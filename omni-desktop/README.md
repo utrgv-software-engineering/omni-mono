@@ -59,3 +59,15 @@ The launcher codebase is in a private repo due to potentially sensitive data in 
 - The installer is still a python script, but we use [`Nuitka`](https://github.com/Nuitka/Nuitka/) to compile it and its dependencies into portable executables for each platform.
 - We use [`uv`](https://github.com/astral-sh/uv) to create and manage the `venv`. It's much faster than `pip`.
 - The GUI is an [electron](https://github.com/electron/electron) application with [React](https://github.com/facebook/react) UI.
+
+### Why Electron?
+
+There are a number of lighter-weight systems that enable cross-platform builds. [Tauri](https://tauri.app/) is probably the most popular, but there are others.
+
+These other systems use the OS-provided engine to render their UIs. That means on Windows uses WebView2 (Chromium), macOS uses WebKit (Safari), and Linux uses WebKitGTK (basically a Linux port of Safari), and the version of the engine depends on the computer.
+
+The result is an inconsistent user experience, and increased workload for devs to support the various rendering engines.
+
+Electron uses the same version of Chrome for all platforms. We only need to build for one rendering engine target, and we can be far more confident in a consistent, bug-free application.
+
+Electron uses about 10x more disk space than something like Tauri, but we're still only talking ~150MB max. You are going to install _many_ GB of models, right? The extra disk usage is a drop in the bucket and both devs and users have a much better experience.
