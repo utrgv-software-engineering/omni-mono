@@ -8,7 +8,7 @@ It can install, update, reinstall and run Invoke Community Edition. It is self-c
 
 Download the launcher from the [releases](https://github.com/invoke-ai/launcher/releases) page.
 
-!['Screenshot of launcher'](./assets/launcher-screenshot.png)
+<img width="912" alt="image" src="https://github.com/user-attachments/assets/1eb85a62-6513-49a9-9091-379f1eb377e1" />
 
 ## FAQ
 
@@ -29,6 +29,12 @@ Currently, the launcher is not able to auto-update itself, but we are working on
 On macOS, the launcher may require you to go to **System Settings** > **Security and Privacy** and manually allow it to run. It may tell you that it is damaged and not run at all.
 
 This is related to Apple's strict code signing restrictions. We are getting set up with Apple to sign the launcher executable, which will fix the issue and allow the launcher to run on all Macs without any fuss.
+
+Until this is resolved, you can manually flag the launcher as safe with `xattr` and it will run.:
+
+```zsh
+xattr -cr /Applications/Invoke-Installer.app
+```
 
 ### Compared to the "old" install/invoke scripts
 
