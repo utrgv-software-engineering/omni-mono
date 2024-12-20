@@ -1,22 +1,18 @@
 # Launcher for Invoke Community Edition
 
-> The launcher is currently in a pre-release status. You can safely use it with your existing Invoke installation; it won't affect your images, models, or any other user data.
-
 The launcher is a desktop application for Windows, macOS (Apple Silicon) and Linux.
 
 It can install, update, reinstall and run Invoke Community Edition. It is self-contained, so you don't need to worry about having the right python version installed.
 
 Download the launcher from the [releases](https://github.com/invoke-ai/launcher/releases) page.
 
-<img width="912" alt="image" src="https://github.com/user-attachments/assets/1eb85a62-6513-49a9-9091-379f1eb377e1" />
+<img width="912" alt="image" src="https://github.com/user-attachments/assets/cd676db3-b8e6-4dcc-b7a9-e442ed98a616" />
 
 ## FAQ
 
 ### Using the launcher to update Invoke
 
-When installing, the launcher installs the latest stable release. We'll add support for installing pre-releases at some point.
-
-We may or may not support installing specific versions of Invoke.
+You can install the latest stable release or latest prerelease versions of Invoke using the launcher.
 
 ### Updating the launcher itself
 
