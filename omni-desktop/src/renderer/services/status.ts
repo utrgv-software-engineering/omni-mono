@@ -5,11 +5,17 @@ import { POLL_INTERVAL } from '@/renderer/constants';
 import { emitter, ipc } from '@/renderer/services/ipc';
 import type { MainProcessStatus, WithTimestamp } from '@/shared/types';
 
+/**
+ * A nanostores atom that holds the status of the main process, wrapped in a timestamp.
+ */
 const $mainProcessStatus = atom<WithTimestamp<MainProcessStatus>>({
   type: 'initializing',
   timestamp: Date.now(),
 });
 
+/**
+ * Listen for main process status updates and poll for updates.
+ */
 const listen = () => {
   ipc.on('main-process:status', (_, data) => {
     $mainProcessStatus.set(data);
