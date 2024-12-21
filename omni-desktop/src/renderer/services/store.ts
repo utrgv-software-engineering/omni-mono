@@ -66,6 +66,18 @@ export const persistedStoreApi = {
 };
 
 /**
+ * A helper function to select the install directory. This will open a dialog for the user to select a directory and
+ * update the store with the selected directory.
+ */
+export const selectInstallDir = async () => {
+  const installDir = persistedStoreApi.getKey('installDir');
+  const newInstallDir = await emitter.invoke('util:select-directory', installDir);
+  if (newInstallDir) {
+    persistedStoreApi.setKey('installDir', newInstallDir);
+  }
+};
+
+/**
  * An atom that holds the initialization state of the store. This is used to determine when the store is ready to be
  * consumed. The app should wait for this atom to be `true` before allowing user interaction.
  */
@@ -104,7 +116,13 @@ persistedStoreApi.$atom.listen(async () => {
   $initialized.set(true);
 });
 
+/**
+ * An atom that holds the operating system of the user. This is fetched from the main process when the app starts.
+ */
 export const $operatingSystem = atom<OperatingSystem | undefined>(undefined);
+
+// Fetch the operating system from the main process and set it in the store when the app starts
 emitter.invoke('util:get-os').then($operatingSystem.set);
 
+// Sync the store with the main process when the app starts
 persistedStoreApi.sync();

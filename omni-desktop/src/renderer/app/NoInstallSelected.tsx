@@ -3,10 +3,9 @@ import { memo, useCallback } from 'react';
 
 import { BodyContainer, BodyContent, BodyFooter, BodyHeader } from '@/renderer/common/layout';
 import { installFlowApi } from '@/renderer/features/InstallFlow/state';
-import { useSelectInstall } from '@/renderer/hooks/use-select-install';
+import { selectInstallDir } from '@/renderer/services/store';
 
 export const FirstRun = memo(() => {
-  const selectInstall = useSelectInstall();
   const install = useCallback(() => {
     installFlowApi.beginFlow();
   }, []);
@@ -19,7 +18,7 @@ export const FirstRun = memo(() => {
         <Text fontSize="md">Install or select an existing installation to manage.</Text>
       </BodyContent>
       <BodyFooter>
-        <Button onClick={selectInstall} variant="link">
+        <Button onClick={selectInstallDir} variant="link">
           Select an existing installation
         </Button>
         <Divider orientation="vertical" />

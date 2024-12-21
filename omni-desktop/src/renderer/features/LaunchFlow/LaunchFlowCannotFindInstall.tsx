@@ -4,7 +4,7 @@ import { memo, useCallback } from 'react';
 import { BodyContainer, BodyContent, BodyFooter, BodyHeader } from '@/renderer/common/layout';
 import { Strong } from '@/renderer/common/Strong';
 import { installFlowApi } from '@/renderer/features/InstallFlow/state';
-import { useSelectInstall } from '@/renderer/hooks/use-select-install';
+import { selectInstallDir } from '@/renderer/services/store';
 import type { DirDetails } from '@/shared/types';
 
 type Props = {
@@ -12,8 +12,6 @@ type Props = {
 };
 
 export const LaunchFlowInvalidInstall = memo(({ installDirDetails }: Props) => {
-  const selectInstall = useSelectInstall();
-
   const install = useCallback(() => {
     installFlowApi.beginFlow(installDirDetails);
   }, [installDirDetails]);
@@ -28,7 +26,7 @@ export const LaunchFlowInvalidInstall = memo(({ installDirDetails }: Props) => {
         </Text>
       </BodyContent>
       <BodyFooter>
-        <Button onClick={selectInstall} variant="link">
+        <Button onClick={selectInstallDir} variant="link">
           Switch installation
         </Button>
         <Divider orientation="vertical" />

@@ -6,8 +6,8 @@ import { Strong } from '@/renderer/common/Strong';
 import { installFlowApi } from '@/renderer/features/InstallFlow/state';
 import { LaunchFlowUpdateCheckerNotification } from '@/renderer/features/LaunchFlow/LaunchFlowUpdateCheckerNotification';
 import { $invokeProcessLogs } from '@/renderer/features/LaunchFlow/state';
-import { useSelectInstall } from '@/renderer/hooks/use-select-install';
 import { emitter } from '@/renderer/services/ipc';
+import { selectInstallDir } from '@/renderer/services/store';
 import type { DirDetails } from '@/shared/types';
 
 type Props = {
@@ -15,8 +15,6 @@ type Props = {
 };
 
 export const LaunchFlowNotRunning = memo(({ installDirDetails }: Props) => {
-  const selectInstall = useSelectInstall();
-
   const launch = useCallback(() => {
     if (!installDirDetails || !installDirDetails.isInstalled) {
       return;
@@ -49,7 +47,7 @@ export const LaunchFlowNotRunning = memo(({ installDirDetails }: Props) => {
         </Text>
       </BodyContent>
       <BodyFooter>
-        <Button onClick={selectInstall} variant="link">
+        <Button onClick={selectInstallDir} variant="link">
           Switch installation
         </Button>
         <Divider orientation="vertical" />
