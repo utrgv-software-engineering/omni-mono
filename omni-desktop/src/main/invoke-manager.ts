@@ -125,21 +125,32 @@ export class InvokeManager {
       this.process = null;
     });
 
+    /**
+     * Watch the process output for the indication that the server is running, then:
+     * - Open the window
+     * - Update the invoke status
+     * - Remove the first run marker if it's the first run since an install or update
+     */
     const urlWatcher = new StringMatcher({
+      // Match HTTP and HTTPS URLs
       re: /https?:\/\/[^:\s]+:\d+/,
+      // We only care about messages that indicate the server is running
       filter: (data) => data.includes('Uvicorn running') || data.includes('Invoke running'),
       onMatch: (url) => {
+        // Stop watching the process output
         invokeProcess?.stderr?.off('data', urlWatcher.checkForMatch);
         invokeProcess?.stdout?.off('data', urlWatcher.checkForMatch);
 
+        // Open the window only when _not_ in server mode
         if (!this.store.get('serverMode')) {
           this.createWindow(url);
         }
 
+        // Update the status to running
         this.updateStatus({ type: 'running', data: { url } });
 
         if (isFirstRun) {
-          // Process has started, remove the first run marker
+          // This is the first run after an install or update - remove the first run marker
           fs.rm(firstRunMarkerPath).catch((error) => {
             this.log.error(`Error removing first run marker: ${error.message}\r\n`);
           });
@@ -147,6 +158,7 @@ export class InvokeManager {
       },
     });
 
+    // Start watching the process output
     invokeProcess.stdout.on('data', urlWatcher.checkForMatch);
     invokeProcess.stderr.on('data', urlWatcher.checkForMatch);
   };
@@ -229,6 +241,10 @@ export class InvokeManager {
   };
 }
 
+/**
+ * Helper function to create an `InvokeManager` instance and set up IPC handlers for it. Returns the instance
+ * and a cleanup function that should be called when the application is shutting down.
+ */
 export const createInvokeManager = (arg: {
   store: Store<StoreData>;
   ipc: IpcListener<IpcEvents>;
