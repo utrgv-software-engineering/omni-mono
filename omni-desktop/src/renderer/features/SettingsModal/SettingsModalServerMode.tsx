@@ -17,7 +17,8 @@ export const SettingsModalServerMode = memo(() => {
         <Checkbox isChecked={serverMode} onChange={onChange} />
       </Flex>
       <FormHelperText>
-        When enabled, the UI won&apos;t open when the app starts up. You must open the displayed URL in a web browser.
+        When enabled, the launcher will run Invoke in &quot;headless&quot; mode with no UI. You can access Invoke on any
+        computer on your local network at the displayed URL.
       </FormHelperText>
     </FormControl>
   );

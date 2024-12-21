@@ -3,6 +3,7 @@ import { type ChildProcess, execFile } from 'child_process';
 import { BrowserWindow, ipcMain, shell } from 'electron';
 import type Store from 'electron-store';
 import fs from 'fs/promises';
+import ip from 'ip';
 import { join } from 'path';
 import { assert } from 'tsafe';
 
@@ -73,12 +74,14 @@ export class InvokeManager {
       this.log.info('Preparing first run of this install - may take a minute or two...\r\n');
     }
 
-    const invokeProcess = execFile(dirDetails.invokeExecPath, [], {
-      env: {
-        ...process.env,
-        INVOKEAI_ROOT: location,
-      },
-    });
+    const env: NodeJS.ProcessEnv = { ...process.env, INVOKEAI_ROOT: location };
+
+    // If server mode is enabled, set the host to 0.0.0.0 to enable LAN access
+    if (this.store.get('serverMode')) {
+      env.INVOKEAI_HOST = '0.0.0.0';
+    }
+
+    const invokeProcess = execFile(dirDetails.invokeExecPath, [], { env });
     this.process = invokeProcess;
 
     invokeProcess.on('spawn', () => {
@@ -141,13 +144,15 @@ export class InvokeManager {
         invokeProcess?.stderr?.off('data', urlWatcher.checkForMatch);
         invokeProcess?.stdout?.off('data', urlWatcher.checkForMatch);
 
-        // Open the window only when _not_ in server mode
+        // If running with `host: 0.0.0.0`, replace with the local IP address
+        const urlProcessed = url.replace('0.0.0.0', ip.address());
+
+        // If server mode is enabled, don't open the window
         if (!this.store.get('serverMode')) {
-          this.createWindow(url);
+          this.createWindow(urlProcessed);
         }
 
-        // Update the status to running
-        this.updateStatus({ type: 'running', data: { url } });
+        this.updateStatus({ type: 'running', data: { url: urlProcessed } });
 
         if (isFirstRun) {
           // This is the first run after an install or update - remove the first run marker
