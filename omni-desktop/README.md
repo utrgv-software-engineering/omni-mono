@@ -70,9 +70,11 @@ Electron uses about 10x more disk space than something like Tauri, but we're sti
 
 ## Dev Setup
 
-1. Run `npm i` to install all packages.
-2. Run `npm run start` to start the launcher in dev mode.
-3. Run `npm app:dist` to build it for your system.
+This project uses node 22 and npm as its package manager.
+
+- Run `npm i` to install all packages. See the next section to get `uv` set up.
+- Run `npm run start` to start the launcher in dev mode.
+- Run `npm app:dist` to build it for your system.
 
 ### Getting `uv` for local dev
 
