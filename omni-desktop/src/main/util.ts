@@ -278,6 +278,9 @@ export const isDevelopment = (): boolean => process.env.NODE_ENV === 'developmen
 
 //#region Window mgmt
 
+/**
+ * Checks if the given rect exceeds the screen bounds
+ */
 const exceedsScreenBounds = (bounds: Electron.Rectangle): boolean => {
   const screenArea = screen.getDisplayMatching(bounds).workArea;
   return (
@@ -288,6 +291,19 @@ const exceedsScreenBounds = (bounds: Electron.Rectangle): boolean => {
   );
 };
 
+/**
+ * Manages a window's size:
+ * - Restores the window to its previous size and position, maximizing or fullscreening it if necessary
+ * - Saves the window's size and position when it is closed
+ * - If provided, uses the initialProps to set the window's size and position
+ *
+ * The window will not be set to the stored/initial bounds if it exceeds the current screen bounds.
+ *
+ * @param window The window to manage
+ * @param windowProps The stored window properties
+ * @param setWindowProps The function to call to save the window properties
+ * @param initialProps The initial window properties to use if there are no stored properties
+ */
 export const manageWindowSize = (
   window: BrowserWindow,
   windowProps: WindowProps | undefined,
@@ -295,6 +311,7 @@ export const manageWindowSize = (
   initialProps?: Partial<WindowProps>
 ): void => {
   if (windowProps) {
+    // Restore window size and position
     const { bounds, isMaximized, isFullScreen } = windowProps;
     if (!exceedsScreenBounds(bounds)) {
       window.setBounds(bounds);
@@ -306,6 +323,7 @@ export const manageWindowSize = (
       window.setFullScreen(true);
     }
   } else if (initialProps) {
+    // No stored properties, use initial properties if they exist
     const { bounds, isMaximized, isFullScreen } = initialProps;
     if (bounds && !exceedsScreenBounds(bounds)) {
       window.setBounds(bounds);
@@ -318,6 +336,7 @@ export const manageWindowSize = (
     }
   }
 
+  // Save window size and position when it is closed and clear the event listener
   const handleClose = () => {
     setWindowProps({
       bounds: window.getBounds(),
