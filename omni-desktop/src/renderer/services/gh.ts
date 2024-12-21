@@ -8,6 +8,17 @@ import type { AsyncRequest } from '@/shared/types';
 
 type LatestGHReleases = { stable: string; pre?: string };
 
+/**
+ * Heads up from frustrating troubleshooting experience:
+ * In this file, we use the `compare` utility from the `@renovatebot/pep440` package to compare versions. When a version
+ * string is not in the right format, `compare` throws low-level errors that can be really confusing. It's important to
+ * have error handling around the `compare` calls!
+ */
+
+/**
+ * A nanostores atom that holds the latest stable and pre-release versions from the GitHub API, wrapped in some async
+ * request state.
+ */
 export const $latestGHReleases = atom<AsyncRequest<LatestGHReleases, string>>({
   isUninitialized: true,
   isError: false,
@@ -15,17 +26,25 @@ export const $latestGHReleases = atom<AsyncRequest<LatestGHReleases, string>>({
   isSuccess: false,
 });
 
-// GH rate-limits requests to 60 per hour, but 304s do not count towards the limit - use conditional requests with ETag
-// to avoid rate-limiting
+/**
+ * The last ETag received from the GitHub API. This ETag is added to the headers of the request to check for new
+ * releases. A 304 indicates the data has not changed since the last request.
+ *
+ * Used to make conditional requests to avoid rate-limiting. GH rate-limits requests to 60 per hour, but 304s do not
+ * count towards the limit.
+ */
 let previousETag: string | null = null;
 
+/**
+ * The timestamp of the last check for new releases. Used to avoid checking too frequently.
+ */
 let lastCheck: number | null = null;
 
 /**
  * Update the $latestGHReleases store with the latest stable and pre-release versions from the GitHub API.
  */
 export const syncGHReleases = async () => {
-  // We may re-use the cached data if we get a 304
+  // We may re-use the cached data if we get a 304, stash it before we set the loading state
   const cached = $latestGHReleases.get();
 
   // Set the loading state
@@ -63,8 +82,8 @@ export const syncGHReleases = async () => {
 
       // Get the latest stable and pre-release versions - we assume tag_name is a valid PEP 440 version
       const releases = {
-        stable: data.find((release) => !release.prerelease && !release.draft)?.tag_name as string | undefined,
-        pre: data.find((release) => release.prerelease && !release.draft)?.tag_name as string | undefined,
+        stable: data.find((release) => !release.prerelease && !release.draft)?.tag_name,
+        pre: data.find((release) => release.prerelease && !release.draft)?.tag_name,
       };
 
       console.log('Latest releases:', releases);
@@ -99,7 +118,7 @@ export const syncGHReleases = async () => {
 
   const { stable, pre } = request.value;
 
-  // We must have a stable release
+  // We must have a stable release. If we didn't find one, something is wrong
   if (!stable) {
     $latestGHReleases.set({
       isLoading: false,
@@ -113,7 +132,10 @@ export const syncGHReleases = async () => {
 
   const data: LatestGHReleases = { stable };
 
-  // Only list pre-releases if they are newer than the stable release
+  /**
+   * Only include the latest pre-release if it is newer than the latest stable release. For example, if the latest
+   * stable release is 1.0.0 and the latest pre-release is 0.9.0, we should not include the pre-release.
+   */
   if (pre && compare(pre, stable) > 0) {
     data.pre = pre;
   }
@@ -155,6 +177,10 @@ type UseAvailableUpdatesReturn = {
   pre: string | null;
 };
 
+/**
+ * Given a current version, return the latest stable and pre-release versions if they are newer than the specified
+ * version.
+ */
 export const useAvailableUpdates = (currentVersion: string): UseAvailableUpdatesReturn => {
   const latestGHReleases = useStore($latestGHReleases);
 
