@@ -68,13 +68,20 @@ Electron uses the same version of Chrome for all platforms. We only need to buil
 
 Electron uses about 10x more disk space than something like Tauri, but we're still only talking ~150MB max. You are going to install _many_ GB of models, right? The extra disk usage is a drop in the bucket and both devs and users have a much better experience.
 
-## Dev Setup
+## Contributing
+
+Contributions are welcome!
+
+If you want to contribute something more than a simple bug fix, please first check in with us on [discord](https://discord.gg/ZmtBAhwWhy). Ping @psychedelicious in the `dev-chat` or `installer-chat` forums.
+
+### Dev Environment
 
 This project uses node 22 and npm as its package manager.
 
 - Run `npm i` to install all packages. See the next section to get `uv` set up.
 - Run `npm run start` to start the launcher in dev mode.
 - Run `npm app:dist` to build it for your system.
+- Run `npm run lint` to run code quality checks.
 
 ### Getting `uv` for local dev
 
@@ -101,9 +108,3 @@ Windows will prompt you to allow the app to run, but on macOS it may refuse, say
 ```zsh
 xattr -d 'com.apple.quarantine' /Applications/Invoke-Installer.app
 ```
-
-### Contributing
-
-Contributions are welcome!
-
-If you want to contribute something more than a simple bug fix, please first check in with us on [discord](https://discord.gg/ZmtBAhwWhy). Ping @psychedelicious in the `dev-chat` or `installer-chat` forums.
