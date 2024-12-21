@@ -4,7 +4,7 @@ import { atom, computed } from 'nanostores';
 import { LineBuffer } from '@/lib/line-buffer';
 import { POLL_INTERVAL } from '@/renderer/constants';
 import { emitter, ipc } from '@/renderer/services/ipc';
-import { persistedStoreApi, syncInstallDirDetails } from '@/renderer/services/store';
+import { syncInstallDirDetails } from '@/renderer/services/store';
 import type { InvokeProcessStatus, LogEntry, WithTimestamp } from '@/shared/types';
 
 export const getIsInvokeProcessActive = (status: InvokeProcessStatus) => {
@@ -49,11 +49,8 @@ const listen = () => {
       // Flush the buffer when the process exits in case there were any remaining logs
       buffer.flush();
 
-      // If the invoke process errored, we need to double-check the install dir to make sure it's still valid
-      const installDir = persistedStoreApi.$atom.get().installDir;
-      if (installDir) {
-        syncInstallDirDetails(installDir);
-      }
+      // If the invoke process errored, we need to force a sync of the install dir details in case something broke
+      syncInstallDirDetails();
     }
   });
 

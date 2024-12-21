@@ -77,19 +77,28 @@ export const $initialized = atom(false);
  */
 export const $installDirDetails = atom<DirDetails | undefined>(undefined);
 
-export const syncInstallDirDetails = async (installDir: string) => {
+/**
+ * A helper function to force a sync of the details of the selected installation directory. This is useful after an
+ * install or update operation to ensure the details are up-to-date.
+ */
+export const syncInstallDirDetails = async () => {
+  const installDir = persistedStoreApi.$atom.get().installDir;
+  if (!installDir) {
+    return;
+  }
   const newDirDetails = await emitter.invoke('util:get-dir-details', installDir);
   $installDirDetails.set(newDirDetails);
 };
 
-persistedStoreApi.$atom.listen(() => {
+persistedStoreApi.$atom.listen(async () => {
   const installDir = persistedStoreApi.$atom.get().installDir;
   const dirDetails = $installDirDetails.get();
 
   if (!installDir) {
     $installDirDetails.set(undefined);
   } else if (installDir !== dirDetails?.path) {
-    syncInstallDirDetails(installDir);
+    const newDirDetails = await emitter.invoke('util:get-dir-details', installDir);
+    $installDirDetails.set(newDirDetails);
   }
 
   $initialized.set(true);

@@ -195,11 +195,9 @@ const listen = () => {
       // Flush the buffer when the process exits in case there were any remaining logs
       buffer.flush();
 
-      // If the install was canceled or errored, we need to double-check the install dir to make sure it's still valid
-      const installDir = persistedStoreApi.$atom.get().installDir;
-      if (installDir) {
-        syncInstallDirDetails(installDir);
-      }
+      // If the install was canceled or errored, we need to force a sync of the install dir details in case something
+      // broke
+      syncInstallDirDetails();
     }
   });
 
