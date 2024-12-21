@@ -102,6 +102,7 @@ export class InstallManager {
 
     // Get the Python version and torch index URL for the target version
     const pinsResult = await withResult(() => getPins(version));
+
     if (pinsResult.isErr()) {
       this.log.error(`Failed to get pins for version ${version}: ${pinsResult.error.message}\r\n`);
       this.updateStatus({
@@ -111,7 +112,6 @@ export class InstallManager {
           context: serializeError(pinsResult.error),
         },
       });
-      this.updateStatus({ type: 'error', error: { message: 'Failed to get pins' } });
       return;
     }
 
@@ -140,13 +140,22 @@ export class InstallManager {
     // Ready to start the installation process
     this.updateStatus({ type: 'installing' });
 
-    // The install processes will log stdout/stderr with this
+    // The install processes will log stdout/stderr with this, but it seems to be a toss of as to which messages
+    // go to stdout and which to stderr. So we'll just log everything as info and handle actual errors separately
     const onOutput = (data: string) => {
       this.log.info(data);
     };
 
     // First step - install python
-    const installPythonArgs = ['python', 'install', pythonVersion, '--python-preference', 'only-managed'];
+    const installPythonArgs = [
+      // Use `uv`'s python interface to install the specific python version
+      'python',
+      'install',
+      pythonVersion,
+      // Always use a managed python version - never the system python
+      '--python-preference',
+      'only-managed',
+    ];
 
     this.log.info('Installing Python...\r\n');
     this.log.info(`> ${uvPath} ${installPythonArgs.join(' ')}\r\n`);
@@ -176,12 +185,17 @@ export class InstallManager {
     // Second step - create a virtual environment
     const venvPath = path.resolve(path.join(location, '.venv'));
     const createVenvArgs = [
+      // Use `uv`'s venv interface to create a virtual environment
       'venv',
+      // We don't ever plan on relocating the venv but it doesn't hurt
       '--relocatable',
+      // Note: the legacy install scripts used `.venv` as the prompt
       '--prompt',
       'invoke',
+      // Ensure we install against the correct python version
       '--python',
       pythonVersion,
+      // Always use a managed python version - never the system python
       '--python-preference',
       'only-managed',
       venvPath,
@@ -216,14 +230,19 @@ export class InstallManager {
 
     // Third step - install the invokeai package
     const installInvokeArgs = [
+      // Use `uv`s pip interface to install the invokeai package
       'pip',
       'install',
+      // Ensure we install against the correct python version
       '--python',
       pythonVersion,
+      // Always use a managed python version - never the system python
       '--python-preference',
       'only-managed',
       `${invokeaiPackageSpecifier}==${version}`,
+      // This may be unnecessary with `uv`, but we've had issues where `pip` screws up dependencies without --force-reinstall
       '--force-reinstall',
+      // TODO(psyche): Last time I checked, this didn't seem to work - the bytecode wasn't compiled
       '--compile-bytecode',
     ];
 
@@ -287,6 +306,10 @@ export class InstallManager {
   };
 }
 
+/**
+ * Helper function to create an `InstallManager` instance and set up IPC handlers for it. Returns the instance
+ * and a cleanup function that should be called when the application is shutting down.
+ */
 export const createInstallManager = (arg: {
   ipc: IpcListener<IpcEvents>;
   sendToWindow: <T extends keyof IpcRendererEvents>(channel: T, ...args: IpcRendererEvents[T]) => void;
@@ -317,6 +340,15 @@ export const createInstallManager = (arg: {
   return [installManager, cleanupInstallManager] as const;
 };
 
+/**
+ * Simple wrapper around `child_process.execFile` that returns a promise that resolves when the process exits with code 0.
+ * If the process exits with a non-zero code, the promise is rejected with an error.
+ *
+ * @param file The path to the executable
+ * @param args The arguments to pass to the executable
+ * @param onOutput A callback that is called with the both stdout _and_ stderr outputs
+ * @param options Additional options to pass to `child_process.execFile`
+ */
 const runProcess = (
   file: string,
   args: string[],
