@@ -1,0 +1,110 @@
+name: Build Binaries
+
+on:
+  push:
+  release:
+    types: [released]
+  workflow_dispatch:
+
+env:
+  UV_VERSION: '0.5.11'
+
+concurrency:
+  group: ${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download uv
+        run: |
+          mkdir bin
+          curl -L https://github.com/astral-sh/uv/releases/download/${{ env.UV_VERSION }}/uv-x86_64-unknown-linux-gnu.tar.gz -o uv.tar.gz
+          tar -xzf uv.tar.gz -C ./bin
+          mv ./bin/uv-x86_64-unknown-linux-gnu/uv ./assets/uv
+          rm -rf ./bin/uv-x86_64-unknown-linux-gnu
+          ls -alF ./bin
+          ls -alF ./assets
+
+      - name: setup nodejs
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install deps and build GUI
+        run: |
+          npm install --include=dev
+          npm run app:dist
+
+      - name: Publish artifact - GUI
+        uses: actions/upload-artifact@v4
+        with:
+          name: Invoke-Installer-linux-x86_64.AppImage
+          path: dist/Invoke-Installer-linux-x86_64.AppImage
+
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download uv
+        run: |
+          mkdir bin
+          curl -L https://github.com/astral-sh/uv/releases/download/${{ env.UV_VERSION }}/uv-aarch64-apple-darwin.tar.gz -o uv.tar.gz
+          tar -xzf uv.tar.gz -C ./bin
+          mv ./bin/uv-aarch64-apple-darwin/uv ./assets/uv
+          rm -rf ./bin/uv-aarch64-apple-darwin
+          ls -alF ./bin
+          ls -alF ./assets
+
+      - name: setup nodejs
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install deps and build GUI
+        run: |
+          npm install --include=dev
+          npm run app:dist
+
+      - name: Publish artifact - GUI
+        uses: actions/upload-artifact@v4
+        with:
+          name: Invoke-Installer-mac-arm64.dmg
+          path: dist/Invoke-Installer-mac-arm64.dmg
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download uv
+        run: |
+          mkdir bin
+          curl -L https://github.com/astral-sh/uv/releases/download/${{ env.UV_VERSION }}/uv-x86_64-pc-windows-msvc.zip -o uv.zip
+          unzip uv.zip -d bin/
+          mv bin/uv.exe assets/uv.exe
+
+      - name: setup nodejs
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install deps and build GUI
+        run: |
+          npm install --include=dev
+          npm run app:dist
+
+      - name: Publish artifact - GUI - UNSIGNED
+        uses: actions/upload-artifact@v4
+        with:
+          name: Invoke-Installer-windows-x64-UNSIGNED.exe
+          path: dist/Invoke-Installer-windows-x64.exe
