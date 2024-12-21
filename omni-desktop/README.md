@@ -101,3 +101,9 @@ Windows will prompt you to allow the app to run, but on macOS it may refuse, say
 ```zsh
 xattr -d 'com.apple.quarantine' /Applications/Invoke-Installer.app
 ```
+
+### Contributing
+
+Contributions are welcome!
+
+If you want to contribute something more than a simple bug fix, please first check in with us on [discord](https://discord.gg/ZmtBAhwWhy). Ping @psychedelicious in the `dev-chat` or `installer-chat` forums.
