@@ -24,11 +24,9 @@ export const LaunchFlowLogViewer = memo(() => {
 
   return (
     <LogViewer logs={invokeProcessLogs}>
-      <LogViewerStatusIndicator
-        status={invokeProcessStatus}
-        getIsActive={getIsInvokeProcessActive}
-        getMessage={getMessage}
-      />
+      <LogViewerStatusIndicator isLoading={getIsInvokeProcessActive(invokeProcessStatus)}>
+        {getMessage(invokeProcessStatus)}
+      </LogViewerStatusIndicator>
     </LogViewer>
   );
 });

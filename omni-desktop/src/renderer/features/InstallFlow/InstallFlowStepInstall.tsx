@@ -7,15 +7,15 @@ import { InstallFlowLogs } from '@/renderer/features/InstallFlow/InstallFlowLogs
 import { InstallFlowStepper } from '@/renderer/features/InstallFlow/InstallFlowStepper';
 import {
   $installProcessStatus,
+  getIsActiveInstallProcessStatus,
   installFlowApi,
-  isActiveInstallProcessStatus,
 } from '@/renderer/features/InstallFlow/state';
 
 export const InstallFlowStepInstall = memo(() => {
   const installProcessStatus = useStore($installProcessStatus);
   const isFinished = useStore(installFlowApi.$isFinished);
 
-  const isActive = isActiveInstallProcessStatus(installProcessStatus);
+  const isActive = getIsActiveInstallProcessStatus(installProcessStatus);
 
   return (
     <BodyContainer>

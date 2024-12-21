@@ -1,14 +1,12 @@
-import type { SystemStyleObject } from '@invoke-ai/ui-library';
+import type { SystemStyleObject, TextProps } from '@invoke-ai/ui-library';
 import { Box, Text } from '@invoke-ai/ui-library';
 import Linkify from 'linkify-react';
 import type { Opts as LinkifyOpts } from 'linkifyjs';
-import { startCase } from 'lodash-es';
 
 import { _afterEllipsisKeyframes } from '@/renderer/common/EllipsisLoadingText';
-import type { Status } from '@/shared/types';
 
 const sx: SystemStyleObject = {
-  '&[data-active="true"]:after': _afterEllipsisKeyframes,
+  '&[data-loading="true"]:after': _afterEllipsisKeyframes,
   a: {
     fontWeight: 'semibold',
   },
@@ -23,17 +21,11 @@ const linkifyOptions: LinkifyOpts = {
   validate: (value) => /^https?:\/\//.test(value),
 };
 
-type Props<T extends Status<string>> = {
-  status: T;
-  getIsActive: (status: T) => boolean;
-  getMessage?: (status: T) => string;
-};
+type Props = {
+  isLoading: boolean;
+} & TextProps;
 
-export const LogViewerStatusIndicator = <T extends Status<string>>({
-  status,
-  getIsActive,
-  getMessage = (status) => startCase(status.type),
-}: Props<T>) => {
+export const LogViewerStatusIndicator = ({ isLoading, children, ...textProps }: Props) => {
   return (
     <Box
       position="absolute"
@@ -48,8 +40,8 @@ export const LogViewerStatusIndicator = <T extends Status<string>>({
       borderWidth={1}
       shadow="dark-lg"
     >
-      <Text sx={sx} data-active={getIsActive(status)}>
-        <Linkify options={linkifyOptions}>{getMessage(status)}</Linkify>
+      <Text sx={sx} data-loading={isLoading} {...textProps}>
+        <Linkify options={linkifyOptions}>{children}</Linkify>
       </Text>
     </Box>
   );

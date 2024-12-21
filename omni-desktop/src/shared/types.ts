@@ -193,7 +193,7 @@ type ErrorStatus = {
 /**
  * A status object that may be either an OK status or an ERROR status.
  */
-export type Status<State extends string> = OkStatus<State> | ErrorStatus;
+type Status<State extends string> = OkStatus<State> | ErrorStatus;
 
 /**
  * The various states the main process can be in.

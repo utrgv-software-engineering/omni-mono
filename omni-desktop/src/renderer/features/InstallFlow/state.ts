@@ -158,7 +158,7 @@ export const $installProcessStatus = atom<WithTimestamp<InstallProcessStatus>>({
 });
 
 $installProcessStatus.subscribe((status, oldStatus) => {
-  if (oldStatus && isActiveInstallProcessStatus(oldStatus) && !isActiveInstallProcessStatus(status)) {
+  if (oldStatus && getIsActiveInstallProcessStatus(oldStatus) && !getIsActiveInstallProcessStatus(status)) {
     $isFinished.set(true);
     // To get chakra to show a checkmark on the last step, the active step must be the step _after_ the last step
     $activeStep.set(steps.length);
@@ -167,7 +167,7 @@ $installProcessStatus.subscribe((status, oldStatus) => {
 
 export const $installProcessLogs = atom<WithTimestamp<LogEntry>[]>([]);
 
-export const isActiveInstallProcessStatus = (status: InstallProcessStatus) => {
+export const getIsActiveInstallProcessStatus = (status: InstallProcessStatus) => {
   switch (status.type) {
     case 'installing':
     case 'canceling':
