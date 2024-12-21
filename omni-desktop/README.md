@@ -56,7 +56,9 @@ Yes, but we won't keep them updated for too much longer. Theoretically, they sho
 
 The launcher is an [electron](https://github.com/electron/electron) application with [React](https://github.com/facebook/react) UI. We bundle [`uv`](https://github.com/astral-sh/uv) with the build and then call it to install python, create the app `venv`, and run the app.
 
-### Why Electron?
+<details>
+
+<summary>Why Electron?</summary>
 
 There are a number of lighter-weight systems that enable cross-platform builds. [Tauri](https://tauri.app/) is probably the most popular, but there are others.
 
@@ -67,6 +69,8 @@ The result is an inconsistent user experience, and increased workload for devs t
 Electron uses the same version of Chrome for all platforms. We only need to build for one rendering engine target, and we can be far more confident in a consistent, bug-free application.
 
 Electron uses about 10x more disk space than something like Tauri, but we're still only talking ~150MB max. You are going to install _many_ GB of models, right? The extra disk usage is a drop in the bucket and both devs and users have a much better experience.
+
+</details>
 
 ## Contributing
 
@@ -80,12 +84,20 @@ This project uses node 22 and npm as its package manager.
 
 - Run `npm i` to install all packages. See the next section to get `uv` set up.
 - Run `npm run start` to start the launcher in dev mode.
-- Run `npm app:dist` to build it for your system.
 - Run `npm run lint` to run code quality checks.
+
+### Build
+
+Building the launcher is very simple:
+
+- `npm i`: install dependencies
+- `npm run app:dist`: build for your system's platform
+
+As described in the next section, you do need to manually download the `uv` binary to get a functioning build.
 
 ### Getting `uv` for local dev
 
-The GitHub CI build workflow downloads `uv` during the build step, but you'll need to download it manually to run the launcher in dev mode.
+The GitHub build workflow downloads `uv` during the build step, but you do need to download it manually to build locally or run the launcher in dev mode locally.
 
 - Check `.github/workflows/build.yml` for the version of `uv` used in the build.
 - Download that version from [`uv`'s releases page on GH](https://github.com/astral-sh/uv/releases).
