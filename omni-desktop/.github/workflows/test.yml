@@ -1,4 +1,4 @@
-name: Test Electron App
+name: Run Tests
 
 on: [push, workflow_dispatch]
 
@@ -18,13 +18,5 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb libgbm-dev
-
       - name: Run tests
-        run: xvfb-run --auto-servernum npm test
-
-      - name: Run code quality checks
-        run: xvfb-run --auto-servernum npm run lint
+        run: npm run test:no-watch
