@@ -73,7 +73,7 @@
     "name": "Invoke AI, Inc.",
     "email": "info@invoke.com"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/typed-ipc": "^1.0.2",
