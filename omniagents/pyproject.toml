@@ -1,0 +1,21 @@
+[project]
+name = "openai-agents-examples"
+version = "0.1.0"
+description = "OpenAI Agents examples"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "requests",
+    "flet",
+    "openai-agents==0.0.9",
+    "python-dotenv",
+    "google-search-results",
+    "pydantic-core==2.33.0",
+    "pydantic==2.11.1",
+    "beautifulsoup4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
