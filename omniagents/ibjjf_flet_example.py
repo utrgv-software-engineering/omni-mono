@@ -224,7 +224,7 @@ class ToolCallDisplay(ft.Container):
     def __init__(self, tool_name, args_str):
         super().__init__()
         self.padding = ft.padding.only(bottom=2)
-        self.margin = ft.margin.only(left=42, top=8, bottom=4)
+        self.margin = ft.margin.only(left=20, right=20, top=8, bottom=12)
         self.animate = ft.animation.Animation(200, ft.AnimationCurve.EASE_OUT)
 
         tool_icons = {
@@ -268,9 +268,9 @@ class ToolCallDisplay(ft.Container):
                         # max_lines=2, # Limit arg length display
                         # overflow=ft.TextOverflow.ELLIPSIS,
                     ),
-                ], spacing=2, tight=True),
+                ], spacing=2, tight=True, expand=True),
             ], spacing=0),
-            padding=12,
+            padding=ft.padding.only(left=12, top=12, bottom=12, right=16),
             border_radius=8,
             bgcolor=ft.Colors.with_opacity(0.04, ft.Colors.BLUE_GREY),
         )
@@ -281,7 +281,8 @@ class ToolOutputDisplay(ft.Container):
     def __init__(self, output_text):
         super().__init__()
         self.padding = 0
-        self.margin = ft.margin.only(left=80, right=20, top=4, bottom=12)
+        # Standardized left margin, consistent bottom margin - Adjusted for no avatar
+        self.margin = ft.margin.only(left=20, right=20, top=4, bottom=12)
         self.animate = ft.animation.Animation(200, ft.AnimationCurve.EASE_OUT)
 
         # Truncate very long outputs
@@ -298,7 +299,8 @@ class ToolOutputDisplay(ft.Container):
                 color=ft.Colors.BLACK87,
                 font_family="SF Mono, Menlo, Monaco, Consolas, monospace"
             ),
-            padding=12,
+            # Removed horizontal padding to align text with margin
+            padding=ft.padding.only(top=12, bottom=12, right=16),
             border_radius=6,
             bgcolor=ft.Colors.with_opacity(0.03, ft.Colors.BLACK),
             border=ft.border.all(0.5, ft.Colors.BLACK12),
@@ -511,101 +513,51 @@ class ChatMessage(ft.Container):
     def __init__(self, message: Message, page: ft.Page = None):
         super().__init__()
         self.animate = ft.animation.Animation(300, ft.AnimationCurve.EASE_OUT)
-        self.padding = ft.padding.only(bottom=16)
+        self.padding = ft.padding.only(bottom=12)
 
         is_user = message.user_name == "You"
         is_system = message.user_name == "System"
 
-        # Configure appearance based on message type
-        if is_system:
-            avatar_bg = ft.Colors.GREY_400
-            text_color = ft.Colors.BLACK87
-            avatar_size = 28
-            name_size = 13
-            msg_size = 14
-            name_weight = "w500"
-        elif is_user:
-            avatar_bg = ft.Colors.BLUE_GREY # User avatar color
-            text_color = ft.Colors.BLACK
-            avatar_size = 32
-            name_size = 14
-            msg_size = 15
-            name_weight = "bold"
+        # Create content area
+        if is_user:
+            # User message: Right-aligned speech bubble
+            content_area = ft.Container(
+                content=ft.Text(message.text, selectable=True, size=15, color=ft.Colors.BLACK87),
+                bgcolor=ft.colors.with_opacity(0.05, ft.colors.BLACK), # Light grey bubble
+                border_radius=18,
+                padding=ft.padding.symmetric(horizontal=16, vertical=10),
+                # margin=ft.margin.only(left=60) # Removed unnecessary left margin for right-aligned item
+            )
+            alignment = ft.MainAxisAlignment.END
+            self.content = ft.Row([content_area], alignment=alignment)
+
+        elif is_system:
+             # System message: Left-aligned, simple text
+            content_area = ft.Container(
+                content=ft.Text(message.text, selectable=True, size=14, color=ft.Colors.BLACK54, italic=True),
+                padding=ft.padding.symmetric(horizontal=16, vertical=8),
+                # margin=ft.margin.only(right=60) # Removed right margin
+            )
+            alignment = ft.MainAxisAlignment.START # Explicitly start
+            # Set expand=True on the container within the Row
+            self.content = ft.Row([ft.Container(content=content_area, expand=True)], alignment=alignment)
+
         else: # Assistant message
-            avatar_bg = ft.Colors.DEEP_PURPLE_400 # Assistant avatar color
-            text_color = ft.Colors.BLACK
-            avatar_size = 32
-            name_size = 14
-            msg_size = 15
-            name_weight = "bold"
-
-        # Create avatar based on message type
-        if is_system:
-            avatar = ft.Container(
-                content=ft.Icon(name=ft.Icons.INFO_OUTLINE, size=16, color=ft.Colors.WHITE),
-                width=avatar_size, height=avatar_size, border_radius=avatar_size/2,
-                bgcolor=avatar_bg, alignment=ft.alignment.center,
-            )
-        else:
-            avatar = ft.Container(
-                content=ft.Text(
-                    self._get_initials(message.user_name), size=avatar_size/2,
-                    weight="bold", color=ft.Colors.WHITE
+            # Assistant message: Left-aligned, no bubble
+            content_area = ft.Container(
+                 content=ft.Markdown(
+                    value=message.text, selectable=True,
+                    extension_set=ft.MarkdownExtensionSet.GITHUB_FLAVORED,
+                    code_theme=ft.MarkdownCodeTheme.GITHUB,
+                    on_tap_link=lambda e: page.launch_url(e.data) if page else None,
                 ),
-                width=avatar_size, height=avatar_size, border_radius=avatar_size/2,
-                bgcolor=avatar_bg if not is_user else self._get_avatar_color(message.user_name),
-                alignment=ft.alignment.center,
+                # Adjusted padding: left=20 to align with tool output box
+                padding=ft.padding.only(left=20, right=16, top=4, bottom=4),
+                # margin=ft.margin.only(right=60) # Removed right margin
             )
-
-        # Create header with avatar and name
-        header = ft.Row(
-            [
-                avatar,
-                ft.Container(width=10),
-                ft.Text(
-                    message.user_name, size=name_size, weight=name_weight,
-                    color=ft.Colors.BLACK87 if is_system else avatar_bg
-                ),
-                ft.Text(
-                    " · " + datetime.now().strftime("%I:%M %p").lstrip("0") if not is_system else "",
-                    size=name_size - 1, color=ft.Colors.BLACK45, weight="w400"
-                )
-            ],
-            spacing=0, alignment=ft.MainAxisAlignment.START,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        )
-
-        # Create content area with markdown support
-        content_area = ft.Container(
-            content=ft.Markdown(
-                value=message.text, selectable=True,
-                extension_set=ft.MarkdownExtensionSet.GITHUB_FLAVORED,
-                code_theme=ft.MarkdownCodeTheme.GITHUB,
-                on_tap_link=lambda e: page.launch_url(e.data) if page else None,
-            ) if not is_system else ft.Text(
-                message.text, selectable=True, size=msg_size, color=text_color,
-            ),
-            padding=ft.padding.only(left=avatar_size + 18) if not is_system else ft.padding.all(16),
-            margin=ft.margin.only(top=6) if not is_system else ft.margin.only(top=8),
-        )
-
-        # System messages use standard layout now
-        self.content = ft.Column([header, content_area], tight=True, spacing=0)
-
-    def _get_initials(self, user_name: str):
-        if not user_name: return "?"
-        parts = user_name.split()
-        if len(parts) > 1: return (parts[0][0] + parts[-1][0]).upper()
-        return user_name[:1].upper()
-
-    def _get_avatar_color(self, user_name: str):
-        # Use a different color set
-        colors_lookup = [
-            ft.Colors.BLUE_GREY, ft.Colors.TEAL, ft.Colors.INDIGO,
-            ft.Colors.DEEP_PURPLE, ft.Colors.CYAN_700, ft.Colors.GREEN_600,
-            ft.Colors.DEEP_ORANGE, ft.Colors.BROWN,
-        ]
-        return colors_lookup[hash(user_name) % len(colors_lookup)]
+            alignment = ft.MainAxisAlignment.START
+            # Set expand=True on the container within the Row to enable wrapping
+            self.content = ft.Row([ft.Container(content=content_area, expand=True)], alignment=alignment)
 
 # --- Main Application Logic ---
 
@@ -701,7 +653,7 @@ async def main(page: ft.Page):
             ],
             alignment=ft.MainAxisAlignment.START,
         ),
-        margin=ft.margin.only(left=42, bottom=12),
+        margin=ft.margin.only(left=20, bottom=12),
         animate=ft.animation.Animation(200, ft.AnimationCurve.EASE_IN_OUT),
         visible=False
     )
@@ -827,7 +779,7 @@ async def main(page: ft.Page):
                     message_type="assistant_message"
                 )
                 chat.controls.append(ChatMessage(assistant_message, page))
-                chat.controls.append(ft.Container(height=16))
+                chat.controls.append(ft.Container(height=12))
                 page.update()
 
         except Exception as e:
@@ -985,7 +937,7 @@ async def main(page: ft.Page):
 
     welcome_message = Message("System", welcome_text, "system_message")
     chat.controls.append(ChatMessage(welcome_message, page))
-    chat.controls.append(ft.Container(height=16))
+    chat.controls.append(ft.Container(height=12))
 
     # Chat input field
     new_message = ft.TextField(
