@@ -17,6 +17,7 @@ from agents import (
     ToolCallItem,
     ToolCallOutputItem,
     set_default_openai_client,
+    set_default_openai_api,
     set_tracing_disabled
 )
 from agents.model_settings import ModelSettings
@@ -43,6 +44,7 @@ SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY")
 
 # Disable tracing
 set_tracing_disabled(disabled=True)
+set_default_openai_api("chat_completions")
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="IBJJF Information Assistant with Flet UI")
@@ -150,7 +152,7 @@ class ToolCallDisplay(ft.Container):
                     width=28,
                     height=28,
                     border_radius=14,
-                    bgcolor=ft.Colors.BLUE_GREY, # Different color scheme
+                    bgcolor=ft.Colors.BLUE, # Changed from BLUE_GREY
                     alignment=ft.alignment.center,
                 ),
                 ft.Container(width=10),
@@ -172,7 +174,7 @@ class ToolCallDisplay(ft.Container):
             ], spacing=0),
             padding=ft.padding.only(left=12, top=12, bottom=12, right=16),
             border_radius=8,
-            bgcolor=ft.Colors.with_opacity(0.04, ft.Colors.BLUE_GREY),
+            bgcolor=ft.Colors.with_opacity(0.04, ft.Colors.BLUE), # Changed from BLUE_GREY
         )
 
         self.content = tool_card
@@ -229,14 +231,14 @@ class SettingsScreen(ft.View):
             value=self.initial_values.get("openai_api_key", ""),
             password=True,
             can_reveal_password=True,
-            border_color=ft.Colors.BLUE_200,
+            border_color=ft.Colors.BLUE_200, # Kept BLUE_200 for consistency
             expand=True,
         )
 
         self.openai_api_base = ft.TextField(
             label="OpenAI API Base URL",
             value=self.initial_values.get("openai_api_base", "https://api.openai.com/v1"),
-            border_color=ft.Colors.BLUE_200,
+            border_color=ft.Colors.BLUE_200, # Kept BLUE_200 for consistency
             expand=True,
             hint_text="https://api.openai.com/v1",
         )
@@ -244,7 +246,7 @@ class SettingsScreen(ft.View):
         self.model_name = ft.TextField(
             label="Model Name",
             value=self.initial_values.get("model_name", "gpt-4o"),
-            border_color=ft.Colors.BLUE_200,
+            border_color=ft.Colors.BLUE_200, # Kept BLUE_200 for consistency
             expand=True,
             hint_text="gpt-4o",
         )
@@ -255,7 +257,7 @@ class SettingsScreen(ft.View):
             value=self.initial_values.get("serpapi_api_key", ""),
             password=True,
             can_reveal_password=True,
-            border_color=ft.Colors.BLUE_200,
+            border_color=ft.Colors.BLUE_200, # Kept BLUE_200 for consistency
             expand=True,
             hint_text="Required for web, YouTube, Flights",
         )
@@ -283,7 +285,7 @@ class SettingsScreen(ft.View):
                 ),
             ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            bgcolor=ft.Colors.BLUE_GREY_700, # Match new theme
+            bgcolor=ft.Colors.INDIGO_900, # Changed from BLUE_GREY_700
             padding=ft.padding.only(left=10, right=10, top=16, bottom=16),
             shadow=ft.BoxShadow(
                 spread_radius=0,
@@ -820,7 +822,11 @@ async def main(page: ft.Page):
         ]),
         gradient=ft.LinearGradient(
             begin=ft.alignment.top_left, end=ft.alignment.bottom_right,
-            colors=[ft.Colors.BLUE_GREY_700, ft.Colors.BLUE_GREY_500, ft.Colors.TEAL_700], # New gradient
+            colors=[
+                ft.Colors.INDIGO_900,  # Changed from BLUE_GREY_700
+                ft.Colors.INDIGO_700,  # Changed from BLUE_GREY_500
+                ft.Colors.BLUE_900,    # Changed from TEAL_700
+            ],
         ),
         shadow=ft.BoxShadow(
             spread_radius=0, blur_radius=8, color=ft.Colors.with_opacity(0.2, ft.Colors.BLACK), offset=ft.Offset(0, 2)
@@ -844,17 +850,17 @@ async def main(page: ft.Page):
         hint_text="Ask about IBJJF events or other info...",
         hint_style=ft.TextStyle(color=ft.Colors.BLACK45),
         autofocus=True, shift_enter=True, min_lines=1, max_lines=5, filled=True,
-        border_color=ft.Colors.BLACK12, focused_border_color=ft.Colors.TEAL, # Theme color
-        text_size=15, text_style=ft.TextStyle(color=ft.Colors.BLACK), cursor_color=ft.Colors.TEAL,
+        border_color=ft.Colors.BLACK12, focused_border_color=ft.Colors.BLUE, # Changed from TEAL
+        text_size=15, text_style=ft.TextStyle(color=ft.Colors.BLACK), cursor_color=ft.Colors.BLUE, # Changed from TEAL
         expand=True, border_radius=24, content_padding=ft.padding.only(left=20, right=20, top=14, bottom=14),
         on_submit=send_message_click,
     )
 
     # Send button
     send_button = ft.IconButton(
-        icon=ft.Icons.SEND_ROUNDED, icon_color=ft.Colors.TEAL, # Theme color
+        icon=ft.Icons.SEND_ROUNDED, icon_color=ft.Colors.BLUE, # Changed from TEAL
         icon_size=22, tooltip="Send message", on_click=send_message_click,
-        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=30), padding=12, overlay_color=ft.Colors.with_opacity(0.1, ft.Colors.TEAL)),
+        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=30), padding=12, overlay_color=ft.Colors.with_opacity(0.1, ft.Colors.BLUE)), # Changed from TEAL
     )
 
     # --- View Creation and Routing ---

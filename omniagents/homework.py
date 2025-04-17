@@ -17,6 +17,7 @@ from agents import (
     ToolCallItem,
     ToolCallOutputItem,
     set_default_openai_client,
+    set_default_openai_api,
     set_tracing_disabled
 )
 from agents.model_settings import ModelSettings
@@ -40,6 +41,7 @@ SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY")
 
 # Disable tracing
 set_tracing_disabled(disabled=True)
+set_default_openai_api("chat_completions")
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="Agent")
@@ -774,7 +776,7 @@ async def main(page: ft.Page):
     if DEBUG_MODE:
         welcome_text += " (Debug mode is active - tool outputs will be shown)"
     if not SERPAPI_API_KEY:
-         welcome_text += "\n\n⚠️ Note: SerpApi key is not configured. Some toolsmight not work. Configure it in Settings."
+         welcome_text += "\n\n⚠️ Note: SerpApi key is not configured. Some tools might not work. Configure it in Settings."
 
 
     welcome_message = Message("System", welcome_text, "system_message")
