@@ -12,7 +12,7 @@ dependencies = [
     "google-search-results",
     "pydantic-core==2.33.0",
     "pydantic==2.11.1",
-    "beautifulsoup4",
+    "beautifulsoup4"
 ]
 
 [project.optional-dependencies]

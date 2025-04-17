@@ -23,7 +23,10 @@ from agents.model_settings import ModelSettings
 from typing import List, Dict, Any, Optional
 
 # Import standard tools
-from tools import geocode, get_weather, web_search, youtube_search, scholar_search, google_flights_search
+from tools import geocode, get_weather, web_search, youtube_search, google_flights_search
+
+# Import IBJJF tools
+from tools.ibjjf_rankings import ibjjf_events, ibjjf_brackets, ibjjf_competitors
 
 # Load environment variables from .env file
 try:
@@ -54,168 +57,66 @@ if DEBUG_MODE:
     print(f"Debug mode enabled")
     print("------------------\n")
 
-# IBJJF Event tool
-@function_tool
-def ibjjf_events(keyword: str) -> Dict[str, Any]:
-    """
-    Fetch IBJJF events and optionally filter by name
-
-    Args:
-        keyword: Text to filter events by name (pass empty string to get all events)
-
-    Returns:
-        Dictionary containing IBJJF events with id and name fields
-    """
-    url = "https://ibjjfrankings.com/api/brackets/events"
-    print(f"Tool: ibjjf_events called with keyword='{keyword}'")
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        data = response.json()
-        events = data.get("events", [])
-
-        # Filter results if keyword is provided
-        if keyword and keyword.strip():
-            filtered = []
-            for event in events:
-                if keyword.lower() in event.get("name", "").lower():
-                    # Return only basic info for brevity in chat
-                    filtered.append({"id": event.get("id"), "name": event.get("name")})
-            # Limit results to avoid flooding chat
-            return {"events": filtered[:15]}
-
-        # Limit results to avoid flooding chat
-        return {"events": [{"id": e.get("id"), "name": e.get("name")} for e in events[:15]]}
-    except requests.HTTPError as error:
-        return {"error": f"HTTP error: {str(error)}"}
-    except Exception as error:
-        return {"error": f"Error fetching IBJJF events: {str(error)}"}
-
-# IBJJF Brackets tool
-@function_tool
-def ibjjf_brackets(event_id: str) -> Dict[str, Any]:
-    """
-    Fetch IBJJF bracket categories for a specific event
-
-    Args:
-        event_id: The numeric ID of the IBJJF event
-
-    Returns:
-        Dictionary containing bracket categories (age, belt, gender, weight)
-    """
-    url = f"https://ibjjfrankings.com/api/brackets/categories/{event_id}"
-    print(f"Tool: ibjjf_brackets called with event_id='{event_id}'")
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        # Return the raw JSON, agent should format it
-        return response.json()
-    except requests.HTTPError as error:
-        return {"error": f"HTTP error: {str(error)}"}
-    except Exception as error:
-        return {"error": f"Error fetching IBJJF brackets: {str(error)}"}
-
-# IBJJF Competitors tool
-@function_tool
-def ibjjf_competitors(link: str, age: str, gender: str, belt: str, weight: str, gi_competition: str) -> Dict[str, Any]:
-    """
-    Fetch competitors for a specific IBJJF division
-
-    Args:
-        link: The category link (format: /tournaments/EVENT_ID/categories/CATEGORY_ID)
-        age: Age category (e.g., "Adult", "Master 1")
-        gender: Gender category ("Male" or "Female")
-        belt: Belt color (e.g., "WHITE", "BLUE", "PURPLE", "BROWN", "BLACK")
-        weight: Weight class (e.g., "Rooster", "Light Feather", "Middle", "Heavy")
-        gi_competition: Whether this is a gi ("true") or no-gi ("false") competition
-
-    Returns:
-        Dictionary containing competitor information
-    """
-    url = "https://ibjjfrankings.com/api/brackets/competitors"
-    print(f"Tool: ibjjf_competitors called for link='{link}', age='{age}', belt='{belt}', weight='{weight}'")
-
-    # Convert string "true"/"false" to boolean for the API
-    gi_param = gi_competition.lower() == "true"
-
-    params = {
-        "link": link,
-        "age": age,
-        "gender": gender,
-        "gi": str(gi_param).lower(), # API expects string 'true' or 'false'
-        "belt": belt,
-        "weight": weight
-    }
-
-    try:
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        # Return raw JSON, agent formats it
-        return response.json()
-    except requests.HTTPError as error:
-        return {"error": f"HTTP error: {str(error)}"}
-    except Exception as error:
-        return {"error": f"Error fetching IBJJF competitors: {str(error)}"}
-
 # --- Agent Instructions ---
 
 def get_agent_instructions() -> str:
-    """Get agent instructions with current date and time"""
+    """Get agent instructions tailored for IBJJF competitors and coaches, based on available tools."""
     current_datetime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     return f"""
     Current date and time: {current_datetime}
 
-    You are a helpful assistant that can:
-    1. Find geographic coordinates for locations using geocode
-    2. Get weather information for a location using latitude and longitude
-    3. Search the web for information
-    4. Search YouTube for videos
-    5. Search Google Scholar for academic papers
-    6. Search for flights using Google Flights
-    7. Find IBJJF (International Brazilian Jiu-Jitsu Federation) events
-    8. Get bracket categories for specific IBJJF events
-    9. Get competitor information for specific IBJJF divisions
+    You are an assistant designed to help IBJJF competitors and coaches with competition planning, logistics, and research using the available tools.
 
-    When asked about weather in a location:
-    1. First use the geocode tool with ONLY the city name (do not include state or country)
-        Example: geocode("Paris") is correct, geocode("Paris, France") will fail
-    2. Then use the get_weather tool with the coordinates from the first result
+    **IBJJF Competition Tools:**
 
-    When asked for general information, use the web_search tool. Ensure SERPAPI_API_KEY is configured.
+    *   `ibjjf_events()`: Call this with no arguments to get a list of all available IBJJF events (upcoming, ongoing, recent - the API doesn't distinguish). Each event will have an `id` and `name`.
+        *   Use this list to find the specific `event_id` required for other tools.
+    *   `ibjjf_brackets(event_id: str)`: Provide the numeric `event_id` (from `ibjjf_events`) to get the raw category data for that tournament.
+        *   You should process this data to show the user the available divisions (age, belt, gender, weight, gi/no-gi) clearly.
+    *   `ibjjf_competitors(link: str, age: str, gender: str, belt: str, weight: str, gi_competition: str)`: Use this to find competitors in a specific division. It requires:
+        *   `link`: The category link (e.g., '/tournaments/EVENT_ID/categories/CATEGORY_ID') found in the `ibjjf_brackets` output.
+        *   `age`: Age group (e.g., "Adult", "Master 1").
+        *   `gender`: "Male" or "Female".
+        *   `belt`: Belt rank (e.g., "BLACK", "BROWN").
+        *   `weight`: Weight class (e.g., "Middle", "Heavy").
+        *   `gi_competition`: A string, "true" for gi or "false" for no-gi.
+        *   You should process the returned competitor list, showing names, teams, and seeds clearly to the user.
+        *   Note: The 'seed' value in the results comes directly from the official IBJJF data for that specific event. Separately, the ibjjfrankings.com website ([https://ibjjfrankings.com/about](https://ibjjfrankings.com/about)) computes its own ELO-based rankings, which are distinct from this official seeding.
 
-    When asked to search for videos on YouTube, use the youtube_search tool. Ensure SERPAPI_API_KEY is configured.
+    **Travel & Location Tools:**
 
-    When asked to search for academic papers or research, use the scholar_search tool. Ensure SERPAPI_API_KEY is configured.
+    *   `geocode(city_name: str)`: **IMPORTANT:** Use ONLY the city name (e.g., "Orlando", NOT "Orlando, FL"). This finds geographic coordinates (latitude, longitude).
+    *   `get_weather(latitude: float, longitude: float)`: After using `geocode`, provide the latitude and longitude from its results to get the current weather forecast for that location.
+    *   `google_flights_search(...)`: Searches for flights. Requires `SERPAPI_API_KEY` (set in settings). This tool takes parameters for:
+        *   `origin` & `destination` (airport/city codes like "LAX", "CDG").
+        *   `departure_date` (YYYY-MM-DD).
+        *   `return_date` (optional, YYYY-MM-DD).
+        *   `adults`, `children`, `infants` (passenger counts).
+        *   `stops` (optional: "any", "nonstop", "1stop", "2stops").
+        *   `flight_class` ("economy", "premium_economy", "business", "first").
+        *   `max_price` (optional).
+        *   `currency` (e.g., "USD").
+        *   `airlines` (optional list of IATA codes).
 
-    When asked to search for flights, use the google_flights_search tool. Ensure SERPAPI_API_KEY is configured.
-    - Use airport or city codes for origin and destination (e.g., "NYC", "SFO", "LHR", "PAR")
-    - Format dates as YYYY-MM-DD
+    **Research Tools:**
 
-    When asked about IBJJF events, use the ibjjf_events tool to:
-    - Get all upcoming IBJJF events by passing an empty string as the keyword parameter
-    - Filter events by keyword (e.g., "Miami", "World", "2025") by providing the search term
-    - Always list the events in a clear, numbered format with the event ID and name
+    *   `web_search(query: str, num_results: int, include_news: bool, time_period: Optional[str])`: Performs a Google search via SerpApi. Requires `SERPAPI_API_KEY`. Takes parameters for the query, number of results (max 100, recommend 10), whether to include news, and optional time filter ("past_day", "past_week", "past_month", "past_year").
+    *   `youtube_search(query: str, num_results: int, sort_by: str, upload_date: Optional[str], duration: Optional[str])`: Searches YouTube via SerpApi. Requires `SERPAPI_API_KEY`. Takes parameters for the query, number of results (max 100), sorting ("relevance", "upload_date", "view_count", "rating"), optional upload date filter ("last_hour", "today", "this_week", "this_month", "this_year"), and optional duration filter ("short", "medium", "long").
+        *   **Recommend using `num_results=10` for most searches, especially for competitors.**
+        *   **When searching for competitor footage:** Don't just use the full name from the bracket. Try multiple searches with variations:
+            *   Full Name + "BJJ" or "IBJJF" (good for official videos).
+            *   First Name + Last Name + Event Name (e.g., "Worlds 2023").
+            *   Nickname (if known) + Last Name + "BJJ".
+            *   Common variations or potential misspellings of the name.
+            *   You should formulate approximately 5 different search queries based on these variations (and any other reasonable combinations).
+            *   Execute *all* of these `youtube_search` calls.
+            *   Synthesize the findings from all searches before reporting back to the user. Mention which queries yielded useful results if possible. Do not just return the results from the first successful search.
 
-    When asked for details about an IBJJF event's brackets/divisions:
-    - First use ibjjf_events to find the event ID if not already known
-    - Then use ibjjf_brackets with the event_id to get categories
-    - Organize the returned data to show available divisions by age, belt, gender, and weight
-    - Format the information in a clear, structured way
-
-    When asked about competitors in a specific division:
-    - First use ibjjf_events to find the event
-    - Then use ibjjf_brackets to find the division's link and category details
-    - Finally use ibjjf_competitors with the following parameters:
-        - link: The category link (format: /tournaments/EVENT_ID/categories/CATEGORY_ID)
-        - age: The age category (e.g., "Adult", "Master 1")
-        - gender: The gender category ("Male" or "Female")
-        - belt: The belt color (e.g., "WHITE", "BLUE", "PURPLE", "BROWN", "BLACK")
-        - weight: The weight class (e.g., "Rooster", "Light Feather", "Middle", "Heavy")
-        - gi_competition: "true" for gi competitions or "false" for no-gi competitions (as a string)
-    - Present the competitor information in a clear, organized format including names, teams, and seeds
-
-    Always be polite, informative and concise in your responses. If a tool requires an API key (like SerpApi) and it's missing, inform the user they need to configure it in the settings.
+    **General Notes:**
+    *   If a tool requiring `SERPAPI_API_KEY` is used and the key isn't configured in Settings, you must inform the user.
+    *   You should structure the information from the IBJJF tools for clarity before presenting it.
+    *   Remember the specific input requirements for tools, especially `geocode`.
     """
 
 # --- Flet UI Components (Adapted from mcp_flet_example.py) ---
@@ -233,7 +134,6 @@ class ToolCallDisplay(ft.Container):
             "get_weather": ft.Icons.CLOUD,
             "web_search": ft.Icons.SEARCH,
             "youtube_search": ft.Icons.VIDEO_LIBRARY,
-            "scholar_search": ft.Icons.SCHOOL,
             "google_flights_search": ft.Icons.FLIGHT,
             "ibjjf_events": ft.Icons.EVENT,
             "ibjjf_brackets": ft.Icons.LIST_ALT,
@@ -357,7 +257,7 @@ class SettingsScreen(ft.View):
             can_reveal_password=True,
             border_color=ft.Colors.BLUE_200,
             expand=True,
-            hint_text="Required for web, YouTube, Scholar, Flights",
+            hint_text="Required for web, YouTube, Flights",
         )
 
         # Create solid color header
@@ -469,7 +369,7 @@ class SettingsScreen(ft.View):
                             ),
                         ),
                         ft.Container(
-                            content=ft.Text("API key for web search, YouTube, Scholar, and Flights tools.", size=12, color=ft.Colors.BLACK45),
+                            content=ft.Text("API key for web search, YouTube, and Flights tools.", size=12, color=ft.Colors.BLACK45),
                             margin=ft.margin.only(left=16, top=6, bottom=30),
                         ),
                     ]),
@@ -636,7 +536,7 @@ async def main(page: ft.Page):
     if not API_KEY:
         print("Warning: No OpenAI API key found. Please configure settings.")
     if not SERPAPI_API_KEY:
-        print("Warning: No SerpApi API key found. Web/YouTube/Scholar/Flights tools may not work. Please configure settings.")
+        print("Warning: No SerpApi API key found. Web/YouTube/Flights tools may not work. Please configure settings.")
 
     # Initialize conversation history
     conversation = []
@@ -671,7 +571,7 @@ async def main(page: ft.Page):
 
     # List of available tools - Include imported and local tools
     available_tools = [
-        geocode, get_weather, web_search, youtube_search, scholar_search,
+        geocode, get_weather, web_search, youtube_search,
         google_flights_search, ibjjf_events, ibjjf_brackets, ibjjf_competitors
     ]
 
@@ -932,7 +832,7 @@ async def main(page: ft.Page):
     if DEBUG_MODE:
         welcome_text += " (Debug mode is active - tool outputs will be shown)"
     if not SERPAPI_API_KEY:
-         welcome_text += "\n\n⚠️ Note: SerpApi key is not configured. Web search, YouTube, Scholar, and Flights tools might not work. Configure it in Settings."
+         welcome_text += "\n\n⚠️ Note: SerpApi key is not configured. Web search, YouTube, and Flights tools might not work. Configure it in Settings."
 
 
     welcome_message = Message("System", welcome_text, "system_message")
