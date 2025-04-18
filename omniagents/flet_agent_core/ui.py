@@ -125,4 +125,50 @@ class ChatMessage(ft.Container):
                 padding=ft.padding.only(left=20, right=16, top=4, bottom=4),
             )
             alignment = ft.MainAxisAlignment.START
-            self.content = ft.Row([ft.Container(content=content_area, expand=True)], alignment=alignment) 
+            self.content = ft.Row([ft.Container(content=content_area, expand=True)], alignment=alignment)
+
+# --- Tool Approval Request UI (Moved from MCP Example) ---
+class ToolApprovalRequest(ft.Container):
+    def __init__(self, tool_name, args_str, on_approve, on_approve_session, on_reject):
+        super().__init__()
+        self.padding = ft.padding.only(bottom=2)
+        self.margin = ft.margin.only(left=20, right=20, top=8, bottom=12)
+        self.animate = ft.animation.Animation(200, ft.AnimationCurve.EASE_OUT)
+
+        self.content = ft.Container(
+            content=ft.Column([
+                ft.Text(
+                    f"Approval required: {tool_name}",
+                    weight="w500", size=14, color=ft.Colors.ORANGE_800,
+                ),
+                ft.Text(
+                    f"Parameters: {args_str}",
+                    size=13, color=ft.Colors.BLACK54, selectable=True,
+                ),
+                ft.Container(height=10),
+                ft.Row([
+                    ft.ElevatedButton(
+                        text="Approve Once", icon=ft.Icons.CHECK,
+                        color=ft.Colors.WHITE, bgcolor=ft.Colors.GREEN_600,
+                        on_click=on_approve,
+                        height=36, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6))
+                    ),
+                    ft.ElevatedButton(
+                        text="Approve Session", icon=ft.Icons.CHECK_CIRCLE_OUTLINE,
+                        color=ft.Colors.WHITE, bgcolor=ft.Colors.BLUE_600,
+                        on_click=on_approve_session,
+                         height=36, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6))
+                    ),
+                    ft.ElevatedButton(
+                        text="Reject", icon=ft.Icons.CANCEL_OUTLINED,
+                        color=ft.Colors.WHITE, bgcolor=ft.Colors.RED_600,
+                        on_click=on_reject,
+                         height=36, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6))
+                    ),
+                ], spacing=10, wrap=True), # Allow buttons to wrap
+            ]),
+            padding=16,
+            border_radius=8,
+            bgcolor=ft.Colors.with_opacity(0.06, ft.Colors.ORANGE),
+            border=ft.border.all(1, ft.Colors.ORANGE_200),
+        ) 
