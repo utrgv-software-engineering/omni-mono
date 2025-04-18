@@ -150,48 +150,97 @@ class ChatMessage(ft.Container):
             alignment = ft.MainAxisAlignment.START
             self.content = ft.Row([ft.Container(content=content_area, expand=True)], alignment=alignment)
 
-# --- Tool Approval Request UI (Moved from MCP Example) ---
+# --- Tool Approval Request UI ---
 class ToolApprovalRequest(ft.Container):
     def __init__(self, tool_name, args_str, on_approve, on_approve_session, on_reject):
         super().__init__()
         self.padding = ft.padding.only(bottom=2)
         self.margin = ft.margin.only(left=20, right=20, top=8, bottom=12)
         self.animate = ft.animation.Animation(200, ft.AnimationCurve.EASE_OUT)
+        
+        # Use orange color for approval requests
+        color = ft.Colors.ORANGE
 
-        self.content = ft.Container(
-            content=ft.Column([
-                ft.Text(
-                    f"Approval required: {tool_name}",
-                    weight="w500", size=14, color=ft.Colors.ORANGE_800,
+        # Prepare icon container with more appropriate icon for approval
+        icon_container = ft.Container(
+            content=ft.Icon(name=ft.icons.VERIFIED_USER, size=16, color=ft.Colors.WHITE),
+            width=28,
+            height=28,
+            border_radius=14,
+            bgcolor=color,
+            alignment=ft.alignment.center,
+        )
+
+        # Prepare text content similar to ToolCallDisplay
+        text_content = ft.Column([
+            ft.Text(
+                f"Approve {tool_name}",
+                weight="w500",
+                size=13,
+                color=ft.Colors.BLACK87
+            ),
+            ft.Text(
+                f"{args_str if args_str else 'No parameters'}",
+                size=12,
+                color=ft.Colors.BLACK54,
+                selectable=True,
+            ),
+        ], spacing=2, tight=True, expand=True)
+
+        # Construct the main row exactly like ToolCallDisplay
+        main_content = ft.Row(
+            [
+                icon_container,
+                ft.Container(width=10),  # Spacer
+                text_content,
+            ],
+            spacing=0,
+            alignment=ft.CrossAxisAlignment.START,
+        )
+        
+        # Add buttons row at the bottom with proper spacing
+        # Reordered buttons to make "Approve Once" the primary option
+        buttons_row = ft.Row(
+            [
+                ft.TextButton(
+                    text="Reject",
+                    on_click=on_reject,
+                    style=ft.ButtonStyle(
+                        color=ft.colors.BLACK54,
+                    ),
                 ),
-                ft.Text(
-                    f"Parameters: {args_str}",
-                    size=13, color=ft.Colors.BLACK54, selectable=True,
+                ft.TextButton(
+                    text="Always",
+                    on_click=on_approve_session,
+                    style=ft.ButtonStyle(
+                        color=color,
+                    ),
                 ),
-                ft.Container(height=10),
-                ft.Row([
-                    ft.ElevatedButton(
-                        text="Approve Once", icon=ft.Icons.CHECK,
-                        color=ft.Colors.WHITE, bgcolor=ft.Colors.GREEN_600,
-                        on_click=on_approve,
-                        height=36, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6))
+                ft.FilledButton(
+                    text="Approve Once",
+                    on_click=on_approve,
+                    height=36,  # Increased height to prevent text cutoff
+                    style=ft.ButtonStyle(
+                        bgcolor=color,
                     ),
-                    ft.ElevatedButton(
-                        text="Approve Session", icon=ft.Icons.CHECK_CIRCLE_OUTLINE,
-                        color=ft.Colors.WHITE, bgcolor=ft.Colors.BLUE_600,
-                        on_click=on_approve_session,
-                         height=36, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6))
-                    ),
-                    ft.ElevatedButton(
-                        text="Reject", icon=ft.Icons.CANCEL_OUTLINED,
-                        color=ft.Colors.WHITE, bgcolor=ft.Colors.RED_600,
-                        on_click=on_reject,
-                         height=36, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6))
-                    ),
-                ], spacing=10, wrap=True), # Allow buttons to wrap
-            ]),
-            padding=16,
+                ),
+            ],
+            alignment=ft.MainAxisAlignment.END,
+        )
+        
+        # Stack content and buttons
+        content_column = ft.Column([
+            main_content,
+            buttons_row,
+        ], spacing=8, tight=True)
+
+        # Create tool card container (same structure as ToolCallDisplay)
+        tool_card = ft.Container(
+            content=content_column,
+            padding=ft.padding.only(left=12, top=12, bottom=12, right=16),
             border_radius=8,
-            bgcolor=ft.Colors.with_opacity(0.06, ft.Colors.ORANGE),
-            border=ft.border.all(1, ft.Colors.ORANGE_200),
-        ) 
+            bgcolor=ft.Colors.with_opacity(0.04, color),
+            border=ft.border.all(1, ft.Colors.with_opacity(0.08, color)),
+        )
+
+        self.content = tool_card 
