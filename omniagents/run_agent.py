@@ -12,7 +12,7 @@ from agents import (
 
 # --- Tool Imports ---
 # Tool modules must be imported for decorator-based discovery to work.
-import tools
+# import tools # No longer needed here, discovery happens relative to agent config
 
 # --- Configuration & Setup ---
 

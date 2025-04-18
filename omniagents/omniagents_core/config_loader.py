@@ -112,13 +112,21 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
     get_instructions_func = _load_instructions(config, base_dir) # Pass base_dir
 
     # --- Tool Discovery and Selection ---
-    # Always use the default 'tools' directory, relative to workspace root
-    tools_dir_path = Path("tools") # Path object for clarity
+    # Look for tools in a 'tools' subdirectory relative to the config file
+    tools_dir_path = (base_dir / "tools").resolve() # Path object relative to YAML
+
     all_discovered_functions = {}
     if tools_dir_path.is_dir():
+        # discover_functions_in_dir should handle the absolute path
         all_discovered_functions = discover_functions_in_dir(str(tools_dir_path))
+        print(f"Discovered tools from: {tools_dir_path}") # Add logging
     else:
-        print(f"Warning: Default tools directory '{tools_dir_path}' not found. No local tools discovered.")
+        # Show path relative to CWD for clearer error messages if run from workspace root
+        try:
+            display_path = tools_dir_path.relative_to(Path.cwd())
+        except ValueError:
+            display_path = tools_dir_path # Show absolute if not relative to CWD
+        print(f"Warning: Agent-specific tools directory '{display_path}' not found. No agent-specific tools discovered.")
 
     activated_tool_names = config.get('tools', [])
     selected_tool_functions = []
@@ -134,7 +142,12 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
             missing_tools.append(tool_name)
 
     if missing_tools:
-        print(f"Warning: The following tools listed in '{config_path}' were not found in the '{tools_dir_path}' directory or are not valid marked functions: {', '.join(missing_tools)}")
+        # Updated error message
+        try:
+            display_path = tools_dir_path.relative_to(Path.cwd())
+        except ValueError:
+            display_path = tools_dir_path
+        print(f"Warning: The following tools listed in '{config_path}' were not found in the agent's tools directory '{display_path}' or are not valid marked functions: {', '.join(missing_tools)}")
         # Continue without missing tools
 
     # --- Safety Configuration ---
