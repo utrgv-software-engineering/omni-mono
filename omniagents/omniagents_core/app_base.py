@@ -310,7 +310,14 @@ class AgentApp:
             icon_color=ft.Colors.WHITE,
             icon_size=20,
             tooltip="API Settings",
-            on_click=self._go_to_settings
+            on_click=self._go_to_settings,
+            style=ft.ButtonStyle(
+                padding=8,  # Consistent padding inside the button
+                shape=ft.CircleBorder(),  # Ensures the clickable area is circular
+            ),
+            # Ensure button is contained within header height
+            height=40,
+            width=40,
         )
 
         # Header
@@ -319,10 +326,11 @@ class AgentApp:
         # Add default MCP status indicator if configured
         if self.spec.uses_mcp and self.spec.show_mcp_status_indicator:
             self._mcp_connection_status_indicator = ft.Container(
-                width=10, height=10, border_radius=5,
+                width=12, height=12, border_radius=6,
                 bgcolor=self._get_mcp_status_color(), # Initial color based on status
                 tooltip=self._get_mcp_status_tooltip(),
-                margin=ft.margin.only(right=8) # Add some margin
+                margin=ft.margin.only(right=8), # Add some margin
+                alignment=ft.alignment.center,
             )
             header_right_controls.append(self._mcp_connection_status_indicator)
 
@@ -341,11 +349,26 @@ class AgentApp:
                 ft.Container(
                     content=ft.Row([
                         ft.Column([
-                            ft.Text(self.spec.header_title, color=ft.Colors.WHITE, size=22, weight="bold"),
+                            ft.Text(
+                                self.spec.header_title, 
+                                color=ft.Colors.WHITE, 
+                                size=20,  # Reduced from 24 to a more moderate size
+                                weight="w500",  # Keeping the weight the same
+                            ),
                         ], spacing=2, tight=True),
-                        ft.Row(header_right_controls, spacing=12, alignment=ft.MainAxisAlignment.END), # Align right
-                    ], spacing=12, alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                    padding=ft.padding.symmetric(horizontal=20, vertical=16),
+                        ft.Row(
+                            header_right_controls, 
+                            spacing=12, 
+                            alignment=ft.MainAxisAlignment.END,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ), # Align right
+                    ], 
+                    spacing=12, 
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN, 
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    padding=ft.padding.symmetric(horizontal=24, vertical=0),  # Reduce vertical padding
+                    height=64,  # Material 3 standard app bar height
+                    alignment=ft.alignment.center,  # Center container content vertically
                 ),
                 # Debug Banner (only if debug_flag is True)
                 *([
@@ -354,7 +377,7 @@ class AgentApp:
                             ft.Icon(name=ft.Icons.BUG_REPORT, color=ft.Colors.WHITE, size=16),
                             ft.Text("Debug Mode Enabled", color=ft.Colors.WHITE, size=13),
                         ], spacing=8),
-                        padding=ft.padding.symmetric(horizontal=20, vertical=8),
+                        padding=ft.padding.symmetric(horizontal=24, vertical=8),  # Matched with header padding
                         bgcolor=ft.Colors.with_opacity(0.1, ft.Colors.WHITE),
                     )
                   ] if self.spec.debug_flag else []
@@ -366,8 +389,8 @@ class AgentApp:
                 colors=[ft.Colors.INDIGO_900, self.spec.theme_color, ft.colors.with_opacity(0.8, self.spec.theme_color)],
             ),
             shadow=ft.BoxShadow(
-                spread_radius=0, blur_radius=8,
-                color=ft.Colors.with_opacity(0.2, ft.Colors.BLACK), offset=ft.Offset(0, 2)
+                spread_radius=0, blur_radius=4,  # Material 3 standard elevation
+                color=ft.Colors.with_opacity(0.3, ft.Colors.BLACK), offset=ft.Offset(0, 2)
             ),
         )
 
@@ -998,7 +1021,7 @@ class AgentApp:
                 # Ensure indicator exists and reflects current status
                 if not self._mcp_connection_status_indicator:
                      self._mcp_connection_status_indicator = ft.Container(
-                         width=10, height=10, border_radius=5, margin=ft.margin.only(right=8)
+                         width=12, height=12, border_radius=6, margin=ft.margin.only(right=8)
                      )
                 self._mcp_connection_status_indicator.bgcolor = self._get_mcp_status_color()
                 self._mcp_connection_status_indicator.tooltip = self._get_mcp_status_tooltip()

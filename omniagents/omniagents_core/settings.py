@@ -38,21 +38,31 @@ class SettingsScreen(ft.View):
                 ft.IconButton(
                     icon=ft.Icons.ARROW_BACK,
                     icon_color=ft.Colors.WHITE,
+                    icon_size=20,
                     on_click=self._go_back,
+                    style=ft.ButtonStyle(
+                        padding=8,
+                        shape=ft.CircleBorder(),
+                    ),
+                    height=40,
+                    width=40,
                 ),
-                ft.Text("Settings", color=ft.Colors.WHITE, size=20, weight="bold"),
+                ft.Text("Settings", color=ft.Colors.WHITE, size=20, weight="w500"),
                 ft.TextButton(
                     text="Save",
                     on_click=self._save_settings,
                     style=ft.ButtonStyle(color=ft.Colors.WHITE),
                 ),
             ],
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER),
             bgcolor=ft.Colors.INDIGO_900,
-            padding=ft.padding.only(left=10, right=10, top=16, bottom=16),
+            padding=ft.padding.symmetric(horizontal=24, vertical=0),
+            height=64, # Material 3 standard app bar height
+            alignment=ft.alignment.center,
             shadow=ft.BoxShadow(
-                spread_radius=0, blur_radius=8,
-                color=ft.Colors.with_opacity(0.2, ft.Colors.BLACK),
+                spread_radius=0, blur_radius=4,
+                color=ft.Colors.with_opacity(0.3, ft.Colors.BLACK),
                 offset=ft.Offset(0, 2)
             ),
         )
