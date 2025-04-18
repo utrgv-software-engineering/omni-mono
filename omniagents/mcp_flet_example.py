@@ -10,22 +10,6 @@ from openai import AsyncOpenAI
 from typing import Dict, Any, List, Optional, Tuple
 from functools import partial # Import partial
 
-# --- Explicitly add workspace root to sys.path ---
-# This ensures Python can find the 'flet_agent_core' package
-# script_dir = os.path.dirname(os.path.abspath(__file__))
-# # Assumes the script is run from the workspace root or a direct subdir
-# # If run from root, script_dir is root. If run from subdir, .. gets root.
-# workspace_root = os.path.abspath(os.path.join(script_dir))
-# if os.path.basename(workspace_root) != 'flet_agent': # Basic check
-#     # If script_dir wasn't the root, go up one level
-#     potential_root = os.path.abspath(os.path.join(script_dir, '..'))
-#     if os.path.basename(potential_root) == 'flet_agent':
-#          workspace_root = potential_root
-
-# if workspace_root not in sys.path:
-#     print(f"[SysPath] Adding workspace root to sys.path: {workspace_root}")
-#     sys.path.insert(0, workspace_root)
-# # -------------------------------------------------
 
 from agents import (
     Agent, # Import base Agent
