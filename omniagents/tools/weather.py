@@ -1,7 +1,7 @@
 import requests
 from typing import Dict, Any
 from requests.exceptions import HTTPError
-from agents import function_tool
+from omniagents_core import function_tool
 
 @function_tool
 def get_weather(latitude: float, longitude: float) -> Dict[str, Any]:

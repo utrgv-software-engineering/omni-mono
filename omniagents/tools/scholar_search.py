@@ -2,7 +2,8 @@ import os
 import json
 import requests
 from typing import Dict, Any, Optional, Literal
-from agents import function_tool
+# from agents import function_tool
+from omniagents_core import function_tool
 
 @function_tool
 def scholar_search(query: str,

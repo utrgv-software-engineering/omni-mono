@@ -9,14 +9,23 @@ from typing import List, Dict, Any, Callable, Optional, Protocol, Awaitable, TYP
 
 # Import from other core modules
 # Use absolute imports for robustness within the package
-from flet_agent_core.ui import Message, ChatMessage, ToolCallDisplay, ToolOutputDisplay, ToolApprovalRequest # Added ToolApprovalRequest
-from flet_agent_core.settings import SettingsScreen, SettingField
-from flet_agent_core.storage import load_settings, save_settings
+from omniagents_core.ui import Message, ChatMessage, ToolCallDisplay, ToolOutputDisplay, ToolApprovalRequest # Added ToolApprovalRequest
+from omniagents_core.settings import SettingsScreen, SettingField
+from omniagents_core.storage import load_settings, save_settings
+from omniagents_core.config_loader import load_agent_spec_from_yaml # <-- Import the loader
+from omniagents_core.specs import AgentSpec, AgentLike, SafeAgentOptions # <-- Import moved specs
 
 # Import agents types for type hinting (use Protocol for flexibility)
 from agents import Agent, ItemHelpers # Added Agent
 from agents import Runner # For run_streamed
 from agents.mcp import MCPServerSse # Import MCPServerSse
+from agents.model_settings import ModelSettings # <-- Import ModelSettings
+from agents import ( # <-- Imports for default builder
+    set_default_openai_client,
+    set_default_openai_api,
+    set_tracing_disabled
+)
+from openai import AsyncOpenAI # <-- Import for default builder
 
 # Import SafeAgent components directly as they are part of the core package now
 from .safe_agent import SafeAgent, ApprovalResult # Added SafeAgent and ApprovalResult
@@ -29,28 +38,9 @@ if TYPE_CHECKING:
 
 # Define a protocol for Agent-like objects to avoid circular dependencies
 # and allow for different Agent types (Agent, SafeAgent, etc.)
-class AgentLike(Protocol):
-    # Define methods/attributes expected from an Agent
-    name: str
-    tools: List[Any]
-    model: str
-    instructions: str
-    model_settings: Optional[Any]
-    mcp_servers: Optional[List[Any]]
+# --- MOVED AgentLike protocol to specs.py --- 
 
-    async def get_all_tools(self) -> List[Any]: ...
-    # Add other necessary methods/attributes if your agent interaction requires them
-
-    # Optional method for resetting state (used by SafeAgent)
-    def reset_run_state(self): ...
-
-@dataclass
-class SafeAgentOptions:
-    """Options specific to SafeAgent behavior."""
-    skip_approvals: bool = False
-    halt_on_rejection: bool = True
-    safe_tool_names: List[str] = field(default_factory=list)
-    safe_tool_patterns: List[str] = field(default_factory=list)
+# --- MOVED SafeAgentOptions dataclass to specs.py --- 
 
 class MCPConnectionStatus(Enum):
     """Enum for MCP connection status."""
@@ -61,53 +51,138 @@ class MCPConnectionStatus(Enum):
     ERROR = "error"
     DISCONNECTED = "disconnected"
 
+# --- MOVED AgentSpec dataclass to specs.py --- 
 
-@dataclass
-class AgentSpec:
-    """Specification for configuring an AgentApp."""
-    # --- Basic App Info ---
-    name: str # Agent's name (e.g., "Indie", "IBJJF Assistant")
-    header_title: str # Title shown in the app header
-    page_title: str # Title for the window/tab
-    welcome_text: str # Initial system message
-    client_storage_prefix: str # Prefix for saving settings (e.g., "ibjjf_flet.")
+# --- Default Agent Builder (Internal) --- #
+async def _default_build_agent(
+    settings: Dict[str, Any],
+    mcp_server: Optional[MCPServerSse],
+    app: 'AgentApp' # Pass the app instance to access spec and callback
+) -> AgentLike:
+    """Internal default function to build the agent instance."""
+    # --- ADDED LOGGING --- 
+    print(f"BUILDER ENTRY: Received settings dict id: {id(settings)}")
+    # ---------------------
+    spec = app.spec # Get the spec from the app instance
+    print("Building agent using internal default builder...")
 
-    # --- Agent Configuration ---
-    get_agent_instructions: Callable[[], str] # Function to get agent instructions
-    # Signature: build_agent(settings: Dict[str, Any], mcp_server: Optional[MCPServerSse], app: 'AgentApp') -> Awaitable[AgentLike]
-    # The student's implementation now receives the managed MCP server instance (if applicable)
-    # and is responsible for passing it to the Agent constructor.
-    build_agent: Callable[[Dict[str, Any], Optional[MCPServerSse], 'AgentApp'], Awaitable[AgentLike]] # Updated signature
-    available_tools: List[Callable] = field(default_factory=list) # Static tools available *if not using MCP*
+    # --- Get Core Config from Spec/Settings --- 
+    agent_name = spec.name
+    # Get model from spec (set by config loader) or fallback from settings
+    model_name = spec.model_name or settings.get("model_name", "gpt-4o") # Ensure fallback
+    instructions = spec.get_agent_instructions() # Use the spec's instruction loader
+    # Tools are provided directly in the spec if loaded from config
+    tools = spec.available_tools
+    # MCP server instance is passed directly
+    mcp_servers_list = [mcp_server] if mcp_server else []
 
-    # --- Agent Safety Configuration ---
-    use_safe_agent: bool = False # Simple flag to enable safety features
-    safe_agent_options: SafeAgentOptions = field(default_factory=SafeAgentOptions)
+    # --- Configure OpenAI Client --- 
+    # Attempt to get key from settings first, then environment
+    api_key_from_settings = settings.get("openai_api_key")
+    api_key_from_env = os.getenv("OPENAI_API_KEY")
+    
+    print(f"BUILDER CHECK: API Key from settings dict passed to builder: '{api_key_from_settings}'")
 
-    # --- MCP Configuration ---
-    uses_mcp: bool = False # Does this agent rely on an MCP server?
-    mcp_url_setting_key: str = "mcp_url" # Key in settings for MCP URL
-    mcp_token_setting_key: str = "mcp_auth_token" # Key in settings for MCP Auth Token (optional)
-    show_mcp_status_indicator: bool = True # Add status indicator to header if uses_mcp=True?
+    # Prioritize settings value if it exists and is not empty
+    api_key = api_key_from_settings if api_key_from_settings else api_key_from_env
 
-    # --- UI/UX Configuration ---
-    icon_map: Dict[str, str] = field(default_factory=dict) # Map tool names to Flet icons
-    settings_fields: List[SettingField] = field(default_factory=list) # Fields for the settings screen
-    debug_flag: bool = False # Whether debug mode is enabled
-    page_title_suffix: str = "" # Suffix for page title (e.g., " (Debug Mode)")
-    theme_color: str = ft.Colors.BLUE # Primary theme color
+    # Explicitly check if the final key is None or empty *after* trying both sources
+    if not api_key:
+        raise ValueError("OpenAI API key is missing. Please configure in settings or set OPENAI_API_KEY environment variable.")
 
-    # --- Optional App-Specific Customization ---
-    # Function to build *extra* controls for the header (e.g., custom buttons)
-    header_controls_builder: Optional[Callable[['AgentApp'], List[ft.Control]]] = None # Updated signature
-    # Function to run any app-specific cleanup logic *in addition* to MCP cleanup
-    cleanup_handler: Optional[Callable[[], Awaitable[None]]] = None
+    base_url = settings.get("openai_api_base") or os.getenv("OPENAI_API_BASE") or "https://api.openai.com/v1"
+
+    try:
+        # Use default settings if not otherwise specified
+        # Disable tracing/default API type - assuming this is handled globally or not needed here
+        # set_tracing_disabled(disabled=True)
+        # set_default_openai_api("chat_completions")
+
+        client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+        # Set client globally so the agents framework can pick it up
+        # Check agents-python docs: Agent might not need global client if passed implicitly via model_settings or env vars
+        set_default_openai_client(client=client, use_for_tracing=False)
+        print(f"OpenAI client configured for default builder: base_url={base_url}, model={model_name}")
+    except Exception as e:
+        raise ValueError(f"Failed to initialize OpenAI client: {e}")
+
+    # Set SERPAPI_API_KEY if provided in settings (for tools that need it)
+    serpapi_key = settings.get("serpapi_api_key") or os.getenv("SERPAPI_API_KEY")
+    if serpapi_key:
+        os.environ["SERPAPI_API_KEY"] = serpapi_key
+        print("SERPAPI_API_KEY set in environment from settings.")
+    elif "SERPAPI_API_KEY" in os.environ:
+         # Clean up env var if not in settings to avoid using stale key
+         del os.environ["SERPAPI_API_KEY"]
+         print("SERPAPI_API_KEY removed from environment as it's not in current settings.")
+
+    # --- Create Base Agent --- 
+    print(f"Creating base Agent: name='{agent_name}', model='{model_name}', tools_count={len(tools)}, mcp_count={len(mcp_servers_list)}")
+    base_agent = Agent(
+        name=agent_name,
+        tools=tools, # Pass the discovered/selected function objects
+        mcp_servers=mcp_servers_list,
+        model=model_name,
+        model_settings=ModelSettings(tool_choice="auto"), # Default model settings
+        instructions=instructions,
+    )
+
+    # --- Optionally Wrap with SafeAgent --- 
+    if spec.use_safe_agent:
+        print(f"Wrapping '{agent_name}' with SafeAgent...")
+        opts = spec.safe_agent_options
+        try:
+            safe_agent = SafeAgent(
+                # Pass parameters from the base agent we just created
+                name=base_agent.name,
+                tools=await base_agent.get_all_tools(), # Get tools resolved by base agent (incl MCP)
+                instructions=base_agent.instructions,
+                model=base_agent.model,
+                model_settings=base_agent.model_settings,
+                mcp_servers=base_agent.mcp_servers,
+
+                # SafeAgent specific config from spec
+                approval_callback=app._request_tool_approval, # Use app's callback
+                safe_tool_names=opts.safe_tool_names,
+                safe_tool_patterns=opts.safe_tool_patterns,
+                skip_approvals=opts.skip_approvals,
+                halt_on_rejection=opts.halt_on_rejection,
+                debug_mode=spec.debug_flag,
+            )
+            print("SafeAgent wrapper created successfully.")
+            return safe_agent # Return the wrapped agent
+        except Exception as safe_agent_init_error:
+            error_msg = f"Failed to initialize SafeAgent wrapper: {safe_agent_init_error}"
+            print(f"ERROR: {error_msg}")
+            # Fallback to returning the base agent if wrapping fails
+            return base_agent
+    else:
+        # Return the base agent directly if not using SafeAgent
+        print(f"Using base Agent '{agent_name}' without SafeAgent wrapper.")
+        return base_agent
 
 
 class AgentApp:
     """Base class for creating Flet Agent applications."""
-    def __init__(self, spec: AgentSpec):
-        self.spec = spec
+    # Modify init to accept config_path OR spec
+    def __init__(self, spec: Optional[AgentSpec] = None, config_path: Optional[str] = None):
+
+        if config_path:
+            print(f"Loading AgentSpec from configuration file: {config_path}")
+            self.spec = load_agent_spec_from_yaml(config_path)
+        elif spec:
+            print("Using provided AgentSpec object.")
+            self.spec = spec
+        else:
+            raise ValueError("Must provide either 'spec' or 'config_path' to AgentApp constructor.")
+
+        # Ensure build_agent is set if loaded from config
+        if self.spec.build_agent is None:
+             print("Using internal default agent builder.")
+             # We don't assign it here, we check for None later during agent creation
+             # self.spec.build_agent = _default_build_agent # This modifies the spec, maybe not ideal
+             pass # We'll check for None in _process_message
+
         self.page: Optional[ft.Page] = None
         self.chat: Optional[ft.ListView] = None
         self.new_message: Optional[ft.TextField] = None
@@ -186,12 +261,20 @@ class AgentApp:
                 self.spec.settings_fields
             )
             print(f"Initial settings loaded: {list(self.current_settings.keys())}")
+            # --- ADDED LOGGING --- 
+            print(f"LOAD SUCCESS: self.current_settings id: {id(self.current_settings)}")
+            # ---------------------
             # Apply any immediate effects of settings here if needed
             # e.g., setting environment variables, though passing to build_agent is preferred.
         except Exception as e:
+            # 3. If ANY error happens *after* step 2 but before the function fully returns...
             print(f"Error loading initial settings: {e}")
-            # Initialize with defaults if loading fails
+            # 4. ...it resets self.current_settings to defaults!
             self.current_settings = {field.key: field.default for field in self.spec.settings_fields}
+            # --- ADDED LOGGING --- 
+            print(f"LOAD EXCEPTION: Resetting settings to defaults due to error. Keys now: {list(self.current_settings.keys())}")
+            print(f"LOAD EXCEPTION: Default API key value: '{self.current_settings.get('openai_api_key')}'")
+            # ---------------------
         # No page.update() here, happens in main
 
     def _build_ui(self):
@@ -265,7 +348,7 @@ class AgentApp:
                     padding=ft.padding.symmetric(horizontal=20, vertical=16),
                 ),
                 # Debug Banner (only if debug_flag is True)
-                *( [
+                *([
                     ft.Container(
                         content=ft.Row([
                             ft.Icon(name=ft.Icons.BUG_REPORT, color=ft.Colors.WHITE, size=16),
@@ -279,7 +362,8 @@ class AgentApp:
             ]),
             gradient=ft.LinearGradient(
                 begin=ft.alignment.top_left, end=ft.alignment.bottom_right,
-                colors=[ft.Colors.INDIGO_900, ft.Colors.INDIGO_700, self.spec.theme_color],
+                # Use theme color in gradient
+                colors=[ft.Colors.INDIGO_900, self.spec.theme_color, ft.colors.with_opacity(0.8, self.spec.theme_color)],
             ),
             shadow=ft.BoxShadow(
                 spread_radius=0, blur_radius=8,
@@ -343,7 +427,8 @@ class AgentApp:
                 bgcolor=ft.Colors.AMBER_50,
                 open=True
             )
-            self.page.show_snack_bar(snack_bar)
+            self.page.overlay.append(snack_bar)
+            self.page.update()
         # Warn if MCP is configured but connection failed
         elif self.spec.uses_mcp and self._mcp_connection_status == MCPConnectionStatus.ERROR:
              snack_bar = ft.SnackBar(
@@ -354,7 +439,8 @@ class AgentApp:
                  bgcolor=ft.Colors.RED_50,
                  open=True
              )
-             self.page.show_snack_bar(snack_bar)
+             self.page.overlay.append(snack_bar)
+             self.page.update()
         # No page.update() here, happens in main
 
     # --- Event Handlers & Actions ---
@@ -397,7 +483,7 @@ class AgentApp:
         """Core logic to interact with the agent and update the UI."""
         print(f"Processing message: {user_message}")
         try:
-            # --- Ensure MCP is connected if needed ---
+            # --- Ensure MCP is connected if needed --- 
             if self.spec.uses_mcp and self._mcp_connection_status != MCPConnectionStatus.CONNECTED:
                 print("MCP not connected, attempting to connect before processing message...")
                 await self._update_mcp_connection() # Try to connect/reconnect
@@ -410,58 +496,30 @@ class AgentApp:
                      return # Stop processing if MCP is required but unavailable
 
 
-            # --- Build or reuse agent instance ---
+            # --- Build or reuse agent instance --- 
             if self.agent_instance is None:
                 print("Building agent instance...")
-                # 1. Build the core agent using the user-provided function,
-                # passing the managed MCP instance (if available).
-                # The build_agent implementation is now responsible for using this instance.
-                core_agent = await self.spec.build_agent(
-                    self.current_settings,
-                    self._mcp_server_instance, # Pass the managed instance
-                    self
-                )
-                if not core_agent:
-                     raise ValueError("Agent builder function failed to return an agent instance.")
-                print(f"Core agent built: {type(core_agent)}")
-
-                # 2. Wrap in SafeAgent if configured
-                if self.spec.use_safe_agent:
-                    print("Wrapping core agent with SafeAgent...")
-                    opts = self.spec.safe_agent_options
-                    try:
-                        # SafeAgent.__init__ now handles passing core components
-                        self.agent_instance = SafeAgent(
-                            name=getattr(core_agent, 'name', self.spec.name),
-                            tools=await core_agent.get_all_tools(),
-                            model=getattr(core_agent, 'model', 'unknown'), # Provide default
-                            instructions=getattr(core_agent, 'instructions', self.spec.get_agent_instructions()),
-                            model_settings=getattr(core_agent, 'model_settings', None),
-                            mcp_servers=getattr(core_agent, 'mcp_servers', []),
-
-                            approval_callback=self._request_tool_approval, # The internal method
-                            safe_tool_names=opts.safe_tool_names,
-                            safe_tool_patterns=opts.safe_tool_patterns,
-                            skip_approvals=opts.skip_approvals,
-                            halt_on_rejection=opts.halt_on_rejection,
-                            debug_mode=self.spec.debug_flag,
-                            # Pass any other relevant kwargs if needed
-                        )
-                        print(f"SafeAgent wrapper created successfully.")
-                    except Exception as safe_agent_init_error:
-                        error_msg = f"Failed to initialize SafeAgent wrapper: {safe_agent_init_error}"
-                        print(f"ERROR: {error_msg}")
-                        self.agent_instance = core_agent # Fallback to core agent
-                        self._display_error_banner(error_msg)
+                # --- Use default builder if spec.build_agent is None --- #
+                if self.spec.build_agent is None:
+                    print("Using internal agent builder...")
+                    builder_func = _default_build_agent
                 else:
-                    # Just use the core agent directly
-                    self.agent_instance = core_agent
+                    # Use the builder provided in the spec (legacy/custom mode)
+                    print("Using custom agent builder provided in AgentSpec...")
+                    builder_func = self.spec.build_agent
+
+                # --- Call the selected builder --- #
+                self.agent_instance = await builder_func(
+                    self.current_settings,
+                    self._mcp_server_instance,
+                    self # Pass the app instance itself
+                )
 
                 if not self.agent_instance:
-                    raise ValueError("Failed to create or wrap agent instance.")
-                print(f"Final agent instance ready: {type(self.agent_instance)}")
+                    raise ValueError("Agent builder function failed to return an agent instance.")
+                print(f"Agent instance ready: {type(self.agent_instance)}")
 
-            # --- Prepare input and run agent ---
+            # --- Prepare input and run agent --- 
             # Reset SafeAgent state if applicable
             if hasattr(self.agent_instance, 'reset_run_state') and callable(self.agent_instance.reset_run_state):
                 self.agent_instance.reset_run_state()
@@ -484,7 +542,7 @@ class AgentApp:
                     item = event.item
                     final_items.append(item) # Store raw items for conversation history
 
-                    # --- Handle Tool Calls ---
+                    # --- Handle Tool Calls --- 
                     if item.type == "tool_call_item":
                         tool_input = item.to_input_item()
                         args_str = tool_input.get('arguments', '{}')
@@ -508,7 +566,7 @@ class AgentApp:
                         self.chat.controls.append(self.typing_indicator)
                         self.page.update()
 
-                    # --- Handle Tool Outputs (Debug Only) ---
+                    # --- Handle Tool Outputs (Debug Only) --- 
                     elif item.type == "tool_call_output_item":
                         # Check if it was a SafeAgent rejection before displaying
                         is_rejection = False
@@ -536,7 +594,7 @@ class AgentApp:
                             self.chat.controls.append(self.typing_indicator)
                             self.page.update()
 
-                    # --- Handle Assistant Message Stream ---
+                    # --- Handle Assistant Message Stream --- 
                     elif item.type == "message_output_item":
                         chunk = ItemHelpers.text_message_output(item)
                         if chunk:
@@ -554,7 +612,7 @@ class AgentApp:
                                 assistant_message_control.content.controls[0].content.value = message_output # Access Markdown value
                             self.page.update() # Update UI with new chunk
 
-            # --- Finalize after stream ---
+            # --- Finalize after stream --- 
             self.typing_indicator.visible = False # Ensure indicator is hidden
             if self.typing_indicator in self.chat.controls:
                 self.chat.controls.remove(self.typing_indicator)
@@ -573,6 +631,8 @@ class AgentApp:
                          # Avoid adding the initial user message again
                         is_initial_user_msg = input_item.get("role") == "user" and input_item.get("content") == user_message
                         if not is_initial_user_msg:
+                            # Prevent adding duplicate tool calls/outputs if history already has them?
+                            # This might be tricky, requires comparing complex dicts. Let's keep it simple for now.
                             self.conversation.append(input_item)
                 # Handle message output item (final assistant message)
                 elif item.type == "message_output_item":
@@ -581,8 +641,14 @@ class AgentApp:
                      if not (self.conversation and
                              self.conversation[-1].get("role") == "assistant" and
                              self.conversation[-1].get("content") == final_assistant_content):
+                         # Add only if it's not a duplicate of the last message
                          self.conversation.append({"role": "assistant", "content": final_assistant_content})
 
+            # Debug: Print final conversation state
+            # print("--- Final Conversation History ---")
+            # for msg in self.conversation:
+            #     print(f"- Role: {msg.get('role')}, Type: {msg.get('type')}, Content/Name: {msg.get('content', msg.get('name'))}")
+            # print("----------------------------------")
 
             self.page.update() # Final update after processing
 
@@ -709,7 +775,7 @@ class AgentApp:
         except Exception as e:
             print(f"Error removing control: {e}")
 
-    # --- MCP Management ---
+    # --- MCP Management --- 
 
     def _get_mcp_status_color(self) -> str:
         """Returns the color for the MCP status indicator."""
@@ -764,7 +830,7 @@ class AgentApp:
             self._update_mcp_ui_indicator()
             return
 
-        # --- Prepare connection parameters ---
+        # --- Prepare connection parameters --- 
         mcp_params = {
             "url": mcp_url,
             "timeout": 30,
@@ -774,7 +840,7 @@ class AgentApp:
         if mcp_auth_token:
             mcp_params["headers"]["Authorization"] = f"Bearer {mcp_auth_token}"
 
-        # --- Determine if reconnection or update is needed ---
+        # --- Determine if reconnection or update is needed --- 
         should_connect = False
         needs_recreate = False
         if self._mcp_server_instance is None:
@@ -796,7 +862,7 @@ class AgentApp:
              self._update_mcp_ui_indicator()
              return # Nothing more to do
 
-        # --- Attempt connection/reconnection ---
+        # --- Attempt connection/reconnection --- 
         if should_connect:
             print("Attempting to connect/reconnect to MCP server...")
             self._mcp_connection_status = MCPConnectionStatus.CONNECTING
@@ -846,7 +912,7 @@ class AgentApp:
                 self._update_mcp_ui_indicator()
 
 
-    # --- Navigation ---
+    # --- Navigation --- 
 
     def _create_main_view(self):
         """Creates the main chat view content."""
@@ -907,7 +973,8 @@ class AgentApp:
         old_mcp_token = self.current_settings.get(self.spec.mcp_token_setting_key)
 
         self.current_settings = new_settings
-        await save_settings(self.page, self.spec.client_storage_prefix, self.current_settings) # Use await
+        # --- AWAIT the async save_settings --- #
+        await save_settings(self.page, self.spec.client_storage_prefix, self.current_settings)
 
         # Check if MCP settings changed and update connection if needed
         mcp_settings_changed = (
@@ -955,7 +1022,9 @@ class AgentApp:
 
         self.page.go("/") # Go back to main chat view
         # Optionally show a confirmation snackbar
-        self.page.show_snack_bar(ft.SnackBar(ft.Text("Settings saved!"), open=True))
+        settings_saved_snackbar = ft.SnackBar(ft.Text("Settings saved!"), open=True)
+        self.page.overlay.append(settings_saved_snackbar)
+        self.page.update() # Update needed to show snackbar
         # self.page.update() # Update is implicitly handled by page.go() and snackbar
 
 # End of AgentApp class 

@@ -23,11 +23,11 @@ from agents.model_settings import ModelSettings
 # SafeAgent is now handled by core, no direct import needed here
 
 # Import core components
-from flet_agent_core.app_base import AgentApp, AgentSpec, AgentLike, SafeAgentOptions # Added AgentLike, SafeAgentOptions
-from flet_agent_core.settings import SettingField
+from omniagents_core.app_base import AgentApp, AgentSpec, AgentLike, SafeAgentOptions # Added AgentLike, SafeAgentOptions
+from omniagents_core.settings import SettingField
 # UI Components (ToolApprovalRequest is now in core.ui)
 # No direct imports needed unless customizing beyond base chat
-# from flet_agent_core.ui import ChatMessage, ToolCallDisplay, ToolOutputDisplay, Message
+# from omniagents_core.ui import ChatMessage, ToolCallDisplay, ToolOutputDisplay, Message
 
 
 # --- Configuration & Setup ---
@@ -72,7 +72,7 @@ set_default_openai_api("chat_completions")
 # Global state for MCP connection REMOVED - handled by AgentApp
 # mcp_server_instance: Optional[MCPServerSse] = None
 
-# ToolApprovalRequest UI REMOVED - handled by flet_agent_core.ui
+# ToolApprovalRequest UI REMOVED - handled by omniagents_core.ui
 # flet_approval_callback logic REMOVED - handled by AgentApp._request_tool_approval
 # Global approval_state REMOVED - handled internally by AgentApp
 

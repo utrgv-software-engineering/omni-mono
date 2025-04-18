@@ -156,10 +156,12 @@ class SettingsScreen(ft.View):
             settings_content
         ]
 
-    def _save_settings(self, e):
+    # --- Make the save method async --- #
+    async def _save_settings(self, e):
         settings = {key: tf.value for key, tf in self.text_fields.items()}
         if self.on_save:
-            self.on_save(settings)
+            # --- Await the callback --- #
+            await self.on_save(settings)
 
     def _go_back(self, e):
         if self.on_back:

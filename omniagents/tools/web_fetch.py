@@ -3,7 +3,8 @@ import json
 import requests
 from bs4 import BeautifulSoup
 from typing import Dict, Any, Optional
-from agents import function_tool
+# from agents import function_tool
+from omniagents_core import function_tool
 
 @function_tool
 def web_fetch(url: str, extract_text: bool) -> Dict[str, Any]:

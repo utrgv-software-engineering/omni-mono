@@ -14,6 +14,7 @@ from .file_tools import (
     edit_file,
     write_file
 )
+from .ibjjf_rankings import ibjjf_events, ibjjf_brackets, ibjjf_competitors
 from .tool_approval import reset_approvals
 
 __all__ = [
@@ -30,5 +31,8 @@ __all__ = [
     "read_file",
     "edit_file",
     "write_file",
+    "ibjjf_events",
+    "ibjjf_brackets",
+    "ibjjf_competitors",
     "reset_approvals"
 ]

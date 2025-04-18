@@ -1,6 +1,7 @@
 import requests
 from typing import Dict, Any
-from agents import function_tool
+# from agents import function_tool
+from omniagents_core import function_tool
 
 @function_tool
 def geocode(city_name: str) -> Dict[str, Any]:
