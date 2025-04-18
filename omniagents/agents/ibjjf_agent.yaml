@@ -1,19 +1,9 @@
-# Configuration for the IBJJF Assistant Agent
-
-# --- Basic Info ---
 name: IBJJF Assistant
-# header_title: IBJJF Assistant # Derived from name
-# page_title: IBJJF Assistant   # Derived from name
-model: gpt-4o # Or specify another model like gpt-3.5-turbo
+model: gpt-4o
 
-# --- Instructions ---
-# Load from file is preferred for longer instructions
-instructions_file: instructions/ibjjf_instructions.md # Path relative to this YAML file
-# instructions: | # Alternatively, define inline (less common for long text)
-#   You are an assistant for IBJJF competitors...
+instructions_file: instructions/ibjjf_instructions.md
 
-# --- Tools ---
-tools: # List of function names to activate for this agent
+tools:
   - geocode
   - get_weather
   - web_search
@@ -23,24 +13,13 @@ tools: # List of function names to activate for this agent
   - ibjjf_brackets
   - ibjjf_competitors
 
-# --- Agent Safety ---
-# Defaults to True, explicitly set to False for this example
 use_safe_agent: false
-# safe_agent_options: # Only needed if use_safe_agent is true and defaults aren't suitable
-#   skip_approvals: false
-#   halt_on_rejection: true
-#   safe_tool_names: []
-#   safe_tool_patterns: []
 
-# --- MCP ---
-# This agent does not use MCP
 uses_mcp: false
 
-# --- UI/UX ---
 welcome_text: "👋 Hi! I'm the IBJJF Assistant. Ask me about upcoming tournaments, specific event divisions, or competitors. You can also ask me about weather, flights, or general web search."
-theme_color: ft.Colors.BLUE_900 # Can use Flet color constants as strings
-debug: false # Set to true to enable debug mode features (like tool output display)
-# page_title_suffix: " (Debug Mode)" # Added automatically if debug: true
+theme_color: ft.Colors.BLUE_900
+debug: false
 icon_map:
   geocode: ft.Icons.MAP
   get_weather: ft.Icons.CLOUD
@@ -51,16 +30,9 @@ icon_map:
   ibjjf_brackets: ft.Icons.LIST_ALT
   ibjjf_competitors: ft.Icons.PEOPLE
 
-# --- Settings ---
-# Define *additional* settings required by this agent's tools.
-# Default OpenAI settings (api_key, base_url, model_name) are added automatically.
 settings:
   - key: serpapi_api_key
     label: SerpApi API Key
     group: SerpApi
     secret: true
     hint: Required for web/YouTube/Flights search tools
-
-# Optional Customizations (rarely needed for basic agents)
-# header_controls_builder: null # Path to a function? (Complex)
-# cleanup_handler: null 
