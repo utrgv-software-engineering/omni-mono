@@ -1,70 +1,61 @@
 import flet as ft
 import os
-import asyncio
+import sys # To read command line args
 import argparse
-import json
-import requests
 from dotenv import load_dotenv
 from datetime import datetime
 from openai import AsyncOpenAI
+from typing import Dict, Any, List
+
 from agents import (
     Agent,
-    Runner,
-    function_tool,
-    HandoffOutputItem,
-    ItemHelpers,
-    MessageOutputItem,
-    ToolCallItem,
-    ToolCallOutputItem,
     set_default_openai_client,
     set_default_openai_api,
     set_tracing_disabled
 )
 from agents.model_settings import ModelSettings
-from typing import List, Dict, Any, Optional
 
 # Import standard tools
 from tools import geocode, get_weather, web_search, youtube_search, google_flights_search
-
 # Import IBJJF tools
 from tools.ibjjf_rankings import ibjjf_events, ibjjf_brackets, ibjjf_competitors
 
-# Load environment variables from .env file
+# Import core components
+from flet_agent_core.app_base import AgentApp, AgentSpec
+from flet_agent_core.settings import SettingField
+
+# --- Configuration & Setup ---
+
+# Load environment variables first
 try:
     load_dotenv()
 except Exception as e:
     print(f"Warning: Could not load .env file: {e}")
 
-# Get configuration from environment variables
-# These will be overridden in the main function if settings are saved in client storage
-BASE_URL = os.getenv("OPENAI_API_BASE") or "https://api.openai.com/v1"
-API_KEY = os.getenv("OPENAI_API_KEY")
-MODEL_NAME = os.getenv("MODEL_NAME") or "gpt-4o"
-SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY")
+# Parse command line arguments for debug mode
+parser = argparse.ArgumentParser(description="IBJJF Information Assistant with Flet UI")
+parser.add_argument("--debug", "-d", action="store_true", help="Enable debug mode")
+args = parser.parse_args()
+DEBUG_MODE = args.debug
+
+if DEBUG_MODE:
+    print("\n--- IBJJF Assistant --- Debug mode enabled ---")
 
 # Disable tracing
 set_tracing_disabled(disabled=True)
 set_default_openai_api("chat_completions")
 
-# Parse command line arguments
-parser = argparse.ArgumentParser(description="IBJJF Information Assistant with Flet UI")
-parser.add_argument("--debug", "-d", action="store_true", help="Enable debug mode to show detailed tool outputs")
-args = parser.parse_args()
+# List of all available tools for this agent
+ALL_AVAILABLE_TOOLS = [
+    geocode, get_weather, web_search, youtube_search,
+    google_flights_search, ibjjf_events, ibjjf_brackets, ibjjf_competitors
+]
 
-# Debug mode flag
-DEBUG_MODE = args.debug
-
-if DEBUG_MODE:
-    print("\n--- Debug Info ---")
-    print(f"Debug mode enabled")
-    print("------------------\n")
-
-# --- Agent Instructions ---
+# --- Agent Specific Functions ---
 
 def get_agent_instructions() -> str:
-    """Get agent instructions tailored for IBJJF competitors and coaches, based on available tools."""
+    """Get agent instructions tailored for IBJJF competitors and coaches."""
     current_datetime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
     return f"""
     Current date and time: {current_datetime}
 
@@ -121,787 +112,104 @@ def get_agent_instructions() -> str:
     *   Remember the specific input requirements for tools, especially `geocode`.
     """
 
-# --- Flet UI Components (Adapted from mcp_flet_example.py) ---
+# Update signature to accept AgentApp instance (app argument is unused but required by protocol)
+# Make the function async to match the Awaitable type hint in AgentSpec
+async def build_agent(settings: Dict[str, Any], app: AgentApp) -> Agent:
+    """Builds the IBJJF Agent instance using current settings."""
+    print("Building IBJJF Agent...")
+    # Use settings passed from AgentApp
+    api_key = settings.get("openai_api_key") or os.getenv("OPENAI_API_KEY")
+    base_url = settings.get("openai_api_base") or os.getenv("OPENAI_API_BASE") or "https://api.openai.com/v1"
+    model_name = settings.get("model_name") or os.getenv("MODEL_NAME") or "gpt-4o"
+    serpapi_key = settings.get("serpapi_api_key") or os.getenv("SERPAPI_API_KEY")
 
-class ToolCallDisplay(ft.Container):
-    def __init__(self, tool_name, args_str):
-        super().__init__()
-        self.padding = ft.padding.only(bottom=2)
-        self.margin = ft.margin.only(left=20, right=20, top=8, bottom=12)
-        self.animate = ft.animation.Animation(200, ft.AnimationCurve.EASE_OUT)
+    if not api_key:
+        # Let AgentApp handle displaying the error via exception
+        raise ValueError("OpenAI API key is missing. Please configure in settings.")
 
-        tool_icons = {
-            # Default tool icons - customize based on actual tool names
-            "geocode": ft.Icons.MAP,
-            "get_weather": ft.Icons.CLOUD,
-            "web_search": ft.Icons.SEARCH,
-            "youtube_search": ft.Icons.VIDEO_LIBRARY,
-            "google_flights_search": ft.Icons.FLIGHT,
-            "ibjjf_events": ft.Icons.EVENT,
-            "ibjjf_brackets": ft.Icons.LIST_ALT,
-            "ibjjf_competitors": ft.Icons.PEOPLE,
-        }
-
-        icon = tool_icons.get(tool_name, ft.Icons.BUILD) # Default icon
-
-        # Create a card with tool info
-        tool_card = ft.Container(
-            content=ft.Row([
-                ft.Container(
-                    content=ft.Icon(name=icon, size=16, color=ft.Colors.WHITE),
-                    width=28,
-                    height=28,
-                    border_radius=14,
-                    bgcolor=ft.Colors.BLUE, # Changed from BLUE_GREY
-                    alignment=ft.alignment.center,
-                ),
-                ft.Container(width=10),
-                ft.Column([
-                    ft.Text(
-                        f"Using {tool_name}",
-                        weight="w500",
-                        size=13,
-                        color=ft.Colors.BLACK87
-                    ),
-                    ft.Text(
-                        f"{args_str}",
-                        size=12,
-                        color=ft.Colors.BLACK54,
-                        # max_lines=2, # Limit arg length display
-                        # overflow=ft.TextOverflow.ELLIPSIS,
-                    ),
-                ], spacing=2, tight=True, expand=True),
-            ], spacing=0),
-            padding=ft.padding.only(left=12, top=12, bottom=12, right=16),
-            border_radius=8,
-            bgcolor=ft.Colors.with_opacity(0.04, ft.Colors.BLUE), # Changed from BLUE_GREY
-        )
-
-        self.content = tool_card
-
-class ToolOutputDisplay(ft.Container):
-    def __init__(self, output_text):
-        super().__init__()
-        self.padding = 0
-        # Standardized left margin, consistent bottom margin - Adjusted for no avatar
-        self.margin = ft.margin.only(left=20, right=20, top=4, bottom=12)
-        self.animate = ft.animation.Animation(200, ft.AnimationCurve.EASE_OUT)
-
-        # Truncate very long outputs
-        if len(output_text) > 1000:
-            display_text = output_text[:1000] + "... [output truncated]"
-        else:
-            display_text = output_text
-
-        self.content = ft.Container(
-            content=ft.Text(
-                display_text,
-                selectable=True,
-                size=13,
-                color=ft.Colors.BLACK87,
-                font_family="SF Mono, Menlo, Monaco, Consolas, monospace"
-            ),
-            # Removed horizontal padding to align text with margin
-            padding=ft.padding.only(top=12, bottom=12, right=16),
-            border_radius=6,
-            bgcolor=ft.Colors.with_opacity(0.03, ft.Colors.BLACK),
-            border=ft.border.all(0.5, ft.Colors.BLACK12),
-        )
-
-class SettingsScreen(ft.View):
-    def __init__(self, on_save, on_back, initial_values=None):
-        super().__init__()
-
-        self.route = "/settings"
-        self.bgcolor = ft.colors.with_opacity(0.98, ft.Colors.WHITE) # Match main screen bg
-        self.padding = ft.padding.all(0)
-
-        self.on_save = on_save
-        self.on_back = on_back
-        self.initial_values = initial_values or {
-            "openai_api_key": "",
-            "openai_api_base": "https://api.openai.com/v1",
-            "model_name": "gpt-4o",
-            "serpapi_api_key": "", # Add SerpApi key
-        }
-
-        # Create form fields
-        self.openai_api_key = ft.TextField(
-            label="OpenAI API Key",
-            value=self.initial_values.get("openai_api_key", ""),
-            password=True,
-            can_reveal_password=True,
-            border_color=ft.Colors.BLUE_200, # Kept BLUE_200 for consistency
-            expand=True,
-        )
-
-        self.openai_api_base = ft.TextField(
-            label="OpenAI API Base URL",
-            value=self.initial_values.get("openai_api_base", "https://api.openai.com/v1"),
-            border_color=ft.Colors.BLUE_200, # Kept BLUE_200 for consistency
-            expand=True,
-            hint_text="https://api.openai.com/v1",
-        )
-
-        self.model_name = ft.TextField(
-            label="Model Name",
-            value=self.initial_values.get("model_name", "gpt-4o"),
-            border_color=ft.Colors.BLUE_200, # Kept BLUE_200 for consistency
-            expand=True,
-            hint_text="gpt-4o",
-        )
-
-        # Add SerpApi Key field
-        self.serpapi_api_key = ft.TextField(
-            label="SerpApi API Key",
-            value=self.initial_values.get("serpapi_api_key", ""),
-            password=True,
-            can_reveal_password=True,
-            border_color=ft.Colors.BLUE_200, # Kept BLUE_200 for consistency
-            expand=True,
-            hint_text="Required for web, YouTube, Flights",
-        )
-
-        # Create solid color header
-        settings_header = ft.Container(
-            content=ft.Row([
-                ft.IconButton(
-                    icon=ft.Icons.ARROW_BACK,
-                    icon_color=ft.Colors.WHITE,
-                    on_click=self._go_back,
-                ),
-                ft.Text(
-                    "Settings",
-                    color=ft.Colors.WHITE,
-                    size=20,
-                    weight="bold",
-                ),
-                ft.TextButton(
-                    text="Save",
-                    on_click=self._save_settings,
-                    style=ft.ButtonStyle(
-                        color=ft.Colors.WHITE,
-                    ),
-                ),
-            ],
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            bgcolor=ft.Colors.INDIGO_900, # Changed from BLUE_GREY_700
-            padding=ft.padding.only(left=10, right=10, top=16, bottom=16),
-            shadow=ft.BoxShadow(
-                spread_radius=0,
-                blur_radius=8,
-                color=ft.Colors.with_opacity(0.2, ft.Colors.BLACK),
-                offset=ft.Offset(0, 2)
-            ),
-        )
-
-        # Create scrollable content
-        settings_content = ft.ListView(
-            controls=[
-                ft.Container(height=12),
-                ft.Container(
-                    content=ft.Text(
-                        "Configure API credentials",
-                        size=14,
-                        color=ft.Colors.BLACK54,
-                        text_align=ft.TextAlign.CENTER,
-                    ),
-                    margin=ft.margin.only(bottom=15, top=10),
-                    expand=True,
-                ),
-
-                # OpenAI API Section
-                ft.Container(
-                    content=ft.Column([
-                        ft.Container(
-                            content=ft.Text("OPENAI API", size=12, weight="w500", color=ft.Colors.BLACK54),
-                            margin=ft.margin.only(left=16, bottom=6),
-                        ),
-                        ft.Container(
-                            content=ft.Column([
-                                ft.Container(
-                                    content=self.openai_api_base,
-                                    padding=ft.padding.symmetric(horizontal=16, vertical=8),
-                                    border=ft.border.only(bottom=ft.border.BorderSide(1, ft.Colors.BLACK12)),
-                                ),
-                                ft.Container(
-                                    content=self.openai_api_key,
-                                    padding=ft.padding.symmetric(horizontal=16, vertical=8),
-                                    border=ft.border.only(bottom=ft.border.BorderSide(1, ft.Colors.BLACK12)),
-                                ),
-                                ft.Container(
-                                    content=self.model_name,
-                                    padding=ft.padding.symmetric(horizontal=16, vertical=8),
-                                ),
-                            ]),
-                            bgcolor=ft.Colors.WHITE,
-                            border_radius=10,
-                            shadow=ft.BoxShadow(
-                                spread_radius=0, blur_radius=2,
-                                color=ft.Colors.with_opacity(0.1, ft.Colors.BLACK), offset=ft.Offset(0, 1)
-                            ),
-                        ),
-                        ft.Container(
-                            content=ft.Text("Your OpenAI API key and configuration settings", size=12, color=ft.Colors.BLACK45),
-                            margin=ft.margin.only(left=16, top=6, bottom=24),
-                        ),
-                    ]),
-                    expand=True,
-                ),
-
-                # SerpApi Section
-                ft.Container(
-                    content=ft.Column([
-                        ft.Container(
-                            content=ft.Text("SERPAPI", size=12, weight="w500", color=ft.Colors.BLACK54),
-                            margin=ft.margin.only(left=16, bottom=6),
-                        ),
-                        ft.Container(
-                            content=ft.Column([
-                                ft.Container(
-                                    content=self.serpapi_api_key,
-                                    padding=ft.padding.symmetric(horizontal=16, vertical=8),
-                                ),
-                            ]),
-                            bgcolor=ft.Colors.WHITE,
-                            border_radius=10,
-                            shadow=ft.BoxShadow(
-                                spread_radius=0, blur_radius=2,
-                                color=ft.Colors.with_opacity(0.1, ft.Colors.BLACK), offset=ft.Offset(0, 1)
-                            ),
-                        ),
-                        ft.Container(
-                            content=ft.Text("API key for web search, YouTube, and Flights tools.", size=12, color=ft.Colors.BLACK45),
-                            margin=ft.margin.only(left=16, top=6, bottom=30),
-                        ),
-                    ]),
-                    expand=True,
-                ),
-
-                ft.Container(height=30),
-            ],
-            expand=True,
-            spacing=0,
-            padding=ft.padding.symmetric(horizontal=20),
-        )
-
-        self.controls = [
-            settings_header,
-            settings_content
-        ]
-
-    def _save_settings(self, e):
-        settings = {
-            "openai_api_key": self.openai_api_key.value,
-            "openai_api_base": self.openai_api_base.value,
-            "model_name": self.model_name.value,
-            "serpapi_api_key": self.serpapi_api_key.value, # Add SerpApi key
-        }
-        if self.on_save:
-            self.on_save(settings)
-
-    def _go_back(self, e):
-        if self.on_back:
-            self.on_back(e)
-
-# --- Chat Message UI (Mostly unchanged) ---
-class Message:
-    def __init__(self, user_name: str, text: str, message_type: str):
-        self.user_name = user_name
-        self.text = text
-        self.message_type = message_type
-
-class ChatMessage(ft.Container):
-    def __init__(self, message: Message, page: ft.Page = None):
-        super().__init__()
-        self.animate = ft.animation.Animation(300, ft.AnimationCurve.EASE_OUT)
-        self.padding = ft.padding.only(bottom=12)
-
-        is_user = message.user_name == "You"
-        is_system = message.user_name == "System"
-
-        # Create content area
-        if is_user:
-            # User message: Right-aligned speech bubble
-            content_area = ft.Container(
-                content=ft.Text(message.text, selectable=True, size=15, color=ft.Colors.BLACK87),
-                bgcolor=ft.colors.with_opacity(0.05, ft.colors.BLACK), # Light grey bubble
-                border_radius=18,
-                padding=ft.padding.symmetric(horizontal=16, vertical=10),
-                # margin=ft.margin.only(left=60) # Removed unnecessary left margin for right-aligned item
-            )
-            alignment = ft.MainAxisAlignment.END
-            self.content = ft.Row([content_area], alignment=alignment)
-
-        elif is_system:
-             # System message: Left-aligned, simple text
-            content_area = ft.Container(
-                content=ft.Text(message.text, selectable=True, size=14, color=ft.Colors.BLACK54, italic=True),
-                padding=ft.padding.symmetric(horizontal=16, vertical=8),
-                # margin=ft.margin.only(right=60) # Removed right margin
-            )
-            alignment = ft.MainAxisAlignment.START # Explicitly start
-            # Set expand=True on the container within the Row
-            self.content = ft.Row([ft.Container(content=content_area, expand=True)], alignment=alignment)
-
-        else: # Assistant message
-            # Assistant message: Left-aligned, no bubble
-            content_area = ft.Container(
-                 content=ft.Markdown(
-                    value=message.text, selectable=True,
-                    extension_set=ft.MarkdownExtensionSet.GITHUB_FLAVORED,
-                    code_theme=ft.MarkdownCodeTheme.GITHUB,
-                    on_tap_link=lambda e: page.launch_url(e.data) if page else None,
-                ),
-                # Adjusted padding: left=20 to align with tool output box
-                padding=ft.padding.only(left=20, right=16, top=4, bottom=4),
-                # margin=ft.margin.only(right=60) # Removed right margin
-            )
-            alignment = ft.MainAxisAlignment.START
-            # Set expand=True on the container within the Row to enable wrapping
-            self.content = ft.Row([ft.Container(content=content_area, expand=True)], alignment=alignment)
-
-# --- Main Application Logic ---
-
-async def main(page: ft.Page):
-    # Set up page properties
-    page.horizontal_alignment = ft.CrossAxisAlignment.STRETCH
-    page.title = "IBJJF Assistant" + (" (Debug Mode)" if DEBUG_MODE else "")
-    page.theme_mode = ft.ThemeMode.LIGHT
-    page.window_width = 900
-    page.window_height = 750
-    page.padding = 0
-    page.bgcolor = ft.colors.with_opacity(0.98, ft.Colors.WHITE)
-    page.fonts = {
-        "SF Pro": "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap",
-    }
-    page.theme = ft.Theme(font_family="SF Pro, Inter, Helvetica, Arial, sans-serif")
-    page.views.clear()
-    page.adaptive = True
-
-    # Client storage prefix
-    prefix = "ibjjf_flet_agent."
-    saved_settings = {}
-
-    # Use the workaround for getting values with longer timeout
-    async def get_with_longer_timeout(key, default_value=""):
-        try:
-            result = await page._invoke_method_async( # noqa: WPS437
-                method_name="clientStorage:get",
-                arguments={"key": key},
-                wait_timeout=10,
-                wait_for_result=True,
-            )
-            if result:
-                return json.loads(json.loads(result))
-            return default_value
-        except Exception as e:
-            print(f"Error getting {key}: {e}")
-            return default_value
-
-    # Load settings asynchronously
-    async def load_settings_async():
-        nonlocal saved_settings # saved_settings is local to main, so nonlocal is correct here
-        global API_KEY, BASE_URL, MODEL_NAME, SERPAPI_API_KEY # Use global for module-level vars
-
-        saved_settings["openai_api_key"] = await get_with_longer_timeout(f"{prefix}openai_api_key", "")
-        saved_settings["openai_api_base"] = await get_with_longer_timeout(f"{prefix}openai_api_base", "https://api.openai.com/v1")
-        saved_settings["model_name"] = await get_with_longer_timeout(f"{prefix}model_name", "gpt-4o")
-        saved_settings["serpapi_api_key"] = await get_with_longer_timeout(f"{prefix}serpapi_api_key", "") # Load SerpApi key
-
-        # Update global vars if settings were loaded
-        if saved_settings["openai_api_key"]:
-            API_KEY = saved_settings["openai_api_key"]
-            print("Loaded OpenAI API Key from client storage")
-        if saved_settings["openai_api_base"]:
-            BASE_URL = saved_settings["openai_api_base"]
-            print(f"Loaded OpenAI Base URL: {BASE_URL}")
-        if saved_settings["model_name"]:
-            MODEL_NAME = saved_settings["model_name"]
-            print(f"Loaded Model Name: {MODEL_NAME}")
-        if saved_settings["serpapi_api_key"]:
-            SERPAPI_API_KEY = saved_settings["serpapi_api_key"] # Update global SerpApi key
-            os.environ["SERPAPI_API_KEY"] = SERPAPI_API_KEY # Set environment variable
-            print("Loaded SerpApi API Key from client storage and set environment variable")
-        # Ensure env var is unset if key is empty/not loaded
-        elif "SERPAPI_API_KEY" in os.environ:
-            del os.environ["SERPAPI_API_KEY"]
-
-        page.update()
-
+    # Configure the OpenAI client (important for the agent)
     try:
-        await load_settings_async()
+        client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+        set_default_openai_client(client=client, use_for_tracing=False)
+        print(f"OpenAI client configured: base_url={base_url}, model={model_name}")
     except Exception as e:
-        print(f"Error loading from client storage: {e}")
+        raise ValueError(f"Failed to initialize OpenAI client: {e}")
 
-    # Check for required API keys after loading
-    if not API_KEY:
-        print("Warning: No OpenAI API key found. Please configure settings.")
-    if not SERPAPI_API_KEY:
-        print("Warning: No SerpApi API key found. Web/YouTube/Flights tools may not work. Please configure settings.")
+    # Set SerpApi key in environment if provided, as tools might expect it there
+    if serpapi_key:
+        os.environ["SERPAPI_API_KEY"] = serpapi_key
+        print("SERPAPI_API_KEY set in environment.")
+    elif "SERPAPI_API_KEY" in os.environ:
+        del os.environ["SERPAPI_API_KEY"]
 
-    # Initialize conversation history
-    conversation = []
-
-    # Create a typing indicator
-    typing_indicator = ft.Container(
-        content=ft.Row(
-            [
-                ft.Container(
-                    content=ft.ProgressRing(width=16, height=16, stroke_width=2),
-                    margin=ft.margin.only(right=8)
-                ),
-                ft.Text("Assistant is thinking...", size=14, color=ft.Colors.BLACK54),
-            ],
-            alignment=ft.MainAxisAlignment.START,
-        ),
-        margin=ft.margin.only(left=20, bottom=12),
-        animate=ft.animation.Animation(200, ft.AnimationCurve.EASE_IN_OUT),
-        visible=False
+    agent = Agent(
+        name="IBJJF Assistant",
+        tools=ALL_AVAILABLE_TOOLS,
+        model=model_name,
+        model_settings=ModelSettings(tool_choice="auto"),
+        instructions=get_agent_instructions(),
     )
+    print(f"IBJJF Agent created with model: {model_name}")
+    return agent
 
-    # Create chat controls
-    chat = ft.ListView(
-        expand=True,
-        spacing=0,
-        auto_scroll=True,
-        padding=ft.padding.only(left=20, right=20, top=24, bottom=24),
-    )
+# --- Application Specification ---
 
-    # Agent instance (created on first message)
-    agent = None
+# Define the settings fields specific to this app
+ibjjf_settings_fields = [
+    SettingField(key="openai_api_base", label="OpenAI API Base URL", group="OpenAI API", default="https://api.openai.com/v1", hint="e.g., https://api.openai.com/v1"),
+    SettingField(key="openai_api_key", label="OpenAI API Key", group="OpenAI API", secret=True, hint="Required"),
+    SettingField(key="model_name", label="Model Name", group="OpenAI API", default="gpt-4o", hint="e.g., gpt-4o, gpt-3.5-turbo"),
+    SettingField(key="serpapi_api_key", label="SerpApi API Key", group="SerpApi", secret=True, hint="Required for web/YouTube/Flights"),
+]
 
-    # List of available tools - Include imported and local tools
-    available_tools = [
-        geocode, get_weather, web_search, youtube_search,
-        google_flights_search, ibjjf_events, ibjjf_brackets, ibjjf_competitors
-    ]
+# Define the icon map for tool calls
+ibjjf_icon_map = {
+    "geocode": ft.Icons.MAP,
+    "get_weather": ft.Icons.CLOUD,
+    "web_search": ft.Icons.SEARCH,
+    "youtube_search": ft.Icons.VIDEO_LIBRARY,
+    "google_flights_search": ft.Icons.FLIGHT,
+    "ibjjf_events": ft.Icons.EVENT,
+    "ibjjf_brackets": ft.Icons.LIST_ALT,
+    "ibjjf_competitors": ft.Icons.PEOPLE,
+}
 
-    async def process_message(user_message: str):
-        nonlocal agent # Allow modification of the agent instance
+# Construct the welcome text
+welcome_text = "👋 Hi! I'm the IBJJF Assistant. Ask me about upcoming tournaments, specific event divisions, or competitors. You can also ask me about weather, flights, or general web search."
+if DEBUG_MODE:
+    welcome_text += " (Debug mode is active - tool outputs will be shown)"
+# Note: We can add the SerpApi key check warning within AgentApp based on loaded settings later
 
-        print(f"process_message called with: {user_message}")
+# Create the Agent Specification
+ibjjf_agent_spec = AgentSpec(
+    # Basic Info
+    name="IBJJF Assistant",
+    header_title="IBJJF Assistant",
+    page_title="IBJJF Assistant",
+    welcome_text=welcome_text,
+    client_storage_prefix="ibjjf_flet_agent.",
 
-        typing_indicator.visible = True
-        page.update()
+    # Agent Config
+    get_agent_instructions=get_agent_instructions,
+    build_agent=build_agent,
+    available_tools=ALL_AVAILABLE_TOOLS,
 
-        try:
-            # Create agent on first message or if settings changed requiring re-init
-            if agent is None:
-                if not API_KEY:
-                    raise ValueError("OpenAI API key is missing. Please configure your API key in settings.")
-                # No check for SERPAPI_API_KEY here, agent instructions handle informing the user
+    # UI/UX Config
+    icon_map=ibjjf_icon_map,
+    settings_fields=ibjjf_settings_fields,
+    debug_flag=DEBUG_MODE,
+    page_title_suffix=" (Debug Mode)",
+    theme_color=ft.Colors.BLUE_900, # Specific theme color for this app
 
-                try:
-                    # Use globally updated BASE_URL and API_KEY
-                    client = AsyncOpenAI(base_url=BASE_URL, api_key=API_KEY)
-                    set_default_openai_client(client=client, use_for_tracing=False)
-                except Exception as e:
-                    raise ValueError(f"Failed to initialize OpenAI client: {str(e)}. Please check your API key and connection.")
+    # Optional Customizations (None needed for this app)
+    header_controls_builder=None,
+    cleanup_handler=None,
+)
 
-                # Using standard Agent, no approval logic needed for now
-                agent = Agent(
-                    name="IBJJF Information Assistant",
-                    tools=available_tools,
-                    model=MODEL_NAME, # Use globally updated MODEL_NAME
-                    model_settings=ModelSettings(tool_choice="auto"),
-                    instructions=get_agent_instructions(),
-                )
-                print(f"Agent initialized with model: {MODEL_NAME}")
-
-
-            # Run the agent
-            if conversation:
-                new_input = conversation + [{"role": "user", "content": user_message}]
-                result = Runner.run_streamed(agent, new_input)
-            else:
-                result = Runner.run_streamed(agent, user_message)
-
-            message_output = ""
-            final_items = []
-
-            # Process streaming results
-            async for event in result.stream_events():
-                if event.type == "raw_response_event": continue
-                elif event.type == "agent_updated_stream_event": continue
-                elif event.type == "run_item_stream_event":
-                    final_items.append(event.item)
-
-                    if event.item.type == "tool_call_item":
-                        args_str = event.item.to_input_item()['arguments']
-                        try:
-                            args_dict = json.loads(args_str)
-                            # Limit length of displayed args
-                            formatted_args = ", ".join([f"{k}: {repr(v)[:50]}{'...' if len(repr(v)) > 50 else ''}" for k, v in args_dict.items()])
-                        except:
-                            formatted_args = args_str[:150] + ('...' if len(args_str) > 150 else '') # Limit raw string too
-
-                        tool_name = event.item.to_input_item()['name']
-
-                        if typing_indicator in chat.controls:
-                            chat.controls.remove(typing_indicator)
-
-                        tool_call_display = ToolCallDisplay(tool_name, formatted_args)
-                        chat.controls.append(tool_call_display)
-                        chat.controls.append(typing_indicator) # Add indicator back
-                        page.update()
-
-                    elif event.item.type == "tool_call_output_item":
-                        if DEBUG_MODE:
-                            tool_output = str(event.item.output)
-
-                            if typing_indicator in chat.controls:
-                                chat.controls.remove(typing_indicator)
-
-                            output_display = ToolOutputDisplay(tool_output)
-                            chat.controls.append(output_display)
-                            chat.controls.append(typing_indicator) # Add indicator back
-                            page.update()
-
-                    elif event.item.type == "message_output_item":
-                        message_output = ItemHelpers.text_message_output(event.item)
-
-            # Hide typing indicator
-            typing_indicator.visible = False
-            if typing_indicator in chat.controls:
-                chat.controls.remove(typing_indicator)
-
-            # Update conversation history
-            for item in final_items:
-                if hasattr(item, 'to_input_item'):
-                    input_item = item.to_input_item()
-                    if input_item:
-                        conversation.append(input_item)
-
-            # Display final assistant message
-            if message_output:
-                assistant_message = Message(
-                    user_name="Assistant",
-                    text=message_output,
-                    message_type="assistant_message"
-                )
-                chat.controls.append(ChatMessage(assistant_message, page))
-                chat.controls.append(ft.Container(height=12))
-                page.update()
-
-        except Exception as e:
-            print(f"Error in process_message: {e}")
-            typing_indicator.visible = False
-            if typing_indicator in chat.controls:
-                chat.controls.remove(typing_indicator)
-
-            friendly_message = f"An error occurred: {str(e)}. Please check settings or logs."
-            print(f"Displaying error: {friendly_message}")
-
-            # Simple error banner
-            error_banner = ft.Container(
-                content=ft.Row([
-                    ft.Icon(name=ft.Icons.ERROR_OUTLINE, color=ft.Colors.RED_600, size=24),
-                    ft.Text(
-                        friendly_message, color=ft.Colors.BLACK87, size=14, expand=True
-                    ),
-                    ft.IconButton(
-                        icon=ft.Icons.CLOSE, icon_color=ft.Colors.RED_400, icon_size=18, tooltip="Dismiss",
-                        on_click=lambda e: chat.controls.remove(error_banner) or page.update()
-                    )
-                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                bgcolor=ft.Colors.RED_50, padding=ft.padding.symmetric(horizontal=16, vertical=12),
-                border_radius=8, border=ft.border.all(1, ft.Colors.RED_200),
-                margin=ft.margin.symmetric(horizontal=8, vertical=16),
-            )
-
-            # Add error banner at the top
-            if len(chat.controls) > 0: chat.controls.insert(0, error_banner)
-            else: chat.controls.append(error_banner)
-            page.update()
-
-    async def send_message_click(e):
-        if new_message.value != "":
-            user_msg = Message("You", new_message.value, "user_message")
-            chat.controls.append(ChatMessage(user_msg, page))
-            chat.controls.append(typing_indicator)
-
-            message_text = new_message.value
-            new_message.value = ""
-            new_message.focus()
-            page.update()
-
-            await process_message(message_text)
-
-    # --- Navigation and Settings Handling ---
-
-    def create_settings_view():
-        nonlocal agent # Allow agent reset on settings change
-        current_settings = {
-            "openai_api_key": API_KEY,
-            "openai_api_base": BASE_URL,
-            "model_name": MODEL_NAME,
-            "serpapi_api_key": SERPAPI_API_KEY,
-        }
-        settings_view = SettingsScreen(
-            on_save=lambda settings: handle_settings_save(settings),
-            on_back=lambda _: page.go("/"),
-            initial_values=current_settings
-        )
-        page.views.clear()
-        page.views.append(settings_view)
-        page.update()
-
-    def go_to_settings(e):
-        page.go("/settings")
-
-    def handle_settings_save(new_settings):
-        nonlocal agent # agent is local to main, so nonlocal is correct here
-        global API_KEY, BASE_URL, MODEL_NAME, SERPAPI_API_KEY # Use global for module-level vars
-
-        # Update global variables
-        API_KEY = new_settings["openai_api_key"]
-        BASE_URL = new_settings["openai_api_base"]
-        MODEL_NAME = new_settings["model_name"]
-        SERPAPI_API_KEY = new_settings["serpapi_api_key"]
-
-        # Update environment variables for tools that read from os.environ
-        os.environ["OPENAI_API_KEY"] = API_KEY # Also update OpenAI env var just in case
-        os.environ["OPENAI_API_BASE"] = BASE_URL # Also update OpenAI env var just in case
-        if SERPAPI_API_KEY:
-            os.environ["SERPAPI_API_KEY"] = SERPAPI_API_KEY
-            print("Set SERPAPI_API_KEY environment variable")
-        elif "SERPAPI_API_KEY" in os.environ:
-            # Remove env var if key is cleared in settings
-            del os.environ["SERPAPI_API_KEY"]
-            print("Cleared SERPAPI_API_KEY environment variable")
-
-        # Save to client storage
-        try:
-            save_prefix = "ibjjf_flet_agent."
-            page.client_storage.set(f"{save_prefix}openai_api_key", API_KEY)
-            page.client_storage.set(f"{save_prefix}openai_api_base", BASE_URL)
-            page.client_storage.set(f"{save_prefix}model_name", MODEL_NAME)
-            page.client_storage.set(f"{save_prefix}serpapi_api_key", SERPAPI_API_KEY)
-            print("Settings saved successfully")
-            # Reset agent to force re-initialization with new settings on next message
-            agent = None
-            print("Agent reset due to settings change.")
-        except Exception as e:
-            print(f"Error saving settings: {e}")
-
-        page.go("/") # Go back to main chat view
-
-    # Settings button
-    settings_button = ft.IconButton(
-        icon=ft.Icons.SETTINGS,
-        icon_color=ft.Colors.WHITE,
-        icon_size=20,
-        tooltip="API Settings",
-        on_click=go_to_settings
-    )
-
-    # Create header
-    header = ft.Container(
-        content=ft.Column([
-            ft.Container(
-                content=ft.Row([
-                    ft.Column([
-                        ft.Text("IBJJF Assistant", color=ft.Colors.WHITE, size=22, weight="bold"),
-                        ft.Text("Ask about events, brackets, or competitors", color=ft.Colors.with_opacity(0.8, ft.Colors.WHITE), size=14, weight="w400"),
-                    ], spacing=2, tight=True),
-                    settings_button, # Only settings button in header now
-                ], spacing=12, alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                padding=ft.padding.symmetric(horizontal=20, vertical=16),
-            ),
-            # Debug indicator
-            ft.Container(
-                content=ft.Row([
-                    ft.Icon(name=ft.Icons.BUG_REPORT, color=ft.Colors.WHITE, size=16),
-                    ft.Text("Debug Mode Enabled", color=ft.Colors.WHITE, size=13),
-                ], spacing=8),
-                padding=ft.padding.symmetric(horizontal=20, vertical=8),
-                bgcolor=ft.Colors.with_opacity(0.1, ft.Colors.WHITE),
-                visible=DEBUG_MODE
-            ) if DEBUG_MODE else ft.Container(height=0),
-        ]),
-        gradient=ft.LinearGradient(
-            begin=ft.alignment.top_left, end=ft.alignment.bottom_right,
-            colors=[
-                ft.Colors.INDIGO_900,  # Changed from BLUE_GREY_700
-                ft.Colors.INDIGO_700,  # Changed from BLUE_GREY_500
-                ft.Colors.BLUE_900,    # Changed from TEAL_700
-            ],
-        ),
-        shadow=ft.BoxShadow(
-            spread_radius=0, blur_radius=8, color=ft.Colors.with_opacity(0.2, ft.Colors.BLACK), offset=ft.Offset(0, 2)
-        ),
-    )
-
-    # Initial Welcome Message
-    welcome_text = "👋 Hi! I'm the IBJJF Assistant. Ask me about upcoming tournaments, specific event divisions, or competitors. You can also ask me about weather, flights, or general web search."
-    if DEBUG_MODE:
-        welcome_text += " (Debug mode is active - tool outputs will be shown)"
-    if not SERPAPI_API_KEY:
-         welcome_text += "\n\n⚠️ Note: SerpApi key is not configured. Web search, YouTube, and Flights tools might not work. Configure it in Settings."
-
-
-    welcome_message = Message("System", welcome_text, "system_message")
-    chat.controls.append(ChatMessage(welcome_message, page))
-    chat.controls.append(ft.Container(height=12))
-
-    # Chat input field
-    new_message = ft.TextField(
-        hint_text="Ask about IBJJF events or other info...",
-        hint_style=ft.TextStyle(color=ft.Colors.BLACK45),
-        autofocus=True, shift_enter=True, min_lines=1, max_lines=5, filled=True,
-        border_color=ft.Colors.BLACK12, focused_border_color=ft.Colors.BLUE, # Changed from TEAL
-        text_size=15, text_style=ft.TextStyle(color=ft.Colors.BLACK), cursor_color=ft.Colors.BLUE, # Changed from TEAL
-        expand=True, border_radius=24, content_padding=ft.padding.only(left=20, right=20, top=14, bottom=14),
-        on_submit=send_message_click,
-    )
-
-    # Send button
-    send_button = ft.IconButton(
-        icon=ft.Icons.SEND_ROUNDED, icon_color=ft.Colors.BLUE, # Changed from TEAL
-        icon_size=22, tooltip="Send message", on_click=send_message_click,
-        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=30), padding=12, overlay_color=ft.Colors.with_opacity(0.1, ft.Colors.BLUE)), # Changed from TEAL
-    )
-
-    # --- View Creation and Routing ---
-
-    def create_main_view():
-        main_view = ft.View(
-            route="/",
-            controls=[
-                header,
-                ft.Container(
-                    content=chat, expand=True, bgcolor=ft.colors.with_opacity(0.98, ft.Colors.WHITE),
-                ),
-                ft.Container(
-                    content=ft.Row([new_message, send_button], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                    padding=ft.padding.only(left=16, right=16, top=12, bottom=16),
-                    bgcolor=ft.Colors.WHITE, border=ft.border.only(top=ft.border.BorderSide(1, ft.Colors.BLACK12)),
-                ),
-            ],
-            padding=0, bgcolor=ft.Colors.WHITE
-        )
-        page.views.clear()
-        page.views.append(main_view)
-        page.update()
-
-    def route_change(e):
-        if e.route == "/settings": create_settings_view()
-        elif e.route == "/": create_main_view()
-
-    page.on_route_change = route_change
-    create_main_view() # Initial view
-
-    # Show initial warnings if keys are missing
-    if not API_KEY:
-        snack_bar = ft.SnackBar(ft.Text("Warning: OpenAI API Key missing. Go to Settings."), open=True)
-        page.overlay.append(snack_bar)
-        page.update()
-    elif not SERPAPI_API_KEY: # Show only if OpenAI key is present but SerpApi is missing
-        snack_bar = ft.SnackBar(ft.Text("Warning: SerpApi Key missing. Some tools may fail. Go to Settings."), open=True)
-        page.overlay.append(snack_bar)
-        page.update()
-
+# --- Main Execution ---
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    # Create the app instance with the spec
+    app = AgentApp(spec=ibjjf_agent_spec)
+    # Run the Flet app, targeting the main method of the app instance
+    ft.app(target=app.main)
