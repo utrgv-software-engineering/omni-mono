@@ -8,7 +8,7 @@ model: gpt-4o # Or specify another model like gpt-3.5-turbo
 
 # --- Instructions ---
 # Load from file is preferred for longer instructions
-instructions_file: instructions/ibjjf_instructions.md
+instructions_file: instructions/ibjjf_instructions.md # Path relative to this YAML file
 # instructions: | # Alternatively, define inline (less common for long text)
 #   You are an assistant for IBJJF competitors...
 

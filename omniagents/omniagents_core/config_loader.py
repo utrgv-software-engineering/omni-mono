@@ -19,25 +19,30 @@ DEFAULT_MCP_SETTINGS_FIELDS = [
     SettingField(key="mcp_auth_token", label="MCP Auth Token", group="MCP Server", secret=True, hint="Optional, if MCP server requires auth"),
 ]
 
-def _load_instructions(config: Dict[str, Any]) -> Callable[[], str]:
-    """Creates a function to load instructions based on YAML config."""
+def _load_instructions(config: Dict[str, Any], base_dir: Path) -> Callable[[], str]:
+    """Creates a function to load instructions based on YAML config, resolving relative to base_dir."""
     instructions_content = config.get('instructions')
-    instructions_file = config.get('instructions_file')
+    instructions_file_relative = config.get('instructions_file') # Keep original key name
 
     if instructions_content:
         # Use literal instructions if provided
         return lambda: str(instructions_content)
-    elif instructions_file:
-        # Create function to read from file
-        file_path = Path(instructions_file)
+    elif instructions_file_relative:
+        # Create function to read from file relative to base_dir
+        file_path = (base_dir / instructions_file_relative).resolve() # Calculate absolute path and resolve symlinks/..
         def read_instructions_file():
             try:
                 if not file_path.is_file():
-                    print(f"Warning: Instructions file not found: {file_path.resolve()}")
-                    return f"Error: Instructions file '{instructions_file}' not found."
+                    # Show path relative to CWD for clearer error messages if run from workspace root
+                    try:
+                        display_path = file_path.relative_to(Path.cwd())
+                    except ValueError:
+                        display_path = file_path # Show absolute if not relative to CWD
+                    print(f"Warning: Instructions file not found: {file_path}")
+                    return f"Error: Instructions file '{display_path}' not found."
                 return file_path.read_text(encoding='utf-8')
             except Exception as e:
-                print(f"Error reading instructions file {file_path.resolve()}: {e}")
+                print(f"Error reading instructions file {file_path}: {e}")
                 return f"Error reading instructions file: {e}"
         return read_instructions_file
     else:
@@ -90,22 +95,31 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
     if not isinstance(config, dict):
         raise ValueError(f"Invalid YAML format in {config_file.resolve()}. Expected a dictionary (key-value pairs).")
 
-    # --- Extract and Derive Basic Info --- 
+    # --- Extract and Derive Basic Info ---
     agent_name = config.get('name', 'Unnamed Agent')
     header_title = config.get('header_title', agent_name)
     page_title = config.get('page_title', agent_name)
-    storage_prefix = config.get('client_storage_prefix', agent_name.lower().replace(' ', '_').replace('-','_') + '.')
+    # Derive default storage prefix if not provided
+    default_storage_prefix = agent_name.lower().replace(' ', '_').replace('-','_') + '.'
+    storage_prefix = config.get('client_storage_prefix', default_storage_prefix)
     welcome_text = config.get('welcome_text', f"Hello! I'm {agent_name}. How can I help you?")
     debug_flag = config.get('debug', False)
     page_title_suffix = config.get('page_title_suffix', " (Debug Mode)" if debug_flag else "")
+    model_name_from_config = config.get('model') # Get model name from YAML
 
-    # --- Agent Instructions --- 
-    get_instructions_func = _load_instructions(config)
+    # --- Agent Instructions ---
+    base_dir = config_file.parent # Get the directory containing the YAML file
+    get_instructions_func = _load_instructions(config, base_dir) # Pass base_dir
 
-    # --- Tool Discovery and Selection --- 
-    # Always use the default 'tools' directory, ignore 'tools_dir' in YAML
-    # tools_dir = config.get('tools_dir', 'tools')
-    all_discovered_functions = discover_functions_in_dir("tools") # Use default
+    # --- Tool Discovery and Selection ---
+    # Always use the default 'tools' directory, relative to workspace root
+    tools_dir_path = Path("tools") # Path object for clarity
+    all_discovered_functions = {}
+    if tools_dir_path.is_dir():
+        all_discovered_functions = discover_functions_in_dir(str(tools_dir_path))
+    else:
+        print(f"Warning: Default tools directory '{tools_dir_path}' not found. No local tools discovered.")
+
     activated_tool_names = config.get('tools', [])
     selected_tool_functions = []
     missing_tools = []
@@ -120,12 +134,10 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
             missing_tools.append(tool_name)
 
     if missing_tools:
-        # Updated error message to reflect default directory
-        print(f"Error: The following tools listed in '{config_path}' were not found in the 'tools' directory or are not valid marked functions: {', '.join(missing_tools)}")
-        # Decide: raise error or continue without missing tools? Continuing for robustness.
-        # raise ValueError(f"Missing tools defined in config: {', '.join(missing_tools)}")
+        print(f"Warning: The following tools listed in '{config_path}' were not found in the '{tools_dir_path}' directory or are not valid marked functions: {', '.join(missing_tools)}")
+        # Continue without missing tools
 
-    # --- Safety Configuration --- 
+    # --- Safety Configuration ---
     use_safe = config.get('use_safe_agent', True) # Default to safe
     safe_options_config = config.get('safe_agent_options', {})
     safe_options = SafeAgentOptions(
@@ -135,13 +147,13 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
         safe_tool_patterns=safe_options_config.get('safe_tool_patterns', []),
     )
 
-    # --- MCP Configuration --- 
+    # --- MCP Configuration ---
     uses_mcp = config.get('uses_mcp', False)
     mcp_url_key = config.get('mcp_url_setting_key', 'mcp_url')
     mcp_token_key = config.get('mcp_token_setting_key', 'mcp_auth_token')
     show_mcp_indicator = config.get('show_mcp_status_indicator', True)
 
-    # --- Settings --- 
+    # --- Settings ---
     # Start with default OpenAI settings
     combined_settings_fields_dict = {field.key: field for field in DEFAULT_SETTINGS_FIELDS}
     # Add default MCP settings if MCP is used
@@ -171,7 +183,7 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
 
     final_settings_fields = list(combined_settings_fields_dict.values())
 
-    # --- UI/UX --- 
+    # --- UI/UX ---
     icon_map_config = config.get('icon_map', {})
     processed_icon_map = {} # Create a new dict for processed icons
     if not isinstance(icon_map_config, dict):
@@ -199,7 +211,7 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
     # We pass None here; AgentApp will use its internal builder.
     build_agent_func = None
 
-    # --- Construct AgentSpec --- 
+    # --- Construct AgentSpec ---
     spec = AgentSpec(
         # Basic Info
         name=agent_name,
@@ -212,6 +224,7 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
         get_agent_instructions=get_instructions_func,
         build_agent=build_agent_func, # Defer to internal builder
         available_tools=selected_tool_functions, # Pass the discovered & selected functions
+        model_name=model_name_from_config, # Pass model name from YAML
 
         # Agent Safety Config
         use_safe_agent=use_safe,

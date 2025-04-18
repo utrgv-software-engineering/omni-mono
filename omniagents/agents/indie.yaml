@@ -1,0 +1,86 @@
+# agent.yaml - Configuration for the Indie - 80/20 Jiu-Jitsu Agent
+
+# --- Basic App Info ---
+name: Indie
+header_title: Indie - 80/20 Jiu-Jitsu
+page_title: Indie - 80/20 Assistant
+# The welcome text from the script
+welcome_text: "👋 Welcome to 80/20 Jiu-Jitsu! I'm Indie, your gym assistant. How can I assist you today?"
+client_storage_prefix: mcp_flet_agent. # Unique prefix from the script
+
+# --- Agent Configuration ---
+# Instructions are loaded from a separate file for better organization
+instructions_file: instructions/indie_instructions.md
+# No static tools needed as they come from MCP
+tools: []
+# Model name (can be overridden by settings)
+model_name: gpt-4o
+
+# --- Agent Safety Configuration ---
+# Use SafeAgent (as per script logic)
+use_safe_agent: true
+# Default SafeAgent options (command-line args in the script would override these if run_agent.py supports it)
+safe_agent_options:
+  skip_approvals: false # Default equivalent to no --skip-approvals
+  halt_on_rejection: true # Default equivalent to no --no-halt
+  safe_tool_names: []   # Default equivalent to no --pre-approve
+  safe_tool_patterns: [] # Default equivalent to no --safe-patterns
+
+# --- MCP Configuration ---
+# Enable MCP integration
+uses_mcp: true
+# Default setting keys are used ("mcp_url", "mcp_auth_token")
+# show_mcp_status_indicator defaults to true
+
+# --- Settings Fields ---
+# Define the settings that will appear in the UI Settings screen.
+# Includes defaults from core + specific ones from the script.
+settings:
+  # OpenAI settings (These will likely be added by the default loader, but explicitly listing ensures presence)
+  - key: openai_api_base
+    label: OpenAI API Base URL
+    group: OpenAI API
+    default: "https://api.openai.com/v1"
+    hint: "e.g., https://api.openai.com/v1"
+  - key: openai_api_key
+    label: OpenAI API Key
+    group: OpenAI API
+    secret: true
+    hint: "Required"
+  - key: model_name
+    label: Model Name
+    group: OpenAI API
+    default: "gpt-4o"
+    hint: "e.g., gpt-4o, gpt-3.5-turbo"
+  # MCP settings (These will likely be added by the default loader if uses_mcp=true)
+  - key: mcp_url
+    label: MCP Server URL
+    group: MCP Server
+    default: ""
+    hint: "e.g., http://localhost:3000/mcp/sse"
+  - key: mcp_auth_token
+    label: MCP Auth Token
+    group: MCP Server
+    secret: true
+    hint: "Optional, if MCP server requires auth"
+  # Note: Any *other* custom settings would be added here.
+
+# --- UI/UX Configuration ---
+# Debug flag (set to false by default, script uses command-line arg)
+debug: false
+# page_title_suffix defaults based on debug flag
+# Theme color from the script
+theme_color: "ft.Colors.INDIGO_700"
+# Icon map from the script (using Flet string representation)
+icon_map:
+  mcp__search: "ft.Icons.SEARCH"
+  mcp__fetch: "ft.Icons.CLOUD_DOWNLOAD"
+  mcp__weather: "ft.Icons.CLOUD"
+  mcp__calendar: "ft.Icons.CALENDAR_TODAY"
+  mcp__location: "ft.Icons.LOCATION_ON"
+  read_file: "ft.Icons.DESCRIPTION"
+  # Add more MCP tool icons here as needed
+
+# --- App-Specific Customizations ---
+# header_controls_builder: None (default)
+# cleanup_handler: None (default) 

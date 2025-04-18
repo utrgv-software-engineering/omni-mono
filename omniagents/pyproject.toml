@@ -1,18 +1,19 @@
 [project]
-name = "openai-agents-examples"
+name = "omniagents"
 version = "0.1.0"
-description = "OpenAI Agents examples"
+description = "OmniAgents"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "requests",
-    "flet",
+    "flet[all]",
     "openai-agents==0.0.9",
     "python-dotenv",
     "google-search-results",
     "pydantic-core==2.33.0",
     "pydantic==2.11.1",
-    "beautifulsoup4"
+    "beautifulsoup4",
+    "PyYAML"
 ]
 
 [project.optional-dependencies]
