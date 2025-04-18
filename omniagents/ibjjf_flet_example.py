@@ -5,7 +5,7 @@ import argparse
 from dotenv import load_dotenv
 from datetime import datetime
 from openai import AsyncOpenAI
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from agents import (
     Agent,
@@ -114,9 +114,14 @@ def get_agent_instructions() -> str:
 
 # Update signature to accept AgentApp instance (app argument is unused but required by protocol)
 # Make the function async to match the Awaitable type hint in AgentSpec
-async def build_agent(settings: Dict[str, Any], app: AgentApp) -> Agent:
+# Add mcp_server argument to match the calling signature in AgentApp
+async def build_agent(settings: Dict[str, Any], mcp_server: Optional[Any], app: AgentApp) -> Agent:
     """Builds the IBJJF Agent instance using current settings."""
     print("Building IBJJF Agent...")
+    # Add a check/log if mcp_server is unexpectedly passed (optional)
+    if mcp_server:
+        print("Warning: build_agent received an mcp_server instance, but IBJJF agent does not use it.")
+
     # Use settings passed from AgentApp
     api_key = settings.get("openai_api_key") or os.getenv("OPENAI_API_KEY")
     base_url = settings.get("openai_api_base") or os.getenv("OPENAI_API_BASE") or "https://api.openai.com/v1"
