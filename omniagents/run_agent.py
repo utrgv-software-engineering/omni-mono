@@ -10,10 +10,6 @@ from agents import (
     set_tracing_disabled
 )
 
-# --- Tool Imports ---
-# Tool modules must be imported for decorator-based discovery to work.
-# import tools # No longer needed here, discovery happens relative to agent config
-
 # --- Configuration & Setup ---
 
 try:
