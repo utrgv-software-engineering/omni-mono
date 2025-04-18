@@ -27,31 +27,54 @@ class ToolCallDisplay(ft.Container):
         effective_icon_map = icon_map or {}
         icon = effective_icon_map.get(tool_name, default_icon)
 
-        tool_card = ft.Container(
-            content=ft.Row([
-                ft.Container(
-                    content=ft.Icon(name=icon, size=16, color=ft.Colors.WHITE),
-                    width=28,
-                    height=28,
-                    border_radius=14,
-                    bgcolor=color, # Use parameterized color
-                    alignment=ft.alignment.center,
+        # Prepare icon container
+        icon_container = ft.Container(
+            content=ft.Icon(name=icon, size=16, color=ft.Colors.WHITE),
+            width=28,
+            height=28,
+            border_radius=14,
+            bgcolor=color, # Use parameterized color
+            alignment=ft.alignment.center,
+        )
+
+        # Prepare text content based on args_str
+        if args_str:
+            text_content = ft.Column([
+                ft.Text(
+                    f"Using {tool_name}",
+                    weight="w500",
+                    size=13,
+                    color=ft.Colors.BLACK87
                 ),
-                ft.Container(width=10),
-                ft.Column([
-                    ft.Text(
-                        f"Using {tool_name}",
-                        weight="w500",
-                        size=13,
-                        color=ft.Colors.BLACK87
-                    ),
-                    ft.Text(
-                        f"{args_str}",
-                        size=12,
-                        color=ft.Colors.BLACK54,
-                    ),
-                ], spacing=2, tight=True, expand=True),
-            ], spacing=0),
+                ft.Text(
+                    f"{args_str}",
+                    size=12,
+                    color=ft.Colors.BLACK54,
+                ),
+            ], spacing=2, tight=True, expand=True)
+            row_alignment = ft.CrossAxisAlignment.START # Default alignment when args are present
+        else:
+            text_content = ft.Text(
+                f"Using {tool_name}",
+                weight="w500",
+                size=13,
+                color=ft.Colors.BLACK87
+            )
+            row_alignment = ft.CrossAxisAlignment.CENTER # Center align when no args
+
+        # Construct the main row
+        tool_card_content = ft.Row(
+            [
+                icon_container,
+                ft.Container(width=10), # Spacer
+                text_content,
+            ],
+            spacing=0,
+            alignment=row_alignment, # Apply conditional alignment
+        )
+
+        tool_card = ft.Container(
+            content=tool_card_content,
             padding=ft.padding.only(left=12, top=12, bottom=12, right=16),
             border_radius=8,
             bgcolor=ft.Colors.with_opacity(0.04, color), # Use parameterized color
