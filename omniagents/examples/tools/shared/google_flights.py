@@ -8,8 +8,8 @@ from omniagents.core import function_tool
 def google_flights_search(origin: str,
                          destination: str,
                          departure_date: str,
-                         return_date: Optional[str] = None,
-                         num_results: int = 10) -> Dict[str, Any]:
+                         num_results: int,
+                         return_date: Optional[str] = None) -> Dict[str, Any]:
     """
     Searches Google Flights for flight information using SerpAPI.
     

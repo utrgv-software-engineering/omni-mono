@@ -1,6 +1,6 @@
 name: IBJJF Assistant
 model: gpt-4o
-instructions_file: instructions/ibjjf_instructions.md
+instructions_file: instructions/ibjjf.md
 tools:
   - geocode
   - get_weather
