@@ -2,8 +2,7 @@ import os
 import json
 import requests
 from typing import Dict, Any, Optional, List, Literal
-# from agents import function_tool
-from omniagents_core import function_tool
+from omniagents.core import function_tool
 
 @function_tool
 def youtube_search(query: str,

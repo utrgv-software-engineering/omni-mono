@@ -16,6 +16,9 @@ dependencies = [
     "PyYAML"
 ]
 
+[project.scripts]
+omniagents = "omniagents.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest",

@@ -112,21 +112,39 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
     get_instructions_func = _load_instructions(config, base_dir) # Pass base_dir
 
     # --- Tool Discovery and Selection ---
-    # Look for tools in a 'tools' subdirectory relative to the config file
-    tools_dir_path = (base_dir / "tools").resolve() # Path object relative to YAML
-
+    # Always check the 'tools' subdirectory first, then any additional directories
     all_discovered_functions = {}
+    
+    # First check the default 'tools' subdirectory
+    tools_dir_path = (base_dir / "tools").resolve()
     if tools_dir_path.is_dir():
-        # discover_functions_in_dir should handle the absolute path
-        all_discovered_functions = discover_functions_in_dir(str(tools_dir_path))
-        print(f"Discovered tools from: {tools_dir_path}") # Add logging
-    else:
-        # Show path relative to CWD for clearer error messages if run from workspace root
-        try:
-            display_path = tools_dir_path.relative_to(Path.cwd())
-        except ValueError:
-            display_path = tools_dir_path # Show absolute if not relative to CWD
-        print(f"Warning: Agent-specific tools directory '{display_path}' not found. No agent-specific tools discovered.")
+        tools_found = discover_functions_in_dir(str(tools_dir_path))
+        all_discovered_functions.update(tools_found)
+        print(f"Discovered tools from 'tools' subdirectory: {tools_dir_path}")
+    
+    # Then check any additional directories specified in the config
+    additional_tools_dirs = config.get('additional_tools_dirs', [])
+    if not isinstance(additional_tools_dirs, list):
+        print(f"Warning: 'additional_tools_dirs' in {config_path} should be a list. Ignoring.")
+        additional_tools_dirs = []
+    
+    for tools_dir in additional_tools_dirs:
+        additional_dir_path = (base_dir / tools_dir).resolve()
+        if additional_dir_path.is_dir():
+            additional_tools = discover_functions_in_dir(str(additional_dir_path))
+            # Update with any new tools found (existing tools take precedence)
+            all_discovered_functions.update(additional_tools)
+            print(f"Discovered additional tools from: {additional_dir_path}")
+        else:
+            # Show path relative to CWD for clearer error messages if run from workspace root
+            try:
+                display_path = additional_dir_path.relative_to(Path.cwd())
+            except ValueError:
+                display_path = additional_dir_path # Show absolute if not relative to CWD
+            print(f"Warning: Additional tools directory '{display_path}' not found. Skipping.")
+    
+    if not all_discovered_functions:
+        print(f"Warning: No tools discovered in any of the specified directories.")
 
     activated_tool_names = config.get('tools', [])
     selected_tool_functions = []

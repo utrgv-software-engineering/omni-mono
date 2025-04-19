@@ -9,11 +9,11 @@ from typing import List, Dict, Any, Callable, Optional, Protocol, Awaitable, TYP
 
 # Import from other core modules
 # Use absolute imports for robustness within the package
-from omniagents_core.ui import Message, ChatMessage, ToolCallDisplay, ToolOutputDisplay, ToolApprovalRequest # Added ToolApprovalRequest
-from omniagents_core.settings import SettingsScreen, SettingField
-from omniagents_core.storage import load_settings, save_settings
-from omniagents_core.config_loader import load_agent_spec_from_yaml # <-- Import the loader
-from omniagents_core.specs import AgentSpec, AgentLike, SafeAgentOptions # <-- Import moved specs
+from omniagents.core.ui import Message, ChatMessage, ToolCallDisplay, ToolOutputDisplay, ToolApprovalRequest # Added ToolApprovalRequest
+from omniagents.core.settings import SettingsScreen, SettingField
+from omniagents.core.storage import load_settings, save_settings
+from omniagents.core.config_loader import load_agent_spec_from_yaml # <-- Import the loader
+from omniagents.core.specs import AgentSpec, AgentLike, SafeAgentOptions # <-- Import moved specs
 
 # Import agents types for type hinting (use Protocol for flexibility)
 from agents import Agent, ItemHelpers # Added Agent
@@ -118,12 +118,20 @@ async def _default_build_agent(
 
     # --- Create Base Agent --- 
     print(f"Creating base Agent: name='{agent_name}', model='{model_name}', tools_count={len(tools)}, mcp_count={len(mcp_servers_list)}")
+    
+    # Create ModelSettings with tool_choice only if tools are available
+    if tools:
+        model_settings = ModelSettings(tool_choice="auto")
+    else:
+        # Create ModelSettings without specifying tool_choice when no tools are available
+        model_settings = ModelSettings()
+    
     base_agent = Agent(
         name=agent_name,
         tools=tools, # Pass the discovered/selected function objects
         mcp_servers=mcp_servers_list,
         model=model_name,
-        model_settings=ModelSettings(tool_choice="auto"), # Default model settings
+        model_settings=model_settings, # Always pass a ModelSettings object
         instructions=instructions,
     )
 

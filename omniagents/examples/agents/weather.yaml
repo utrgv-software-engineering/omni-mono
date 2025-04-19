@@ -1,0 +1,10 @@
+name: Weather Bot
+model: gpt-4o
+instructions_file: weather_bot.md
+tools:
+  - geocode
+  - get_weather
+
+welcome_text: "👋 Hi! I'm a weather bot. Ask me about the weather in a specific city."
+theme_color: ft.Colors.BLUE_900
+debug: true

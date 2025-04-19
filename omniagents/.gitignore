@@ -67,5 +67,4 @@ results/
 
 # Encryption
 secret.key
-
 tmp_logs/

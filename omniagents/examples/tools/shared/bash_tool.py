@@ -1,8 +1,7 @@
 import subprocess
 import os
 from typing import Dict, Any, Optional
-# from agents import function_tool
-from omniagents_core import function_tool
+from omniagents.core import function_tool
 
 @function_tool
 def execute_bash(command: str, timeout: Optional[int]) -> Dict[str, Any]:

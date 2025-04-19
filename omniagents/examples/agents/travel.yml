@@ -1,0 +1,15 @@
+name: Travel Agent
+model: gpt-4o
+instructions_file: travel_agent.md
+tools:
+  - web_fetch
+  - web_search
+  - youtube_search
+  - google_flights_search
+  - get_weather
+  - geocode
+additional_tools_dirs:
+  - "../tools/shared"
+welcome_text: "👋 Hi! I'm a travel agent. I can help you find the best flights, hotels, and activities for your next trip."
+theme_color: ft.Colors.BLUE_900
+debug: true

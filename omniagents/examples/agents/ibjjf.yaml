@@ -1,17 +1,17 @@
 name: IBJJF Assistant
 model: gpt-4o
-
 instructions_file: instructions/ibjjf_instructions.md
-
 tools:
   - geocode
   - get_weather
-  - web_search
   - youtube_search
   - google_flights_search
   - ibjjf_events
   - ibjjf_brackets
   - ibjjf_competitors
+additional_tools_dirs:
+  - "../tools/shared"
+  - "../tools/ibjjf"
 
 use_safe_agent: false
 
