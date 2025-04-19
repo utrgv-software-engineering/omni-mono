@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "beautifulsoup4",
     "google-search-results",
-    "omniagents",
+    "omniagents @ git+https://github.com/ericmichael/omniagents.git@main#egg=omniagents",
     "requests",
 ]
 

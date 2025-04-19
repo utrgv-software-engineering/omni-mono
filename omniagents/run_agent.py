@@ -4,7 +4,7 @@ import argparse
 from dotenv import load_dotenv
 
 # --- Core Framework Imports --- #
-from omniagents_core import AgentApp
+from omniagents.core import AgentApp
 from agents import (
     set_default_openai_api,
     set_tracing_disabled

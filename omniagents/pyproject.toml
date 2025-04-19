@@ -5,14 +5,11 @@ description = "OmniAgents"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "requests",
     "flet[all]",
     "openai-agents==0.0.9",
     "python-dotenv",
-    "google-search-results",
     "pydantic-core==2.33.0",
     "pydantic==2.11.1",
-    "beautifulsoup4",
     "PyYAML"
 ]
 
@@ -23,3 +20,6 @@ omniagents = "omniagents.cli:main"
 dev = [
     "pytest",
 ]
+
+[tool.uv.workspace]
+members = ["examples"]
