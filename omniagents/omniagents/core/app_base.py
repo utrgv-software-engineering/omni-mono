@@ -949,9 +949,9 @@ class AgentApp:
 
     def _create_main_view(self):
         """Creates the main chat view content."""
-        return ft.View(
-            route="/",
-            controls=[
+        # Wrap the entire view content in a SafeArea
+        view_content = ft.Column(
+            [
                 self.header,
                 ft.Container(
                     content=self.chat, expand=True, bgcolor=ft.colors.with_opacity(0.98, ft.Colors.WHITE),
@@ -962,7 +962,19 @@ class AgentApp:
                     bgcolor=ft.Colors.WHITE, border=ft.border.only(top=ft.border.BorderSide(1, ft.Colors.BLACK12)),
                 ),
             ],
-            padding=0, bgcolor=ft.Colors.WHITE
+            spacing=0, # Prevent extra space from Column
+            expand=True,
+        )
+
+        return ft.View(
+            route="/",
+            controls=[
+                ft.SafeArea(
+                    content=view_content,
+                    expand=True # Make SafeArea fill the View
+                )
+            ],
+            padding=0, bgcolor=ft.Colors.WHITE # Padding handled by SafeArea
         )
 
     def _create_settings_view(self):
