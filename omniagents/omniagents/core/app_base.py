@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import flet as ft
 import asyncio
 import json
@@ -18,7 +20,6 @@ from omniagents.core.specs import AgentSpec, AgentLike, SafeAgentOptions # <-- I
 # Import agents types for type hinting (use Protocol for flexibility)
 from agents import Agent, ItemHelpers # Added Agent
 from agents import Runner # For run_streamed
-from agents.mcp import MCPServerSse # Import MCPServerSse
 from agents.model_settings import ModelSettings # <-- Import ModelSettings
 from agents import ( # <-- Imports for default builder
     set_default_openai_client,
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
     # Use absolute import if AgentApp is defined elsewhere in the package,
     # otherwise keep relative if it's defined in this file (which it is).
     from .app_base import AgentApp # Keep relative for self-reference check
+    from agents.mcp import MCPServerSse # <-- Add import here
 
 # Define a protocol for Agent-like objects to avoid circular dependencies
 # and allow for different Agent types (Agent, SafeAgent, etc.)

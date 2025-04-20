@@ -1,11 +1,19 @@
 #!/bin/bash
+
+# ---> ADD THIS <---
+CLEAN_BUILD=false
+if [ "$1" == "--clean" ]; then
+  CLEAN_BUILD=true
+  shift # Remove --clean from arguments
+fi
+
 # Determine script and project root directories
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Check if module name is provided
 if [ -z "$1" ]; then
-  echo "Usage: $0 <module_name.py>"
+  echo "Usage: $0 [--clean] <module_name.py>" # Update usage message
   exit 1
 fi
 MODULE_NAME="$1"
@@ -59,6 +67,14 @@ echo "Building $MODULE_NAME"
 # Set PIP_FIND_LINKS to use local wheels
 export PIP_FIND_LINKS="$HOME/mobile-forge/dist/"
 echo "Using local wheels from: $PIP_FIND_LINKS"
+
+# ---> MODIFY THIS SECTION <---
+if [ "$CLEAN_BUILD" = true ]; then
+  echo "Performing clean build: Removing existing build directory..."
+  rm -rf "$SCRIPT_DIR/build"
+else
+  echo "Performing incremental build. Use --clean flag to remove existing build directory."
+fi
 
 # Run the command and tee output to both terminal and log file
 uv run flet build ipa \
