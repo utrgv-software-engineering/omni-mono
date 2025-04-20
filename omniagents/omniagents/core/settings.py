@@ -24,47 +24,57 @@ class SettingsScreen(ft.View):
         self.initial_values = initial_values
         self.text_fields: Dict[str, ft.TextField] = {}
 
-        # --- Create Header (same as before) ---
+        # --- Create Header ---
         settings_header = ft.Container(
             content=ft.SafeArea(
-                content=ft.Row([
-                    ft.IconButton(
-                        icon=ft.Icons.ARROW_BACK,
-                        icon_color=ft.Colors.WHITE,
-                        icon_size=20,
-                        on_click=self._go_back,
-                        style=ft.ButtonStyle(
-                            padding=8,
-                            shape=ft.CircleBorder(),
+                # --- Wrap Row in a Container and Column like app_base.py ---
+                content=ft.Column([
+                    ft.Container(
+                        content=ft.Row([
+                            ft.IconButton(
+                                icon=ft.Icons.ARROW_BACK,
+                                icon_color=ft.Colors.WHITE,
+                                icon_size=20,
+                                on_click=self._go_back,
+                                style=ft.ButtonStyle(
+                                    padding=8,
+                                    shape=ft.CircleBorder(),
+                                ),
+                                height=40,
+                                width=40,
+                            ),
+                            ft.Text("Settings", color=ft.Colors.WHITE, size=20, weight="w500"),
+                            ft.TextButton(
+                                text="Save",
+                                on_click=self._save_settings,
+                                style=ft.ButtonStyle(color=ft.Colors.WHITE),
+                            ),
+                        ],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER
                         ),
-                        height=40,
-                        width=40,
-                    ),
-                    ft.Text("Settings", color=ft.Colors.WHITE, size=20, weight="w500"),
-                    ft.TextButton(
-                        text="Save",
-                        on_click=self._save_settings,
-                        style=ft.ButtonStyle(color=ft.Colors.WHITE),
-                    ),
-                ],
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER
+                        # --- Apply height and padding to inner container ---
+                        padding=ft.padding.symmetric(horizontal=20, vertical=0),
+                        height=64,
+                        alignment=ft.alignment.center, # Center content vertically in inner container
+                    )
+                ]),
+                bottom=False
             ),
-            bottom=False
-        ),
-        gradient=ft.LinearGradient(
-            begin=ft.alignment.top_left, end=ft.alignment.bottom_right,
-            colors=[ft.Colors.INDIGO_900, self.spec.theme_color, ft.colors.with_opacity(0.8, self.spec.theme_color)],
-        ),
-        padding=ft.padding.symmetric(horizontal=20, vertical=0),
-        height=64, # Material 3 standard app bar height
-        alignment=ft.alignment.center,
-        shadow=ft.BoxShadow(
-            spread_radius=0, blur_radius=4,
-            color=ft.Colors.with_opacity(0.3, ft.Colors.BLACK),
-            offset=ft.Offset(0, 2)
-        ),
-    )
+            # --- Remove height and padding from outer container ---
+            gradient=ft.LinearGradient(
+                begin=ft.alignment.top_left, end=ft.alignment.bottom_right,
+                colors=[ft.Colors.INDIGO_900, self.spec.theme_color, ft.colors.with_opacity(0.8, self.spec.theme_color)],
+            ),
+            # padding=ft.padding.symmetric(horizontal=20, vertical=0), # Removed
+            # height=64, # Removed
+            alignment=ft.alignment.center,
+            shadow=ft.BoxShadow(
+                spread_radius=0, blur_radius=4,
+                color=ft.Colors.with_opacity(0.3, ft.Colors.BLACK),
+                offset=ft.Offset(0, 2)
+            ),
+        )
 
         # --- MOVED UI Building Logic Inside Init --- 
 
