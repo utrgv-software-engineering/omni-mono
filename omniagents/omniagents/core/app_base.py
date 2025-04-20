@@ -58,7 +58,7 @@ class MCPConnectionStatus(Enum):
 # --- Default Agent Builder (Internal) --- #
 async def _default_build_agent(
     settings: Dict[str, Any],
-    mcp_server: Optional[MCPServerSse],
+    mcp_server: Optional['MCPServerSse'], # Use string literal
     app: 'AgentApp' # Pass the app instance to access spec and callback
 ) -> AgentLike:
     """Internal default function to build the agent instance."""
@@ -206,7 +206,7 @@ class AgentApp:
         self.current_settings: Dict[str, Any] = {}
 
         # MCP State
-        self._mcp_server_instance: Optional[MCPServerSse] = None
+        self._mcp_server_instance: Optional['MCPServerSse'] = None # Use string literal
         self._mcp_connection_status: MCPConnectionStatus = MCPConnectionStatus.UNKNOWN
         self._mcp_connection_status_indicator: Optional[ft.Container] = None # UI element
 
@@ -907,6 +907,8 @@ class AgentApp:
             self._update_mcp_ui_indicator()
             try:
                 if needs_recreate or self._mcp_server_instance is None:
+                    # Dynamically import here if needed for instantiation
+                    from agents.mcp import MCPServerSse
                     self._mcp_server_instance = MCPServerSse(
                         name=f"{self.spec.name}_MCP_Server", # Generic name based on app
                         params=mcp_params,
