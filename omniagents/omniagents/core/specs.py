@@ -1,15 +1,17 @@
+from __future__ import annotations
+
 import flet as ft
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Callable, Optional, Protocol, Awaitable
 
 # Import necessary components for definitions
 from .settings import SettingField
-from agents.mcp import MCPServerSse # For type hint in build_agent
 
 # Use TYPE_CHECKING to avoid runtime circular dependency if AgentApp type hint is needed
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .app_base import AgentApp # Import only for type hinting
+    from agents.mcp import MCPServerSse # Add the import here
 
 # Define a protocol for Agent-like objects
 class AgentLike(Protocol):
