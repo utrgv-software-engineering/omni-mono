@@ -356,44 +356,47 @@ class AgentApp:
                 print(f"Error calling header_controls_builder: {e}")
 
         self.header = ft.Container(
-            content=ft.Column([
-                ft.Container(
-                    content=ft.Row([
-                        ft.Column([
-                            ft.Text(
-                                self.spec.header_title, 
-                                color=ft.Colors.WHITE, 
-                                size=20,  # Reduced from 24 to a more moderate size
-                                weight="w500",  # Keeping the weight the same
-                            ),
-                        ], spacing=2, tight=True),
-                        ft.Row(
-                            header_right_controls, 
-                            spacing=12, 
-                            alignment=ft.MainAxisAlignment.END,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        ), # Align right
-                    ], 
-                    spacing=12, 
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN, 
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                    padding=ft.padding.symmetric(horizontal=20, vertical=0),  # Reduce vertical padding
-                    height=64,  # Material 3 standard app bar height
-                    alignment=ft.alignment.center,  # Center container content vertically
-                ),
-                # Debug Banner (only if debug_flag is True)
-                *([
+            content=ft.SafeArea(
+                content=ft.Column([
                     ft.Container(
                         content=ft.Row([
-                            ft.Icon(name=ft.Icons.BUG_REPORT, color=ft.Colors.WHITE, size=16),
-                            ft.Text("Debug Mode Enabled", color=ft.Colors.WHITE, size=13),
-                        ], spacing=8),
-                        padding=ft.padding.symmetric(horizontal=20, vertical=8),  # Matched with header padding
-                        bgcolor=ft.Colors.with_opacity(0.1, ft.Colors.WHITE),
-                    )
-                  ] if self.spec.debug_flag else []
-                ),
-            ]),
+                            ft.Column([
+                                ft.Text(
+                                    self.spec.header_title, 
+                                    color=ft.Colors.WHITE, 
+                                    size=20,  # Reduced from 24 to a more moderate size
+                                    weight="w500",  # Keeping the weight the same
+                                ),
+                            ], spacing=2, tight=True),
+                            ft.Row(
+                                header_right_controls, 
+                                spacing=12, 
+                                alignment=ft.MainAxisAlignment.END,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            ), # Align right
+                        ], 
+                        spacing=12, 
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN, 
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                        padding=ft.padding.symmetric(horizontal=20, vertical=0),  # Reduce vertical padding
+                        height=64,  # Material 3 standard app bar height
+                        alignment=ft.alignment.center,  # Center container content vertically
+                    ),
+                    # Debug Banner (only if debug_flag is True)
+                    *([
+                        ft.Container(
+                            content=ft.Row([
+                                ft.Icon(name=ft.Icons.BUG_REPORT, color=ft.Colors.WHITE, size=16),
+                                ft.Text("Debug Mode Enabled", color=ft.Colors.WHITE, size=13),
+                            ], spacing=8),
+                            padding=ft.padding.symmetric(horizontal=20, vertical=8),  # Matched with header padding
+                            bgcolor=ft.Colors.with_opacity(0.1, ft.Colors.WHITE),
+                        )
+                      ] if self.spec.debug_flag else []
+                    ),
+                ]),
+                bottom=False
+            ),
             gradient=ft.LinearGradient(
                 begin=ft.alignment.top_left, end=ft.alignment.bottom_right,
                 # Use theme color in gradient
@@ -409,13 +412,13 @@ class AgentApp:
         self.new_message = ft.TextField(
             hint_text="Ask the assistant...",
             hint_style=ft.TextStyle(color=ft.Colors.BLACK45),
-            autofocus=True, shift_enter=True, min_lines=1, max_lines=5, filled=False, # Use default border
-            border=ft.InputBorder.OUTLINE, # Use outline border
-            border_radius=30, # Rounded border
+            autofocus=True, shift_enter=True, min_lines=1, max_lines=5, filled=False,
+            border=ft.InputBorder.OUTLINE,
+            border_radius=30,
             border_color=ft.Colors.BLACK26,
             focused_border_color=self.spec.theme_color,
             text_size=15, text_style=ft.TextStyle(color=ft.Colors.BLACK), cursor_color=self.spec.theme_color,
-            expand=True, content_padding=ft.padding.only(left=20, right=20, top=14, bottom=14),
+            expand=True, content_padding=ft.padding.symmetric(horizontal=24, vertical=16),
             on_submit=self._send_message_click,
         )
 
@@ -970,15 +973,12 @@ class AgentApp:
         return ft.View(
             route="/",
             controls=[
-                self.header, # Header is the first element
-                ft.SafeArea( # SafeArea wraps the content below the header
-                    content=content_below_header,
-                    expand=True,
-                )
+                self.header,
+                content_below_header,
             ],
-            spacing=12, # Prevent default spacing between header and SafeArea
+            spacing=12,
             padding=0,
-            bgcolor=ft.Colors.WHITE # Overall view background
+            bgcolor=ft.Colors.WHITE
         )
 
     def _create_settings_view(self):
