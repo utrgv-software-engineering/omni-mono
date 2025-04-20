@@ -161,22 +161,16 @@ class SettingsScreen(ft.View):
             padding=ft.padding.symmetric(horizontal=20),
         )
 
-        # Wrap the view's main content (header + scrollable list) in SafeArea
-        view_main_content = ft.Column(
-            [
-                settings_header,
-                settings_content
-            ],
-            spacing=0,
-            expand=True,
-        )
-
+        # View controls: Header followed by SafeArea wrapping the content list
         self.controls = [
+            settings_header,
             ft.SafeArea(
-                content=view_main_content,
-                expand=True
+                content=settings_content, # Only the scrollable list is inside SafeArea
+                expand=True,
             )
         ]
+        # View properties are set directly on the View instance
+        self.spacing = 0 # Prevent spacing between header and SafeArea
 
     # --- Make the save method async --- #
     async def _save_settings(self, e):

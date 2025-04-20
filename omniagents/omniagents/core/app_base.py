@@ -301,7 +301,7 @@ class AgentApp:
                 ],
                 alignment=ft.MainAxisAlignment.START,
             ),
-            margin=ft.margin.only(left=20, bottom=12),
+            # margin removed: spacing now handled by ListView
             animate=ft.animation.Animation(200, ft.AnimationCurve.EASE_IN_OUT),
             visible=False
         )
@@ -309,8 +309,9 @@ class AgentApp:
         # Chat View
         self.chat = ft.ListView(
             expand=True,
-            spacing=0,
+            spacing=20,  # increased vertical spacing for more breathing room
             auto_scroll=True,
+            padding=ft.padding.symmetric(horizontal=20),  # consistent left/right inset for all items
             # Controls added later (welcome message)
         )
 
@@ -376,7 +377,7 @@ class AgentApp:
                     spacing=12, 
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN, 
                     vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                    padding=ft.padding.symmetric(horizontal=24, vertical=0),  # Reduce vertical padding
+                    padding=ft.padding.symmetric(horizontal=20, vertical=0),  # Reduce vertical padding
                     height=64,  # Material 3 standard app bar height
                     alignment=ft.alignment.center,  # Center container content vertically
                 ),
@@ -387,7 +388,7 @@ class AgentApp:
                             ft.Icon(name=ft.Icons.BUG_REPORT, color=ft.Colors.WHITE, size=16),
                             ft.Text("Debug Mode Enabled", color=ft.Colors.WHITE, size=13),
                         ], spacing=8),
-                        padding=ft.padding.symmetric(horizontal=24, vertical=8),  # Matched with header padding
+                        padding=ft.padding.symmetric(horizontal=20, vertical=8),  # Matched with header padding
                         bgcolor=ft.Colors.with_opacity(0.1, ft.Colors.WHITE),
                     )
                   ] if self.spec.debug_flag else []
@@ -430,9 +431,7 @@ class AgentApp:
 
         # Initial Welcome Message
         welcome_msg = Message("System", self.spec.welcome_text, "system_message")
-        self.chat.controls.append(ft.Container(height=12)) # Space at top
         self.chat.controls.append(ChatMessage(welcome_msg, self.page, assistant_name=self.spec.name))
-        self.chat.controls.append(ft.Container(height=12)) # Space after welcome
 
     def _setup_routing(self):
         """Set up page routing for main view and settings."""
@@ -484,33 +483,40 @@ class AgentApp:
             user_msg_text = self.new_message.value.strip()
             user_msg = Message("You", user_msg_text, "user_message")
 
-            # Add user message bubble immediately
+            # Add user message bubble and refresh chat only
             self.chat.controls.append(ChatMessage(user_msg, self.page))
-            self.new_message.value = "" # Clear input field *before* processing
+            self.chat.update()
 
-            # Show typing indicator below the user message
+            # Clear input field immediately and update it
+            self.new_message.value = ""
+            self.new_message.update()
+
+            # Show typing indicator and refresh chat
             if self.typing_indicator not in self.chat.controls:
                 self.chat.controls.append(self.typing_indicator)
             self.typing_indicator.visible = True
-            self.page.update() # Update UI to show user message and indicator
+            self.chat.update()
 
-            # Disable input while processing
-            self.new_message.disabled = True
+            # Disable only the send button while processing
             self.send_button.disabled = True
-            self.page.update()
+            self.send_button.update()
 
             try:
                 await self._process_message(user_msg_text)
             finally:
-                # Ensure UI elements are re-enabled even if an error occurs
-                self.new_message.disabled = False
+                # Re-enable only the send button
                 self.send_button.disabled = False
-                if self.typing_indicator.visible: # Hide indicator if still visible
-                    self.typing_indicator.visible = False
+                self.send_button.update()
+
+                # Hide typing indicator and refresh chat
+                self.typing_indicator.visible = False
                 if self.typing_indicator in self.chat.controls:
                     self.chat.controls.remove(self.typing_indicator)
-                self.new_message.focus() # Return focus to input field
-                self.page.update()
+                    self.chat.update()
+
+                # Re-focus and update the text field so focus sticks
+                self.new_message.focus()
+                self.new_message.update()
 
     async def _process_message(self, user_message: str):
         """Core logic to interact with the agent and update the UI."""
@@ -649,10 +655,6 @@ class AgentApp:
             self.typing_indicator.visible = False # Ensure indicator is hidden
             if self.typing_indicator in self.chat.controls:
                 self.chat.controls.remove(self.typing_indicator)
-
-            # Add final padding if a message was generated
-            if assistant_message_control:
-                 self.chat.controls.append(ft.Container(height=12))
 
             # Update conversation history with structured items
             for item in final_items:
@@ -949,10 +951,9 @@ class AgentApp:
 
     def _create_main_view(self):
         """Creates the main chat view content."""
-        # Wrap the entire view content in a SafeArea
-        view_content = ft.Column(
+        # Content below the header (chat list and input)
+        content_below_header = ft.Column(
             [
-                self.header,
                 ft.Container(
                     content=self.chat, expand=True, bgcolor=ft.colors.with_opacity(0.98, ft.Colors.WHITE),
                 ),
@@ -962,19 +963,22 @@ class AgentApp:
                     bgcolor=ft.Colors.WHITE, border=ft.border.only(top=ft.border.BorderSide(1, ft.Colors.BLACK12)),
                 ),
             ],
-            spacing=0, # Prevent extra space from Column
+            spacing=12,
             expand=True,
         )
 
         return ft.View(
             route="/",
             controls=[
-                ft.SafeArea(
-                    content=view_content,
-                    expand=True # Make SafeArea fill the View
+                self.header, # Header is the first element
+                ft.SafeArea( # SafeArea wraps the content below the header
+                    content=content_below_header,
+                    expand=True,
                 )
             ],
-            padding=0, bgcolor=ft.Colors.WHITE # Padding handled by SafeArea
+            spacing=12, # Prevent default spacing between header and SafeArea
+            padding=0,
+            bgcolor=ft.Colors.WHITE # Overall view background
         )
 
     def _create_settings_view(self):
