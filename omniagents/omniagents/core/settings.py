@@ -2,20 +2,11 @@ import flet as ft
 from dataclasses import dataclass, field
 from typing import List, Callable, Dict, Any, Optional
 from collections import defaultdict
-
-@dataclass
-class SettingField:
-    key: str
-    label: str
-    group: Optional[str] = None
-    default: str = ""
-    secret: bool = False
-    hint: str = ""
-    # Add other potential field types/properties if needed later
-
+from .specs import AgentSpec, SettingField
 
 class SettingsScreen(ft.View):
     def __init__(self,
+                 spec: AgentSpec,
                  fields: List[SettingField],
                  initial_values: Dict[str, Any],
                  on_save: Callable[[Dict[str, Any]], None],
@@ -26,6 +17,7 @@ class SettingsScreen(ft.View):
         self.bgcolor = ft.colors.with_opacity(0.98, ft.Colors.WHITE)
         self.padding = ft.padding.all(0)
 
+        self.spec = spec
         self.fields_spec = fields
         self.on_save = on_save
         self.on_back = on_back
@@ -60,8 +52,11 @@ class SettingsScreen(ft.View):
             ),
             bottom=False
         ),
-        bgcolor=ft.Colors.INDIGO_900,
-        padding=ft.padding.symmetric(horizontal=24, vertical=0),
+        gradient=ft.LinearGradient(
+            begin=ft.alignment.top_left, end=ft.alignment.bottom_right,
+            colors=[ft.Colors.INDIGO_900, self.spec.theme_color, ft.colors.with_opacity(0.8, self.spec.theme_color)],
+        ),
+        padding=ft.padding.symmetric(horizontal=20, vertical=0),
         height=64, # Material 3 standard app bar height
         alignment=ft.alignment.center,
         shadow=ft.BoxShadow(

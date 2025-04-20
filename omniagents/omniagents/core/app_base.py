@@ -984,6 +984,7 @@ class AgentApp:
     def _create_settings_view(self):
         """Creates the settings view dynamically."""
         return SettingsScreen(
+            spec=self.spec,
             fields=self.spec.settings_fields,
             initial_values=self.current_settings,
             on_save=self._handle_settings_save,
