@@ -193,9 +193,32 @@ async def run_cli(config_path: str, args) -> None:
                 if event.type == "run_item_stream_event":
                     item = event.item
                     final_items.append(item)
-                    if item.type == "message_output_item":
+                    # Tool call: always display in CLI
+                    if item.type == "tool_call_item":
+                        inp = item.to_input_item() or {}
+                        name = inp.get("name", "<tool>")
+                        args_str = inp.get("arguments", "")
+                        # Format arguments dict if JSON
+                        try:
+                            args_dict = json.loads(args_str)
+                            formatted_args = ", ".join(
+                                f"{k}: {repr(v)}" for k, v in args_dict.items()
+                            )
+                        except Exception:
+                            formatted_args = args_str
+                        # Emit colored, bold tool call
+                        print(f"\033[36m⏺\033[0m \033[1m{name}\033[0m({formatted_args})")
+                    # Tool output: optionally debug-print
+                    elif item.type == "tool_call_output_item":
+                        if spec.debug_flag:
+                            print(f"[DEBUG] Tool output: {item.output}")
+                    # Chat message content
+                    elif item.type == "message_output_item":
                         message_output = ItemHelpers.text_message_output(item)
-                    if spec.debug_flag:
+                        if spec.debug_flag:
+                            print(f"[DEBUG] Message building: {message_output}")
+                    # Other events: debug only
+                    elif spec.debug_flag:
                         print(f"[DEBUG] Event: {event.type}, Item: {getattr(item, 'type', None)}")
 
             # Append assistant and tool items to conversation
