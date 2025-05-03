@@ -27,7 +27,7 @@ def function_tool(func: Callable) -> Callable:
 
 # --- Updated Discovery Function --- #
 
-def discover_functions_in_dir(base_dir: str = "tools") -> Dict[str, Callable]:
+def discover_functions_in_dir(base_dir: str = "tools", debug: bool = False) -> Dict[str, Callable]:
     """
     Discovers Python functions marked with the omniagents_core @function_tool
     decorator (which adds the '_is_omniagents_core_tool' attribute).
@@ -47,7 +47,8 @@ def discover_functions_in_dir(base_dir: str = "tools") -> Dict[str, Callable]:
         print(f"Warning: Tool discovery directory '{base_dir}' not found or is not a directory.")
         return {}
 
-    print(f"Starting tool discovery (looking for marker) in directory: {base_path}")
+    if debug:
+        print(f"Starting tool discovery (looking for marker) in directory: {base_path}")
 
     parent_path = str(base_path.parent)
     base_path_str = str(base_path)
@@ -74,7 +75,8 @@ def discover_functions_in_dir(base_dir: str = "tools") -> Dict[str, Callable]:
                 print(f"Warning: Skipping file {filepath} as it seems outside the expected parent directory {base_path.parent}")
                 continue
 
-            print(f"Attempting to import module: {module_path} from {filepath}")
+                if debug:
+                    print(f"Attempting to import module: {module_path} from {filepath}")
 
             try:
                 module = importlib.import_module(module_path)
@@ -82,8 +84,10 @@ def discover_functions_in_dir(base_dir: str = "tools") -> Dict[str, Callable]:
                     # --- Check for the marker attribute set by our wrapper decorator --- #
                     if hasattr(obj, '_is_omniagents_core_tool'):
                         if name in discovered_functions:
+                            # always warn on duplicate names
                             print(f"Warning: Duplicate tool name '{name}' found (from {module_path}). Overwriting previous definition.")
-                        print(f"  Discovered marked tool: {name}")
+                        if debug:
+                            print(f"  Discovered marked tool: {name}")
                         discovered_functions[name] = obj
                     # Optionally log other functions found but not marked
                     # elif inspect.isfunction(obj) and obj.__module__ == module_path and not name.startswith("_"):
@@ -101,5 +105,6 @@ def discover_functions_in_dir(base_dir: str = "tools") -> Dict[str, Callable]:
     finally:
         sys.path = original_sys_path
 
-    print(f"Completed tool discovery: Found {len(discovered_functions)} marked tools in '{base_dir}'.")
+    if debug:
+        print(f"Completed tool discovery: Found {len(discovered_functions)} marked tools in '{base_dir}'.")
     return discovered_functions 

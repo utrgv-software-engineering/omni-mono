@@ -12,7 +12,6 @@ def ibjjf_events() -> Dict[str, Any]:
         Dictionary containing all IBJJF events with id and name fields
     """
     url = "https://ibjjfrankings.com/api/brackets/events"
-    print(f"Tool: ibjjf_events called")
     try:
         response = requests.get(url)
         response.raise_for_status()
@@ -39,7 +38,6 @@ def ibjjf_brackets(event_id: str) -> Dict[str, Any]:
         Dictionary containing bracket categories (age, belt, gender, weight)
     """
     url = f"https://ibjjfrankings.com/api/brackets/categories/{event_id}"
-    print(f"Tool: ibjjf_brackets called with event_id='{event_id}'")
     try:
         response = requests.get(url)
         response.raise_for_status()
@@ -68,7 +66,6 @@ def ibjjf_competitors(link: str, age: str, gender: str, belt: str, weight: str, 
         Dictionary containing competitor information
     """
     url = "https://ibjjfrankings.com/api/brackets/competitors"
-    print(f"Tool: ibjjf_competitors called for link='{link}', age='{age}', belt='{belt}', weight='{weight}'")
 
     # Convert string "true"/"false" to boolean for the API
     gi_param = gi_competition.lower() == "true"

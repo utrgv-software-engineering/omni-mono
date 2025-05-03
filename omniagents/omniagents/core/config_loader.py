@@ -118,9 +118,11 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
     # First check the default 'tools' subdirectory
     tools_dir_path = (base_dir / "tools").resolve()
     if tools_dir_path.is_dir():
-        tools_found = discover_functions_in_dir(str(tools_dir_path))
+        # Discover tools (only verbose in debug mode)
+        tools_found = discover_functions_in_dir(str(tools_dir_path), debug_flag)
         all_discovered_functions.update(tools_found)
-        print(f"Discovered tools from 'tools' subdirectory: {tools_dir_path}")
+        if debug_flag:
+            print(f"Discovered tools from 'tools' subdirectory: {tools_dir_path}")
     
     # Then check any additional directories specified in the config
     additional_tools_dirs = config.get('additional_tools_dirs', [])
@@ -131,10 +133,12 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
     for tools_dir in additional_tools_dirs:
         additional_dir_path = (base_dir / tools_dir).resolve()
         if additional_dir_path.is_dir():
-            additional_tools = discover_functions_in_dir(str(additional_dir_path))
+            # Discover additional tools (only verbose in debug mode)
+            additional_tools = discover_functions_in_dir(str(additional_dir_path), debug_flag)
             # Update with any new tools found (existing tools take precedence)
             all_discovered_functions.update(additional_tools)
-            print(f"Discovered additional tools from: {additional_dir_path}")
+            if debug_flag:
+                print(f"Discovered additional tools from: {additional_dir_path}")
         else:
             # Show path relative to CWD for clearer error messages if run from workspace root
             try:

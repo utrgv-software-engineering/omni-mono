@@ -36,10 +36,10 @@ async def cli_approval_callback(tool_name: str, formatted_args: str) -> Approval
         try:
             choice = input("\nYour choice [1-3]: ").strip()
             if choice == "1":
-                print(f"\n\033[36m⏺\033[0m \033[1m{tool_name}\033[0m({formatted_args})")
+                # approved: continue without additional echo (CLI runner will print)
                 return True, False, None
             elif choice == "2":
-                print(f"\n\033[36m⏺\033[0m \033[1m{tool_name}\033[0m({formatted_args})")
+                # approved and always-approve: continue without additional echo
                 return True, True, None
             elif choice == "3":
                 print("\n❌ Tool call cancelled by user")
@@ -206,8 +206,8 @@ async def run_cli(config_path: str, args) -> None:
                             )
                         except Exception:
                             formatted_args = args_str
-                        # Emit colored, bold tool call
-                        print(f"\033[36m⏺\033[0m \033[1m{name}\033[0m({formatted_args})")
+                    # Emit colored, bold tool call, with leading newline for spacing
+                        print(f"\n\033[36m⏺\033[0m \033[1m{name}\033[0m({formatted_args})")
                     # Tool output: optionally debug-print
                     elif item.type == "tool_call_output_item":
                         if spec.debug_flag:
