@@ -83,6 +83,21 @@ uv run flet build ipa \
   --clear-cache \
   --verbose 2>&1 | tee "$LOG_FILE"
 
+# Patch Info.plist to allow HTTP and local network access on iOS
+PLIST_PATH="$SCRIPT_DIR/build/flutter/ios/Runner/Info.plist"
+echo "Patching Info.plist for ATS and Local Network"
+if /usr/libexec/PlistBuddy -c "Print :NSAppTransportSecurity" "$PLIST_PATH" > /dev/null 2>&1; then
+  echo "ATS already configured, skipping."
+else
+  /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$PLIST_PATH"
+  /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$PLIST_PATH"
+fi
+if /usr/libexec/PlistBuddy -c "Print :NSLocalNetworkUsageDescription" "$PLIST_PATH" > /dev/null 2>&1; then
+  echo "Local Network description already configured, skipping."
+else
+  /usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string 'This app needs to connect to a local MCP server on your LAN.'" "$PLIST_PATH"
+fi
+
 # Fix the iOS socket remoteAddress issue
 echo "Patching main.dart to fix iOS socket issue..."
 MAIN_DART_PATH="$SCRIPT_DIR/build/flutter/lib/main.dart"

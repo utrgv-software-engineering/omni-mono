@@ -1,0 +1,18 @@
+[project]
+name = "minimal-mcp"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "flet",
+    "mcp"
+] 
+
+[tool.flet]
+org = "app.indiegym"
+project = "indie-test"
+
+[tool.flet.ios]
+provisioning_profile = "Indie Ad-Hoc"
+signing_certificate = "Apple Distribution"
+team_id = "737TB2WL7V"
+bundle_id = "app.indiegym.indie-test"
