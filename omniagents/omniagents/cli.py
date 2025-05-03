@@ -25,6 +25,12 @@ def main():
     # Run command
     run_parser = subparsers.add_parser("run", help="Run an agent")
     run_parser.add_argument(
+        "--mode", "-m",
+        choices=["gui", "cli"],
+        default="gui",
+        help="Run mode: 'gui' (default) for graphical UI, 'cli' for command-line interface"
+    )
+    run_parser.add_argument(
         "--config",
         "-c",
         type=str,
@@ -59,7 +65,18 @@ def main():
     
     if args.command == "run":
         CONFIG_FILE_PATH = args.config
-        
+        mode = args.mode or "gui"
+        if mode == "cli":
+            # Run in CLI mode
+            from omniagents.cli_runner import run_cli
+            try:
+                import asyncio
+                asyncio.run(run_cli(config_path=CONFIG_FILE_PATH, args=args))
+            except KeyboardInterrupt:
+                print("\nExiting CLI mode.")
+            return
+
+        # Default GUI mode
         # --- Global Settings ---
         set_tracing_disabled(disabled=True)
         set_default_openai_api("chat_completions")

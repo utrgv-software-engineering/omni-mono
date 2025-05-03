@@ -146,7 +146,7 @@ dependencies = [
 requires-dist = [
     { name = "beautifulsoup4" },
     { name = "google-search-results" },
-    { name = "omniagents", virtual = "." },
+    { name = "omniagents", editable = "." },
     { name = "requests" },
 ]
 
@@ -326,7 +326,7 @@ wheels = [
 [[package]]
 name = "omniagents"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "flet" },
     { name = "openai-agents" },
