@@ -14,7 +14,7 @@ from typing import List, Dict, Any, Callable, Optional, Protocol, Awaitable, TYP
 from omniagents.core.ui import Message, ChatMessage, ToolCallDisplay, ToolOutputDisplay, ToolApprovalRequest # Added ToolApprovalRequest
 from omniagents.core.settings import SettingsScreen, SettingField
 from omniagents.core.storage import load_settings, save_settings
-from omniagents.core.config_loader import load_agent_spec_from_yaml # <-- Import the loader
+from omniagents.core.config_loader import load_agent_spec_from_yaml, DEFAULT_SETTINGS_FIELDS # <-- Import the loader and default settings
 from omniagents.core.specs import AgentSpec, AgentLike, SafeAgentOptions # <-- Import moved specs
 
 # Import agents types for type hinting (use Protocol for flexibility)
@@ -174,6 +174,43 @@ async def _default_build_agent(
 
 class AgentApp:
     """Base class for creating Flet Agent applications."""
+    @classmethod
+    def from_agent(
+        cls,
+        agent: AgentLike,
+        *,
+        welcome_text: Optional[str] = None,
+        prefix: Optional[str] = None,
+        safe: bool = False
+    ) -> AgentApp:
+        """
+        Construct an AgentApp directly from an existing agents.Agent (or Agent-like).
+        This builds an internal AgentSpec that wraps the given agent without YAML.
+        """
+        name = getattr(agent, 'name', 'agent')
+        # Instructions may be a callable or a string
+        instr = agent.instructions() if callable(agent.instructions) else agent.instructions
+        # Determine storage prefix
+        storage_prefix = prefix or name.lower().replace(' ', '_') + '.'
+        # Wrap the provided Agent in an async builder function
+        async def _agent_builder(settings: Dict[str, Any], mcp, app) -> AgentLike:
+            return agent
+
+        spec = AgentSpec(
+            name=name,
+            header_title=name,
+            page_title=name,
+            welcome_text=welcome_text or instr,
+            client_storage_prefix=storage_prefix,
+            get_agent_instructions=lambda: instr,
+            build_agent=_agent_builder,
+            available_tools=getattr(agent, 'tools', []),
+            model_name=getattr(agent, 'model', None),
+            use_safe_agent=safe,
+            safe_agent_options=SafeAgentOptions(skip_approvals=True),
+            settings_fields=list(DEFAULT_SETTINGS_FIELDS),  # include OpenAI settings by default
+        )
+        return cls(spec=spec)
     # Modify init to accept config_path OR spec
     def __init__(self, spec: Optional[AgentSpec] = None, config_path: Optional[str] = None):
 
@@ -215,6 +252,28 @@ class AgentApp:
             "active_displays": {}, # Maps approval_id -> UI control
             "pending_futures": {}  # Maps approval_id -> asyncio.Future
         }
+    def run(self, mode: str = "gui", **ft_kwargs):
+        """
+        Convenience method to start the agent app.
+        mode: "gui" for Flet-based GUI (only supported).
+        Additional keyword args are passed to ft.app.
+        """
+        if mode == "cli":
+            # Run in CLI mode via the CLI runner
+            from omniagents.cli_runner import run_cli
+            import asyncio, argparse
+            # Build minimal args for overrides (all defaults)
+            cli_args = argparse.Namespace()
+            # Execute CLI loop with in-memory spec
+            asyncio.run(run_cli(config_path=None, args=cli_args, spec=self.spec))
+            return
+        elif mode == "gui":
+            # Ensure OpenAI settings for GUI mode
+            set_tracing_disabled(disabled=True)
+            set_default_openai_api("chat_completions")
+            ft.app(target=self.main, **ft_kwargs)
+        else:
+            raise ValueError(f"Unsupported run mode: {mode}. Choose 'gui' or 'cli'.")
 
     async def main(self, page: ft.Page):
         """Main entry point for the Flet application."""

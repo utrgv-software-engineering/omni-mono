@@ -7,9 +7,7 @@ from datetime import datetime
 from typing import List, Optional, Tuple, Awaitable
 
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
-
-from agents import Runner, RunConfig, set_default_openai_client, set_tracing_disabled, ItemHelpers
+from agents import Runner, RunConfig, ItemHelpers
 from agents.mcp import MCPServerSse
 
 from omniagents.core.config_loader import load_agent_spec_from_yaml
@@ -51,7 +49,11 @@ async def cli_approval_callback(tool_name: str, formatted_args: str) -> Approval
             return False, False, "Operation cancelled by user"
 
 
-async def run_cli(config_path: str, args) -> None:
+async def run_cli(
+    config_path: str | None = None,
+    args=None,
+    spec=None
+) -> None:
     """
     Run an OmniAgents agent in CLI mode using the given YAML config and command-line args.
     """
@@ -61,8 +63,18 @@ async def run_cli(config_path: str, args) -> None:
     except Exception:
         pass
 
-    # Load spec from YAML
-    spec = load_agent_spec_from_yaml(config_path)
+    # Load environment variables
+    try:
+        load_dotenv()
+    except Exception:
+        pass
+
+    # Determine spec: use provided in-memory spec or load from YAML
+    if spec is None:
+        if not config_path:
+            print("Error: config_path is required when spec is not provided.")
+            sys.exit(1)
+        spec = load_agent_spec_from_yaml(config_path)
 
     # Build settings dict from environment or defaults
     settings = {}
@@ -70,20 +82,21 @@ async def run_cli(config_path: str, args) -> None:
         env_val = os.getenv(field.key.upper())
         settings[field.key] = env_val if env_val not in (None, "") else field.default
 
-    # Apply CLI overrides
-    spec.debug_flag = getattr(args, "debug", False)
-    if getattr(args, "no_approval", False):
-        spec.use_safe_agent = False
-    if getattr(args, "skip_approvals", False):
-        spec.safe_agent_options.skip_approvals = True
-    if getattr(args, "no_halt", False):
-        spec.safe_agent_options.halt_on_rejection = False
-    if getattr(args, "pre_approve", None):
-        pre = args.pre_approve.split(",")
-        spec.safe_agent_options.safe_tool_names.extend([t.strip() for t in pre if t.strip()])
-    if getattr(args, "safe_patterns", None):
-        pats = args.safe_patterns.split(",")
-        spec.safe_agent_options.safe_tool_patterns.extend([p.strip() for p in pats if p.strip()])
+    # Apply CLI overrides if args provided
+    spec.debug_flag = getattr(args, "debug", False) if args is not None else spec.debug_flag
+    if args is not None:
+        if getattr(args, "no_approval", False):
+            spec.use_safe_agent = False
+        if getattr(args, "skip_approvals", False):
+            spec.safe_agent_options.skip_approvals = True
+        if getattr(args, "no_halt", False):
+            spec.safe_agent_options.halt_on_rejection = False
+        if getattr(args, "pre_approve", None):
+            pre = args.pre_approve.split(",")
+            spec.safe_agent_options.safe_tool_names.extend([t.strip() for t in pre if t.strip()])
+        if getattr(args, "safe_patterns", None):
+            pats = args.safe_patterns.split(",")
+            spec.safe_agent_options.safe_tool_patterns.extend([p.strip() for p in pats if p.strip()])
 
     # Configure OpenAI client
     api_base = settings.get("openai_api_base")
@@ -91,9 +104,6 @@ async def run_cli(config_path: str, args) -> None:
     if not api_key:
         print("Error: OPENAI_API_KEY is required for CLI mode.")
         sys.exit(1)
-    client = AsyncOpenAI(base_url=api_base, api_key=api_key)
-    set_default_openai_client(client=client, use_for_tracing=False)
-    set_tracing_disabled(disabled=True)
 
     # Ensure model_name is set on spec
     if not spec.model_name:

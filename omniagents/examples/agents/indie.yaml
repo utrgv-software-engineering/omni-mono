@@ -2,7 +2,7 @@ name: Indie
 welcome_text: "👋 Welcome to 80/20 Jiu-Jitsu! I'm Indie, your gym assistant. How can I assist you today?"
 client_storage_prefix: mcp_flet_agent.
 
-instructions_file: instructions/indie_instructions.md
+instructions_file: ,,/instructions/indie.md
 tools: []
 model_name: gpt-4o
 

@@ -5,7 +5,7 @@ description = "OmniAgents"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "flet",
+    "flet[all]",
     "openai-agents==0.0.9",
     "python-dotenv",
     "pydantic-core==2.33.0",

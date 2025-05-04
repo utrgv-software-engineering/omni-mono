@@ -5,10 +5,7 @@ from dotenv import load_dotenv
 
 # --- Core Framework Imports --- #
 from omniagents.core.app_base import AgentApp
-from agents import (
-    set_default_openai_api,
-    set_tracing_disabled
-)
+# Note: All OpenAI client configuration (API key, base URL, tracing) should be done by the user script or environment.
 from omniagents.core.config_loader import load_agent_spec_from_yaml
 
 def main():
@@ -77,9 +74,6 @@ def main():
             return
 
         # Default GUI mode
-        # --- Global Settings ---
-        set_tracing_disabled(disabled=True)
-        set_default_openai_api("chat_completions")
         
         try:
             # Load AgentSpec from YAML via AgentApp

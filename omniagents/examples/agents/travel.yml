@@ -1,6 +1,6 @@
 name: Travel Agent
 model: gpt-4o
-instructions_file: travel_agent.md
+instructions_file: ../instructions/travel.md
 tools:
   - web_fetch
   - web_search

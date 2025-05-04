@@ -9,9 +9,20 @@ from .settings import SettingField
 from .tooling import discover_functions_in_dir
 
 DEFAULT_SETTINGS_FIELDS = [
-    SettingField(key="openai_api_base", label="OpenAI API Base URL", group="OpenAI API", default="https://api.openai.com/v1", hint="e.g., https://api.openai.com/v1"),
-    SettingField(key="openai_api_key", label="OpenAI API Key", group="OpenAI API", secret=True, hint="Required"),
-    SettingField(key="model_name", label="Model Name", group="OpenAI API", default="gpt-4o", hint="e.g., gpt-4o, gpt-3.5-turbo"),
+    SettingField(
+        key="openai_api_base",
+        label="OpenAI API Base URL",
+        group="OpenAI API",
+        default="https://api.openai.com/v1",
+        hint="e.g., https://api.openai.com/v1",
+    ),
+    SettingField(
+        key="openai_api_key",
+        label="OpenAI API Key",
+        group="OpenAI API",
+        secret=True,
+        hint="Required",
+    ),
 ]
 
 DEFAULT_MCP_SETTINGS_FIELDS = [
