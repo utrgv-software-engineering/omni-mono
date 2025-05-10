@@ -48,6 +48,51 @@ def build_app(config_path: str, auth_token: str | None = None) -> FastAPI:  # no
     class AgentService(RpcMethodsBase):
         """JSON-RPC methods available to the client."""
 
+        # --------------------------------------------------------------
+        #  Tool-approval request / response helper state
+        # --------------------------------------------------------------
+        _pending_approvals: dict[str, asyncio.Future] = {}
+
+        # ------------------------------------------------------------------
+        #  RPC method invoked by the *client* when the user answers the
+        #  approval prompt.  Resolves the Future we saved when we asked.
+        # ------------------------------------------------------------------
+
+        async def tool_approval_response(
+            self,
+            approval_id: str,
+            approved: bool,
+            always_approve: bool = False,
+            error_message: str | None = None,
+        ):  # noqa: D401
+            fut = self._pending_approvals.pop(approval_id, None)
+            if fut and not fut.done():
+                fut.set_result((approved, always_approve, error_message))
+            return True
+
+        # ------------------------------------------------------------------
+        #  Callback passed to SafeAgent: emits a *request* to the client and
+        #  waits for the matching response.
+        # ------------------------------------------------------------------
+
+        async def _request_tool_approval(self, tool_name: str, formatted_args: str):  # noqa: D401
+            approval_id = uuid.uuid4().hex
+
+            # Fire a notification – the client will present the UI and reply
+            await self.channel.async_call(
+                "tool_approval_request",
+                args={
+                    "approval_id": approval_id,
+                    "tool": tool_name,
+                    "arguments": formatted_args,
+                },
+            )
+
+            # Wait for user decision
+            fut: asyncio.Future = asyncio.get_event_loop().create_future()
+            self._pending_approvals[approval_id] = fut
+            return await fut  # -> (approved, always_approve, error_message)
+
         async def start_run(self, prompt: str, session_id: str | None = None):  # noqa: D401
             sess: Session = sm.get_or_create(session_id)
             if sess.current_task and not sess.current_task.done():
@@ -55,7 +100,9 @@ def build_app(config_path: str, auth_token: str | None = None) -> FastAPI:  # no
 
             # Build (or reuse) agent for this session
             if not hasattr(sess, "agent"):
-                agent = await _default_build_agent({}, None, SimpleNamespace(spec=spec))
+                # Build a stub *app* object that provides the approval callback
+                stub_app = SimpleNamespace(spec=spec, _request_tool_approval=self._request_tool_approval)
+                agent = await _default_build_agent({}, None, stub_app)
                 sess.agent = agent
             else:
                 agent = sess.agent

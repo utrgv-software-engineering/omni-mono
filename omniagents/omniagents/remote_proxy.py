@@ -205,6 +205,9 @@ def _map_notification_to_event(method: str, payload: dict[str, Any]):  # noqa: D
     elif method == "message_output":
         item = _MessageOutputItem(payload.get("content", ""))
         return _new_item_event("message_output_created", item)
+    elif method == "tool_approval_request":
+        # Pass raw payload; AgentApp will manage UI and response
+        return _new_item_event("tool_approval_request", payload)
     elif method == "token":
         # Could map to raw_response_event, but AgentApp ignores tokens for now
         return None
@@ -243,6 +246,10 @@ class _ClientEventMethods(RpcMethodsBase):
 
     async def run_end(self, **params):
         return await self._push("run_end", **params)
+
+    # ----- new: tool approval request notification from server -----
+    async def tool_approval_request(self, **params):
+        return await self._push("tool_approval_request", **params)
 
 # ----------------------------------------------------------------------
 # Utility to extract run_id from mixed response shapes
