@@ -13,7 +13,7 @@ additional_tools_dirs:
   - "../tools/shared"
   - "../tools/ibjjf"
 
-use_safe_agent: false
+use_safe_agent: true
 
 uses_mcp: false
 

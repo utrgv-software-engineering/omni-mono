@@ -82,6 +82,10 @@ class AgentSpec:
     page_title_suffix: str = ""
     theme_color: str = ft.Colors.BLUE
 
+    # --- Remote Agent (optional) --- #
+    remote_ws_url: str | None = None  # If provided, UI/CLI will connect to this URL instead of building local agent
+    remote_auth_token_key: str | None = None  # Name of env var holding the bearer token (optional)
+
     # --- Optional App-Specific Customization ---
     header_controls_builder: Optional[Callable[['AgentApp'], List[ft.Control]]] = None
     cleanup_handler: Optional[Callable[[], Awaitable[None]]] = None 

@@ -600,22 +600,35 @@ class AgentApp:
             # --- Build or reuse agent instance --- 
             if self.agent_instance is None:
                 print("Building agent instance...")
-                # --- Use default builder if spec.build_agent is None --- #
-                if self.spec.build_agent is None:
-                    print("Using internal agent builder...")
-                    builder_func = _default_build_agent
+                # --- Remote AgentProxy path ---
+                if self.spec.remote_ws_url:
+                    try:
+                        from omniagents.remote_proxy import RemoteAgentProxy
+                    except ImportError as e:
+                        raise RuntimeError(f"Remote mode requested but remote_proxy could not be imported: {e}")
+
+                    token = os.getenv(self.spec.remote_auth_token_key) if self.spec.remote_auth_token_key else None
+                    self.agent_instance = RemoteAgentProxy(self.spec.remote_ws_url, token)
+                    print(f"RemoteAgentProxy configured for {self.spec.remote_ws_url}")
                 else:
-                    # Use the builder provided in the spec (legacy/custom mode)
-                    print("Using custom agent builder provided in AgentSpec...")
-                    builder_func = self.spec.build_agent
+                    # --- Use default builder if spec.build_agent is None --- #
+                    if self.spec.build_agent is None:
+                        print("Using internal agent builder...")
+                        builder_func = _default_build_agent
+                    else:
+                        # Use the builder provided in the spec (legacy/custom mode)
+                        print("Using custom agent builder provided in AgentSpec...")
+                        builder_func = self.spec.build_agent
 
-                # --- Call the selected builder --- #
-                self.agent_instance = await builder_func(
-                    self.current_settings,
-                    self._mcp_server_instance,
-                    self # Pass the app instance itself
-                )
+                    # --- Call the selected builder --- #
+                    self.agent_instance = await builder_func(
+                        self.current_settings,
+                        self._mcp_server_instance,
+                        self # Pass the app instance itself
+                    )
 
+                # After either remote or local path ensure instance exists
+                
                 if not self.agent_instance:
                     raise ValueError("Agent builder function failed to return an agent instance.")
                 print(f"Agent instance ready: {type(self.agent_instance)}")
@@ -629,7 +642,11 @@ class AgentApp:
             agent_input = self.conversation + [{"role": "user", "content": user_message}]
 
             # Run the agent stream
-            result = Runner.run_streamed(self.agent_instance, agent_input)
+            if self.spec.remote_ws_url and hasattr(self.agent_instance, "run_streamed"):
+                # Use the proxy's built-in streamed runner (bypasses local Runner logic)
+                result = self.agent_instance.run_streamed(agent_input)
+            else:
+                result = Runner.run_streamed(self.agent_instance, agent_input)
 
             message_output = ""
             final_items = []

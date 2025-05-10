@@ -139,24 +139,35 @@ async def run_cli(
         from agents import Agent
         from agents.model_settings import ModelSettings
 
-        instructions = spec.get_agent_instructions()
-        tools = spec.available_tools
+        # --- Remote Agent Handling ---
+        if spec.remote_ws_url:
+            from omniagents.remote_proxy import RemoteAgentProxy
+            token = os.getenv(spec.remote_auth_token_key) if spec.remote_auth_token_key else None
+            base_agent = RemoteAgentProxy(spec.remote_ws_url, token)
+            tools = []
+            instructions = ""
+        else:
+            instructions = spec.get_agent_instructions()
+            tools = spec.available_tools
         mcp_list = [mcp_server] if mcp_server else []
         # ModelSettings: use tool_choice when tools are available
         if tools:
             model_settings = ModelSettings(tool_choice="auto")
         else:
             model_settings = ModelSettings()
-        base_agent = Agent(
-            name=spec.name,
-            tools=tools,
-            instructions=instructions,
-            model=spec.model_name,
-            model_settings=model_settings,
-            mcp_servers=mcp_list,
-        )
+        if not spec.remote_ws_url:
+            base_agent = Agent(
+                name=spec.name,
+                tools=tools,
+                instructions=instructions,
+                model=spec.model_name,
+                model_settings=model_settings,
+                mcp_servers=mcp_list,
+            )
         # Wrap with SafeAgent if configured
-        if spec.use_safe_agent:
+        if spec.remote_ws_url:
+            agent = base_agent  # Remote proxy, no safe wrapper
+        elif spec.use_safe_agent:
             wrapped_tools = await base_agent.get_all_tools()
             agent = SafeAgent(
                 name=base_agent.name,

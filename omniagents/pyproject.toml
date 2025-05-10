@@ -10,7 +10,10 @@ dependencies = [
     "python-dotenv",
     "pydantic-core==2.33.0",
     "pydantic==2.11.1",
-    "PyYAML"
+    "PyYAML",
+    "fastapi[all]>=0.115.12",
+    "fastapi-websocket-rpc>=0.1.28",
+    "uvicorn>=0.34.1",
 ]
 
 [project.scripts]

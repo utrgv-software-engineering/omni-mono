@@ -106,6 +106,14 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
     if not isinstance(config, dict):
         raise ValueError(f"Invalid YAML format in {config_file.resolve()}. Expected a dictionary (key-value pairs).")
 
+    # --- Remote Agent preliminary ---
+    remote_ws_url: str | None = None
+    remote_token_env: str | None = None
+    if isinstance(config.get('remote_agent'), dict):
+        remote_cfg_tmp = config['remote_agent']
+        remote_ws_url = remote_cfg_tmp.get('ws_url')
+        remote_token_env = remote_cfg_tmp.get('auth_token_env')
+
     # --- Extract and Derive Basic Info ---
     agent_name = config.get('name', 'Unnamed Agent')
     header_title = config.get('header_title', agent_name)
@@ -119,8 +127,12 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
     model_name_from_config = config.get('model') # Get model name from YAML
 
     # --- Agent Instructions ---
-    base_dir = config_file.parent # Get the directory containing the YAML file
-    get_instructions_func = _load_instructions(config, base_dir) # Pass base_dir
+    base_dir = config_file.parent
+    if remote_ws_url:
+        # When using a remote agent we don't need local instructions
+        get_instructions_func = lambda: ""
+    else:
+        get_instructions_func = _load_instructions(config, base_dir)
 
     # --- Tool Discovery and Selection ---
     # Always check the 'tools' subdirectory first, then any additional directories
@@ -168,11 +180,12 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
         print(f"Warning: 'tools' key in {config_path} should be a list of tool names. Ignoring.")
         activated_tool_names = []
 
-    for tool_name in activated_tool_names:
-        if tool_name in all_discovered_functions:
-            selected_tool_functions.append(all_discovered_functions[tool_name])
-        else:
-            missing_tools.append(tool_name)
+    if not remote_ws_url:
+        for tool_name in activated_tool_names:
+            if tool_name in all_discovered_functions:
+                selected_tool_functions.append(all_discovered_functions[tool_name])
+            else:
+                missing_tools.append(tool_name)
 
     if missing_tools:
         # Updated error message
@@ -269,8 +282,8 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
         # Agent Config
         get_agent_instructions=get_instructions_func,
         build_agent=build_agent_func, # Defer to internal builder
-        available_tools=selected_tool_functions, # Pass the discovered & selected functions
-        model_name=model_name_from_config, # Pass model name from YAML
+        available_tools=selected_tool_functions if not remote_ws_url else [],
+        model_name=model_name_from_config if not remote_ws_url else None,
 
         # Agent Safety Config
         use_safe_agent=use_safe,
@@ -288,6 +301,10 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
         debug_flag=debug_flag,
         page_title_suffix=page_title_suffix,
         theme_color=theme_color,
+
+        # Remote agent metadata
+        remote_ws_url=remote_ws_url,
+        remote_auth_token_key=remote_token_env,
 
         # Optional Customizations (Not typically set via simple YAML)
         header_controls_builder=None,

@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+import os
+import asyncio
+import uuid
+from types import SimpleNamespace
+from typing import Optional
+
+from fastapi import FastAPI, WebSocket, Depends, HTTPException, status
+from fastapi_websocket_rpc import RpcMethodsBase, WebsocketRPCEndpoint
+
+from omniagents.core.config_loader import load_agent_spec_from_yaml
+from omniagents.core.app_base import _default_build_agent
+
+from .sessions import sm, Session
+from .runner_bridge import stream_agent
+
+__all__ = ["build_app"]
+
+# ------------------------------------------------------------------
+# Optional verbose logging controlled by env var
+# ------------------------------------------------------------------
+DEBUG_SERVER = os.getenv("OMNIAGENTS_SERVER_DEBUG", "0") in ("1", "true", "True")
+
+def _token_dependency(required_token: Optional[str] = None):  # noqa: D401
+    """Return a FastAPI dependency that validates the ?token param."""
+
+    async def _verify_token(websocket: WebSocket):  # noqa: D401
+        if required_token:
+            if websocket.query_params.get("token") != required_token:
+                # Close immediately with 4403 (custom) if invalid
+                await websocket.close(code=4403)
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid token")
+
+    return Depends(_verify_token)
+
+
+def build_app(config_path: str, auth_token: str | None = None) -> FastAPI:  # noqa: D401
+    """Return a fully configured FastAPI app exposing the agent via RPC."""
+    spec = load_agent_spec_from_yaml(config_path)
+
+    app = FastAPI()
+
+    # ------------------------------------------------------------------
+    # Register RPC endpoint at "/ws" with optional token dependency
+    # ------------------------------------------------------------------
+
+    class AgentService(RpcMethodsBase):
+        """JSON-RPC methods available to the client."""
+
+        async def start_run(self, prompt: str, session_id: str | None = None):  # noqa: D401
+            sess: Session = sm.get_or_create(session_id)
+            if sess.current_task and not sess.current_task.done():
+                raise RuntimeError("Run already active in this session")
+
+            # Build (or reuse) agent for this session
+            if not hasattr(sess, "agent"):
+                agent = await _default_build_agent({}, None, SimpleNamespace(spec=spec))
+                sess.agent = agent
+            else:
+                agent = sess.agent
+
+            async def _worker():
+                try:
+                    await stream_agent(agent, prompt, sess, self.channel)
+                finally:
+                    # Inform client the run finished
+                    await self.channel.async_call(
+                        "run_end", args={"run_id": asyncio.current_task().get_name(), "end_reason": "completed"}
+                    )
+
+            task_name = f"run_{uuid.uuid4().hex}"
+            if DEBUG_SERVER:
+                print(f"[srv] ★ start_run RPC  prompt={prompt[:80]!r} session_id_in={session_id} -> sess={sess.id[:8]} run_id={task_name}")
+            task = asyncio.create_task(_worker(), name=task_name)
+            sm.bind_task(task, sess)
+            return {"run_id": task_name, "session_id": sess.id}
+
+        async def stop_run(self, run_id: str):  # noqa: D401
+            if DEBUG_SERVER:
+                print(f"[srv] ★ stop_run  run_id={run_id}")
+            return sm.cancel(run_id)
+
+        async def send_user_message(self, run_id: str, content: str):  # noqa: D401
+            if DEBUG_SERVER:
+                print(f"[srv] ★ send_user_message  run_id={run_id} content={content[:80]!r}")
+            sess = sm.get_by_run_id(run_id)
+            if not sess:
+                raise RuntimeError("Unknown run_id")
+            sess.history.append({"role": "user", "content": content})
+            # No immediate return value; next assistant chunk will arrive via stream.
+
+    endpoint = WebsocketRPCEndpoint(AgentService())
+    # Attach route with dependency if token is set
+    if auth_token:
+        endpoint.register_route(app, "/ws", dependencies=[_token_dependency(auth_token)])
+    else:
+        endpoint.register_route(app, "/ws")
+    return app 

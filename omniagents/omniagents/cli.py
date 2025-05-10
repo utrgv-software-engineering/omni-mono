@@ -58,6 +58,14 @@ def main():
         help="Output Python file path."
     )
     
+    # Server command (JSON-RPC over WebSocket)
+    serve_parser = subparsers.add_parser("server", help="Run agent as RPC WebSocket server")
+    serve_parser.add_argument("--config", "-c", required=True, type=str, help="Path to the agent configuration YAML file.")
+    serve_parser.add_argument("--host", default="0.0.0.0", help="Host interface to bind (default 0.0.0.0)")
+    serve_parser.add_argument("--port", "-p", type=int, default=8000, help="Port to listen on (default 8000)")
+    serve_parser.add_argument("--auth-token", dest="auth_token", default=None, help="Bearer token to require from clients (?token=XYZ)")
+    serve_parser.add_argument("--reload", action="store_true", help="Auto-reload server when code changes")
+    
     args = parser.parse_args()
     
     if args.command == "run":
@@ -114,6 +122,20 @@ def main():
             print(f"Standalone Python module created at: {args.output}")
         except Exception as e:
             print(f"Error saving agent spec: {e}")
+            import traceback; traceback.print_exc()
+            sys.exit(1)
+    elif args.command == "server":
+        try:
+            from omniagents.server.app import build_app
+            import uvicorn
+            print(f"Starting OmniAgents RPC server on {args.host}:{args.port} (config: {args.config})")
+            app = build_app(args.config, auth_token=args.auth_token)
+            uvicorn.run(app, host=args.host, port=args.port, reload=args.reload)
+        except ImportError as e:
+            print(f"Error: Required module not found: {e}. Install dependencies with 'pip install fastapi[all] fastapi-websocket-rpc uvicorn'.")
+            sys.exit(1)
+        except Exception as e:
+            print(f"Failed to start server: {e}")
             import traceback; traceback.print_exc()
             sys.exit(1)
     else:
