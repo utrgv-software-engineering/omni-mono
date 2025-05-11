@@ -328,7 +328,7 @@ class AgentApp:
         self.page.window_width = 900
         self.page.window_height = 750
         self.page.padding = 0
-        self.page.bgcolor = ft.colors.with_opacity(0.98, ft.Colors.WHITE)
+        self.page.bgcolor = ft.Colors.with_opacity(0.98, ft.Colors.WHITE)
         self.page.fonts = {
             "SF Pro": "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap",
         }
@@ -474,7 +474,7 @@ class AgentApp:
             gradient=ft.LinearGradient(
                 begin=ft.alignment.top_left, end=ft.alignment.bottom_right,
                 # Use theme color in gradient
-                colors=[ft.Colors.INDIGO_900, self.spec.theme_color, ft.colors.with_opacity(0.8, self.spec.theme_color)],
+                colors=[ft.Colors.INDIGO_900, self.spec.theme_color, ft.Colors.with_opacity(0.8, self.spec.theme_color)],
             ),
             shadow=ft.BoxShadow(
                 spread_radius=0, blur_radius=4,  # Material 3 standard elevation
@@ -1078,7 +1078,7 @@ class AgentApp:
         content_below_header = ft.Column(
             [
                 ft.Container(
-                    content=self.chat, expand=True, bgcolor=ft.colors.with_opacity(0.98, ft.Colors.WHITE),
+                    content=self.chat, expand=True, bgcolor=ft.Colors.with_opacity(0.98, ft.Colors.WHITE),
                 ),
                 ft.Container(
                     content=ft.Row([self.new_message, self.send_button], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),

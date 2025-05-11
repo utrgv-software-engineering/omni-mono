@@ -121,7 +121,7 @@ class ChatMessage(ft.Container):
             # Build the user bubble
             bubble = ft.Container(
                 content=ft.Text(message.text, selectable=True, size=14, color=ft.Colors.BLACK87),
-                bgcolor=ft.colors.with_opacity(0.05, ft.colors.BLACK),
+                bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.BLACK),
                 border_radius=18,
                 padding=ft.padding.symmetric(horizontal=16, vertical=10),
             )
@@ -212,7 +212,7 @@ class ToolApprovalRequest(ft.Container):
                     text="Reject",
                     on_click=on_reject,
                     style=ft.ButtonStyle(
-                        color=ft.colors.BLACK54,
+                        color=ft.Colors.BLACK54,
                     ),
                 ),
                 ft.TextButton(

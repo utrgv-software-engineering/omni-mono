@@ -14,7 +14,7 @@ class SettingsScreen(ft.View):
         super().__init__()
 
         self.route = "/settings"
-        self.bgcolor = ft.colors.with_opacity(0.98, ft.Colors.WHITE)
+        self.bgcolor = ft.Colors.with_opacity(0.98, ft.Colors.WHITE)
         self.padding = ft.padding.all(0)
 
         self.spec = spec
@@ -64,7 +64,7 @@ class SettingsScreen(ft.View):
             # --- Remove height and padding from outer container ---
             gradient=ft.LinearGradient(
                 begin=ft.alignment.top_left, end=ft.alignment.bottom_right,
-                colors=[ft.Colors.INDIGO_900, self.spec.theme_color, ft.colors.with_opacity(0.8, self.spec.theme_color)],
+                colors=[ft.Colors.INDIGO_900, self.spec.theme_color, ft.Colors.with_opacity(0.8, self.spec.theme_color)],
             ),
             # padding=ft.padding.symmetric(horizontal=20, vertical=0), # Removed
             # height=64, # Removed
