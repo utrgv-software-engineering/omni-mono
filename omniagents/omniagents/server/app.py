@@ -5,6 +5,7 @@ import asyncio
 import uuid
 from types import SimpleNamespace
 from typing import Optional
+import json  # local to avoid top-level dep
 
 from fastapi import FastAPI, WebSocket, Depends, HTTPException, status
 from fastapi_websocket_rpc import RpcMethodsBase, WebsocketRPCEndpoint
@@ -136,6 +137,19 @@ def build_app(config_path: str, auth_token: str | None = None) -> FastAPI:  # no
                 raise RuntimeError("Unknown run_id")
             sess.history.append({"role": "user", "content": content})
             # No immediate return value; next assistant chunk will arrive via stream.
+
+        # ------------------------------------------------------------------
+        #  NEW: expose conversation history to clients ---------------------
+        # ------------------------------------------------------------------
+        async def get_session_history(self, session_id: str):  # noqa: D401
+            """Return JSON-serialisable history for *session_id*."""
+            sess: Session = sm.get_or_create(session_id)
+            # Serialise to strict JSON so clients can parse reliably
+            try:
+                return json.dumps(sess.history)
+            except TypeError:
+                # Fallback: return string repr as last resort
+                return str(sess.history)
 
     endpoint = WebsocketRPCEndpoint(AgentService())
     # Attach route with dependency if token is set
