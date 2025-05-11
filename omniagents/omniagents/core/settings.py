@@ -1,4 +1,5 @@
 import flet as ft
+from flet import animation as animation  # ensure ft.animation module is loaded
 from dataclasses import dataclass, field
 from typing import List, Callable, Dict, Any, Optional
 from collections import defaultdict

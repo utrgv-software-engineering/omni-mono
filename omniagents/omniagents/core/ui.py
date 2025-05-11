@@ -1,4 +1,5 @@
 import flet as ft
+from flet import animation as animation  # ensure ft.animation submodule loaded
 from typing import Dict, Optional
 
 # --- Shared Message Class ---

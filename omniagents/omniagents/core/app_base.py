@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import flet as ft
+from flet import animation as animation  # ensure ft.animation submodule is loaded
 import asyncio
 import json
 import os
