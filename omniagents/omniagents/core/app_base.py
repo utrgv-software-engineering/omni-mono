@@ -208,7 +208,7 @@ class AgentApp:
             available_tools=getattr(agent, 'tools', []),
             model_name=getattr(agent, 'model', None),
             use_safe_agent=safe,
-            safe_agent_options=SafeAgentOptions(skip_approvals=True),
+            safe_agent_options=SafeAgentOptions(skip_approvals=False),
             settings_fields=list(DEFAULT_SETTINGS_FIELDS),  # include OpenAI settings by default
         )
         return cls(spec=spec)
