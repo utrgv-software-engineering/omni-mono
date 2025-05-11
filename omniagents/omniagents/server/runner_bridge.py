@@ -22,16 +22,28 @@ def _stream_event_payload(item, run_id: str):
     if item.type == "tool_call_item":
         inp = item.to_input_item() or {}
         name = inp.get("name", "<tool>")
+        call_id = inp.get("call_id")
         return "tool_called", {
             "run_id": run_id,
             "tool": name,
-            "input": inp.get("arguments", "")
+            "input": inp.get("arguments", ""),
+            **({"call_id": call_id} if call_id else {})
         }
     elif item.type == "tool_call_output_item":
+        # Extract call_id if present on the underlying raw_item / input item
+        call_id = None
+        try:
+            out_dict = item.to_input_item() if hasattr(item, "to_input_item") else {}
+            if isinstance(out_dict, dict):
+                call_id = out_dict.get("call_id")
+        except Exception:
+            pass
+
         return "tool_result", {
             "run_id": run_id,
             "tool": getattr(item, "name", "<tool>"),
-            "output": str(getattr(item, "output", ""))
+            "output": str(getattr(item, "output", "")),
+            **({"call_id": call_id} if call_id else {})
         }
     elif item.type == "message_output_item":
         text = ItemHelpers.text_message_output(item)

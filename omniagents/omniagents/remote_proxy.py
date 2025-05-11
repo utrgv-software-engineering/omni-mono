@@ -149,24 +149,32 @@ def _new_item_event(event_name: str, item: Any) -> RunItemStreamEvent:  # type: 
 
 
 class _ToolCallItem:  # noqa: D401
-    def __init__(self, name: str, arguments: str):
+    def __init__(self, name: str, arguments: str, call_id: str | None = None):
         self.type = "tool_call_item"
         self.name = name
         self.arguments = arguments
+        self.call_id = call_id
 
     # AgentApp expects this helper for conversation history updates
     def to_input_item(self):  # noqa: D401
-        return {"name": self.name, "arguments": self.arguments, "role": "assistant", "type": "tool_call"}
+        base = {"name": self.name, "arguments": self.arguments, "role": "assistant", "type": "tool_call"}
+        if self.call_id:
+            base["call_id"] = self.call_id
+        return base
 
 
 class _ToolCallOutputItem:  # noqa: D401
-    def __init__(self, name: str, output: str):
+    def __init__(self, name: str, output: str, call_id: str | None = None):
         self.type = "tool_call_output_item"
         self.name = name
         self.output = output
+        self.call_id = call_id
 
     def to_input_item(self):  # noqa: D401 – rarely used
-        return {"name": self.name, "output": self.output, "role": "assistant", "type": "tool_call_output"}
+        base = {"name": self.name, "output": self.output, "role": "assistant", "type": "tool_call_output"}
+        if self.call_id:
+            base["call_id"] = self.call_id
+        return base
 
 
 class _MessageOutputItem:  # noqa: D401
@@ -197,10 +205,10 @@ class _MessageOutputItem:  # noqa: D401
 
 def _map_notification_to_event(method: str, payload: dict[str, Any]):  # noqa: D401
     if method == "tool_called":
-        item = _ToolCallItem(payload["tool"], payload.get("input", "{}"))
+        item = _ToolCallItem(payload.get("tool"), payload.get("input", "{}"), payload.get("call_id"))
         return _new_item_event("tool_called", item)
     elif method == "tool_result":
-        item = _ToolCallOutputItem(payload["tool"], payload.get("output", ""))
+        item = _ToolCallOutputItem(payload.get("tool"), payload.get("output", ""), payload.get("call_id"))
         return _new_item_event("tool_output", item)
     elif method == "message_output":
         item = _MessageOutputItem(payload.get("content", ""))
