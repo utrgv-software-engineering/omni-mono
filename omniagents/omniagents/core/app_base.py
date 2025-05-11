@@ -267,13 +267,28 @@ class AgentApp:
             # Execute CLI loop with in-memory spec
             asyncio.run(run_cli(config_path=None, args=cli_args, spec=self.spec))
             return
+        elif mode == "server":
+            # ------------------------------------------------------------------
+            #  JSON-RPC / WebSocket server (remote agent) -----------------------
+            # ------------------------------------------------------------------
+            host = ft_kwargs.pop("host", "0.0.0.0")  # remove so uvicorn gets a clean dict
+            port = ft_kwargs.pop("port", 8000)
+            auth_token = ft_kwargs.pop("auth_token", None)
+
+            # Defer import of heavy deps until needed
+            from omniagents.server.app import build_app  # local import to avoid startup cost
+            import uvicorn
+
+            rpc_app = build_app(spec=self.spec, auth_token=auth_token)
+            print(f"Starting OmniAgents RPC server on {host}:{port} (programmatic spec: {self.spec.name})")
+            uvicorn.run(rpc_app, host=host, port=port, **ft_kwargs)
         elif mode == "gui":
             # Ensure OpenAI settings for GUI mode
             set_tracing_disabled(disabled=True)
             set_default_openai_api("chat_completions")
             ft.app(target=self.main, **ft_kwargs)
         else:
-            raise ValueError(f"Unsupported run mode: {mode}. Choose 'gui' or 'cli'.")
+            raise ValueError(f"Unsupported run mode: {mode}. Choose 'gui', 'cli', or 'server'.")
 
     async def main(self, page: ft.Page):
         """Main entry point for the Flet application."""

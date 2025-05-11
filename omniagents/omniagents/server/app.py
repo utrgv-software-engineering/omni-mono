@@ -12,6 +12,7 @@ from fastapi_websocket_rpc import RpcMethodsBase, WebsocketRPCEndpoint
 
 from omniagents.core.config_loader import load_agent_spec_from_yaml
 from omniagents.core.app_base import _default_build_agent
+from omniagents.core.specs import AgentSpec
 
 from .sessions import sm, Session
 from .runner_bridge import stream_agent
@@ -36,9 +37,26 @@ def _token_dependency(required_token: Optional[str] = None):  # noqa: D401
     return Depends(_verify_token)
 
 
-def build_app(config_path: str, auth_token: str | None = None) -> FastAPI:  # noqa: D401
-    """Return a fully configured FastAPI app exposing the agent via RPC."""
-    spec = load_agent_spec_from_yaml(config_path)
+def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, auth_token: str | None = None) -> FastAPI:  # noqa: D401
+    """Return a fully configured FastAPI app exposing the agent via RPC.
+
+    Args:
+        config_path: Path to a YAML spec file. **Ignored if ``spec`` is provided.**
+        spec: An already-constructed :class:`~omniagents.core.specs.AgentSpec` instance.  When
+            supplied, this allows launching a remote server for programmatically created
+            agents (e.g. via ``AgentApp.from_agent``) without the need for an intermediate
+            YAML file.
+        auth_token: Optional bearer token that clients must pass via the ``?token=XYZ``
+            query parameter.
+    """
+
+    # ------------------------------------------------------------------
+    # Resolve the AgentSpec ------------------------------------------------
+    # ------------------------------------------------------------------
+    if spec is None:
+        if config_path is None:
+            raise ValueError("Either `config_path` or `spec` must be provided to build_app().")
+        spec = load_agent_spec_from_yaml(config_path)
 
     app = FastAPI()
 
@@ -103,7 +121,20 @@ def build_app(config_path: str, auth_token: str | None = None) -> FastAPI:  # no
             if not hasattr(sess, "agent"):
                 # Build a stub *app* object that provides the approval callback
                 stub_app = SimpleNamespace(spec=spec, _request_tool_approval=self._request_tool_approval)
-                agent = await _default_build_agent({}, None, stub_app)
+
+                # Prefer the builder defined on the spec (allows custom or pre-constructed
+                # agents coming from ``AgentApp.from_agent``).  Fallback to the default
+                # builder if none is provided.
+                if getattr(spec, "build_agent", None):
+                    builder = spec.build_agent  # type: ignore[attr-defined]
+                    # Support both async and sync builder functions
+                    import inspect
+                    if inspect.iscoroutinefunction(builder):
+                        agent = await builder({}, None, stub_app)
+                    else:
+                        agent = builder({}, None, stub_app)
+                else:
+                    agent = await _default_build_agent({}, None, stub_app)
                 sess.agent = agent
             else:
                 agent = sess.agent

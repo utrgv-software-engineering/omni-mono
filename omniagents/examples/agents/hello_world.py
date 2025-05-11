@@ -72,11 +72,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Hello World Agent Runner")
     parser.add_argument(
         "--mode", "-m",
-        choices=["gui", "cli"],
+        choices=["gui", "cli", "server"],
         default="gui",
-        help="Run mode: 'gui' for graphical UI, 'cli' for command-line interface"
+        help="Run mode: 'gui' for graphical UI, 'cli' for command-line interface, 'server' to expose JSON-RPC/WebSocket endpoint"
     )
+    parser.add_argument("--host", default="0.0.0.0", help="Host interface to bind in server mode (default 0.0.0.0)")
+    parser.add_argument("--port", "-p", type=int, default=8000, help="Port for server mode (default 8000)")
+    parser.add_argument("--auth-token", dest="auth_token", default=None, help="Bearer token to require from remote clients (server mode)")
     args = parser.parse_args()
 
-    # Launch
-    app.run(mode=args.mode)
+    # Launch (pass extra server args if needed)
+    if args.mode == "server":
+        app.run(mode="server", host=args.host, port=args.port, auth_token=args.auth_token)
+    else:
+        app.run(mode=args.mode)
