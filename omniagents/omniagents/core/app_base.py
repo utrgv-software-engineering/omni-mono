@@ -182,7 +182,8 @@ class AgentApp:
         *,
         welcome_text: Optional[str] = None,
         prefix: Optional[str] = None,
-        safe: bool = False
+        safe: bool = False,
+        max_turns: int | None = None
     ) -> AgentApp:
         """
         Construct an AgentApp directly from an existing agents.Agent (or Agent-like).
@@ -210,6 +211,7 @@ class AgentApp:
             use_safe_agent=safe,
             safe_agent_options=SafeAgentOptions(skip_approvals=False),
             settings_fields=list(DEFAULT_SETTINGS_FIELDS),  # include OpenAI settings by default
+            max_turns=max_turns if max_turns is not None else 20,
         )
         return cls(spec=spec)
     # Modify init to accept config_path OR spec
