@@ -129,6 +129,11 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
 
         async def start_run(self, prompt: str, session_id: str | None = None):  # noqa: D401
             sess: Session = sm.get_or_create(session_id)
+
+            # Track current channel for real-time notifications.
+            if self.channel not in sess.channels:
+                sess.channels.append(self.channel)
+
             if sess.current_task and not sess.current_task.done():
                 raise RuntimeError("Run already active in this session")
 
@@ -142,8 +147,12 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
                     print(f"[srv]  ↻ replay {len(sess.pending_events)} queued events for {sess.id[:8]}")
                 still_pending: list[tuple[str, dict]] = []
                 for (meth, payl) in list(sess.pending_events):
-                    delivered = await self._safe_notify(self.channel, meth, payl)
-                    if not delivered:
+                    delivered_any = False
+                    # Try every channel currently known for the session
+                    for ch in list(sess.channels):
+                        if await self._safe_notify(ch, meth, payl):
+                            delivered_any = True
+                    if not delivered_any:
                         still_pending.append((meth, payl))
                 sess.pending_events = still_pending
 
@@ -215,9 +224,13 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
             # before we hand back the static history.
             if sess.pending_events:
                 still_pending: list[tuple[str, dict]] = []
-                for meth, payl in list(sess.pending_events):
-                    delivered = await self._safe_notify(self.channel, meth, payl)
-                    if not delivered:
+                for (meth, payl) in list(sess.pending_events):
+                    delivered_any = False
+                    # Try every channel currently known for the session
+                    for ch in list(sess.channels):
+                        if await self._safe_notify(ch, meth, payl):
+                            delivered_any = True
+                    if not delivered_any:
                         still_pending.append((meth, payl))
                 sess.pending_events = still_pending
 

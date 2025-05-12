@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 
 __all__ = ["Session", "SessionManager", "sm"]
 
@@ -24,6 +24,10 @@ class Session:  # noqa: D101
         # reconnects we replay everything that is still pending so the UI can
         # catch up (e.g. pending tool-approval requests).
         self.pending_events: list[tuple[str, dict]] = []
+        # Active Rpc channels (one per concurrent client connection).  We
+        # may have more than one in case the user opens multiple tabs.
+        # Disconnected channels are automatically culled when a send fails.
+        self.channels: list[Any] = []
 
 
 class SessionManager:  # noqa: D101

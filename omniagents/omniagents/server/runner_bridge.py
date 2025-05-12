@@ -26,6 +26,33 @@ async def _safe_notify(channel, method: str, payload: dict) -> bool:  # noqa: D4
         # Most commonly RuntimeError or WebSocketDisconnect from Starlette
         return False
 
+# ---------------------------------------------------------------------
+# Broadcast helper: send to every live channel attached to the Session.
+# Returns True if at least one channel received the message.
+# ---------------------------------------------------------------------
+
+async def _broadcast(session, method: str, payload: dict) -> bool:  # noqa: D401
+    if not session.channels:
+        return False
+
+    delivered_any = False
+    dead_channels = []
+    for ch in list(session.channels):
+        ok = await _safe_notify(ch, method, payload)
+        if ok:
+            delivered_any = True
+        else:
+            dead_channels.append(ch)
+
+    # Remove channels that are no longer alive
+    for ch in dead_channels:
+        try:
+            session.channels.remove(ch)
+        except ValueError:
+            pass
+
+    return delivered_any
+
 # Event mapping helper ----------------------------------------------------
 
 def _stream_event_payload(item, run_id: str):
@@ -104,7 +131,7 @@ async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: i
             # Push event to client; if the WebSocket is already closed we
             # remember the payload so it can be replayed when the user
             # reconnects.
-            delivered = await _safe_notify(rpc_channel, method, payload)
+            delivered = await _broadcast(session, method, payload)
             if not delivered:
                 session.pending_events.append((method, payload))
 
