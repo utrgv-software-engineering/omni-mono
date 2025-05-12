@@ -178,37 +178,45 @@ class SafeAgent(Agent):
         original_on_invoke = tool.on_invoke_tool
 
         async def approved_on_invoke(context, params_json: str):
-            # Format arguments for display
+            # If the tool has become safe (e.g., user clicked "Always" before)
+            # we can execute it directly without another approval prompt.
+            if self.is_tool_safe(tool):
+                return await original_on_invoke(context, params_json)
+
+            # Otherwise, prompt for approval
             try:
                 args_dict = json.loads(params_json) if params_json else {}
-                # Limit display length of args for clarity
-                formatted_args = ", ".join([f"{k}: {repr(v)[:100]}{'...' if len(repr(v)) > 100 else ''}" for k, v in args_dict.items()])
+                formatted_args = ", ".join(
+                    [f"{k}: {repr(v)[:100]}{'...' if len(repr(v)) > 100 else ''}" for k, v in args_dict.items()]
+                )
             except Exception:
-                formatted_args = params_json[:200] + ('...' if len(params_json) > 200 else '')
+                formatted_args = params_json[:200] + ("..." if len(params_json) > 200 else "")
 
-            # Get approval using the callback
             approved, always_approve, error_msg = await self._approval_callback(tool.name, formatted_args)
 
             if approved:
                 if always_approve:
-                    self.add_safe_tool(tool.name) # Add to safe list for this session
-                # Run the original invocation
+                    self.add_safe_tool(tool.name)  # Remember for the rest of the session
                 return await original_on_invoke(context, params_json)
-            else:
-                # Tool was rejected
-                rejection_reason = error_msg or "User rejected tool call"
-                if self.halt_on_rejection:
-                    self._halt_run = True # Set halt flag on the agent instance
-                    self._halt_reason = f"{rejection_reason} ({tool.name})"
-                    if self.debug_mode:
-                        print(f"[SafeAgent] Setting halt flag due to rejection of {tool.name}", file=sys.stderr)
 
-                # Return structured rejection response
-                return json.dumps({
+            # --- Rejected path ---------------------------------------------------
+            rejection_reason = error_msg or "User rejected tool call"
+            if self.halt_on_rejection:
+                self._halt_run = True
+                self._halt_reason = f"{rejection_reason} ({tool.name})"
+                if self.debug_mode:
+                    print(
+                        f"[SafeAgent] Setting halt flag due to rejection of {tool.name}",
+                        file=sys.stderr,
+                    )
+
+            return json.dumps(
+                {
                     "error": "TOOL_REJECTED",
                     "message": rejection_reason,
-                    "tool": tool.name
-                })
+                    "tool": tool.name,
+                }
+            )
 
         # Create a new FunctionTool instance with the wrapped invoke method
         # Ensure we preserve all relevant properties from the original tool
