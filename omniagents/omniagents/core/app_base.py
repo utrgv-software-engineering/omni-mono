@@ -183,7 +183,12 @@ class AgentApp:
         welcome_text: Optional[str] = None,
         prefix: Optional[str] = None,
         safe: bool = False,
-        max_turns: int | None = None
+        max_turns: int | None = None,
+        # --- SafeAgent customisation ------------------
+        skip_approvals: bool = False,
+        halt_on_rejection: bool = True,
+        safe_tool_names: Optional[List[str]] = None,
+        safe_tool_patterns: Optional[List[str]] = None,
     ) -> AgentApp:
         """
         Construct an AgentApp directly from an existing agents.Agent (or Agent-like).
@@ -194,9 +199,19 @@ class AgentApp:
         instr = agent.instructions() if callable(agent.instructions) else agent.instructions
         # Determine storage prefix
         storage_prefix = prefix or name.lower().replace(' ', '_') + '.'
-        # Wrap the provided Agent in an async builder function
-        async def _agent_builder(settings: Dict[str, Any], mcp, app) -> AgentLike:
-            return agent
+
+        # Decide how the Agent will be built downstream:
+        # • If `safe` is True we leave build_agent=None so the internal
+        #   _default_build_agent will run (it applies SafeAgent wrapping).
+        # • If `safe` is False we embed a trivial builder that just returns
+        #   the concrete Agent instance supplied by the caller.
+
+        _builder = None
+        if not safe:
+            async def _builder(
+                settings: Dict[str, Any], mcp, app
+            ) -> AgentLike:  # type: ignore
+                return agent
 
         spec = AgentSpec(
             name=name,
@@ -205,11 +220,16 @@ class AgentApp:
             welcome_text=welcome_text or instr,
             client_storage_prefix=storage_prefix,
             get_agent_instructions=lambda: instr,
-            build_agent=_agent_builder,
+            build_agent=_builder,
             available_tools=getattr(agent, 'tools', []),
             model_name=getattr(agent, 'model', None),
             use_safe_agent=safe,
-            safe_agent_options=SafeAgentOptions(skip_approvals=False),
+            safe_agent_options=SafeAgentOptions(
+                skip_approvals=skip_approvals,
+                halt_on_rejection=halt_on_rejection,
+                safe_tool_names=safe_tool_names or [],
+                safe_tool_patterns=safe_tool_patterns or [],
+            ),
             settings_fields=list(DEFAULT_SETTINGS_FIELDS),  # include OpenAI settings by default
             max_turns=max_turns if max_turns is not None else 20,
         )
