@@ -73,6 +73,19 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
         _pending_approvals: dict[str, asyncio.Future] = {}
 
         # ------------------------------------------------------------------
+        #  Helper: best-effort async_call that tolerates disconnected sockets.
+        #  Returns True if the notification was delivered, False if the WebSocket
+        #  had already been closed.
+        # ------------------------------------------------------------------
+
+        async def _safe_notify(self, channel, method: str, payload: dict) -> bool:  # noqa: D401
+            try:
+                await channel.async_call(method, args=payload)
+                return True
+            except Exception:
+                return False
+
+        # ------------------------------------------------------------------
         #  RPC method invoked by the *client* when the user answers the
         #  approval prompt.  Resolves the Future we saved when we asked.
         # ------------------------------------------------------------------
@@ -94,18 +107,20 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
         #  waits for the matching response.
         # ------------------------------------------------------------------
 
-        async def _request_tool_approval(self, tool_name: str, formatted_args: str):  # noqa: D401
-            approval_id = uuid.uuid4().hex
+        async def _request_tool_approval(self, tool_name: str, formatted_args: str, _sess: Session | None = None):  # noqa: D401
+            """Ask the client for approval; buffer request if not delivered."""
 
-            # Fire a notification – the client will present the UI and reply
-            await self.channel.async_call(
-                "tool_approval_request",
-                args={
-                    "approval_id": approval_id,
-                    "tool": tool_name,
-                    "arguments": formatted_args,
-                },
-            )
+            approval_id = uuid.uuid4().hex
+            payload = {
+                "approval_id": approval_id,
+                "tool": tool_name,
+                "arguments": formatted_args,
+            }
+
+            delivered = await self._safe_notify(self.channel, "tool_approval_request", payload)
+            if not delivered and _sess is not None:
+                # Socket gone – remember so we can replay later
+                _sess.pending_events.append(("tool_approval_request", payload))
 
             # Wait for user decision
             fut: asyncio.Future = asyncio.get_event_loop().create_future()
@@ -117,10 +132,29 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
             if sess.current_task and not sess.current_task.done():
                 raise RuntimeError("Run already active in this session")
 
+            # --------------------------------------------------------------
+            # Flush any events that were generated while the client was
+            # disconnected (e.g. pending approval requests).
+            # --------------------------------------------------------------
+
+            if sess.pending_events:
+                if DEBUG_SERVER:
+                    print(f"[srv]  ↻ replay {len(sess.pending_events)} queued events for {sess.id[:8]}")
+                still_pending: list[tuple[str, dict]] = []
+                for (meth, payl) in list(sess.pending_events):
+                    delivered = await self._safe_notify(self.channel, meth, payl)
+                    if not delivered:
+                        still_pending.append((meth, payl))
+                sess.pending_events = still_pending
+
             # Build (or reuse) agent for this session
             if not hasattr(sess, "agent"):
-                # Build a stub *app* object that provides the approval callback
-                stub_app = SimpleNamespace(spec=spec, _request_tool_approval=self._request_tool_approval)
+                # Provide a closure that captures *sess* so the callback can
+                # stash undelivered approval-requests for later replay.
+                stub_app = SimpleNamespace(
+                    spec=spec,
+                    _request_tool_approval=lambda name, args: self._request_tool_approval(name, args, _sess=sess),
+                )
 
                 # Prefer the builder defined on the spec (allows custom or pre-constructed
                 # agents coming from ``AgentApp.from_agent``).  Fallback to the default
@@ -175,6 +209,18 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
         async def get_session_history(self, session_id: str):  # noqa: D401
             """Return JSON-serialisable history for *session_id*."""
             sess: Session = sm.get_or_create(session_id)
+
+            # First, replay any queued events (e.g. unfinished approval
+            # requests) so the reconnecting client sees the current state
+            # before we hand back the static history.
+            if sess.pending_events:
+                still_pending: list[tuple[str, dict]] = []
+                for meth, payl in list(sess.pending_events):
+                    delivered = await self._safe_notify(self.channel, meth, payl)
+                    if not delivered:
+                        still_pending.append((meth, payl))
+                sess.pending_events = still_pending
+
             # Serialise to strict JSON so clients can parse reliably
             try:
                 return json.dumps(sess.history)

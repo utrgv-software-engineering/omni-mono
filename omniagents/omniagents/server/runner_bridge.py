@@ -11,6 +11,21 @@ from agents import Runner, RunConfig, ItemHelpers
 # ---------------------------------------------------------------------
 DEBUG_SERVER = os.getenv("OMNIAGENTS_SERVER_DEBUG", "0") in ("1", "true", "True")
 
+# ---------------------------------------------------------------------
+# Helper: best-effort notify that swallows disconnect errors so the
+#         streaming task can keep running even when the WebSocket is
+#         already closed.  Returns True if the payload was delivered.
+# ---------------------------------------------------------------------
+
+async def _safe_notify(channel, method: str, payload: dict) -> bool:  # noqa: D401
+    """Try to send *payload* via *channel*; return False if socket is gone."""
+    try:
+        await channel.async_call(method, args=payload)
+        return True
+    except Exception:
+        # Most commonly RuntimeError or WebSocketDisconnect from Starlette
+        return False
+
 # Event mapping helper ----------------------------------------------------
 
 def _stream_event_payload(item, run_id: str):
@@ -86,8 +101,12 @@ async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: i
         item = event.item
         method, payload = _stream_event_payload(item, run_id=asyncio.current_task().get_name())
         if method:
-            # Push event to client without waiting for response
-            await rpc_channel.async_call(method, args=payload)
+            # Push event to client; if the WebSocket is already closed we
+            # remember the payload so it can be replayed when the user
+            # reconnects.
+            delivered = await _safe_notify(rpc_channel, method, payload)
+            if not delivered:
+                session.pending_events.append((method, payload))
 
         # Persist item into session history when it reaches a finalised form
         if hasattr(item, "to_input_item"):

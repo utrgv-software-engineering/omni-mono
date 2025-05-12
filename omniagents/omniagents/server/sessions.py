@@ -19,6 +19,11 @@ class Session:  # noqa: D101
         self.id: str = str(uuid.uuid4())
         self.history: list[dict] = []
         self.current_task: Optional[asyncio.Task] = None
+        # Holds (method, payload) tuples that could not be delivered because
+        # the WebSocket connection was already closed.  When the client
+        # reconnects we replay everything that is still pending so the UI can
+        # catch up (e.g. pending tool-approval requests).
+        self.pending_events: list[tuple[str, dict]] = []
 
 
 class SessionManager:  # noqa: D101
