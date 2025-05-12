@@ -137,9 +137,13 @@ async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: i
 
         # Persist item into session history when it reaches a finalised form
         if hasattr(item, "to_input_item"):
-            inp = item.to_input_item()
-            if inp:
-                session.history.append(inp)
+            try:
+                inp = item.to_input_item()
+                if inp:
+                    session.history.append(inp)
+            except Exception:
+                # Ignore malformed items but keep streaming.
+                pass
 
         if DEBUG_SERVER and method:
             print(f"[srv]   → {method} run={payload.get('run_id','')} details={payload}")
