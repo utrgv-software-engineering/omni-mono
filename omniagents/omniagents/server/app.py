@@ -219,6 +219,11 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
             """Return JSON-serialisable history for *session_id*."""
             sess: Session = sm.get_or_create(session_id)
 
+            # Track this Rpc channel too – allows further live events while
+            # a run is still streaming.
+            if self.channel not in sess.channels:
+                sess.channels.append(self.channel)
+
             # First, replay any queued events (e.g. unfinished approval
             # requests) so the reconnecting client sees the current state
             # before we hand back the static history.
