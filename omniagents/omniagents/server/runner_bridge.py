@@ -55,7 +55,7 @@ def _stream_event_payload(item, run_id: str):
     return None, None
 
 
-async def stream_agent(agent, prompt: str, session, rpc_channel) -> None:  # noqa: D401
+async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: int = 20) -> None:  # noqa: D401
     """Drive Runner.run_streamed and forward events to *rpc_channel*.
 
     rpc_channel is the `RpcMethodsBase` instance from fastapi_websocket_rpc
@@ -76,7 +76,7 @@ async def stream_agent(agent, prompt: str, session, rpc_channel) -> None:  # noq
         print(f"[srv] ▶ start_run  session={session.id[:8]} prompt={prompt[:80]!r} (hist={len(session.history)})")
 
     run_config = RunConfig()
-    result = Runner.run_streamed(agent, agent_input, run_config=run_config)
+    result = Runner.run_streamed(agent, agent_input, max_turns=max_turns, run_config=run_config)
 
     async for event in result.stream_events():
         # Skip low-level / uninterested event types

@@ -662,7 +662,7 @@ class AgentApp:
                 # Use the proxy's built-in streamed runner (bypasses local Runner logic)
                 result = self.agent_instance.run_streamed(agent_input)
             else:
-                result = Runner.run_streamed(self.agent_instance, agent_input)
+                result = Runner.run_streamed(self.agent_instance, agent_input, max_turns=self.spec.max_turns)
 
             message_output = ""
             final_items = []

@@ -64,6 +64,7 @@ class AgentSpec:
     build_agent: Optional[Callable[[Dict[str, Any], Optional[MCPServerSse], 'AgentApp'], Awaitable[AgentLike]]]
     available_tools: List[Callable] = field(default_factory=list)
     model_name: Optional[str] = None # Model name used by default builder
+    max_turns: int = 20  # Maximum turns per run (overrides Runner default)
 
     # --- Agent Safety Configuration ---
     use_safe_agent: bool = False

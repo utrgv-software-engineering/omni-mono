@@ -206,7 +206,7 @@ async def run_cli(
 
             new_input = conversation + [{"role": "user", "content": user_input}]
             run_config = RunConfig()
-            result = Runner.run_streamed(agent, new_input, run_config=run_config)
+            result = Runner.run_streamed(agent, new_input, max_turns=spec.max_turns, run_config=run_config)
 
             message_output = ""
             final_items = []

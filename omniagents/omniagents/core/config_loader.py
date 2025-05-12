@@ -118,6 +118,7 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
     agent_name = config.get('name', 'Unnamed Agent')
     header_title = config.get('header_title', agent_name)
     page_title = config.get('page_title', agent_name)
+    max_turns_cfg = config.get('max_turns', 20)
     # Derive default storage prefix if not provided
     default_storage_prefix = agent_name.lower().replace(' ', '_').replace('-','_') + '.'
     storage_prefix = config.get('client_storage_prefix', default_storage_prefix)
@@ -284,6 +285,7 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
         build_agent=build_agent_func, # Defer to internal builder
         available_tools=selected_tool_functions if not remote_ws_url else [],
         model_name=model_name_from_config if not remote_ws_url else None,
+        max_turns=max_turns_cfg,
 
         # Agent Safety Config
         use_safe_agent=use_safe,

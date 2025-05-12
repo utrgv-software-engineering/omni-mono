@@ -141,7 +141,7 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
 
             async def _worker():
                 try:
-                    await stream_agent(agent, prompt, sess, self.channel)
+                    await stream_agent(agent, prompt, sess, self.channel, max_turns=spec.max_turns)
                 finally:
                     # Inform client the run finished
                     await self.channel.async_call(
