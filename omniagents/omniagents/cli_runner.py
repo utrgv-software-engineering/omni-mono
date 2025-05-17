@@ -63,12 +63,6 @@ async def run_cli(
     except Exception:
         pass
 
-    # Load environment variables
-    try:
-        load_dotenv()
-    except Exception:
-        pass
-
     # Determine spec: use provided in-memory spec or load from YAML
     if spec is None:
         if not config_path:
