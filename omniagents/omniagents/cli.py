@@ -40,6 +40,12 @@ def main():
         action="store_true",
         help="Enable debug mode (overrides YAML setting)."
     )
+    run_parser.add_argument(
+        "--session-id",
+        type=str,
+        default=None,
+        help="Resume a previous CLI session using this identifier."
+    )
     
     # Save command
     save_parser = subparsers.add_parser("save", help="Save an agent spec as a standalone Python module")

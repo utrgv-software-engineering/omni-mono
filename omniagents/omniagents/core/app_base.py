@@ -15,6 +15,7 @@ from typing import List, Dict, Any, Callable, Optional, Protocol, Awaitable, TYP
 from omniagents.core.ui import Message, ChatMessage, ToolCallDisplay, ToolOutputDisplay, ToolApprovalRequest # Added ToolApprovalRequest
 from omniagents.core.settings import SettingsScreen, SettingField
 from omniagents.core.storage import load_settings, save_settings
+from omniagents.core.local_sessions import LocalSession
 from omniagents.core.config_loader import load_agent_spec_from_yaml, DEFAULT_SETTINGS_FIELDS # <-- Import the loader and default settings
 from omniagents.core.specs import AgentSpec, AgentLike, SafeAgentOptions # <-- Import moved specs
 
@@ -262,6 +263,7 @@ class AgentApp:
         self.send_button: Optional[ft.IconButton] = None
 
         self.conversation: List[Dict[str, Any]] = []
+        self.local_session: Optional[LocalSession] = None
         self.agent_instance: Optional[AgentLike] = None
         self.current_settings: Dict[str, Any] = {}
 
@@ -318,6 +320,10 @@ class AgentApp:
         self.page = page
         await self._configure_page()
         await self._load_initial_settings()
+
+        # Start a fresh local session each time the app launches
+        self.local_session = LocalSession()
+        self.conversation = list(self.local_session.history)
 
         # Attempt initial MCP connection if configured
         if self.spec.uses_mcp:
@@ -676,8 +682,12 @@ class AgentApp:
             if hasattr(self.agent_instance, 'reset_run_state') and callable(self.agent_instance.reset_run_state):
                 self.agent_instance.reset_run_state()
 
-            # Prepare input for the agent
-            agent_input = self.conversation + [{"role": "user", "content": user_message}]
+            # Prepare input for the agent and persist user message
+            user_msg = {"role": "user", "content": user_message}
+            self.conversation.append(user_msg)
+            if self.local_session:
+                self.local_session.append_message(user_msg)
+            agent_input = self.conversation
 
             # Run the agent stream
             if self.spec.remote_ws_url and hasattr(self.agent_instance, "run_streamed"):
@@ -817,6 +827,8 @@ class AgentApp:
                             # Prevent adding duplicate tool calls/outputs if history already has them?
                             # This might be tricky, requires comparing complex dicts. Let's keep it simple for now.
                             self.conversation.append(input_item)
+                            if self.local_session:
+                                self.local_session.append_message(input_item)
                 # Handle message output item (final assistant message)
                 elif item.type == "message_output_item":
                      # Check if the last item in conversation is already this assistant message
@@ -825,7 +837,10 @@ class AgentApp:
                              self.conversation[-1].get("role") == "assistant" and
                              self.conversation[-1].get("content") == final_assistant_content):
                          # Add only if it's not a duplicate of the last message
-                         self.conversation.append({"role": "assistant", "content": final_assistant_content})
+                         msg = {"role": "assistant", "content": final_assistant_content}
+                         self.conversation.append(msg)
+                         if self.local_session:
+                             self.local_session.append_message(msg)
 
             # Debug: Print final conversation state
             # print("--- Final Conversation History ---")

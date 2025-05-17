@@ -93,6 +93,21 @@ Configure the following variables in your `.env` file:
 - `main.py`: Basic implementation with a weather tool.
 - `advanced_example.py`: Interactive example integrating multiple tools for a dynamic chat interface.
 
+## Resuming Sessions
+
+Conversation history is saved in a local SQLite file `sessions.db`. Each chat is
+identified by a session ID.
+
+### CLI
+
+Use `--session-id <id>` with `omniagents cli run --mode cli` to continue a
+previous conversation. If omitted, a new ID is generated and printed at startup.
+
+### GUI
+
+GUI sessions always start fresh. Conversation history is not automatically
+restored when reopening the app.
+
 ## Documentation
 
 For more information, see the [OpenAI Agents Python documentation](https://openai.github.io/openai-agents-python/quickstart/).

@@ -13,6 +13,7 @@ from agents.mcp import MCPServerSse
 from omniagents.core.config_loader import load_agent_spec_from_yaml
 from omniagents.core.app_base import _default_build_agent
 from omniagents.core.safe_agent import SafeAgent
+from omniagents.core.local_sessions import LocalSession
 
 ApprovalResult = Tuple[bool, bool, Optional[str]]
 
@@ -184,7 +185,11 @@ async def run_cli(
         print(f"\nStarting CLI chat for agent: {spec.name}")
         print(f"{spec.welcome_text}\n(Type 'exit' to quit)\n")
 
-        conversation = []
+        session_id = getattr(args, "session_id", None) if args is not None else None
+        local_session = LocalSession(session_id)
+        conversation = list(local_session.history)
+        if session_id is None:
+            print(f"Session ID: {local_session.id}")
         while True:
             try:
                 user_input = input("> ").strip()
@@ -198,7 +203,10 @@ async def run_cli(
             if spec.debug_flag:
                 print(f"[DEBUG] User input: {user_input}")
 
-            new_input = conversation + [{"role": "user", "content": user_input}]
+            user_msg = {"role": "user", "content": user_input}
+            conversation.append(user_msg)
+            local_session.append_message(user_msg)
+            new_input = conversation
             run_config = RunConfig()
             result = Runner.run_streamed(agent, new_input, max_turns=spec.max_turns, run_config=run_config)
 
@@ -242,7 +250,8 @@ async def run_cli(
                     inp = item.to_input_item()
                     if inp:
                         conversation.append(inp)
-
+                        local_session.append_message(inp)
+            
             # Display response
             print(f"\n⏺ {message_output}\n")
 
