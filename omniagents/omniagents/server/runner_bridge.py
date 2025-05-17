@@ -5,6 +5,7 @@ import asyncio
 from typing import AsyncGenerator
 
 from agents import Runner, RunConfig, ItemHelpers
+from .history_db import append_message
 
 # ---------------------------------------------------------------------
 # Optional verbose logging controlled by env var
@@ -112,7 +113,9 @@ async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: i
 
     # Persist the new user message immediately so it is available for
     # subsequent runs even if the assistant errors out mid-stream.
-    session.history.append({"role": "user", "content": prompt})
+    user_msg = {"role": "user", "content": prompt}
+    session.history.append(user_msg)
+    append_message(session.id, user_msg)
 
     if DEBUG_SERVER:
         print(f"[srv] ▶ start_run  session={session.id[:8]} prompt={prompt[:80]!r} (hist={len(session.history)})")
@@ -141,6 +144,7 @@ async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: i
                 inp = item.to_input_item()
                 if inp:
                     session.history.append(inp)
+                    append_message(session.id, inp)
             except Exception:
                 # Ignore malformed items but keep streaming.
                 pass
