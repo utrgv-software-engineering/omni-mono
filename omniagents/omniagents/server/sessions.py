@@ -63,5 +63,9 @@ class SessionManager:  # noqa: D101
         sess.current_task.cancel()
         return True
 
+    def list_sessions(self) -> list[str]:  # noqa: D401
+        """Return the list of active session IDs."""
+        return list(self._by_id)
+
 
 sm = SessionManager() 
