@@ -16,6 +16,7 @@ from omniagents.core.specs import AgentSpec
 
 from .sessions import sm, Session
 from .runner_bridge import stream_agent
+from .history_db import append_message
 
 __all__ = ["build_app"]
 
@@ -209,7 +210,9 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
             sess = sm.get_by_run_id(run_id)
             if not sess:
                 raise RuntimeError("Unknown run_id")
-            sess.history.append({"role": "user", "content": content})
+            msg = {"role": "user", "content": content}
+            sess.history.append(msg)
+            append_message(sess.id, msg)
             # No immediate return value; next assistant chunk will arrive via stream.
 
         # ------------------------------------------------------------------

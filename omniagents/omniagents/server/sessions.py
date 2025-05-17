@@ -4,6 +4,8 @@ import asyncio
 import uuid
 from typing import Dict, Optional, Any
 
+from .history_db import load_history
+
 __all__ = ["Session", "SessionManager", "sm"]
 
 
@@ -15,9 +17,9 @@ class Session:  # noqa: D101
     can preserve context.
     """
 
-    def __init__(self) -> None:  # noqa: D401
-        self.id: str = str(uuid.uuid4())
-        self.history: list[dict] = []
+    def __init__(self, session_id: str | None = None) -> None:  # noqa: D401
+        self.id: str = session_id or str(uuid.uuid4())
+        self.history: list[dict] = load_history(self.id) if session_id else []
         self.current_task: Optional[asyncio.Task] = None
         # Holds (method, payload) tuples that could not be delivered because
         # the WebSocket connection was already closed.  When the client
@@ -43,7 +45,7 @@ class SessionManager:  # noqa: D101
     def get_or_create(self, session_id: str | None = None) -> Session:  # noqa: D401
         if session_id and session_id in self._by_id:
             return self._by_id[session_id]
-        sess = Session()
+        sess = Session(session_id)
         self._by_id[sess.id] = sess
         return sess
 
