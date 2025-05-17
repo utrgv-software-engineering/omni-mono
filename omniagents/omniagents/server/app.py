@@ -249,6 +249,10 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
                 # Fallback: return string repr as last resort
                 return str(sess.history)
 
+        async def list_sessions(self):  # noqa: D401
+            """Return a list of active session IDs."""
+            return sm.list_sessions()
+
     endpoint = WebsocketRPCEndpoint(AgentService())
     # Attach route with dependency if token is set
     if auth_token:

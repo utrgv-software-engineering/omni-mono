@@ -60,6 +60,19 @@ Fetch the full conversation history for a session as JSON text.
 **Response**
 A JSON string representing the history list.
 
+### `list_sessions`
+Return a list of all active session identifiers.
+
+**Request**
+```json
+{"method": "list_sessions", "params": {}}
+```
+
+**Response**
+```json
+["session_1", "session_2"]
+```
+
 ### `tool_approval_response`
 Answer a pending tool approval request. The `approval_id` matches the identifier sent in the notification.
 
