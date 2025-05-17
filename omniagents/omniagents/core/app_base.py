@@ -740,6 +740,7 @@ class AgentApp:
                         # Remove typing indicator before showing tool call
                         if self.typing_indicator in self.chat.controls:
                             self.chat.controls.remove(self.typing_indicator)
+                            self.chat.update()
 
                         tool_call_display = ToolCallDisplay(
                             tool_name, formatted_args, self.spec.icon_map, self.spec.theme_color
@@ -747,6 +748,7 @@ class AgentApp:
                         self.chat.controls.append(tool_call_display)
                         # Add indicator back *after* the tool call display
                         self.chat.controls.append(self.typing_indicator)
+                        self.chat.update()
                         self.page.update()
 
                     # --- Handle Tool Outputs (Debug Only) --- 
@@ -775,6 +777,7 @@ class AgentApp:
                             self.chat.controls.append(output_display)
                             # Add indicator back after output
                             self.chat.controls.append(self.typing_indicator)
+                            self.chat.update()
                             self.page.update()
 
                     # --- Handle Assistant Message Stream --- 
@@ -793,6 +796,7 @@ class AgentApp:
                             else:
                                 # Update existing bubble's text
                                 assistant_message_control.content.controls[0].content.value = message_output # Access Markdown value
+                            self.chat.update()
                             self.page.update() # Update UI with new chunk
 
             # --- Finalize after stream --- 
@@ -829,6 +833,7 @@ class AgentApp:
             #     print(f"- Role: {msg.get('role')}, Type: {msg.get('type')}, Content/Name: {msg.get('content', msg.get('name'))}")
             # print("----------------------------------")
 
+            self.chat.update()
             self.page.update() # Final update after processing
 
         except Exception as e:
@@ -859,6 +864,7 @@ class AgentApp:
         # Ensure typing indicator is removed before showing prompt
         if self.typing_indicator in self.chat.controls:
             self.chat.controls.remove(self.typing_indicator)
+            self.chat.update()
 
         def create_handler(approved: bool, always_approve: bool, rejection_message: Optional[str] = None):
             async def handler(e): # Make handler async
@@ -885,6 +891,7 @@ class AgentApp:
                     self.chat.controls.append(self.typing_indicator)
                 self.typing_indicator.visible = True # Show indicator while agent potentially processes rejection/approval
 
+                self.chat.update()
                 self.page.update()
 
                 # Set the future result if it's not already done
@@ -909,6 +916,7 @@ class AgentApp:
 
         self._approval_state['active_displays'][approval_id] = approval_display
         self.chat.controls.append(approval_display)
+        self.chat.update()
         self.page.update()
 
         # Wait for user decision
@@ -943,6 +951,7 @@ class AgentApp:
             self.chat.controls.insert(insert_index, error_banner)
         else:
             self.chat.controls.append(error_banner)
+        self.chat.update()
         self.page.update()
 
     def _remove_control(self, control: ft.Control):
