@@ -1,8 +1,0 @@
-name: AI Assistant
-model: gpt-4o
-
-instructions_file: ../instructions/chat.md
-
-welcome_text: "👋 Hi! I'm an AI Assistant. Ask me about anything."
-theme_color: ft.Colors.BLUE_900
-debug: false
