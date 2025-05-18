@@ -170,51 +170,6 @@ agents.set_default_openai_api = set_default_openai_api
 agents.set_tracing_disabled = set_tracing_disabled
 sys.modules.setdefault('agents', agents)
 
-# ---------------------------------------------------------------------------
-# Stub minimal fastapi_websocket_rpc with behaviour just enough for tests
-# ---------------------------------------------------------------------------
-fastapi_rpc = types.ModuleType('fastapi_websocket_rpc')
-from fastapi import WebSocket, WebSocketDisconnect
-
-class RpcMethodsBase:
-    def __init__(self):
-        self.channel = None
-
-class _Channel:
-    def __init__(self, websocket: WebSocket):
-        self.websocket = websocket
-    async def async_call(self, method: str, args: dict | None = None):
-        await self.websocket.send_json({'method': method, 'params': args or {}})
-
-class WebsocketRPCEndpoint:
-    def __init__(self, methods: RpcMethodsBase):
-        self.methods = methods
-    def register_route(self, app, path: str, dependencies=None):
-        dependencies = dependencies or []
-        async def handler(websocket: WebSocket):
-            await websocket.accept()
-            channel = _Channel(websocket)
-            self.methods.channel = channel
-            while True:
-                try:
-                    data = await websocket.receive_json()
-                except WebSocketDisconnect:
-                    break
-                method = data.get('method')
-                args = data.get('args') or data.get('params') or {}
-                request_id = data.get('id')
-                func = getattr(self.methods, method)
-                result = await func(**args)
-                await websocket.send_json({'id': request_id, 'result': result})
-        app.add_api_websocket_route(path, handler, dependencies=dependencies)
-
-fastapi_rpc.RpcMethodsBase = RpcMethodsBase
-fastapi_rpc.WebsocketRPCEndpoint = WebsocketRPCEndpoint
-class WebSocketRpcClient:
-    def __init__(self, *args, **kwargs):
-        pass
-fastapi_rpc.WebSocketRpcClient = WebSocketRpcClient
-sys.modules.setdefault('fastapi_websocket_rpc', fastapi_rpc)
 
 # ---------------------------------------------------------------------------
 # Pytest fixture: temporary history DB for tests

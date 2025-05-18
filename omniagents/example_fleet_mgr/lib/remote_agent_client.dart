@@ -8,14 +8,7 @@ import 'package:flutter/foundation.dart';
 
 import 'models.dart';
 
-/// Lightweight client that speaks the wire-format expected by
-/// `fastapi_websocket_rpc` (see RpcChannel in Python).  Frames look like:
-///
-///   {"request":  {"method":"start_run", "arguments":{..}, "call_id":"uuid"}}
-///   {"response": {"call_id":"uuid", "result":{..}, "result_type":"dict"}}
-///
-/// This replaces the JSON-RPC 2.0 code we used earlier which the server did
-/// not understand.
+/// Lightweight client that speaks JSON-RPC 2.0 over WebSockets.
 class RemoteAgentClient {
   RemoteAgentClient(this.endpoint, {this.token, this.debug = false});
 

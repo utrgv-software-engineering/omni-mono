@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 """RemoteAgentProxy – minimal Agent-like object that forwards chat
-messages to a remote OmniAgents server via fastapi-websocket-rpc.
+messages to a remote OmniAgents server via JSON-RPC over WebSocket.
 
 Design goal: conform *just enough* to the interface expected by
 omniagents.cli_runner and AgentApp so we can drop it in anywhere a
@@ -10,15 +10,11 @@ local `agents.Agent` instance would normally be used.
 
 from typing import Any, AsyncGenerator
 import asyncio
-import inspect
 import json
 import os
 import uuid
 import ast
-
-from fastapi_websocket_rpc import RpcMethodsBase, WebSocketRpcClient
-from omniagents.jsonrpc.socket import JsonRpcWebSocket
-from agents import StreamEvent, RunItemStreamEvent, ItemHelpers, Runner, RunConfig  # type: ignore
+from omniagents.jsonrpc.rpc import RpcMethodsBase, JsonRpcClient
 
 __all__ = ["RemoteAgentProxy"]
 
@@ -42,7 +38,7 @@ class RemoteAgentProxy:
             sep = "&" if "?" in ws_url else "?"
             ws_url = f"{ws_url}{sep}token={token}"
         self._url = ws_url
-        self._client: WebSocketRpcClient | None = None
+        self._client: JsonRpcClient | None = None
         self._run_lock: asyncio.Lock = asyncio.Lock()
         # Event queue populated by Rpc callback methods implemented below
         self._event_q: asyncio.Queue = asyncio.Queue()
@@ -144,14 +140,7 @@ class RemoteAgentProxy:
         if self._client is None:
             # Build methods object that forwards events into _event_q
             self._methods = _ClientEventMethods(self._event_q)
-            if "serializing_socket_cls" in inspect.signature(WebSocketRpcClient.__init__).parameters:
-                self._client = await WebSocketRpcClient(
-                    self._url,
-                    self._methods,
-                    serializing_socket_cls=JsonRpcWebSocket,
-                ).__aenter__()
-            else:  # pragma: no cover - test stub fallback
-                self._client = await WebSocketRpcClient(self._url, self._methods).__aenter__()
+            self._client = await JsonRpcClient(self._url, self._methods).__aenter__()
 
 
 # ----------------------------------------------------------------------

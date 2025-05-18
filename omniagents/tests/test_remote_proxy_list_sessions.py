@@ -23,7 +23,7 @@ class DummyClient:
         return SimpleNamespace(result=True)
 
 def test_list_sessions(monkeypatch):
-    monkeypatch.setattr(remote_proxy, "WebSocketRpcClient", DummyClient)
+    monkeypatch.setattr(remote_proxy, "JsonRpcClient", DummyClient)
     proxy = RemoteAgentProxy("ws://dummy")
     sessions = asyncio.run(proxy.list_sessions())
     assert sessions == [{"id": "s1", "archived": False}, {"id": "s2", "archived": True}]
