@@ -10,12 +10,70 @@ ft = types.ModuleType('flet')
 class Colors:
     BLUE = '#0000FF'
     BLUE_900 = '#000099'
+    WHITE = '#FFFFFF'
+    BLACK = '#000000'
+    BLACK12 = '#000000'
+    BLACK45 = '#000000'
+    BLACK54 = '#000000'
+    BLUE_200 = '#0000DD'
+    INDIGO_900 = '#0000DD'
+    ORANGE = '#FFA500'
+
+    @staticmethod
+    def with_opacity(opacity, color):
+        return color
 ft.Colors = Colors
 class Icons:
-    pass
+    BUILD = 'BUILD'
 ft.Icons = Icons
+# Basic component placeholder used for most UI classes
+class _Component:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __call__(self, *args, **kwargs):
+        return _Component()
+
+# Common UI classes used across modules
+ft.Container = _Component
+ft.Row = _Component
+ft.Column = _Component
+ft.Text = _Component
+ft.Icon = _Component
+ft.View = _Component
+ft.Page = _Component
+ft.TextField = _Component
+ft.IconButton = _Component
+ft.FilledButton = _Component
+ft.ListView = _Component
+ft.ButtonStyle = _Component
+ft.SafeArea = _Component
+ft.CircleBorder = _Component
+ft.BoxShadow = _Component
+ft.Offset = _Component
+ft.LinearGradient = _Component
+ft.Markdown = _Component
+ft.MarkdownExtensionSet = _Component
+ft.MarkdownCodeTheme = _Component
+ft.ThemeMode = types.SimpleNamespace(LIGHT='light')
+ft.MainAxisAlignment = types.SimpleNamespace(START=0, END=1, SPACE_BETWEEN=2)
+ft.CrossAxisAlignment = types.SimpleNamespace(START=0, END=1, CENTER=2, STRETCH=3)
+ft.TextAlign = types.SimpleNamespace(CENTER=0)
+ft.alignment = types.SimpleNamespace(center=None, center_right=None, top_left=None, bottom_right=None)
+ft.padding = types.SimpleNamespace(all=lambda *a, **k: None,
+                                   symmetric=lambda *a, **k: None,
+                                   only=lambda *a, **k: None)
+ft.margin = types.SimpleNamespace(all=lambda *a, **k: None,
+                                  symmetric=lambda *a, **k: None,
+                                  only=lambda *a, **k: None)
+ft.border = types.SimpleNamespace(all=lambda *a, **k: None,
+                                  only=lambda *a, **k: None,
+                                  BorderSide=_Component)
+ft.icons = types.SimpleNamespace(VERIFIED_USER='VERIFIED_USER', ARROW_BACK='ARROW_BACK', SETTINGS='SETTINGS')
 # also stub submodule animation used by app_base
 ft.animation = types.ModuleType('flet.animation')
+ft.animation.Animation = _Component
+ft.AnimationCurve = types.SimpleNamespace(EASE_OUT=0)
 sys.modules.setdefault('flet', ft)
 sys.modules.setdefault('flet.animation', ft.animation)
 
@@ -38,6 +96,10 @@ class FunctionTool(Tool):
 tool_mod = types.ModuleType('agents.tool')
 tool_mod.Tool = Tool
 tool_mod.FunctionTool = FunctionTool
+def function_tool(func):
+    setattr(func, '_is_omniagents_core_tool', True)
+    return func
+tool_mod.function_tool = function_tool
 sys.modules.setdefault('agents.tool', tool_mod)
 
 class ModelSettings:
@@ -97,6 +159,15 @@ agents.StreamEvent = StreamEvent
 agents.RunItemStreamEvent = RunItemStreamEvent
 agents.tool = tool_mod
 agents.model_settings = model_settings_mod
+def set_default_openai_client(*args, **kwargs):
+    pass
+def set_default_openai_api(*args, **kwargs):
+    pass
+def set_tracing_disabled(*args, **kwargs):
+    pass
+agents.set_default_openai_client = set_default_openai_client
+agents.set_default_openai_api = set_default_openai_api
+agents.set_tracing_disabled = set_tracing_disabled
 sys.modules.setdefault('agents', agents)
 
 # ---------------------------------------------------------------------------
@@ -139,6 +210,10 @@ class WebsocketRPCEndpoint:
 
 fastapi_rpc.RpcMethodsBase = RpcMethodsBase
 fastapi_rpc.WebsocketRPCEndpoint = WebsocketRPCEndpoint
+class WebSocketRpcClient:
+    def __init__(self, *args, **kwargs):
+        pass
+fastapi_rpc.WebSocketRpcClient = WebSocketRpcClient
 sys.modules.setdefault('fastapi_websocket_rpc', fastapi_rpc)
 
 # ---------------------------------------------------------------------------
