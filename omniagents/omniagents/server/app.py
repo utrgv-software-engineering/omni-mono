@@ -250,8 +250,12 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
                 return str(sess.history)
 
         async def list_sessions(self):  # noqa: D401
-            """Return a list of active session IDs."""
+            """Return metadata for all sessions."""
             return sm.list_sessions()
+
+        async def archive_session(self, session_id: str):  # noqa: D401
+            """Archive *session_id* so clients can hide it."""
+            return sm.archive_session(session_id)
 
     endpoint = WebsocketRPCEndpoint(AgentService())
     # Attach route with dependency if token is set

@@ -4,7 +4,13 @@ import asyncio
 import uuid
 from typing import Dict, Optional, Any
 
-from .history_db import load_history
+from .history_db import (
+    load_history,
+    register_session,
+    get_archived,
+    set_archived,
+    list_sessions as db_list_sessions,
+)
 
 __all__ = ["Session", "SessionManager", "sm"]
 
@@ -30,6 +36,8 @@ class Session:  # noqa: D101
         # may have more than one in case the user opens multiple tabs.
         # Disconnected channels are automatically culled when a send fails.
         self.channels: list[Any] = []
+        # Flag indicating whether this session was archived by the client.
+        self.archived: bool = get_archived(self.id) if session_id else False
 
 
 class SessionManager:  # noqa: D101
@@ -46,6 +54,7 @@ class SessionManager:  # noqa: D101
         if session_id and session_id in self._by_id:
             return self._by_id[session_id]
         sess = Session(session_id)
+        register_session(sess.id)
         self._by_id[sess.id] = sess
         return sess
 
@@ -63,9 +72,18 @@ class SessionManager:  # noqa: D101
         sess.current_task.cancel()
         return True
 
-    def list_sessions(self) -> list[str]:  # noqa: D401
-        """Return the list of active session IDs."""
-        return list(self._by_id)
+    def archive_session(self, session_id: str) -> bool:  # noqa: D401
+        """Mark *session_id* as archived."""
+        sess = self._by_id.get(session_id)
+        if not sess:
+            return False
+        sess.archived = True
+        set_archived(session_id, True)
+        return True
+
+    def list_sessions(self) -> list[dict]:  # noqa: D401
+        """Return metadata for all known sessions."""
+        return db_list_sessions()
 
 
 sm = SessionManager() 

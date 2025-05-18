@@ -1,5 +1,6 @@
 import asyncio
 import json
+import importlib
 from fastapi.testclient import TestClient
 from omniagents.server import app as server_app
 from omniagents.core.specs import AgentSpec
@@ -47,5 +48,28 @@ def test_rpc_methods(monkeypatch):
 
         ws.send_json({'id': 3, 'method': 'list_sessions', 'args': {}})
         list_resp = ws.receive_json()
-        assert session_id in list_resp['result']
+        sess_meta = list_resp['result'][0]
+        assert sess_meta['id'] == session_id
+        assert sess_meta['archived'] is False
+
+        ws.send_json({'id': 4, 'method': 'archive_session', 'args': {'session_id': session_id}})
+        arch_resp = ws.receive_json()
+        assert arch_resp['result'] is True
+
+        ws.send_json({'id': 5, 'method': 'list_sessions', 'args': {}})
+        list_resp2 = ws.receive_json()
+        sess_meta2 = list_resp2['result'][0]
+        assert sess_meta2['archived'] is True
+
+    # Reload modules to ensure archive state persists
+    import omniagents.server.sessions as sessions_mod
+    importlib.reload(sessions_mod)
+    importlib.reload(server_app)
+    app2 = server_app.build_app(spec=spec)
+    client2 = TestClient(app2)
+    with client2.websocket_connect('/ws') as ws2:
+        ws2.send_json({'id': 6, 'method': 'list_sessions', 'args': {}})
+        list_resp3 = ws2.receive_json()
+        sess_meta3 = list_resp3['result'][0]
+        assert sess_meta3['archived'] is True
 
