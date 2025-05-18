@@ -247,8 +247,8 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
             # serialise this to JSON for the client.
             return sess.history
 
-        async def list_sessions(self):  # noqa: D401
-            """Return metadata for all sessions."""
+        async def list_sessions(self) -> list[dict]:  # noqa: D401
+            """Return metadata for all sessions as a real JSON list."""
             result = sm.list_sessions()
             if DEBUG_SERVER:
                 print(f"[srv] ★ list_sessions  count={len(result)}")
