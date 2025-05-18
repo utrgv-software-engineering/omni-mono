@@ -6,6 +6,7 @@ import uuid
 from types import SimpleNamespace
 from typing import Optional
 import json  # local to avoid top-level dep
+import inspect
 
 from fastapi import FastAPI, WebSocket, Depends, HTTPException, status
 from fastapi_websocket_rpc import RpcMethodsBase, WebsocketRPCEndpoint
@@ -255,9 +256,19 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
             return sm.archive_session(session_id)
 
     endpoint = WebsocketRPCEndpoint(AgentService())
-    # Attach route with dependency if token is set
+    # Attach route with optional token dependency. Older versions of
+    # fastapi_websocket_rpc do not support the ``dependencies`` parameter on
+    # ``register_route``.  Detect this and fall back to a custom handler.
     if auth_token:
-        endpoint.register_route(app, "/ws", dependencies=[_token_dependency(auth_token)])
+        if "dependencies" in inspect.signature(endpoint.register_route).parameters:
+            endpoint.register_route(app, "/ws", dependencies=[_token_dependency(auth_token)])
+        else:
+            @app.websocket("/ws")
+            async def websocket_endpoint(ws: WebSocket):  # type: ignore
+                if ws.query_params.get("token") != auth_token:
+                    await ws.close(code=4403)
+                    return
+                await endpoint.main_loop(ws)
     else:
         endpoint.register_route(app, "/ws")
     return app 
