@@ -242,12 +242,9 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
                         still_pending.append((meth, payl))
                 sess.pending_events = still_pending
 
-            # Serialise to strict JSON so clients can parse reliably
-            try:
-                return json.dumps(sess.history)
-            except TypeError:
-                # Fallback: return string repr as last resort
-                return str(sess.history)
+            # Return the raw history list; the WebSocket RPC layer will
+            # serialise this to JSON for the client.
+            return sess.history
 
         async def list_sessions(self):  # noqa: D401
             """Return metadata for all sessions."""
