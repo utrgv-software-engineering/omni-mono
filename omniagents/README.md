@@ -111,3 +111,11 @@ restored when reopening the app.
 ## Documentation
 
 For more information, see the [OpenAI Agents Python documentation](https://openai.github.io/openai-agents-python/quickstart/).
+
+## Running Tests
+
+Use `uv` to automatically install dependencies before running the tests:
+
+```bash
+uv run pytest -q
+```
