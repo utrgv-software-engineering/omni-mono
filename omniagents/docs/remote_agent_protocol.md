@@ -14,6 +14,8 @@ Start a new assistant run. The server preserves history across runs using a `ses
 **Request**
 ```json
 {
+  "jsonrpc": "2.0",
+  "id": 1,
   "method": "start_run",
   "params": {"prompt": "Hello", "session_id": null}
 }
@@ -32,7 +34,7 @@ Cancel an active run.
 
 **Request**
 ```json
-{"method": "stop_run", "params": {"run_id": "run_xxx"}}
+{"jsonrpc": "2.0", "id": 2, "method": "stop_run", "params": {"run_id": "run_xxx"}}
 ```
 
 **Response**
@@ -43,7 +45,7 @@ Append a message to the current run's conversation. The next assistant output wi
 
 **Request**
 ```json
-{"method": "send_user_message", "params": {"run_id": "run_xxx", "content": "next prompt"}}
+{"jsonrpc": "2.0", "id": 3, "method": "send_user_message", "params": {"run_id": "run_xxx", "content": "next prompt"}}
 ```
 
 **Response**
@@ -54,7 +56,7 @@ Fetch the full conversation history for a session as JSON text.
 
 **Request**
 ```json
-{"method": "get_session_history", "params": {"session_id": "session_xxx"}}
+{"jsonrpc": "2.0", "id": 4, "method": "get_session_history", "params": {"session_id": "session_xxx"}}
 ```
 
 **Response**
@@ -65,7 +67,7 @@ Return a list of all sessions with their archive state.
 
 **Request**
 ```json
-{"method": "list_sessions", "params": {}}
+{"jsonrpc": "2.0", "id": 5, "method": "list_sessions", "params": {}}
 ```
 
 **Response**
@@ -84,7 +86,7 @@ persists across restarts.
 
 **Request**
 ```json
-{"method": "archive_session", "params": {"session_id": "session_xxx"}}
+{"jsonrpc": "2.0", "id": 6, "method": "archive_session", "params": {"session_id": "session_xxx"}}
 ```
 
 **Response**

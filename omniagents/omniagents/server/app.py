@@ -10,6 +10,7 @@ import inspect
 
 from fastapi import FastAPI, WebSocket, Depends, HTTPException, status
 from fastapi_websocket_rpc import RpcMethodsBase, WebsocketRPCEndpoint
+from omniagents.jsonrpc.socket import JsonRpcWebSocket
 
 from omniagents.core.config_loader import load_agent_spec_from_yaml
 from omniagents.core.app_base import _default_build_agent
@@ -258,7 +259,10 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
             """Archive *session_id* so clients can hide it."""
             return sm.archive_session(session_id)
 
-    endpoint = WebsocketRPCEndpoint(AgentService())
+    if "serializing_socket_cls" in inspect.signature(WebsocketRPCEndpoint).parameters:
+        endpoint = WebsocketRPCEndpoint(AgentService(), serializing_socket_cls=JsonRpcWebSocket)
+    else:  # pragma: no cover - test stub fallback
+        endpoint = WebsocketRPCEndpoint(AgentService())
     # Attach route with optional token dependency. Older versions of
     # fastapi_websocket_rpc do not support the ``dependencies`` parameter on
     # ``register_route``.  Detect this and fall back to a custom handler.
