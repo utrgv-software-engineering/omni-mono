@@ -107,7 +107,7 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
             approved: bool,
             always_approve: bool = False,
             error_message: str | None = None,
-        ):  # noqa: D401
+        ) -> bool:  # noqa: D401
             _debug_rpc(
                 "tool_approval_response",
                 {
@@ -147,7 +147,7 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
             self._pending_approvals[approval_id] = fut
             return await fut  # -> (approved, always_approve, error_message)
 
-        async def start_run(self, prompt: str, session_id: str | None = None):  # noqa: D401
+        async def start_run(self, prompt: str, session_id: str | None = None) -> dict:  # noqa: D401
             sess: Session = sm.get_or_create(session_id)
 
             # Track current channel for real-time notifications.
@@ -225,11 +225,11 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
             sm.bind_task(task, sess)
             return {"run_id": task_name, "session_id": sess.id}
 
-        async def stop_run(self, run_id: str):  # noqa: D401
+        async def stop_run(self, run_id: str) -> bool:  # noqa: D401
             _debug_rpc("stop_run", {"run_id": run_id})
             return sm.cancel(run_id)
 
-        async def send_user_message(self, run_id: str, content: str):  # noqa: D401
+        async def send_user_message(self, run_id: str, content: str) -> None:  # noqa: D401
             _debug_rpc("send_user_message", {"run_id": run_id, "content": content})
             sess = sm.get_by_run_id(run_id)
             if not sess:
@@ -242,7 +242,7 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
         # ------------------------------------------------------------------
         #  NEW: expose conversation history to clients ---------------------
         # ------------------------------------------------------------------
-        async def get_session_history(self, session_id: str):  # noqa: D401
+        async def get_session_history(self, session_id: str) -> list[dict]:  # noqa: D401
             """Return JSON-serialisable history for *session_id*."""
             _debug_rpc("get_session_history", {"session_id": session_id})
             sess: Session = sm.get_or_create(session_id)
@@ -273,13 +273,13 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
             _debug_rpc("get_session_history result", {"history": result})
             return result
 
-        async def list_sessions(self):  # noqa: D401
+        async def list_sessions(self) -> list[dict]:  # noqa: D401
             """Return metadata for all sessions."""
             result = sm.list_sessions()
             _debug_rpc("list_sessions", {"result": result})
             return result
 
-        async def archive_session(self, session_id: str):  # noqa: D401
+        async def archive_session(self, session_id: str) -> bool:  # noqa: D401
             """Archive *session_id* so clients can hide it."""
             _debug_rpc("archive_session", {"session_id": session_id})
             return sm.archive_session(session_id)
