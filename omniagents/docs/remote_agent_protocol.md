@@ -61,7 +61,7 @@ Fetch the full conversation history for a session as JSON text.
 A JSON string representing the history list.
 
 ### `list_sessions`
-Return a list of all active session identifiers.
+Return a list of all sessions with their archive state.
 
 **Request**
 ```json
@@ -70,8 +70,25 @@ Return a list of all active session identifiers.
 
 **Response**
 ```json
-["session_1", "session_2"]
+[
+  {"id": "session_1", "archived": false},
+  {"id": "session_2", "archived": true}
+]
 ```
+
+### `archive_session`
+Mark a session as archived so clients can hide it.
+
+The archived status is stored in the server history database so it
+persists across restarts.
+
+**Request**
+```json
+{"method": "archive_session", "params": {"session_id": "session_xxx"}}
+```
+
+**Response**
+`true` once the session was archived.
 
 ### `tool_approval_response`
 Answer a pending tool approval request. The `approval_id` matches the identifier sent in the notification.

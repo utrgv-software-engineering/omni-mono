@@ -124,9 +124,15 @@ class RemoteAgentProxy:
         return _Result(_events_gen())
 
     async def list_sessions(self):  # noqa: D401
-        """Fetch list of active session IDs from the server."""
+        """Fetch list of session metadata from the server."""
         await self._ensure_client()
         resp = await self._client.other.list_sessions()
+        return getattr(resp, "result", resp)
+
+    async def archive_session(self, session_id: str):  # noqa: D401
+        """Archive *session_id* on the server."""
+        await self._ensure_client()
+        resp = await self._client.other.archive_session(session_id=session_id)
         return getattr(resp, "result", resp)
 
     # ------------------------------------------------------------------

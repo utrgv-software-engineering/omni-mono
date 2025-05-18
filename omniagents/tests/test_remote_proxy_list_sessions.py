@@ -16,10 +16,18 @@ class DummyClient:
         pass
 
     async def list_sessions(self):
-        return SimpleNamespace(result=["s1", "s2"])
+        return SimpleNamespace(result=[{"id": "s1", "archived": False}, {"id": "s2", "archived": True}])
+
+    async def archive_session(self, session_id: str):
+        self.archived = session_id
+        return SimpleNamespace(result=True)
 
 def test_list_sessions(monkeypatch):
     monkeypatch.setattr(remote_proxy, "WebSocketRpcClient", DummyClient)
     proxy = RemoteAgentProxy("ws://dummy")
     sessions = asyncio.run(proxy.list_sessions())
-    assert sessions == ["s1", "s2"]
+    assert sessions == [{"id": "s1", "archived": False}, {"id": "s2", "archived": True}]
+
+    res = asyncio.run(proxy.archive_session("s1"))
+    assert res is True
+    assert proxy._client.archived == "s1"
