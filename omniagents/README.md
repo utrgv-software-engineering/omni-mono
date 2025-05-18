@@ -8,45 +8,28 @@ The project provides a platform to integrate multiple specialized tools, allowin
 
 ## Setup
 
-### Option 1: Using uv (Recommended)
+### Option 1: Using pip (Recommended)
 
-The project uses `pyproject.toml` for dependency management with uv, allowing for a simpler developer experience with no environment setup.
+Install the dependencies listed in `requirements.txt` and run the scripts normally.
 
-1. **Install uv** (if not already installed):
-   ```shell
-   # macOS (Homebrew)
-   brew install astral/tap/uv
-   
-   # Windows (via PowerShell)
-   irm https://astral.sh/uv/install.ps1 | iex
-   
-   # Linux/macOS (via curl)
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   
-   # Using pip (alternative)
-   pip install uv
+1. **Install dependencies**:
+   ```bash
+   pip install -r requirements.txt
    ```
 
 2. **Configure environment variables**:
    Copy `.env.example` to create `.env`, and edit it to add your OpenAI API key:
-   ```shell
+   ```bash
    cp .env.example .env
    # Edit .env with your favorite editor
    ```
 
-3. **Run scripts with uv**:
-   ```shell
-   # Run any script directly - uv handles all dependencies automatically
-   uv run main.py
-   uv run surfing_agent.py
-   uv run advanced_example.py
+3. **Run example scripts**:
+   ```bash
+   python main.py
+   python surfing_agent.py
+   python advanced_example.py
    ```
-
-That's it! uv automatically:
-- Creates an isolated environment for each run
-- Installs all dependencies defined in `pyproject.toml`
-- Runs your script without requiring environment activation
-- Caches dependencies for faster subsequent runs
 
 ### Option 2: Using conda (Legacy)
 
@@ -114,8 +97,9 @@ For more information, see the [OpenAI Agents Python documentation](https://opena
 
 ## Running Tests
 
-Use `uv` to automatically install dependencies before running the tests:
+Install dependencies and run the test suite with `pytest`:
 
 ```bash
-uv run pytest -q
+pip install -r requirements.txt
+pytest -q
 ```
