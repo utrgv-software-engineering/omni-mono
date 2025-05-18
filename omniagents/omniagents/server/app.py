@@ -27,6 +27,14 @@ __all__ = ["build_app"]
 # ------------------------------------------------------------------
 DEBUG_SERVER = os.getenv("OMNIAGENTS_SERVER_DEBUG", "0") in ("1", "true", "True")
 
+def _debug_rpc(method: str, payload: dict | None = None) -> None:
+    """Print *method* and *payload* when ``OMNIAGENTS_SERVER_DEBUG`` is set."""
+    if DEBUG_SERVER:
+        if payload is not None:
+            print(f"[srv] ★ {method} payload={payload!r}")
+        else:
+            print(f"[srv] ★ {method}")
+
 def _token_dependency(required_token: Optional[str] = None):  # noqa: D401
     """Return a FastAPI dependency that validates the ?token param."""
 
@@ -100,6 +108,15 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
             always_approve: bool = False,
             error_message: str | None = None,
         ):  # noqa: D401
+            _debug_rpc(
+                "tool_approval_response",
+                {
+                    "approval_id": approval_id,
+                    "approved": approved,
+                    "always_approve": always_approve,
+                    "error_message": error_message,
+                },
+            )
             fut = self._pending_approvals.pop(approval_id, None)
             if fut and not fut.done():
                 fut.set_result((approved, always_approve, error_message))
@@ -195,20 +212,25 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
                     )
 
             task_name = f"run_{uuid.uuid4().hex}"
-            if DEBUG_SERVER:
-                print(f"[srv] ★ start_run RPC  prompt={prompt[:80]!r} session_id_in={session_id} -> sess={sess.id[:8]} run_id={task_name}")
+            _debug_rpc(
+                "start_run",
+                {
+                    "prompt": prompt,
+                    "session_id_in": session_id,
+                    "session_id": sess.id,
+                    "run_id": task_name,
+                },
+            )
             task = asyncio.create_task(_worker(), name=task_name)
             sm.bind_task(task, sess)
             return {"run_id": task_name, "session_id": sess.id}
 
         async def stop_run(self, run_id: str):  # noqa: D401
-            if DEBUG_SERVER:
-                print(f"[srv] ★ stop_run  run_id={run_id}")
+            _debug_rpc("stop_run", {"run_id": run_id})
             return sm.cancel(run_id)
 
         async def send_user_message(self, run_id: str, content: str):  # noqa: D401
-            if DEBUG_SERVER:
-                print(f"[srv] ★ send_user_message  run_id={run_id} content={content[:80]!r}")
+            _debug_rpc("send_user_message", {"run_id": run_id, "content": content})
             sess = sm.get_by_run_id(run_id)
             if not sess:
                 raise RuntimeError("Unknown run_id")
@@ -222,6 +244,7 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
         # ------------------------------------------------------------------
         async def get_session_history(self, session_id: str):  # noqa: D401
             """Return JSON-serialisable history for *session_id*."""
+            _debug_rpc("get_session_history", {"session_id": session_id})
             sess: Session = sm.get_or_create(session_id)
 
             # Track this Rpc channel too – allows further live events while
@@ -246,17 +269,19 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
 
             # Return the raw history list; the WebSocket RPC layer will
             # serialise this to JSON for the client.
-            return sess.history
+            result = sess.history
+            _debug_rpc("get_session_history result", {"history": result})
+            return result
 
         async def list_sessions(self):  # noqa: D401
             """Return metadata for all sessions."""
             result = sm.list_sessions()
-            if DEBUG_SERVER:
-                print(f"[srv] ★ list_sessions  count={len(result)}")
+            _debug_rpc("list_sessions", {"result": result})
             return result
 
         async def archive_session(self, session_id: str):  # noqa: D401
             """Archive *session_id* so clients can hide it."""
+            _debug_rpc("archive_session", {"session_id": session_id})
             return sm.archive_session(session_id)
 
     if "serializing_socket_cls" in inspect.signature(WebsocketRPCEndpoint).parameters:
