@@ -94,6 +94,10 @@ class _MultiColumnScreenState extends State<MultiColumnScreen>
   void _closeConversation(String id) {
     setState(() {
       final conv = _conversations.firstWhere((c) => c.id == id);
+      if (conv.sessionId != null) {
+        // Archive the session on the server so it no longer appears in lists.
+        conv.client.archiveSession(conv.sessionId!).catchError((_) {});
+      }
       conv.dispose();
       _conversations.remove(conv);
     });
@@ -263,33 +267,51 @@ class _MultiColumnScreenState extends State<MultiColumnScreen>
   Future<void> _loadOrder() async {
     final prefs = await SharedPreferences.getInstance();
     final stored = prefs.getStringList('column_order_v1') ?? [];
-    if (stored.isEmpty) return;
 
     // We need the AgentsRepository to be available via context after build.
     // Delay reordering until first frame to ensure repository is loaded.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final repo = context.read<AgentsRepository>();
-      final List<_Conversation> ordered = [];
+      final sessionsMap = await _fetchActiveSessions(repo);
+      final List<_Conversation> convs = [];
+
+      // First add sessions in the order stored locally if they still exist.
       for (final s in stored) {
         try {
           final obj = jsonDecode(s) as Map<String, dynamic>;
           final endpoint = obj['endpoint'] as String?;
           final sessionId = obj['session_id'] as String?;
-          if (endpoint == null) continue;
-          final agent = repo.agents.firstWhere((a) => a.endpoint == endpoint,
-              orElse: () => AgentConfig(name: endpoint, endpoint: endpoint));
-          ordered.add(_Conversation(
-              id: 'c${_idCounter++}', agent: agent, sessionId: sessionId));
+          if (endpoint == null || sessionId == null) continue;
+          final active = sessionsMap[endpoint];
+          if (active != null && active.remove(sessionId)) {
+            final agent = repo.agents.firstWhere((a) => a.endpoint == endpoint,
+                orElse: () => AgentConfig(name: endpoint, endpoint: endpoint));
+            convs.add(_Conversation(
+                id: 'c${_idCounter++}', agent: agent, sessionId: sessionId));
+          }
         } catch (_) {
           continue;
         }
       }
-      if (ordered.isNotEmpty) {
+
+      // Append any new sessions not seen before.
+      for (final entry in sessionsMap.entries) {
+        final endpoint = entry.key;
+        final agent = repo.agents.firstWhere((a) => a.endpoint == endpoint,
+            orElse: () => AgentConfig(name: endpoint, endpoint: endpoint));
+        for (final sessionId in entry.value) {
+          convs.add(_Conversation(
+              id: 'c${_idCounter++}', agent: agent, sessionId: sessionId));
+        }
+      }
+
+      if (convs.isNotEmpty) {
         setState(() {
           _conversations
             ..clear()
-            ..addAll(ordered);
+            ..addAll(convs);
         });
+        _saveOrder();
       }
     });
   }
@@ -303,6 +325,32 @@ class _MultiColumnScreenState extends State<MultiColumnScreen>
             }))
         .toList();
     await prefs.setStringList('column_order_v1', list);
+  }
+
+  /// Query each configured agent for its active (non-archived) sessions.
+  Future<Map<String, List<String>>> _fetchActiveSessions(
+      AgentsRepository repo) async {
+    final Map<String, List<String>> result = {};
+    for (final agent in repo.agents) {
+      final client =
+          RemoteAgentClient(agent.endpoint, token: agent.token, debug: true);
+      try {
+        final sessions = await client.listSessions();
+        for (final sess in sessions) {
+          if (sess is Map && sess['id'] is String) {
+            final archived = sess['archived'] as bool? ?? false;
+            if (!archived) {
+              result.putIfAbsent(agent.endpoint, () => []).add(sess['id'] as String);
+            }
+          }
+        }
+      } catch (_) {
+        // Ignore errors per agent to keep others loading.
+      } finally {
+        client.dispose();
+      }
+    }
+    return result;
   }
 
   Future<void> _pickAgent(AgentsRepository repo) async {

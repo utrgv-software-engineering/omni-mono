@@ -218,6 +218,40 @@ class RemoteAgentClient {
     return <dynamic>[];
   }
 
+  /// Fetch list of sessions with archive state from the server.
+  /// Returns an empty list if the request fails.
+  Future<List<dynamic>> listSessions() async {
+    try {
+      await connect();
+    } catch (_) {
+      return <dynamic>[];
+    }
+
+    final callId = _uuid.v4();
+    final completer = Completer<dynamic>();
+    _pending[callId] = completer;
+    _sendRequest('list_sessions', const {}, callId: callId);
+
+    final result = await completer.future;
+    if (result is List) {
+      return result;
+    }
+    if (result is String) {
+      try {
+        final decoded = jsonDecode(result);
+        if (decoded is List) return decoded;
+      } catch (_) {
+        // Ignore parse errors
+      }
+    }
+    return <dynamic>[];
+  }
+
+  /// Mark [sessionId] as archived on the server.
+  Future<void> archiveSession(String sessionId) {
+    return _simpleCall('archive_session', {'session_id': sessionId});
+  }
+
   // ---------------------------------------------------------------------------
   // Internals -----------------------------------------------------------------
   // ---------------------------------------------------------------------------
