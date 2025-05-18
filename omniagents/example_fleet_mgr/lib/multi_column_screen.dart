@@ -332,7 +332,18 @@ class _MultiColumnScreenState extends State<MultiColumnScreen>
       AgentsRepository repo) async {
     final Map<String, List<String>> result = {};
     for (final agent in repo.agents) {
-      final client =
+      // Reuse an existing client if we already have a conversation for this
+      // agent so the WebSocket stays connected. Otherwise create a temporary
+      // one just for listing sessions.
+      RemoteAgentClient? client;
+      for (final c in _conversations) {
+        if (c.agent.endpoint == agent.endpoint) {
+          client = c.client;
+          break;
+        }
+      }
+      final bool ownClient = client == null;
+      client ??=
           RemoteAgentClient(agent.endpoint, token: agent.token, debug: true);
       try {
         final sessions = await client.listSessions();
@@ -347,7 +358,9 @@ class _MultiColumnScreenState extends State<MultiColumnScreen>
       } catch (_) {
         // Ignore errors per agent to keep others loading.
       } finally {
-        client.dispose();
+        // Only dispose if we created a temporary client above – existing
+        // conversations keep their connection alive.
+        if (ownClient) client.dispose();
       }
     }
     return result;
