@@ -10,12 +10,14 @@ local `agents.Agent` instance would normally be used.
 
 from typing import Any, AsyncGenerator
 import asyncio
+import inspect
 import json
 import os
 import uuid
 import ast
 
 from fastapi_websocket_rpc import RpcMethodsBase, WebSocketRpcClient
+from omniagents.jsonrpc.socket import JsonRpcWebSocket
 from agents import StreamEvent, RunItemStreamEvent, ItemHelpers, Runner, RunConfig  # type: ignore
 
 __all__ = ["RemoteAgentProxy"]
@@ -142,7 +144,14 @@ class RemoteAgentProxy:
         if self._client is None:
             # Build methods object that forwards events into _event_q
             self._methods = _ClientEventMethods(self._event_q)
-            self._client = await WebSocketRpcClient(self._url, self._methods).__aenter__()
+            if "serializing_socket_cls" in inspect.signature(WebSocketRpcClient.__init__).parameters:
+                self._client = await WebSocketRpcClient(
+                    self._url,
+                    self._methods,
+                    serializing_socket_cls=JsonRpcWebSocket,
+                ).__aenter__()
+            else:  # pragma: no cover - test stub fallback
+                self._client = await WebSocketRpcClient(self._url, self._methods).__aenter__()
 
 
 # ----------------------------------------------------------------------

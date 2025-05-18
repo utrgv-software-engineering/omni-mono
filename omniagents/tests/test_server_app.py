@@ -35,27 +35,27 @@ def test_rpc_methods(monkeypatch):
     client = TestClient(app)
 
     with client.websocket_connect('/ws') as ws:
-        ws.send_json({'id': 1, 'method': 'start_run', 'args': {'prompt': 'hello'}})
+        ws.send_json({'jsonrpc': '2.0', 'id': 1, 'method': 'start_run', 'params': {'prompt': 'hello'}})
         resp = ws.receive_json()
         session_id = resp['result']['session_id']
         ws.receive_json()  # run_end
 
-        ws.send_json({'id': 2, 'method': 'get_session_history', 'args': {'session_id': session_id}})
+        ws.send_json({'jsonrpc': '2.0', 'id': 2, 'method': 'get_session_history', 'params': {'session_id': session_id}})
         hist_resp = ws.receive_json()
         hist = hist_resp['result']
         assert hist[0]['content'] == 'hello'
 
-        ws.send_json({'id': 3, 'method': 'list_sessions', 'args': {}})
+        ws.send_json({'jsonrpc': '2.0', 'id': 3, 'method': 'list_sessions', 'params': {}})
         list_resp = ws.receive_json()
         sess_meta = list_resp['result'][0]
         assert sess_meta['id'] == session_id
         assert sess_meta['archived'] is False
 
-        ws.send_json({'id': 4, 'method': 'archive_session', 'args': {'session_id': session_id}})
+        ws.send_json({'jsonrpc': '2.0', 'id': 4, 'method': 'archive_session', 'params': {'session_id': session_id}})
         arch_resp = ws.receive_json()
         assert arch_resp['result'] is True
 
-        ws.send_json({'id': 5, 'method': 'list_sessions', 'args': {}})
+        ws.send_json({'jsonrpc': '2.0', 'id': 5, 'method': 'list_sessions', 'params': {}})
         list_resp2 = ws.receive_json()
         sess_meta2 = list_resp2['result'][0]
         assert sess_meta2['archived'] is True
@@ -67,7 +67,7 @@ def test_rpc_methods(monkeypatch):
     app2 = server_app.build_app(spec=spec)
     client2 = TestClient(app2)
     with client2.websocket_connect('/ws') as ws2:
-        ws2.send_json({'id': 6, 'method': 'list_sessions', 'args': {}})
+        ws2.send_json({'jsonrpc': '2.0', 'id': 6, 'method': 'list_sessions', 'params': {}})
         list_resp3 = ws2.receive_json()
         sess_meta3 = list_resp3['result'][0]
         assert sess_meta3['archived'] is True

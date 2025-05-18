@@ -265,11 +265,10 @@ class RemoteAgentClient {
   void _sendRequest(String method, Map<String, dynamic> args,
       {required String callId}) {
     final frame = {
-      'request': {
-        'method': method,
-        'arguments': args,
-        'call_id': callId,
-      }
+      'jsonrpc': '2.0',
+      'method': method,
+      'params': args,
+      'id': callId,
     };
     final payload = jsonEncode(frame);
     if (debug) debugPrint('→ $payload');
@@ -298,29 +297,28 @@ class RemoteAgentClient {
 
     if (debug) debugPrint('← $msg');
 
-    // Handle notifications first so UI updates even when a response is also present.
-    if (msg.containsKey('request') && msg['request'] != null) {
-      final req = msg['request'] as Map<String, dynamic>;
-      final method = req['method'] as String?;
-      final args = (req['arguments'] as Map?)?.cast<String, dynamic>() ?? {};
-      final callId = req['call_id'] as String?;
+    // Handle notifications/requests first so UI updates even when a response is also present.
+    if (msg.containsKey('method')) {
+      final method = msg['method'] as String?;
+      final args = (msg['params'] as Map?)?.cast<String, dynamic>() ?? {};
+      final callId = msg['id'] as String?;
       if (method != null) {
         if (method == '_ping_' && callId != null) {
           // Respond immediately with pong
           _sendResponse(callId, 'pong');
         } else {
           _handleNotification(method, args);
+          if (callId != null) _sendResponse(callId, true);
         }
       }
     }
 
     // Now handle response part (may be absent or null)
-    if (msg.containsKey('response') && msg['response'] != null) {
-      final resp = msg['response'] as Map<String, dynamic>;
-      final callId = resp['call_id'] as String?;
+    if (msg.containsKey('id') && msg.containsKey('result')) {
+      final callId = msg['id'] as String?;
       if (callId != null) {
         final completer = _pending.remove(callId);
-        completer?.complete(resp['result']);
+        completer?.complete(msg['result']);
       }
     }
   }
@@ -361,11 +359,9 @@ class RemoteAgentClient {
 
   void _sendResponse(String callId, dynamic result) {
     final frame = {
-      'response': {
-        'call_id': callId,
-        'result': result,
-        'result_type': result.runtimeType.toString(),
-      }
+      'jsonrpc': '2.0',
+      'id': callId,
+      'result': result,
     };
     final payload = jsonEncode(frame);
     if (debug) debugPrint('→ $payload');
