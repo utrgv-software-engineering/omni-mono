@@ -101,8 +101,9 @@ def _stream_event_payload(item, run_id: str):
 async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: int = 20) -> None:  # noqa: D401
     """Drive Runner.run_streamed and forward events to *rpc_channel*.
 
-    rpc_channel is the `RpcMethodsBase` instance from fastapi_websocket_rpc
-    and exposes `.notify(method, **params)`.
+    ``rpc_channel`` is the :class:`RpcMethodsBase` instance attached to the
+    WebSocket connection and exposes ``.async_call(method, args)`` for
+    server-to-client notifications.
     """
 
     # ------------------------------------------------------------------

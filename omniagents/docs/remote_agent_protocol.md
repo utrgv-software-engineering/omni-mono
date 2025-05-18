@@ -2,7 +2,7 @@
 
 This document describes the JSON-RPC interface implemented by the OmniAgents server.
 
-Remote clients use a WebSocket connection (provided by [`fastapi_websocket_rpc`](https://github.com/authorizon/fastapi-websocket-rpc)) to send RPC methods and receive real-time notifications.
+Remote clients use a WebSocket connection implementing the JSON-RPC 2.0 protocol to send RPC methods and receive real-time notifications.
 
 The reference implementation lives in [`omniagents/server/app.py`](../omniagents/server/app.py) and [`omniagents/remote_proxy.py`](../omniagents/remote_proxy.py).
 
