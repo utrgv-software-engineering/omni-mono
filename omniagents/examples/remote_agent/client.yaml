@@ -1,0 +1,4 @@
+name: Remote Client
+remote_agent:
+  ws_url: "ws://localhost:8000/ws"
+welcome_text: "Connected to remote agent."

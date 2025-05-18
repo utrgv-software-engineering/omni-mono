@@ -1,0 +1,8 @@
+name: Tool Demo (YAML)
+model: gpt-4o
+instructions_file: instructions.md
+welcome_text: "Ask me the time or to flip a coin!"
+
+tools:
+  - get_current_time
+  - flip_coin
