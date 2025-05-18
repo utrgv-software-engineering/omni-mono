@@ -1,5 +1,4 @@
 import asyncio
-import json
 import importlib
 from fastapi.testclient import TestClient
 from omniagents.server import app as server_app
@@ -43,7 +42,7 @@ def test_rpc_methods(monkeypatch):
 
         ws.send_json({'id': 2, 'method': 'get_session_history', 'args': {'session_id': session_id}})
         hist_resp = ws.receive_json()
-        hist = json.loads(hist_resp['result'])
+        hist = hist_resp['result']
         assert hist[0]['content'] == 'hello'
 
         ws.send_json({'id': 3, 'method': 'list_sessions', 'args': {}})

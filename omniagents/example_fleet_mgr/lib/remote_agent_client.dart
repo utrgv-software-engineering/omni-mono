@@ -132,10 +132,9 @@ class RemoteAgentClient {
       if (raw is Map<String, dynamic>) {
         value = raw;
       } else if (raw is String) {
-        // Server may send Python-dict-as-string.  Try to coerce it into JSON.
         try {
-          final jsonLike = raw.replaceAll("'", '"');
-          value = jsonDecode(jsonLike) as Map<String, dynamic>?;
+          final decoded = jsonDecode(raw);
+          if (decoded is Map<String, dynamic>) value = decoded;
         } catch (_) {
           value = null;
         }
