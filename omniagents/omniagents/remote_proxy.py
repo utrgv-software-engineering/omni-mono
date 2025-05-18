@@ -123,6 +123,12 @@ class RemoteAgentProxy:
 
         return _Result(_events_gen())
 
+    async def list_sessions(self):  # noqa: D401
+        """Fetch list of active session IDs from the server."""
+        await self._ensure_client()
+        resp = await self._client.other.list_sessions()
+        return getattr(resp, "result", resp)
+
     # ------------------------------------------------------------------
     # Internals ---------------------------------------------------------
     # ------------------------------------------------------------------
