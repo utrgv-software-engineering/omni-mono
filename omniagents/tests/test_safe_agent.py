@@ -1,5 +1,5 @@
-import pytest
 import asyncio
+
 from omniagents.core.safe_agent import SafeAgent
 from agents.tool import FunctionTool
 
@@ -7,9 +7,7 @@ from agents.tool import FunctionTool
 async def dummy_tool(ctx, params_json: str):
     return 'ok'
 
-@pytest.mark.asyncio
-
-async def test_safe_agent_wrap(monkeypatch):
+def test_safe_agent_wrap(monkeypatch):
     calls = []
 
     async def approval_cb(name, args):
@@ -26,12 +24,11 @@ async def test_safe_agent_wrap(monkeypatch):
         skip_approvals=False,
     )
     wrapped = sa.wrap_tool_with_approval(tool)
-    await wrapped.on_invoke_tool(None, '{}')
+    asyncio.run(wrapped.on_invoke_tool(None, '{}'))
     assert calls == [('danger', '')]
 
 
-@pytest.mark.asyncio
-async def test_safe_agent_safe_tool(monkeypatch):
+def test_safe_agent_safe_tool(monkeypatch):
     async def approval_cb(name, args):
         return False, False, None
 
