@@ -1,109 +1,85 @@
-# OpenAI Agents Python Project
+# OmniAgents
 
-This project leverages the OpenAI Agents Python library to create a versatile application featuring multiple tools for various real-world applications.
+OmniAgents provides a lightweight wrapper around the [OpenAI Agents](https://github.com/openai/openai-agents-python) library.  
+It offers three ways to run your assistant:
 
-## Overview
+- **CLI** – text based chat in the terminal
+- **GUI** – a desktop style interface built with [Flet](https://flet.dev)
+- **Server** – expose an agent through a JSON‑RPC WebSocket API
 
-The project provides a platform to integrate multiple specialized tools, allowing for interaction with external APIs and services, including weather updates, web searches, geocoding, and more.
+Agents are described using a small YAML file which lists available tools and where to load them from.  You can also build an agent directly in Python and run it with the same interface.
 
-## Setup
 
-### Option 1: Using pip (Recommended)
+## Installation
 
-Install the dependencies listed in `requirements.txt` and run the scripts normally.
-
-1. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **Configure environment variables**:
-   Copy `.env.example` to create `.env`, and edit it to add your OpenAI API key:
-   ```bash
-   cp .env.example .env
-   # Edit .env with your favorite editor
-   ```
-
-3. **Run example scripts**:
-   ```bash
-   python main.py
-   python surfing_agent.py
-   python advanced_example.py
-   ```
-
-### Option 2: Using conda (Legacy)
-
-1. **Create the conda environment**:
-   ```shell
-   conda env create -f environment.yml
-   ```
-
-2. **Activate the environment**:
-   ```shell
-   conda activate openai-agents
-   ```
-
-3. **Configure environment variables**:
-   Copy `.env.example` to create `.env`, and edit it to add your OpenAI API key.
-
-4. **Run example scripts**:
-   ```shell
-   python main.py             # Basic example
-   python advanced_example.py # Interactive example with multiple tools
-   ```
-
-## Tools Included
-
-- **bash_tool.py**: Execute and manage bash commands.
-- **file_tools.py**: Perform various file operations.
-- **geocoding.py**: Convert addresses into geographic coordinates.
-- **google_flights.py**: Interface with Google Flights for search and data retrieval.
-- **scholar_search.py**: Search scholarly articles and databases.
-- **weather.py**: Fetch current weather information.
-- **web_search.py**: Conduct online searches.
-- **youtube_search.py**: Search for YouTube videos.
-
-## Environment Variables
-
-Configure the following variables in your `.env` file:
-
-- `OPENAI_API_KEY` (required): Your OpenAI API key
-- `OPENAI_API_BASE` (optional): Custom API base URL (defaults to `https://api.openai.com/v1`)
-- `MODEL_NAME` (optional): The model to use (defaults to `gpt-4-turbo`)
-
-## Examples
-
-- `examples/basic_python` – simple agent defined directly in Python.
-- `examples/basic_yaml` – simple agent defined in YAML.
-- `examples/safe_agent_python` – SafeAgent demo written in Python that asks for approval before using tools.
-- `examples/safe_agent_yaml` – SafeAgent demo configured in YAML.
-- `examples/remote_agent` – run an agent as a JSON-RPC server and connect from another process.
-- `examples/agentdeck` – Flutter project scaffolding.
-
-## Resuming Sessions
-
-Conversation history is saved in a local SQLite file `sessions.db`. Each chat is
-identified by a session ID.
-
-### CLI
-
-Use `--session-id <id>` with `omniagents cli run --mode cli` to continue a
-previous conversation. If omitted, a new ID is generated and printed at startup.
-
-### GUI
-
-GUI sessions always start fresh. Conversation history is not automatically
-restored when reopening the app.
-
-## Documentation
-
-For more information, see the [OpenAI Agents Python documentation](https://openai.github.io/openai-agents-python/quickstart/).
-
-## Running Tests
-
-Install dependencies and run the test suite with `pytest`:
+1. Clone this repository and install dependencies:
 
 ```bash
 pip install -r requirements.txt
+```
+
+After publication to PyPI you will also be able to `pip install omniagents` directly.
+
+## Configuration
+
+Most examples expect an OpenAI API key which can be provided via the `OPENAI_API_KEY` environment variable or entered in the GUI settings screen.  Additional fields defined in your YAML file are persisted locally.  Conversation history for CLI and server sessions is stored in `sessions.db`.
+
+
+## Defining an agent
+
+A minimal YAML specification might look like:
+
+```yaml
+name: DemoAgent
+instructions_file: instructions.md
+# tools directory is scanned automatically
+tools: [get_current_time, flip_coin]
+use_safe_agent: true
+```
+
+Each tool is a Python function decorated with `@function_tool` from `omniagents.core`.  See `examples/basic_python/tools.py` for reference.
+
+## Running
+
+### CLI mode
+
+Run an agent entirely in the terminal:
+
+```bash
+python -m omniagents.cli run -c path/to/agent.yaml --mode cli
+```
+
+Use `--session-id <id>` to resume a previous conversation stored in `sessions.db`.
+
+### GUI mode
+
+```bash
+python -m omniagents.cli run -c path/to/agent.yaml
+```
+
+The GUI persists settings such as API keys in the browser local storage.
+
+### Server mode
+
+```bash
+python -m omniagents.cli server -c path/to/agent.yaml --host 0.0.0.0 --port 8000
+```
+
+This launches a FastAPI app exposing a WebSocket endpoint at `/ws`.  The protocol is described in [`docs/remote_agent_protocol.md`](docs/remote_agent_protocol.md).  A client can connect using `RemoteAgentProxy` from this package or any JSON‑RPC library.
+
+## Examples
+
+- `examples/basic_python` – build an agent directly in Python
+- `examples/basic_yaml` – define the agent in YAML
+- `examples/safe_agent_python` and `safe_agent_yaml` – require approval before running tools
+- `examples/remote_agent` – run the server and connect from another process
+
+## Development
+
+Run the test suite with:
+
+```bash
 pytest -q
 ```
+
+
