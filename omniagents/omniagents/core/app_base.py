@@ -12,7 +12,12 @@ from typing import List, Dict, Any, Callable, Optional, Protocol, Awaitable, TYP
 
 # Import from other core modules
 # Use absolute imports for robustness within the package
-from omniagents.core.ui import Message, ChatMessage, ToolCallDisplay, ToolOutputDisplay, ToolApprovalRequest # Added ToolApprovalRequest
+from omniagents.core.ui import (
+    Message,
+    ChatMessage,
+    ToolInteractionDisplay,
+    ToolApprovalRequest,
+)
 from omniagents.core.settings import SettingsScreen, SettingField
 from omniagents.core.storage import load_settings, save_settings
 from omniagents.core.local_sessions import LocalSession
@@ -277,6 +282,10 @@ class AgentApp:
             "active_displays": {}, # Maps approval_id -> UI control
             "pending_futures": {}  # Maps approval_id -> asyncio.Future
         }
+
+        # Track active tool interaction cards for pairing call and result
+        self._interactions_by_call_id: Dict[str, ToolInteractionDisplay] = {}
+        self._pending_interactions: List[ToolInteractionDisplay] = []
     def run(self, mode: str = "gui", **ft_kwargs):
         """
         Convenience method to start the agent app.
@@ -740,52 +749,73 @@ class AgentApp:
                         tool_input = item.to_input_item()
                         args_str = tool_input.get('arguments', '{}')
                         tool_name = tool_input.get('name', 'unknown_tool')
-                        try:
-                            args_dict = json.loads(args_str) if args_str else {}
-                            # Shorter, cleaner arg formatting for display
-                            formatted_args = ", ".join([f"{k}={repr(v)[:50]}{'...' if len(repr(v)) > 50 else ''}" for k, v in args_dict.items()])
-                        except:
-                            formatted_args = args_str[:150] + ('...' if len(args_str) > 150 else '')
+                        call_id = tool_input.get('call_id')
 
-                        # Remove typing indicator before showing tool call
                         if self.typing_indicator in self.chat.controls:
                             self.chat.controls.remove(self.typing_indicator)
                             self.chat.update()
 
-                        tool_call_display = ToolCallDisplay(
-                            tool_name, formatted_args, self.spec.icon_map, self.spec.theme_color
+                        interaction = ToolInteractionDisplay(
+                            tool_name,
+                            args_str,
+                            self.spec.icon_map,
+                            self.spec.theme_color,
                         )
-                        self.chat.controls.append(tool_call_display)
-                        # Add indicator back *after* the tool call display
+                        self.chat.controls.append(interaction)
+                        if call_id:
+                            self._interactions_by_call_id[call_id] = interaction
+                        else:
+                            self._pending_interactions.append(interaction)
+
                         self.chat.controls.append(self.typing_indicator)
                         self.chat.update()
+                        self.page.update()
                         self.page.update()
 
                     # --- Handle Tool Outputs (Debug Only) --- 
                     elif item.type == "tool_call_output_item":
-                        # Check if it was a SafeAgent rejection before displaying
                         is_rejection = False
                         try:
                             output_data = json.loads(str(item.output))
                             if isinstance(output_data, dict) and output_data.get("error") == "TOOL_REJECTED":
                                 is_rejection = True
-                                if self.spec.debug_flag: # Only print rejection in debug
-                                    print(f"Debug: Tool call {output_data.get('tool')} rejected: {output_data.get('message')}")
-                                # We might still want a subtle UI indicator for rejection?
-                                # For now, just skip the output display.
+                                if self.spec.debug_flag:
+                                    print(
+                                        f"Debug: Tool call {output_data.get('tool')} rejected: {output_data.get('message')}"
+                                    )
                         except (json.JSONDecodeError, TypeError):
-                            pass # Not JSON or not the rejection format
+                            pass
 
-                        # Display non-rejection output only if in debug mode
-                        if not is_rejection and self.spec.debug_flag:
-                             # Remove indicator before showing output
+                        if not is_rejection:
                             if self.typing_indicator in self.chat.controls:
                                 self.chat.controls.remove(self.typing_indicator)
 
                             tool_output = str(item.output)
-                            output_display = ToolOutputDisplay(tool_output)
-                            self.chat.controls.append(output_display)
-                            # Add indicator back after output
+                            call_id = getattr(item, "call_id", None)
+
+                            interaction = None
+                            if call_id and call_id in self._interactions_by_call_id:
+                                interaction = self._interactions_by_call_id.pop(call_id)
+                            else:
+                                for idx in range(len(self._pending_interactions) - 1, -1, -1):
+                                    cand = self._pending_interactions[idx]
+                                    if not cand.has_output():
+                                        interaction = cand
+                                        del self._pending_interactions[idx]
+                                        break
+
+                            if interaction is None:
+                                interaction = ToolInteractionDisplay(
+                                    getattr(item, "name", "tool"),
+                                    "",
+                                    self.spec.icon_map,
+                                    self.spec.theme_color,
+                                    tool_output,
+                                )
+                                self.chat.controls.append(interaction)
+                            else:
+                                interaction.set_output(tool_output)
+
                             self.chat.controls.append(self.typing_indicator)
                             self.chat.update()
                             self.page.update()
