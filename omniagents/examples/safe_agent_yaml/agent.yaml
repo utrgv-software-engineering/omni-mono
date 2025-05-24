@@ -1,0 +1,14 @@
+name: Safe Tool Demo (YAML)
+model: gpt-4o
+instructions_file: instructions.md
+welcome_text: "Ask me the time or to flip a coin!"
+use_safe_agent: true
+safe_agent_options:
+  skip_approvals: false
+  halt_on_rejection: true
+  safe_tool_names: []
+  safe_tool_patterns: []
+
+tools:
+  - get_current_time
+  - flip_coin

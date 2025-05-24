@@ -73,8 +73,12 @@ Configure the following variables in your `.env` file:
 
 ## Examples
 
-- `main.py`: Basic implementation with a weather tool.
-- `advanced_example.py`: Interactive example integrating multiple tools for a dynamic chat interface.
+- `examples/basic_python` – simple agent defined directly in Python.
+- `examples/basic_yaml` – simple agent defined in YAML.
+- `examples/safe_agent_python` – SafeAgent demo written in Python that asks for approval before using tools.
+- `examples/safe_agent_yaml` – SafeAgent demo configured in YAML.
+- `examples/remote_agent` – run an agent as a JSON-RPC server and connect from another process.
+- `examples/agentdeck` – Flutter project scaffolding.
 
 ## Resuming Sessions
 
