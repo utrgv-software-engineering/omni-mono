@@ -9,6 +9,8 @@ local `agents.Agent` instance would normally be used.
 """
 
 from typing import Any, AsyncGenerator
+
+from agents import ItemHelpers, RunConfig, RunItemStreamEvent, StreamEvent
 import asyncio
 import json
 import os
@@ -29,6 +31,7 @@ class RemoteAgentProxy:
     name = "RemoteAgentProxy"
     tools: list = []
     instructions: str = ""
+    handoffs: list = []
     model = "remote"
     model_settings: dict = {}
     mcp_servers = None

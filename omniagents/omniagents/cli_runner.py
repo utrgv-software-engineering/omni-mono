@@ -96,7 +96,8 @@ async def run_cli(
     # Configure OpenAI client
     api_base = settings.get("openai_api_base")
     api_key = settings.get("openai_api_key")
-    if not api_key:
+    # Remote agents don't require a local OpenAI API key
+    if not api_key and not spec.remote_ws_url:
         print("Error: OPENAI_API_KEY is required for CLI mode.")
         sys.exit(1)
 
@@ -208,7 +209,13 @@ async def run_cli(
             local_session.append_message(user_msg)
             new_input = conversation
             run_config = RunConfig()
-            result = Runner.run_streamed(agent, new_input, max_turns=spec.max_turns, run_config=run_config)
+            if spec.remote_ws_url and hasattr(agent, "run_streamed"):
+                # Bypass Runner and delegate streaming to RemoteAgentProxy
+                result = agent.run_streamed(new_input, run_config=run_config)
+            else:
+                result = Runner.run_streamed(
+                    agent, new_input, max_turns=spec.max_turns, run_config=run_config
+                )
 
             message_output = ""
             final_items = []
