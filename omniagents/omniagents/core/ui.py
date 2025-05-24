@@ -288,7 +288,7 @@ class CollapsibleCard(ft.Container):
                 border=ft.border.all(1, ft.Colors.with_opacity(0.8, self.icon_color)),
                 border_radius=10,
             ),
-            ft.Container(width=8),
+            ft.Container(width=4),
             ft.Text(self.title, weight="w500", size=13, color=ft.Colors.BLACK87, expand=True),
         ]
         if arrow:
