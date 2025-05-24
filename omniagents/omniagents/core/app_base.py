@@ -195,6 +195,7 @@ class AgentApp:
         halt_on_rejection: bool = True,
         safe_tool_names: Optional[List[str]] = None,
         safe_tool_patterns: Optional[List[str]] = None,
+        layout: str = "classic",
     ) -> AgentApp:
         """
         Construct an AgentApp directly from an existing agents.Agent (or Agent-like).
@@ -238,6 +239,7 @@ class AgentApp:
             ),
             settings_fields=list(DEFAULT_SETTINGS_FIELDS),  # include OpenAI settings by default
             max_turns=max_turns if max_turns is not None else 20,
+            layout=layout,
         )
         return cls(spec=spec)
     # Modify init to accept config_path OR spec
@@ -261,6 +263,7 @@ class AgentApp:
 
         self.page: Optional[ft.Page] = None
         self.chat: Optional[ft.ListView] = None
+        self.logs: Optional[ft.ListView] = None
         self.new_message: Optional[ft.TextField] = None
         self.typing_indicator: Optional[ft.Container] = None
         self.settings_button: Optional[ft.IconButton] = None
@@ -426,6 +429,14 @@ class AgentApp:
             padding=ft.padding.symmetric(horizontal=20),  # consistent left/right inset for all items
             # Controls added later (welcome message)
         )
+
+        if self.spec.layout == "tabs":
+            self.logs = ft.ListView(
+                expand=True,
+                spacing=20,
+                auto_scroll=True,
+                padding=ft.padding.symmetric(horizontal=20),
+            )
 
         # Settings Button
         self.settings_button = ft.IconButton(
@@ -761,13 +772,16 @@ class AgentApp:
                             self.spec.icon_map,
                             self.spec.theme_color,
                         )
-                        self.chat.controls.append(interaction)
+                        target_list = self.logs if self.spec.layout == "tabs" and self.logs is not None else self.chat
+                        target_list.controls.append(interaction)
                         if call_id:
                             self._interactions_by_call_id[call_id] = interaction
                         else:
                             self._pending_interactions.append(interaction)
 
                         self.chat.controls.append(self.typing_indicator)
+                        if target_list is not self.chat:
+                            target_list.update()
                         self.chat.update()
                         self.page.update()
                         self.page.update()
@@ -812,11 +826,14 @@ class AgentApp:
                                     self.spec.theme_color,
                                     tool_output,
                                 )
-                                self.chat.controls.append(interaction)
+                                target_list = self.logs if self.spec.layout == "tabs" and self.logs is not None else self.chat
+                                target_list.controls.append(interaction)
                             else:
                                 interaction.set_output(tool_output)
 
                             self.chat.controls.append(self.typing_indicator)
+                            if self.spec.layout == "tabs" and self.logs is not None:
+                                self.logs.update()
                             self.chat.update()
                             self.page.update()
 
@@ -878,6 +895,8 @@ class AgentApp:
             #     print(f"- Role: {msg.get('role')}, Type: {msg.get('type')}, Content/Name: {msg.get('content', msg.get('name'))}")
             # print("----------------------------------")
 
+            if self.spec.layout == "tabs" and self.logs is not None:
+                self.logs.update()
             self.chat.update()
             self.page.update() # Final update after processing
 
@@ -1151,31 +1170,51 @@ class AgentApp:
 
     def _create_main_view(self):
         """Creates the main chat view content."""
-        # Content below the header (chat list and input)
-        content_below_header = ft.Column(
+        conversation_column = ft.Column(
             [
                 ft.Container(
-                    content=self.chat, expand=True, bgcolor=ft.Colors.with_opacity(0.98, ft.Colors.WHITE),
+                    content=self.chat,
+                    expand=True,
+                    bgcolor=ft.Colors.with_opacity(0.98, ft.Colors.WHITE),
                 ),
                 ft.Container(
-                    content=ft.Row([self.new_message, self.send_button], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    content=ft.Row(
+                        [self.new_message, self.send_button],
+                        spacing=10,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
                     padding=ft.padding.only(left=16, right=16, top=12, bottom=16),
-                    bgcolor=ft.Colors.WHITE, border=ft.border.only(top=ft.border.BorderSide(1, ft.Colors.BLACK12)),
+                    bgcolor=ft.Colors.WHITE,
+                    border=ft.border.only(top=ft.border.BorderSide(1, ft.Colors.BLACK12)),
                 ),
             ],
             spacing=12,
             expand=True,
         )
 
+        if self.spec.layout == "tabs" and self.logs is not None:
+            logs_container = ft.Container(
+                content=self.logs,
+                expand=True,
+                bgcolor=ft.Colors.with_opacity(0.98, ft.Colors.WHITE),
+            )
+            tabs = ft.Tabs(
+                tabs=[
+                    ft.Tab(text="Conversation", content=conversation_column),
+                    ft.Tab(text="Logs", content=logs_container),
+                ],
+                expand=True,
+            )
+            main_content = tabs
+        else:
+            main_content = conversation_column
+
         return ft.View(
             route="/",
-            controls=[
-                self.header,
-                content_below_header,
-            ],
+            controls=[self.header, main_content],
             spacing=12,
             padding=0,
-            bgcolor=ft.Colors.WHITE
+            bgcolor=ft.Colors.WHITE,
         )
 
     def _create_settings_view(self):
