@@ -213,11 +213,26 @@ class ToolApprovalRequest(ft.Container):
             vertical_alignment=ft.CrossAxisAlignment.START,
         )
 
+        compact_padding = ft.padding.symmetric(horizontal=8, vertical=4)
+        compact_text = ft.TextStyle(size=12)
+
         buttons_row = ft.Row(
             [
-                ft.TextButton(text="Reject", on_click=on_reject),
-                ft.TextButton(text="Always", on_click=on_approve_session, style=ft.ButtonStyle(color=icon_color)),
-                ft.FilledButton(text="Approve Once", on_click=on_approve, style=ft.ButtonStyle(bgcolor=icon_color)),
+                ft.TextButton(
+                    text="Reject",
+                    on_click=on_reject,
+                    style=ft.ButtonStyle(padding=compact_padding, text_style=compact_text),
+                ),
+                ft.TextButton(
+                    text="Always",
+                    on_click=on_approve_session,
+                    style=ft.ButtonStyle(color=icon_color, padding=compact_padding, text_style=compact_text),
+                ),
+                ft.FilledButton(
+                    text="Approve Once",
+                    on_click=on_approve,
+                    style=ft.ButtonStyle(bgcolor=icon_color, padding=compact_padding, text_style=compact_text),
+                ),
             ],
             alignment=ft.MainAxisAlignment.END,
         )
@@ -231,7 +246,7 @@ class ToolApprovalRequest(ft.Container):
             ),
             padding=ft.padding.all(12),
             border_radius=8,
-            bgcolor=ft.colors.SURFACE_VARIANT,
+            bgcolor=ft.Colors.with_opacity(0.05, icon_color),
             border=ft.border.all(1, ft.Colors.with_opacity(0.12, icon_color)),
         )
 
