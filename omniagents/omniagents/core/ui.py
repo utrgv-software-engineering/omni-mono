@@ -21,7 +21,8 @@ class ToolCallDisplay(ft.Container):
         default_icon: str = ft.Icons.BUILD # Default icon if not in map
     ):
         super().__init__()
-        self.padding = ft.padding.only(bottom=2)
+        # Outer padding matches the AgentDeck approval card spacing
+        self.padding = ft.padding.symmetric(horizontal=8, vertical=4)
         self.animate = ft.animation.Animation(200, ft.AnimationCurve.EASE_OUT)
 
         # Use provided icon_map or empty dict
@@ -52,8 +53,8 @@ class ToolCallDisplay(ft.Container):
                     size=12,
                     color=ft.Colors.BLACK54,
                 ),
-            ], spacing=2, tight=True, expand=True)
-            row_alignment = ft.CrossAxisAlignment.START # Default alignment when args are present
+            ], spacing=2, tight=True, expand=True, horizontal_alignment=ft.CrossAxisAlignment.START)
+            row_alignment = ft.CrossAxisAlignment.START  # Default alignment when args are present
         else:
             text_content = ft.Text(
                 f"Using {tool_name}",
@@ -61,17 +62,17 @@ class ToolCallDisplay(ft.Container):
                 size=13,
                 color=ft.Colors.BLACK87
             )
-            row_alignment = ft.CrossAxisAlignment.CENTER # Center align when no args
+            row_alignment = ft.CrossAxisAlignment.CENTER  # Center align when no args
 
         # Construct the main row
         tool_card_content = ft.Row(
             [
                 icon_container,
-                ft.Container(width=10), # Spacer
+                ft.Container(width=10),  # Spacer
                 text_content,
             ],
             spacing=0,
-            alignment=row_alignment, # Apply conditional alignment
+            vertical_alignment=row_alignment,
         )
 
         tool_card = ft.Container(
@@ -163,95 +164,78 @@ class ChatMessage(ft.Container):
 class ToolApprovalRequest(ft.Container):
     def __init__(self, tool_name, args_str, on_approve, on_approve_session, on_reject):
         super().__init__()
-        self.padding = ft.padding.only(bottom=2)
+        # Mirror AgentDeck outer card padding
+        self.padding = ft.padding.symmetric(horizontal=8, vertical=4)
         self.animate = ft.animation.Animation(200, ft.AnimationCurve.EASE_OUT)
-        
-        # Use orange color for approval requests
-        color = ft.Colors.ORANGE
 
-        # Prepare icon container with more appropriate icon for approval
+        # Colour scheme matching the Flutter implementation
+        icon_color = "#FFA534"  # warningOrange in agentdeck
+
+        # Circular icon badge with transparent background
         icon_container = ft.Container(
-            content=ft.Icon(name=ft.icons.VERIFIED_USER, size=16, color=ft.Colors.WHITE),
-            width=28,
-            height=28,
-            border_radius=14,
-            bgcolor=color,
-            alignment=ft.alignment.center,
-        )
-
-        # Prepare text content similar to ToolCallDisplay
-        text_content = ft.Column([
-            ft.Text(
-                f"Approve {tool_name}",
-                weight="w500",
-                size=13,
-                color=ft.Colors.BLACK87
-            ),
-            ft.Text(
-                f"{args_str if args_str else 'No parameters'}",
+            content=ft.Icon(
+                name=ft.icons.VERIFIED_USER,
                 size=12,
-                color=ft.Colors.BLACK54,
-                selectable=True,
+                color=ft.Colors.with_opacity(0.9, icon_color),
             ),
-        ], spacing=2, tight=True, expand=True)
-
-        # Construct the main row exactly like ToolCallDisplay
-        main_content = ft.Row(
-            [
-                icon_container,
-                ft.Container(width=10),  # Spacer
-                text_content,
-            ],
-            spacing=0,
-            alignment=ft.CrossAxisAlignment.START,
+            width=20,
+            height=20,
+            alignment=ft.alignment.center,
+            bgcolor="transparent",
+            border=ft.border.all(1.2, ft.Colors.with_opacity(0.8, icon_color)),
+            border_radius=10,
         )
-        
-        # Add buttons row at the bottom with proper spacing
-        # Reordered buttons to make "Approve Once" the primary option
+
+        text_content = ft.Column(
+            [
+                ft.Text(
+                    f"Approve {tool_name}",
+                    weight="w500",
+                    size=13,
+                    color=ft.Colors.BLACK87,
+                ),
+                ft.Text(
+                    args_str if args_str else "No parameters",
+                    size=12,
+                    color=ft.Colors.BLACK54,
+                    selectable=True,
+                ),
+            ],
+            spacing=2,
+            tight=True,
+            expand=True,
+            horizontal_alignment=ft.CrossAxisAlignment.START,
+        )
+
+        main_row = ft.Row(
+            [icon_container, ft.Container(width=8), text_content],
+            spacing=0,
+            vertical_alignment=ft.CrossAxisAlignment.START,
+        )
+
         buttons_row = ft.Row(
             [
-                ft.TextButton(
-                    text="Reject",
-                    on_click=on_reject,
-                    style=ft.ButtonStyle(
-                        color=ft.Colors.BLACK54,
-                    ),
-                ),
-                ft.TextButton(
-                    text="Always",
-                    on_click=on_approve_session,
-                    style=ft.ButtonStyle(
-                        color=color,
-                    ),
-                ),
-                ft.FilledButton(
-                    text="Approve Once",
-                    on_click=on_approve,
-                    height=36,  # Increased height to prevent text cutoff
-                    style=ft.ButtonStyle(
-                        bgcolor=color,
-                    ),
-                ),
+                ft.TextButton(text="Reject", on_click=on_reject),
+                ft.TextButton(text="Always", on_click=on_approve_session, style=ft.ButtonStyle(color=icon_color)),
+                ft.FilledButton(text="Approve Once", on_click=on_approve, style=ft.ButtonStyle(bgcolor=icon_color)),
             ],
             alignment=ft.MainAxisAlignment.END,
         )
-        
-        # Stack content and buttons
-        content_column = ft.Column([
-            main_content,
-            buttons_row,
-        ], spacing=8, tight=True)
 
-        # Create tool card container (same structure as ToolCallDisplay)
-        tool_card = ft.Container(
-            content=content_column,
-            padding=ft.padding.symmetric(horizontal=16, vertical=12),
+        card = ft.Container(
+            content=ft.Column(
+                [main_row, ft.Container(height=8), buttons_row],
+                spacing=0,
+                tight=True,
+                horizontal_alignment=ft.CrossAxisAlignment.START,
+            ),
+            padding=ft.padding.all(12),
             border_radius=8,
-            bgcolor=ft.Colors.with_opacity(0.04, color),
-            border=ft.border.all(1, ft.Colors.with_opacity(0.08, color)),
+            bgcolor=ft.colors.SURFACE_VARIANT,
+            border=ft.border.all(1, ft.Colors.with_opacity(0.12, icon_color)),
         )
 
-        self.content = tool_card
+        self.content = card
 
 
 # --- Collapsible Card and Tool Interaction Display ---
