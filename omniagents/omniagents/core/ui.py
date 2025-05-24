@@ -1,6 +1,7 @@
+import json
 import flet as ft
 from flet import animation as animation  # ensure ft.animation submodule loaded
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 
 # --- Shared Message Class ---
 class Message:
@@ -250,4 +251,171 @@ class ToolApprovalRequest(ft.Container):
             border=ft.border.all(1, ft.Colors.with_opacity(0.08, color)),
         )
 
-        self.content = tool_card 
+        self.content = tool_card
+
+
+# --- Collapsible Card and Tool Interaction Display ---
+class CollapsibleCard(ft.Container):
+    """A simple collapsible card used for tool call/results."""
+
+    def __init__(self, icon_color: str, icon: str, title: str,
+                 body: str | None = None, body_widget: ft.Control | None = None,
+                 initially_expanded: bool = False):
+        super().__init__()
+        self.icon_color = icon_color
+        self.icon = icon
+        self.title = title
+        self.body = body
+        self.body_widget = body_widget
+        self.expanded = initially_expanded
+        self._refresh()
+
+    def _refresh(self):
+        arrow = None
+        if self.body or self.body_widget:
+            arrow = ft.Icon(
+                ft.icons.EXPAND_LESS if self.expanded else ft.icons.EXPAND_MORE,
+                size=16,
+                color=ft.Colors.BLACK54,
+            )
+
+        header_items = [
+            ft.Container(
+                content=ft.Icon(name=self.icon, size=12, color=self.icon_color),
+                width=20,
+                height=20,
+                alignment=ft.alignment.center,
+                border=ft.border.all(1, ft.Colors.with_opacity(0.8, self.icon_color)),
+                border_radius=10,
+            ),
+            ft.Container(width=8),
+            ft.Text(self.title, weight="w500", size=13, color=ft.Colors.BLACK87, expand=True),
+        ]
+        if arrow:
+            header_items.append(arrow)
+
+        header = ft.Row(
+            header_items,
+            alignment=ft.MainAxisAlignment.START,
+            vertical_alignment=ft.CrossAxisAlignment.START if self.expanded else ft.CrossAxisAlignment.CENTER,
+        )
+
+        children = [header]
+        if self.expanded and (self.body or self.body_widget):
+            children.append(ft.Container(height=6))
+            if self.body_widget is not None:
+                children.append(self.body_widget)
+            else:
+                children.append(
+                    ft.Markdown(
+                        value=self.body or "",
+                        selectable=True,
+                        extension_set=ft.MarkdownExtensionSet.GITHUB_FLAVORED,
+                        code_theme=ft.MarkdownCodeTheme.GITHUB,
+                    )
+                )
+
+        self.content = ft.Column(children, spacing=0, tight=True)
+        self.padding = ft.padding.symmetric(horizontal=16, vertical=12)
+        self.border_radius = 8
+        self.bgcolor = ft.Colors.with_opacity(0.04, self.icon_color)
+        self.border = ft.border.all(1, ft.Colors.with_opacity(0.08, self.icon_color))
+        self.on_click = self._toggle if arrow else None
+
+    def _toggle(self, _):
+        self.expanded = not self.expanded
+        self._refresh()
+        self.update()
+
+
+def _json_key_value_widget(data: Dict[str, Any]) -> ft.Column:
+    children = []
+    for k, v in data.items():
+        if not isinstance(v, str):
+            try:
+                v_str = json.dumps(v, indent=2)
+            except Exception:
+                v_str = str(v)
+        else:
+            v_str = v
+        fenced = f"```text\n{v_str}\n```"
+        children.append(ft.Text(k, weight="w500", size=12, color=ft.Colors.BLACK54))
+        children.append(
+            ft.Markdown(
+                value=fenced,
+                selectable=True,
+                extension_set=ft.MarkdownExtensionSet.GITHUB_FLAVORED,
+                code_theme=ft.MarkdownCodeTheme.GITHUB,
+            )
+        )
+    return ft.Column(children, spacing=4, tight=True)
+
+
+def _build_json_section(label: str, text: str, color: str) -> list[ft.Control]:
+    parts: list[ft.Control] = []
+    parts.append(ft.Text(label, weight="w500", size=12, color=color))
+    parts.append(ft.Container(height=4))
+    parsed = None
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        pass
+    if isinstance(parsed, dict):
+        parts.append(_json_key_value_widget(parsed))
+    else:
+        display = text
+        if len(display) > 1000:
+            display = display[:1000] + "... [output truncated]"
+        fenced = f"```text\n{display}\n```"
+        parts.append(
+            ft.Markdown(
+                value=fenced,
+                selectable=True,
+                extension_set=ft.MarkdownExtensionSet.GITHUB_FLAVORED,
+                code_theme=ft.MarkdownCodeTheme.GITHUB,
+            )
+        )
+    parts.append(ft.Container(height=12))
+    return parts
+
+
+class ToolInteractionDisplay(CollapsibleCard):
+    """Combined tool call and result display with collapsible body."""
+
+    def __init__(self, tool_name: str, args_str: str, icon_map: Optional[Dict[str, str]] = None,
+                 color: str = ft.Colors.BLUE, output_text: str | None = None):
+        self.tool_name = tool_name
+        self.args_str = args_str
+        self.output_text = output_text
+        self.icon_map = icon_map or {}
+        self.theme_color = color
+        super().__init__(icon_color=color,
+                         icon=self.icon_map.get(tool_name, ft.Icons.BUILD),
+                         title=f"Tool {tool_name}",
+                         body=None,
+                         body_widget=None,
+                         initially_expanded=False)
+
+    def has_output(self) -> bool:
+        return self.output_text is not None
+
+    def set_output(self, output_text: str):
+        self.output_text = output_text
+        self._refresh()
+        self.update()
+
+    def _refresh(self):
+        body_parts: list[ft.Control] = []
+        if self.args_str:
+            body_parts.extend(_build_json_section("input", self.args_str, self.theme_color))
+        if self.output_text is not None:
+            body_parts.extend(_build_json_section("output", self.output_text, ft.Colors.GREEN))
+        if body_parts and isinstance(body_parts[-1], ft.Container):
+            body_parts.pop()  # remove trailing spacer
+
+        self.icon_color = ft.Colors.GREEN if self.output_text is not None else self.theme_color
+        self.icon = ft.Icons.CHECK if self.output_text is not None else self.icon_map.get(self.tool_name, ft.Icons.BUILD)
+        self.title = f"Tool {self.tool_name}"
+        self.body_widget = ft.Column(body_parts, spacing=4, tight=True) if body_parts else None
+        self.body = None
+        super()._refresh()

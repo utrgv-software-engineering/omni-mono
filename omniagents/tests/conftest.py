@@ -34,6 +34,9 @@ class _Component:
     def __call__(self, *args, **kwargs):
         return _Component()
 
+    def update(self, *args, **kwargs):
+        pass
+
 # Common UI classes used across modules
 ft.Container = _Component
 ft.Row = _Component
@@ -41,6 +44,7 @@ ft.Column = _Component
 ft.Text = _Component
 ft.Icon = _Component
 ft.View = _Component
+ft.Control = _Component
 ft.Page = _Component
 ft.TextField = _Component
 ft.IconButton = _Component
