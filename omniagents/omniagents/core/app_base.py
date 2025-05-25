@@ -805,7 +805,13 @@ class AgentApp:
                                 self.chat.controls.remove(self.typing_indicator)
 
                             tool_output = str(item.output)
-                            call_id = getattr(item, "call_id", None)
+                            call_id = None
+                            if hasattr(item, "raw_item"):
+                                raw = item.raw_item
+                                if isinstance(raw, dict):
+                                    call_id = raw.get("call_id")
+                                else:
+                                    call_id = getattr(raw, "call_id", None)
 
                             interaction = None
                             if call_id and call_id in self._interactions_by_call_id:
