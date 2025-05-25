@@ -873,8 +873,10 @@ class AgentApp:
                                     )
                             except Exception:
                                 pass
+
+                        # Skip rendering if no summary text is available
                         if not reasoning_text:
-                            reasoning_text = str(raw)
+                            continue
 
                         reasoning_msg = Message(self.spec.name, reasoning_text, "assistant_message")
                         reasoning_control = ChatMessage(
