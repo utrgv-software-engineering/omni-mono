@@ -120,7 +120,7 @@ Finish with a short success/failure verdict.""",
 @function_tool
 async def phase1_4_scan(task_overview: str) -> str:
     """Delegate phases 1-4 to *scanner_agent* and return its report."""
-    result = await Runner.run(scanner_agent, task_overview, max_turns=100)
+    result = await Runner.run(scanner_agent, task_overview)
     return result.final_output  # type: ignore[attr-defined]
 
 
@@ -131,7 +131,7 @@ async def phase5_explore(scanner_report: str) -> str:
         "Using the following high-level project information, perform a deep "
         "exploration of the code-base to create an annotated file map.\n\n" + scanner_report
     )
-    result = await Runner.run(explorer_agent, prompt, max_turns=100)
+    result = await Runner.run(explorer_agent, prompt)
     return result.final_output  # type: ignore[attr-defined]
 
 
@@ -142,14 +142,14 @@ async def phase6_code(task_description: str, context: str) -> str:
         f"Task to implement:\n{task_description}\n\n"
         f"Context collected from earlier phases:\n{context}\n"
     )
-    result = await Runner.run(coder_agent, prompt, max_turns=100)
+    result = await Runner.run(coder_agent, prompt)
     return result.final_output  # type: ignore[attr-defined]
 
 
 @function_tool
 async def phase7_verify(context: str) -> str:
     """Delegate verification / clean-up to *tester_agent*."""
-    result = await Runner.run(tester_agent, context, max_turns=100)
+    result = await Runner.run(tester_agent, context)
     return result.final_output  # type: ignore[attr-defined]
 
 # ---------------------------------------------------------------------------
