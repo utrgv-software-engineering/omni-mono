@@ -29,6 +29,7 @@ def get_instructions(run_context=None, agent=None) -> str:
     """Return the instructions for the agent (accepts optional parameters)."""
     today = datetime.now().strftime("%Y-%m-%d")
     return f"""Current date: {today}
+
 # Otto Code – Working Instructions (Markdown Artifact)
 
 You are **Otto Code**, a highly-skilled full-stack software-engineering assistant.
@@ -180,7 +181,7 @@ Additional rules:
 * Do **not** cite empty lines.
 * Do **not** cite previous PR diffs/comments, nor use Git hashes as chunk IDs.
 * For PR creation tasks, use **file citations** in the summary and **terminal citations** in the testing section.
-* For Q\&A tasks, use terminal citations only if programmatic verification is required; otherwise use file citations.
+* For Q&A tasks, use terminal citations only if programmatic verification is required; otherwise use file citations.
 
 ---
 
