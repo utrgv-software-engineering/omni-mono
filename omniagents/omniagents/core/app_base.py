@@ -322,9 +322,6 @@ class AgentApp:
             print(f"Starting OmniAgents RPC server on {host}:{port} (programmatic spec: {self.spec.name})")
             uvicorn.run(rpc_app, host=host, port=port, **ft_kwargs)
         elif mode == "gui":
-            # Ensure OpenAI settings for GUI mode
-            set_tracing_disabled(disabled=True)
-            set_default_openai_api("chat_completions")
             ft.app(target=self.main, **ft_kwargs)
         else:
             raise ValueError(f"Unsupported run mode: {mode}. Choose 'gui', 'cli', or 'server'.")
