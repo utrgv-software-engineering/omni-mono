@@ -26,7 +26,7 @@ def tmp_workdir(tmp_path):
 
 def test_glob_files_basic(mock_function_tool, tmp_workdir):
     """Ensure glob_files returns only *.py files when pattern is specified."""
-    from tools.file_tools import glob_files
+    from examples.coding_agent.tools.file_tools import glob_files
 
     result = glob_files('*.py', path=str(tmp_workdir))
 
@@ -36,7 +36,7 @@ def test_glob_files_basic(mock_function_tool, tmp_workdir):
 
 def test_grep_files_basic(mock_function_tool, tmp_workdir):
     """Ensure grep_files finds occurrences in matching files only."""
-    from tools.file_tools import grep_files
+    from examples.coding_agent.tools.file_tools import grep_files
 
     # Search for the word 'hello' in *.txt files
     result = grep_files('hello', path=str(tmp_workdir), include='*.txt')
@@ -47,7 +47,7 @@ def test_grep_files_basic(mock_function_tool, tmp_workdir):
 
 def test_list_directory_nonrecursive(mock_function_tool, tmp_workdir):
     """Verify list_directory lists top-level items only when recursive=False."""
-    from tools.file_tools import list_directory
+    from examples.coding_agent.tools.file_tools import list_directory
 
     listing = list_directory(path=str(tmp_workdir), recursive=False)
 
@@ -60,7 +60,7 @@ def test_list_directory_nonrecursive(mock_function_tool, tmp_workdir):
 
 def test_read_file_range(mock_function_tool, tmp_workdir):
     """Verify read_file reads the correct slice of lines."""
-    from tools.file_tools import read_file
+    from examples.coding_agent.tools.file_tools import read_file
 
     target_file = tmp_workdir / 'b.txt'
     result = read_file(file_path=str(target_file), start_line=1, num_lines=1)
@@ -71,7 +71,7 @@ def test_read_file_range(mock_function_tool, tmp_workdir):
 
 def test_edit_file_replace(mock_function_tool, tmp_workdir):
     """Ensure edit_file replaces text and reports number of replacements."""
-    from tools.file_tools import edit_file, read_file
+    from examples.coding_agent.tools.file_tools import edit_file, read_file
 
     target_file = tmp_workdir / 'b.txt'
     replacements_result = edit_file(file_path=str(target_file), old_text='world', new_text='planet')
@@ -87,7 +87,7 @@ def test_edit_file_replace(mock_function_tool, tmp_workdir):
 
 def test_write_file_append(mock_function_tool, tmp_path):
     """Test write_file in overwrite and append modes."""
-    from tools.file_tools import write_file, read_file
+    from examples.coding_agent.tools.file_tools import write_file, read_file
 
     target_file = tmp_path / 'log.txt'
 

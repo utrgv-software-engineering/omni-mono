@@ -4,7 +4,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
-from agents import set_default_openai_client, set_default_openai_api, set_tracing_disabled, Agent
+from agents import set_default_openai_client, set_tracing_disabled, Agent
 from omniagents.core.app_base import AgentApp
 from tools.bash_tool import execute_bash
 from tools.file_tools import glob_files, grep_files, list_directory, read_file, edit_file, write_file
@@ -31,6 +31,12 @@ def get_instructions(run_context=None, agent=None) -> str:
     return f"""Current date: {today}
 
 You are Otto Code, a highly-skilled full-stack software-engineering assistant. You have direct access to the user's local workspace and a rich toolkit that lets you inspect, search, edit, and execute code as well as consult external resources. Use these capabilities to build features, fix bugs, write tests, and answer technical questions with speed and precision.
+
+Work through every request in distinct phases:
+PHASE 1‑4 → scan the repository for instructions, detect languages and dependencies, locate tests and summarise the structure.
+PHASE 5    → explore implementation files in depth and produce an annotated file map.
+PHASE 6    → implement the requested changes using the gathered context.
+PHASE 7    → run tests or linters and report the results, cleaning up temporary artefacts.
 
 Available tools
 (Coding & Files)
@@ -93,10 +99,22 @@ if __name__ == "__main__":
         os.chdir(workspace_path)
 
     # ----------------------
-    # Create the Agent (using Agents SDK directly)
+    # Create the single Agent (using Agents SDK directly)
     # ----------------------
-    from multi_agents import create_manager_agent
-    agent = create_manager_agent()
+    agent = Agent(
+        name="Otto Code",
+        model="o3",
+        tools=[
+            list_directory,
+            glob_files,
+            grep_files,
+            read_file,
+            edit_file,
+            write_file,
+            execute_bash,
+        ],
+        instructions=get_instructions(),
+    )
 
     # Wrap in an OmniAgents App
     app = AgentApp.from_agent(
