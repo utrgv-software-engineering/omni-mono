@@ -8,6 +8,8 @@ from agents import set_default_openai_client, set_tracing_disabled, Agent
 from omniagents.core.app_base import AgentApp
 from tools.bash_tool import execute_bash
 from tools.file_tools import glob_files, grep_files, list_directory, read_file, edit_file, write_file
+from openai.types.shared import Reasoning
+from agents.model_settings import ModelSettings
 
 # Load environment variables
 load_dotenv()
@@ -239,6 +241,10 @@ if __name__ == "__main__":
             execute_bash,
         ],
         instructions=get_instructions(),
+        model_settings = ModelSettings(
+            tool_choice="auto",
+            reasoning=Reasoning(summary="concise")   # or "detailed" / "auto"
+        )
     )
 
     # Wrap in an OmniAgents App
@@ -252,8 +258,7 @@ if __name__ == "__main__":
             "grep_files",
             "read_file"
         ],
-        max_turns=100,
-        layout="tabs"
+        max_turns=100
     )
 
         # Launch (pass extra server args if needed)

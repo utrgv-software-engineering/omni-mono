@@ -858,7 +858,41 @@ class AgentApp:
                             self.chat.update()
                             self.page.update()
 
-                    # --- Handle Assistant Message Stream --- 
+                    # --- Handle Reasoning Items ---
+                    elif item.type == "reasoning_item":
+                        if self.typing_indicator in self.chat.controls:
+                            self.chat.controls.remove(self.typing_indicator)
+                            self.chat.update()
+
+                        reasoning_text = ""
+                        raw = getattr(item, "raw_item", None)
+                        if raw:
+                            try:
+                                summaries = getattr(raw, "summary", [])
+                                if isinstance(summaries, list):
+                                    reasoning_text = " ".join(
+                                        s.text if hasattr(s, "text") else str(getattr(s, "text", s))
+                                        for s in summaries
+                                    )
+                            except Exception:
+                                pass
+                        if not reasoning_text:
+                            reasoning_text = str(raw)
+
+                        reasoning_msg = Message(self.spec.name, reasoning_text, "assistant_message")
+                        reasoning_control = ChatMessage(
+                            reasoning_msg, self.page, assistant_name=self.spec.name
+                        )
+                        target_list = (
+                            self.logs if self.spec.layout == "tabs" and self.logs is not None else self.chat
+                        )
+                        target_list.controls.append(reasoning_control)
+                        if target_list is not self.chat:
+                            target_list.update()
+                        self.chat.update()
+                        self.page.update()
+
+                    # --- Handle Assistant Message Stream ---
                     elif item.type == "message_output_item":
                         chunk = ItemHelpers.text_message_output(item)
                         if chunk:
