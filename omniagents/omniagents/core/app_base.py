@@ -1199,26 +1199,36 @@ class AgentApp:
         )
 
         if self.spec.layout == "tabs" and self.logs is not None:
+            conversation_tab = ft.Container(
+                content=conversation_column,
+                expand=True,
+                padding=ft.padding.only(top=12),
+            )
             logs_container = ft.Container(
                 content=self.logs,
                 expand=True,
                 bgcolor=ft.Colors.with_opacity(0.98, ft.Colors.WHITE),
+                padding=ft.padding.only(top=12),
             )
             tabs = ft.Tabs(
                 tabs=[
-                    ft.Tab(text="Conversation", content=conversation_column),
+                    ft.Tab(text="Conversation", content=conversation_tab),
                     ft.Tab(text="Logs", content=logs_container),
                 ],
                 expand=True,
             )
             main_content = tabs
         else:
-            main_content = conversation_column
+            main_content = ft.Container(
+                content=conversation_column,
+                expand=True,
+                padding=ft.padding.only(top=12),
+            )
 
         return ft.View(
             route="/",
             controls=[self.header, main_content],
-            spacing=12,
+            spacing=0,
             padding=0,
             bgcolor=ft.Colors.WHITE,
         )
