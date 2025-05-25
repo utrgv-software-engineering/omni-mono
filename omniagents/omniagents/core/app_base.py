@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import uuid # Added for unique approval IDs
+import time
 from dataclasses import dataclass, field
 from enum import Enum # Added Enum
 from typing import List, Dict, Any, Callable, Optional, Protocol, Awaitable, TYPE_CHECKING, Tuple # Added Tuple
@@ -266,6 +267,7 @@ class AgentApp:
         self.logs: Optional[ft.ListView] = None
         self.new_message: Optional[ft.TextField] = None
         self.typing_indicator: Optional[ft.Container] = None
+        self.tabs: Optional[ft.Tabs] = None
         self.settings_button: Optional[ft.IconButton] = None
         self.header: Optional[ft.Container] = None
         self.send_button: Optional[ft.IconButton] = None
@@ -709,6 +711,11 @@ class AgentApp:
                 self.local_session.append_message(user_msg)
             agent_input = self.conversation
 
+            start_time = time.monotonic()
+            tools_used = False
+            anchor_key = f"run_{uuid.uuid4().hex}"
+            anchor_inserted = False
+
             # Run the agent stream
             if self.spec.remote_ws_url and hasattr(self.agent_instance, "run_streamed"):
                 # Use the proxy's built-in streamed runner (bypasses local Runner logic)
@@ -757,6 +764,10 @@ class AgentApp:
 
                     # --- Handle Tool Calls --- 
                     if item.type == "tool_call_item":
+                        tools_used = True
+                        if not anchor_inserted and self.spec.layout == "tabs" and self.logs is not None:
+                            self.logs.controls.append(ft.Container(key=anchor_key, height=1))
+                            anchor_inserted = True
                         tool_input = item.to_input_item()
                         args_str = tool_input.get('arguments', '{}')
                         tool_name = tool_input.get('name', 'unknown_tool')
@@ -788,6 +799,10 @@ class AgentApp:
 
                     # --- Handle Tool Outputs (Debug Only) --- 
                     elif item.type == "tool_call_output_item":
+                        tools_used = True
+                        if not anchor_inserted and self.spec.layout == "tabs" and self.logs is not None:
+                            self.logs.controls.append(ft.Container(key=anchor_key, height=1))
+                            anchor_inserted = True
                         is_rejection = False
                         try:
                             output_data = json.loads(str(item.output))
@@ -900,6 +915,24 @@ class AgentApp:
             # for msg in self.conversation:
             #     print(f"- Role: {msg.get('role')}, Type: {msg.get('type')}, Content/Name: {msg.get('content', msg.get('name'))}")
             # print("----------------------------------")
+
+            if tools_used and assistant_message_control is not None:
+                duration_str = self._format_duration(time.monotonic() - start_time)
+                summary = ft.GestureDetector(
+                    content=ft.Text(
+                        f"Worked for {duration_str} >",
+                        size=12,
+                        color=ft.Colors.BLACK45,
+                    ),
+                    on_tap=lambda e, k=anchor_key: self._show_logs(k),
+                    mouse_cursor=ft.MouseCursor.CLICK,
+                )
+                summary_container = ft.Container(summary, margin=ft.margin.only(left=16))
+                try:
+                    idx = self.chat.controls.index(assistant_message_control)
+                    self.chat.controls.insert(idx, summary_container)
+                except ValueError:
+                    self.chat.controls.append(summary_container)
 
             if self.spec.layout == "tabs" and self.logs is not None:
                 self.logs.update()
@@ -1024,6 +1057,12 @@ class AgentApp:
         self.chat.update()
         self.page.update()
 
+    def _format_duration(self, seconds: float) -> str:
+        m, s = divmod(int(seconds), 60)
+        if m > 0:
+            return f"{m}m {s}s" if s else f"{m}m"
+        return f"{s}s"
+
     def _remove_control(self, control: ft.Control):
         """Safely removes a specific control from the chat list."""
         try:
@@ -1033,7 +1072,18 @@ class AgentApp:
         except Exception as e:
             print(f"Error removing control: {e}")
 
-    # --- MCP Management --- 
+    def _show_logs(self, anchor_key: str | None = None):
+        """Switch to Logs tab and optionally scroll to *anchor_key*."""
+        if self.spec.layout == "tabs" and self.logs is not None and self.tabs is not None:
+            self.tabs.selected_index = 1
+            self.tabs.update()
+            if anchor_key:
+                self.logs.scroll_to(key=anchor_key, duration=300)
+            self.logs.update()
+            if self.page:
+                self.page.update()
+
+    # --- MCP Management ---
 
     def _get_mcp_status_color(self) -> str:
         """Returns the color for the MCP status indicator."""
@@ -1210,14 +1260,14 @@ class AgentApp:
                 bgcolor=ft.Colors.with_opacity(0.98, ft.Colors.WHITE),
                 padding=ft.padding.only(top=12),
             )
-            tabs = ft.Tabs(
+            self.tabs = ft.Tabs(
                 tabs=[
                     ft.Tab(text="Conversation", content=conversation_tab),
                     ft.Tab(text="Logs", content=logs_container),
                 ],
                 expand=True,
             )
-            main_content = tabs
+            main_content = self.tabs
         else:
             main_content = ft.Container(
                 content=conversation_column,
