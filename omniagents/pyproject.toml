@@ -30,6 +30,3 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["omniagents*"]
-
-[tool.uv.workspace]
-members = ["examples", ]
