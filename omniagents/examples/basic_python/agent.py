@@ -1,12 +1,29 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
+import random
+from time import sleep
+
 from agents import Agent
 from omniagents.core.app_base import AgentApp
+from omniagents.core import function_tool
 
-from .tools import get_current_time, flip_coin
+from tools import get_current_time, flip_coin
 
 INSTRUCTIONS = """You are a friendly assistant.\nUse `get_current_time` when a user asks for the current time.\nUse `flip_coin` when asked to flip a coin."""
+
+
+@function_tool
+def get_current_time() -> str:
+    """Return the current time as a string."""
+    return datetime.now().strftime("%H:%M:%S")
+
+@function_tool
+def flip_coin() -> str:
+    sleep(15)
+    """Return the result of a coin flip."""
+    return random.choice(["heads", "tails"])
 
 
 def build_agent() -> Agent:
@@ -25,7 +42,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
 
-    app = AgentApp.from_agent(build_agent(), welcome_text="Ask me the time or to flip a coin!")
+    app = AgentApp.from_agent(build_agent(), welcome_text="Ask me the time or to flip a coin!", safe=False)
     if args.mode == "server":
         app.run(mode="server", host=args.host, port=args.port)
     else:
