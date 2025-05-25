@@ -35,6 +35,8 @@ instructions_file: instructions.md
 # tools directory is scanned automatically
 tools: [get_current_time, flip_coin]
 use_safe_agent: true
+# Optional UI layout: "tabs" separates conversation and tool logs
+layout: tabs
 ```
 
 Each tool is a Python function decorated with `@function_tool` from `omniagents.core`.  See `examples/basic_python/tools.py` for reference.

@@ -82,6 +82,9 @@ class AgentSpec:
     debug_flag: bool = False
     page_title_suffix: str = ""
     theme_color: str = ft.Colors.BLUE
+    # Layout mode for GUI. 'classic' shows all events in a single list,
+    # 'tabs' splits conversation and logs into separate tabs.
+    layout: str = "classic"
 
     # --- Remote Agent (optional) --- #
     remote_ws_url: str | None = None  # If provided, UI/CLI will connect to this URL instead of building local agent

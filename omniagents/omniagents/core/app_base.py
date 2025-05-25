@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import uuid # Added for unique approval IDs
+import time
 from dataclasses import dataclass, field
 from enum import Enum # Added Enum
 from typing import List, Dict, Any, Callable, Optional, Protocol, Awaitable, TYPE_CHECKING, Tuple # Added Tuple
@@ -195,6 +196,7 @@ class AgentApp:
         halt_on_rejection: bool = True,
         safe_tool_names: Optional[List[str]] = None,
         safe_tool_patterns: Optional[List[str]] = None,
+        layout: str = "classic",
     ) -> AgentApp:
         """
         Construct an AgentApp directly from an existing agents.Agent (or Agent-like).
@@ -238,6 +240,7 @@ class AgentApp:
             ),
             settings_fields=list(DEFAULT_SETTINGS_FIELDS),  # include OpenAI settings by default
             max_turns=max_turns if max_turns is not None else 20,
+            layout=layout,
         )
         return cls(spec=spec)
     # Modify init to accept config_path OR spec
@@ -261,8 +264,10 @@ class AgentApp:
 
         self.page: Optional[ft.Page] = None
         self.chat: Optional[ft.ListView] = None
+        self.logs: Optional[ft.ListView] = None
         self.new_message: Optional[ft.TextField] = None
         self.typing_indicator: Optional[ft.Container] = None
+        self.tabs: Optional[ft.Tabs] = None
         self.settings_button: Optional[ft.IconButton] = None
         self.header: Optional[ft.Container] = None
         self.send_button: Optional[ft.IconButton] = None
@@ -426,6 +431,14 @@ class AgentApp:
             padding=ft.padding.symmetric(horizontal=20),  # consistent left/right inset for all items
             # Controls added later (welcome message)
         )
+
+        if self.spec.layout == "tabs":
+            self.logs = ft.ListView(
+                expand=True,
+                spacing=20,
+                auto_scroll=True,
+                padding=ft.padding.symmetric(horizontal=20),
+            )
 
         # Settings Button
         self.settings_button = ft.IconButton(
@@ -698,6 +711,11 @@ class AgentApp:
                 self.local_session.append_message(user_msg)
             agent_input = self.conversation
 
+            start_time = time.monotonic()
+            tools_used = False
+            anchor_key = f"run_{uuid.uuid4().hex}"
+            anchor_inserted = False
+
             # Run the agent stream
             if self.spec.remote_ws_url and hasattr(self.agent_instance, "run_streamed"):
                 # Use the proxy's built-in streamed runner (bypasses local Runner logic)
@@ -746,6 +764,10 @@ class AgentApp:
 
                     # --- Handle Tool Calls --- 
                     if item.type == "tool_call_item":
+                        tools_used = True
+                        if not anchor_inserted and self.spec.layout == "tabs" and self.logs is not None:
+                            self.logs.controls.append(ft.Container(key=anchor_key, height=1))
+                            anchor_inserted = True
                         tool_input = item.to_input_item()
                         args_str = tool_input.get('arguments', '{}')
                         tool_name = tool_input.get('name', 'unknown_tool')
@@ -761,19 +783,26 @@ class AgentApp:
                             self.spec.icon_map,
                             self.spec.theme_color,
                         )
-                        self.chat.controls.append(interaction)
+                        target_list = self.logs if self.spec.layout == "tabs" and self.logs is not None else self.chat
+                        target_list.controls.append(interaction)
                         if call_id:
                             self._interactions_by_call_id[call_id] = interaction
                         else:
                             self._pending_interactions.append(interaction)
 
                         self.chat.controls.append(self.typing_indicator)
+                        if target_list is not self.chat:
+                            target_list.update()
                         self.chat.update()
                         self.page.update()
                         self.page.update()
 
                     # --- Handle Tool Outputs (Debug Only) --- 
                     elif item.type == "tool_call_output_item":
+                        tools_used = True
+                        if not anchor_inserted and self.spec.layout == "tabs" and self.logs is not None:
+                            self.logs.controls.append(ft.Container(key=anchor_key, height=1))
+                            anchor_inserted = True
                         is_rejection = False
                         try:
                             output_data = json.loads(str(item.output))
@@ -791,7 +820,13 @@ class AgentApp:
                                 self.chat.controls.remove(self.typing_indicator)
 
                             tool_output = str(item.output)
-                            call_id = getattr(item, "call_id", None)
+                            call_id = None
+                            if hasattr(item, "raw_item"):
+                                raw = item.raw_item
+                                if isinstance(raw, dict):
+                                    call_id = raw.get("call_id")
+                                else:
+                                    call_id = getattr(raw, "call_id", None)
 
                             interaction = None
                             if call_id and call_id in self._interactions_by_call_id:
@@ -812,11 +847,14 @@ class AgentApp:
                                     self.spec.theme_color,
                                     tool_output,
                                 )
-                                self.chat.controls.append(interaction)
+                                target_list = self.logs if self.spec.layout == "tabs" and self.logs is not None else self.chat
+                                target_list.controls.append(interaction)
                             else:
                                 interaction.set_output(tool_output)
 
                             self.chat.controls.append(self.typing_indicator)
+                            if self.spec.layout == "tabs" and self.logs is not None:
+                                self.logs.update()
                             self.chat.update()
                             self.page.update()
 
@@ -878,6 +916,26 @@ class AgentApp:
             #     print(f"- Role: {msg.get('role')}, Type: {msg.get('type')}, Content/Name: {msg.get('content', msg.get('name'))}")
             # print("----------------------------------")
 
+            if tools_used and assistant_message_control is not None:
+                duration_str = self._format_duration(time.monotonic() - start_time)
+                summary = ft.GestureDetector(
+                    content=ft.Text(
+                        f"Worked for {duration_str} >",
+                        size=12,
+                        color=ft.Colors.BLACK45,
+                    ),
+                    on_tap=lambda e, k=anchor_key: self._show_logs(k),
+                    mouse_cursor=ft.MouseCursor.CLICK,
+                )
+                summary_container = ft.Container(summary, margin=ft.margin.only(left=16))
+                try:
+                    idx = self.chat.controls.index(assistant_message_control)
+                    self.chat.controls.insert(idx, summary_container)
+                except ValueError:
+                    self.chat.controls.append(summary_container)
+
+            if self.spec.layout == "tabs" and self.logs is not None:
+                self.logs.update()
             self.chat.update()
             self.page.update() # Final update after processing
 
@@ -999,6 +1057,12 @@ class AgentApp:
         self.chat.update()
         self.page.update()
 
+    def _format_duration(self, seconds: float) -> str:
+        m, s = divmod(int(seconds), 60)
+        if m > 0:
+            return f"{m}m {s}s" if s else f"{m}m"
+        return f"{s}s"
+
     def _remove_control(self, control: ft.Control):
         """Safely removes a specific control from the chat list."""
         try:
@@ -1008,7 +1072,18 @@ class AgentApp:
         except Exception as e:
             print(f"Error removing control: {e}")
 
-    # --- MCP Management --- 
+    def _show_logs(self, anchor_key: str | None = None):
+        """Switch to Logs tab and optionally scroll to *anchor_key*."""
+        if self.spec.layout == "tabs" and self.logs is not None and self.tabs is not None:
+            self.tabs.selected_index = 1
+            self.tabs.update()
+            if anchor_key:
+                self.logs.scroll_to(key=anchor_key, duration=300)
+            self.logs.update()
+            if self.page:
+                self.page.update()
+
+    # --- MCP Management ---
 
     def _get_mcp_status_color(self) -> str:
         """Returns the color for the MCP status indicator."""
@@ -1151,31 +1226,61 @@ class AgentApp:
 
     def _create_main_view(self):
         """Creates the main chat view content."""
-        # Content below the header (chat list and input)
-        content_below_header = ft.Column(
+        conversation_column = ft.Column(
             [
                 ft.Container(
-                    content=self.chat, expand=True, bgcolor=ft.Colors.with_opacity(0.98, ft.Colors.WHITE),
+                    content=self.chat,
+                    expand=True,
+                    bgcolor=ft.Colors.with_opacity(0.98, ft.Colors.WHITE),
                 ),
                 ft.Container(
-                    content=ft.Row([self.new_message, self.send_button], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    content=ft.Row(
+                        [self.new_message, self.send_button],
+                        spacing=10,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
                     padding=ft.padding.only(left=16, right=16, top=12, bottom=16),
-                    bgcolor=ft.Colors.WHITE, border=ft.border.only(top=ft.border.BorderSide(1, ft.Colors.BLACK12)),
+                    bgcolor=ft.Colors.WHITE,
+                    border=ft.border.only(top=ft.border.BorderSide(1, ft.Colors.BLACK12)),
                 ),
             ],
             spacing=12,
             expand=True,
         )
 
+        if self.spec.layout == "tabs" and self.logs is not None:
+            conversation_tab = ft.Container(
+                content=conversation_column,
+                expand=True,
+                padding=ft.padding.only(top=12),
+            )
+            logs_container = ft.Container(
+                content=self.logs,
+                expand=True,
+                bgcolor=ft.Colors.with_opacity(0.98, ft.Colors.WHITE),
+                padding=ft.padding.only(top=12),
+            )
+            self.tabs = ft.Tabs(
+                tabs=[
+                    ft.Tab(text="Conversation", content=conversation_tab),
+                    ft.Tab(text="Logs", content=logs_container),
+                ],
+                expand=True,
+            )
+            main_content = self.tabs
+        else:
+            main_content = ft.Container(
+                content=conversation_column,
+                expand=True,
+                padding=ft.padding.only(top=12),
+            )
+
         return ft.View(
             route="/",
-            controls=[
-                self.header,
-                content_below_header,
-            ],
-            spacing=12,
+            controls=[self.header, main_content],
+            spacing=0,
             padding=0,
-            bgcolor=ft.Colors.WHITE
+            bgcolor=ft.Colors.WHITE,
         )
 
     def _create_settings_view(self):

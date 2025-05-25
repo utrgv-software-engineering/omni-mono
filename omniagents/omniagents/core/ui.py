@@ -385,7 +385,7 @@ class ToolInteractionDisplay(CollapsibleCard):
                  color: str = ft.Colors.BLUE, output_text: str | None = None):
         self.tool_name = tool_name
         self.args_str = args_str
-        self.output_text = output_text
+        self.output_text = output_text if output_text and str(output_text).strip() else None
         self.icon_map = icon_map or {}
         self.theme_color = color
         super().__init__(icon_color=color,
@@ -396,24 +396,25 @@ class ToolInteractionDisplay(CollapsibleCard):
                          initially_expanded=False)
 
     def has_output(self) -> bool:
-        return self.output_text is not None
+        return bool(self.output_text and str(self.output_text).strip())
 
     def set_output(self, output_text: str):
-        self.output_text = output_text
+        self.output_text = output_text if output_text and str(output_text).strip() else None
         self._refresh()
         self.update()
 
     def _refresh(self):
         body_parts: list[ft.Control] = []
-        if self.args_str:
+        if self.args_str and str(self.args_str).strip():
             body_parts.extend(_build_json_section("input", self.args_str, self.theme_color))
-        if self.output_text is not None:
+        if self.output_text and str(self.output_text).strip():
             body_parts.extend(_build_json_section("output", self.output_text, ft.Colors.GREEN))
         if body_parts and isinstance(body_parts[-1], ft.Container):
             body_parts.pop()  # remove trailing spacer
 
-        self.icon_color = ft.Colors.GREEN if self.output_text is not None else self.theme_color
-        self.icon = ft.Icons.CHECK if self.output_text is not None else self.icon_map.get(self.tool_name, ft.Icons.BUILD)
+        has_output_text = bool(self.output_text and str(self.output_text).strip())
+        self.icon_color = ft.Colors.GREEN if has_output_text else self.theme_color
+        self.icon = ft.Icons.CHECK if has_output_text else self.icon_map.get(self.tool_name, ft.Icons.BUILD)
         self.title = f"Tool {self.tool_name}"
         self.body_widget = ft.Column(body_parts, spacing=4, tight=True) if body_parts else None
         self.body = None

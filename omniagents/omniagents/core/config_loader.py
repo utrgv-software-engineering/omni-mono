@@ -303,6 +303,7 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
         debug_flag=debug_flag,
         page_title_suffix=page_title_suffix,
         theme_color=theme_color,
+        layout=config.get('layout', 'classic'),
 
         # Remote agent metadata
         remote_ws_url=remote_ws_url,
