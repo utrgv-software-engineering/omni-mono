@@ -994,12 +994,15 @@ class AgentApp:
                     self.chat.controls.append(self.typing_indicator)
                 self.typing_indicator.visible = True # Show indicator while agent potentially processes rejection/approval
 
+                # Flush UI updates before proceeding so the approval card disappears immediately
                 self.chat.update()
                 self.page.update()
+                # Yield control to allow the frontend to repaint
+                await asyncio.sleep(0)
 
                 # Set the future result if it's not already done
                 if not approval_future.done():
-                     approval_future.set_result((approved, always_approve, rejection_message))
+                    approval_future.set_result((approved, always_approve, rejection_message))
 
                 # Clean up future reference
                 if approval_id in self._approval_state['pending_futures']:
