@@ -1,4 +1,5 @@
 import json
+import json
 import flet as ft
 from flet import animation as animation  # ensure ft.animation submodule loaded
 from typing import Dict, Optional, Any
@@ -94,24 +95,53 @@ class ToolCallDisplay(ft.Container):
 
 # --- Shared Tool Output Display ---
 class ToolOutputDisplay(ft.Container):
-    def __init__(self, output_text):
+    """Display a tool\'s output intelligently.
+
+    * If the value is a JSON object (or can be parsed as such) each top-level key
+      is rendered as a label and the value underneath using the same markdown
+      style that tool inputs use.
+    * Otherwise the value is shown exactly as before (mono-spaced text, limited
+      length).
+    """
+
+    def __init__(self, output):
         super().__init__()
         self.padding = 0
         self.animate = ft.animation.Animation(200, ft.AnimationCurve.EASE_OUT)
 
-        if len(output_text) > 1000:
-            display_text = output_text[:1000] + "... [output truncated]"
-        else:
-            display_text = output_text
+        # Normalise to string for non-JSON fallback handling
+        output_text = "" if output is None else (output if isinstance(output, str) else json.dumps(output))
 
-        self.content = ft.Container(
-            content=ft.Text(
-                display_text,
+        parsed_dict = None
+        # Detect already-materialised dicts first to avoid serialisation churn
+        if isinstance(output, dict):
+            parsed_dict = output
+        else:
+            # Attempt to parse string output as JSON
+            try:
+                maybe_parsed = json.loads(output_text)
+                if isinstance(maybe_parsed, dict):
+                    parsed_dict = maybe_parsed
+            except Exception:
+                pass
+
+        if parsed_dict is not None:
+            # Render each key/value pair using existing helper so styling matches
+            body_widget = _json_key_value_widget(parsed_dict)
+        else:
+            # Fall back to the original plain-text behaviour
+            if len(output_text) > 1000:
+                output_text = output_text[:1000] + "... [output truncated]"
+            body_widget = ft.Text(
+                output_text,
                 selectable=True,
                 size=13,
                 color=ft.Colors.BLACK87,
                 font_family="SF Mono, Menlo, Monaco, Consolas, monospace",
-            ),
+            )
+
+        self.content = ft.Container(
+            content=body_widget,
             padding=ft.padding.symmetric(horizontal=16, vertical=12),
             border_radius=6,
             bgcolor=ft.Colors.with_opacity(0.03, ft.Colors.BLACK),
