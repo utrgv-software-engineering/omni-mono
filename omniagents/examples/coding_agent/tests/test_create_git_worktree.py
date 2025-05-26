@@ -9,8 +9,10 @@ def mock_function_tool():
 
 def test_create_git_worktree_basic(mock_function_tool):
     with patch('examples.coding_agent.tools.file_tools.subprocess.run') as mock_run, \
-         patch('examples.coding_agent.tools.file_tools.os.chdir') as mock_chdir:
+         patch('examples.coding_agent.tools.file_tools.os.chdir') as mock_chdir, \
+         patch('examples.coding_agent.tools.file_tools.subprocess.check_output') as mock_check:
         mock_run.return_value = MagicMock()
+        mock_check.return_value = 'abc123\n'
         from examples.coding_agent.tools.file_tools import create_git_worktree
         result = create_git_worktree('demo-task', base_branch='dev')
 

@@ -265,6 +265,7 @@ class AgentApp:
         self.page: Optional[ft.Page] = None
         self.chat: Optional[ft.ListView] = None
         self.logs: Optional[ft.ListView] = None
+        self.artifacts: Optional[ft.ListView] = None
         self.new_message: Optional[ft.TextField] = None
         self.typing_indicator: Optional[ft.Container] = None
         self.tabs: Optional[ft.Tabs] = None
@@ -291,6 +292,10 @@ class AgentApp:
         # Track active tool interaction cards for pairing call and result
         self._interactions_by_call_id: Dict[str, ToolInteractionDisplay] = {}
         self._pending_interactions: List[ToolInteractionDisplay] = []
+
+        # Register artifact callback
+        from .artifacts import set_artifact_callback
+        set_artifact_callback(self.add_artifact)
     def run(self, mode: str = "gui", **ft_kwargs):
         """
         Convenience method to start the agent app.
@@ -431,6 +436,12 @@ class AgentApp:
 
         if self.spec.layout == "tabs":
             self.logs = ft.ListView(
+                expand=True,
+                spacing=20,
+                auto_scroll=True,
+                padding=ft.padding.symmetric(horizontal=20),
+            )
+            self.artifacts = ft.ListView(
                 expand=True,
                 spacing=20,
                 auto_scroll=True,
@@ -1119,6 +1130,21 @@ class AgentApp:
             if self.page:
                 self.page.update()
 
+    def add_artifact(self, title: str, content: str, mode: str = "markdown") -> None:
+        """Programmatically add an artifact for the user."""
+        from .ui import ArtifactDisplay
+
+        display = ArtifactDisplay(title, content, mode)
+        target = self.artifacts if self.spec.layout == "tabs" and self.artifacts is not None else self.chat
+        if target is None:
+            return
+        target.controls.append(display)
+        target.update()
+        if target is not self.chat and self.chat is not None:
+            self.chat.update()
+        if self.page:
+            self.page.update()
+
     # --- MCP Management ---
 
     def _get_mcp_status_color(self) -> str:
@@ -1284,10 +1310,16 @@ class AgentApp:
             expand=True,
         )
 
-        if self.spec.layout == "tabs" and self.logs is not None:
+        if self.spec.layout == "tabs" and self.logs is not None and self.artifacts is not None:
             conversation_tab = ft.Container(
                 content=conversation_column,
                 expand=True,
+                padding=ft.padding.only(top=12),
+            )
+            artifacts_container = ft.Container(
+                content=self.artifacts,
+                expand=True,
+                bgcolor=ft.Colors.with_opacity(0.98, ft.Colors.WHITE),
                 padding=ft.padding.only(top=12),
             )
             logs_container = ft.Container(
@@ -1299,6 +1331,7 @@ class AgentApp:
             self.tabs = ft.Tabs(
                 tabs=[
                     ft.Tab(text="Conversation", content=conversation_tab),
+                    ft.Tab(text="Artifacts", content=artifacts_container),
                     ft.Tab(text="Logs", content=logs_container),
                 ],
                 expand=True,
