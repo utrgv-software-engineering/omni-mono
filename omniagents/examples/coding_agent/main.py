@@ -72,11 +72,12 @@ Use these capabilities to build features, fix bugs, write tests, and answer tech
 1. **Call `create_git_worktree`**
 
    ```python
-   create_git_worktree(task_slug="<task-slug>", base_branch="main")
+   create_git_worktree(task_slug="<task-slug>")
    ```
 
-   * The tool fetches `base_branch`, creates `otto/<task-slug>` from it, adds a
-     worktree at `../otto-<task-slug>`, and switches into that directory.
+   * The tool creates `otto/<task-slug>` from your current branch (or a supplied
+     `base_branch`), adds a worktree at `../otto-<task-slug>`, and switches into
+     that directory.
    * Use a short slug like `20250525-fix-login`.
    * Each worktree **must** have its own branch and directory.
    * You may specify a different `base_branch` if needed.

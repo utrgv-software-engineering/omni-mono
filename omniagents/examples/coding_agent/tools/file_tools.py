@@ -160,12 +160,13 @@ def _validate_git_environment() -> Dict[str, Any]:
 
 
 @function_tool
-def create_git_worktree(task_slug: str, base_branch: str = "main") -> Dict[str, Any]:
+def create_git_worktree(task_slug: str, base_branch: str | None = None) -> Dict[str, Any]:
     """Create and switch to a Git worktree for the given task.
 
-    The tool fetches ``base_branch`` from ``origin``, creates a new branch
-    ``otto/<slug>`` from it and adds a worktree at ``../otto-<slug>``.  The
-    current working directory is changed to the new worktree on success.
+    If ``base_branch`` is ``None`` the caller's current branch is used. The tool
+    creates ``otto/<slug>`` from this base and adds a worktree at
+    ``../otto-<slug>`` without changing the caller's branch. The current working
+    directory is changed to the new worktree on success.
     """
     try:
         import re
@@ -192,11 +193,12 @@ def create_git_worktree(task_slug: str, base_branch: str = "main") -> Dict[str, 
         branch_name = f"otto/{final_slug}"
         worktree_path = f"../otto-{final_slug}"
 
-        clean_base = base_branch.strip() if base_branch else "main"
-
-        subprocess.run(['git', 'fetch', 'origin'], check=True, cwd='.')
-        subprocess.run(['git', 'switch', clean_base], check=True, cwd='.')
-        subprocess.run(['git', 'pull', '--ff-only'], check=True, cwd='.')
+        if base_branch:
+            clean_base = base_branch.strip()
+        else:
+            clean_base = subprocess.check_output(
+                ['git', 'rev-parse', '--abbrev-ref', 'HEAD'], text=True
+            ).strip()
 
         subprocess.run([
             'git', 'worktree', 'add', worktree_path,
