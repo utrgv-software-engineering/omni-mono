@@ -1,6 +1,7 @@
 import os
 import glob
 import re
+import subprocess
 from typing import Dict, Any, List, Optional
 from omniagents.core import function_tool
 import pathlib
@@ -105,6 +106,118 @@ def _is_ignored(path: str, repo_root: str = ".") -> bool:
         matched = spec.match_file(rel_path + "/")
     return matched
 
+
+def _validate_git_environment() -> Dict[str, Any]:
+    """Validate that we're in a proper Otto Code Git worktree."""
+    try:
+        # Check if we're in a Git repository
+        result = subprocess.run([
+            'git', 'rev-parse', '--is-inside-work-tree'],
+            capture_output=True, text=True, cwd='.'
+        )
+        if result.returncode != 0:
+            return {
+                "valid": False,
+                "error": "Not in a Git repository",
+                "required_action": "Call create_git_worktree(task_slug) to set up the working environment"
+            }
+
+        # Get current branch
+        branch_result = subprocess.run([
+            'git', 'branch', '--show-current'],
+            capture_output=True, text=True, cwd='.'
+        )
+        current_branch = branch_result.stdout.strip()
+
+        if not current_branch.startswith('otto/'):
+            return {
+                "valid": False,
+                "error": f"Not on an Otto branch. Current branch: {current_branch}",
+                "required_action": "Call create_git_worktree(task_slug) to create a proper Otto worktree"
+            }
+
+        current_dir = os.path.basename(os.getcwd())
+        if not current_dir.startswith('otto-'):
+            return {
+                "valid": False,
+                "error": f"Not in an Otto worktree directory. Current: {current_dir}",
+                "required_action": "Call create_git_worktree(task_slug) to create and switch to a worktree"
+            }
+
+        return {
+            "valid": True,
+            "branch": current_branch,
+            "directory": os.getcwd(),
+            "worktree_name": current_dir
+        }
+
+    except Exception as e:
+        return {
+            "valid": False,
+            "error": f"Git validation failed: {str(e)}",
+            "required_action": "Call create_git_worktree(task_slug) to set up the working environment"
+        }
+
+
+@function_tool
+def create_git_worktree(task_slug: str) -> Dict[str, Any]:
+    """Creates a Git worktree following Otto Code conventions and switches to it."""
+    try:
+        import re
+        from datetime import datetime
+
+        if not task_slug or not isinstance(task_slug, str):
+            return {
+                "success": False,
+                "error": "task_slug must be a non-empty string"
+            }
+
+        clean_slug = re.sub(r'[^a-zA-Z0-9-]', '', task_slug.lower().strip())
+        clean_slug = re.sub(r'-+', '-', clean_slug).strip('-')
+
+        if not clean_slug:
+            return {
+                "success": False,
+                "error": "task_slug must contain at least some alphanumeric characters"
+            }
+
+        date_prefix = datetime.now().strftime("%Y%m%d")
+        final_slug = f"{date_prefix}-{clean_slug}"[:50]
+
+        branch_name = f"otto/{final_slug}"
+        worktree_path = f"../otto-{final_slug}"
+
+        subprocess.run(['git', 'fetch', 'origin'], check=True, cwd='.')
+        subprocess.run(['git', 'switch', 'main'], check=True, cwd='.')
+        subprocess.run(['git', 'pull', '--ff-only'], check=True, cwd='.')
+
+        subprocess.run([
+            'git', 'worktree', 'add', worktree_path,
+            '-b', branch_name, 'main'
+        ], check=True, cwd='.')
+
+        abs_worktree_path = os.path.abspath(worktree_path)
+        os.chdir(abs_worktree_path)
+
+        return {
+            "success": True,
+            "worktree_path": abs_worktree_path,
+            "branch_name": branch_name,
+            "message": "Git worktree created and switched to successfully",
+        }
+
+    except subprocess.CalledProcessError as e:
+        return {
+            "success": False,
+            "error": f"Git command failed: {e}",
+            "required_action": "Ensure you're in a Git repository and have proper permissions"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Worktree creation failed: {str(e)}"
+        }
+
 @function_tool
 def glob_files(pattern: str, path: Optional[str]) -> Dict[str, Any]:
     """
@@ -140,6 +253,15 @@ def glob_files(pattern: str, path: Optional[str]) -> Dict[str, Any]:
         # Find all log files in a specific directory
         glob_files("*.log", path="/var/log")
     """
+    # SAFEGUARD: Validate Git environment first
+    git_validation = _validate_git_environment()
+    if not git_validation["valid"]:
+        return {
+            "error": f"CANNOT SEARCH FILES: {git_validation['error']}",
+            "required_action": git_validation["required_action"],
+            "instructions": "You MUST call the create_git_worktree tool first and then retry this operation."
+        }
+
     try:
         # Default to current directory if path is not provided
         if path is None:
@@ -194,6 +316,15 @@ def grep_files(pattern: str, path: Optional[str], include: Optional[str]) -> Dic
         # Find all imports in Python files
         grep_files("^import\\s+\\w+", path="./", include="*.py")
     """
+    # SAFEGUARD: Validate Git environment first
+    git_validation = _validate_git_environment()
+    if not git_validation["valid"]:
+        return {
+            "error": f"CANNOT SEARCH FILES: {git_validation['error']}",
+            "required_action": git_validation["required_action"],
+            "instructions": "You MUST call the create_git_worktree tool first and then retry this operation."
+        }
+
     try:
         # Default to current directory if path is not provided
         if path is None:
@@ -276,6 +407,15 @@ def list_directory(path: str, recursive: Optional[bool]) -> Dict[str, Any]:
         # List contents of a specific directory recursively
         list_directory("/path/to/directory", recursive=True)
     """
+    if path != "." or recursive is True:
+        git_validation = _validate_git_environment()
+        if not git_validation["valid"]:
+            return {
+                "error": f"CANNOT LIST DIRECTORY: {git_validation['error']}",
+                "required_action": git_validation["required_action"],
+                "instructions": "You MUST call the create_git_worktree tool first and then retry this operation."
+            }
+
     try:
         # Default to non-recursive if not specified
         if recursive is None:
@@ -354,6 +494,20 @@ def read_file(file_path: str, start_line: Optional[int], num_lines: Optional[int
         # Read 10 lines starting from line 5
         read_file("/path/to/file.txt", start_line=5, num_lines=10)
     """
+    git_validation = _validate_git_environment()
+    if not git_validation["valid"]:
+        return {
+            "error": f"CANNOT READ FILE: {git_validation['error']}",
+            "required_action": git_validation["required_action"],
+            "instructions": "You MUST call the create_git_worktree tool first and then retry this operation."
+        }
+
+    if os.path.isabs(file_path):
+        return {
+            "error": "CANNOT READ FILE: Absolute paths not allowed in worktree",
+            "instructions": f"Use relative path instead. Remove leading slash from: {file_path}"
+        }
+
     try:
         # Default to start at beginning if not specified
         if start_line is None:
@@ -413,6 +567,20 @@ def edit_file(file_path: str, old_text: str, new_text: str) -> Dict[str, Any]:
         # Replace a configuration value
         edit_file("/path/to/config.json", '"debug": false', '"debug": true')
     """
+    git_validation = _validate_git_environment()
+    if not git_validation["valid"]:
+        return {
+            "error": f"CANNOT EDIT FILE: {git_validation['error']}",
+            "required_action": git_validation["required_action"],
+            "instructions": "You MUST call the create_git_worktree tool first and then retry this operation."
+        }
+
+    if os.path.isabs(file_path):
+        return {
+            "error": "CANNOT EDIT FILE: Absolute paths not allowed in worktree",
+            "instructions": f"Use relative path instead. Remove leading slash from: {file_path}"
+        }
+
     try:
         # Read the file content
         with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
@@ -468,6 +636,20 @@ def write_file(file_path: str, content: str, append: Optional[bool]) -> Dict[str
         # Append to a log file
         write_file("/path/to/log.txt", "New log entry\n", append=True)
     """
+    git_validation = _validate_git_environment()
+    if not git_validation["valid"]:
+        return {
+            "error": f"CANNOT WRITE FILE: {git_validation['error']}",
+            "required_action": git_validation["required_action"],
+            "instructions": "You MUST call the create_git_worktree tool first and then retry this operation."
+        }
+
+    if os.path.isabs(file_path):
+        return {
+            "error": "CANNOT WRITE FILE: Absolute paths not allowed in worktree",
+            "instructions": f"Use relative path instead. Remove leading slash from: {file_path}"
+        }
+
     try:
         # Default to overwrite if not specified
         if append is None:
