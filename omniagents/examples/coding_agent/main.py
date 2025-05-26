@@ -312,7 +312,8 @@ if __name__ == "__main__":
             "read_file",
             "create_git_worktree"
         ],
-        max_turns=100
+        max_turns=100,
+        layout="tabs"
     )
 
         # Launch (pass extra server args if needed)
