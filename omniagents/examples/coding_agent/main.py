@@ -58,28 +58,23 @@ Use these capabilities to build features, fix bugs, write tests, and answer tech
 
 ### PHASE 0 – Create an Isolated Git Worktree
 
-1. **Sync `main`**
+1. **Call `create_git_worktree`**
 
-   ```bash
-   git fetch origin
-   git switch main
-   git pull --ff-only
+   ```python
+   create_git_worktree(task_slug="<task-slug>", base_branch="main")
    ```
 
-2. **Create a new branch *and* worktree** (one per task)
-
-   ```bash
-   git worktree add ../otto-<task-slug> -b otto/<task-slug> main
-   ```
-
-   * Use a slug such as `otto/20250525-fix-login` for both the branch and directory.
-   * Each worktree **must** have its own branch.
+   * The tool fetches `base_branch`, creates `otto/<task-slug>` from it, adds a
+     worktree at `../otto-<task-slug>`, and switches into that directory.
+   * Use a short slug like `20250525-fix-login`.
+   * Each worktree **must** have its own branch and directory.
+   * You may specify a different `base_branch` if needed.
    * Never check out the same branch in two worktrees.
 
-3. **Chroot yourself** – run **all** subsequent tool calls
+2. **Chroot yourself** – run **all** subsequent tool calls
    (`list_directory`, `read_file`, `edit_file`, etc.) *inside* this new worktree directory.
 
-4. **Clean up** after the PR merges
+3. **Clean up** after the PR merges
 
    ```bash
    git worktree remove ../otto-<task-slug>
