@@ -7,11 +7,11 @@ from .file_tools import _validate_git_environment
 
 @function_tool
 def create_pull_request(title: str, body: str) -> Dict[str, Any]:
-    """Push the current branch and create a draft PR via ``gh``.
+    """Push the current branch and create a pull request via ``gh``.
 
     This tool assumes the ``gh`` CLI is configured for the repository.
-    It pushes the active branch and then runs ``gh pr create --draft``
-    with the provided title and body.
+    It pushes the active branch and then runs ``gh pr create`` with the
+    provided title and body.
     """
 
     validation = _validate_git_environment()
@@ -41,7 +41,6 @@ def create_pull_request(title: str, body: str) -> Dict[str, Any]:
                 title,
                 "--body",
                 body,
-                "--draft",
             ],
             capture_output=True,
             text=True,
