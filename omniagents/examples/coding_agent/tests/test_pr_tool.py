@@ -25,5 +25,5 @@ def test_create_pull_request(tmp_path, mock_function_tool, monkeypatch):
         assert result['url'] == 'https://example.com/pr/1'
         mock_run.assert_has_calls([
             call(['git', 'push', '--set-upstream', 'origin', 'otto/test'], check=False),
-            call(['gh', 'pr', 'create', '--title', 'My PR', '--body', 'Body text', '--draft'], capture_output=True, text=True)
+            call(['gh', 'pr', 'create', '--title', 'My PR', '--body', 'Body text'], capture_output=True, text=True)
         ])
