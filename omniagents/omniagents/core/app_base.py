@@ -5,11 +5,21 @@ from flet import animation as animation  # ensure ft.animation submodule is load
 import asyncio
 import json
 import os
-import uuid # Added for unique approval IDs
+import uuid  # Added for unique approval IDs
 import time
 from dataclasses import dataclass, field
-from enum import Enum # Added Enum
-from typing import List, Dict, Any, Callable, Optional, Protocol, Awaitable, TYPE_CHECKING, Tuple # Added Tuple
+from enum import Enum  # Added Enum
+from typing import (
+    List,
+    Dict,
+    Any,
+    Callable,
+    Optional,
+    Protocol,
+    Awaitable,
+    TYPE_CHECKING,
+    Tuple,
+)  # Added Tuple
 
 # Import from other core modules
 # Use absolute imports for robustness within the package
@@ -18,42 +28,52 @@ from omniagents.core.ui import (
     ChatMessage,
     ToolInteractionDisplay,
     ToolApprovalRequest,
+    TabHeader,
 )
 from omniagents.core.settings import SettingsScreen, SettingField
 from omniagents.core.storage import load_settings, save_settings
 from omniagents.core.local_sessions import LocalSession
-from omniagents.core.config_loader import load_agent_spec_from_yaml, DEFAULT_SETTINGS_FIELDS # <-- Import the loader and default settings
-from omniagents.core.specs import AgentSpec, AgentLike, SafeAgentOptions # <-- Import moved specs
+from omniagents.core.config_loader import (
+    load_agent_spec_from_yaml,
+    DEFAULT_SETTINGS_FIELDS,
+)  # <-- Import the loader and default settings
+from omniagents.core.specs import (
+    AgentSpec,
+    AgentLike,
+    SafeAgentOptions,
+)  # <-- Import moved specs
 
 # Import agents types for type hinting (use Protocol for flexibility)
-from agents import Agent, ItemHelpers # Added Agent
-from agents import Runner # For run_streamed
-from agents.model_settings import ModelSettings # <-- Import ModelSettings
-from agents import ( # <-- Imports for default builder
+from agents import Agent, ItemHelpers  # Added Agent
+from agents import Runner  # For run_streamed
+from agents.model_settings import ModelSettings  # <-- Import ModelSettings
+from agents import (  # <-- Imports for default builder
     set_default_openai_client,
     set_default_openai_api,
-    set_tracing_disabled
+    set_tracing_disabled,
 )
-from openai import AsyncOpenAI # <-- Import for default builder
+from openai import AsyncOpenAI  # <-- Import for default builder
 
 # Import SafeAgent components directly as they are part of the core package now
-from .safe_agent import SafeAgent, ApprovalResult # Added SafeAgent and ApprovalResult
+from .safe_agent import SafeAgent, ApprovalResult  # Added SafeAgent and ApprovalResult
 
 # Use TYPE_CHECKING to avoid circular import issues at runtime
 if TYPE_CHECKING:
     # Use absolute import if AgentApp is defined elsewhere in the package,
     # otherwise keep relative if it's defined in this file (which it is).
-    from .app_base import AgentApp # Keep relative for self-reference check
-    from agents.mcp import MCPServerSse # <-- Add import here
+    from .app_base import AgentApp  # Keep relative for self-reference check
+    from agents.mcp import MCPServerSse  # <-- Add import here
 
 # Define a protocol for Agent-like objects to avoid circular dependencies
 # and allow for different Agent types (Agent, SafeAgent, etc.)
-# --- MOVED AgentLike protocol to specs.py --- 
+# --- MOVED AgentLike protocol to specs.py ---
 
-# --- MOVED SafeAgentOptions dataclass to specs.py --- 
+# --- MOVED SafeAgentOptions dataclass to specs.py ---
+
 
 class MCPConnectionStatus(Enum):
     """Enum for MCP connection status."""
+
     UNKNOWN = "unknown"
     NOT_CONFIGURED = "not_configured"
     CONNECTING = "connecting"
@@ -61,46 +81,58 @@ class MCPConnectionStatus(Enum):
     ERROR = "error"
     DISCONNECTED = "disconnected"
 
-# --- MOVED AgentSpec dataclass to specs.py --- 
+
+# --- MOVED AgentSpec dataclass to specs.py ---
+
 
 # --- Default Agent Builder (Internal) --- #
 async def _default_build_agent(
     settings: Dict[str, Any],
-    mcp_server: Optional['MCPServerSse'], # Use string literal
-    app: 'AgentApp' # Pass the app instance to access spec and callback
+    mcp_server: Optional["MCPServerSse"],  # Use string literal
+    app: "AgentApp",  # Pass the app instance to access spec and callback
 ) -> AgentLike:
     """Internal default function to build the agent instance."""
-    # --- ADDED LOGGING --- 
+    # --- ADDED LOGGING ---
     print(f"BUILDER ENTRY: Received settings dict id: {id(settings)}")
     # ---------------------
-    spec = app.spec # Get the spec from the app instance
+    spec = app.spec  # Get the spec from the app instance
     print("Building agent using internal default builder...")
 
-    # --- Get Core Config from Spec/Settings --- 
+    # --- Get Core Config from Spec/Settings ---
     agent_name = spec.name
     # Get model from spec (set by config loader) or fallback from settings
-    model_name = spec.model_name or settings.get("model_name", "gpt-4o") # Ensure fallback
-    instructions = spec.get_agent_instructions() # Use the spec's instruction loader
+    model_name = spec.model_name or settings.get(
+        "model_name", "gpt-4o"
+    )  # Ensure fallback
+    instructions = spec.get_agent_instructions()  # Use the spec's instruction loader
     # Tools are provided directly in the spec if loaded from config
     tools = spec.available_tools
     # MCP server instance is passed directly
     mcp_servers_list = [mcp_server] if mcp_server else []
 
-    # --- Configure OpenAI Client --- 
+    # --- Configure OpenAI Client ---
     # Attempt to get key from settings first, then environment
     api_key_from_settings = settings.get("openai_api_key")
     api_key_from_env = os.getenv("OPENAI_API_KEY")
-    
-    print(f"BUILDER CHECK: API Key from settings dict passed to builder: '{api_key_from_settings}'")
+
+    print(
+        f"BUILDER CHECK: API Key from settings dict passed to builder: '{api_key_from_settings}'"
+    )
 
     # Prioritize settings value if it exists and is not empty
     api_key = api_key_from_settings if api_key_from_settings else api_key_from_env
 
     # Explicitly check if the final key is None or empty *after* trying both sources
     if not api_key:
-        raise ValueError("OpenAI API key is missing. Please configure in settings or set OPENAI_API_KEY environment variable.")
+        raise ValueError(
+            "OpenAI API key is missing. Please configure in settings or set OPENAI_API_KEY environment variable."
+        )
 
-    base_url = settings.get("openai_api_base") or os.getenv("OPENAI_API_BASE") or "https://api.openai.com/v1"
+    base_url = (
+        settings.get("openai_api_base")
+        or os.getenv("OPENAI_API_BASE")
+        or "https://api.openai.com/v1"
+    )
 
     try:
         # Use default settings if not otherwise specified
@@ -112,7 +144,9 @@ async def _default_build_agent(
         # Set client globally so the agents framework can pick it up
         # Check agents-python docs: Agent might not need global client if passed implicitly via model_settings or env vars
         set_default_openai_client(client=client, use_for_tracing=False)
-        print(f"OpenAI client configured for default builder: base_url={base_url}, model={model_name}")
+        print(
+            f"OpenAI client configured for default builder: base_url={base_url}, model={model_name}"
+        )
     except Exception as e:
         raise ValueError(f"Failed to initialize OpenAI client: {e}")
 
@@ -122,30 +156,34 @@ async def _default_build_agent(
         os.environ["SERPAPI_API_KEY"] = serpapi_key
         print("SERPAPI_API_KEY set in environment from settings.")
     elif "SERPAPI_API_KEY" in os.environ:
-         # Clean up env var if not in settings to avoid using stale key
-         del os.environ["SERPAPI_API_KEY"]
-         print("SERPAPI_API_KEY removed from environment as it's not in current settings.")
+        # Clean up env var if not in settings to avoid using stale key
+        del os.environ["SERPAPI_API_KEY"]
+        print(
+            "SERPAPI_API_KEY removed from environment as it's not in current settings."
+        )
 
-    # --- Create Base Agent --- 
-    print(f"Creating base Agent: name='{agent_name}', model='{model_name}', tools_count={len(tools)}, mcp_count={len(mcp_servers_list)}")
-    
+    # --- Create Base Agent ---
+    print(
+        f"Creating base Agent: name='{agent_name}', model='{model_name}', tools_count={len(tools)}, mcp_count={len(mcp_servers_list)}"
+    )
+
     # Create ModelSettings with tool_choice only if tools are available
     if tools:
         model_settings = ModelSettings(tool_choice="auto")
     else:
         # Create ModelSettings without specifying tool_choice when no tools are available
         model_settings = ModelSettings()
-    
+
     base_agent = Agent(
         name=agent_name,
-        tools=tools, # Pass the discovered/selected function objects
+        tools=tools,  # Pass the discovered/selected function objects
         mcp_servers=mcp_servers_list,
         model=model_name,
-        model_settings=model_settings, # Always pass a ModelSettings object
+        model_settings=model_settings,  # Always pass a ModelSettings object
         instructions=instructions,
     )
 
-    # --- Optionally Wrap with SafeAgent --- 
+    # --- Optionally Wrap with SafeAgent ---
     if spec.use_safe_agent:
         print(f"Wrapping '{agent_name}' with SafeAgent...")
         opts = spec.safe_agent_options
@@ -153,14 +191,13 @@ async def _default_build_agent(
             safe_agent = SafeAgent(
                 # Pass parameters from the base agent we just created
                 name=base_agent.name,
-                tools=await base_agent.get_all_tools(), # Get tools resolved by base agent (incl MCP)
+                tools=await base_agent.get_all_tools(),  # Get tools resolved by base agent (incl MCP)
                 instructions=base_agent.instructions,
                 model=base_agent.model,
                 model_settings=base_agent.model_settings,
                 mcp_servers=base_agent.mcp_servers,
-
                 # SafeAgent specific config from spec
-                approval_callback=app._request_tool_approval, # Use app's callback
+                approval_callback=app._request_tool_approval,  # Use app's callback
                 safe_tool_names=opts.safe_tool_names,
                 safe_tool_patterns=opts.safe_tool_patterns,
                 skip_approvals=opts.skip_approvals,
@@ -168,9 +205,11 @@ async def _default_build_agent(
                 debug_mode=spec.debug_flag,
             )
             print("SafeAgent wrapper created successfully.")
-            return safe_agent # Return the wrapped agent
+            return safe_agent  # Return the wrapped agent
         except Exception as safe_agent_init_error:
-            error_msg = f"Failed to initialize SafeAgent wrapper: {safe_agent_init_error}"
+            error_msg = (
+                f"Failed to initialize SafeAgent wrapper: {safe_agent_init_error}"
+            )
             print(f"ERROR: {error_msg}")
             # Fallback to returning the base agent if wrapping fails
             return base_agent
@@ -182,6 +221,7 @@ async def _default_build_agent(
 
 class AgentApp:
     """Base class for creating Flet Agent applications."""
+
     @classmethod
     def from_agent(
         cls,
@@ -202,11 +242,13 @@ class AgentApp:
         Construct an AgentApp directly from an existing agents.Agent (or Agent-like).
         This builds an internal AgentSpec that wraps the given agent without YAML.
         """
-        name = getattr(agent, 'name', 'agent')
+        name = getattr(agent, "name", "agent")
         # Instructions may be a callable or a string
-        instr = agent.instructions() if callable(agent.instructions) else agent.instructions
+        instr = (
+            agent.instructions() if callable(agent.instructions) else agent.instructions
+        )
         # Determine storage prefix
-        storage_prefix = prefix or name.lower().replace(' ', '_') + '.'
+        storage_prefix = prefix or name.lower().replace(" ", "_") + "."
 
         # Decide how the Agent will be built downstream:
         # • If `safe` is True we leave build_agent=None so the internal
@@ -216,6 +258,7 @@ class AgentApp:
 
         _builder = None
         if not safe:
+
             async def _builder(
                 settings: Dict[str, Any], mcp, app
             ) -> AgentLike:  # type: ignore
@@ -229,8 +272,8 @@ class AgentApp:
             client_storage_prefix=storage_prefix,
             get_agent_instructions=lambda: instr,
             build_agent=_builder,
-            available_tools=getattr(agent, 'tools', []),
-            model_name=getattr(agent, 'model', None),
+            available_tools=getattr(agent, "tools", []),
+            model_name=getattr(agent, "model", None),
             use_safe_agent=safe,
             safe_agent_options=SafeAgentOptions(
                 skip_approvals=skip_approvals,
@@ -238,13 +281,18 @@ class AgentApp:
                 safe_tool_names=safe_tool_names or [],
                 safe_tool_patterns=safe_tool_patterns or [],
             ),
-            settings_fields=list(DEFAULT_SETTINGS_FIELDS),  # include OpenAI settings by default
+            settings_fields=list(
+                DEFAULT_SETTINGS_FIELDS
+            ),  # include OpenAI settings by default
             max_turns=max_turns if max_turns is not None else 20,
             layout=layout,
         )
         return cls(spec=spec)
+
     # Modify init to accept config_path OR spec
-    def __init__(self, spec: Optional[AgentSpec] = None, config_path: Optional[str] = None):
+    def __init__(
+        self, spec: Optional[AgentSpec] = None, config_path: Optional[str] = None
+    ):
 
         if config_path:
             print(f"Loading AgentSpec from configuration file: {config_path}")
@@ -253,14 +301,16 @@ class AgentApp:
             print("Using provided AgentSpec object.")
             self.spec = spec
         else:
-            raise ValueError("Must provide either 'spec' or 'config_path' to AgentApp constructor.")
+            raise ValueError(
+                "Must provide either 'spec' or 'config_path' to AgentApp constructor."
+            )
 
         # Ensure build_agent is set if loaded from config
         if self.spec.build_agent is None:
-             print("Using internal default agent builder.")
-             # We don't assign it here, we check for None later during agent creation
-             # self.spec.build_agent = _default_build_agent # This modifies the spec, maybe not ideal
-             pass # We'll check for None in _process_message
+            print("Using internal default agent builder.")
+            # We don't assign it here, we check for None later during agent creation
+            # self.spec.build_agent = _default_build_agent # This modifies the spec, maybe not ideal
+            pass  # We'll check for None in _process_message
 
         self.page: Optional[ft.Page] = None
         self.chat: Optional[ft.ListView] = None
@@ -279,23 +329,32 @@ class AgentApp:
         self.current_settings: Dict[str, Any] = {}
 
         # MCP State
-        self._mcp_server_instance: Optional['MCPServerSse'] = None # Use string literal
+        self._mcp_server_instance: Optional["MCPServerSse"] = None  # Use string literal
         self._mcp_connection_status: MCPConnectionStatus = MCPConnectionStatus.UNKNOWN
-        self._mcp_connection_status_indicator: Optional[ft.Container] = None # UI element
+        self._mcp_connection_status_indicator: Optional[ft.Container] = (
+            None  # UI element
+        )
 
         # Internal state for tool approval UI
         self._approval_state: Dict[str, Any] = {
-            "active_displays": {}, # Maps approval_id -> UI control
-            "pending_futures": {}  # Maps approval_id -> asyncio.Future
+            "active_displays": {},  # Maps approval_id -> UI control
+            "pending_futures": {},  # Maps approval_id -> asyncio.Future
         }
 
         # Track active tool interaction cards for pairing call and result
         self._interactions_by_call_id: Dict[str, ToolInteractionDisplay] = {}
         self._pending_interactions: List[ToolInteractionDisplay] = []
 
+        # Tab indicator references
+        self._conversation_tab_header = None
+        self._artifacts_tab_header = None
+        self._logs_tab_header = None
+
         # Register artifact callback
         from .artifacts import set_artifact_callback
+
         set_artifact_callback(self.add_artifact)
+
     def run(self, mode: str = "gui", **ft_kwargs):
         """
         Convenience method to start the agent app.
@@ -306,6 +365,7 @@ class AgentApp:
             # Run in CLI mode via the CLI runner
             from omniagents.cli_runner import run_cli
             import asyncio, argparse
+
             # Build minimal args for overrides (all defaults)
             cli_args = argparse.Namespace()
             # Execute CLI loop with in-memory spec
@@ -315,21 +375,29 @@ class AgentApp:
             # ------------------------------------------------------------------
             #  JSON-RPC / WebSocket server (remote agent) -----------------------
             # ------------------------------------------------------------------
-            host = ft_kwargs.pop("host", "0.0.0.0")  # remove so uvicorn gets a clean dict
+            host = ft_kwargs.pop(
+                "host", "0.0.0.0"
+            )  # remove so uvicorn gets a clean dict
             port = ft_kwargs.pop("port", 8000)
             auth_token = ft_kwargs.pop("auth_token", None)
 
             # Defer import of heavy deps until needed
-            from omniagents.server.app import build_app  # local import to avoid startup cost
+            from omniagents.server.app import (
+                build_app,
+            )  # local import to avoid startup cost
             import uvicorn
 
             rpc_app = build_app(spec=self.spec, auth_token=auth_token)
-            print(f"Starting OmniAgents RPC server on {host}:{port} (programmatic spec: {self.spec.name})")
+            print(
+                f"Starting OmniAgents RPC server on {host}:{port} (programmatic spec: {self.spec.name})"
+            )
             uvicorn.run(rpc_app, host=host, port=port, **ft_kwargs)
         elif mode == "gui":
             ft.app(target=self.main, **ft_kwargs)
         else:
-            raise ValueError(f"Unsupported run mode: {mode}. Choose 'gui', 'cli', or 'server'.")
+            raise ValueError(
+                f"Unsupported run mode: {mode}. Choose 'gui', 'cli', or 'server'."
+            )
 
     async def main(self, page: ft.Page):
         """Main entry point for the Flet application."""
@@ -345,7 +413,7 @@ class AgentApp:
         if self.spec.uses_mcp:
             await self._update_mcp_connection()
 
-        self._build_ui() # UI depends on initial MCP status potentially
+        self._build_ui()  # UI depends on initial MCP status potentially
         self._setup_routing()
         self._show_initial_warnings()
 
@@ -361,14 +429,16 @@ class AgentApp:
 
         # Create the initial main view AND add it to the page's views
         initial_view = self._create_main_view()
-        self.page.views.append(initial_view) # Ensure the first view is added
+        self.page.views.append(initial_view)  # Ensure the first view is added
 
-        self.page.update() # Ensure initial view is rendered
+        self.page.update()  # Ensure initial view is rendered
 
     async def _configure_page(self):
         """Configure basic page properties."""
         self.page.horizontal_alignment = ft.CrossAxisAlignment.STRETCH
-        self.page.title = self.spec.page_title + (self.spec.page_title_suffix if self.spec.debug_flag else "")
+        self.page.title = self.spec.page_title + (
+            self.spec.page_title_suffix if self.spec.debug_flag else ""
+        )
         self.page.theme_mode = ft.ThemeMode.LIGHT
         self.page.window_width = 900
         self.page.window_height = 750
@@ -377,7 +447,9 @@ class AgentApp:
         self.page.fonts = {
             "SF Pro": "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap",
         }
-        self.page.theme = ft.Theme(font_family="SF Pro, Inter, Helvetica, Arial, sans-serif")
+        self.page.theme = ft.Theme(
+            font_family="SF Pro, Inter, Helvetica, Arial, sans-serif"
+        )
         self.page.views.clear()
         self.page.adaptive = True
 
@@ -385,13 +457,13 @@ class AgentApp:
         """Load settings from client storage."""
         try:
             self.current_settings = await load_settings(
-                self.page,
-                self.spec.client_storage_prefix,
-                self.spec.settings_fields
+                self.page, self.spec.client_storage_prefix, self.spec.settings_fields
             )
             print(f"Initial settings loaded: {list(self.current_settings.keys())}")
-            # --- ADDED LOGGING --- 
-            print(f"LOAD SUCCESS: self.current_settings id: {id(self.current_settings)}")
+            # --- ADDED LOGGING ---
+            print(
+                f"LOAD SUCCESS: self.current_settings id: {id(self.current_settings)}"
+            )
             # ---------------------
             # Apply any immediate effects of settings here if needed
             # e.g., setting environment variables, though passing to build_agent is preferred.
@@ -399,10 +471,16 @@ class AgentApp:
             # 3. If ANY error happens *after* step 2 but before the function fully returns...
             print(f"Error loading initial settings: {e}")
             # 4. ...it resets self.current_settings to defaults!
-            self.current_settings = {field.key: field.default for field in self.spec.settings_fields}
-            # --- ADDED LOGGING --- 
-            print(f"LOAD EXCEPTION: Resetting settings to defaults due to error. Keys now: {list(self.current_settings.keys())}")
-            print(f"LOAD EXCEPTION: Default API key value: '{self.current_settings.get('openai_api_key')}'")
+            self.current_settings = {
+                field.key: field.default for field in self.spec.settings_fields
+            }
+            # --- ADDED LOGGING ---
+            print(
+                f"LOAD EXCEPTION: Resetting settings to defaults due to error. Keys now: {list(self.current_settings.keys())}"
+            )
+            print(
+                f"LOAD EXCEPTION: Default API key value: '{self.current_settings.get('openai_api_key')}'"
+            )
             # ---------------------
         # No page.update() here, happens in main
 
@@ -413,16 +491,23 @@ class AgentApp:
             content=ft.Row(
                 [
                     ft.Container(
-                        content=ft.ProgressRing(width=16, height=16, stroke_width=2, color=self.spec.theme_color), # Use theme color
-                        margin=ft.margin.only(right=8)
+                        content=ft.ProgressRing(
+                            width=16,
+                            height=16,
+                            stroke_width=2,
+                            color=self.spec.theme_color,
+                        ),  # Use theme color
+                        margin=ft.margin.only(right=8),
                     ),
-                    ft.Text("Assistant is thinking...", size=14, color=ft.Colors.BLACK54),
+                    ft.Text(
+                        "Assistant is thinking...", size=14, color=ft.Colors.BLACK54
+                    ),
                 ],
                 alignment=ft.MainAxisAlignment.START,
             ),
             # margin removed: spacing now handled by ListView
             animate=ft.animation.Animation(200, ft.AnimationCurve.EASE_IN_OUT),
-            visible=False
+            visible=False,
         )
 
         # Chat View
@@ -430,7 +515,9 @@ class AgentApp:
             expand=True,
             spacing=20,  # increased vertical spacing for more breathing room
             auto_scroll=True,
-            padding=ft.padding.symmetric(horizontal=20),  # consistent left/right inset for all items
+            padding=ft.padding.symmetric(
+                horizontal=20
+            ),  # consistent left/right inset for all items
             # Controls added later (welcome message)
         )
 
@@ -470,10 +557,12 @@ class AgentApp:
         # Add default MCP status indicator if configured
         if self.spec.uses_mcp and self.spec.show_mcp_status_indicator:
             self._mcp_connection_status_indicator = ft.Container(
-                width=12, height=12, border_radius=6,
-                bgcolor=self._get_mcp_status_color(), # Initial color based on status
+                width=12,
+                height=12,
+                border_radius=6,
+                bgcolor=self._get_mcp_status_color(),  # Initial color based on status
                 tooltip=self._get_mcp_status_tooltip(),
-                margin=ft.margin.only(right=8), # Add some margin
+                margin=ft.margin.only(right=8),  # Add some margin
                 alignment=ft.alignment.center,
             )
             header_right_controls.append(self._mcp_connection_status_indicator)
@@ -490,54 +579,89 @@ class AgentApp:
 
         self.header = ft.Container(
             content=ft.SafeArea(
-                content=ft.Column([
-                    ft.Container(
-                        content=ft.Row([
-                            ft.Column([
-                                ft.Text(
-                                    self.spec.header_title, 
-                                    color=ft.Colors.WHITE, 
-                                    size=20,  # Reduced from 24 to a more moderate size
-                                    weight="w500",  # Keeping the weight the same
-                                ),
-                            ], spacing=2, tight=True),
-                            ft.Row(
-                                header_right_controls, 
-                                spacing=12, 
-                                alignment=ft.MainAxisAlignment.END,
-                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                            ), # Align right
-                        ], 
-                        spacing=12, 
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN, 
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                        padding=ft.padding.symmetric(horizontal=20, vertical=0),  # Reduce vertical padding
-                        height=64,  # Material 3 standard app bar height
-                        alignment=ft.alignment.center,  # Center container content vertically
-                    ),
-                    # Debug Banner (only if debug_flag is True)
-                    *([
+                content=ft.Column(
+                    [
                         ft.Container(
-                            content=ft.Row([
-                                ft.Icon(name=ft.Icons.BUG_REPORT, color=ft.Colors.WHITE, size=16),
-                                ft.Text("Debug Mode Enabled", color=ft.Colors.WHITE, size=13),
-                            ], spacing=8),
-                            padding=ft.padding.symmetric(horizontal=20, vertical=8),  # Matched with header padding
-                            bgcolor=ft.Colors.with_opacity(0.1, ft.Colors.WHITE),
-                        )
-                      ] if self.spec.debug_flag else []
-                    ),
-                ]),
-                bottom=False
+                            content=ft.Row(
+                                [
+                                    ft.Column(
+                                        [
+                                            ft.Text(
+                                                self.spec.header_title,
+                                                color=ft.Colors.WHITE,
+                                                size=20,  # Reduced from 24 to a more moderate size
+                                                weight="w500",  # Keeping the weight the same
+                                            ),
+                                        ],
+                                        spacing=2,
+                                        tight=True,
+                                    ),
+                                    ft.Row(
+                                        header_right_controls,
+                                        spacing=12,
+                                        alignment=ft.MainAxisAlignment.END,
+                                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                    ),  # Align right
+                                ],
+                                spacing=12,
+                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            ),
+                            padding=ft.padding.symmetric(
+                                horizontal=20, vertical=0
+                            ),  # Reduce vertical padding
+                            height=64,  # Material 3 standard app bar height
+                            alignment=ft.alignment.center,  # Center container content vertically
+                        ),
+                        # Debug Banner (only if debug_flag is True)
+                        *(
+                            [
+                                ft.Container(
+                                    content=ft.Row(
+                                        [
+                                            ft.Icon(
+                                                name=ft.Icons.BUG_REPORT,
+                                                color=ft.Colors.WHITE,
+                                                size=16,
+                                            ),
+                                            ft.Text(
+                                                "Debug Mode Enabled",
+                                                color=ft.Colors.WHITE,
+                                                size=13,
+                                            ),
+                                        ],
+                                        spacing=8,
+                                    ),
+                                    padding=ft.padding.symmetric(
+                                        horizontal=20, vertical=8
+                                    ),  # Matched with header padding
+                                    bgcolor=ft.Colors.with_opacity(
+                                        0.1, ft.Colors.WHITE
+                                    ),
+                                )
+                            ]
+                            if self.spec.debug_flag
+                            else []
+                        ),
+                    ]
+                ),
+                bottom=False,
             ),
             gradient=ft.LinearGradient(
-                begin=ft.alignment.top_left, end=ft.alignment.bottom_right,
+                begin=ft.alignment.top_left,
+                end=ft.alignment.bottom_right,
                 # Use theme color in gradient
-                colors=[ft.Colors.INDIGO_900, self.spec.theme_color, ft.Colors.with_opacity(0.8, self.spec.theme_color)],
+                colors=[
+                    ft.Colors.INDIGO_900,
+                    self.spec.theme_color,
+                    ft.Colors.with_opacity(0.8, self.spec.theme_color),
+                ],
             ),
             shadow=ft.BoxShadow(
-                spread_radius=0, blur_radius=4,  # Material 3 standard elevation
-                color=ft.Colors.with_opacity(0.3, ft.Colors.BLACK), offset=ft.Offset(0, 2)
+                spread_radius=0,
+                blur_radius=4,  # Material 3 standard elevation
+                color=ft.Colors.with_opacity(0.3, ft.Colors.BLACK),
+                offset=ft.Offset(0, 2),
             ),
         )
 
@@ -545,77 +669,116 @@ class AgentApp:
         self.new_message = ft.TextField(
             hint_text="Ask the assistant...",
             hint_style=ft.TextStyle(color=ft.Colors.BLACK45),
-            autofocus=True, shift_enter=True, min_lines=1, max_lines=5, filled=False,
+            autofocus=True,
+            shift_enter=True,
+            min_lines=1,
+            max_lines=5,
+            filled=False,
             border=ft.InputBorder.OUTLINE,
             border_radius=30,
             border_color=ft.Colors.BLACK26,
             focused_border_color=self.spec.theme_color,
-            text_size=15, text_style=ft.TextStyle(color=ft.Colors.BLACK), cursor_color=self.spec.theme_color,
-            expand=True, content_padding=ft.padding.symmetric(horizontal=24, vertical=16),
+            text_size=15,
+            text_style=ft.TextStyle(color=ft.Colors.BLACK),
+            cursor_color=self.spec.theme_color,
+            expand=True,
+            content_padding=ft.padding.symmetric(horizontal=24, vertical=16),
             on_submit=self._send_message_click,
         )
 
         # Send Button
         self.send_button = ft.IconButton(
-            icon=ft.Icons.SEND_ROUNDED, icon_color=self.spec.theme_color,
-            icon_size=24, tooltip="Send message", on_click=self._send_message_click,
+            icon=ft.Icons.SEND_ROUNDED,
+            icon_color=self.spec.theme_color,
+            icon_size=24,
+            tooltip="Send message",
+            on_click=self._send_message_click,
             style=ft.ButtonStyle(
-                shape=ft.CircleBorder(), padding=12, # Make it circular
-                overlay_color=ft.Colors.with_opacity(0.1, self.spec.theme_color)
+                shape=ft.CircleBorder(),
+                padding=12,  # Make it circular
+                overlay_color=ft.Colors.with_opacity(0.1, self.spec.theme_color),
             ),
         )
 
         # Initial Welcome Message
         welcome_msg = Message("System", self.spec.welcome_text, "system_message")
-        self.chat.controls.append(ChatMessage(welcome_msg, self.page, assistant_name=self.spec.name))
+        self.chat.controls.append(
+            ChatMessage(welcome_msg, self.page, assistant_name=self.spec.name)
+        )
 
     def _setup_routing(self):
         """Set up page routing for main view and settings."""
         self.page.on_route_change = self._route_change
-        self.page.on_view_pop = self._view_pop # Handle back button in settings
+        self.page.on_view_pop = self._view_pop  # Handle back button in settings
 
     def _show_initial_warnings(self):
         """Show snackbar warnings based on initial settings (e.g., missing keys)."""
         missing_keys = []
         for field in self.spec.settings_fields:
             # Check if required field is missing (simple check: empty and has 'Required' in hint)
-            if not self.current_settings.get(field.key) and field.hint and "Required" in field.hint:
-                 # Special case: Don't warn about MCP token if URL is also missing
-                 if field.key == self.spec.mcp_token_setting_key and not self.current_settings.get(self.spec.mcp_url_setting_key):
-                      continue
-                 missing_keys.append(field.label)
+            if (
+                not self.current_settings.get(field.key)
+                and field.hint
+                and "Required" in field.hint
+            ):
+                # Special case: Don't warn about MCP token if URL is also missing
+                if (
+                    field.key == self.spec.mcp_token_setting_key
+                    and not self.current_settings.get(self.spec.mcp_url_setting_key)
+                ):
+                    continue
+                missing_keys.append(field.label)
 
         if missing_keys:
             keys_str = ", ".join(missing_keys)
             snack_bar = ft.SnackBar(
-                content=ft.Row([
-                    ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=ft.Colors.AMBER_600),
-                    ft.Text(f"Missing required setting(s): {keys_str}. Go to Settings.", color=ft.Colors.BLACK87),
-                ]),
+                content=ft.Row(
+                    [
+                        ft.Icon(
+                            ft.Icons.WARNING_AMBER_ROUNDED, color=ft.Colors.AMBER_600
+                        ),
+                        ft.Text(
+                            f"Missing required setting(s): {keys_str}. Go to Settings.",
+                            color=ft.Colors.BLACK87,
+                        ),
+                    ]
+                ),
                 bgcolor=ft.Colors.AMBER_50,
-                open=True
+                open=True,
             )
             self.page.overlay.append(snack_bar)
             self.page.update()
         # Warn if MCP is configured but connection failed
-        elif self.spec.uses_mcp and self._mcp_connection_status == MCPConnectionStatus.ERROR:
-             snack_bar = ft.SnackBar(
-                 content=ft.Row([
-                     ft.Icon(ft.Icons.ERROR_OUTLINE, color=ft.Colors.RED_600),
-                     ft.Text(f"MCP Connection Failed. Check URL/Token in Settings.", color=ft.Colors.BLACK87),
-                 ]),
-                 bgcolor=ft.Colors.RED_50,
-                 open=True
-             )
-             self.page.overlay.append(snack_bar)
-             self.page.update()
+        elif (
+            self.spec.uses_mcp
+            and self._mcp_connection_status == MCPConnectionStatus.ERROR
+        ):
+            snack_bar = ft.SnackBar(
+                content=ft.Row(
+                    [
+                        ft.Icon(ft.Icons.ERROR_OUTLINE, color=ft.Colors.RED_600),
+                        ft.Text(
+                            f"MCP Connection Failed. Check URL/Token in Settings.",
+                            color=ft.Colors.BLACK87,
+                        ),
+                    ]
+                ),
+                bgcolor=ft.Colors.RED_50,
+                open=True,
+            )
+            self.page.overlay.append(snack_bar)
+            self.page.update()
         # No page.update() here, happens in main
 
     # --- Event Handlers & Actions ---
 
-    async def _send_message_click(self, e=None): # Added e=None for direct calls
+    async def _send_message_click(self, e=None):  # Added e=None for direct calls
         """Handle clicks on the send button or Enter in the text field."""
-        if self.new_message and self.new_message.value and self.new_message.value.strip() != "":
+        if (
+            self.new_message
+            and self.new_message.value
+            and self.new_message.value.strip() != ""
+        ):
             user_msg_text = self.new_message.value.strip()
             user_msg = Message("You", user_msg_text, "user_message")
 
@@ -658,20 +821,24 @@ class AgentApp:
         """Core logic to interact with the agent and update the UI."""
         print(f"Processing message: {user_message}")
         try:
-            # --- Ensure MCP is connected if needed --- 
-            if self.spec.uses_mcp and self._mcp_connection_status != MCPConnectionStatus.CONNECTED:
-                print("MCP not connected, attempting to connect before processing message...")
-                await self._update_mcp_connection() # Try to connect/reconnect
+            # --- Ensure MCP is connected if needed ---
+            if (
+                self.spec.uses_mcp
+                and self._mcp_connection_status != MCPConnectionStatus.CONNECTED
+            ):
+                print(
+                    "MCP not connected, attempting to connect before processing message..."
+                )
+                await self._update_mcp_connection()  # Try to connect/reconnect
                 if self._mcp_connection_status != MCPConnectionStatus.CONNECTED:
-                     # Display error and potentially stop if connection failed
-                     error_msg = "Cannot process request: Failed to connect to required MCP Server. Check Settings."
-                     print(f"ERROR: {error_msg}")
-                     self._display_error_banner(error_msg)
-                     self.page.update()
-                     return # Stop processing if MCP is required but unavailable
+                    # Display error and potentially stop if connection failed
+                    error_msg = "Cannot process request: Failed to connect to required MCP Server. Check Settings."
+                    print(f"ERROR: {error_msg}")
+                    self._display_error_banner(error_msg)
+                    self.page.update()
+                    return  # Stop processing if MCP is required but unavailable
 
-
-            # --- Build or reuse agent instance --- 
+            # --- Build or reuse agent instance ---
             if self.agent_instance is None:
                 print("Building agent instance...")
                 # --- Remote AgentProxy path ---
@@ -679,10 +846,18 @@ class AgentApp:
                     try:
                         from omniagents.remote_proxy import RemoteAgentProxy
                     except ImportError as e:
-                        raise RuntimeError(f"Remote mode requested but remote_proxy could not be imported: {e}")
+                        raise RuntimeError(
+                            f"Remote mode requested but remote_proxy could not be imported: {e}"
+                        )
 
-                    token = os.getenv(self.spec.remote_auth_token_key) if self.spec.remote_auth_token_key else None
-                    self.agent_instance = RemoteAgentProxy(self.spec.remote_ws_url, token)
+                    token = (
+                        os.getenv(self.spec.remote_auth_token_key)
+                        if self.spec.remote_auth_token_key
+                        else None
+                    )
+                    self.agent_instance = RemoteAgentProxy(
+                        self.spec.remote_ws_url, token
+                    )
                     print(f"RemoteAgentProxy configured for {self.spec.remote_ws_url}")
                 else:
                     # --- Use default builder if spec.build_agent is None --- #
@@ -698,18 +873,22 @@ class AgentApp:
                     self.agent_instance = await builder_func(
                         self.current_settings,
                         self._mcp_server_instance,
-                        self # Pass the app instance itself
+                        self,  # Pass the app instance itself
                     )
 
                 # After either remote or local path ensure instance exists
-                
+
                 if not self.agent_instance:
-                    raise ValueError("Agent builder function failed to return an agent instance.")
+                    raise ValueError(
+                        "Agent builder function failed to return an agent instance."
+                    )
                 print(f"Agent instance ready: {type(self.agent_instance)}")
 
-            # --- Prepare input and run agent --- 
+            # --- Prepare input and run agent ---
             # Reset SafeAgent state if applicable
-            if hasattr(self.agent_instance, 'reset_run_state') and callable(self.agent_instance.reset_run_state):
+            if hasattr(self.agent_instance, "reset_run_state") and callable(
+                self.agent_instance.reset_run_state
+            ):
                 self.agent_instance.reset_run_state()
 
             # Prepare input for the agent and persist user message
@@ -729,15 +908,21 @@ class AgentApp:
                 # Use the proxy's built-in streamed runner (bypasses local Runner logic)
                 result = self.agent_instance.run_streamed(agent_input)
             else:
-                result = Runner.run_streamed(self.agent_instance, agent_input, max_turns=self.spec.max_turns)
+                result = Runner.run_streamed(
+                    self.agent_instance, agent_input, max_turns=self.spec.max_turns
+                )
 
             message_output = ""
             final_items = []
-            assistant_message_control: Optional[ChatMessage] = None # To update assistant message live
+            assistant_message_control: Optional[ChatMessage] = (
+                None  # To update assistant message live
+            )
 
             async for event in result.stream_events():
-                if event.type == "raw_response_event": continue # Ignore raw OpenAI chunks
-                elif event.type == "agent_updated_stream_event": continue # Ignore agent updates
+                if event.type == "raw_response_event":
+                    continue  # Ignore raw OpenAI chunks
+                elif event.type == "agent_updated_stream_event":
+                    continue  # Ignore agent updates
 
                 elif event.type == "run_item_stream_event":
                     # --------------------------------------------------
@@ -750,11 +935,17 @@ class AgentApp:
                         args_str = payload.get("arguments", "")
 
                         # Show approval UI and wait for user decision
-                        approved, always_approve, err_msg = await self._request_tool_approval(tool_name, args_str)
+                        approved, always_approve, err_msg = (
+                            await self._request_tool_approval(tool_name, args_str)
+                        )
 
                         # Send decision back to server (remote mode only)
                         try:
-                            if self.spec.remote_ws_url and hasattr(self.agent_instance, "_client") and self.agent_instance._client:
+                            if (
+                                self.spec.remote_ws_url
+                                and hasattr(self.agent_instance, "_client")
+                                and self.agent_instance._client
+                            ):
                                 await self.agent_instance._client.other.tool_approval_response(
                                     approval_id=approval_id,
                                     approved=approved,
@@ -768,18 +959,24 @@ class AgentApp:
                         continue
 
                     item = event.item
-                    final_items.append(item) # Store raw items for conversation history
+                    final_items.append(item)  # Store raw items for conversation history
 
-                    # --- Handle Tool Calls --- 
+                    # --- Handle Tool Calls ---
                     if item.type == "tool_call_item":
                         tools_used = True
-                        if not anchor_inserted and self.spec.layout == "tabs" and self.logs is not None:
-                            self.logs.controls.append(ft.Container(key=anchor_key, height=1))
+                        if (
+                            not anchor_inserted
+                            and self.spec.layout == "tabs"
+                            and self.logs is not None
+                        ):
+                            self.logs.controls.append(
+                                ft.Container(key=anchor_key, height=1)
+                            )
                             anchor_inserted = True
                         tool_input = item.to_input_item()
-                        args_str = tool_input.get('arguments', '{}')
-                        tool_name = tool_input.get('name', 'unknown_tool')
-                        call_id = tool_input.get('call_id')
+                        args_str = tool_input.get("arguments", "{}")
+                        tool_name = tool_input.get("name", "unknown_tool")
+                        call_id = tool_input.get("call_id")
 
                         if self.typing_indicator in self.chat.controls:
                             self.chat.controls.remove(self.typing_indicator)
@@ -791,8 +988,14 @@ class AgentApp:
                             self.spec.icon_map,
                             self.spec.theme_color,
                         )
-                        target_list = self.logs if self.spec.layout == "tabs" and self.logs is not None else self.chat
+                        target_list = (
+                            self.logs
+                            if self.spec.layout == "tabs" and self.logs is not None
+                            else self.chat
+                        )
                         target_list.controls.append(interaction)
+                        if target_list is self.logs:
+                            self._mark_unseen("logs")
                         if call_id:
                             self._interactions_by_call_id[call_id] = interaction
                         else:
@@ -805,16 +1008,25 @@ class AgentApp:
                         self.page.update()
                         self.page.update()
 
-                    # --- Handle Tool Outputs (Debug Only) --- 
+                    # --- Handle Tool Outputs (Debug Only) ---
                     elif item.type == "tool_call_output_item":
                         tools_used = True
-                        if not anchor_inserted and self.spec.layout == "tabs" and self.logs is not None:
-                            self.logs.controls.append(ft.Container(key=anchor_key, height=1))
+                        if (
+                            not anchor_inserted
+                            and self.spec.layout == "tabs"
+                            and self.logs is not None
+                        ):
+                            self.logs.controls.append(
+                                ft.Container(key=anchor_key, height=1)
+                            )
                             anchor_inserted = True
                         is_rejection = False
                         try:
                             output_data = json.loads(str(item.output))
-                            if isinstance(output_data, dict) and output_data.get("error") == "TOOL_REJECTED":
+                            if (
+                                isinstance(output_data, dict)
+                                and output_data.get("error") == "TOOL_REJECTED"
+                            ):
                                 is_rejection = True
                                 if self.spec.debug_flag:
                                     print(
@@ -840,7 +1052,9 @@ class AgentApp:
                             if call_id and call_id in self._interactions_by_call_id:
                                 interaction = self._interactions_by_call_id.pop(call_id)
                             else:
-                                for idx in range(len(self._pending_interactions) - 1, -1, -1):
+                                for idx in range(
+                                    len(self._pending_interactions) - 1, -1, -1
+                                ):
                                     cand = self._pending_interactions[idx]
                                     if not cand.has_output():
                                         interaction = cand
@@ -855,8 +1069,15 @@ class AgentApp:
                                     self.spec.theme_color,
                                     tool_output,
                                 )
-                                target_list = self.logs if self.spec.layout == "tabs" and self.logs is not None else self.chat
+                                target_list = (
+                                    self.logs
+                                    if self.spec.layout == "tabs"
+                                    and self.logs is not None
+                                    else self.chat
+                                )
                                 target_list.controls.append(interaction)
+                                if target_list is self.logs:
+                                    self._mark_unseen("logs")
                             else:
                                 interaction.set_output(tool_output)
 
@@ -879,7 +1100,11 @@ class AgentApp:
                                 summaries = getattr(raw, "summary", [])
                                 if isinstance(summaries, list):
                                     reasoning_text = " ".join(
-                                        s.text if hasattr(s, "text") else str(getattr(s, "text", s))
+                                        (
+                                            s.text
+                                            if hasattr(s, "text")
+                                            else str(getattr(s, "text", s))
+                                        )
                                         for s in summaries
                                     )
                             except Exception:
@@ -889,14 +1114,20 @@ class AgentApp:
                         if not reasoning_text:
                             continue
 
-                        reasoning_msg = Message(self.spec.name, reasoning_text, "assistant_message")
+                        reasoning_msg = Message(
+                            self.spec.name, reasoning_text, "assistant_message"
+                        )
                         reasoning_control = ChatMessage(
                             reasoning_msg, self.page, assistant_name=self.spec.name
                         )
                         target_list = (
-                            self.logs if self.spec.layout == "tabs" and self.logs is not None else self.chat
+                            self.logs
+                            if self.spec.layout == "tabs" and self.logs is not None
+                            else self.chat
                         )
                         target_list.controls.append(reasoning_control)
+                        if target_list is self.logs:
+                            self._mark_unseen("logs")
                         if target_list is not self.chat:
                             target_list.update()
                         self.chat.update()
@@ -912,29 +1143,43 @@ class AgentApp:
                                 # Remove indicator when first text arrives
                                 if self.typing_indicator in self.chat.controls:
                                     self.chat.controls.remove(self.typing_indicator)
-                                assistant_message = Message(self.spec.name, message_output, "assistant_message")
-                                assistant_message_control = ChatMessage(assistant_message, self.page, assistant_name=self.spec.name)
+                                assistant_message = Message(
+                                    self.spec.name, message_output, "assistant_message"
+                                )
+                                assistant_message_control = ChatMessage(
+                                    assistant_message,
+                                    self.page,
+                                    assistant_name=self.spec.name,
+                                )
                                 self.chat.controls.append(assistant_message_control)
                             else:
                                 # Update existing bubble's text
-                                assistant_message_control.content.controls[0].content.value = message_output # Access Markdown value
+                                assistant_message_control.content.controls[
+                                    0
+                                ].content.value = (
+                                    message_output  # Access Markdown value
+                                )
                             self.chat.update()
-                            self.page.update() # Update UI with new chunk
+                            self.page.update()  # Update UI with new chunk
+                            self._mark_unseen("conversation")
 
-            # --- Finalize after stream --- 
-            self.typing_indicator.visible = False # Ensure indicator is hidden
+            # --- Finalize after stream ---
+            self.typing_indicator.visible = False  # Ensure indicator is hidden
             if self.typing_indicator in self.chat.controls:
                 self.chat.controls.remove(self.typing_indicator)
 
             # Update conversation history with structured items
             for item in final_items:
                 # Convert items to the dictionary format expected by the agent
-                if hasattr(item, 'to_input_item'):
+                if hasattr(item, "to_input_item"):
                     input_item = item.to_input_item()
                     # Ensure it's a valid dict and avoid duplicates
                     if isinstance(input_item, dict) and input_item:
-                         # Avoid adding the initial user message again
-                        is_initial_user_msg = input_item.get("role") == "user" and input_item.get("content") == user_message
+                        # Avoid adding the initial user message again
+                        is_initial_user_msg = (
+                            input_item.get("role") == "user"
+                            and input_item.get("content") == user_message
+                        )
                         if not is_initial_user_msg:
                             # Prevent adding duplicate tool calls/outputs if history already has them?
                             # This might be tricky, requires comparing complex dicts. Let's keep it simple for now.
@@ -943,16 +1188,19 @@ class AgentApp:
                                 self.local_session.append_message(input_item)
                 # Handle message output item (final assistant message)
                 elif item.type == "message_output_item":
-                     # Check if the last item in conversation is already this assistant message
-                     final_assistant_content = ItemHelpers.text_message_output(item)
-                     if not (self.conversation and
-                             self.conversation[-1].get("role") == "assistant" and
-                             self.conversation[-1].get("content") == final_assistant_content):
-                         # Add only if it's not a duplicate of the last message
-                         msg = {"role": "assistant", "content": final_assistant_content}
-                         self.conversation.append(msg)
-                         if self.local_session:
-                             self.local_session.append_message(msg)
+                    # Check if the last item in conversation is already this assistant message
+                    final_assistant_content = ItemHelpers.text_message_output(item)
+                    if not (
+                        self.conversation
+                        and self.conversation[-1].get("role") == "assistant"
+                        and self.conversation[-1].get("content")
+                        == final_assistant_content
+                    ):
+                        # Add only if it's not a duplicate of the last message
+                        msg = {"role": "assistant", "content": final_assistant_content}
+                        self.conversation.append(msg)
+                        if self.local_session:
+                            self.local_session.append_message(msg)
 
             # Debug: Print final conversation state
             # print("--- Final Conversation History ---")
@@ -971,7 +1219,9 @@ class AgentApp:
                     on_tap=lambda e, k=anchor_key: self._show_logs(k),
                     mouse_cursor=ft.MouseCursor.CLICK,
                 )
-                summary_container = ft.Container(summary, margin=ft.margin.only(left=16))
+                summary_container = ft.Container(
+                    summary, margin=ft.margin.only(left=16)
+                )
                 try:
                     idx = self.chat.controls.index(assistant_message_control)
                     self.chat.controls.insert(idx, summary_container)
@@ -981,12 +1231,14 @@ class AgentApp:
             if self.spec.layout == "tabs" and self.logs is not None:
                 self.logs.update()
             self.chat.update()
-            self.page.update() # Final update after processing
+            self.page.update()  # Final update after processing
+            self._mark_unseen("conversation")
 
         except Exception as e:
             print(f"Error in process_message: {e}")
             import traceback
-            traceback.print_exc() # Print full traceback for debugging
+
+            traceback.print_exc()  # Print full traceback for debugging
 
             # Ensure indicator is hidden on error
             self.typing_indicator.visible = False
@@ -996,9 +1248,11 @@ class AgentApp:
             # Show a user-friendly error message in the chat
             error_message = f"An error occurred: {str(e)}. Check logs or settings."
             self._display_error_banner(error_message)
-            self.page.update() # Ensure error banner is shown
+            self.page.update()  # Ensure error banner is shown
 
-    async def _request_tool_approval(self, tool_name: str, formatted_args: str) -> ApprovalResult:
+    async def _request_tool_approval(
+        self, tool_name: str, formatted_args: str
+    ) -> ApprovalResult:
         """Displays the tool approval UI and waits for user interaction."""
         if not self.page or not self.chat:
             print("Error: Flet page/chat context not available for approval callback.")
@@ -1006,26 +1260,32 @@ class AgentApp:
 
         approval_id = f"approval_{uuid.uuid4()}"
         approval_future = asyncio.get_event_loop().create_future()
-        self._approval_state['pending_futures'][approval_id] = approval_future
+        self._approval_state["pending_futures"][approval_id] = approval_future
 
         # Ensure typing indicator is removed before showing prompt
         if self.typing_indicator in self.chat.controls:
             self.chat.controls.remove(self.typing_indicator)
             self.chat.update()
 
-        def create_handler(approved: bool, always_approve: bool, rejection_message: Optional[str] = None):
-            async def handler(e): # Make handler async
-                display = self._approval_state['active_displays'].get(approval_id)
+        def create_handler(
+            approved: bool,
+            always_approve: bool,
+            rejection_message: Optional[str] = None,
+        ):
+            async def handler(e):  # Make handler async
+                display = self._approval_state["active_displays"].get(approval_id)
                 if display and display in self.chat.controls:
                     self.chat.controls.remove(display)
-                    del self._approval_state['active_displays'][approval_id]
+                    del self._approval_state["active_displays"][approval_id]
 
                 # Add rejection message if tool was rejected
                 if not approved:
                     rejection_ui = ft.Container(
                         content=ft.Text(
                             f"❌ Tool call ({tool_name}) rejected by user.",
-                            color=ft.Colors.RED_700, italic=True, size=13
+                            color=ft.Colors.RED_700,
+                            italic=True,
+                            size=13,
                         ),
                         margin=ft.margin.only(left=20, top=0, bottom=8),
                     )
@@ -1036,24 +1296,27 @@ class AgentApp:
                 # We add it back generally, _process_message handles final removal.
                 if self.typing_indicator not in self.chat.controls:
                     self.chat.controls.append(self.typing_indicator)
-                self.typing_indicator.visible = True # Show indicator while agent potentially processes rejection/approval
+                self.typing_indicator.visible = True  # Show indicator while agent potentially processes rejection/approval
 
                 # Flush UI updates before proceeding so the approval card disappears immediately
                 self.chat.update()
                 self.page.update()
+                self._mark_unseen("conversation")
                 # Yield control to allow the frontend to repaint
                 await asyncio.sleep(0)
 
                 # Set the future result if it's not already done
                 if not approval_future.done():
-                    approval_future.set_result((approved, always_approve, rejection_message))
+                    approval_future.set_result(
+                        (approved, always_approve, rejection_message)
+                    )
 
                 # Clean up future reference
-                if approval_id in self._approval_state['pending_futures']:
-                    del self._approval_state['pending_futures'][approval_id]
+                if approval_id in self._approval_state["pending_futures"]:
+                    del self._approval_state["pending_futures"][approval_id]
 
             # Use page.run_task to schedule the async handler on the main event loop
-            return lambda e: self.page.run_task(handler, e) # <-- Changed this line
+            return lambda e: self.page.run_task(handler, e)  # <-- Changed this line
 
         # Use the ToolApprovalRequest UI component from core.ui
         approval_display = ToolApprovalRequest(
@@ -1061,13 +1324,14 @@ class AgentApp:
             args_str=formatted_args,
             on_approve=create_handler(True, False),
             on_approve_session=create_handler(True, True),
-            on_reject=create_handler(False, False, "User rejected tool call")
+            on_reject=create_handler(False, False, "User rejected tool call"),
         )
 
-        self._approval_state['active_displays'][approval_id] = approval_display
+        self._approval_state["active_displays"][approval_id] = approval_display
         self.chat.controls.append(approval_display)
         self.chat.update()
         self.page.update()
+        self._mark_unseen("conversation")
 
         # Wait for user decision
         result = await approval_future
@@ -1077,32 +1341,52 @@ class AgentApp:
         """Displays a persistent error banner in the chat list."""
         # Check if a similar error banner already exists
         for control in self.chat.controls:
-             if isinstance(control, ft.Container) and hasattr(control, 'data') and control.data == 'error_banner':
-                 # Optionally update existing banner text or just return
-                 # For simplicity, let's just return to avoid duplicate banners
-                 print("Skipping duplicate error banner.")
-                 return
+            if (
+                isinstance(control, ft.Container)
+                and hasattr(control, "data")
+                and control.data == "error_banner"
+            ):
+                # Optionally update existing banner text or just return
+                # For simplicity, let's just return to avoid duplicate banners
+                print("Skipping duplicate error banner.")
+                return
 
         error_banner = ft.Container(
-            content=ft.Row([
-                ft.Icon(name=ft.Icons.ERROR_OUTLINE, color=ft.Colors.RED_600, size=20),
-                ft.Text(message, color=ft.Colors.BLACK87, size=14, expand=True, weight="w500"),
-                # Removed close button to make it persistent until next successful run or restart
-            ], alignment=ft.MainAxisAlignment.START, spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            bgcolor=ft.Colors.RED_50, padding=ft.padding.symmetric(horizontal=16, vertical=10),
-            border_radius=8, border=ft.border.all(1, ft.Colors.RED_200),
+            content=ft.Row(
+                [
+                    ft.Icon(
+                        name=ft.Icons.ERROR_OUTLINE, color=ft.Colors.RED_600, size=20
+                    ),
+                    ft.Text(
+                        message,
+                        color=ft.Colors.BLACK87,
+                        size=14,
+                        expand=True,
+                        weight="w500",
+                    ),
+                    # Removed close button to make it persistent until next successful run or restart
+                ],
+                alignment=ft.MainAxisAlignment.START,
+                spacing=10,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            bgcolor=ft.Colors.RED_50,
+            padding=ft.padding.symmetric(horizontal=16, vertical=10),
+            border_radius=8,
+            border=ft.border.all(1, ft.Colors.RED_200),
             margin=ft.margin.only(left=8, right=8, top=8, bottom=8),
-            data='error_banner' # Add data attribute for identification
+            data="error_banner",  # Add data attribute for identification
         )
 
         # Add error banner (insert near the top, after welcome maybe?)
-        insert_index = 1 # After initial padding/welcome
+        insert_index = 1  # After initial padding/welcome
         if len(self.chat.controls) > insert_index:
             self.chat.controls.insert(insert_index, error_banner)
         else:
             self.chat.controls.append(error_banner)
         self.chat.update()
         self.page.update()
+        self._mark_unseen("conversation")
 
     def _format_duration(self, seconds: float) -> str:
         m, s = divmod(int(seconds), 60)
@@ -1119,11 +1403,32 @@ class AgentApp:
         except Exception as e:
             print(f"Error removing control: {e}")
 
+    def _mark_unseen(self, tab: str):
+        """Show indicator on a tab if it's not the active one."""
+        if not self.tabs:
+            return
+        index_map = {"conversation": 0, "artifacts": 1, "logs": 2}
+        idx = index_map.get(tab)
+        if idx is None or self.tabs.selected_index == idx:
+            return
+        header = {
+            0: self._conversation_tab_header,
+            1: self._artifacts_tab_header,
+            2: self._logs_tab_header,
+        }.get(idx)
+        if header:
+            header.show(True)
+
     def _show_logs(self, anchor_key: str | None = None):
         """Switch to Logs tab and optionally scroll to *anchor_key*."""
-        if self.spec.layout == "tabs" and self.logs is not None and self.tabs is not None:
-            self.tabs.selected_index = 1
+        if (
+            self.spec.layout == "tabs"
+            and self.logs is not None
+            and self.tabs is not None
+        ):
+            self.tabs.selected_index = 2
             self.tabs.update()
+            self._on_tab_change(None)
             if anchor_key:
                 self.logs.scroll_to(key=anchor_key, duration=300)
             self.logs.update()
@@ -1135,11 +1440,17 @@ class AgentApp:
         from .ui import ArtifactDisplay
 
         display = ArtifactDisplay(title, content, mode)
-        target = self.artifacts if self.spec.layout == "tabs" and self.artifacts is not None else self.chat
+        target = (
+            self.artifacts
+            if self.spec.layout == "tabs" and self.artifacts is not None
+            else self.chat
+        )
         if target is None:
             return
         target.controls.append(display)
         target.update()
+        if target is self.artifacts:
+            self._mark_unseen("artifacts")
         if target is not self.chat and self.chat is not None:
             self.chat.update()
         if self.page:
@@ -1175,7 +1486,9 @@ class AgentApp:
         """Updates the UI element for MCP status."""
         if self.page and self._mcp_connection_status_indicator:
             self._mcp_connection_status_indicator.bgcolor = self._get_mcp_status_color()
-            self._mcp_connection_status_indicator.tooltip = self._get_mcp_status_tooltip()
+            self._mcp_connection_status_indicator.tooltip = (
+                self._get_mcp_status_tooltip()
+            )
             # Consider if self.page.update() is needed here or batched later
             # It's usually safer to batch updates, but for immediate feedback:
             self.page.update()
@@ -1183,7 +1496,7 @@ class AgentApp:
     async def _update_mcp_connection(self):
         """Connects, disconnects, or updates the MCP server instance based on settings."""
         if not self.spec.uses_mcp:
-            if self._mcp_server_instance: # Disconnect if MCP was used but now disabled
+            if self._mcp_server_instance:  # Disconnect if MCP was used but now disabled
                 await self._disconnect_mcp()
             self._mcp_connection_status = MCPConnectionStatus.NOT_CONFIGURED
             self._update_mcp_ui_indicator()
@@ -1200,7 +1513,7 @@ class AgentApp:
             self._update_mcp_ui_indicator()
             return
 
-        # --- Prepare connection parameters --- 
+        # --- Prepare connection parameters ---
         mcp_params = {
             "url": mcp_url,
             "timeout": 30,
@@ -1210,29 +1523,43 @@ class AgentApp:
         if mcp_auth_token:
             mcp_params["headers"]["Authorization"] = f"Bearer {mcp_auth_token}"
 
-        # --- Determine if reconnection or update is needed --- 
+        # --- Determine if reconnection or update is needed ---
         should_connect = False
         needs_recreate = False
         if self._mcp_server_instance is None:
             print("No existing MCP instance, creating new one.")
             should_connect = True
             needs_recreate = True
-        elif self._mcp_server_instance.params.get("url") != mcp_url or \
-             self._mcp_server_instance.params.get("headers", {}).get("Authorization") != mcp_params["headers"].get("Authorization"):
+        elif self._mcp_server_instance.params.get(
+            "url"
+        ) != mcp_url or self._mcp_server_instance.params.get("headers", {}).get(
+            "Authorization"
+        ) != mcp_params[
+            "headers"
+        ].get(
+            "Authorization"
+        ):
             print("MCP configuration changed, recreating connection.")
-            await self._disconnect_mcp() # Disconnect old one first
+            await self._disconnect_mcp()  # Disconnect old one first
             should_connect = True
             needs_recreate = True
-        elif self._mcp_server_instance._sse_client is None or self._mcp_server_instance._sse_client.is_closed:
-             print("Existing MCP instance found but connection is closed, attempting to reconnect.")
-             should_connect = True # Try to reconnect existing instance
+        elif (
+            self._mcp_server_instance._sse_client is None
+            or self._mcp_server_instance._sse_client.is_closed
+        ):
+            print(
+                "Existing MCP instance found but connection is closed, attempting to reconnect."
+            )
+            should_connect = True  # Try to reconnect existing instance
         else:
-             print("Reusing existing and connected MCP server instance.")
-             self._mcp_connection_status = MCPConnectionStatus.CONNECTED # Already connected
-             self._update_mcp_ui_indicator()
-             return # Nothing more to do
+            print("Reusing existing and connected MCP server instance.")
+            self._mcp_connection_status = (
+                MCPConnectionStatus.CONNECTED
+            )  # Already connected
+            self._update_mcp_ui_indicator()
+            return  # Nothing more to do
 
-        # --- Attempt connection/reconnection --- 
+        # --- Attempt connection/reconnection ---
         if should_connect:
             print("Attempting to connect/reconnect to MCP server...")
             self._mcp_connection_status = MCPConnectionStatus.CONNECTING
@@ -1241,14 +1568,15 @@ class AgentApp:
                 if needs_recreate or self._mcp_server_instance is None:
                     # Dynamically import here if needed for instantiation
                     from agents.mcp import MCPServerSse
+
                     self._mcp_server_instance = MCPServerSse(
-                        name=f"{self.spec.name}_MCP_Server", # Generic name based on app
+                        name=f"{self.spec.name}_MCP_Server",  # Generic name based on app
                         params=mcp_params,
                     )
-                else: # Update params if reconnecting existing instance
+                else:  # Update params if reconnecting existing instance
                     self._mcp_server_instance.params = mcp_params
 
-                await self._mcp_server_instance.__aenter__() # Connects/reconnects
+                await self._mcp_server_instance.__aenter__()  # Connects/reconnects
                 self._mcp_connection_status = MCPConnectionStatus.CONNECTED
                 print(f"MCP Server connected successfully to {mcp_url}")
             except Exception as e_conn:
@@ -1258,15 +1586,15 @@ class AgentApp:
                 self._mcp_connection_status = MCPConnectionStatus.ERROR
                 # Don't keep the failed instance
                 if self._mcp_server_instance:
-                    try: # Attempt cleanup even on connection error
-                         await self._mcp_server_instance.__aexit__(None, None, None)
-                    except: pass # Ignore cleanup errors here
+                    try:  # Attempt cleanup even on connection error
+                        await self._mcp_server_instance.__aexit__(None, None, None)
+                    except:
+                        pass  # Ignore cleanup errors here
                 self._mcp_server_instance = None
                 # Reset agent if connection fails? Depends on desired behavior.
                 # For now, just show error. Agent build/run will handle missing MCP.
             finally:
-                 self._update_mcp_ui_indicator() # Update UI with final status
-
+                self._update_mcp_ui_indicator()  # Update UI with final status
 
     async def _disconnect_mcp(self):
         """Gracefully disconnects the MCP server instance."""
@@ -1278,13 +1606,14 @@ class AgentApp:
                 self._mcp_connection_status = MCPConnectionStatus.DISCONNECTED
             except Exception as e_close:
                 print(f"Error closing MCP connection: {e_close}")
-                self._mcp_connection_status = MCPConnectionStatus.ERROR # Error state if close fails
+                self._mcp_connection_status = (
+                    MCPConnectionStatus.ERROR
+                )  # Error state if close fails
             finally:
-                self._mcp_server_instance = None # Clear instance ref
+                self._mcp_server_instance = None  # Clear instance ref
                 self._update_mcp_ui_indicator()
 
-
-    # --- Navigation --- 
+    # --- Navigation ---
 
     def _create_main_view(self):
         """Creates the main chat view content."""
@@ -1303,14 +1632,20 @@ class AgentApp:
                     ),
                     padding=ft.padding.only(left=16, right=16, top=12, bottom=16),
                     bgcolor=ft.Colors.WHITE,
-                    border=ft.border.only(top=ft.border.BorderSide(1, ft.Colors.BLACK12)),
+                    border=ft.border.only(
+                        top=ft.border.BorderSide(1, ft.Colors.BLACK12)
+                    ),
                 ),
             ],
             spacing=12,
             expand=True,
         )
 
-        if self.spec.layout == "tabs" and self.logs is not None and self.artifacts is not None:
+        if (
+            self.spec.layout == "tabs"
+            and self.logs is not None
+            and self.artifacts is not None
+        ):
             conversation_tab = ft.Container(
                 content=conversation_column,
                 expand=True,
@@ -1328,12 +1663,22 @@ class AgentApp:
                 bgcolor=ft.Colors.with_opacity(0.98, ft.Colors.WHITE),
                 padding=ft.padding.only(top=12),
             )
+            self._conversation_tab_header = TabHeader("Conversation")
+            self._artifacts_tab_header = TabHeader("Artifacts")
+            self._logs_tab_header = TabHeader("Logs")
             self.tabs = ft.Tabs(
                 tabs=[
-                    ft.Tab(text="Conversation", content=conversation_tab),
-                    ft.Tab(text="Artifacts", content=artifacts_container),
-                    ft.Tab(text="Logs", content=logs_container),
+                    ft.Tab(
+                        tab_content=self._conversation_tab_header,
+                        content=conversation_tab,
+                    ),
+                    ft.Tab(
+                        tab_content=self._artifacts_tab_header,
+                        content=artifacts_container,
+                    ),
+                    ft.Tab(tab_content=self._logs_tab_header, content=logs_container),
                 ],
+                on_change=self._on_tab_change,
                 expand=True,
             )
             main_content = self.tabs
@@ -1359,7 +1704,7 @@ class AgentApp:
             fields=self.spec.settings_fields,
             initial_values=self.current_settings,
             on_save=self._handle_settings_save,
-            on_back=lambda _: self.page.go("/") # Use lambda for simplicity
+            on_back=lambda _: self.page.go("/"),  # Use lambda for simplicity
         )
 
     def _go_to_settings(self, e):
@@ -1372,11 +1717,11 @@ class AgentApp:
         self.page.views.clear()
         if self.page.route == "/settings":
             self.page.views.append(self._create_settings_view())
-        else: # Default to main view
-             # Ensure main view components are created if they weren't
-             if not self.header or not self.chat or not self.new_message:
-                 self._build_ui() # Rebuild UI ensures header updates if needed
-             self.page.views.append(self._create_main_view())
+        else:  # Default to main view
+            # Ensure main view components are created if they weren't
+            if not self.header or not self.chat or not self.new_message:
+                self._build_ui()  # Rebuild UI ensures header updates if needed
+            self.page.views.append(self._create_main_view())
 
         self.page.update()
 
@@ -1385,7 +1730,19 @@ class AgentApp:
         print("View popped")
         self.page.views.pop()
         top_view = self.page.views[-1]
-        self.page.go(top_view.route) # Go to the route of the view below
+        self.page.go(top_view.route)  # Go to the route of the view below
+
+    def _on_tab_change(self, e):
+        """Clear tab indicators when the user switches tabs."""
+        if not self.tabs:
+            return
+        idx = self.tabs.selected_index
+        if idx == 0 and self._conversation_tab_header:
+            self._conversation_tab_header.show(False)
+        elif idx == 1 and self._artifacts_tab_header:
+            self._artifacts_tab_header.show(False)
+        elif idx == 2 and self._logs_tab_header:
+            self._logs_tab_header.show(False)
 
     async def _handle_settings_save(self, new_settings: Dict[str, Any]):
         """Save updated settings, update MCP, and navigate back."""
@@ -1395,18 +1752,19 @@ class AgentApp:
 
         self.current_settings = new_settings
         # --- AWAIT the async save_settings --- #
-        await save_settings(self.page, self.spec.client_storage_prefix, self.current_settings)
+        await save_settings(
+            self.page, self.spec.client_storage_prefix, self.current_settings
+        )
 
         # Check if MCP settings changed and update connection if needed
-        mcp_settings_changed = (
-            self.spec.uses_mcp and
-            (new_settings.get(self.spec.mcp_url_setting_key) != old_mcp_url or
-             new_settings.get(self.spec.mcp_token_setting_key) != old_mcp_token)
+        mcp_settings_changed = self.spec.uses_mcp and (
+            new_settings.get(self.spec.mcp_url_setting_key) != old_mcp_url
+            or new_settings.get(self.spec.mcp_token_setting_key) != old_mcp_token
         )
 
         if mcp_settings_changed:
             print("MCP settings changed, updating connection...")
-            await self._update_mcp_connection() # Reconnect/disconnect based on new settings
+            await self._update_mcp_connection()  # Reconnect/disconnect based on new settings
 
         # Reset agent instance to force re-initialization with new settings
         self.agent_instance = None
@@ -1418,34 +1776,48 @@ class AgentApp:
             if self.spec.uses_mcp and self.spec.show_mcp_status_indicator:
                 # Ensure indicator exists and reflects current status
                 if not self._mcp_connection_status_indicator:
-                     self._mcp_connection_status_indicator = ft.Container(
-                         width=12, height=12, border_radius=6, margin=ft.margin.only(right=8)
-                     )
-                self._mcp_connection_status_indicator.bgcolor = self._get_mcp_status_color()
-                self._mcp_connection_status_indicator.tooltip = self._get_mcp_status_tooltip()
+                    self._mcp_connection_status_indicator = ft.Container(
+                        width=12,
+                        height=12,
+                        border_radius=6,
+                        margin=ft.margin.only(right=8),
+                    )
+                self._mcp_connection_status_indicator.bgcolor = (
+                    self._get_mcp_status_color()
+                )
+                self._mcp_connection_status_indicator.tooltip = (
+                    self._get_mcp_status_tooltip()
+                )
                 header_right_controls.append(self._mcp_connection_status_indicator)
 
-            header_right_controls.append(self.settings_button) # Add settings button back
+            header_right_controls.append(
+                self.settings_button
+            )  # Add settings button back
 
             if self.spec.header_controls_builder:
-                 try:
-                     header_right_controls.extend(self.spec.header_controls_builder(self))
-                 except Exception as e:
-                     print(f"Error calling header_controls_builder after save: {e}")
+                try:
+                    header_right_controls.extend(
+                        self.spec.header_controls_builder(self)
+                    )
+                except Exception as e:
+                    print(f"Error calling header_controls_builder after save: {e}")
 
             # Update controls in place (assuming header structure)
             try:
-                button_row = self.header.content.controls[0].content.controls[1] # Title/Button Row
+                button_row = self.header.content.controls[0].content.controls[
+                    1
+                ]  # Title/Button Row
                 button_row.controls = header_right_controls
                 print("Header controls updated after save.")
             except (IndexError, AttributeError) as e:
-                 print(f"Error accessing header structure to update controls: {e}")
+                print(f"Error accessing header structure to update controls: {e}")
 
-        self.page.go("/") # Go back to main chat view
+        self.page.go("/")  # Go back to main chat view
         # Optionally show a confirmation snackbar
         settings_saved_snackbar = ft.SnackBar(ft.Text("Settings saved!"), open=True)
         self.page.overlay.append(settings_saved_snackbar)
-        self.page.update() # Update needed to show snackbar
+        self.page.update()  # Update needed to show snackbar
         # self.page.update() # Update is implicitly handled by page.go() and snackbar
 
-# End of AgentApp class 
+
+# End of AgentApp class
