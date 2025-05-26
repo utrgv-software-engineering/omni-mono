@@ -201,18 +201,14 @@ You are now ready to assist.
 
 def _git_changed_diffs() -> list[tuple[str, str]]:
     """Return list of (filename, markdown_diff) for files changed in the worktree."""
-    base_branch = os.getenv("OTTO_BASE_BRANCH", "origin/main")
-    base_commit = os.getenv("OTTO_BASE_COMMIT")
-    if not base_commit:
-        try:
-            base_commit = subprocess.check_output(
-                ["git", "merge-base", base_branch, "HEAD"], text=True
-            ).strip()
-        except Exception:
-            base_commit = None
-
-    if base_commit is None:
-        return []
+    try:
+        base_commit = subprocess.check_output(
+            ["git", "config", "--get", "otto.base-commit"], text=True
+        ).strip()
+    except subprocess.CalledProcessError:
+        raise RuntimeError(
+            "otto.base-commit not found in git config; run create_git_worktree first"
+        )
 
     try:
         res = subprocess.run(
