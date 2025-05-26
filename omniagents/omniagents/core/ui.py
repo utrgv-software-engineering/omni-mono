@@ -441,5 +441,5 @@ class ArtifactDisplay(CollapsibleCard):
             title=title,
             body=None,
             body_widget=body_widget,
-            initially_expanded=False,
+            initially_expanded=True,
         )
