@@ -1,5 +1,7 @@
 import os
 from datetime import datetime
+import subprocess
+import html
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -195,6 +197,51 @@ You are now ready to assist.
 
 """
 
+
+def _git_changed_diffs() -> list[tuple[str, str]]:
+    """Return list of (filename, html_diff) for files changed in the worktree."""
+    base_branch = os.getenv("OTTO_BASE_BRANCH", "origin/main")
+    base_commit = os.getenv("OTTO_BASE_COMMIT")
+    if not base_commit:
+        try:
+            base_commit = subprocess.check_output(
+                ["git", "merge-base", base_branch, "HEAD"], text=True
+            ).strip()
+        except Exception:
+            base_commit = None
+
+    if base_commit is None:
+        return []
+
+    try:
+        res = subprocess.run(
+            ["git", "diff", "--name-only", base_commit], capture_output=True, text=True
+        )
+        files = [f.strip() for f in res.stdout.splitlines() if f.strip()]
+    except Exception:
+        return []
+
+    diffs: list[tuple[str, str]] = []
+    for f in files:
+        try:
+            diff = subprocess.run(
+                ["git", "--no-pager", "diff", base_commit, "--", f],
+                capture_output=True,
+                text=True,
+            ).stdout
+            if diff.strip():
+                diffs.append((f, f"<pre>{html.escape(diff)}</pre>"))
+        except Exception:
+            pass
+    return diffs
+
+
+class CodingAgentApp(AgentApp):
+    async def _process_message(self, user_message: str):
+        await super()._process_message(user_message)
+        for fname, diff_html in _git_changed_diffs():
+            self.add_artifact(fname, diff_html, mode="html")
+
 # Build a direct Agent instance and run via AgentApp.from_agent
 if __name__ == "__main__":
     import argparse
@@ -254,7 +301,7 @@ if __name__ == "__main__":
     )
 
     # Wrap in an OmniAgents App
-    app = AgentApp.from_agent(
+    app = CodingAgentApp.from_agent(
         agent,
         welcome_text="Welcome to Otto Code! I'm here to help you with your coding needs.",
         safe=True,

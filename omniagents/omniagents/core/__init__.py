@@ -7,5 +7,6 @@ from .settings import SettingField
 from .config_loader import load_agent_spec_from_yaml
 # --- Expose the wrapped function_tool decorator --- #
 from .tooling import function_tool
+from .artifacts import display_artifact, set_artifact_callback, emit_artifact
 # Optionally expose other useful components like SafeAgentOptions etc.
 # from .specs import SafeAgentOptions # Example if exposing SafeAgentOptions 

@@ -419,3 +419,27 @@ class ToolInteractionDisplay(CollapsibleCard):
         self.body_widget = ft.Column(body_parts, spacing=4, tight=True) if body_parts else None
         self.body = None
         super()._refresh()
+
+
+class ArtifactDisplay(CollapsibleCard):
+    """Collapsible display for user-visible artifacts."""
+
+    def __init__(self, title: str, content: str, mode: str = "markdown"):
+        if mode == "markdown":
+            body_widget = ft.Markdown(
+                value=content,
+                selectable=True,
+                extension_set=ft.MarkdownExtensionSet.GITHUB_FLAVORED,
+                code_theme=ft.MarkdownCodeTheme.GITHUB,
+            )
+        else:
+            body_widget = ft.Container(ft.Text(content, selectable=True))
+
+        super().__init__(
+            icon_color=ft.Colors.BLUE_GREY_400,
+            icon=ft.Icons.ARTICLE,
+            title=title,
+            body=None,
+            body_widget=body_widget,
+            initially_expanded=False,
+        )

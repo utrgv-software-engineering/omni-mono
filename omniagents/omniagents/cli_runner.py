@@ -182,6 +182,15 @@ async def run_cli(
         else:
             agent = base_agent
 
+        from omniagents.core.artifacts import set_artifact_callback
+
+        def _cli_artifact(title: str, content: str, mode: str = "markdown") -> None:
+            print(f"\n== {title} ==")
+            print(content)
+            print()
+
+        set_artifact_callback(_cli_artifact)
+
         # Intro
         print(f"\nStarting CLI chat for agent: {spec.name}")
         print(f"{spec.welcome_text}\n(Type 'exit' to quit)\n")
