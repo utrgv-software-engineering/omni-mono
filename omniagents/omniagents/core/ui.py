@@ -3,6 +3,7 @@ import flet as ft
 from flet import animation as animation  # ensure ft.animation submodule loaded
 from typing import Dict, Optional, Any
 
+
 # --- Shared Message Class ---
 class Message:
     def __init__(self, user_name: str, text: str, message_type: str):
@@ -10,15 +11,16 @@ class Message:
         self.text = text
         self.message_type = message_type
 
+
 # --- Shared Tool Call Display ---
 class ToolCallDisplay(ft.Container):
     def __init__(
         self,
         tool_name: str,
         args_str: str,
-        icon_map: Optional[Dict[str, str]] = None, # Make icon map optional
-        color: str = ft.Colors.BLUE, # Parameterize color
-        default_icon: str = ft.Icons.BUILD # Default icon if not in map
+        icon_map: Optional[Dict[str, str]] = None,  # Make icon map optional
+        color: str = ft.Colors.BLUE,  # Parameterize color
+        default_icon: str = ft.Icons.BUILD,  # Default icon if not in map
     ):
         super().__init__()
         # Outer padding matches the AgentDeck approval card spacing
@@ -35,32 +37,37 @@ class ToolCallDisplay(ft.Container):
             width=28,
             height=28,
             border_radius=14,
-            bgcolor=color, # Use parameterized color
+            bgcolor=color,  # Use parameterized color
             alignment=ft.alignment.center,
         )
 
         # Prepare text content based on args_str
         if args_str:
-            text_content = ft.Column([
-                ft.Text(
-                    f"Using {tool_name}",
-                    weight="w500",
-                    size=13,
-                    color=ft.Colors.BLACK87
-                ),
-                ft.Text(
-                    f"{args_str}",
-                    size=12,
-                    color=ft.Colors.BLACK54,
-                ),
-            ], spacing=2, tight=True, expand=True, horizontal_alignment=ft.CrossAxisAlignment.START)
-            row_alignment = ft.CrossAxisAlignment.START  # Default alignment when args are present
+            text_content = ft.Column(
+                [
+                    ft.Text(
+                        f"Using {tool_name}",
+                        weight="w500",
+                        size=13,
+                        color=ft.Colors.BLACK87,
+                    ),
+                    ft.Text(
+                        f"{args_str}",
+                        size=12,
+                        color=ft.Colors.BLACK54,
+                    ),
+                ],
+                spacing=2,
+                tight=True,
+                expand=True,
+                horizontal_alignment=ft.CrossAxisAlignment.START,
+            )
+            row_alignment = (
+                ft.CrossAxisAlignment.START
+            )  # Default alignment when args are present
         else:
             text_content = ft.Text(
-                f"Using {tool_name}",
-                weight="w500",
-                size=13,
-                color=ft.Colors.BLACK87
+                f"Using {tool_name}", weight="w500", size=13, color=ft.Colors.BLACK87
             )
             row_alignment = ft.CrossAxisAlignment.CENTER  # Center align when no args
 
@@ -79,10 +86,11 @@ class ToolCallDisplay(ft.Container):
             content=tool_card_content,
             padding=ft.padding.symmetric(horizontal=16, vertical=12),
             border_radius=8,
-            bgcolor=ft.Colors.with_opacity(0.04, color), # Use parameterized color
+            bgcolor=ft.Colors.with_opacity(0.04, color),  # Use parameterized color
         )
 
         self.content = tool_card
+
 
 # --- Shared Tool Output Display ---
 class ToolOutputDisplay(ft.Container):
@@ -102,7 +110,7 @@ class ToolOutputDisplay(ft.Container):
                 selectable=True,
                 size=13,
                 color=ft.Colors.BLACK87,
-                font_family="SF Mono, Menlo, Monaco, Consolas, monospace"
+                font_family="SF Mono, Menlo, Monaco, Consolas, monospace",
             ),
             padding=ft.padding.symmetric(horizontal=16, vertical=12),
             border_radius=6,
@@ -110,9 +118,12 @@ class ToolOutputDisplay(ft.Container):
             border=ft.border.all(0.5, ft.Colors.BLACK12),
         )
 
+
 # --- Shared Chat Message Display ---
 class ChatMessage(ft.Container):
-    def __init__(self, message: Message, page: ft.Page = None, assistant_name: str = "Assistant"):
+    def __init__(
+        self, message: Message, page: ft.Page = None, assistant_name: str = "Assistant"
+    ):
         super().__init__()
         self.animate = ft.animation.Animation(300, ft.AnimationCurve.EASE_OUT)
         self.padding = ft.padding.only(bottom=0)
@@ -123,7 +134,9 @@ class ChatMessage(ft.Container):
         if is_user:
             # Build the user bubble
             bubble = ft.Container(
-                content=ft.Text(message.text, selectable=True, size=14, color=ft.Colors.BLACK87),
+                content=ft.Text(
+                    message.text, selectable=True, size=14, color=ft.Colors.BLACK87
+                ),
                 bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.BLACK),
                 border_radius=18,
                 padding=ft.padding.symmetric(horizontal=16, vertical=10),
@@ -141,16 +154,25 @@ class ChatMessage(ft.Container):
 
         elif is_system:
             content_area = ft.Container(
-                content=ft.Text(message.text, selectable=True, size=14, color=ft.Colors.BLACK54, italic=True),
+                content=ft.Text(
+                    message.text,
+                    selectable=True,
+                    size=14,
+                    color=ft.Colors.BLACK54,
+                    italic=True,
+                ),
                 padding=ft.padding.symmetric(horizontal=16, vertical=10),
             )
             alignment = ft.MainAxisAlignment.START
-            self.content = ft.Row([ft.Container(content=content_area, expand=True)], alignment=alignment)
+            self.content = ft.Row(
+                [ft.Container(content=content_area, expand=True)], alignment=alignment
+            )
 
-        else: # Assistant message (could be "Assistant" or "Indie", etc.)
+        else:  # Assistant message (could be "Assistant" or "Indie", etc.)
             content_area = ft.Container(
                 content=ft.Markdown(
-                    value=message.text, selectable=True,
+                    value=message.text,
+                    selectable=True,
                     extension_set=ft.MarkdownExtensionSet.GITHUB_FLAVORED,
                     code_theme=ft.MarkdownCodeTheme.GITHUB,
                     on_tap_link=lambda e: page.launch_url(e.data) if page else None,
@@ -158,7 +180,10 @@ class ChatMessage(ft.Container):
                 padding=ft.padding.symmetric(horizontal=16, vertical=10),
             )
             alignment = ft.MainAxisAlignment.START
-            self.content = ft.Row([ft.Container(content=content_area, expand=True)], alignment=alignment)
+            self.content = ft.Row(
+                [ft.Container(content=content_area, expand=True)], alignment=alignment
+            )
+
 
 # --- Tool Approval Request UI ---
 class ToolApprovalRequest(ft.Container):
@@ -221,17 +246,27 @@ class ToolApprovalRequest(ft.Container):
                 ft.TextButton(
                     text="Reject",
                     on_click=on_reject,
-                    style=ft.ButtonStyle(padding=compact_padding, text_style=compact_text),
+                    style=ft.ButtonStyle(
+                        padding=compact_padding, text_style=compact_text
+                    ),
                 ),
                 ft.TextButton(
                     text="Always",
                     on_click=on_approve_session,
-                    style=ft.ButtonStyle(color=icon_color, padding=compact_padding, text_style=compact_text),
+                    style=ft.ButtonStyle(
+                        color=icon_color,
+                        padding=compact_padding,
+                        text_style=compact_text,
+                    ),
                 ),
                 ft.FilledButton(
                     text="Approve Once",
                     on_click=on_approve,
-                    style=ft.ButtonStyle(bgcolor=icon_color, padding=compact_padding, text_style=compact_text),
+                    style=ft.ButtonStyle(
+                        bgcolor=icon_color,
+                        padding=compact_padding,
+                        text_style=compact_text,
+                    ),
                 ),
             ],
             alignment=ft.MainAxisAlignment.END,
@@ -257,9 +292,15 @@ class ToolApprovalRequest(ft.Container):
 class CollapsibleCard(ft.Container):
     """A simple collapsible card used for tool call/results."""
 
-    def __init__(self, icon_color: str, icon: str, title: str,
-                 body: str | None = None, body_widget: ft.Control | None = None,
-                 initially_expanded: bool = False):
+    def __init__(
+        self,
+        icon_color: str,
+        icon: str,
+        title: str,
+        body: str | None = None,
+        body_widget: ft.Control | None = None,
+        initially_expanded: bool = False,
+    ):
         super().__init__()
         self.icon_color = icon_color
         self.icon = icon
@@ -288,7 +329,9 @@ class CollapsibleCard(ft.Container):
                 border_radius=10,
             ),
             ft.Container(width=4),
-            ft.Text(self.title, weight="w500", size=13, color=ft.Colors.BLACK87, expand=True),
+            ft.Text(
+                self.title, weight="w500", size=13, color=ft.Colors.BLACK87, expand=True
+            ),
         ]
         if arrow:
             header_items.append(arrow)
@@ -296,7 +339,11 @@ class CollapsibleCard(ft.Container):
         header = ft.Row(
             header_items,
             alignment=ft.MainAxisAlignment.START,
-            vertical_alignment=ft.CrossAxisAlignment.START if self.expanded else ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=(
+                ft.CrossAxisAlignment.START
+                if self.expanded
+                else ft.CrossAxisAlignment.CENTER
+            ),
         )
 
         children = [header]
@@ -381,42 +428,64 @@ def _build_json_section(label: str, text: str, color: str) -> list[ft.Control]:
 class ToolInteractionDisplay(CollapsibleCard):
     """Combined tool call and result display with collapsible body."""
 
-    def __init__(self, tool_name: str, args_str: str, icon_map: Optional[Dict[str, str]] = None,
-                 color: str = ft.Colors.BLUE, output_text: str | None = None):
+    def __init__(
+        self,
+        tool_name: str,
+        args_str: str,
+        icon_map: Optional[Dict[str, str]] = None,
+        color: str = ft.Colors.BLUE,
+        output_text: str | None = None,
+    ):
         self.tool_name = tool_name
         self.args_str = args_str
-        self.output_text = output_text if output_text and str(output_text).strip() else None
+        self.output_text = (
+            output_text if output_text and str(output_text).strip() else None
+        )
         self.icon_map = icon_map or {}
         self.theme_color = color
-        super().__init__(icon_color=color,
-                         icon=self.icon_map.get(tool_name, ft.Icons.BUILD),
-                         title=f"Tool {tool_name}",
-                         body=None,
-                         body_widget=None,
-                         initially_expanded=False)
+        super().__init__(
+            icon_color=color,
+            icon=self.icon_map.get(tool_name, ft.Icons.BUILD),
+            title=f"Tool {tool_name}",
+            body=None,
+            body_widget=None,
+            initially_expanded=False,
+        )
 
     def has_output(self) -> bool:
         return bool(self.output_text and str(self.output_text).strip())
 
     def set_output(self, output_text: str):
-        self.output_text = output_text if output_text and str(output_text).strip() else None
+        self.output_text = (
+            output_text if output_text and str(output_text).strip() else None
+        )
         self._refresh()
         self.update()
 
     def _refresh(self):
         body_parts: list[ft.Control] = []
         if self.args_str and str(self.args_str).strip():
-            body_parts.extend(_build_json_section("input", self.args_str, self.theme_color))
+            body_parts.extend(
+                _build_json_section("input", self.args_str, self.theme_color)
+            )
         if self.output_text and str(self.output_text).strip():
-            body_parts.extend(_build_json_section("output", self.output_text, ft.Colors.GREEN))
+            body_parts.extend(
+                _build_json_section("output", self.output_text, ft.Colors.GREEN)
+            )
         if body_parts and isinstance(body_parts[-1], ft.Container):
             body_parts.pop()  # remove trailing spacer
 
         has_output_text = bool(self.output_text and str(self.output_text).strip())
         self.icon_color = ft.Colors.GREEN if has_output_text else self.theme_color
-        self.icon = ft.Icons.CHECK if has_output_text else self.icon_map.get(self.tool_name, ft.Icons.BUILD)
+        self.icon = (
+            ft.Icons.CHECK
+            if has_output_text
+            else self.icon_map.get(self.tool_name, ft.Icons.BUILD)
+        )
         self.title = f"Tool {self.tool_name}"
-        self.body_widget = ft.Column(body_parts, spacing=4, tight=True) if body_parts else None
+        self.body_widget = (
+            ft.Column(body_parts, spacing=4, tight=True) if body_parts else None
+        )
         self.body = None
         super()._refresh()
 
@@ -443,3 +512,24 @@ class ArtifactDisplay(CollapsibleCard):
             body_widget=body_widget,
             initially_expanded=True,
         )
+
+
+# --- Tab Header with Indicator ---
+class TabHeader(ft.Row):
+    """Tab header widget with a small indicator dot."""
+
+    def __init__(self, label: str):
+        super().__init__(spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        self.label = ft.Text(label)
+        self.indicator = ft.Container(
+            width=6,
+            height=6,
+            border_radius=3,
+            bgcolor=ft.Colors.RED,
+            visible=False,
+        )
+        self.controls = [self.label, self.indicator]
+
+    def show(self, value: bool) -> None:
+        self.indicator.visible = value
+        self.indicator.update()
