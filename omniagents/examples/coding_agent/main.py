@@ -199,7 +199,7 @@ You are now ready to assist.
 
 
 def _git_changed_diffs() -> list[tuple[str, str]]:
-    """Return list of (filename, html_diff) for files changed in the worktree."""
+    """Return list of (filename, markdown_diff) for files changed in the worktree."""
     base_branch = os.getenv("OTTO_BASE_BRANCH", "origin/main")
     base_commit = os.getenv("OTTO_BASE_COMMIT")
     if not base_commit:
@@ -230,7 +230,8 @@ def _git_changed_diffs() -> list[tuple[str, str]]:
                 text=True,
             ).stdout
             if diff.strip():
-                diffs.append((f, f"<pre>{html.escape(diff)}</pre>"))
+                diff_block = f"```diff\n{diff}\n```"
+                diffs.append((f, diff_block))
         except Exception:
             pass
     return diffs
@@ -239,8 +240,8 @@ def _git_changed_diffs() -> list[tuple[str, str]]:
 class CodingAgentApp(AgentApp):
     async def _process_message(self, user_message: str):
         await super()._process_message(user_message)
-        for fname, diff_html in _git_changed_diffs():
-            self.add_artifact(fname, diff_html, mode="html")
+        for fname, diff_md in _git_changed_diffs():
+            self.add_artifact(fname, diff_md, mode="markdown")
 
 # Build a direct Agent instance and run via AgentApp.from_agent
 if __name__ == "__main__":
