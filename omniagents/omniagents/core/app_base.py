@@ -514,7 +514,6 @@ class AgentApp:
         self.chat = ft.ListView(
             expand=True,
             spacing=20,  # increased vertical spacing for more breathing room
-            auto_scroll=True,
             padding=ft.padding.symmetric(
                 horizontal=20
             ),  # consistent left/right inset for all items
@@ -525,13 +524,11 @@ class AgentApp:
             self.logs = ft.ListView(
                 expand=True,
                 spacing=20,
-                auto_scroll=True,
                 padding=ft.padding.symmetric(horizontal=20),
             )
             self.artifacts = ft.ListView(
                 expand=True,
                 spacing=20,
-                auto_scroll=True,
                 padding=ft.padding.symmetric(horizontal=20),
             )
 
@@ -785,6 +782,7 @@ class AgentApp:
             # Add user message bubble and refresh chat only
             self.chat.controls.append(ChatMessage(user_msg, self.page))
             self.chat.update()
+            self._scroll_list_to_bottom(self.chat)
 
             # Clear input field immediately and update it
             self.new_message.value = ""
@@ -795,6 +793,7 @@ class AgentApp:
                 self.chat.controls.append(self.typing_indicator)
             self.typing_indicator.visible = True
             self.chat.update()
+            self._scroll_list_to_bottom(self.chat)
 
             # Disable only the send button while processing
             self.send_button.disabled = True
@@ -812,6 +811,7 @@ class AgentApp:
                 if self.typing_indicator in self.chat.controls:
                     self.chat.controls.remove(self.typing_indicator)
                     self.chat.update()
+                    self._scroll_list_to_bottom(self.chat)
 
                 # Re-focus and update the text field so focus sticks
                 self.new_message.focus()
@@ -981,6 +981,7 @@ class AgentApp:
                         if self.typing_indicator in self.chat.controls:
                             self.chat.controls.remove(self.typing_indicator)
                             self.chat.update()
+                            self._scroll_list_to_bottom(self.chat)
 
                         interaction = ToolInteractionDisplay(
                             tool_name,
@@ -1004,7 +1005,9 @@ class AgentApp:
                         self.chat.controls.append(self.typing_indicator)
                         if target_list is not self.chat:
                             target_list.update()
+                            self._scroll_list_to_bottom(target_list)
                         self.chat.update()
+                        self._scroll_list_to_bottom(self.chat)
                         self.page.update()
                         self.page.update()
 
@@ -1084,7 +1087,9 @@ class AgentApp:
                             self.chat.controls.append(self.typing_indicator)
                             if self.spec.layout == "tabs" and self.logs is not None:
                                 self.logs.update()
+                                self._scroll_list_to_bottom(self.logs)
                             self.chat.update()
+                            self._scroll_list_to_bottom(self.chat)
                             self.page.update()
 
                     # --- Handle Reasoning Items ---
@@ -1092,6 +1097,7 @@ class AgentApp:
                         if self.typing_indicator in self.chat.controls:
                             self.chat.controls.remove(self.typing_indicator)
                             self.chat.update()
+                            self._scroll_list_to_bottom(self.chat)
 
                         reasoning_text = ""
                         raw = getattr(item, "raw_item", None)
@@ -1130,7 +1136,9 @@ class AgentApp:
                             self._mark_unseen("logs")
                         if target_list is not self.chat:
                             target_list.update()
+                            self._scroll_list_to_bottom(target_list)
                         self.chat.update()
+                        self._scroll_list_to_bottom(self.chat)
                         self.page.update()
 
                     # --- Handle Assistant Message Stream ---
@@ -1160,6 +1168,7 @@ class AgentApp:
                                     message_output  # Access Markdown value
                                 )
                             self.chat.update()
+                            self._scroll_list_to_bottom(self.chat)
                             self.page.update()  # Update UI with new chunk
                             self._mark_unseen("conversation")
 
@@ -1230,7 +1239,9 @@ class AgentApp:
 
             if self.spec.layout == "tabs" and self.logs is not None:
                 self.logs.update()
+                self._scroll_list_to_bottom(self.logs)
             self.chat.update()
+            self._scroll_list_to_bottom(self.chat)
             self.page.update()  # Final update after processing
             self._mark_unseen("conversation")
 
@@ -1266,6 +1277,7 @@ class AgentApp:
         if self.typing_indicator in self.chat.controls:
             self.chat.controls.remove(self.typing_indicator)
             self.chat.update()
+            self._scroll_list_to_bottom(self.chat)
 
         def create_handler(
             approved: bool,
@@ -1300,6 +1312,7 @@ class AgentApp:
 
                 # Flush UI updates before proceeding so the approval card disappears immediately
                 self.chat.update()
+                self._scroll_list_to_bottom(self.chat)
                 self.page.update()
                 self._mark_unseen("conversation")
                 # Yield control to allow the frontend to repaint
@@ -1330,6 +1343,7 @@ class AgentApp:
         self._approval_state["active_displays"][approval_id] = approval_display
         self.chat.controls.append(approval_display)
         self.chat.update()
+        self._scroll_list_to_bottom(self.chat)
         self.page.update()
         self._mark_unseen("conversation")
 
@@ -1385,6 +1399,7 @@ class AgentApp:
         else:
             self.chat.controls.append(error_banner)
         self.chat.update()
+        self._scroll_list_to_bottom(self.chat)
         self.page.update()
         self._mark_unseen("conversation")
 
@@ -1402,6 +1417,18 @@ class AgentApp:
                 # No page update here, caller should handle batching updates
         except Exception as e:
             print(f"Error removing control: {e}")
+
+    def _scroll_list_to_bottom(self, lv: ft.ListView, duration: int = 300):
+        """Animate *lv* to its bottom-most position."""
+        try:
+            if lv and lv.controls:
+                last = lv.controls[-1]
+                if not getattr(last, "key", None):
+                    last.key = f"scroll_anchor_{uuid.uuid4()}"
+                lv.scroll_to(key=last.key, duration=duration)
+                lv.update()
+        except Exception as e:
+            print(f"Error scrolling list: {e}")
 
     def _mark_unseen(self, tab: str):
         """Show indicator on a tab if it's not the active one."""
@@ -1449,10 +1476,12 @@ class AgentApp:
             return
         target.controls.append(display)
         target.update()
+        self._scroll_list_to_bottom(target)
         if target is self.artifacts:
             self._mark_unseen("artifacts")
         if target is not self.chat and self.chat is not None:
             self.chat.update()
+            self._scroll_list_to_bottom(self.chat)
         if self.page:
             self.page.update()
 
