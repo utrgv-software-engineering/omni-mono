@@ -7,7 +7,16 @@ from openai import AsyncOpenAI
 from agents import set_default_openai_client, set_tracing_disabled, Agent
 from omniagents.core.app_base import AgentApp
 from tools.bash_tool import execute_bash
-from tools.file_tools import glob_files, grep_files, list_directory, read_file, edit_file, write_file, create_git_worktree
+from tools.file_tools import (
+    glob_files,
+    grep_files,
+    list_directory,
+    read_file,
+    edit_file,
+    write_file,
+    create_git_worktree,
+)
+from tools.pr_tool import create_pull_request
 from openai.types.shared import Reasoning
 from agents.model_settings import ModelSettings
 
@@ -235,6 +244,7 @@ if __name__ == "__main__":
             write_file,
             execute_bash,
             create_git_worktree,
+            create_pull_request,
         ],
         instructions=get_instructions(),
         model_settings = ModelSettings(
