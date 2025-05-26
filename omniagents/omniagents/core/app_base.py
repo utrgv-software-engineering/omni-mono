@@ -1476,7 +1476,8 @@ class AgentApp:
             return
         target.controls.append(display)
         target.update()
-        self._scroll_list_to_bottom(target)
+        if target is not self.artifacts:
+            self._scroll_list_to_bottom(target)
         if target is self.artifacts:
             self._mark_unseen("artifacts")
         if target is not self.chat and self.chat is not None:
@@ -1768,10 +1769,14 @@ class AgentApp:
         idx = self.tabs.selected_index
         if idx == 0 and self._conversation_tab_header:
             self._conversation_tab_header.show(False)
+            if self.chat:
+                self._scroll_list_to_bottom(self.chat)
         elif idx == 1 and self._artifacts_tab_header:
             self._artifacts_tab_header.show(False)
         elif idx == 2 and self._logs_tab_header:
             self._logs_tab_header.show(False)
+            if self.logs:
+                self._scroll_list_to_bottom(self.logs)
 
     async def _handle_settings_save(self, new_settings: Dict[str, Any]):
         """Save updated settings, update MCP, and navigate back."""
