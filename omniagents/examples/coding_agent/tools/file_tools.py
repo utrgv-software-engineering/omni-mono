@@ -205,15 +205,16 @@ def create_git_worktree(task_slug: str, base_branch: str | None = None) -> Dict[
             '-b', branch_name, clean_base
         ], check=True, cwd='.')
 
-        # Record the base branch and commit for later diff calculations
         base_commit = subprocess.check_output(
             ['git', 'rev-parse', clean_base], text=True
         ).strip()
-        os.environ['OTTO_BASE_BRANCH'] = clean_base
-        os.environ['OTTO_BASE_COMMIT'] = base_commit
 
         abs_worktree_path = os.path.abspath(worktree_path)
         os.chdir(abs_worktree_path)
+
+        subprocess.run([
+            'git', 'config', 'otto.base-commit', base_commit
+        ], check=True)
 
         return {
             "success": True,

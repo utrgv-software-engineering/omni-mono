@@ -29,7 +29,13 @@ def test_create_git_worktree_with_branch(mock_function_tool):
                     ["git", "worktree", "add", mock.ANY, "-b", mock.ANY, "dev"],
                     check=True,
                     cwd=".",
-                )
+                ),
+                call([
+                    "git",
+                    "config",
+                    "otto.base-commit",
+                    "abc123",
+                ], check=True),
             ]
         )
         mock_check.assert_called_with(["git", "rev-parse", "dev"], text=True)
@@ -54,7 +60,13 @@ def test_create_git_worktree_default_branch(mock_function_tool):
                     ["git", "worktree", "add", mock.ANY, "-b", mock.ANY, "dev"],
                     check=True,
                     cwd=".",
-                )
+                ),
+                call([
+                    "git",
+                    "config",
+                    "otto.base-commit",
+                    "abc123",
+                ], check=True),
             ]
         )
         mock_check.assert_has_calls(
