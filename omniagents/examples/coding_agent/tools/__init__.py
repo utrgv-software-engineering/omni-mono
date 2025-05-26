@@ -1,5 +1,5 @@
 from .bash_tool import execute_bash
-from .file_tools import glob_files, grep_files, list_directory, read_file, edit_file, write_file
+from .file_tools import glob_files, grep_files, list_directory, read_file, edit_file, write_file, create_git_worktree
 
 __all__ = [
     'web_fetch',
@@ -14,5 +14,6 @@ __all__ = [
     'list_directory',
     'read_file',
     'edit_file',
-    'write_file'
+    'write_file',
+    'create_git_worktree'
 ]

@@ -12,6 +12,12 @@ def mock_function_tool():
         yield
 
 
+@pytest.fixture(autouse=True)
+def mock_git_validation():
+    with patch('examples.coding_agent.tools.file_tools._validate_git_environment', return_value={"valid": True}):
+        yield
+
+
 @pytest.fixture
 def tmp_workdir(tmp_path):
     """Set up a temporary working directory populated with sample files."""
@@ -63,7 +69,8 @@ def test_read_file_range(mock_function_tool, tmp_workdir):
     from examples.coding_agent.tools.file_tools import read_file
 
     target_file = tmp_workdir / 'b.txt'
-    result = read_file(file_path=str(target_file), start_line=1, num_lines=1)
+    rel = os.path.relpath(target_file, os.getcwd())
+    result = read_file(file_path=rel, start_line=1, num_lines=1)
 
     assert result['line_count'] == 1
     assert result['lines'][0].strip() == 'bye world'
@@ -74,13 +81,14 @@ def test_edit_file_replace(mock_function_tool, tmp_workdir):
     from examples.coding_agent.tools.file_tools import edit_file, read_file
 
     target_file = tmp_workdir / 'b.txt'
-    replacements_result = edit_file(file_path=str(target_file), old_text='world', new_text='planet')
+    rel = os.path.relpath(target_file, os.getcwd())
+    replacements_result = edit_file(file_path=rel, old_text='world', new_text='planet')
 
     assert replacements_result['success'] is True
     assert replacements_result['replacements'] == 2
 
     # Confirm content changed
-    after = read_file(file_path=str(target_file), start_line=0, num_lines=None)
+    after = read_file(file_path=rel, start_line=0, num_lines=None)
     assert 'planet' in after['content']
     assert 'world' not in after['content']
 
@@ -90,11 +98,12 @@ def test_write_file_append(mock_function_tool, tmp_path):
     from examples.coding_agent.tools.file_tools import write_file, read_file
 
     target_file = tmp_path / 'log.txt'
+    rel = os.path.relpath(target_file, os.getcwd())
 
     # Overwrite mode (create)
-    write_file(file_path=str(target_file), content='hello', append=False)
+    write_file(file_path=rel, content='hello', append=False)
     # Append mode
-    write_file(file_path=str(target_file), content=' world', append=True)
+    write_file(file_path=rel, content=' world', append=True)
 
-    content = read_file(file_path=str(target_file), start_line=0, num_lines=None)['content']
+    content = read_file(file_path=rel, start_line=0, num_lines=None)['content']
     assert content == 'hello world' 

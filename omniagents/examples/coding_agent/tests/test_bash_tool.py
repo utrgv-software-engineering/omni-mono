@@ -10,6 +10,12 @@ def mock_function_tool():
         yield
 
 
+@pytest.fixture(autouse=True)
+def mock_git_validation():
+    with patch('examples.coding_agent.tools.bash_tool._validate_git_environment', return_value={"valid": True}):
+        yield
+
+
 def test_execute_bash_success(mock_function_tool):
     """Test successful execution of a shell command."""
     # Prepare the mocked CompletedProcess-like object

@@ -1,6 +1,7 @@
 import subprocess
 from typing import Dict, Any, Optional
 from omniagents.core import function_tool
+from .file_tools import _validate_git_environment
 
 @function_tool
 def execute_bash(command: str, timeout: Optional[int]) -> Dict[str, Any]:
@@ -37,16 +38,43 @@ def execute_bash(command: str, timeout: Optional[int]) -> Dict[str, Any]:
         # Find a file
         execute_bash("find . -name '*.py' -type f", timeout=60)
     """
-    # Default timeout value if not provided
+    command_parts = command.strip().split()
+    command_start = command_parts[0] if command_parts else ""
+
+    git_worktree_commands = [
+        'git worktree',
+        'git fetch',
+        'git switch',
+        'git pull',
+        'git checkout'
+    ]
+
+    command_lower = command.lower().strip()
+    for blocked_cmd in git_worktree_commands:
+        if command_lower.startswith(blocked_cmd):
+            return {
+                "error": "BLOCKED: Git worktree operations must use the create_git_worktree tool",
+                "blocked_command": command,
+                "required_action": "Call create_git_worktree(task_slug) instead of running Git commands manually",
+                "instructions": "Use the create_git_worktree tool with a short task identifier like 'fix-auth' or 'add-logging'."
+            }
+
+    safe_commands = ['cd', 'pwd', 'ls', 'echo', 'whoami']
+
+    if command_start not in safe_commands:
+        git_validation = _validate_git_environment()
+        if not git_validation["valid"]:
+            return {
+                "error": f"CANNOT EXECUTE COMMAND: {git_validation['error']}",
+                "required_action": git_validation["required_action"],
+                "instructions": "You MUST call the create_git_worktree tool first and then retry this operation."
+            }
+
     if timeout is None:
         timeout = 30
-        
-    result = {
-        "stdout": "",
-        "stderr": "",
-        "returncode": None
-    }
-    
+
+    result = {"stdout": "", "stderr": "", "returncode": None}
+
     try:
         process = subprocess.run(
             command,
@@ -55,11 +83,11 @@ def execute_bash(command: str, timeout: Optional[int]) -> Dict[str, Any]:
             text=True,
             timeout=timeout
         )
-        
+
         result["stdout"] = process.stdout
         result["stderr"] = process.stderr
         result["returncode"] = process.returncode
-        
+
         return result
     except subprocess.TimeoutExpired:
         return {"error": f"Command timed out after {timeout} seconds"}
