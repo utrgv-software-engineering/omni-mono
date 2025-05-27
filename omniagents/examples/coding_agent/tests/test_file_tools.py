@@ -86,22 +86,34 @@ def test_read_file_range(mock_function_tool, tmp_workdir):
     assert result['lines'][0].strip() == 'bye world'
 
 
-def test_edit_file_replace(mock_function_tool, tmp_workdir):
-    """Ensure edit_file replaces text and reports number of replacements."""
+def test_edit_file_rejects_multiple_matches(mock_function_tool, tmp_workdir):
+    """edit_file should reject ambiguous changes with multiple matches."""
     from examples.coding_agent.tools.file_tools import edit_file, read_file
 
     target_file = tmp_workdir / 'b.txt'
     rel = os.path.relpath(target_file, os.getcwd())
     read_file(file_path=rel, start_line=0, num_lines=None)
-    replacements_result = edit_file(file_path=rel, old_text='world', new_text='planet')
+    result = edit_file(file_path=rel, old_text='world', new_text='planet')
 
-    assert replacements_result['success'] is True
-    assert replacements_result['replacements'] == 2
+    assert result['success'] is False
+    assert result['replacements'] == 2
+    assert 'multiple matches' in result['error'].lower()
 
-    # Confirm content changed
+
+def test_edit_file_single_replacement(mock_function_tool, tmp_workdir):
+    """Verify that a single replacement is allowed and applied."""
+    from examples.coding_agent.tools.file_tools import edit_file, read_file
+
+    target_file = tmp_workdir / 'b.txt'
+    rel = os.path.relpath(target_file, os.getcwd())
+    read_file(file_path=rel, start_line=0, num_lines=None)
+    result = edit_file(file_path=rel, old_text='hello', new_text='hi')
+
+    assert result['success'] is True
+    assert result['replacements'] == 1
+
     after = read_file(file_path=rel, start_line=0, num_lines=None)
-    assert 'planet' in after['content']
-    assert 'world' not in after['content']
+    assert 'hi world' in after['content']
 
 
 def test_write_file_append(mock_function_tool, tmp_path):
@@ -153,12 +165,12 @@ def test_edit_requires_reread_after_edit(mock_function_tool, tmp_workdir):
     rel = os.path.relpath(target_file, os.getcwd())
 
     file_tools.read_file(file_path=rel, start_line=0, num_lines=None)
-    first = file_tools.edit_file(file_path=rel, old_text='world', new_text='planet')
+    first = file_tools.edit_file(file_path=rel, old_text='hello', new_text='hi')
     assert first['success'] is True
 
-    second = file_tools.edit_file(file_path=rel, old_text='planet', new_text='star')
+    second = file_tools.edit_file(file_path=rel, old_text='hi', new_text='hey')
     assert 'error' in second
 
     file_tools.read_file(file_path=rel, start_line=0, num_lines=None)
-    third = file_tools.edit_file(file_path=rel, old_text='planet', new_text='star')
+    third = file_tools.edit_file(file_path=rel, old_text='hi', new_text='hey')
     assert third['success'] is True

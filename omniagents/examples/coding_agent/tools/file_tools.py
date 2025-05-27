@@ -655,24 +655,35 @@ def edit_file(file_path: str, old_text: str, new_text: str) -> Dict[str, Any]:
         
         # Replace the text
         new_content, replacements = re.subn(re.escape(old_text), new_text, content)
-        
-        if replacements > 0:
-            # Write the modified content back to the file
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(new_content)
 
-            _record_edit(file_path)
-
-            return {
-                "success": True,
-                "replacements": replacements
-            }
-        else:
+        if replacements == 0:
             return {
                 "success": False,
                 "replacements": 0,
-                "error": "No matches found for the specified text"
+                "error": "No matches found for the specified text",
             }
+
+        if replacements > 1:
+            return {
+                "success": False,
+                "replacements": replacements,
+                "error": (
+                    "Multiple matches found for the specified text. "
+                    "Provide more context or target a specific occurrence "
+                    "and invoke the tool again."
+                ),
+            }
+
+        # Exactly one match
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+
+        _record_edit(file_path)
+
+        return {
+            "success": True,
+            "replacements": replacements,
+        }
     except Exception as e:
         return {"error": f"Error editing file: {str(e)}"}
 
