@@ -2,6 +2,7 @@ import os
 import glob
 import re
 import subprocess
+import time
 from typing import Dict, Any, List, Optional
 from omniagents.core import function_tool
 import pathlib
@@ -13,6 +14,34 @@ try:
     import pathspec  # type: ignore
 except ImportError:  # pragma: no cover – pathspec should be present via pyproject
     pathspec = None
+
+# Track file access to enforce "read before edit" safeguards
+_file_history: Dict[str, Dict[str, Optional[float]]] = {}
+
+
+def _record_full_read(path: str) -> None:
+    abs_path = os.path.abspath(path)
+    state = _file_history.setdefault(abs_path, {})
+    state["last_full_read"] = time.time()
+
+
+def _record_edit(path: str) -> None:
+    abs_path = os.path.abspath(path)
+    state = _file_history.setdefault(abs_path, {})
+    state["last_edit"] = time.time()
+    # Require re-reading after edit
+    state["last_full_read"] = None
+
+
+def _has_recent_full_read(path: str) -> bool:
+    abs_path = os.path.abspath(path)
+    state = _file_history.get(abs_path)
+    if not state or state.get("last_full_read") is None:
+        return False
+    if state.get("last_edit") and state["last_full_read"] < state["last_edit"]:
+        return False
+    return True
+
     
 def _load_gitignore_spec(start_dir: str = "."):
     """Return a PathSpec compiled from every .gitignore under *start_dir*.
@@ -533,30 +562,41 @@ def read_file(file_path: str, start_line: Optional[int], num_lines: Optional[int
         # Default to start at beginning if not specified
         if start_line is None:
             start_line = 0
-            
+
         with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
             # Read all lines
             all_lines = f.readlines()
-            
-            # Apply start_line and num_lines filters
-            if start_line < 0:
-                start_line = 0
-            
-            if start_line >= len(all_lines):
-                start_line = len(all_lines) - 1 if all_lines else 0
-            
-            if num_lines is None:
-                # Read all remaining lines
-                selected_lines = all_lines[start_line:]
-            else:
-                # Read specified number of lines
-                selected_lines = all_lines[start_line:start_line + num_lines]
-            
+
+        if start_line < 0:
+            start_line = 0
+
+        if start_line >= len(all_lines):
+            start_line = len(all_lines) - 1 if all_lines else 0
+
+        # Determine if this is a full file read
+        is_full_read = start_line <= 0 and (
+            num_lines is None or start_line + num_lines >= len(all_lines)
+        )
+
+        if not is_full_read and not _has_recent_full_read(file_path):
             return {
-                "content": "".join(selected_lines),
-                "lines": selected_lines,
-                "line_count": len(selected_lines)
+                "error": "CANNOT READ FILE: Must read entire file before partial reads",
+                "instructions": "Call read_file(file_path, start_line=0, num_lines=None) first"
             }
+
+        if num_lines is None:
+            selected_lines = all_lines[start_line:]
+        else:
+            selected_lines = all_lines[start_line:start_line + num_lines]
+
+        if is_full_read:
+            _record_full_read(file_path)
+
+        return {
+            "content": "".join(selected_lines),
+            "lines": selected_lines,
+            "line_count": len(selected_lines)
+        }
     except Exception as e:
         return {"error": f"Error reading file: {str(e)}"}
 
@@ -602,6 +642,12 @@ def edit_file(file_path: str, old_text: str, new_text: str) -> Dict[str, Any]:
             "instructions": f"Use relative path instead. Remove leading slash from: {file_path}"
         }
 
+    if not _has_recent_full_read(file_path):
+        return {
+            "error": "CANNOT EDIT FILE: File must be fully read before editing",
+            "instructions": "Call read_file(file_path, start_line=0, num_lines=None) first"
+        }
+
     try:
         # Read the file content
         with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
@@ -614,7 +660,9 @@ def edit_file(file_path: str, old_text: str, new_text: str) -> Dict[str, Any]:
             # Write the modified content back to the file
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(new_content)
-            
+
+            _record_edit(file_path)
+
             return {
                 "success": True,
                 "replacements": replacements
@@ -684,7 +732,9 @@ def write_file(file_path: str, content: str, append: Optional[bool]) -> Dict[str
         
         with open(file_path, mode, encoding='utf-8') as f:
             bytes_written = f.write(content)
-        
+
+        _record_edit(file_path)
+
         return {
             "success": True,
             "bytes_written": bytes_written

@@ -18,6 +18,14 @@ def mock_git_validation():
         yield
 
 
+@pytest.fixture(autouse=True)
+def reset_file_history():
+    from examples.coding_agent.tools import file_tools
+    file_tools._file_history.clear()
+    yield
+    file_tools._file_history.clear()
+
+
 @pytest.fixture
 def tmp_workdir(tmp_path):
     """Set up a temporary working directory populated with sample files."""
@@ -70,6 +78,8 @@ def test_read_file_range(mock_function_tool, tmp_workdir):
 
     target_file = tmp_workdir / 'b.txt'
     rel = os.path.relpath(target_file, os.getcwd())
+    # Must read entire file first
+    read_file(file_path=rel, start_line=0, num_lines=None)
     result = read_file(file_path=rel, start_line=1, num_lines=1)
 
     assert result['line_count'] == 1
@@ -82,6 +92,7 @@ def test_edit_file_replace(mock_function_tool, tmp_workdir):
 
     target_file = tmp_workdir / 'b.txt'
     rel = os.path.relpath(target_file, os.getcwd())
+    read_file(file_path=rel, start_line=0, num_lines=None)
     replacements_result = edit_file(file_path=rel, old_text='world', new_text='planet')
 
     assert replacements_result['success'] is True
@@ -106,4 +117,48 @@ def test_write_file_append(mock_function_tool, tmp_path):
     write_file(file_path=rel, content=' world', append=True)
 
     content = read_file(file_path=rel, start_line=0, num_lines=None)['content']
-    assert content == 'hello world' 
+    assert content == 'hello world'
+
+
+def test_read_partial_requires_full_read(mock_function_tool, tmp_workdir):
+    from examples.coding_agent.tools import file_tools
+
+    target_file = tmp_workdir / 'b.txt'
+    rel = os.path.relpath(target_file, os.getcwd())
+
+    result = file_tools.read_file(file_path=rel, start_line=1, num_lines=1)
+
+    assert 'error' in result
+    assert 'entire file' in result['error'].lower()
+
+
+def test_edit_requires_full_read(mock_function_tool, tmp_workdir):
+    from examples.coding_agent.tools import file_tools
+
+    target_file = tmp_workdir / 'b.txt'
+    rel = os.path.relpath(target_file, os.getcwd())
+
+    result = file_tools.edit_file(file_path=rel, old_text='hello', new_text='hi')
+    assert 'error' in result
+
+    file_tools.read_file(file_path=rel, start_line=0, num_lines=None)
+    result2 = file_tools.edit_file(file_path=rel, old_text='hello', new_text='hi')
+    assert result2['success'] is True
+
+
+def test_edit_requires_reread_after_edit(mock_function_tool, tmp_workdir):
+    from examples.coding_agent.tools import file_tools
+
+    target_file = tmp_workdir / 'b.txt'
+    rel = os.path.relpath(target_file, os.getcwd())
+
+    file_tools.read_file(file_path=rel, start_line=0, num_lines=None)
+    first = file_tools.edit_file(file_path=rel, old_text='world', new_text='planet')
+    assert first['success'] is True
+
+    second = file_tools.edit_file(file_path=rel, old_text='planet', new_text='star')
+    assert 'error' in second
+
+    file_tools.read_file(file_path=rel, start_line=0, num_lines=None)
+    third = file_tools.edit_file(file_path=rel, old_text='planet', new_text='star')
+    assert third['success'] is True
