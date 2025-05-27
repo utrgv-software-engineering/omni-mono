@@ -11,7 +11,7 @@ def create_pull_request(title: str, body: str) -> Dict[str, Any]:
 
     This tool assumes the ``gh`` CLI is configured for the repository.
     It pushes the active branch and then runs ``gh pr create`` with the
-    provided title and body.
+    provided title and body, targeting the branch this worktree was created from.
     """
 
     validation = _validate_git_environment()
@@ -22,6 +22,19 @@ def create_pull_request(title: str, body: str) -> Dict[str, Any]:
         }
 
     branch = validation.get("branch")
+    
+    # Get the base branch from git config (set by create_git_worktree)
+    try:
+        base_branch = subprocess.check_output(
+            ["git", "config", "--get", "otto.base-branch"], 
+            text=True
+        ).strip()
+    except subprocess.CalledProcessError:
+        return {
+            "error": "CANNOT CREATE PR: No base branch found in git config. Was this worktree created properly?",
+            "required_action": "Run create_git_worktree first to set up the working environment"
+        }
+    
     try:
         if branch:
             subprocess.run([
@@ -41,13 +54,19 @@ def create_pull_request(title: str, body: str) -> Dict[str, Any]:
                 title,
                 "--body",
                 body,
+                "--base",
+                base_branch,  # Target the original base branch
             ],
             capture_output=True,
             text=True,
         )
 
         if result.returncode == 0:
-            return {"success": True, "url": result.stdout.strip()}
+            return {
+                "success": True, 
+                "url": result.stdout.strip(),
+                "base_branch": base_branch
+            }
         return {"success": False, "error": result.stderr.strip()}
     except Exception as e:
         return {"success": False, "error": str(e)}

@@ -216,6 +216,10 @@ def create_git_worktree(task_slug: str, base_branch: str | None = None) -> Dict[
             'git', 'config', 'otto.base-commit', base_commit
         ], check=True)
 
+        subprocess.run([
+            'git', 'config', 'otto.base-branch', clean_base
+        ], check=True)
+
         return {
             "success": True,
             "worktree_path": abs_worktree_path,

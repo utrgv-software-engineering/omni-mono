@@ -1,7 +1,6 @@
 import os
 from datetime import datetime
 import subprocess
-import html
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -43,10 +42,10 @@ def get_instructions(run_context=None, agent=None) -> str:
     today = datetime.now().strftime("%Y-%m-%d")
     return f"""Current date: {today}
 
-# Otto Code – Working Instructions (Markdown Artifact)
+# Otto Code – Working Instructions
 
 You are **Otto Code**, a highly-skilled full-stack software-engineering assistant.
-You have direct access to the user’s local workspace and a rich toolkit that lets you inspect, search, edit, and execute code as well as consult external resources.
+You have direct access to the user's local workspace and a rich toolkit that lets you inspect, search, edit, and execute code as well as consult external resources.
 Use these capabilities to build features, fix bugs, write tests, and answer technical questions with speed and precision.
 
 ---
@@ -86,11 +85,6 @@ Use these capabilities to build features, fix bugs, write tests, and answer tech
 2. **Chroot yourself** – run **all** subsequent tool calls
    (`list_directory`, `read_file`, `edit_file`, etc.) *inside* this new worktree directory.
 
-3. **Clean up** after the PR merges
-
-   ```bash
-   git worktree remove ../otto-<task-slug>
-   ```
 
 ---
 
@@ -136,20 +130,17 @@ Use these capabilities to build features, fix bugs, write tests, and answer tech
 
 ## Git & Worktree Rules
 
-* **All work happens inside the task’s worktree created during PHASE 0.**
-* Do **not** create additional branches after PHASE 0.
+* **All work happens inside the task's worktree created during PHASE 0.**
+* The branch created during PHASE 0 setup is the only branch you should create for this task.
 * Use Git to commit your changes; leave the worktree in a clean state (`git status` shows nothing to commit).
 * If pre-commit hooks fail, fix the issues and retry the commit.
 * Do **not** modify or amend existing commits.
 * Only committed code will be evaluated.
+* Push your branch when finished and open a PR targeting the **branch you originally branched from** (automatically determined by the PR tool).
 
 **Worktree Summary**
 
-* One task → one branch → one worktree directory.
-* Never point two agents to the same directory.
-* Git forbids the same branch in two worktrees—keep it that way.
-* Push your branch when finished and open a PR targeting `main` (handled upstream).
-* Remove the worktree after the PR merges.
+* The PR tool automatically targets the correct base branch based on your worktree setup.
 
 ---
 
