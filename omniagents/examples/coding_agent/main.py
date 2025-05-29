@@ -229,7 +229,7 @@ class CodingAgentApp(AgentApp):
     async def _process_message(self, user_message: str):
         await super()._process_message(user_message)
         for fname, diff_md in _git_changed_diffs():
-            self.add_artifact(fname, diff_md, mode="markdown")
+            self.add_artifact(fname, diff_md, mode="markdown", artifact_id=fname)
 
 # Build a direct Agent instance and run via AgentApp.from_agent
 if __name__ == "__main__":

@@ -29,6 +29,7 @@ from omniagents.core.ui import (
     ToolInteractionDisplay,
     ToolApprovalRequest,
     TabHeader,
+    ArtifactDisplay,
 )
 from omniagents.core.settings import SettingsScreen, SettingField
 from omniagents.core.storage import load_settings, save_settings
@@ -349,6 +350,9 @@ class AgentApp:
         self._conversation_tab_header = None
         self._artifacts_tab_header = None
         self._logs_tab_header = None
+
+        # Track artifact displays by id for updates
+        self._artifact_displays: Dict[str, ArtifactDisplay] = {}
 
         # Register artifact callback
         from .artifacts import set_artifact_callback
@@ -1462,11 +1466,23 @@ class AgentApp:
             if self.page:
                 self.page.update()
 
-    def add_artifact(self, title: str, content: str, mode: str = "markdown") -> None:
-        """Programmatically add an artifact for the user."""
-        from .ui import ArtifactDisplay
+    def add_artifact(
+        self,
+        title: str,
+        content: str,
+        mode: str = "markdown",
+        artifact_id: str | None = None,
+    ) -> None:
+        """Programmatically add or update an artifact for the user."""
 
-        display = ArtifactDisplay(title, content, mode)
+        key = artifact_id or title
+        display = self._artifact_displays.get(key)
+        is_new = display is None
+        if display is None:
+            display = ArtifactDisplay(title, content, mode)
+            self._artifact_displays[key] = display
+        else:
+            display.update_content(title, content, mode)
         target = (
             self.artifacts
             if self.spec.layout == "tabs" and self.artifacts is not None
@@ -1474,9 +1490,10 @@ class AgentApp:
         )
         if target is None:
             return
-        target.controls.append(display)
+        if is_new:
+            target.controls.append(display)
         target.update()
-        if target is not self.artifacts:
+        if is_new and target is not self.artifacts:
             self._scroll_list_to_bottom(target)
         if target is self.artifacts:
             self._mark_unseen("artifacts")
