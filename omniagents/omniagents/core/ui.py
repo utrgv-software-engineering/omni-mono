@@ -543,6 +543,21 @@ class ArtifactDisplay(CollapsibleCard):
             initially_expanded=True,
         )
 
+    def update_content(self, title: str, content: str, mode: str = "markdown") -> None:
+        """Update the artifact's title and body content."""
+        self.title = title
+        if mode == "markdown":
+            self.body_widget = ft.Markdown(
+                value=content,
+                selectable=True,
+                extension_set=ft.MarkdownExtensionSet.GITHUB_FLAVORED,
+                code_theme=ft.MarkdownCodeTheme.GITHUB,
+            )
+        else:
+            self.body_widget = ft.Container(ft.Text(content, selectable=True))
+        self._refresh()
+        self.update()
+
 
 # --- Tab Header with Indicator ---
 class TabHeader(ft.Row):

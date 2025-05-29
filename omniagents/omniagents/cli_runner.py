@@ -184,7 +184,12 @@ async def run_cli(
 
         from omniagents.core.artifacts import set_artifact_callback
 
-        def _cli_artifact(title: str, content: str, mode: str = "markdown") -> None:
+        def _cli_artifact(
+            title: str,
+            content: str,
+            mode: str = "markdown",
+            artifact_id: str | None = None,
+        ) -> None:
             print(f"\n== {title} ==")
             print(content)
             print()
