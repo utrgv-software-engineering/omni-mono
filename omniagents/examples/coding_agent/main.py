@@ -1,6 +1,7 @@
 import os
 from datetime import datetime
 import subprocess
+from typing import Optional
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -16,6 +17,7 @@ from tools.file_tools import (
     edit_file,
     write_file,
     create_git_worktree,
+    _get_worktree_metadata,
 )
 from tools.pr_tool import create_pull_request
 from openai.types.shared import Reasoning
@@ -190,36 +192,125 @@ You are now ready to assist.
 """
 
 
+def _get_otto_metadata(key: str) -> Optional[str]:
+    """Get Otto metadata from worktree-specific storage.
+    
+    This ensures complete isolation between concurrent worktrees.
+    """
+    # Only use worktree-specific storage, no fallback to git config
+    return _get_worktree_metadata(key)
+
+
 def _git_changed_diffs() -> list[tuple[str, str]]:
     """Return list of (filename, markdown_diff) for files changed in the worktree."""
-    try:
-        base_commit = subprocess.check_output(
-            ["git", "config", "--get", "otto.base-commit"], text=True
-        ).strip()
-    except subprocess.CalledProcessError:
-        raise RuntimeError(
-            "otto.base-commit not found in git config; run create_git_worktree first"
-        )
+    # Use the new helper function to get metadata
+    base_commit = _get_otto_metadata('base-commit')
+    if not base_commit:
+        # Not in an Otto worktree, return empty list
+        return []
+
+    # Get the initial state (which captures any uncommitted changes at worktree creation)
+    initial_state = _get_otto_metadata('initial-state')
+    if not initial_state:
+        # Fall back to base commit if initial state not found (for backwards compatibility)
+        initial_state = base_commit
 
     try:
-        res = subprocess.run(
-            ["git", "diff", "--name-only", base_commit], capture_output=True, text=True
+        # Get files changed in both committed and uncommitted states
+        # First, get files with uncommitted changes (staged and unstaged)
+        uncommitted_res = subprocess.run(
+            ["git", "diff", "--name-only", initial_state], 
+            capture_output=True, text=True
         )
-        files = [f.strip() for f in res.stdout.splitlines() if f.strip()]
+        uncommitted_files = set(f.strip() for f in uncommitted_res.stdout.splitlines() if f.strip())
+        
+        # Also get files in staging area
+        staged_res = subprocess.run(
+            ["git", "diff", "--cached", "--name-only", initial_state],
+            capture_output=True, text=True  
+        )
+        staged_files = set(f.strip() for f in staged_res.stdout.splitlines() if f.strip())
+        
+        # Get untracked files
+        untracked_res = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            capture_output=True, text=True
+        )
+        untracked_files = set(f.strip() for f in untracked_res.stdout.splitlines() if f.strip())
+        
+        # Get files changed in commits since initial state
+        committed_res = subprocess.run(
+            ["git", "diff", "--name-only", f"{initial_state}..HEAD"],
+            capture_output=True, text=True
+        )
+        committed_files = set(f.strip() for f in committed_res.stdout.splitlines() if f.strip())
+        
+        # Combine all changed files
+        all_changed_files = uncommitted_files | staged_files | committed_files | untracked_files
+        
     except Exception:
         return []
 
     diffs: list[tuple[str, str]] = []
-    for f in files:
+    for f in sorted(all_changed_files):
         try:
-            diff = subprocess.run(
-                ["git", "--no-pager", "diff", base_commit, "--", f],
-                capture_output=True,
-                text=True,
-            ).stdout
+            # Check if file exists (it might have been deleted)
+            file_exists = subprocess.run(
+                ["git", "cat-file", "-e", f"HEAD:{f}"],
+                capture_output=True
+            ).returncode == 0 or os.path.exists(f)
+            
+            if not file_exists and f not in untracked_files:
+                # File was deleted
+                diff = subprocess.run(
+                    ["git", "--no-pager", "diff", initial_state, "--", f],
+                    capture_output=True,
+                    text=True,
+                ).stdout
+            elif f in untracked_files:
+                # New untracked file - create a diff showing it as added
+                try:
+                    with open(f, 'r', encoding='utf-8', errors='replace') as file:
+                        content = file.read()
+                    lines = content.splitlines(keepends=True)
+                    diff = f"diff --git a/{f} b/{f}\n"
+                    diff += "new file mode 100644\n"
+                    diff += "index 0000000..1111111\n"
+                    diff += f"--- /dev/null\n"
+                    diff += f"+++ b/{f}\n"
+                    diff += "@@ -0,0 +1," + str(len(lines)) + " @@\n"
+                    for line in lines:
+                        diff += "+" + line
+                        if not line.endswith('\n'):
+                            diff += "\n"
+                except Exception:
+                    # If we can't read the file, skip it
+                    continue
+            else:
+                # Get the complete diff for this file from initial state to current working directory
+                # This shows all changes made by the agent, whether committed or not
+                diff = subprocess.run(
+                    ["git", "--no-pager", "diff", initial_state, "--", f],
+                    capture_output=True,
+                    text=True,
+                ).stdout
+                
+                # If no diff in working directory, check if there are committed changes
+                if not diff.strip():
+                    diff = subprocess.run(
+                        ["git", "--no-pager", "diff", f"{initial_state}..HEAD", "--", f],
+                        capture_output=True,
+                        text=True,
+                    ).stdout
+                    
             if diff.strip():
-                diff_block = f"```diff\n{diff}\n```"
-                diffs.append((f, diff_block))
+                # Filter out binary file diffs
+                if "Binary files" not in diff:
+                    diff_block = f"```diff\n{diff}\n```"
+                    diffs.append((f, diff_block))
+                else:
+                    # For binary files, just note the change
+                    diffs.append((f, "```\n[Binary file changed]\n```"))
         except Exception:
             pass
     return diffs
@@ -228,8 +319,16 @@ def _git_changed_diffs() -> list[tuple[str, str]]:
 class CodingAgentApp(AgentApp):
     async def _process_message(self, user_message: str):
         await super()._process_message(user_message)
-        for fname, diff_md in _git_changed_diffs():
-            self.add_artifact(fname, diff_md, mode="markdown", artifact_id=fname)
+        
+        # Only try to generate diffs if we're in an Otto worktree
+        if _get_otto_metadata('base-commit'):
+            # We're in a worktree, so generate diffs
+            try:
+                for fname, diff_md in _git_changed_diffs():
+                    self.add_artifact(fname, diff_md, mode="markdown", artifact_id=fname)
+            except Exception:
+                # Any error during diff generation, skip it
+                pass
 
 # Build a direct Agent instance and run via AgentApp.from_agent
 if __name__ == "__main__":

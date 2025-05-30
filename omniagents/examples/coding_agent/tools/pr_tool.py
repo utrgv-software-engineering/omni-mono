@@ -3,7 +3,7 @@ from typing import Dict, Any
 
 from omniagents.core import function_tool
 
-from .file_tools import _validate_git_environment
+from .file_tools import _validate_git_environment, _get_worktree_metadata
 
 @function_tool
 def create_pull_request(title: str, body: str) -> Dict[str, Any]:
@@ -23,15 +23,11 @@ def create_pull_request(title: str, body: str) -> Dict[str, Any]:
 
     branch = validation.get("branch")
     
-    # Get the base branch from git config (set by create_git_worktree)
-    try:
-        base_branch = subprocess.check_output(
-            ["git", "config", "--get", "otto.base-branch"], 
-            text=True
-        ).strip()
-    except subprocess.CalledProcessError:
+    # Get the base branch from worktree-specific storage
+    base_branch = _get_worktree_metadata('base-branch')
+    if not base_branch:
         return {
-            "error": "CANNOT CREATE PR: No base branch found in git config. Was this worktree created properly?",
+            "error": "CANNOT CREATE PR: No base branch found. Was this worktree created properly?",
             "required_action": "Run create_git_worktree first to set up the working environment"
         }
     

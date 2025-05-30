@@ -7,6 +7,7 @@ from typing import Dict, Any, List, Optional
 from omniagents.core import function_tool
 import pathlib
 from functools import lru_cache
+import json
 
 # Optional dependency: pathspec is lightweight and allows us to honor .gitignore
 # If it is not available at runtime we simply fall back to previous behaviour.
@@ -241,13 +242,56 @@ def create_git_worktree(task_slug: str, base_branch: str | None = None) -> Dict[
         abs_worktree_path = os.path.abspath(worktree_path)
         os.chdir(abs_worktree_path)
 
-        subprocess.run([
-            'git', 'config', 'otto.base-commit', base_commit
-        ], check=True)
+        # Store metadata using worktree-specific storage
+        if not _store_worktree_metadata('base-commit', base_commit):
+            raise RuntimeError("Failed to store base-commit in worktree metadata")
 
-        subprocess.run([
-            'git', 'config', 'otto.base-branch', clean_base
-        ], check=True)
+        if not _store_worktree_metadata('base-branch', clean_base):
+            raise RuntimeError("Failed to store base-branch in worktree metadata")
+
+        # Capture initial state of the worktree (including any uncommitted changes)
+        # This will be used to show only net new changes made by the agent
+        try:
+            # Check if there are any uncommitted changes in the new worktree
+            status_result = subprocess.run(
+                ['git', 'status', '--porcelain'],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            
+            if status_result.stdout.strip():
+                # There are uncommitted changes - create a temporary commit to capture state
+                # First, add all files (including untracked) to a temporary index
+                subprocess.run(['git', 'add', '-A'], check=True)
+                
+                # Create a tree object from the current state
+                tree_hash = subprocess.check_output(
+                    ['git', 'write-tree'],
+                    text=True
+                ).strip()
+                
+                # Create a commit object without updating any refs
+                initial_state_commit = subprocess.check_output(
+                    ['git', 'commit-tree', tree_hash, '-p', base_commit, '-m', 'Initial worktree state'],
+                    text=True
+                ).strip()
+                
+                # Reset the index and working directory back to their original state
+                subprocess.run(['git', 'reset', base_commit], check=True)
+                
+                # Store the initial state commit hash
+                if not _store_worktree_metadata('initial-state', initial_state_commit):
+                    raise RuntimeError("Failed to store initial-state in worktree metadata")
+            else:
+                # No uncommitted changes - initial state is the base commit
+                if not _store_worktree_metadata('initial-state', base_commit):
+                    raise RuntimeError("Failed to store initial-state in worktree metadata")
+                
+        except subprocess.CalledProcessError:
+            # If capturing initial state fails, fall back to using base commit
+            if not _store_worktree_metadata('initial-state', base_commit):
+                raise RuntimeError("Failed to store initial-state in worktree metadata")
 
         return {
             "success": True,
@@ -752,3 +796,73 @@ def write_file(file_path: str, content: str, append: Optional[bool]) -> Dict[str
         }
     except Exception as e:
         return {"error": f"Error writing file: {str(e)}"}
+
+def _get_worktree_metadata_dir() -> Optional[str]:
+    """Get the path to the current worktree's private metadata directory.
+    
+    Returns None if not in a worktree or if the directory cannot be determined.
+    """
+    try:
+        # Get the path to the .git file/directory
+        git_dir = subprocess.check_output(
+            ['git', 'rev-parse', '--git-dir'],
+            text=True,
+            stderr=subprocess.DEVNULL
+        ).strip()
+        
+        # If it's a worktree, the .git file contains a path like:
+        # gitdir: /path/to/repo/.git/worktrees/worktree-name
+        if os.path.isfile('.git'):
+            with open('.git', 'r') as f:
+                content = f.read().strip()
+                if content.startswith('gitdir: '):
+                    worktree_git_dir = content[8:]  # Remove 'gitdir: ' prefix
+                    # Create otto subdirectory for our metadata
+                    otto_dir = os.path.join(worktree_git_dir, 'otto')
+                    os.makedirs(otto_dir, exist_ok=True)
+                    return otto_dir
+        
+        # Not in a worktree or unable to determine
+        return None
+        
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return None
+
+
+def _store_worktree_metadata(key: str, value: str) -> bool:
+    """Store metadata specific to the current worktree.
+    
+    This data is stored in the worktree's private git directory and will not
+    be committed or interfere with other worktrees.
+    
+    Returns True if successful, False otherwise.
+    """
+    metadata_dir = _get_worktree_metadata_dir()
+    if not metadata_dir:
+        return False
+    
+    try:
+        # Store as individual files for easy access
+        metadata_file = os.path.join(metadata_dir, f"{key}.txt")
+        with open(metadata_file, 'w') as f:
+            f.write(value)
+        return True
+    except (OSError, IOError):
+        return False
+
+
+def _get_worktree_metadata(key: str) -> Optional[str]:
+    """Retrieve metadata specific to the current worktree.
+    
+    Returns None if the key doesn't exist or cannot be read.
+    """
+    metadata_dir = _get_worktree_metadata_dir()
+    if not metadata_dir:
+        return None
+    
+    try:
+        metadata_file = os.path.join(metadata_dir, f"{key}.txt")
+        with open(metadata_file, 'r') as f:
+            return f.read().strip()
+    except (OSError, IOError, FileNotFoundError):
+        return None

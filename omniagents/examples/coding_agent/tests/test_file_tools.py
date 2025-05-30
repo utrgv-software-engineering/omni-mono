@@ -3,6 +3,7 @@ import pytest
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
+import sys
 
 # Mock the decorator before importing the module
 @pytest.fixture(autouse=True)
@@ -14,13 +15,15 @@ def mock_function_tool():
 
 @pytest.fixture(autouse=True)
 def mock_git_validation():
-    with patch('examples.coding_agent.tools.file_tools._validate_git_environment', return_value={"valid": True}):
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    with patch('tools.file_tools._validate_git_environment', return_value={"valid": True}):
         yield
 
 
 @pytest.fixture(autouse=True)
 def reset_file_history():
-    from examples.coding_agent.tools import file_tools
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from tools import file_tools
     file_tools._file_history.clear()
     yield
     file_tools._file_history.clear()
@@ -40,7 +43,7 @@ def tmp_workdir(tmp_path):
 
 def test_glob_files_basic(mock_function_tool, tmp_workdir):
     """Ensure glob_files returns only *.py files when pattern is specified."""
-    from examples.coding_agent.tools.file_tools import glob_files
+    from tools.file_tools import glob_files
 
     result = glob_files('*.py', path=str(tmp_workdir))
 
@@ -50,7 +53,7 @@ def test_glob_files_basic(mock_function_tool, tmp_workdir):
 
 def test_grep_files_basic(mock_function_tool, tmp_workdir):
     """Ensure grep_files finds occurrences in matching files only."""
-    from examples.coding_agent.tools.file_tools import grep_files
+    from tools.file_tools import grep_files
 
     # Search for the word 'hello' in *.txt files
     result = grep_files('hello', path=str(tmp_workdir), include='*.txt')
@@ -61,7 +64,7 @@ def test_grep_files_basic(mock_function_tool, tmp_workdir):
 
 def test_list_directory_nonrecursive(mock_function_tool, tmp_workdir):
     """Verify list_directory lists top-level items only when recursive=False."""
-    from examples.coding_agent.tools.file_tools import list_directory
+    from tools.file_tools import list_directory
 
     listing = list_directory(path=str(tmp_workdir), recursive=False)
 
@@ -74,7 +77,7 @@ def test_list_directory_nonrecursive(mock_function_tool, tmp_workdir):
 
 def test_read_file_range(mock_function_tool, tmp_workdir):
     """Verify read_file reads the correct slice of lines."""
-    from examples.coding_agent.tools.file_tools import read_file
+    from tools.file_tools import read_file
 
     target_file = tmp_workdir / 'b.txt'
     rel = os.path.relpath(target_file, os.getcwd())
@@ -88,7 +91,7 @@ def test_read_file_range(mock_function_tool, tmp_workdir):
 
 def test_edit_file_rejects_multiple_matches(mock_function_tool, tmp_workdir):
     """edit_file should reject ambiguous changes with multiple matches."""
-    from examples.coding_agent.tools.file_tools import edit_file, read_file
+    from tools.file_tools import edit_file, read_file
 
     target_file = tmp_workdir / 'b.txt'
     rel = os.path.relpath(target_file, os.getcwd())
@@ -102,7 +105,7 @@ def test_edit_file_rejects_multiple_matches(mock_function_tool, tmp_workdir):
 
 def test_edit_file_single_replacement(mock_function_tool, tmp_workdir):
     """Verify that a single replacement is allowed and applied."""
-    from examples.coding_agent.tools.file_tools import edit_file, read_file
+    from tools.file_tools import edit_file, read_file
 
     target_file = tmp_workdir / 'b.txt'
     rel = os.path.relpath(target_file, os.getcwd())
@@ -118,7 +121,7 @@ def test_edit_file_single_replacement(mock_function_tool, tmp_workdir):
 
 def test_write_file_append(mock_function_tool, tmp_path):
     """Test write_file in overwrite and append modes."""
-    from examples.coding_agent.tools.file_tools import write_file, read_file
+    from tools.file_tools import write_file, read_file
 
     target_file = tmp_path / 'log.txt'
     rel = os.path.relpath(target_file, os.getcwd())
@@ -133,7 +136,7 @@ def test_write_file_append(mock_function_tool, tmp_path):
 
 
 def test_read_partial_requires_full_read(mock_function_tool, tmp_workdir):
-    from examples.coding_agent.tools import file_tools
+    from tools import file_tools
 
     target_file = tmp_workdir / 'b.txt'
     rel = os.path.relpath(target_file, os.getcwd())
@@ -145,7 +148,7 @@ def test_read_partial_requires_full_read(mock_function_tool, tmp_workdir):
 
 
 def test_edit_requires_full_read(mock_function_tool, tmp_workdir):
-    from examples.coding_agent.tools import file_tools
+    from tools import file_tools
 
     target_file = tmp_workdir / 'b.txt'
     rel = os.path.relpath(target_file, os.getcwd())
@@ -159,7 +162,7 @@ def test_edit_requires_full_read(mock_function_tool, tmp_workdir):
 
 
 def test_edit_requires_reread_after_edit(mock_function_tool, tmp_workdir):
-    from examples.coding_agent.tools import file_tools
+    from tools import file_tools
 
     target_file = tmp_workdir / 'b.txt'
     rel = os.path.relpath(target_file, os.getcwd())
