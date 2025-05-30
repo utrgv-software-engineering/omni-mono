@@ -9,7 +9,6 @@ from agents import Agent
 from omniagents.core.app_base import AgentApp
 from omniagents.core import function_tool
 
-from tools import get_current_time, flip_coin
 
 INSTRUCTIONS = """You are a friendly assistant.\nUse `get_current_time` when a user asks for the current time.\nUse `flip_coin` when asked to flip a coin."""
 
