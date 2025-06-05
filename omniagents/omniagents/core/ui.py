@@ -543,6 +543,7 @@ class ArtifactDisplay(CollapsibleCard):
             body_widget = ft.Container(
                 content=ft.InteractiveViewer(content=img, expand=True),
                 height=400,  # default viewport height; adjust as needed
+                expand=True,
             )
         else:
             body_widget = ft.Container(ft.Text(content, selectable=True))
@@ -577,6 +578,7 @@ class ArtifactDisplay(CollapsibleCard):
             self.body_widget = ft.Container(
                 content=ft.InteractiveViewer(content=img, expand=True),
                 height=400,
+                expand=True,
             )
         else:
             self.body_widget = ft.Container(ft.Text(content, selectable=True))
