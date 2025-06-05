@@ -533,8 +533,9 @@ class ArtifactDisplay(CollapsibleCard):
             )
         elif mode == "image":
             # Display images with pan/zoom capabilities via InteractiveViewer
-            # Decide whether the string is raw base64 data or a source URL/file path
-            if content.strip().startswith("data:image") or len(content) > 300:
+            # If the string starts with a data URI treat it as base64; otherwise assume
+            # it's a URL or file path—even if it happens to be long.
+            if content.strip().startswith("data:image"):
                 img = ft.Image(src_base64=content, fit=ft.ImageFit.CONTAIN, expand=True)
             else:
                 img = ft.Image(src=content, fit=ft.ImageFit.CONTAIN, expand=True)
@@ -563,8 +564,9 @@ class ArtifactDisplay(CollapsibleCard):
             )
         elif mode == "image":
             # Display images with pan/zoom capabilities via InteractiveViewer
-            # Decide whether the string is raw base64 data or a source URL/file path
-            if content.strip().startswith("data:image") or len(content) > 300:
+            # If the string starts with a data URI treat it as base64; otherwise assume
+            # it's a URL or file path—even if it happens to be long.
+            if content.strip().startswith("data:image"):
                 img = ft.Image(src_base64=content, fit=ft.ImageFit.CONTAIN, expand=True)
             else:
                 img = ft.Image(src=content, fit=ft.ImageFit.CONTAIN, expand=True)
