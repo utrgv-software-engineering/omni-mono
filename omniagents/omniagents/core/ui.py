@@ -535,42 +535,25 @@ class ArtifactDisplay(CollapsibleCard):
             # Image artifacts render as a single "Save" button (no preview)
             def _save_image(e):
                 page = e.page
-                # Web targets: open the image in new tab so browser handles save.
-                if page.web:
-                    target_uri = (
-                        content
-                        if content.startswith("http") or content.startswith("data:image")
-                        else f"data:image/png;base64,{content}"
-                    )
-                    page.launch_url(target_uri)
+                # Web targets: open the image URL directly so browser handles save.
+                if page.web and content.startswith("http"):
+                    page.launch_url(content)
                     return
 
                 # Desktop / mobile apps: use native save dialog via FilePicker
-                import base64, urllib.request, ssl, os, urllib.parse
+                import urllib.request, ssl, os, urllib.parse, shutil
 
                 def _write_file(picker_event: ft.FilePickerResultEvent):
                     if not picker_event.path:
                         return
-                    data_bytes: bytes | None = None
                     try:
                         if content.startswith("http://") or content.startswith("https://"):
-                            data_bytes = urllib.request.urlopen(
-                                content, context=ssl._create_unverified_context()
-                            ).read()
+                            # Download over HTTP(S)
+                            with urllib.request.urlopen(content, context=ssl._create_unverified_context()) as resp, open(picker_event.path, "wb") as out_f:
+                                shutil.copyfileobj(resp, out_f)
                         else:
-                            b64_data = (
-                                content.split(",", 1)[1]
-                                if content.strip().startswith("data:image")
-                                else content
-                            )
-                            data_bytes = base64.b64decode(b64_data)
-                    except Exception as err:
-                        print(f"Error obtaining image data: {err}")
-                    if data_bytes is None:
-                        return
-                    try:
-                        with open(picker_event.path, "wb") as f:
-                            f.write(data_bytes)
+                            # Copy from local filesystem path
+                            shutil.copyfile(content, picker_event.path)
                         print(f"Saved artifact image to {picker_event.path}")
                     except Exception as err:
                         print(f"Error saving image: {err}")
@@ -578,12 +561,7 @@ class ArtifactDisplay(CollapsibleCard):
                 fp = ft.FilePicker(on_result=_write_file)
                 page.overlay.append(fp)
                 page.update()  # Ensure FilePicker is attached before use
-                default_name = "artifact.png"
-                if content.startswith("http"):
-                    try:
-                        default_name = os.path.basename(urllib.parse.urlparse(content).path) or default_name
-                    except Exception:
-                        pass
+                default_name = os.path.basename(content) if not content.startswith("http") else os.path.basename(urllib.parse.urlparse(content).path) or "artifact.png"
                 fp.save_file(file_name=default_name)
             # Save button control (shown in the card body)
             body_widget = ft.FilledButton(
@@ -617,40 +595,23 @@ class ArtifactDisplay(CollapsibleCard):
             # Image artifacts render as a single "Save" button (no preview)
             def _save_image(e):
                 page = e.page
-                if page.web:
-                    target_uri = (
-                        content
-                        if content.startswith("http") or content.startswith("data:image")
-                        else f"data:image/png;base64,{content}"
-                    )
-                    page.launch_url(target_uri)
+                if page.web and content.startswith("http"):
+                    page.launch_url(content)
                     return
 
-                import base64, urllib.request, ssl, os, urllib.parse
+                import urllib.request, ssl, os, urllib.parse, shutil
 
                 def _write_file(picker_event: ft.FilePickerResultEvent):
                     if not picker_event.path:
                         return
-                    data_bytes: bytes | None = None
                     try:
                         if content.startswith("http://") or content.startswith("https://"):
-                            data_bytes = urllib.request.urlopen(
-                                content, context=ssl._create_unverified_context()
-                            ).read()
+                            # Download over HTTP(S)
+                            with urllib.request.urlopen(content, context=ssl._create_unverified_context()) as resp, open(picker_event.path, "wb") as out_f:
+                                shutil.copyfileobj(resp, out_f)
                         else:
-                            b64_data = (
-                                content.split(",", 1)[1]
-                                if content.strip().startswith("data:image")
-                                else content
-                            )
-                            data_bytes = base64.b64decode(b64_data)
-                    except Exception as err:
-                        print(f"Error obtaining image data: {err}")
-                    if data_bytes is None:
-                        return
-                    try:
-                        with open(picker_event.path, "wb") as f:
-                            f.write(data_bytes)
+                            # Copy from local filesystem path
+                            shutil.copyfile(content, picker_event.path)
                         print(f"Saved artifact image to {picker_event.path}")
                     except Exception as err:
                         print(f"Error saving image: {err}")
@@ -658,12 +619,7 @@ class ArtifactDisplay(CollapsibleCard):
                 fp = ft.FilePicker(on_result=_write_file)
                 page.overlay.append(fp)
                 page.update()
-                default_name = "artifact.png"
-                if content.startswith("http"):
-                    try:
-                        default_name = os.path.basename(urllib.parse.urlparse(content).path) or default_name
-                    except Exception:
-                        pass
+                default_name = os.path.basename(content) if not content.startswith("http") else os.path.basename(urllib.parse.urlparse(content).path) or "artifact.png"
                 fp.save_file(file_name=default_name)
             self.body_widget = ft.FilledButton(
                 text="Save",
