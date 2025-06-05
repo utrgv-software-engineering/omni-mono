@@ -577,6 +577,7 @@ class ArtifactDisplay(CollapsibleCard):
 
                 fp = ft.FilePicker(on_result=_write_file)
                 page.overlay.append(fp)
+                page.update()  # Ensure FilePicker is attached before use
                 default_name = "artifact.png"
                 if content.startswith("http"):
                     try:
@@ -656,6 +657,7 @@ class ArtifactDisplay(CollapsibleCard):
 
                 fp = ft.FilePicker(on_result=_write_file)
                 page.overlay.append(fp)
+                page.update()
                 default_name = "artifact.png"
                 if content.startswith("http"):
                     try:
