@@ -531,6 +531,14 @@ class ArtifactDisplay(CollapsibleCard):
                 extension_set=ft.MarkdownExtensionSet.GITHUB_FLAVORED,
                 code_theme=ft.MarkdownCodeTheme.GITHUB,
             )
+        elif mode == "image":
+            # Display images with pan/zoom capabilities via InteractiveViewer
+            # Decide whether the string is raw base64 data or a source URL/file path
+            if content.strip().startswith("data:image") or len(content) > 300:
+                img = ft.Image(src_base64=content, fit=ft.ImageFit.CONTAIN, expand=True)
+            else:
+                img = ft.Image(src=content, fit=ft.ImageFit.CONTAIN, expand=True)
+            body_widget = ft.InteractiveViewer(content=img, expand=True)
         else:
             body_widget = ft.Container(ft.Text(content, selectable=True))
 
@@ -553,6 +561,14 @@ class ArtifactDisplay(CollapsibleCard):
                 extension_set=ft.MarkdownExtensionSet.GITHUB_FLAVORED,
                 code_theme=ft.MarkdownCodeTheme.GITHUB,
             )
+        elif mode == "image":
+            # Display images with pan/zoom capabilities via InteractiveViewer
+            # Decide whether the string is raw base64 data or a source URL/file path
+            if content.strip().startswith("data:image") or len(content) > 300:
+                img = ft.Image(src_base64=content, fit=ft.ImageFit.CONTAIN, expand=True)
+            else:
+                img = ft.Image(src=content, fit=ft.ImageFit.CONTAIN, expand=True)
+            self.body_widget = ft.InteractiveViewer(content=img, expand=True)
         else:
             self.body_widget = ft.Container(ft.Text(content, selectable=True))
         self._refresh()
