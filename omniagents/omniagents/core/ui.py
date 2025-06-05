@@ -584,6 +584,12 @@ class ArtifactDisplay(CollapsibleCard):
                     except Exception:
                         pass
                 fp.save_file(file_name=default_name)
+            # Save button control (shown in the card body)
+            body_widget = ft.FilledButton(
+                text="Save",
+                icon=ft.icons.DOWNLOAD,
+                on_click=_save_image,
+            )
         else:
             body_widget = ft.Container(ft.Text(content, selectable=True))
 
@@ -657,6 +663,11 @@ class ArtifactDisplay(CollapsibleCard):
                     except Exception:
                         pass
                 fp.save_file(file_name=default_name)
+            self.body_widget = ft.FilledButton(
+                text="Save",
+                icon=ft.icons.DOWNLOAD,
+                on_click=_save_image,
+            )
         else:
             self.body_widget = ft.Container(ft.Text(content, selectable=True))
         self._refresh()
