@@ -535,11 +535,15 @@ class ArtifactDisplay(CollapsibleCard):
             # Display images with pan/zoom capabilities via InteractiveViewer
             # If the string starts with a data URI treat it as base64; otherwise assume
             # it's a URL or file path—even if it happens to be long.
-            if content.strip().startswith("data:image"):
+            if content.strip().startswith("data:image") or len(content) > 300:
                 img = ft.Image(src_base64=content, fit=ft.ImageFit.CONTAIN, expand=True)
             else:
                 img = ft.Image(src=content, fit=ft.ImageFit.CONTAIN, expand=True)
-            body_widget = ft.InteractiveViewer(content=img, expand=True)
+            # InteractiveViewer needs an explicit height when placed inside a Column(tight=True)
+            body_widget = ft.Container(
+                content=ft.InteractiveViewer(content=img, expand=True),
+                height=400,  # default viewport height; adjust as needed
+            )
         else:
             body_widget = ft.Container(ft.Text(content, selectable=True))
 
@@ -566,11 +570,14 @@ class ArtifactDisplay(CollapsibleCard):
             # Display images with pan/zoom capabilities via InteractiveViewer
             # If the string starts with a data URI treat it as base64; otherwise assume
             # it's a URL or file path—even if it happens to be long.
-            if content.strip().startswith("data:image"):
+            if content.strip().startswith("data:image") or len(content) > 300:
                 img = ft.Image(src_base64=content, fit=ft.ImageFit.CONTAIN, expand=True)
             else:
                 img = ft.Image(src=content, fit=ft.ImageFit.CONTAIN, expand=True)
-            self.body_widget = ft.InteractiveViewer(content=img, expand=True)
+            self.body_widget = ft.Container(
+                content=ft.InteractiveViewer(content=img, expand=True),
+                height=400,
+            )
         else:
             self.body_widget = ft.Container(ft.Text(content, selectable=True))
         self._refresh()
