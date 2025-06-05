@@ -532,19 +532,58 @@ class ArtifactDisplay(CollapsibleCard):
                 code_theme=ft.MarkdownCodeTheme.GITHUB,
             )
         elif mode == "image":
-            # Display images with pan/zoom capabilities via InteractiveViewer
-            # If the string starts with a data URI treat it as base64; otherwise assume
-            # it's a URL or file path—even if it happens to be long.
-            if content.strip().startswith("data:image") or len(content) > 300:
-                img = ft.Image(src_base64=content, fit=ft.ImageFit.CONTAIN, expand=True)
-            else:
-                img = ft.Image(src=content, fit=ft.ImageFit.CONTAIN, expand=True)
-            # InteractiveViewer needs an explicit height when placed inside a Column(tight=True)
-            body_widget = ft.Container(
-                content=ft.InteractiveViewer(content=img, expand=True),
-                height=400,  # default viewport height; adjust as needed
-                expand=True,
-            )
+            # Image artifacts render as a single "Save" button (no preview)
+            def _save_image(e):
+                page = e.page
+                # Web targets: open the image in new tab so browser handles save.
+                if page.web:
+                    target_uri = (
+                        content
+                        if content.startswith("http") or content.startswith("data:image")
+                        else f"data:image/png;base64,{content}"
+                    )
+                    page.launch_url(target_uri)
+                    return
+
+                # Desktop / mobile apps: use native save dialog via FilePicker
+                import base64, urllib.request, ssl, os, urllib.parse
+
+                def _write_file(picker_event: ft.FilePickerResultEvent):
+                    if not picker_event.path:
+                        return
+                    data_bytes: bytes | None = None
+                    try:
+                        if content.startswith("http://") or content.startswith("https://"):
+                            data_bytes = urllib.request.urlopen(
+                                content, context=ssl._create_unverified_context()
+                            ).read()
+                        else:
+                            b64_data = (
+                                content.split(",", 1)[1]
+                                if content.strip().startswith("data:image")
+                                else content
+                            )
+                            data_bytes = base64.b64decode(b64_data)
+                    except Exception as err:
+                        print(f"Error obtaining image data: {err}")
+                    if data_bytes is None:
+                        return
+                    try:
+                        with open(picker_event.path, "wb") as f:
+                            f.write(data_bytes)
+                        print(f"Saved artifact image to {picker_event.path}")
+                    except Exception as err:
+                        print(f"Error saving image: {err}")
+
+                fp = ft.FilePicker(on_result=_write_file)
+                page.overlay.append(fp)
+                default_name = "artifact.png"
+                if content.startswith("http"):
+                    try:
+                        default_name = os.path.basename(urllib.parse.urlparse(content).path) or default_name
+                    except Exception:
+                        pass
+                fp.save_file(file_name=default_name)
         else:
             body_widget = ft.Container(ft.Text(content, selectable=True))
 
@@ -568,18 +607,56 @@ class ArtifactDisplay(CollapsibleCard):
                 code_theme=ft.MarkdownCodeTheme.GITHUB,
             )
         elif mode == "image":
-            # Display images with pan/zoom capabilities via InteractiveViewer
-            # If the string starts with a data URI treat it as base64; otherwise assume
-            # it's a URL or file path—even if it happens to be long.
-            if content.strip().startswith("data:image") or len(content) > 300:
-                img = ft.Image(src_base64=content, fit=ft.ImageFit.CONTAIN, expand=True)
-            else:
-                img = ft.Image(src=content, fit=ft.ImageFit.CONTAIN, expand=True)
-            self.body_widget = ft.Container(
-                content=ft.InteractiveViewer(content=img, expand=True),
-                height=400,
-                expand=True,
-            )
+            # Image artifacts render as a single "Save" button (no preview)
+            def _save_image(e):
+                page = e.page
+                if page.web:
+                    target_uri = (
+                        content
+                        if content.startswith("http") or content.startswith("data:image")
+                        else f"data:image/png;base64,{content}"
+                    )
+                    page.launch_url(target_uri)
+                    return
+
+                import base64, urllib.request, ssl, os, urllib.parse
+
+                def _write_file(picker_event: ft.FilePickerResultEvent):
+                    if not picker_event.path:
+                        return
+                    data_bytes: bytes | None = None
+                    try:
+                        if content.startswith("http://") or content.startswith("https://"):
+                            data_bytes = urllib.request.urlopen(
+                                content, context=ssl._create_unverified_context()
+                            ).read()
+                        else:
+                            b64_data = (
+                                content.split(",", 1)[1]
+                                if content.strip().startswith("data:image")
+                                else content
+                            )
+                            data_bytes = base64.b64decode(b64_data)
+                    except Exception as err:
+                        print(f"Error obtaining image data: {err}")
+                    if data_bytes is None:
+                        return
+                    try:
+                        with open(picker_event.path, "wb") as f:
+                            f.write(data_bytes)
+                        print(f"Saved artifact image to {picker_event.path}")
+                    except Exception as err:
+                        print(f"Error saving image: {err}")
+
+                fp = ft.FilePicker(on_result=_write_file)
+                page.overlay.append(fp)
+                default_name = "artifact.png"
+                if content.startswith("http"):
+                    try:
+                        default_name = os.path.basename(urllib.parse.urlparse(content).path) or default_name
+                    except Exception:
+                        pass
+                fp.save_file(file_name=default_name)
         else:
             self.body_widget = ft.Container(ft.Text(content, selectable=True))
         self._refresh()
