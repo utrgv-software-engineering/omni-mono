@@ -1,5 +1,6 @@
 import flet as ft
 import json
+import os
 from typing import Dict, Any, List
 from datetime import datetime # Import datetime
 from .settings import SettingField # Import SettingField for default values
@@ -29,7 +30,7 @@ async def get_with_longer_timeout(page: ft.Page, key: str, default_value: Any = 
         return default_value
 
 async def load_settings(page: ft.Page, prefix: str, fields: List[SettingField]) -> Dict[str, Any]:
-    """Loads settings from client storage based on SettingField specs."""
+    """Loads settings from client storage based on SettingField specs, with environment variable fallback."""
     loaded_settings = {}
     ts_start = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
     print(f"[{ts_start}] Loading settings with prefix: {prefix}")
@@ -38,8 +39,22 @@ async def load_settings(page: ft.Page, prefix: str, fields: List[SettingField]) 
             key = f"{prefix}{field.key}"
             ts_attempt = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
             print(f"[{ts_attempt}]   Attempting to load key: {key} (Field: {field.label})") # Added print
-            # Use the field's default value if not found in storage
-            value = await get_with_longer_timeout(page, key, field.default) # Uses original get
+            
+            # First try to load from client storage
+            value = await get_with_longer_timeout(page, key, None) # Use None as default to detect if not found
+            
+            # If not found in client storage, check environment variables (like CLI mode)
+            if value is None or value == "":
+                env_val = os.getenv(field.key.upper())  # Use uppercase like CLI mode
+                if env_val not in (None, ""):
+                    value = env_val
+                    print(f"[{ts_attempt}]     Using environment variable {field.key.upper()}: {env_val}")
+                else:
+                    value = field.default
+                    print(f"[{ts_attempt}]     Using default value for {field.key}: {field.default}")
+            else:
+                print(f"[{ts_attempt}]     Using client storage value for {field.key}")
+            
             loaded_settings[field.key] = value
             ts_loaded = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
             # --- MODIFIED LOGGING (NO SECRET MASKING) --- 

@@ -10,8 +10,10 @@ from omniagents.core.config_loader import load_agent_spec_from_yaml
 
 def main():
     """Entry point for the omniagents CLI."""
+    # Load .env file for both CLI and GUI modes
     try:
         load_dotenv()
+        print("Loaded .env file")
     except Exception as e:
         print(f"Warning: Could not load .env file: {e}")
 
