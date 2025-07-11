@@ -1,10 +1,8 @@
-import flet as ft
 import sys
 import argparse
 from dotenv import load_dotenv
 
 # --- Core Framework Imports --- #
-from omniagents.core.app_base import AgentApp
 # Note: All OpenAI client configuration (API key, base URL, tracing) should be done by the user script or environment.
 from omniagents.core.config_loader import load_agent_spec_from_yaml
 
@@ -128,39 +126,39 @@ def main():
             return
 
         # Default GUI mode
+        from omniagents.core.backend_loader import load_backend, is_backend_available
         
-        try:
-            # Load AgentSpec from YAML via AgentApp
-            print(f"Loading agent configuration from: {CONFIG_FILE_PATH}")
-            app = AgentApp(config_path=CONFIG_FILE_PATH)
-            
-            # Override Debug Mode from Command Line Argument if provided
-            if args.debug:
-                print("Overriding debug mode: Setting to True based on command line argument.")
-                app.spec.debug_flag = True
-                if "(Debug Mode)" not in app.spec.page_title_suffix:
-                    app.spec.page_title_suffix += " (Debug Mode)"
-            
-            # Run the Flet App
-            print(f"Starting Flet app for agent: {app.spec.name}")
-            ft.app(
-                target=app.main,
-                # Other ft.app options can be added here (e.g., assets_dir, port)
-            )
-            
-        except FileNotFoundError:
-            print(f"Error: Configuration file '{CONFIG_FILE_PATH}' not found.")
-            print("Please ensure the YAML configuration file exists.")
+        if not is_backend_available('gui'):
+            print("Error: GUI backend is not available.")
+            print("Please install with: pip install omniagents[flet]")
             sys.exit(1)
-        except ImportError as e:
-            print(f"Error: Failed to import required modules: {e}")
-            if "PyYAML" in str(e):
-                print("Hint: PyYAML is required for loading config files. Install it using: pip install pyyaml")
-            sys.exit(1)
-        except Exception as e:
-            print(f"An unexpected error occurred: {e}")
-            import traceback
-            traceback.print_exc()
+        
+        gui_backend_class = load_backend('gui')
+        if gui_backend_class:
+            gui_backend = gui_backend_class()
+            spec = load_agent_spec_from_yaml(CONFIG_FILE_PATH)
+            try:
+                gui_backend.run(
+                    spec,
+                    config_path=CONFIG_FILE_PATH,
+                    debug=args.debug
+                )
+            except FileNotFoundError:
+                print(f"Error: Configuration file '{CONFIG_FILE_PATH}' not found.")
+                print("Please ensure the YAML configuration file exists.")
+                sys.exit(1)
+            except ImportError as e:
+                print(f"Error: Failed to import required modules: {e}")
+                if "PyYAML" in str(e):
+                    print("Hint: PyYAML is required for loading config files. Install it using: pip install pyyaml")
+                sys.exit(1)
+            except Exception as e:
+                print(f"An unexpected error occurred: {e}")
+                import traceback
+                traceback.print_exc()
+                sys.exit(1)
+        else:
+            print("Error: Failed to load GUI backend.")
             sys.exit(1)
     elif args.command == "save":
         try:

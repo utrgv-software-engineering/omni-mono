@@ -5,13 +5,11 @@ description = "OmniAgents"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "flet[all]==0.27.6",
     "openai-agents==0.0.9",
     "python-dotenv",
     "pydantic-core==2.33.0",
     "pydantic==2.11.1",
     "PyYAML",
-    "pytest",
 ]
 
 [project.scripts]
@@ -19,17 +17,23 @@ omniagents = "omniagents.cli:main"
 
 [project.optional-dependencies]
 cli = []  # CLI has no extra dependencies
+flet = [
+    "flet[all]==0.27.6",
+]
+gui = ["omniagents[flet]"]  # Alias for flet
 server = [
     "fastapi[all]>=0.115.12",
     "uvicorn>=0.34.1",
 ]
-all = ["omniagents[cli,server]"]
+all = ["omniagents[cli,flet,server]"]
 dev = [
     "pytest",
 ]
 
 [project.entry-points."omniagents.backends"]
 cli = "omniagents.backends.cli:CLIBackend"
+flet = "omniagents.backends.flet:FletBackend"
+gui = "omniagents.backends.flet:FletBackend"
 server = "omniagents.backends.server:ServerBackend"
 
 [build-system]

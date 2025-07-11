@@ -33,7 +33,8 @@ def load_backend(backend_name: str) -> Optional[Any]:
     # Fallback to direct import for backward compatibility
     backend_modules = {
         'cli': 'omniagents.backends.cli:CLIBackend',
-        'flet': 'omniagents.core.app_base:AgentApp',  # Still in core for now
+        'flet': 'omniagents.backends.flet:FletBackend',
+        'gui': 'omniagents.backends.flet:FletBackend',  # Alias for flet
         'server': 'omniagents.backends.server:ServerBackend',
     }
     
