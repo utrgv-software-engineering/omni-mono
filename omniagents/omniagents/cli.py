@@ -48,6 +48,32 @@ def main():
         default=None,
         help="Resume a previous CLI session using this identifier."
     )
+    # CLI-specific arguments for safe agent control
+    run_parser.add_argument(
+        "--no-approval",
+        action="store_true",
+        help="Disable SafeAgent tool approval (CLI mode only)."
+    )
+    run_parser.add_argument(
+        "--skip-approvals",
+        action="store_true",
+        help="Auto-approve all tool calls (CLI mode only)."
+    )
+    run_parser.add_argument(
+        "--no-halt",
+        action="store_true",
+        help="Don't halt on rejection (CLI mode only)."
+    )
+    run_parser.add_argument(
+        "--pre-approve",
+        type=str,
+        help="Comma-separated list of tool names to pre-approve (CLI mode only)."
+    )
+    run_parser.add_argument(
+        "--safe-patterns",
+        type=str,
+        help="Comma-separated list of safe tool patterns (CLI mode only)."
+    )
     
     # Save command
     save_parser = subparsers.add_parser("save", help="Save an agent spec as a standalone Python module")
@@ -81,12 +107,24 @@ def main():
         mode = args.mode or "gui"
         if mode == "cli":
             # Run in CLI mode
-            from omniagents.cli_runner import run_cli
-            try:
-                import asyncio
-                asyncio.run(run_cli(config_path=CONFIG_FILE_PATH, args=args))
-            except KeyboardInterrupt:
-                print("\nExiting CLI mode.")
+            from omniagents.core.backend_loader import load_backend, is_backend_available
+            
+            if not is_backend_available('cli'):
+                print("Error: CLI backend is not available.")
+                print("Please install with: pip install omniagents[cli]")
+                sys.exit(1)
+            
+            cli_backend_class = load_backend('cli')
+            if cli_backend_class:
+                cli_backend = cli_backend_class()
+                spec = load_agent_spec_from_yaml(CONFIG_FILE_PATH)
+                try:
+                    cli_backend.run(spec, config_path=CONFIG_FILE_PATH, args=args)
+                except KeyboardInterrupt:
+                    print("\nExiting CLI mode.")
+            else:
+                print("Error: Failed to load CLI backend.")
+                sys.exit(1)
             return
 
         # Default GUI mode
@@ -133,18 +171,34 @@ def main():
             import traceback; traceback.print_exc()
             sys.exit(1)
     elif args.command == "server":
-        try:
-            from omniagents.server.app import build_app
-            import uvicorn
-            print(f"Starting OmniAgents RPC server on {args.host}:{args.port} (config: {args.config})")
-            app = build_app(args.config, auth_token=args.auth_token)
-            uvicorn.run(app, host=args.host, port=args.port, reload=args.reload)
-        except ImportError as e:
-            print(f"Error: Required module not found: {e}. Install dependencies with 'pip install fastapi[all] fastapi-websocket-rpc uvicorn'.")
+        # Run in server mode
+        from omniagents.core.backend_loader import load_backend, is_backend_available
+        
+        if not is_backend_available('server'):
+            print("Error: Server backend is not available.")
+            print("Please install with: pip install omniagents[server]")
             sys.exit(1)
-        except Exception as e:
-            print(f"Failed to start server: {e}")
-            import traceback; traceback.print_exc()
+        
+        server_backend_class = load_backend('server')
+        if server_backend_class:
+            server_backend = server_backend_class()
+            spec = load_agent_spec_from_yaml(args.config)
+            try:
+                server_backend.run(
+                    spec,
+                    config_path=args.config,
+                    host=args.host,
+                    port=args.port,
+                    auth_token=args.auth_token,
+                    reload=args.reload
+                )
+            except Exception as e:
+                print(f"Failed to start server: {e}")
+                import traceback
+                traceback.print_exc()
+                sys.exit(1)
+        else:
+            print("Error: Failed to load server backend.")
             sys.exit(1)
     else:
         parser.print_help()

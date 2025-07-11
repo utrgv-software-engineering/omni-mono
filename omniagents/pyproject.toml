@@ -11,8 +11,6 @@ dependencies = [
     "pydantic-core==2.33.0",
     "pydantic==2.11.1",
     "PyYAML",
-    "fastapi[all]>=0.115.12",
-    "uvicorn>=0.34.1",
     "pytest",
 ]
 
@@ -20,9 +18,19 @@ dependencies = [
 omniagents = "omniagents.cli:main"
 
 [project.optional-dependencies]
+cli = []  # CLI has no extra dependencies
+server = [
+    "fastapi[all]>=0.115.12",
+    "uvicorn>=0.34.1",
+]
+all = ["omniagents[cli,server]"]
 dev = [
     "pytest",
 ]
+
+[project.entry-points."omniagents.backends"]
+cli = "omniagents.backends.cli:CLIBackend"
+server = "omniagents.backends.server:ServerBackend"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
