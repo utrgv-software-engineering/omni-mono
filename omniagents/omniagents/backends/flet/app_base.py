@@ -23,7 +23,7 @@ from typing import (
 
 # Import from other core modules
 # Use absolute imports for robustness within the package
-from omniagents.core.ui import (
+from .ui import (
     Message,
     ChatMessage,
     ToolInteractionDisplay,
@@ -31,8 +31,9 @@ from omniagents.core.ui import (
     TabHeader,
     ArtifactDisplay,
 )
-from omniagents.core.settings import SettingsScreen, SettingField
-from omniagents.core.storage import load_settings, save_settings
+from .settings import SettingsScreen
+from .storage import load_settings, save_settings
+from omniagents.core.specs import SettingField
 from omniagents.core.local_sessions import LocalSession
 from omniagents.core.config_loader import (
     load_agent_spec_from_yaml,
@@ -43,6 +44,7 @@ from omniagents.core.specs import (
     AgentLike,
     SafeAgentOptions,
 )  # <-- Import moved specs
+from omniagents.core.agent_builder import _default_build_agent
 
 # Import agents types for type hinting (use Protocol for flexibility)
 from agents import Agent, ItemHelpers  # Added Agent
@@ -56,7 +58,7 @@ from agents import (  # <-- Imports for default builder
 from openai import AsyncOpenAI  # <-- Import for default builder
 
 # Import SafeAgent components directly as they are part of the core package now
-from .safe_agent import SafeAgent, ApprovalResult  # Added SafeAgent and ApprovalResult
+from omniagents.core.safe_agent import SafeAgent, ApprovalResult  # Added SafeAgent and ApprovalResult
 
 # Use TYPE_CHECKING to avoid circular import issues at runtime
 if TYPE_CHECKING:
@@ -86,138 +88,7 @@ class MCPConnectionStatus(Enum):
 # --- MOVED AgentSpec dataclass to specs.py ---
 
 
-# --- Default Agent Builder (Internal) --- #
-async def _default_build_agent(
-    settings: Dict[str, Any],
-    mcp_server: Optional["MCPServerSse"],  # Use string literal
-    app: "AgentApp",  # Pass the app instance to access spec and callback
-) -> AgentLike:
-    """Internal default function to build the agent instance."""
-    # --- ADDED LOGGING ---
-    print(f"BUILDER ENTRY: Received settings dict id: {id(settings)}")
-    # ---------------------
-    spec = app.spec  # Get the spec from the app instance
-    print("Building agent using internal default builder...")
-
-    # --- Get Core Config from Spec/Settings ---
-    agent_name = spec.name
-    # Get model from spec (set by config loader) or fallback from settings
-    model_name = spec.model_name or settings.get(
-        "model_name", "gpt-4o"
-    )  # Ensure fallback
-    instructions = spec.get_agent_instructions()  # Use the spec's instruction loader
-    # Tools are provided directly in the spec if loaded from config
-    tools = spec.available_tools
-    # MCP server instance is passed directly
-    mcp_servers_list = [mcp_server] if mcp_server else []
-
-    # --- Configure OpenAI Client ---
-    # Attempt to get key from settings first, then environment
-    api_key_from_settings = settings.get("openai_api_key")
-    api_key_from_env = os.getenv("OPENAI_API_KEY")
-
-    print(
-        f"BUILDER CHECK: API Key from settings dict passed to builder: '{api_key_from_settings}'"
-    )
-
-    # Prioritize settings value if it exists and is not empty
-    api_key = api_key_from_settings if api_key_from_settings else api_key_from_env
-
-    # Explicitly check if the final key is None or empty *after* trying both sources
-    if not api_key:
-        raise ValueError(
-            "OpenAI API key is missing. Please configure in settings or set OPENAI_API_KEY environment variable."
-        )
-
-    base_url = (
-        settings.get("openai_api_base")
-        or os.getenv("OPENAI_API_BASE")
-        or "https://api.openai.com/v1"
-    )
-
-    try:
-        # Use default settings if not otherwise specified
-        # Disable tracing/default API type - assuming this is handled globally or not needed here
-        # set_tracing_disabled(disabled=True)
-        # set_default_openai_api("chat_completions")
-
-        client = AsyncOpenAI(base_url=base_url, api_key=api_key)
-        # Set client globally so the agents framework can pick it up
-        # Check agents-python docs: Agent might not need global client if passed implicitly via model_settings or env vars
-        set_default_openai_client(client=client, use_for_tracing=False)
-        print(
-            f"OpenAI client configured for default builder: base_url={base_url}, model={model_name}"
-        )
-    except Exception as e:
-        raise ValueError(f"Failed to initialize OpenAI client: {e}")
-
-    # Set SERPAPI_API_KEY if provided in settings (for tools that need it)
-    serpapi_key = settings.get("serpapi_api_key") or os.getenv("SERPAPI_API_KEY")
-    if serpapi_key:
-        os.environ["SERPAPI_API_KEY"] = serpapi_key
-        print("SERPAPI_API_KEY set in environment from settings.")
-    elif "SERPAPI_API_KEY" in os.environ:
-        # Clean up env var if not in settings to avoid using stale key
-        del os.environ["SERPAPI_API_KEY"]
-        print(
-            "SERPAPI_API_KEY removed from environment as it's not in current settings."
-        )
-
-    # --- Create Base Agent ---
-    print(
-        f"Creating base Agent: name='{agent_name}', model='{model_name}', tools_count={len(tools)}, mcp_count={len(mcp_servers_list)}"
-    )
-
-    # Create ModelSettings with tool_choice only if tools are available
-    if tools:
-        model_settings = ModelSettings(tool_choice="auto")
-    else:
-        # Create ModelSettings without specifying tool_choice when no tools are available
-        model_settings = ModelSettings()
-
-    base_agent = Agent(
-        name=agent_name,
-        tools=tools,  # Pass the discovered/selected function objects
-        mcp_servers=mcp_servers_list,
-        model=model_name,
-        model_settings=model_settings,  # Always pass a ModelSettings object
-        instructions=instructions,
-    )
-
-    # --- Optionally Wrap with SafeAgent ---
-    if spec.use_safe_agent:
-        print(f"Wrapping '{agent_name}' with SafeAgent...")
-        opts = spec.safe_agent_options
-        try:
-            safe_agent = SafeAgent(
-                # Pass parameters from the base agent we just created
-                name=base_agent.name,
-                tools=await base_agent.get_all_tools(),  # Get tools resolved by base agent (incl MCP)
-                instructions=base_agent.instructions,
-                model=base_agent.model,
-                model_settings=base_agent.model_settings,
-                mcp_servers=base_agent.mcp_servers,
-                # SafeAgent specific config from spec
-                approval_callback=app._request_tool_approval,  # Use app's callback
-                safe_tool_names=opts.safe_tool_names,
-                safe_tool_patterns=opts.safe_tool_patterns,
-                skip_approvals=opts.skip_approvals,
-                halt_on_rejection=opts.halt_on_rejection,
-                debug_mode=spec.debug_flag,
-            )
-            print("SafeAgent wrapper created successfully.")
-            return safe_agent  # Return the wrapped agent
-        except Exception as safe_agent_init_error:
-            error_msg = (
-                f"Failed to initialize SafeAgent wrapper: {safe_agent_init_error}"
-            )
-            print(f"ERROR: {error_msg}")
-            # Fallback to returning the base agent if wrapping fails
-            return base_agent
-    else:
-        # Return the base agent directly if not using SafeAgent
-        print(f"Using base Agent '{agent_name}' without SafeAgent wrapper.")
-        return base_agent
+# The default agent builder is now imported from core
 
 
 class AgentApp:
@@ -355,7 +226,7 @@ class AgentApp:
         self._artifact_displays: Dict[str, ArtifactDisplay] = {}
 
         # Register artifact callback
-        from .artifacts import set_artifact_callback
+        from omniagents.core.artifacts import set_artifact_callback
 
         set_artifact_callback(self.add_artifact)
 
@@ -874,10 +745,20 @@ class AgentApp:
                         builder_func = self.spec.build_agent
 
                     # --- Call the selected builder --- #
-                    self.agent_instance = await builder_func(
-                        self.current_settings,
-                        self._mcp_server_instance,
-                        self,  # Pass the app instance itself
+                    if builder_func == _default_build_agent:
+                        # Default builder expects spec as third argument and approval callback
+                        self.agent_instance = await builder_func(
+                            self.current_settings,
+                            self._mcp_server_instance,
+                            self.spec,
+                            self._request_tool_approval if self.spec.use_safe_agent else None,
+                        )
+                    else:
+                        # Custom builder expects app instance
+                        self.agent_instance = await builder_func(
+                            self.current_settings,
+                            self._mcp_server_instance,
+                            self,  # Pass the app instance itself
                     )
 
                 # After either remote or local path ensure instance exists

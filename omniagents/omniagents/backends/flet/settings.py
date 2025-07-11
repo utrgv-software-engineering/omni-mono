@@ -3,7 +3,7 @@ from flet import animation as animation  # ensure ft.animation module is loaded
 from dataclasses import dataclass, field
 from typing import List, Callable, Dict, Any, Optional
 from collections import defaultdict
-from .specs import AgentSpec, SettingField
+from omniagents.core.specs import AgentSpec, SettingField
 
 class SettingsScreen(ft.View):
     def __init__(self,

@@ -19,7 +19,7 @@ class FletBackend:
         # Import Flet dependencies only when needed
         try:
             import flet as ft
-            from omniagents.core.app_base import AgentApp
+            from .app_base import AgentApp
         except ImportError as e:
             print(f"Error: Flet dependencies not installed. Install with: pip install omniagents[flet]")
             print(f"Missing: {e}")

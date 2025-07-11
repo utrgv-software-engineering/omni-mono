@@ -11,7 +11,7 @@ from agents import Runner, RunConfig, ItemHelpers
 from agents.mcp import MCPServerSse
 
 from omniagents.core.config_loader import load_agent_spec_from_yaml
-from omniagents.core.app_base import _default_build_agent
+from omniagents.core.agent_builder import _default_build_agent
 from omniagents.core.safe_agent import SafeAgent
 from omniagents.core.local_sessions import LocalSession
 

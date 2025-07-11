@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import flet as ft
+# No longer need flet import
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Callable, Optional, Protocol, Awaitable
 
@@ -81,7 +81,7 @@ class AgentSpec:
     settings_fields: List[SettingField] = field(default_factory=list)
     debug_flag: bool = False
     page_title_suffix: str = ""
-    theme_color: str = ft.Colors.BLUE
+    theme_color: str = "#2196F3"  # Material Blue color
     # Layout mode for GUI. 'classic' shows all events in a single list,
     # 'tabs' splits conversation and logs into separate tabs.
     layout: str = "classic"

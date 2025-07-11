@@ -12,7 +12,7 @@ from fastapi import FastAPI, WebSocket, Depends, HTTPException, status
 from omniagents.jsonrpc.rpc import RpcMethodsBase, JsonRpcEndpoint
 
 from omniagents.core.config_loader import load_agent_spec_from_yaml
-from omniagents.core.app_base import _default_build_agent
+from omniagents.core.agent_builder import _default_build_agent
 from omniagents.core.specs import AgentSpec
 
 from .sessions import sm, Session
@@ -196,7 +196,12 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
                     else:
                         agent = builder({}, None, stub_app)
                 else:
-                    agent = await _default_build_agent({}, None, stub_app)
+                    agent = await _default_build_agent(
+                        {}, 
+                        None, 
+                        spec,
+                        stub_app._request_tool_approval if spec.use_safe_agent else None
+                    )
                 sess.agent = agent
             else:
                 agent = sess.agent

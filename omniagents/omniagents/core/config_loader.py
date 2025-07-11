@@ -1,11 +1,11 @@
 import yaml
-import flet as ft # For theme colors if specified as strings
+# import flet as ft # For theme colors if specified as strings - moved to Flet backend
 from pathlib import Path
 from typing import Dict, Any, List, Callable, Optional
 
 # Core imports
 from .specs import AgentSpec, AgentLike, SafeAgentOptions
-from .settings import SettingField
+from .specs import SettingField
 from .tooling import discover_functions_in_dir
 
 DEFAULT_SETTINGS_FIELDS = [
@@ -62,19 +62,14 @@ def _load_instructions(config: Dict[str, Any], base_dir: Path) -> Callable[[], s
         return lambda: "You are a helpful assistant."
 
 def _parse_theme_color(color_str: Optional[str], default: str) -> str:
-    """Parses a theme color string, allowing Flet color constants."""
+    """Parses a theme color string."""
     if not color_str:
         return default
-    # Check if it matches a Flet color constant (e.g., "ft.Colors.BLUE_900")
+    # For now, just return the color string as-is (hex codes, color names)
+    # Flet-specific color parsing should be handled by the Flet backend
     if color_str.startswith("ft.Colors."):
-        try:
-            # Caution: eval can be risky if the string isn't controlled
-            # Assuming YAML is trusted source here.
-            return eval(color_str, {"ft": ft}) # Pass ft module context
-        except Exception as e:
-            print(f"Warning: Could not evaluate theme_color '{color_str}': {e}. Using default.")
-            return default
-    # Otherwise, assume it's a hex code or standard color name Flet understands
+        print(f"Warning: Flet color constants like '{color_str}' are no longer supported in YAML. Please use hex codes (e.g., '#2196F3') instead.")
+        return default
     return color_str
 
 def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
@@ -249,22 +244,19 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
     if not isinstance(icon_map_config, dict):
         print(f"Warning: 'icon_map' key in {config_path} should be a dictionary. Using empty map.")
     else:
-        # --- Evaluate icon strings into Flet constants --- #
+        # Icon strings should now be simple string names, not Flet constants
         for tool_name, icon_str in icon_map_config.items():
-            if isinstance(icon_str, str) and icon_str.startswith("ft.Icons."):
-                try:
-                    # Evaluate the string like "ft.Icons.MAP" to get the constant
-                    icon_value = eval(icon_str, {"ft": ft})
-                    processed_icon_map[tool_name] = icon_value
-                except Exception as e:
-                    print(f"Warning: Could not evaluate icon string '{icon_str}' for tool '{tool_name}': {e}. Default icon will be used.")
-                    # Let ToolCallDisplay handle the default icon
+            if isinstance(icon_str, str):
+                if icon_str.startswith("ft.Icons."):
+                    print(f"Warning: Flet icon constants like '{icon_str}' are no longer supported in YAML. Please use icon names (e.g., 'map', 'search') instead.")
+                else:
+                    # Store the icon name as a string
+                    processed_icon_map[tool_name] = icon_str
             else:
-                 # If it's not a string starting with ft.Icons., log warning and skip
-                 print(f"Warning: Invalid icon format '{icon_str}' for tool '{tool_name}'. Expected string like 'ft.Icons.ICON_NAME'. Default icon will be used.")
+                print(f"Warning: Icon for tool '{tool_name}' should be a string. Skipping.")
         # ---------------------------------------------- #
 
-    theme_color = _parse_theme_color(config.get('theme_color'), ft.Colors.BLUE) # Default Blue
+    theme_color = _parse_theme_color(config.get('theme_color'), "#2196F3")  # Default Material Blue
 
     # --- Build Agent (Placeholder/Default) ---
     # The actual Agent/SafeAgent creation is deferred to AgentApp using a default builder.

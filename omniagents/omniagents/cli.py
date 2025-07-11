@@ -265,9 +265,8 @@ def save_agent_as_py(config_path: str, output_path: str):
 
     # Imports for building AgentSpec
     lines.append("import flet as ft")
-    lines.append("from omniagents.core.app_base import AgentApp")
-    lines.append("from omniagents.core.specs import AgentSpec, SafeAgentOptions")
-    lines.append("from omniagents.core.settings import SettingField\n")
+    lines.append("from omniagents.backends.flet.app_base import AgentApp")
+    lines.append("from omniagents.core.specs import AgentSpec, SafeAgentOptions, SettingField\n")
 
     # Construct the AgentSpec inline
     lines.append("spec = AgentSpec(")
