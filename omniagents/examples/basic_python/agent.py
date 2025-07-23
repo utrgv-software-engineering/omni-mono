@@ -6,7 +6,7 @@ import random
 from time import sleep
 
 from agents import Agent
-from omniagents.core.app_base import AgentApp
+from omniagents.backends.flet.app_base import AgentApp
 from omniagents.core import function_tool
 
 
@@ -20,7 +20,7 @@ def get_current_time() -> str:
 
 @function_tool
 def flip_coin() -> str:
-    sleep(15)
+    sleep(5)
     """Return the result of a coin flip."""
     return random.choice(["heads", "tails"])
 
