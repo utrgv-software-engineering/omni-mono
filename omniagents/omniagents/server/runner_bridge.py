@@ -4,7 +4,7 @@ import os
 import asyncio
 from typing import AsyncGenerator
 
-from agents import Runner, RunConfig, ItemHelpers
+from agents import RunConfig, ItemHelpers
 from .history_db import append_message
 
 # ---------------------------------------------------------------------
@@ -99,7 +99,7 @@ def _stream_event_payload(item, run_id: str):
 
 
 async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: int = 20) -> None:  # noqa: D401
-    """Drive Runner.run_streamed and forward events to *rpc_channel*.
+    """Drive agent.run_streamed and forward events to *rpc_channel*.
 
     ``rpc_channel`` is the :class:`RpcMethodsBase` instance attached to the
     WebSocket connection and exposes ``.async_call(method, args)`` for
@@ -121,8 +121,13 @@ async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: i
     if DEBUG_SERVER:
         print(f"[srv] ▶ start_run  session={session.id[:8]} prompt={prompt[:80]!r} (hist={len(session.history)})")
 
+    # Use Runner to run the agent
+    from agents import RunConfig
     run_config = RunConfig()
-    result = Runner.run_streamed(agent, agent_input, max_turns=max_turns, run_config=run_config)
+    
+    # Import Runner locally to avoid module-level import
+    from agents import Runner as _Runner
+    result = _Runner.run_streamed(agent, agent_input, max_turns=max_turns, run_config=run_config)
 
     async for event in result.stream_events():
         # Skip low-level / uninterested event types

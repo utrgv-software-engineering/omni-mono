@@ -2,12 +2,20 @@ from types import SimpleNamespace
 import pytest
 import asyncio
 
-from omniagents import remote_proxy
-from omniagents.remote_proxy import RemoteAgentProxy
+from omniagents.rpc.agents import remote
+from omniagents.rpc.agents.remote import RemoteAgent
 
 class DummyClient:
-    def __init__(self, url, methods):
+    def __init__(self, transport, methods):
         self.other = self
+        self._transport = transport
+        self._methods = methods
+
+    @classmethod
+    def from_url(cls, url, methods):
+        # Mimic the factory method
+        transport = SimpleNamespace(url=url)
+        return cls(transport, methods)
 
     async def __aenter__(self):
         return self
@@ -23,8 +31,8 @@ class DummyClient:
         return SimpleNamespace(result=True)
 
 def test_list_sessions(monkeypatch):
-    monkeypatch.setattr(remote_proxy, "JsonRpcClient", DummyClient)
-    proxy = RemoteAgentProxy("ws://dummy")
+    monkeypatch.setattr(remote, "JsonRpcClient", DummyClient)
+    proxy = RemoteAgent("ws://dummy")
     sessions = asyncio.run(proxy.list_sessions())
     assert sessions == [{"id": "s1", "archived": False}, {"id": "s2", "archived": True}]
 

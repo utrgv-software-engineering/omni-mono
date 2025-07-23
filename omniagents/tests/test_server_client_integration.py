@@ -1,13 +1,12 @@
 import asyncio
-import importlib
 import socket
+import pytest
+from unittest.mock import patch, AsyncMock
 
 import uvicorn
 from omniagents.server import app as server_app
-from omniagents.server import runner_bridge
 from omniagents.core.specs import AgentSpec
-from omniagents.remote_proxy import RemoteAgentProxy
-from omniagents import remote_proxy
+from omniagents.rpc.agents.remote import RemoteAgent
 from agents import Agent
 
 
@@ -16,12 +15,15 @@ async def dummy_build_agent(settings, mcp, app):
 
 
 async def fake_stream_agent(agent, prompt, sess, channel, max_turns=20):
+    print(f"DEBUG fake_stream_agent: Started with prompt={prompt}")
     run_id = asyncio.current_task().get_name()
     user_msg = {"role": "user", "content": prompt}
     sess.history.append(user_msg)
     from omniagents.server.history_db import append_message
 
     append_message(sess.id, user_msg)
+    
+    print(f"DEBUG fake_stream_agent: Sending message_output")
     await channel.async_call(
         "message_output",
         {"run_id": run_id, "content": "pong", "is_final": False},
@@ -31,12 +33,14 @@ async def fake_stream_agent(agent, prompt, sess, channel, max_turns=20):
     append_message(sess.id, assistant_msg)
 
     approval_id = "appr1"
+    print(f"DEBUG fake_stream_agent: Sending tool_approval_request")
     await channel.async_call(
         "tool_approval_request",
         {"approval_id": approval_id, "tool": "echo", "arguments": "{}"},
     )
     await asyncio.sleep(0.01)
 
+    print(f"DEBUG fake_stream_agent: Sending tool_called")
     await channel.async_call(
         "tool_called",
         {"run_id": run_id, "tool": "echo", "input": "{}"},
@@ -50,10 +54,13 @@ async def fake_stream_agent(agent, prompt, sess, channel, max_turns=20):
     sess.history.append(call_item)
     append_message(sess.id, call_item)
 
+    print(f"DEBUG fake_stream_agent: Sending tool_result")
     await channel.async_call(
         "tool_result",
         {"run_id": run_id, "tool": "echo", "output": "ok"},
     )
+    
+    print(f"DEBUG fake_stream_agent: Finished")
     out_item = {
         "role": "assistant",
         "type": "tool_call_output",
@@ -62,10 +69,8 @@ async def fake_stream_agent(agent, prompt, sess, channel, max_turns=20):
     }
     sess.history.append(out_item)
     append_message(sess.id, out_item)
-
-    await channel.async_call(
-        "run_end", {"run_id": run_id, "end_reason": "completed"}
-    )
+    
+    # Don't send run_end here - it's sent by AgentService._worker()
 
 
 def _get_free_port():
@@ -83,6 +88,7 @@ async def _run_server(app, port):
     return server, task
 
 
+@patch('omniagents.core.agent_service.stream_agent', new=fake_stream_agent)
 async def _integration_flow():
     spec = AgentSpec(
         name="A",
@@ -94,27 +100,20 @@ async def _integration_flow():
         build_agent=dummy_build_agent,
     )
 
-    class DummyRunItemStreamEvent:
-        def __init__(self, name, item=None):
-            self.type = name
-            self.item = item
-
-    remote_proxy.RunItemStreamEvent = DummyRunItemStreamEvent
-
-    importlib.reload(runner_bridge)
-    runner_bridge.stream_agent = fake_stream_agent
-    importlib.reload(server_app)
-
     app = server_app.build_app(spec=spec)
 
     port = _get_free_port()
     server, task = await _run_server(app, port)
 
     try:
-        proxy = RemoteAgentProxy(f"ws://127.0.0.1:{port}/ws")
+        proxy = RemoteAgent(f"ws://127.0.0.1:{port}/ws")
+        proxy.DEBUG_CLIENT = True  # Enable debug output
         events = {"msg": [], "tool_call": [], "tool_out": []}
         run = proxy.run_streamed([{"role": "user", "content": "ping"}])
+        event_count = 0
         async for event in run.stream_events():
+            event_count += 1
+            print(f"DEBUG: Got event {event_count}: type={event.type}")
             if event.type == "message_output_created":
                 events["msg"].append(event.item.raw_item.content[0].text)
             elif event.type == "tool_approval_request":
@@ -125,6 +124,7 @@ async def _integration_flow():
                 events["tool_call"].append((event.item.name, event.item.arguments))
             elif event.type == "tool_output":
                 events["tool_out"].append(event.item.output)
+        print(f"DEBUG: Total events received: {event_count}")
 
         assert events["msg"] == ["pong"]
         assert events["tool_call"] == [("echo", "{}")]

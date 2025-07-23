@@ -44,11 +44,10 @@ from omniagents.core.specs import (
     AgentLike,
     SafeAgentOptions,
 )  # <-- Import moved specs
-from omniagents.core.agent_builder import _default_build_agent
+from omniagents.core.agent_factory import create_unified_agent
 
 # Import agents types for type hinting (use Protocol for flexibility)
-from agents import Agent, ItemHelpers  # Added Agent
-from agents import Runner  # For run_streamed
+from agents import ItemHelpers  # For message parsing
 from agents.model_settings import ModelSettings  # <-- Import ModelSettings
 from agents import (  # <-- Imports for default builder
     set_default_openai_client,
@@ -113,7 +112,17 @@ class AgentApp:
         """
         Construct an AgentApp directly from an existing agents.Agent (or Agent-like).
         This builds an internal AgentSpec that wraps the given agent without YAML.
+        
+        DEPRECATED: This method is deprecated and will be removed in a future version.
+        Please use YAML configuration or create an AgentSpec directly.
         """
+        import warnings
+        warnings.warn(
+            "AgentApp.from_agent is deprecated and will be removed in a future version. "
+            "Please use YAML configuration or create an AgentSpec directly.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         name = getattr(agent, "name", "agent")
         # Instructions may be a callable or a string
         instr = (
@@ -238,7 +247,7 @@ class AgentApp:
         """
         if mode == "cli":
             # Run in CLI mode via the CLI runner
-            from omniagents.cli_runner import run_cli
+            from omniagents.backends.cli.runner import run_cli
             import asyncio, argparse
 
             # Build minimal args for overrides (all defaults)
@@ -692,6 +701,26 @@ class AgentApp:
                 self.new_message.focus()
                 self.new_message.update()
 
+    async def _create_or_update_agent(self):
+        """Create or update the agent instance using unified factory."""
+        try:
+            # Build unified agent
+            mcp_servers = [self._mcp_server_instance] if self._mcp_server_instance else None
+            
+            self.agent_instance = await create_unified_agent(
+                spec=self.spec,
+                settings=self.current_settings,
+                approval_callback=self._request_tool_approval if self.spec.use_safe_agent else None,
+                mcp_servers=mcp_servers
+            )
+            
+            print(f"Agent instance ready: {type(self.agent_instance)}")
+            
+        except Exception as e:
+            print(f"Error creating agent: {e}")
+            self.agent_instance = None
+            raise
+
     async def _process_message(self, user_message: str):
         """Core logic to interact with the agent and update the UI."""
         print(f"Processing message: {user_message}")
@@ -716,58 +745,7 @@ class AgentApp:
             # --- Build or reuse agent instance ---
             if self.agent_instance is None:
                 print("Building agent instance...")
-                # --- Remote AgentProxy path ---
-                if self.spec.remote_ws_url:
-                    try:
-                        from omniagents.remote_proxy import RemoteAgentProxy
-                    except ImportError as e:
-                        raise RuntimeError(
-                            f"Remote mode requested but remote_proxy could not be imported: {e}"
-                        )
-
-                    token = (
-                        os.getenv(self.spec.remote_auth_token_key)
-                        if self.spec.remote_auth_token_key
-                        else None
-                    )
-                    self.agent_instance = RemoteAgentProxy(
-                        self.spec.remote_ws_url, token
-                    )
-                    print(f"RemoteAgentProxy configured for {self.spec.remote_ws_url}")
-                else:
-                    # --- Use default builder if spec.build_agent is None --- #
-                    if self.spec.build_agent is None:
-                        print("Using internal agent builder...")
-                        builder_func = _default_build_agent
-                    else:
-                        # Use the builder provided in the spec (legacy/custom mode)
-                        print("Using custom agent builder provided in AgentSpec...")
-                        builder_func = self.spec.build_agent
-
-                    # --- Call the selected builder --- #
-                    if builder_func == _default_build_agent:
-                        # Default builder expects spec as third argument and approval callback
-                        self.agent_instance = await builder_func(
-                            self.current_settings,
-                            self._mcp_server_instance,
-                            self.spec,
-                            self._request_tool_approval if self.spec.use_safe_agent else None,
-                        )
-                    else:
-                        # Custom builder expects app instance
-                        self.agent_instance = await builder_func(
-                            self.current_settings,
-                            self._mcp_server_instance,
-                            self,  # Pass the app instance itself
-                    )
-
-                # After either remote or local path ensure instance exists
-
-                if not self.agent_instance:
-                    raise ValueError(
-                        "Agent builder function failed to return an agent instance."
-                    )
-                print(f"Agent instance ready: {type(self.agent_instance)}")
+                await self._create_or_update_agent()
 
             # --- Prepare input and run agent ---
             # Reset SafeAgent state if applicable
@@ -788,14 +766,8 @@ class AgentApp:
             anchor_key = f"run_{uuid.uuid4().hex}"
             anchor_inserted = False
 
-            # Run the agent stream
-            if self.spec.remote_ws_url and hasattr(self.agent_instance, "run_streamed"):
-                # Use the proxy's built-in streamed runner (bypasses local Runner logic)
-                result = self.agent_instance.run_streamed(agent_input)
-            else:
-                result = Runner.run_streamed(
-                    self.agent_instance, agent_input, max_turns=self.spec.max_turns
-                )
+            # Run the agent stream - all unified agents support run_streamed
+            result = self.agent_instance.run_streamed(agent_input)
 
             message_output = ""
             final_items = []
@@ -1423,6 +1395,8 @@ class AgentApp:
 
     async def _update_mcp_connection(self):
         """Connects, disconnects, or updates the MCP server instance based on settings."""
+        prev_status = self._mcp_connection_status
+        
         if not self.spec.uses_mcp:
             if self._mcp_server_instance:  # Disconnect if MCP was used but now disabled
                 await self._disconnect_mcp()
@@ -1516,13 +1490,25 @@ class AgentApp:
                 if self._mcp_server_instance:
                     try:  # Attempt cleanup even on connection error
                         await self._mcp_server_instance.__aexit__(None, None, None)
-                    except:
+                    except Exception:
                         pass  # Ignore cleanup errors here
                 self._mcp_server_instance = None
                 # Reset agent if connection fails? Depends on desired behavior.
                 # For now, just show error. Agent build/run will handle missing MCP.
             finally:
                 self._update_mcp_ui_indicator()  # Update UI with final status
+        
+        # If MCP status changed and we have an agent, rebuild it
+        if (self._mcp_connection_status != prev_status and 
+            self.agent_instance is not None and
+            prev_status != MCPConnectionStatus.UNKNOWN):
+            print("MCP connection status changed, rebuilding agent...")
+            try:
+                await self._create_or_update_agent()
+            except Exception as e:
+                print(f"Error rebuilding agent after MCP status change: {e}")
+                # Reset to None so it gets rebuilt on next message
+                self.agent_instance = None
 
     async def _disconnect_mcp(self):
         """Gracefully disconnects the MCP server instance."""
@@ -1698,9 +1684,15 @@ class AgentApp:
             print("MCP settings changed, updating connection...")
             await self._update_mcp_connection()  # Reconnect/disconnect based on new settings
 
-        # Reset agent instance to force re-initialization with new settings
-        self.agent_instance = None
-        print("Agent reset due to settings change.")
+        # Rebuild agent with new settings
+        if self.agent_instance is not None:
+            print("Settings changed, rebuilding agent...")
+            try:
+                await self._create_or_update_agent()
+            except Exception as e:
+                print(f"Error rebuilding agent after settings change: {e}")
+                # Reset to None so it gets rebuilt on next message
+                self.agent_instance = None
 
         # Rebuild header controls *after* potential MCP update to reflect status
         if self.header:

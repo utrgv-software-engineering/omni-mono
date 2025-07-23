@@ -7,11 +7,11 @@ from datetime import datetime
 from typing import List, Optional, Tuple, Awaitable
 
 from dotenv import load_dotenv
-from agents import Runner, RunConfig, ItemHelpers
+from agents import RunConfig, ItemHelpers
 from agents.mcp import MCPServerSse
 
 from omniagents.core.config_loader import load_agent_spec_from_yaml
-from omniagents.core.agent_builder import _default_build_agent
+from omniagents.core.agent_factory import create_unified_agent
 from omniagents.core.safe_agent import SafeAgent
 from omniagents.core.local_sessions import LocalSession
 
@@ -131,56 +131,21 @@ async def run_cli(
         approval_callback = cli_approval_callback
 
     async def _chat_loop(mcp_server):
-        # Build base Agent
-        from agents import Agent
-        from agents.model_settings import ModelSettings
-
-        # --- Remote Agent Handling ---
-        if spec.remote_ws_url:
-            from omniagents.remote_proxy import RemoteAgentProxy
-            token = os.getenv(spec.remote_auth_token_key) if spec.remote_auth_token_key else None
-            base_agent = RemoteAgentProxy(spec.remote_ws_url, token)
-            tools = []
-            instructions = ""
-        else:
-            instructions = spec.get_agent_instructions()
-            tools = spec.available_tools
-        mcp_list = [mcp_server] if mcp_server else []
-        # ModelSettings: use tool_choice when tools are available
-        if tools:
-            model_settings = ModelSettings(tool_choice="auto")
-        else:
-            model_settings = ModelSettings()
-        if not spec.remote_ws_url:
-            base_agent = Agent(
-                name=spec.name,
-                tools=tools,
-                instructions=instructions,
-                model=spec.model_name,
-                model_settings=model_settings,
-                mcp_servers=mcp_list,
-            )
-        # Wrap with SafeAgent if configured
-        if spec.remote_ws_url:
-            agent = base_agent  # Remote proxy, no safe wrapper
-        elif spec.use_safe_agent:
-            wrapped_tools = await base_agent.get_all_tools()
-            agent = SafeAgent(
-                name=base_agent.name,
-                tools=wrapped_tools,
-                instructions=base_agent.instructions,
-                model=base_agent.model,
-                model_settings=base_agent.model_settings,
-                mcp_servers=base_agent.mcp_servers,
-                safe_tool_names=spec.safe_agent_options.safe_tool_names,
-                safe_tool_patterns=spec.safe_agent_options.safe_tool_patterns,
-                skip_approvals=spec.safe_agent_options.skip_approvals,
-                halt_on_rejection=spec.safe_agent_options.halt_on_rejection,
-                approval_callback=approval_callback,
-                debug_mode=spec.debug_flag,
-            )
-        else:
-            agent = base_agent
+        # Build unified agent using factory
+        mcp_list = [mcp_server] if mcp_server else None
+        
+        # Determine approval callback to pass
+        approval_cb = None
+        if spec.use_safe_agent and not spec.safe_agent_options.skip_approvals:
+            approval_cb = approval_callback
+            
+        # Create agent through unified factory
+        agent = await create_unified_agent(
+            spec=spec,
+            settings=settings,
+            approval_callback=approval_cb,
+            mcp_servers=mcp_list
+        )
 
         from omniagents.core.artifacts import set_artifact_callback
 
@@ -223,13 +188,8 @@ async def run_cli(
             local_session.append_message(user_msg)
             new_input = conversation
             run_config = RunConfig()
-            if spec.remote_ws_url and hasattr(agent, "run_streamed"):
-                # Bypass Runner and delegate streaming to RemoteAgentProxy
-                result = agent.run_streamed(new_input, run_config=run_config)
-            else:
-                result = Runner.run_streamed(
-                    agent, new_input, max_turns=spec.max_turns, run_config=run_config
-                )
+            # All unified agents support run_streamed
+            result = agent.run_streamed(new_input, run_config=run_config)
 
             message_output = ""
             final_items = []

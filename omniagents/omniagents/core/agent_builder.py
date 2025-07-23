@@ -3,9 +3,13 @@
 import os
 from typing import Dict, Any, Optional, TYPE_CHECKING
 
+from omniagents.core.logging import get_logger
+
 if TYPE_CHECKING:
     from agents.mcp import MCPServerSse
     from omniagents.core.specs import AgentSpec, AgentLike
+
+logger = get_logger(__name__)
 
 
 async def _default_build_agent(
@@ -19,7 +23,7 @@ async def _default_build_agent(
     from agents.model_settings import ModelSettings
     from openai import AsyncOpenAI
 
-    print("Building agent using internal default builder...")
+    logger.info("Building agent using internal default builder...")
     
     # Get core config from spec/settings
     agent_name = spec.name
@@ -60,7 +64,6 @@ async def _default_build_agent(
         instructions=instructions,
         tools=tools,
         model=model_name,
-        client=client,
         model_settings=model_settings,
         mcp_servers=mcp_servers_list,
     )
