@@ -14,9 +14,8 @@ import inspect
 
 from omniagents.rpc import RpcMethodsBase
 from omniagents.core.specs import AgentSpec
-from omniagents.server.sessions import sm, Session
-from omniagents.server.runner_bridge import stream_agent
-from omniagents.server.history_db import append_message
+from omniagents.core.session import sm, Session, append_message
+from omniagents.core.runner_bridge import stream_agent
 from omniagents.core.agent_builder import _default_build_agent
 
 

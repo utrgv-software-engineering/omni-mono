@@ -9,7 +9,7 @@ from typing import Dict, Any, List
 
 from omniagents.core.specs import AgentSpec
 from omniagents.core.agent_service import AgentService
-from omniagents.server.sessions import Session
+from omniagents.core.session import Session
 
 
 class TestServerUnifiedAgent:
@@ -121,7 +121,7 @@ class TestServerUnifiedAgent:
     @pytest.mark.asyncio
     async def test_stream_agent_with_unified_agent(self, mock_session):
         """Test stream_agent works with unified agent's run_streamed method."""
-        from omniagents.server.runner_bridge import stream_agent
+        from omniagents.core.runner_bridge import stream_agent
         
         # Create mock unified agent
         mock_agent = Mock()
@@ -193,7 +193,7 @@ class TestServerUnifiedAgent:
     
     def test_no_runner_imports(self):
         """Verify that Runner is not imported in migrated server code."""
-        import omniagents.server.runner_bridge as bridge_module
+        import omniagents.core.runner_bridge as bridge_module
         
         # Check that Runner is not in the module's namespace
         assert not hasattr(bridge_module, 'Runner')

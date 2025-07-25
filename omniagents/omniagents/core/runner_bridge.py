@@ -5,7 +5,7 @@ import asyncio
 from typing import AsyncGenerator
 
 from agents import RunConfig, ItemHelpers
-from .history_db import append_message
+from .session import append_message
 
 # ---------------------------------------------------------------------
 # Optional verbose logging controlled by env var

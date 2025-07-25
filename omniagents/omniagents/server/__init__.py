@@ -16,4 +16,4 @@ code.  The server layer is only responsible for:
 3. Exposing a very small RPC surface (start_run, stop_run, send_user_message).
 """
 
-from .sessions import Session, SessionManager  # re-export for convenience 
+from omniagents.core.session import Session, SessionManager  # re-export for convenience

@@ -183,9 +183,9 @@ def temp_history_db(tmp_path, monkeypatch):
     db_path = tmp_path / 'history.db'
     monkeypatch.setenv('OMNIAGENTS_HISTORY_DB', str(db_path))
     # Reload modules that depend on this env var
-    import omniagents.core.local_sessions as local_sessions
-    import omniagents.server.history_db as history_db
-    importlib.reload(local_sessions)
+    import omniagents.core.session.history_db as history_db
+    import omniagents.core.session.manager as manager
     importlib.reload(history_db)
+    importlib.reload(manager)
     yield
 

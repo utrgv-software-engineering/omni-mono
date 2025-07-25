@@ -9,7 +9,7 @@ from fastapi import WebSocketDisconnect
 
 from omniagents.rpc import JsonRpcEndpoint, RpcMethodsBase
 from omniagents.rpc.server import JsonRpcChannel
-from omniagents.server.sessions import Session
+from omniagents.core.session import Session
 
 
 class TestDisconnectionScenarios:
@@ -100,7 +100,7 @@ class TestDisconnectionScenarios:
     @pytest.mark.asyncio
     async def test_multi_channel_broadcast_with_dead_channels(self):
         """Test broadcasting to multiple channels with some disconnected."""
-        from omniagents.server.runner_bridge import _broadcast
+        from omniagents.core.runner_bridge import _broadcast
         
         session = Session()
         
@@ -130,7 +130,7 @@ class TestDisconnectionScenarios:
     @pytest.mark.asyncio
     async def test_broadcast_with_no_channels(self):
         """Test broadcasting when no channels are connected."""
-        from omniagents.server.runner_bridge import _broadcast
+        from omniagents.core.runner_bridge import _broadcast
         
         session = Session()
         session.channels = []
@@ -220,7 +220,7 @@ class TestReconnectionIntegration:
         # This is a conceptual test showing the pattern
         # Real integration test would require full server setup
         
-        from omniagents.server.sessions import SessionManager
+        from omniagents.core.session import SessionManager
         
         # Create session manager
         sm = SessionManager()

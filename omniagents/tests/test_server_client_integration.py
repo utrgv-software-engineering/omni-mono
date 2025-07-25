@@ -19,7 +19,7 @@ async def fake_stream_agent(agent, prompt, sess, channel, max_turns=20):
     run_id = asyncio.current_task().get_name()
     user_msg = {"role": "user", "content": prompt}
     sess.history.append(user_msg)
-    from omniagents.server.history_db import append_message
+    from omniagents.core.session import append_message
 
     append_message(sess.id, user_msg)
     

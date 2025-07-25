@@ -10,6 +10,7 @@ from .history_db import (
     get_archived,
     set_archived,
     list_sessions as db_list_sessions,
+    append_message as db_append_message,
 )
 
 __all__ = ["Session", "SessionManager", "sm"]
@@ -38,6 +39,11 @@ class Session:  # noqa: D101
         self.channels: list[Any] = []
         # Flag indicating whether this session was archived by the client.
         self.archived: bool = get_archived(self.id) if session_id else False
+    
+    def append_message(self, message: dict) -> None:
+        """Add a message to this session and persist it."""
+        self.history.append(message)
+        db_append_message(self.id, message)
 
 
 class SessionManager:  # noqa: D101
@@ -86,4 +92,4 @@ class SessionManager:  # noqa: D101
         return db_list_sessions()
 
 
-sm = SessionManager() 
+sm = SessionManager()

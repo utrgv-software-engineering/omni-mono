@@ -34,7 +34,7 @@ from .ui import (
 from .settings import SettingsScreen
 from .storage import load_settings, save_settings
 from omniagents.core.specs import SettingField
-from omniagents.core.local_sessions import LocalSession
+from omniagents.core.session import Session
 from omniagents.core.config_loader import (
     load_agent_spec_from_yaml,
     DEFAULT_SETTINGS_FIELDS,
@@ -195,7 +195,7 @@ class AgentApp:
         self.send_button: Optional[ft.IconButton] = None
 
         self.conversation: List[Dict[str, Any]] = []
-        self.local_session: Optional[LocalSession] = None
+        self.local_session: Optional[Session] = None
         self.agent_instance: Optional[AgentLike] = None
         self.current_settings: Dict[str, Any] = {}
 
@@ -243,7 +243,7 @@ class AgentApp:
         await self._load_initial_settings()
 
         # Start a fresh local session each time the app launches
-        self.local_session = LocalSession()
+        self.local_session = Session()
         self.conversation = list(self.local_session.history)
 
         # Attempt initial MCP connection if configured

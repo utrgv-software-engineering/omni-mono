@@ -22,7 +22,7 @@ async def mock_stream_agent(agent, prompt, sess, channel, max_turns=20):
     # Add user message to history
     user_msg = {"role": "user", "content": prompt}
     sess.history.append(user_msg)
-    from omniagents.server.history_db import append_message
+    from omniagents.core.session import append_message
     append_message(sess.id, user_msg)
     # The server will send run_end
 
@@ -44,7 +44,7 @@ class TestServerIntegration:
         )
         
         # Mock the stream_agent function
-        from omniagents.server import runner_bridge
+        from omniagents.core import runner_bridge
         monkeypatch.setattr(runner_bridge, 'stream_agent', mock_stream_agent)
         
         # Build and return the app
