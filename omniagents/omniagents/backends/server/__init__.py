@@ -21,7 +21,7 @@ class ServerBackend:
         """
         # Import server dependencies only when needed
         try:
-            from omniagents.server.app import build_app
+            from .app import build_app
             import uvicorn
         except ImportError as e:
             print(f"Error: Server dependencies not installed. Install with: pip install omniagents[server]")

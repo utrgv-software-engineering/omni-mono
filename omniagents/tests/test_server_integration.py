@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from omniagents.server import app as server_app
+from omniagents.backends.server import app as server_app
 from omniagents.core.specs import AgentSpec
 from agents import Agent
 

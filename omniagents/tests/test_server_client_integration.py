@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import patch, AsyncMock
 
 import uvicorn
-from omniagents.server import app as server_app
+from omniagents.backends.server import app as server_app
 from omniagents.core.specs import AgentSpec
 from omniagents.rpc.agents.remote import RemoteAgent
 from agents import Agent

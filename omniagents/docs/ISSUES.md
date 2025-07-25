@@ -62,6 +62,8 @@ from omniagents.server.runner_bridge import stream_agent  # line 18
 from omniagents.server.history_db import append_message  # line 19
 ```
 
+**UPDATE: This issue has been resolved. All these modules have been moved to core.**
+
 **Impact:**
 - Creates a backwards dependency: core → server
 - Core modules should not depend on specific backend implementations

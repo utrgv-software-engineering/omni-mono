@@ -1,7 +1,7 @@
 import asyncio
 import importlib
 from fastapi.testclient import TestClient
-from omniagents.server import app as server_app
+from omniagents.backends.server import app as server_app
 from omniagents.core.specs import AgentSpec
 from agents import Agent
 from omniagents.core import runner_bridge

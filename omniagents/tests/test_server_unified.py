@@ -67,7 +67,7 @@ class TestServerUnifiedAgent:
                 # Mock stream_agent to be async
                 with patch('omniagents.core.agent_service.stream_agent', new_callable=AsyncMock) as mock_stream:
                     # Mock append_message to avoid database errors
-                    with patch('omniagents.server.history_db.append_message'):
+                    with patch('omniagents.core.session.append_message'):
                         # Start a run - this will create a task
                         result = await service.start_run("Hello", session_id="test-123")
                         
@@ -150,8 +150,8 @@ class TestServerUnifiedAgent:
         mock_channel.async_call = AsyncMock()
         
         # Mock dependencies
-        with patch('omniagents.server.runner_bridge.append_message'):
-            with patch('omniagents.server.runner_bridge.ItemHelpers') as mock_helpers:
+        with patch('omniagents.core.runner_bridge.append_message'):
+            with patch('omniagents.core.runner_bridge.ItemHelpers') as mock_helpers:
                 mock_helpers.text_message_output.return_value = "Hello!"
                 
                 # Run stream_agent
