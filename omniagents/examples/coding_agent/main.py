@@ -7,7 +7,8 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
 from agents import set_default_openai_client, set_tracing_disabled, Agent
-from omniagents.core.app_base import AgentApp
+from omniagents.core.runner import Runner
+from omniagents.backends.flet.app_base import AgentApp
 from tools.bash_tool import execute_bash
 from tools.file_tools import (
     glob_files,
@@ -404,8 +405,23 @@ if __name__ == "__main__":
         layout="tabs"
     )
 
-        # Launch (pass extra server args if needed)
-    if args.mode == "server":
-        app.run(mode="server", host=args.host, port=args.port, auth_token=args.auth_token)
+    # For GUI mode, use the custom CodingAgentApp directly
+    if args.mode == "gui":
+        app.run()
     else:
-        app.run(mode=args.mode)
+        # For CLI and server modes, use the Runner
+        runner = Runner.from_agent(
+            agent,
+            welcome_text="Welcome to Otto Code! I'm here to help you with your coding needs.",
+            safe=True,
+            safe_tool_names=[
+                "list_directory",
+                "glob_files",
+                "grep_files",
+                "read_file",
+                "create_git_worktree"
+            ],
+            max_turns=100,
+            layout="tabs"
+        )
+        runner.run(mode=args.mode, host=args.host, port=args.port, auth_token=args.auth_token)

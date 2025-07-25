@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 # --- Core Framework Imports --- #
 # Note: All OpenAI client configuration (API key, base URL, tracing) should be done by the user script or environment.
 from omniagents.core.config_loader import load_agent_spec_from_yaml
+from omniagents.core.runner import Runner
 
 def main():
     """Entry point for the omniagents CLI."""
@@ -101,64 +102,34 @@ def main():
     args = parser.parse_args()
     
     if args.command == "run":
-        CONFIG_FILE_PATH = args.config
-        mode = args.mode or "gui"
-        if mode == "cli":
-            # Run in CLI mode
-            from omniagents.core.backend_loader import load_backend, is_backend_available
-            
-            if not is_backend_available('cli'):
-                print("Error: CLI backend is not available.")
-                print("Please install with: pip install omniagents[cli]")
-                sys.exit(1)
-            
-            cli_backend_class = load_backend('cli')
-            if cli_backend_class:
-                cli_backend = cli_backend_class()
-                spec = load_agent_spec_from_yaml(CONFIG_FILE_PATH)
-                try:
-                    cli_backend.run(spec, config_path=CONFIG_FILE_PATH, args=args)
-                except KeyboardInterrupt:
-                    print("\nExiting CLI mode.")
-            else:
-                print("Error: Failed to load CLI backend.")
-                sys.exit(1)
-            return
-
-        # Default GUI mode
-        from omniagents.core.backend_loader import load_backend, is_backend_available
+        # Use the new Runner for all modes
+        runner = Runner(config_path=args.config)
         
-        if not is_backend_available('gui'):
-            print("Error: GUI backend is not available.")
-            print("Please install with: pip install omniagents[flet]")
+        # Pass all relevant args to the backend
+        kwargs = {
+            'config_path': args.config,
+            'args': args,  # Pass all CLI args for backend-specific handling
+            'debug': args.debug,
+            'session_id': getattr(args, 'session_id', None),
+        }
+        
+        try:
+            runner.run(mode=args.mode, **kwargs)
+        except FileNotFoundError:
+            print(f"Error: Configuration file '{args.config}' not found.")
+            print("Please ensure the YAML configuration file exists.")
             sys.exit(1)
-        
-        gui_backend_class = load_backend('gui')
-        if gui_backend_class:
-            gui_backend = gui_backend_class()
-            spec = load_agent_spec_from_yaml(CONFIG_FILE_PATH)
-            try:
-                gui_backend.run(
-                    spec,
-                    config_path=CONFIG_FILE_PATH,
-                    debug=args.debug
-                )
-            except FileNotFoundError:
-                print(f"Error: Configuration file '{CONFIG_FILE_PATH}' not found.")
-                print("Please ensure the YAML configuration file exists.")
-                sys.exit(1)
-            except ImportError as e:
-                print(f"Error: Failed to import required modules: {e}")
-                if "PyYAML" in str(e):
-                    print("Hint: PyYAML is required for loading config files. Install it using: pip install pyyaml")
-                sys.exit(1)
-            except Exception as e:
-                print(f"An unexpected error occurred: {e}")
-                import traceback
-                traceback.print_exc()
-                sys.exit(1)
-        else:
-            print("Error: Failed to load GUI backend.")
+        except ImportError as e:
+            print(f"Error: Failed to import required modules: {e}")
+            if "PyYAML" in str(e):
+                print("Hint: PyYAML is required for loading config files. Install it using: pip install pyyaml")
+            sys.exit(1)
+        except KeyboardInterrupt:
+            print("\nExiting.")
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+            import traceback
+            traceback.print_exc()
             sys.exit(1)
     elif args.command == "save":
         try:
@@ -169,34 +140,22 @@ def main():
             import traceback; traceback.print_exc()
             sys.exit(1)
     elif args.command == "server":
-        # Run in server mode
-        from omniagents.core.backend_loader import load_backend, is_backend_available
+        # Use the new Runner for server mode
+        runner = Runner(config_path=args.config)
         
-        if not is_backend_available('server'):
-            print("Error: Server backend is not available.")
-            print("Please install with: pip install omniagents[server]")
-            sys.exit(1)
-        
-        server_backend_class = load_backend('server')
-        if server_backend_class:
-            server_backend = server_backend_class()
-            spec = load_agent_spec_from_yaml(args.config)
-            try:
-                server_backend.run(
-                    spec,
-                    config_path=args.config,
-                    host=args.host,
-                    port=args.port,
-                    auth_token=args.auth_token,
-                    reload=args.reload
-                )
-            except Exception as e:
-                print(f"Failed to start server: {e}")
-                import traceback
-                traceback.print_exc()
-                sys.exit(1)
-        else:
-            print("Error: Failed to load server backend.")
+        try:
+            runner.run(
+                mode='server',
+                config_path=args.config,
+                host=args.host,
+                port=args.port,
+                auth_token=args.auth_token,
+                reload=args.reload
+            )
+        except Exception as e:
+            print(f"Failed to start server: {e}")
+            import traceback
+            traceback.print_exc()
             sys.exit(1)
     else:
         parser.print_help()
@@ -264,8 +223,7 @@ def save_agent_as_py(config_path: str, output_path: str):
     lines.append("'''\n")
 
     # Imports for building AgentSpec
-    lines.append("import flet as ft")
-    lines.append("from omniagents.backends.flet.app_base import AgentApp")
+    lines.append("from omniagents.core.runner import Runner")
     lines.append("from omniagents.core.specs import AgentSpec, SafeAgentOptions, SettingField\n")
 
     # Construct the AgentSpec inline
@@ -314,10 +272,10 @@ def save_agent_as_py(config_path: str, output_path: str):
 
     lines.append(")\n")
 
-    # Kick off the Flet app
+    # Run the agent
     lines.append("if __name__ == '__main__':")
-    lines.append("    app = AgentApp(spec=spec)")
-    lines.append("    ft.app(target=app.main)\n")
+    lines.append("    runner = Runner(spec=spec)")
+    lines.append("    runner.run(mode='gui')\n")
 
     # Write out the file
     Path(output_path).write_text("\n".join(lines), encoding='utf-8')

@@ -6,7 +6,7 @@ import random
 from time import sleep
 
 from agents import Agent
-from omniagents.backends.flet.app_base import AgentApp
+from omniagents.core.runner import Runner
 from omniagents.core import function_tool
 
 
@@ -41,11 +41,12 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
 
-    app = AgentApp.from_agent(build_agent(), welcome_text="Ask me the time or to flip a coin!", safe=False)
-    if args.mode == "server":
-        app.run(mode="server", host=args.host, port=args.port)
-    else:
-        app.run(mode=args.mode)
+    runner = Runner.from_agent(
+        build_agent(), 
+        welcome_text="Ask me the time or to flip a coin!", 
+        safe=False
+    )
+    runner.run(mode=args.mode, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

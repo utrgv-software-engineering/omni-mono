@@ -43,12 +43,9 @@ class FletBackend:
             if "(Debug Mode)" not in app.spec.page_title_suffix:
                 app.spec.page_title_suffix += " (Debug Mode)"
         
-        # Run the Flet app
+        # Run the Flet app directly
         print(f"Starting Flet app for agent: {app.spec.name}")
-        ft.app(
-            target=app.main,
-            # Other ft.app options can be added here (e.g., assets_dir, port)
-        )
+        app.run()
 
 
 __all__ = ['FletBackend']

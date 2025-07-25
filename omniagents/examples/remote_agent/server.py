@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from agents import Agent
-from omniagents.core.app_base import AgentApp
+from omniagents.core.runner import Runner
 from omniagents.core import function_tool
 from datetime import datetime
 import random
@@ -36,8 +36,8 @@ def main() -> None:
     parser.add_argument("--auth-token", dest="auth_token", default=None)
     args = parser.parse_args()
 
-    app = AgentApp.from_agent(build_agent())
-    app.run(mode="server", host=args.host, port=args.port, auth_token=args.auth_token)
+    runner = Runner.from_agent(build_agent())
+    runner.run(mode="server", host=args.host, port=args.port, auth_token=args.auth_token)
 
 
 if __name__ == "__main__":

@@ -112,17 +112,7 @@ class AgentApp:
         """
         Construct an AgentApp directly from an existing agents.Agent (or Agent-like).
         This builds an internal AgentSpec that wraps the given agent without YAML.
-        
-        DEPRECATED: This method is deprecated and will be removed in a future version.
-        Please use YAML configuration or create an AgentSpec directly.
         """
-        import warnings
-        warnings.warn(
-            "AgentApp.from_agent is deprecated and will be removed in a future version. "
-            "Please use YAML configuration or create an AgentSpec directly.",
-            DeprecationWarning,
-            stacklevel=2
-        )
         name = getattr(agent, "name", "agent")
         # Instructions may be a callable or a string
         instr = (
@@ -239,49 +229,12 @@ class AgentApp:
 
         set_artifact_callback(self.add_artifact)
 
-    def run(self, mode: str = "gui", **ft_kwargs):
+    def run(self, **ft_kwargs):
         """
-        Convenience method to start the agent app.
-        mode: "gui" for Flet-based GUI (only supported).
+        Start the Flet GUI application.
         Additional keyword args are passed to ft.app.
         """
-        if mode == "cli":
-            # Run in CLI mode via the CLI runner
-            from omniagents.backends.cli.runner import run_cli
-            import asyncio, argparse
-
-            # Build minimal args for overrides (all defaults)
-            cli_args = argparse.Namespace()
-            # Execute CLI loop with in-memory spec
-            asyncio.run(run_cli(config_path=None, args=cli_args, spec=self.spec))
-            return
-        elif mode == "server":
-            # ------------------------------------------------------------------
-            #  JSON-RPC / WebSocket server (remote agent) -----------------------
-            # ------------------------------------------------------------------
-            host = ft_kwargs.pop(
-                "host", "0.0.0.0"
-            )  # remove so uvicorn gets a clean dict
-            port = ft_kwargs.pop("port", 8000)
-            auth_token = ft_kwargs.pop("auth_token", None)
-
-            # Defer import of heavy deps until needed
-            from omniagents.server.app import (
-                build_app,
-            )  # local import to avoid startup cost
-            import uvicorn
-
-            rpc_app = build_app(spec=self.spec, auth_token=auth_token)
-            print(
-                f"Starting OmniAgents RPC server on {host}:{port} (programmatic spec: {self.spec.name})"
-            )
-            uvicorn.run(rpc_app, host=host, port=port, **ft_kwargs)
-        elif mode == "gui":
-            ft.app(target=self.main, **ft_kwargs)
-        else:
-            raise ValueError(
-                f"Unsupported run mode: {mode}. Choose 'gui', 'cli', or 'server'."
-            )
+        ft.app(target=self.main, **ft_kwargs)
 
     async def main(self, page: ft.Page):
         """Main entry point for the Flet application."""
