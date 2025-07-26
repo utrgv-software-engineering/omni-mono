@@ -1,6 +1,6 @@
 import asyncio
 
-from omniagents.core.safe_agent import SafeAgent
+from omniagents.core.agents.safe import SafeAgent
 from agents.tool import FunctionTool
 
 

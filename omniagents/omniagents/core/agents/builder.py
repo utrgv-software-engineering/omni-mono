@@ -3,11 +3,11 @@
 import os
 from typing import Dict, Any, Optional, TYPE_CHECKING
 
-from omniagents.core.logging import get_logger
+from omniagents.core.utils.logging import get_logger
 
 if TYPE_CHECKING:
     from agents.mcp import MCPServerSse
-    from omniagents.core.specs import AgentSpec, AgentLike
+    from omniagents.core.agents.specs import AgentSpec, AgentLike
 
 logger = get_logger(__name__)
 
@@ -70,7 +70,7 @@ async def _default_build_agent(
     
     # Optionally wrap with SafeAgent
     if spec.use_safe_agent and approval_callback:
-        from omniagents.core.safe_agent import SafeAgent
+        from omniagents.core.agents.safe import SafeAgent
         
         opts = spec.safe_agent_options
         safe_agent = SafeAgent(

@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
 from agents import set_default_openai_client, set_tracing_disabled, Agent
-from omniagents.core.runner import Runner
+from omniagents.core.runtime.runner import Runner
 from omniagents.backends.flet.app_base import AgentApp
 from tools.bash_tool import execute_bash
 from tools.file_tools import (

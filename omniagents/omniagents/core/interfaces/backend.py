@@ -2,7 +2,7 @@
 
 from typing import Protocol, runtime_checkable, Optional, Dict, Any, Callable, List
 from abc import ABC, abstractmethod
-from omniagents.core.specs import AgentSpec
+from omniagents.core.agents.specs import AgentSpec
 
 
 @runtime_checkable

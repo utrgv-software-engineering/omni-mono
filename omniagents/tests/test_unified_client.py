@@ -7,10 +7,10 @@ import pytest
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from typing import Dict, Any, List
 
-from omniagents.core.unified_agent import UnifiedAgent, UnifiedAgentBase
+from omniagents.core.interfaces.agent import UnifiedAgent, UnifiedAgentBase
 from omniagents.rpc.agents import LocalAgent, RemoteAgent
-from omniagents.core.agent_factory import create_unified_agent, is_remote_agent, is_local_agent
-from omniagents.core.specs import AgentSpec, SettingField
+from omniagents.core.agents.factory import create_unified_agent, is_remote_agent, is_local_agent
+from omniagents.core.agents.specs import AgentSpec, SettingField
 
 
 class TestUnifiedAgentProtocol:
@@ -195,7 +195,7 @@ class TestAgentFactory:
         settings = {"openai_api_key": "test-key"}
         approval_cb = Mock()
         
-        with patch('omniagents.core.agent_factory.LocalAgent') as mock_adapter:
+        with patch('omniagents.core.agents.factory.LocalAgent') as mock_adapter:
             agent = await create_unified_agent(mock_spec, settings, approval_cb)
             
             mock_adapter.assert_called_once_with(mock_spec, settings, approval_cb, None)
@@ -208,7 +208,7 @@ class TestAgentFactory:
         mock_spec.remote_auth_token_key = "AGENT_TOKEN"
         
         with patch.dict('os.environ', {'AGENT_TOKEN': 'secret-token'}):
-            with patch('omniagents.core.agent_factory.RemoteAgent') as mock_proxy:
+            with patch('omniagents.core.agents.factory.RemoteAgent') as mock_proxy:
                 agent = await create_unified_agent(mock_spec)
                 
                 mock_proxy.assert_called_once_with("ws://localhost:8000/ws", "secret-token")
@@ -221,7 +221,7 @@ class TestAgentFactory:
             'OPENAI_API_KEY': 'env-key',
             'MODEL_NAME': 'gpt-3.5-turbo'
         }):
-            with patch('omniagents.core.agent_factory.LocalAgent') as mock_adapter:
+            with patch('omniagents.core.agents.factory.LocalAgent') as mock_adapter:
                 agent = await create_unified_agent(mock_spec)
                 
                 # Check settings were built from environment
@@ -237,7 +237,7 @@ class TestAgentFactory:
         approval_cb = Mock()
         mcp_servers = [Mock(name="MCP1"), Mock(name="MCP2")]
         
-        with patch('omniagents.core.agent_factory.LocalAgent') as mock_adapter:
+        with patch('omniagents.core.agents.factory.LocalAgent') as mock_adapter:
             agent = await create_unified_agent(mock_spec, settings, approval_cb, mcp_servers)
             
             mock_adapter.assert_called_once_with(mock_spec, settings, approval_cb, mcp_servers)
@@ -287,7 +287,7 @@ class TestLocalAgentAdapterWithBuilder:
         
         # Create the custom builder function directly
         async def custom_build_agent(stub_settings, mcp_server, stub_app):
-            from omniagents.core.agent_builder import _default_build_agent
+            from omniagents.core.agents.builder import _default_build_agent
             approval_cb_to_use = approval_cb if mock_spec.use_safe_agent else None
             return await _default_build_agent(
                 settings,
@@ -317,7 +317,7 @@ class TestLocalAgentAdapterWithBuilder:
         
         # Create the custom builder manually (same as what initialize does)
         async def custom_build_agent(stub_settings, mcp_server, stub_app):
-            from omniagents.core.agent_builder import _default_build_agent
+            from omniagents.core.agents.builder import _default_build_agent
             approval_cb_to_use = approval_cb if mock_spec.use_safe_agent else None
             return await _default_build_agent(
                 settings,
@@ -327,7 +327,7 @@ class TestLocalAgentAdapterWithBuilder:
             )
         
         # Mock _default_build_agent to check it's called correctly
-        with patch('omniagents.core.agent_builder._default_build_agent', new_callable=AsyncMock) as mock_build:
+        with patch('omniagents.core.agents.builder._default_build_agent', new_callable=AsyncMock) as mock_build:
             mock_agent = Mock()
             mock_build.return_value = mock_agent
             

@@ -10,9 +10,9 @@ from dotenv import load_dotenv
 from agents import RunConfig, ItemHelpers
 from agents.mcp import MCPServerSse
 
-from omniagents.core.config_loader import load_agent_spec_from_yaml
-from omniagents.core.agent_factory import create_unified_agent
-from omniagents.core.safe_agent import SafeAgent
+from omniagents.core.config.loader import load_agent_spec_from_yaml
+from omniagents.core.agents.factory import create_unified_agent
+from omniagents.core.agents.safe import SafeAgent
 from omniagents.core.session import Session
 
 ApprovalResult = Tuple[bool, bool, Optional[str]]
@@ -147,7 +147,7 @@ async def run_cli(
             mcp_servers=mcp_list
         )
 
-        from omniagents.core.artifacts import set_artifact_callback
+        from omniagents.core.tools.artifacts import set_artifact_callback
 
         def _cli_artifact(
             title: str,

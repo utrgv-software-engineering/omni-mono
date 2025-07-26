@@ -2,9 +2,9 @@ import asyncio
 import importlib
 from fastapi.testclient import TestClient
 from omniagents.backends.server import app as server_app
-from omniagents.core.specs import AgentSpec
+from omniagents.core.agents.specs import AgentSpec
 from agents import Agent
-from omniagents.core import runner_bridge
+from omniagents.core.runtime import bridge as runner_bridge
 
 
 async def dummy_build_agent(settings, mcp, app):

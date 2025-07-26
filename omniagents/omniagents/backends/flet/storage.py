@@ -3,7 +3,7 @@ import json
 import os
 from typing import Dict, Any, List
 from datetime import datetime # Import datetime
-from omniagents.core.specs import SettingField # Import SettingField for default values
+from omniagents.core.agents.specs import SettingField # Import SettingField for default values
 
 async def get_with_longer_timeout(page: ft.Page, key: str, default_value: Any = "") -> Any:
     """Gets value from client storage with a longer timeout."""

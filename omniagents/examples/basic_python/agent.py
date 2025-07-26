@@ -6,7 +6,7 @@ import random
 from time import sleep
 
 from agents import Agent
-from omniagents.core.runner import Runner
+from omniagents.core.runtime.runner import Runner
 from omniagents.core import function_tool
 
 

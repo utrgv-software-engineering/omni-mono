@@ -7,8 +7,8 @@ import asyncio
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from typing import Dict, Any, List
 
-from omniagents.core.specs import AgentSpec
-from omniagents.core.agent_service import AgentService
+from omniagents.core.agents.specs import AgentSpec
+from omniagents.core.agents.service import AgentService
 from omniagents.core.session import Session
 
 
@@ -46,7 +46,7 @@ class TestServerUnifiedAgent:
     @pytest.mark.asyncio
     async def test_agent_creation_with_unified_factory(self, mock_spec, mock_channel):
         """Test that AgentService creates agents using unified factory."""
-        with patch('omniagents.core.agent_factory.create_unified_agent', new_callable=AsyncMock) as mock_create:
+        with patch('omniagents.core.agents.factory.create_unified_agent', new_callable=AsyncMock) as mock_create:
             # Mock the unified agent
             mock_agent = AsyncMock()
             mock_create.return_value = mock_agent
@@ -56,7 +56,7 @@ class TestServerUnifiedAgent:
             service.channel = mock_channel
             
             # Mock session manager
-            with patch('omniagents.core.agent_service.sm') as mock_sm:
+            with patch('omniagents.core.agents.service.sm') as mock_sm:
                 mock_session = Mock()
                 mock_session.history = []
                 mock_session.channels = []
@@ -65,7 +65,7 @@ class TestServerUnifiedAgent:
                 mock_sm.bind_task = Mock()
                 
                 # Mock stream_agent to be async
-                with patch('omniagents.core.agent_service.stream_agent', new_callable=AsyncMock) as mock_stream:
+                with patch('omniagents.core.agents.service.stream_agent', new_callable=AsyncMock) as mock_stream:
                     # Mock append_message to avoid database errors
                     with patch('omniagents.core.session.append_message'):
                         # Start a run - this will create a task
@@ -95,21 +95,21 @@ class TestServerUnifiedAgent:
         """Test that approval callback is passed for SafeAgent."""
         mock_spec.use_safe_agent = True
         
-        with patch('omniagents.core.agent_factory.create_unified_agent') as mock_create:
+        with patch('omniagents.core.agents.factory.create_unified_agent') as mock_create:
             mock_agent = AsyncMock()
             mock_create.return_value = mock_agent
             
             service = AgentService(mock_spec)
             service.channel = mock_channel
             
-            with patch('omniagents.core.agent_service.sm') as mock_sm:
+            with patch('omniagents.core.agents.service.sm') as mock_sm:
                 mock_session = Mock()
                 mock_session.history = []
                 mock_session.channels = []
                 mock_session.pending_events = []
                 mock_sm.get_or_create.return_value = mock_session
                 
-                with patch('omniagents.core.agent_service.stream_agent'):
+                with patch('omniagents.core.agents.service.stream_agent'):
                     await service.start_run("Hello", session_id="test-123")
                     
                     # Verify approval callback was passed
@@ -121,7 +121,7 @@ class TestServerUnifiedAgent:
     @pytest.mark.asyncio
     async def test_stream_agent_with_unified_agent(self, mock_session):
         """Test stream_agent works with unified agent's run_streamed method."""
-        from omniagents.core.runner_bridge import stream_agent
+        from omniagents.core.runtime.bridge import stream_agent
         
         # Create mock unified agent
         mock_agent = Mock()
@@ -150,8 +150,8 @@ class TestServerUnifiedAgent:
         mock_channel.async_call = AsyncMock()
         
         # Mock dependencies
-        with patch('omniagents.core.runner_bridge.append_message'):
-            with patch('omniagents.core.runner_bridge.ItemHelpers') as mock_helpers:
+        with patch('omniagents.core.runtime.bridge.append_message'):
+            with patch('omniagents.core.runtime.bridge.ItemHelpers') as mock_helpers:
                 mock_helpers.text_message_output.return_value = "Hello!"
                 
                 # Run stream_agent
@@ -171,17 +171,17 @@ class TestServerUnifiedAgent:
     @pytest.mark.asyncio
     async def test_agent_reuse_across_runs(self, mock_spec, mock_channel, mock_session):
         """Test that agents are reused for subsequent runs in same session."""
-        with patch('omniagents.core.agent_factory.create_unified_agent') as mock_create:
+        with patch('omniagents.core.agents.factory.create_unified_agent') as mock_create:
             mock_agent = AsyncMock()
             mock_create.return_value = mock_agent
             
             service = AgentService(mock_spec)
             service.channel = mock_channel
             
-            with patch('omniagents.core.agent_service.sm') as mock_sm:
+            with patch('omniagents.core.agents.service.sm') as mock_sm:
                 mock_sm.get_or_create.return_value = mock_session
                 
-                with patch('omniagents.core.agent_service.stream_agent'):
+                with patch('omniagents.core.agents.service.stream_agent'):
                     # First run - should create agent
                     await service.start_run("First", session_id="test-123")
                     assert mock_create.call_count == 1
@@ -193,7 +193,7 @@ class TestServerUnifiedAgent:
     
     def test_no_runner_imports(self):
         """Verify that Runner is not imported in migrated server code."""
-        import omniagents.core.runner_bridge as bridge_module
+        import omniagents.core.runtime.bridge as bridge_module
         
         # Check that Runner is not in the module's namespace
         assert not hasattr(bridge_module, 'Runner')

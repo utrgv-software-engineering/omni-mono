@@ -13,10 +13,10 @@ from typing import Optional, Dict, Any
 import inspect
 
 from omniagents.rpc import RpcMethodsBase
-from omniagents.core.specs import AgentSpec
+from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.session import sm, Session, append_message
-from omniagents.core.runner_bridge import stream_agent
-from omniagents.core.agent_builder import _default_build_agent
+from omniagents.core.runtime.bridge import stream_agent
+from omniagents.core.agents.builder import _default_build_agent
 
 
 # Optional verbose logging controlled by env var
@@ -166,7 +166,7 @@ class AgentService(RpcMethodsBase):
             if self.spec.build_agent:
                 sess.agent = await self.spec.build_agent({}, None, stub_app)
             else:
-                from omniagents.core.agent_builder import _default_build_agent
+                from omniagents.core.agents.builder import _default_build_agent
                 sess.agent = await _default_build_agent(
                     {},  # Server doesn't use settings from UI
                     None,  # Server doesn't support MCP yet

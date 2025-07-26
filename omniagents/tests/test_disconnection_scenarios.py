@@ -100,7 +100,7 @@ class TestDisconnectionScenarios:
     @pytest.mark.asyncio
     async def test_multi_channel_broadcast_with_dead_channels(self):
         """Test broadcasting to multiple channels with some disconnected."""
-        from omniagents.core.runner_bridge import _broadcast
+        from omniagents.core.runtime.bridge import _broadcast
         
         session = Session()
         
@@ -130,7 +130,7 @@ class TestDisconnectionScenarios:
     @pytest.mark.asyncio
     async def test_broadcast_with_no_channels(self):
         """Test broadcasting when no channels are connected."""
-        from omniagents.core.runner_bridge import _broadcast
+        from omniagents.core.runtime.bridge import _broadcast
         
         session = Session()
         session.channels = []

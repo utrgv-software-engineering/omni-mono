@@ -7,9 +7,9 @@ import pytest
 from unittest.mock import Mock, AsyncMock, patch
 from typing import List, Any
 
-from omniagents.core.specs import AgentSpec, SafeAgentOptions
+from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions
 from omniagents.rpc.agents.local import LocalAgent
-from omniagents.core.agent_factory import create_unified_agent
+from omniagents.core.agents.factory import create_unified_agent
 
 
 class TestCLIUnifiedIntegration:
@@ -45,7 +45,7 @@ class TestCLIUnifiedIntegration:
         assert adapter.mcp_servers == mcp_servers
         
         # Initialize and verify custom builder uses MCP
-        with patch('omniagents.core.agent_builder._default_build_agent', new_callable=AsyncMock) as mock_build:
+        with patch('omniagents.core.agents.builder._default_build_agent', new_callable=AsyncMock) as mock_build:
             mock_agent = Mock()
             mock_build.return_value = mock_agent
             
@@ -101,7 +101,7 @@ class TestCLIUnifiedIntegration:
         assert adapter.approval_callback == approval_cb
         
         # Initialize and verify approval callback is used
-        with patch('omniagents.core.agent_builder._default_build_agent', new_callable=AsyncMock) as mock_build:
+        with patch('omniagents.core.agents.builder._default_build_agent', new_callable=AsyncMock) as mock_build:
             await adapter.initialize()
             
             # Get the custom builder

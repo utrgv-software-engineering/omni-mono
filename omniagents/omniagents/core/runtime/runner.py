@@ -1,9 +1,9 @@
 """Core runner for executing agents in different modes."""
 
 from typing import Optional, List, Any, Dict
-from omniagents.core.specs import AgentSpec, SafeAgentOptions
-from omniagents.core.config_loader import load_agent_spec_from_yaml, DEFAULT_SETTINGS_FIELDS
-from omniagents.core.backend_loader import load_backend
+from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions
+from omniagents.core.config.loader import load_agent_spec_from_yaml, DEFAULT_SETTINGS_FIELDS
+from omniagents.core.runtime.loader import load_backend
 
 
 class Runner:

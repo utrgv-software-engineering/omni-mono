@@ -7,7 +7,7 @@ import asyncio
 import os
 
 from omniagents.rpc import RpcMethodsBase, JsonRpcClient
-from omniagents.core.unified_agent import UnifiedAgentBase
+from omniagents.core.interfaces.agent import UnifiedAgentBase
 from ._events import map_notification_to_event
 
 

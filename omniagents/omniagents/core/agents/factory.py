@@ -8,8 +8,8 @@ agent implementation (local or remote) based on the agent specification.
 import os
 from typing import Optional, Dict, Any, List
 
-from omniagents.core.specs import AgentSpec
-from omniagents.core.unified_agent import UnifiedAgent
+from omniagents.core.agents.specs import AgentSpec
+from omniagents.core.interfaces.agent import UnifiedAgent
 from omniagents.rpc.agents import LocalAgent, RemoteAgent
 
 

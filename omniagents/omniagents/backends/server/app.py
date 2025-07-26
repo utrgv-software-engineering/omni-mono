@@ -6,9 +6,9 @@ from typing import Optional
 from fastapi import FastAPI, WebSocket, Depends, HTTPException, status
 from omniagents.rpc import JsonRpcEndpoint
 
-from omniagents.core.config_loader import load_agent_spec_from_yaml
-from omniagents.core.specs import AgentSpec
-from omniagents.core.agent_service import AgentService
+from omniagents.core.config.loader import load_agent_spec_from_yaml
+from omniagents.core.agents.specs import AgentSpec
+from omniagents.core.agents.service import AgentService
 
 __all__ = ["build_app"]
 

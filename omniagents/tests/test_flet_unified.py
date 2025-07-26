@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from typing import Dict, Any
 
-from omniagents.core.specs import AgentSpec, SafeAgentOptions
+from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions
 
 
 class TestFletUnifiedAgent:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from agents import Agent
-from omniagents.core.runner import Runner
+from omniagents.core.runtime.runner import Runner
 from omniagents.core import function_tool
 from datetime import datetime
 import random

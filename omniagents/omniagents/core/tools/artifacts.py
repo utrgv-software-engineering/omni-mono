@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from .tooling import function_tool
+from .discovery import function_tool
 
 # Global callback used to display artifacts
 # Callback signature accepts title, content, mode and an optional artifact_id

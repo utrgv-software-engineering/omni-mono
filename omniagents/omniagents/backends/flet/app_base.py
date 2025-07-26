@@ -33,18 +33,18 @@ from .ui import (
 )
 from .settings import SettingsScreen
 from .storage import load_settings, save_settings
-from omniagents.core.specs import SettingField
+from omniagents.core.agents.specs import SettingField
 from omniagents.core.session import Session
-from omniagents.core.config_loader import (
+from omniagents.core.config.loader import (
     load_agent_spec_from_yaml,
     DEFAULT_SETTINGS_FIELDS,
 )  # <-- Import the loader and default settings
-from omniagents.core.specs import (
+from omniagents.core.agents.specs import (
     AgentSpec,
     AgentLike,
     SafeAgentOptions,
 )  # <-- Import moved specs
-from omniagents.core.agent_factory import create_unified_agent
+from omniagents.core.agents.factory import create_unified_agent
 
 # Import agents types for type hinting (use Protocol for flexibility)
 from agents import ItemHelpers  # For message parsing
@@ -57,7 +57,7 @@ from agents import (  # <-- Imports for default builder
 from openai import AsyncOpenAI  # <-- Import for default builder
 
 # Import SafeAgent components directly as they are part of the core package now
-from omniagents.core.safe_agent import SafeAgent, ApprovalResult  # Added SafeAgent and ApprovalResult
+from omniagents.core.agents.safe import SafeAgent, ApprovalResult  # Added SafeAgent and ApprovalResult
 
 # Use TYPE_CHECKING to avoid circular import issues at runtime
 if TYPE_CHECKING:
@@ -225,7 +225,7 @@ class AgentApp:
         self._artifact_displays: Dict[str, ArtifactDisplay] = {}
 
         # Register artifact callback
-        from omniagents.core.artifacts import set_artifact_callback
+        from omniagents.core.tools.artifacts import set_artifact_callback
 
         set_artifact_callback(self.add_artifact)
 

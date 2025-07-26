@@ -1,4 +1,4 @@
-from omniagents.core.artifacts import set_artifact_callback, emit_artifact, display_artifact
+from omniagents.core.tools.artifacts import set_artifact_callback, emit_artifact, display_artifact
 
 
 def test_emit_artifact_callback():

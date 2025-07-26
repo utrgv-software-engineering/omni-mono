@@ -1,8 +1,8 @@
 """CLI backend for OmniAgents."""
 
 import asyncio
-from omniagents.core.backend import Backend
-from omniagents.core.specs import AgentSpec
+from omniagents.core.interfaces.backend import Backend
+from omniagents.core.agents.specs import AgentSpec
 from .runner import run_cli
 
 

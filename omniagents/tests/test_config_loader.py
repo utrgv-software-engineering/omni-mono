@@ -1,6 +1,6 @@
 import os
 import tempfile
-from omniagents.core.config_loader import load_agent_spec_from_yaml
+from omniagents.core.config.loader import load_agent_spec_from_yaml
 
 
 def test_load_agent_spec_from_yaml(tmp_path):

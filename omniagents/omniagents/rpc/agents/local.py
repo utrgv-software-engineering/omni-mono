@@ -4,9 +4,9 @@ import asyncio
 from typing import Optional, Any, List, Dict
 from contextlib import suppress
 
-from omniagents.core.unified_agent import UnifiedAgentBase
-from omniagents.core.agent_service import AgentService
-from omniagents.core.specs import AgentSpec
+from omniagents.core.interfaces.agent import UnifiedAgentBase
+from omniagents.core.agents.service import AgentService
+from omniagents.core.agents.specs import AgentSpec
 from omniagents.rpc import RpcMethodsBase, JsonRpcClient
 from omniagents.rpc.transport.inmemory import InMemoryTransport
 from omniagents.rpc.transport import TransportClosedError
@@ -104,7 +104,7 @@ class LocalAgent(UnifiedAgentBase):
         
         async def custom_build_agent(stub_settings, mcp_server, stub_app):
             # Import here to avoid circular imports
-            from omniagents.core.agent_builder import _default_build_agent
+            from omniagents.core.agents.builder import _default_build_agent
             
             # Use our captured settings instead of stub_settings
             # Use our captured approval_callback if safe agent is enabled

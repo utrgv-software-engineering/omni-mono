@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from omniagents.backends.server import app as server_app
-from omniagents.core.specs import AgentSpec
+from omniagents.core.agents.specs import AgentSpec
 from agents import Agent
 
 
@@ -44,7 +44,7 @@ class TestServerIntegration:
         )
         
         # Mock the stream_agent function
-        from omniagents.core import runner_bridge
+        from omniagents.core.runtime import bridge as runner_bridge
         monkeypatch.setattr(runner_bridge, 'stream_agent', mock_stream_agent)
         
         # Build and return the app

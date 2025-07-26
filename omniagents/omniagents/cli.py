@@ -4,8 +4,8 @@ from dotenv import load_dotenv
 
 # --- Core Framework Imports --- #
 # Note: All OpenAI client configuration (API key, base URL, tracing) should be done by the user script or environment.
-from omniagents.core.config_loader import load_agent_spec_from_yaml
-from omniagents.core.runner import Runner
+from omniagents.core.config.loader import load_agent_spec_from_yaml
+from omniagents.core.runtime.runner import Runner
 
 def main():
     """Entry point for the omniagents CLI."""
@@ -223,8 +223,8 @@ def save_agent_as_py(config_path: str, output_path: str):
     lines.append("'''\n")
 
     # Imports for building AgentSpec
-    lines.append("from omniagents.core.runner import Runner")
-    lines.append("from omniagents.core.specs import AgentSpec, SafeAgentOptions, SettingField\n")
+    lines.append("from omniagents.core.runtime.runner import Runner")
+    lines.append("from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions, SettingField\n")
 
     # Construct the AgentSpec inline
     lines.append("spec = AgentSpec(")

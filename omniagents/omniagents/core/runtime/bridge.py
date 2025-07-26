@@ -5,7 +5,7 @@ import asyncio
 from typing import AsyncGenerator
 
 from agents import RunConfig, ItemHelpers
-from .session import append_message
+from omniagents.core.session import append_message
 
 # ---------------------------------------------------------------------
 # Optional verbose logging controlled by env var

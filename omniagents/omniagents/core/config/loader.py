@@ -4,9 +4,9 @@ from pathlib import Path
 from typing import Dict, Any, List, Callable, Optional
 
 # Core imports
-from .specs import AgentSpec, AgentLike, SafeAgentOptions
-from .specs import SettingField
-from .tooling import discover_functions_in_dir
+from omniagents.core.agents.specs import AgentSpec, AgentLike, SafeAgentOptions
+from omniagents.core.agents.specs import SettingField
+from omniagents.core.tools.discovery import discover_functions_in_dir
 
 DEFAULT_SETTINGS_FIELDS = [
     SettingField(

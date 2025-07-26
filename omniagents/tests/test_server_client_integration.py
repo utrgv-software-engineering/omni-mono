@@ -5,7 +5,7 @@ from unittest.mock import patch, AsyncMock
 
 import uvicorn
 from omniagents.backends.server import app as server_app
-from omniagents.core.specs import AgentSpec
+from omniagents.core.agents.specs import AgentSpec
 from omniagents.rpc.agents.remote import RemoteAgent
 from agents import Agent
 
@@ -88,7 +88,7 @@ async def _run_server(app, port):
     return server, task
 
 
-@patch('omniagents.core.agent_service.stream_agent', new=fake_stream_agent)
+@patch('omniagents.core.agents.service.stream_agent', new=fake_stream_agent)
 async def _integration_flow():
     spec = AgentSpec(
         name="A",

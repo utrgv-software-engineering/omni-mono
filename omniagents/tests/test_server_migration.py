@@ -5,18 +5,18 @@ Test to verify server migration is working correctly.
 import pytest
 from unittest.mock import Mock, patch
 
-from omniagents.core.agent_service import AgentService
-from omniagents.core.runner_bridge import stream_agent
+from omniagents.core.agents.service import AgentService
+from omniagents.core.runtime.bridge import stream_agent
 
 
 def test_runner_not_imported():
     """Verify Runner is not imported in server modules."""
     # Check agent_service
-    import omniagents.core.agent_service as agent_service_module
+    import omniagents.core.agents.service as agent_service_module
     assert not hasattr(agent_service_module, 'Runner')
     
     # Check runner_bridge is now in core
-    import omniagents.core.runner_bridge as bridge_module
+    import omniagents.core.runtime.bridge as bridge_module
     assert not hasattr(bridge_module, 'Runner')
     
     # Check source doesn't contain Runner.run_streamed
@@ -73,8 +73,8 @@ async def test_agent_with_runner():
     mock_result.stream_events = mock_stream_events
     
     # Mock dependencies
-    with patch('omniagents.core.runner_bridge.append_message'):
-        with patch('omniagents.core.runner_bridge._Runner') as mock_runner_class:
+    with patch('omniagents.core.runtime.bridge.append_message'):
+        with patch('omniagents.core.runtime.bridge._Runner') as mock_runner_class:
             mock_runner_class.run_streamed.return_value = mock_result
             
             # Run stream_agent
