@@ -1,187 +1,160 @@
-# OmniAgents Architecture Issues
+# OmniAgents Current Issues
 
-This document tracks identified architectural issues and code organization problems in the OmniAgents codebase.
+This document tracks verified architectural issues and missing features in the OmniAgents codebase based on code analysis.
 
-## ✅ Resolved Issues
+## 🔴 Critical Issues
 
-### 1. Misplaced Multi-Mode Runner (RESOLVED)
-- **Issue**: `AgentApp` was a general-purpose multi-mode runner living in the Flet backend directory
-- **Solution**: Created `omniagents/core/runner.py` with a unified `Runner` class
-- **Details**: See `docs/RUNNER.md` for full resolution details
-
-## 🔴 Open Issues
-
-### 2. Duplicate Database/Persistence Implementations
+### 1. No Version Management
 
 **Problem:**
-- `omniagents/core/local_sessions.py`: Basic SQLite implementation for CLI/local sessions
-- `omniagents/server/history_db.py`: Extended SQLite implementation with session archiving
-- Both implement the same core functionality (load_history, append_message) with slight variations
-- The server version adds session management features that could benefit all backends
+- Version only exists in `pyproject.toml` (hardcoded as "0.1.3")
+- No `__version__` attribute in the codebase
+- Cannot programmatically access version information
 
-**Example:**
-```python
-# In local_sessions.py
-def load_history(session_id: str) -> list[dict]:
-    with _lock:
-        cur = _conn.execute(
-            "SELECT msg_json FROM history WHERE session_id=? ORDER BY id ASC",
-            (session_id,),
-        )
-        rows = cur.fetchall()
-    return [json.loads(r[0]) for r in rows]
-
-# In history_db.py - same function, same implementation
-def load_history(session_id: str) -> list[dict]:
-    with _lock:
-        cur = _conn.execute(
-            "SELECT msg_json FROM history WHERE session_id=? ORDER BY id ASC",
-            (session_id,),
-        )
-        rows = cur.fetchall()
-    return [json.loads(r[0]) for r in rows]
+**Code Evidence:**
+```toml
+# pyproject.toml
+[project]
+name = "omniagents"
+version = "0.1.3"
 ```
 
 **Impact:**
-- Code duplication
-- Features like session archiving only available to server backend
-- Maintenance burden - need to update multiple files for database changes
+- Cannot display version in CLI/API responses
+- Cannot track deployments programmatically
+- Difficult to debug version-specific issues
 
-**Proposed Solution:**
-- Move the extended history_db.py functionality to core
-- Create `omniagents/core/persistence/` module
-- Have all backends use the unified persistence layer
-
-### 3. Server-Specific Code in Core
-
-**Problem:**
-`AgentService` (`omniagents/core/agent_service.py`) imports from `omniagents.server.*`:
+**Solution:**
+Create `omniagents/__version__.py`:
 ```python
-from omniagents.server.sessions import sm, Session  # line 17
-from omniagents.server.runner_bridge import stream_agent  # line 18
-from omniagents.server.history_db import append_message  # line 19
+__version__ = "0.1.3"
+__version_info__ = (0, 1, 3)
 ```
 
-**UPDATE: This issue has been resolved. All these modules have been moved to core.**
-
-**Impact:**
-- Creates a backwards dependency: core → server
-- Core modules should not depend on specific backend implementations
-- Makes it harder to use AgentService without the server backend
-
-**Proposed Solution:**
-- Move shared functionality from server to core
-- Have server backend extend/use core functionality instead
-- AgentService should only import from core modules
-
-### 4. Inconsistent Settings Storage
+### 2. Minimal Error Handling
 
 **Problem:**
-Each backend handles settings differently:
-- **CLI Backend**: Uses environment variables only
-- **Flet Backend**: Uses client-side browser storage + environment fallback
-- **Server Backend**: No persistent settings storage
+- Only transport-specific exceptions exist (`TransportError`, `TransportClosedError`)
+- No comprehensive exception hierarchy
+- No error middleware or structured error responses
+- Errors can crash the application without proper handling
 
-**Example:**
+**Code Evidence:**
 ```python
-# CLI backend (run_cli):
-settings = {}
-for field in spec.settings_fields:
-    env_val = os.getenv(field.key.upper())
-    settings[field.key] = env_val if env_val not in (None, "") else field.default
+# omniagents/rpc/transport/__init__.py
+class TransportError(Exception):
+    """Base exception for transport-related errors."""
+    pass
 
-# Flet backend (storage.py):
-async def load_settings(page: ft.Page, prefix: str, fields: List[SettingField]) -> Dict[str, Any]:
-    # First try client storage, then environment variables
+class TransportClosedError(TransportError):
+    """Raised when attempting to use a closed transport."""
+    pass
 ```
 
 **Impact:**
-- Inconsistent user experience across backends
-- Settings don't persist consistently
-- Each backend reimplements settings logic
+- Ungraceful failures in production
+- Difficult to debug issues
+- Poor user experience with cryptic error messages
 
-**Proposed Solution:**
-- Create a unified settings manager in core
-- Support multiple storage backends (env vars, file, memory)
-- Let each UI backend choose its storage method while using the same interface
+**Solution:**
+- Create comprehensive exception hierarchy in `omniagents/core/exceptions.py`
+- Add error handling middleware
+- Implement structured error responses
 
-### 5. Session Management Duplication
+### 3. No Production Monitoring
 
 **Problem:**
-Different session implementations across backends:
-- **CLI/Flet**: `LocalSession` class (simple)
-- **Server**: `Session` + `SessionManager` classes (advanced with channels, archiving)
+- No health check endpoints
+- No metrics or observability
+- No way to monitor application status
+- Basic logging exists but no structured logging
 
-**Example:**
+**Code Evidence:**
 ```python
-# LocalSession (simple)
-class LocalSession:
-    def __init__(self, session_id: str | None = None) -> None:
-        self.id: str = session_id or str(uuid.uuid4())
-        self.history: list[dict] = load_history(self.id) if session_id else []
-
-# Server Session (advanced)
-class Session:
-    def __init__(self, session_id: str | None = None) -> None:
-        self.id: str = session_id or str(uuid.uuid4())
-        self.history: list[dict] = load_history(self.id) if session_id else []
-        self.current_task: Optional[asyncio.Task] = None
-        self.pending_events: list[tuple[str, dict]] = []
-        self.channels: list[Any] = []
-        self.archived: bool = get_archived(self.id) if session_id else False
+# omniagents/backends/server/app.py - No health endpoints
+def build_app(...) -> FastAPI:
+    app = FastAPI()
+    # Only WebSocket endpoint registered
+    endpoint.register_route(app, "/ws")
+    return app
 ```
 
 **Impact:**
-- Features like archiving only available in server backend
-- Code duplication for basic functionality
-- Inconsistent session capabilities across backends
+- Cannot monitor application health in production
+- No visibility into performance issues
+- Difficult to debug production problems
 
-**Proposed Solution:**
-- Create a unified session interface in core
-- Basic implementation for simple use cases
-- Extended implementation for advanced features
-- Let backends choose which features they need
+**Solution:**
+- Add `/health` endpoint
+- Add basic metrics collection
+- Implement structured logging with context
 
-### 6. Backend Initialization Inconsistency
+### 4. Limited Security Features
 
 **Problem:**
-Some backends check for dependencies at import time, others at runtime:
-```python
-# Good - checks at runtime (FletBackend)
-try:
-    import flet as ft
-    from .app_base import AgentApp
-except ImportError as e:
-    print(f"Error: Flet dependencies not installed...")
-    sys.exit(1)
+- Basic token authentication exists (query parameter only)
+- No rate limiting implementation
+- No API key management system
+- Token passed as query parameter (less secure than headers)
 
-# Could be improved - dependencies imported at module level
-# This fails at import time if dependencies missing
+**Code Evidence:**
+```python
+# omniagents/backends/server/app.py
+async def _verify_token(websocket: WebSocket):
+    if required_token:
+        if websocket.query_params.get("token") != required_token:
+            await websocket.close(code=4403)
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid token")
 ```
 
 **Impact:**
-- Inconsistent error handling
-- Some backends fail at import, others at runtime
-- Harder to provide helpful error messages
+- Vulnerable to brute force attacks
+- Tokens visible in logs/URLs
+- No way to manage multiple API keys
 
-**Proposed Solution:**
-- Standardize dependency checking across all backends
-- Check dependencies when backend is actually used, not imported
-- Provide consistent, helpful error messages
+**Solution:**
+- Add rate limiting middleware
+- Support bearer token authentication
+- Implement proper API key management
+
+## ⚠️ Architecture Concerns
+
+### 5. Test Organization
+
+**Problem:**
+- Tests were previously flat in `/tests` directory
+- Now reorganized but some tests still fail due to code changes
+- No clear testing strategy documented
+
+**Status:**
+- ✅ Test structure reorganized into unit/integration/e2e
+- ❌ 10 tests failing (not due to reorganization)
+
+### 6. Limited Documentation
+
+**Problem:**
+- Basic README exists
+- No API documentation
+- No deployment guide
+- No security best practices documented
+
+**Files:**
+- `/README.md` - Basic usage
+- `/CLAUDE.md` - AI assistant instructions
+- `/docs/ISSUES.md` - This file
+- No comprehensive documentation
 
 ## Priority Ranking
 
-1. **High Priority**: Issues #2, #3, #5 (Database/Session unification and core dependencies)
-   - These cause the most duplication and architectural problems
-   
-2. **Medium Priority**: Issue #4 (Settings storage)
-   - Important for user experience but not blocking
-   
-3. **Low Priority**: Issue #6 (Backend initialization)
-   - More of a polish issue than architectural problem
+1. **Version Management** - Quick fix, high impact
+2. **Error Handling** - Critical for production
+3. **Health Checks** - Essential for operations
+4. **Rate Limiting** - Important for security
+5. **Documentation** - Needed for adoption
 
 ## Notes
 
-- These issues are interconnected - fixing the database layer (#2) would help with session management (#5)
-- Moving server code out of core (#3) should be done before unifying the database layer
-- The settings issue (#4) could be addressed independently
+- The codebase has a clean architecture with good separation of concerns
+- Database layer is already unified (no duplication found)
+- Basic abstractions and protocols are well-designed
+- Main gaps are production-readiness features
