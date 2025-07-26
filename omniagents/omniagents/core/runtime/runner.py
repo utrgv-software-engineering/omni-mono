@@ -39,13 +39,24 @@ class Runner:
         name = getattr(agent, "name", "agent")
         instr = agent.instructions() if callable(agent.instructions) else agent.instructions
         
+        # Generate storage prefix from agent name
+        storage_prefix = name.lower().replace(" ", "_") + "."
+        
+        # Build agent function
+        _builder = None
+        if not safe:
+            async def _builder(settings: Dict[str, Any], mcp, spec) -> Any:
+                return agent
+        
         # Create spec from agent
         spec = AgentSpec(
             name=name,
             header_title=name,
             page_title=name,
             welcome_text=welcome_text or instr,
+            client_storage_prefix=storage_prefix,
             get_agent_instructions=lambda: instr,
+            build_agent=_builder,
             available_tools=getattr(agent, "tools", []),
             model_name=getattr(agent, "model", None),
             use_safe_agent=safe,
