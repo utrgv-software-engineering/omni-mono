@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI `--version` flag support
 - Automated versioning workflow with bump2version
 
-## [0.1.3] - 2025-01-26
+## [## [Unreleased]] - 2025-01-26
 
 ### Added
 - Core refactoring of backends architecture
@@ -56,8 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI interface
 - Flet-based GUI
 
-[Unreleased]: https://github.com/yourusername/omniagents/compare/v0.1.3...HEAD
-[0.1.3]: https://github.com/yourusername/omniagents/compare/v0.1.2...v0.1.3
+[Unreleased]: https://github.com/yourusername/omniagents/compare/v## [Unreleased]...HEAD
+[## [Unreleased]]: https://github.com/yourusername/omniagents/compare/v0.1.2...v## [Unreleased]
 [0.1.2]: https://github.com/yourusername/omniagents/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/yourusername/omniagents/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/yourusername/omniagents/releases/tag/v0.1.0
