@@ -64,7 +64,7 @@ The GUI persists settings such as API keys in the browser local storage.
 ### Server mode
 
 ```bash
-python -m omniagents.cli server -c path/to/agent.yaml --host 0.0.0.0 --port 8000
+python -m omniagents.cli run -c path/to/agent.yaml --mode server --host 0.0.0.0 --port 8000
 ```
 
 This launches a FastAPI app exposing a WebSocket endpoint at `/ws`.  The protocol is described in [`docs/remote_agent_protocol.md`](docs/remote_agent_protocol.md).  A client can connect using `RemoteAgentProxy` from this package or any JSON‑RPC library.

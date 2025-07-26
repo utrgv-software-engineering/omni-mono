@@ -39,7 +39,7 @@ class ServerBackend:
         print(f"Starting OmniAgents RPC server on {host}:{port} (config: {config_path})")
         
         # Build and run the FastAPI app
-        app = build_app(config_path, auth_token=auth_token)
+        app = build_app(config_path, spec=spec, auth_token=auth_token)
         uvicorn.run(app, host=host, port=port, reload=reload)
 
 

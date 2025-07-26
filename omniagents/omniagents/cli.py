@@ -24,9 +24,9 @@ def main():
     run_parser = subparsers.add_parser("run", help="Run an agent")
     run_parser.add_argument(
         "--mode", "-m",
-        choices=["gui", "cli"],
+        choices=["gui", "cli", "server"],
         default="gui",
-        help="Run mode: 'gui' (default) for graphical UI, 'cli' for command-line interface"
+        help="Run mode: 'gui' (default) for graphical UI, 'cli' for command-line interface, 'server' for JSON-RPC server"
     )
     run_parser.add_argument(
         "--config",
@@ -73,6 +73,29 @@ def main():
         type=str,
         help="Comma-separated list of safe tool patterns (CLI mode only)."
     )
+    # Server-specific arguments
+    run_parser.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="Host interface to bind (server mode only, default 0.0.0.0)"
+    )
+    run_parser.add_argument(
+        "--port", "-p",
+        type=int,
+        default=8000,
+        help="Port to listen on (server mode only, default 8000)"
+    )
+    run_parser.add_argument(
+        "--auth-token",
+        dest="auth_token",
+        default=None,
+        help="Bearer token to require from clients (server mode only)"
+    )
+    run_parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="Auto-reload server when code changes (server mode only)"
+    )
     
     # Save command
     save_parser = subparsers.add_parser("save", help="Save an agent spec as a standalone Python module")
@@ -91,13 +114,6 @@ def main():
         help="Output Python file path."
     )
     
-    # Server command (JSON-RPC over WebSocket)
-    serve_parser = subparsers.add_parser("server", help="Run agent as RPC WebSocket server")
-    serve_parser.add_argument("--config", "-c", required=True, type=str, help="Path to the agent configuration YAML file.")
-    serve_parser.add_argument("--host", default="0.0.0.0", help="Host interface to bind (default 0.0.0.0)")
-    serve_parser.add_argument("--port", "-p", type=int, default=8000, help="Port to listen on (default 8000)")
-    serve_parser.add_argument("--auth-token", dest="auth_token", default=None, help="Bearer token to require from clients (?token=XYZ)")
-    serve_parser.add_argument("--reload", action="store_true", help="Auto-reload server when code changes")
     
     args = parser.parse_args()
     
@@ -112,6 +128,15 @@ def main():
             'debug': args.debug,
             'session_id': getattr(args, 'session_id', None),
         }
+        
+        # Add server-specific kwargs if in server mode
+        if args.mode == 'server':
+            kwargs.update({
+                'host': args.host,
+                'port': args.port,
+                'auth_token': args.auth_token,
+                'reload': args.reload
+            })
         
         try:
             runner.run(mode=args.mode, **kwargs)
@@ -138,24 +163,6 @@ def main():
         except Exception as e:
             print(f"Error saving agent spec: {e}")
             import traceback; traceback.print_exc()
-            sys.exit(1)
-    elif args.command == "server":
-        # Use the new Runner for server mode
-        runner = Runner(config_path=args.config)
-        
-        try:
-            runner.run(
-                mode='server',
-                config_path=args.config,
-                host=args.host,
-                port=args.port,
-                auth_token=args.auth_token,
-                reload=args.reload
-            )
-        except Exception as e:
-            print(f"Failed to start server: {e}")
-            import traceback
-            traceback.print_exc()
             sys.exit(1)
     else:
         parser.print_help()

@@ -25,7 +25,7 @@ python -m omniagents.cli run -c path/to/agent.yaml
 
 **Server Mode:**
 ```bash
-python -m omniagents.cli server -c path/to/agent.yaml --host 0.0.0.0 --port 8000
+python -m omniagents.cli run -c path/to/agent.yaml --mode server --host 0.0.0.0 --port 8000
 ```
 
 ### Installing Dependencies
