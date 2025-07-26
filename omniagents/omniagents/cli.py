@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 
 # --- Core Framework Imports --- #
 # Note: All OpenAI client configuration (API key, base URL, tracing) should be done by the user script or environment.
+from omniagents import __version__
 from omniagents.core.config.loader import load_agent_spec_from_yaml
 from omniagents.core.runtime.runner import Runner
 
@@ -18,6 +19,11 @@ def main():
 
     # --- Command Line Arguments ---
     parser = argparse.ArgumentParser(description="OmniAgents CLI")
+    parser.add_argument(
+        "--version", "-v",
+        action="version",
+        version=f"omniagents {__version__}"
+    )
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
     
     # Run command
