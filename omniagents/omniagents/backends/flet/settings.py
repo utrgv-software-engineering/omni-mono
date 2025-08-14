@@ -79,10 +79,21 @@ class SettingsScreen(ft.View):
 
         # --- MOVED UI Building Logic Inside Init --- 
 
+        # Check if a custom client has been set
+        from agents.models._openai_shared import get_default_openai_client
+        has_custom_client = get_default_openai_client() is not None
+
         # --- Group Fields and Build UI --- 
         grouped_fields = defaultdict(list)
         all_groups = [] # Keep track of group order
+        
+        # Filter out OpenAI-specific fields if custom client is set
+        openai_keys = {'openai_api_key', 'openai_api_base'}
         for field_spec in self.fields_spec:
+            # Skip OpenAI fields if custom client is set
+            if has_custom_client and field_spec.key in openai_keys:
+                continue
+                
             group_name = field_spec.group or "General" # Default group if none specified
             if group_name not in grouped_fields:
                 all_groups.append(group_name)
@@ -100,55 +111,106 @@ class SettingsScreen(ft.View):
 
         # Build controls for each group
         grouped_controls = []
-        for group_name in all_groups:
-            field_controls_in_group = []
-            for i, field_spec in enumerate(grouped_fields[group_name]):
-                tf = self.text_fields[field_spec.key]
-                is_last_in_group = (i == len(grouped_fields[group_name]) - 1)
-                field_controls_in_group.append(
+        
+        # Check if we have any fields to show after filtering
+        if has_custom_client and len(self.text_fields) == 0:
+            # Show message only if ALL fields were filtered out (no custom settings)
+            grouped_controls.append(
+                ft.Container(
+                    content=ft.Column([
+                        ft.Icon(ft.Icons.INFO_OUTLINE, color=ft.Colors.BLUE_400, size=48),
+                        ft.Text(
+                            "Using Custom Client Configuration",
+                            size=18,
+                            weight="w500",
+                            color=ft.Colors.BLACK87,
+                            text_align=ft.TextAlign.CENTER,
+                        ),
+                        ft.Text(
+                            "A custom OpenAI client has been configured programmatically.\n"
+                            "OpenAI settings are managed by your application code.",
+                            size=14,
+                            color=ft.Colors.BLACK54,
+                            text_align=ft.TextAlign.CENTER,
+                        ),
+                    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=12),
+                    padding=ft.padding.all(40),
+                    margin=ft.margin.only(top=40),
+                    bgcolor=ft.Colors.BLUE_50,
+                    border_radius=10,
+                )
+            )
+        elif len(self.text_fields) > 0:
+            # Build settings fields (either all fields if no custom client, or non-OpenAI fields if custom client)
+            
+            # If custom client is set, add a note about hidden OpenAI fields
+            if has_custom_client:
+                grouped_controls.append(
                     ft.Container(
-                        content=tf,
-                        padding=ft.padding.symmetric(horizontal=16, vertical=8),
-                        # Add border only if not the last item in the group
-                        border=ft.border.only(bottom=ft.border.BorderSide(1, ft.Colors.BLACK12)) if not is_last_in_group else None,
+                        content=ft.Row([
+                            ft.Icon(ft.Icons.INFO_OUTLINE, color=ft.Colors.BLUE_400, size=20),
+                            ft.Text(
+                                "Note: OpenAI settings are hidden (using custom client)",
+                                size=12,
+                                color=ft.Colors.BLUE_700,
+                            ),
+                        ], spacing=8),
+                        padding=ft.padding.all(12),
+                        margin=ft.margin.only(bottom=16),
+                        bgcolor=ft.Colors.BLUE_50,
+                        border_radius=8,
+                    )
+                )
+            
+            for group_name in all_groups:
+                field_controls_in_group = []
+                for i, field_spec in enumerate(grouped_fields[group_name]):
+                    tf = self.text_fields[field_spec.key]
+                    is_last_in_group = (i == len(grouped_fields[group_name]) - 1)
+                    field_controls_in_group.append(
+                        ft.Container(
+                            content=tf,
+                            padding=ft.padding.symmetric(horizontal=16, vertical=8),
+                            # Add border only if not the last item in the group
+                            border=ft.border.only(bottom=ft.border.BorderSide(1, ft.Colors.BLACK12)) if not is_last_in_group else None,
+                        )
+                    )
+
+                # Add group header
+                grouped_controls.append(
+                    ft.Container(
+                        content=ft.Text(
+                            group_name.upper(), # Display group name as header
+                            size=12,
+                            weight="w500",
+                            color=ft.Colors.BLACK54,
+                        ),
+                        margin=ft.margin.only(left=16, bottom=6, top=20 if len(grouped_controls) > 0 else 0), # Add top margin for subsequent groups
                     )
                 )
 
-            # Add group header
-            grouped_controls.append(
-                ft.Container(
-                    content=ft.Text(
-                        group_name.upper(), # Display group name as header
-                        size=12,
-                        weight="w500",
-                        color=ft.Colors.BLACK54,
-                    ),
-                    margin=ft.margin.only(left=16, bottom=6, top=20 if len(grouped_controls) > 0 else 0), # Add top margin for subsequent groups
+                # Add the container for the fields in this group
+                grouped_controls.append(
+                     ft.Container(
+                        content=ft.Column(field_controls_in_group, spacing=0),
+                        bgcolor=ft.Colors.WHITE,
+                        border_radius=10,
+                        shadow=ft.BoxShadow(
+                            spread_radius=0, blur_radius=2,
+                            color=ft.Colors.with_opacity(0.1, ft.Colors.BLACK), offset=ft.Offset(0, 1)
+                        ),
+                        margin=ft.margin.only(bottom=6) # Smaller margin below group box
+                    )
                 )
-            )
-
-            # Add the container for the fields in this group
-            grouped_controls.append(
-                 ft.Container(
-                    content=ft.Column(field_controls_in_group, spacing=0),
-                    bgcolor=ft.Colors.WHITE,
-                    border_radius=10,
-                    shadow=ft.BoxShadow(
-                        spread_radius=0, blur_radius=2,
-                        color=ft.Colors.with_opacity(0.1, ft.Colors.BLACK), offset=ft.Offset(0, 1)
-                    ),
-                    margin=ft.margin.only(bottom=6) # Smaller margin below group box
-                )
-            )
-            # Optionally add a hint/footer for the group if needed
-            # last_field_hint = grouped_fields[group_name][-1].hint
-            # if last_field_hint:
-            #     grouped_controls.append(ft.Container(
-            #         content=ft.Text(last_field_hint, size=12, color=ft.Colors.BLACK45),
-            #         margin=ft.margin.only(left=16, top=6, bottom=24)
-            #     ))
-            # else:
-            grouped_controls.append(ft.Container(height=18)) # Space between groups
+                # Optionally add a hint/footer for the group if needed
+                # last_field_hint = grouped_fields[group_name][-1].hint
+                # if last_field_hint:
+                #     grouped_controls.append(ft.Container(
+                #         content=ft.Text(last_field_hint, size=12, color=ft.Colors.BLACK45),
+                #         margin=ft.margin.only(left=16, top=6, bottom=24)
+                #     ))
+                # else:
+                grouped_controls.append(ft.Container(height=18)) # Space between groups
 
 
         # --- Create Scrollable Content --- 

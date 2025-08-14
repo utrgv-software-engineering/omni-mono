@@ -93,13 +93,8 @@ async def run_cli(
             pats = args.safe_patterns.split(",")
             spec.safe_agent_options.safe_tool_patterns.extend([p.strip() for p in pats if p.strip()])
 
-    # Configure OpenAI client
-    api_base = settings.get("openai_api_base")
-    api_key = settings.get("openai_api_key")
-    # Remote agents don't require a local OpenAI API key
-    if not api_key and not spec.remote_ws_url:
-        print("Error: OPENAI_API_KEY is required for CLI mode.")
-        sys.exit(1)
+    # Note: OpenAI client configuration is now handled by the agent builder
+    # which respects set_default_openai_client() if the user has set a custom client
 
     # Ensure model_name is set on spec
     if not spec.model_name:

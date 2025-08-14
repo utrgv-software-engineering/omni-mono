@@ -19,9 +19,9 @@ async def _default_build_agent(
     approval_callback: Optional[Any] = None,
 ) -> "AgentLike":
     """Internal default function to build the agent instance."""
-    from agents import Agent
+    from agents import Agent, set_default_openai_key
     from agents.model_settings import ModelSettings
-    from openai import AsyncOpenAI
+    from agents.models._openai_shared import get_default_openai_client
 
     logger.info("Building agent using internal default builder...")
     
@@ -32,25 +32,18 @@ async def _default_build_agent(
     tools = spec.available_tools
     mcp_servers_list = [mcp_server] if mcp_server else []
     
-    # Configure OpenAI client
-    api_key_from_settings = settings.get("openai_api_key")
-    api_key_from_env = os.getenv("OPENAI_API_KEY")
+    # Only set the API key from settings if no custom client has been set
+    # This preserves any client set via set_default_openai_client() (e.g., AsyncAzureOpenAI)
+    if get_default_openai_client() is None:
+        api_key_from_settings = settings.get("openai_api_key")
+        if api_key_from_settings:
+            logger.debug("No custom client set, using API key from settings")
+            set_default_openai_key(api_key_from_settings, use_for_tracing=False)
+    else:
+        logger.debug("Custom client already set, skipping API key configuration")
     
-    api_key = api_key_from_settings or api_key_from_env
-    if not api_key:
-        raise ValueError(
-            "API key must be provided either in settings or OPENAI_API_KEY environment variable"
-        )
-    
-    api_base = settings.get("openai_api_base", None)
-    
-    # Build client config
-    client_config = {"api_key": api_key}
-    if api_base:
-        client_config["base_url"] = api_base
-    
-    # Create AsyncOpenAI client
-    client = AsyncOpenAI(**client_config)
+    # Note: We don't create a client here anymore. The SDK will handle client resolution
+    # through its provider chain, which respects set_default_openai_client() if called
     
     # ModelSettings: use tool_choice when tools are available
     if tools:
