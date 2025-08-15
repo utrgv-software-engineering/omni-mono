@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-import argparse
 from datetime import datetime
 import random
 from time import sleep
 
+from dotenv import load_dotenv
 from agents import Agent
 from omniagents.core.runtime.runner import Runner
 from omniagents.core import function_tool
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 INSTRUCTIONS = """You are a friendly assistant.\nUse `get_current_time` when a user asks for the current time.\nUse `flip_coin` when asked to flip a coin."""
@@ -35,18 +38,12 @@ def build_agent() -> Agent:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the Python tools example")
-    parser.add_argument("--mode", choices=["gui", "cli", "server"], default="cli")
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8000)
-    args = parser.parse_args()
-
     runner = Runner.from_agent(
         build_agent(), 
         welcome_text="Ask me the time or to flip a coin!", 
         safe=False
     )
-    runner.run(mode=args.mode, host=args.host, port=args.port)
+    runner.main(default_mode="cli")
 
 
 if __name__ == "__main__":

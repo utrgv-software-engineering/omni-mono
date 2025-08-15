@@ -85,3 +85,131 @@ class Runner:
         
         backend = backend_class()
         backend.run(spec=self.spec, **kwargs)
+    
+    def main(self, prog_name: Optional[str] = None, default_mode: str = "cli") -> None:
+        """Handle command-line arguments and run the agent.
+        
+        This provides a consistent CLI interface for all agents, eliminating the need
+        for repetitive argparse boilerplate in every script.
+        
+        Args:
+            prog_name: Optional program name for the argument parser
+            default_mode: Default execution mode ('gui', 'cli', or 'server')
+        
+        Example:
+            # In your agent script:
+            runner = Runner.from_agent(build_agent())
+            runner.main()
+        """
+        import argparse
+        import sys
+        
+        parser = argparse.ArgumentParser(
+            prog=prog_name,
+            description=f"Run {self.spec.name}" if self.spec else "Run agent"
+        )
+        
+        # Common arguments
+        common_group = parser.add_argument_group('common arguments')
+        common_group.add_argument(
+            "--mode", "-m",
+            choices=["gui", "cli", "server"],
+            default=default_mode,
+            help=f"Execution mode (default: {default_mode})"
+        )
+        common_group.add_argument(
+            "--debug", "-d",
+            action="store_true",
+            help="Enable debug mode"
+        )
+        
+        # SafeAgent control arguments (CLI and GUI modes)
+        safe_group = parser.add_argument_group('SafeAgent controls', 'Control tool approval behavior (CLI/GUI modes)')
+        safe_group.add_argument(
+            "--no-approval",
+            action="store_true",
+            help="Disable SafeAgent tool approval"
+        )
+        safe_group.add_argument(
+            "--skip-approvals",
+            action="store_true",
+            help="Auto-approve all tool calls"
+        )
+        safe_group.add_argument(
+            "--no-halt",
+            action="store_true",
+            help="Don't halt on rejection"
+        )
+        safe_group.add_argument(
+            "--pre-approve",
+            type=str,
+            help="Comma-separated list of tool names to pre-approve"
+        )
+        safe_group.add_argument(
+            "--safe-patterns",
+            type=str,
+            help="Comma-separated list of safe tool patterns"
+        )
+        
+        # CLI-specific arguments
+        cli_group = parser.add_argument_group('CLI mode options')
+        cli_group.add_argument(
+            "--session-id",
+            help="Resume a previous CLI session"
+        )
+        
+        # Server-specific arguments
+        server_group = parser.add_argument_group('server mode options')
+        server_group.add_argument(
+            "--host",
+            default="0.0.0.0",
+            help="Host interface to bind (default: 0.0.0.0)"
+        )
+        server_group.add_argument(
+            "--port", "-p",
+            type=int,
+            default=8000,
+            help="Port to listen on (default: 8000)"
+        )
+        server_group.add_argument(
+            "--auth-token",
+            dest="auth_token",
+            help="Bearer token for authentication"
+        )
+        server_group.add_argument(
+            "--reload",
+            action="store_true",
+            help="Auto-reload on code changes"
+        )
+        
+        args = parser.parse_args()
+        
+        # Build kwargs for run()
+        kwargs = {
+            'debug': args.debug,
+            'args': args,  # Pass full args for all backends
+        }
+        
+        # Add mode-specific kwargs
+        if args.mode == 'cli':
+            kwargs.update({
+                'session_id': args.session_id,
+            })
+        elif args.mode == 'server':
+            kwargs.update({
+                'host': args.host,
+                'port': args.port,
+                'auth_token': args.auth_token,
+                'reload': args.reload,
+            })
+        
+        try:
+            self.run(mode=args.mode, **kwargs)
+        except KeyboardInterrupt:
+            print("\nExiting.")
+            sys.exit(0)
+        except Exception as e:
+            print(f"Error: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)

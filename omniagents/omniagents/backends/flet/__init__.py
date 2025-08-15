@@ -29,6 +29,7 @@ class FletBackend:
         # Extract GUI-specific kwargs
         config_path = kwargs.get('config_path')
         debug = kwargs.get('debug', False)
+        args = kwargs.get('args')
         
         # Create AgentApp instance
         if config_path:
@@ -36,8 +37,23 @@ class FletBackend:
         else:
             app = AgentApp(spec=spec)
         
+        # Apply CLI overrides if args provided (same as CLI backend)
+        if args is not None:
+            if getattr(args, "no_approval", False):
+                app.spec.use_safe_agent = False
+            if getattr(args, "skip_approvals", False):
+                app.spec.safe_agent_options.skip_approvals = True
+            if getattr(args, "no_halt", False):
+                app.spec.safe_agent_options.halt_on_rejection = False
+            if getattr(args, "pre_approve", None):
+                pre = args.pre_approve.split(",")
+                app.spec.safe_agent_options.safe_tool_names.extend([t.strip() for t in pre if t.strip()])
+            if getattr(args, "safe_patterns", None):
+                pats = args.safe_patterns.split(",")
+                app.spec.safe_agent_options.safe_tool_patterns.extend([p.strip() for p in pats if p.strip()])
+        
         # Override debug mode if specified
-        if debug and debug != spec.debug_flag:
+        if debug and debug != app.spec.debug_flag:
             print("Overriding debug mode: Setting to True based on command line argument.")
             app.spec.debug_flag = True
             if "(Debug Mode)" not in app.spec.page_title_suffix:

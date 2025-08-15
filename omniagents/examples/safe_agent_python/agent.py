@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 from agents import Agent
 from omniagents.core.runtime.runner import Runner
 from omniagents.core import function_tool
@@ -29,18 +28,12 @@ def build_agent() -> Agent:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the SafeAgent tools example")
-    parser.add_argument("--mode", choices=["gui", "cli", "server"], default="cli")
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8000)
-    args = parser.parse_args()
-
     runner = Runner.from_agent(
         build_agent(), 
         welcome_text="Ask me the time or to flip a coin!", 
         safe=True  # Enable SafeAgent wrapper
     )
-    runner.run(mode=args.mode, host=args.host, port=args.port)
+    runner.main(default_mode="cli")
 
 
 if __name__ == "__main__":
