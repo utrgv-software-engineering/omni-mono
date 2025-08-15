@@ -108,7 +108,37 @@ class LocalAgent(UnifiedAgentBase):
         async def custom_build_agent(stub_settings, mcp_server, stub_app):
             # If spec already has a custom builder, use it
             if self._original_builder:
-                return await self._original_builder(settings, mcp_servers[0] if mcp_servers else mcp_server, self.spec)
+                agent = await self._original_builder(settings, mcp_servers[0] if mcp_servers else mcp_server, self.spec)
+                
+                # If safe mode is enabled, wrap the agent in SafeAgent
+                if self.spec.use_safe_agent and approval_callback:
+                    from omniagents.core.agents.safe import SafeAgent
+                    opts = self.spec.safe_agent_options
+                    
+                    # Create SafeAgent, passing through all attributes via **kwargs
+                    # SafeAgent's __init__ accepts **kwargs and passes them to Agent.__init__
+                    safe_agent = SafeAgent(
+                        name=agent.name,
+                        tools=await agent.get_all_tools() if hasattr(agent, 'get_all_tools') else agent.tools,
+                        instructions=agent.instructions,
+                        model=agent.model,
+                        model_settings=getattr(agent, 'model_settings', None),
+                        mcp_servers=getattr(agent, 'mcp_servers', []) or [],  # Ensure it's a list, not None
+                        # Pass through other Agent attributes
+                        handoffs=getattr(agent, 'handoffs', []),
+                        handoff_description=getattr(agent, 'handoff_description', None),
+                        prompt=getattr(agent, 'prompt', None),
+                        # SafeAgent specific parameters
+                        approval_callback=approval_callback,
+                        safe_tool_names=opts.safe_tool_names,
+                        safe_tool_patterns=opts.safe_tool_patterns,
+                        skip_approvals=opts.skip_approvals,
+                        halt_on_rejection=opts.halt_on_rejection,
+                        debug_mode=self.spec.debug_flag,
+                    )
+                    return safe_agent
+                
+                return agent
             
             # Otherwise use the default builder
             from omniagents.core.agents.builder import _default_build_agent

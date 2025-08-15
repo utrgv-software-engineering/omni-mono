@@ -60,7 +60,7 @@ def main() -> None:
     runner = Runner.from_agent(
         build_agent(),
         welcome_text="Hi! I can help with general questions, math, or time. What do you need?",
-        safe=False
+        safe=True  # Enable SafeAgent mode to test handoffs with approval
     )
     runner.main(default_mode="cli")
 

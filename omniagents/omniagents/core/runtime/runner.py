@@ -42,11 +42,9 @@ class Runner:
         # Generate storage prefix from agent name
         storage_prefix = name.lower().replace(" ", "_") + "."
         
-        # Build agent function
-        _builder = None
-        if not safe:
-            async def _builder(settings: Dict[str, Any], mcp, spec) -> Any:
-                return agent
+        # Build agent function - always store the original agent
+        async def _builder(settings: Dict[str, Any], mcp, spec) -> Any:
+            return agent
         
         # Create spec from agent
         spec = AgentSpec(
@@ -56,7 +54,7 @@ class Runner:
             welcome_text=welcome_text or instr,
             client_storage_prefix=storage_prefix,
             get_agent_instructions=lambda: instr,
-            build_agent=_builder,
+            build_agent=_builder,  # Always use custom builder
             available_tools=getattr(agent, "tools", []),
             model_name=getattr(agent, "model", None),
             use_safe_agent=safe,
