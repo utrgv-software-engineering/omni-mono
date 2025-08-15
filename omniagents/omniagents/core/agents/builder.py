@@ -68,7 +68,7 @@ async def _default_build_agent(
         opts = spec.safe_agent_options
         safe_agent = SafeAgent(
             name=base_agent.name,
-            tools=await base_agent.get_all_tools(),
+            tools=base_agent.tools,  # Use static tools at build time
             instructions=base_agent.instructions,
             model=base_agent.model,
             model_settings=base_agent.model_settings,

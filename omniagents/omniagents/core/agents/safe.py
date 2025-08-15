@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Set, Pattern, Callable, Tuple, Awa
 from agents import Agent, ItemHelpers # Added ItemHelpers import
 from agents.tool import Tool, FunctionTool
 from agents.model_settings import ModelSettings # Added ModelSettings import
+from agents.run_context import RunContextWrapper # Added for proper typing
 
 # Type hinting for the approval callback result
 ApprovalResult = Tuple[bool, bool, Optional[str]]
@@ -58,6 +59,13 @@ class SafeAgent(Agent):
                  skip_approvals: bool = False,
                  **kwargs): # Added **kwargs to catch extra args from Agent init
 
+        # Import ModelSettings here to avoid circular imports
+        from agents.model_settings import ModelSettings as AgentModelSettings
+        
+        # Ensure model_settings is not None for base Agent
+        if model_settings is None:
+            model_settings = AgentModelSettings()
+        
         # Initialize the base Agent class
         super().__init__(
             name=name,
@@ -65,7 +73,7 @@ class SafeAgent(Agent):
             instructions=instructions,
             model=model,
             model_settings=model_settings,
-            mcp_servers=mcp_servers,
+            mcp_servers=mcp_servers if mcp_servers is not None else [],
             **kwargs
         )
 
@@ -235,14 +243,18 @@ class SafeAgent(Agent):
         return wrapped_tool
 
     # Override get_all_tools to ensure wrapping happens dynamically
-    async def get_all_tools(self) -> List[Tool]:
-        """Get all tools from the base class and wrap them with approval checks."""
+    async def get_all_tools(self, run_context: RunContextWrapper[Any]) -> List[Tool]:
+        """Get all tools from the base class and wrap them with approval checks.
+        
+        Args:
+            run_context: The run context wrapper, required by parent class
+        """
         # Reset halt flag at the beginning of each run potentially involving tool fetching
         self._halt_run = False
         self._halt_reason = None
 
         # Get tools from base Agent (could come from init or MCP servers)
-        tools = await super().get_all_tools()
+        tools = await super().get_all_tools(run_context)
 
         # Wrap necessary tools
         wrapped_tools = [self.wrap_tool_with_approval(tool) for tool in tools]

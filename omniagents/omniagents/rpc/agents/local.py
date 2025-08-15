@@ -119,7 +119,7 @@ class LocalAgent(UnifiedAgentBase):
                     # SafeAgent's __init__ accepts **kwargs and passes them to Agent.__init__
                     safe_agent = SafeAgent(
                         name=agent.name,
-                        tools=await agent.get_all_tools() if hasattr(agent, 'get_all_tools') else agent.tools,
+                        tools=agent.tools,  # Use static tools at build time
                         instructions=agent.instructions,
                         model=agent.model,
                         model_settings=getattr(agent, 'model_settings', None),
