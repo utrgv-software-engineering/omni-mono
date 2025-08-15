@@ -102,8 +102,15 @@ class LocalAgent(UnifiedAgentBase):
         approval_callback = self.approval_callback
         mcp_servers = self.mcp_servers
         
+        # Store the original builder before replacing it
+        self._original_builder = self.spec.build_agent
+        
         async def custom_build_agent(stub_settings, mcp_server, stub_app):
-            # Import here to avoid circular imports
+            # If spec already has a custom builder, use it
+            if self._original_builder:
+                return await self._original_builder(settings, mcp_servers[0] if mcp_servers else mcp_server, self.spec)
+            
+            # Otherwise use the default builder
             from omniagents.core.agents.builder import _default_build_agent
             
             # Use our captured settings instead of stub_settings
@@ -121,7 +128,6 @@ class LocalAgent(UnifiedAgentBase):
             )
         
         # Set the custom builder on the spec
-        self._original_builder = self.spec.build_agent
         self.spec.build_agent = custom_build_agent
         
         # Connect server transport
