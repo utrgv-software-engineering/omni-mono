@@ -854,6 +854,7 @@ class AgentApp:
 
                             tool_output = str(item.output)
                             call_id = None
+                            # Extract call_id from raw_item (matches OpenAI SDK format)
                             if hasattr(item, "raw_item"):
                                 raw = item.raw_item
                                 if isinstance(raw, dict):

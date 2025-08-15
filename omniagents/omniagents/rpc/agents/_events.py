@@ -32,13 +32,18 @@ class ToolCallItem:
 
 
 class ToolCallOutputItem:
-    """Represents tool output for UI display."""
+    """Represents tool output for UI display, matching OpenAI SDK format."""
     
     def __init__(self, name: str, output: str, call_id: str | None = None):
         self.type = "tool_call_output_item"
         self.name = name
         self.output = output
-        self.call_id = call_id
+        # Store call_id in raw_item to match OpenAI SDK format
+        self.raw_item = {
+            "call_id": call_id,
+            "output": output,
+            "type": "function_call_output"
+        }
 
     def to_input_item(self):
         """Convert to input format for conversation history."""
@@ -48,8 +53,8 @@ class ToolCallOutputItem:
             "role": "assistant", 
             "type": "tool_call_output"
         }
-        if self.call_id:
-            base["call_id"] = self.call_id
+        if self.raw_item.get("call_id"):
+            base["call_id"] = self.raw_item["call_id"]
         return base
 
 
