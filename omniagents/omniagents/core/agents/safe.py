@@ -11,15 +11,21 @@ import sys
 import inspect
 import asyncio # Added asyncio import
 from typing import Any, Dict, List, Optional, Set, Pattern, Callable, Tuple, Awaitable # Added Tuple import
+import contextvars
 
 from agents import Agent, ItemHelpers # Added ItemHelpers import
 from agents.tool import Tool, FunctionTool
 from agents.model_settings import ModelSettings # Added ModelSettings import
-from agents.run_context import RunContextWrapper # Added for proper typing
 
 # Type hinting for the approval callback result
 ApprovalResult = Tuple[bool, bool, Optional[str]]
 ApprovalCallback = Callable[[str, str], Awaitable[ApprovalResult]]
+
+# Context variable to store the approval callback for the current execution
+_approval_callback_context: contextvars.ContextVar[Optional[ApprovalCallback]] = contextvars.ContextVar(
+    'approval_callback',
+    default=None
+)
 
 class ToolsToFinalOutputResult:
     """Container class for tool execution results."""
@@ -42,6 +48,19 @@ class SafeAgent(Agent):
     async def auto_approval_callback(tool_name: str, formatted_args: str) -> ApprovalResult:
         """Automatic approval callback that always approves tools."""
         return True, False, None # approved=True, always_approve=False, error_msg=None
+    
+    @classmethod
+    def set_global_approval_callback(cls, callback: Optional[ApprovalCallback]) -> None:
+        """Set the global approval callback for all SafeAgent instances in this context.
+        
+        This is typically called by the Runner/backend at the start of execution.
+        """
+        _approval_callback_context.set(callback)
+    
+    @classmethod
+    def get_global_approval_callback(cls) -> Optional[ApprovalCallback]:
+        """Get the global approval callback from the context."""
+        return _approval_callback_context.get()
 
     def __init__(self,
                  name: str,
@@ -66,6 +85,9 @@ class SafeAgent(Agent):
         if model_settings is None:
             model_settings = AgentModelSettings()
         
+        # Extract handoffs before passing to parent, we'll wrap them
+        handoffs = kwargs.pop('handoffs', [])
+        
         # Initialize the base Agent class
         super().__init__(
             name=name,
@@ -74,6 +96,7 @@ class SafeAgent(Agent):
             model=model,
             model_settings=model_settings,
             mcp_servers=mcp_servers if mcp_servers is not None else [],
+            handoffs=[], # Will be set after wrapping
             **kwargs
         )
 
@@ -86,14 +109,17 @@ class SafeAgent(Agent):
         self.halt_on_rejection = halt_on_rejection
         self._skip_approvals = skip_approvals
 
-        # Store the approval callback - raise error if needed but not provided
-        if not skip_approvals and approval_callback is None:
-            raise ValueError("approval_callback is required when skip_approvals is False")
-        self._approval_callback = approval_callback or self.auto_approval_callback
+        # Store the approval callback - allow None for deferred binding
+        # Callback will be set later by Runner/backend if needed
+        self._approval_callback = approval_callback
+        self._needs_callback = not skip_approvals and approval_callback is None
 
         # Store attributes for halt state management
         self._halt_run = False
         self._halt_reason = None
+        
+        # Wrap handoffs to automatically wrap returned agents in SafeAgent
+        self.handoffs = self._wrap_handoffs(handoffs)
 
         # Custom tool use behavior setup (optional, depends if base Agent has it)
         self._original_tool_use_behavior = None
@@ -105,6 +131,95 @@ class SafeAgent(Agent):
             print(f"[SafeAgent] Initialized: skip={self._skip_approvals}, halt={self.halt_on_rejection}, "
                   f"safe_names={len(self._safe_tool_names)}, safe_patterns={len(self._safe_tool_patterns)}", file=sys.stderr)
 
+    def _wrap_handoffs(self, handoffs: List[Any]) -> List[Any]:
+        """Wrap handoff agents to automatically convert them to SafeAgent when invoked.
+        
+        This ensures that when safe mode is enabled, ALL agents in the chain
+        (including handoffs) respect the approval mechanism.
+        """
+        from agents.handoffs import Handoff
+        
+        wrapped_handoffs = []
+        for handoff in handoffs:
+            if isinstance(handoff, Handoff):
+                # Wrap the on_invoke_handoff function
+                original_invoke = handoff.on_invoke_handoff
+                
+                async def wrapped_invoke(ctx, input_json, _original=original_invoke):
+                    # Call the original handoff function
+                    agent = await _original(ctx, input_json)
+                    
+                    # If the returned agent is not already a SafeAgent, wrap it
+                    if not isinstance(agent, SafeAgent):
+                        # Get the approval callback from context or instance
+                        approval_cb = self._approval_callback or self.get_global_approval_callback()
+                        
+                        if approval_cb and not self._skip_approvals:
+                            # Create a SafeAgent wrapping the returned agent
+                            safe_agent = SafeAgent(
+                                name=agent.name,
+                                tools=agent.tools,
+                                instructions=agent.instructions,
+                                model=agent.model,
+                                model_settings=getattr(agent, 'model_settings', None),
+                                mcp_servers=getattr(agent, 'mcp_servers', []) or [],
+                                handoffs=getattr(agent, 'handoffs', []),
+                                handoff_description=getattr(agent, 'handoff_description', None),
+                                prompt=getattr(agent, 'prompt', None),
+                                # SafeAgent params - inherit from parent
+                                approval_callback=approval_cb,
+                                safe_tool_names=list(self._safe_tool_names),
+                                safe_tool_patterns=[p.pattern for p in self._safe_tool_patterns],
+                                skip_approvals=self._skip_approvals,
+                                halt_on_rejection=self.halt_on_rejection,
+                                debug_mode=self.debug_mode,
+                            )
+                            if self.debug_mode:
+                                print(f"[SafeAgent] Wrapped handoff agent '{agent.name}' in SafeAgent", file=sys.stderr)
+                            return safe_agent
+                    
+                    return agent
+                
+                # Create a new Handoff with the wrapped invoke function
+                # We need to copy all attributes
+                import dataclasses
+                wrapped_handoff = dataclasses.replace(handoff, on_invoke_handoff=wrapped_invoke)
+                wrapped_handoffs.append(wrapped_handoff)
+            else:
+                # Not a Handoff object, just pass through
+                wrapped_handoffs.append(handoff)
+        
+        return wrapped_handoffs
+    
+    def set_approval_callback(self, callback: ApprovalCallback) -> None:
+        """Set the approval callback after initialization.
+        
+        This is called by the Runner/backend to inject the appropriate
+        callback for the execution environment (CLI, GUI, server).
+        
+        Also propagates the callback to any SafeAgent instances in handoffs.
+        """
+        self._approval_callback = callback
+        self._needs_callback = False
+        
+        # Propagate to handoff agents if they are SafeAgents
+        if hasattr(self, 'handoffs'):
+            for handoff in self.handoffs:
+                # Handle both Handoff objects and direct Agent references
+                agent = None
+                if hasattr(handoff, 'agent'):
+                    agent = handoff.agent
+                elif hasattr(handoff, 'on_invoke_handoff'):
+                    # For handoff() created objects, we may need to inspect differently
+                    # This is tricky as the agent is returned by the function
+                    pass
+                
+                if agent and isinstance(agent, SafeAgent):
+                    agent.set_approval_callback(callback)
+        
+        if self.debug_mode:
+            print(f"[SafeAgent] Approval callback set for {self.name}", file=sys.stderr)
+    
     def is_tool_safe(self, tool: Tool) -> bool:
         """Check if a tool is considered safe and doesn't need approval."""
         if self._skip_approvals:
@@ -190,6 +305,23 @@ class SafeAgent(Agent):
             # we can execute it directly without another approval prompt.
             if self.is_tool_safe(tool):
                 return await original_on_invoke(context, params_json)
+            
+            # Get approval callback - prefer instance callback, fall back to global
+            approval_callback = self._approval_callback
+            if approval_callback is None:
+                approval_callback = self.get_global_approval_callback()
+            
+            # Check if we have a callback available
+            if approval_callback is None:
+                if self._needs_callback:
+                    # This shouldn't happen in normal flow as Runner should set callback
+                    # But provide a helpful error message
+                    raise RuntimeError(
+                        f"SafeAgent '{self.name}' needs an approval callback but none was set. "
+                        "This usually means the agent wasn't properly initialized by the Runner."
+                    )
+                # If we don't need a callback (skip_approvals=True), just execute
+                return await original_on_invoke(context, params_json)
 
             # Otherwise, prompt for approval
             try:
@@ -200,7 +332,7 @@ class SafeAgent(Agent):
             except Exception:
                 formatted_args = params_json[:200] + ("..." if len(params_json) > 200 else "")
 
-            approved, always_approve, error_msg = await self._approval_callback(tool.name, formatted_args)
+            approved, always_approve, error_msg = await approval_callback(tool.name, formatted_args)
 
             if approved:
                 if always_approve:
@@ -243,7 +375,7 @@ class SafeAgent(Agent):
         return wrapped_tool
 
     # Override get_all_tools to ensure wrapping happens dynamically
-    async def get_all_tools(self, run_context: RunContextWrapper[Any]) -> List[Tool]:
+    async def get_all_tools(self, run_context: Any) -> List[Tool]:
         """Get all tools from the base class and wrap them with approval checks.
         
         Args:

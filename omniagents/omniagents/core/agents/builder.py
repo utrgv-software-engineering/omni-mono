@@ -25,6 +25,12 @@ async def _default_build_agent(
 
     logger.info("Building agent using internal default builder...")
     
+    # Set global approval callback if we have one
+    # This will be available to all SafeAgent instances including handoffs
+    if approval_callback:
+        from omniagents.core.agents.safe import SafeAgent
+        SafeAgent.set_global_approval_callback(approval_callback)
+    
     # Get core config from spec/settings
     agent_name = spec.name
     model_name = spec.model_name or settings.get("model_name", "gpt-4o")

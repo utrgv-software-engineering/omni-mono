@@ -25,7 +25,9 @@ def calculate(expression: str) -> str:
         return "Invalid expression"
 
 
-# Define specialized agents
+# Define specialized agents - just regular Agents
+# When safe=True is set in Runner, these will automatically
+# be wrapped in SafeAgent when handed off to
 math_agent = Agent(
     name="Math Expert",
     instructions="You are a math expert. Help users with calculations and math problems. Be concise.",
@@ -60,7 +62,7 @@ def main() -> None:
     runner = Runner.from_agent(
         build_agent(),
         welcome_text="Hi! I can help with general questions, math, or time. What do you need?",
-        safe=True  # Enable SafeAgent mode to test handoffs with approval
+        safe=True  # Enable SafeAgent mode - automatically wraps ALL agents including handoffs
     )
     runner.main(default_mode="cli")
 

@@ -105,14 +105,25 @@ class LocalAgent(UnifiedAgentBase):
         # Store the original builder before replacing it
         self._original_builder = self.spec.build_agent
         
+        
         async def custom_build_agent(stub_settings, mcp_server, stub_app):
+            # Set global approval callback if we have one
+            # This will be available to all SafeAgent instances including handoffs
+            from omniagents.core.agents.safe import SafeAgent
+            if approval_callback:
+                SafeAgent.set_global_approval_callback(approval_callback)
+            
             # If spec already has a custom builder, use it
             if self._original_builder:
                 agent = await self._original_builder(settings, mcp_servers[0] if mcp_servers else mcp_server, self.spec)
                 
-                # If safe mode is enabled, wrap the agent in SafeAgent
-                if self.spec.use_safe_agent and approval_callback:
-                    from omniagents.core.agents.safe import SafeAgent
+                # Check if agent is already a SafeAgent that needs callback
+                if isinstance(agent, SafeAgent) and approval_callback:
+                    # Set the instance callback as well for this specific agent
+                    agent.set_approval_callback(approval_callback)
+                
+                # If safe mode is enabled and agent is not already a SafeAgent, wrap it
+                elif self.spec.use_safe_agent and approval_callback and not isinstance(agent, SafeAgent):
                     opts = self.spec.safe_agent_options
                     
                     # Create SafeAgent, passing through all attributes via **kwargs
