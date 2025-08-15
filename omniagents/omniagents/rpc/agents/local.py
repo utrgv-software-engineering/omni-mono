@@ -107,11 +107,18 @@ class LocalAgent(UnifiedAgentBase):
         
         
         async def custom_build_agent(stub_settings, mcp_server, stub_app):
-            # Set global approval callback if we have one
+            # Set global approval callback and safe tools if we have them
             # This will be available to all SafeAgent instances including handoffs
             from omniagents.core.agents.safe import SafeAgent
             if approval_callback:
                 SafeAgent.set_global_approval_callback(approval_callback)
+            
+            # Set global safe tool settings
+            if self.spec.safe_agent_options:
+                SafeAgent.set_global_safe_tools(
+                    tool_names=self.spec.safe_agent_options.safe_tool_names,
+                    tool_patterns=self.spec.safe_agent_options.safe_tool_patterns
+                )
             
             # If spec already has a custom builder, use it
             if self._original_builder:

@@ -27,6 +27,17 @@ _approval_callback_context: contextvars.ContextVar[Optional[ApprovalCallback]] =
     default=None
 )
 
+# Context variables for global safe tool settings
+_global_safe_tool_names: contextvars.ContextVar[Set[str]] = contextvars.ContextVar(
+    'global_safe_tool_names',
+    default=set()
+)
+
+_global_safe_tool_patterns: contextvars.ContextVar[List[Pattern]] = contextvars.ContextVar(
+    'global_safe_tool_patterns', 
+    default=[]
+)
+
 class ToolsToFinalOutputResult:
     """Container class for tool execution results."""
     def __init__(self, is_final_output=False, final_output=None):
@@ -61,6 +72,28 @@ class SafeAgent(Agent):
     def get_global_approval_callback(cls) -> Optional[ApprovalCallback]:
         """Get the global approval callback from the context."""
         return _approval_callback_context.get()
+    
+    @classmethod
+    def set_global_safe_tools(cls, tool_names: Optional[List[str]] = None, 
+                            tool_patterns: Optional[List[str]] = None) -> None:
+        """Set global safe tool settings that apply to all SafeAgent instances.
+        
+        Args:
+            tool_names: List of exact tool names that are considered safe
+            tool_patterns: List of regex patterns for tools that are considered safe
+        """
+        if tool_names:
+            _global_safe_tool_names.set(set(tool_names))
+        if tool_patterns:
+            _global_safe_tool_patterns.set([re.compile(p) for p in tool_patterns])
+    
+    @classmethod
+    def add_global_safe_tool(cls, tool_name: str) -> None:
+        """Add a tool to the global safe tools list."""
+        current = _global_safe_tool_names.get()
+        updated = current.copy()
+        updated.add(tool_name)
+        _global_safe_tool_names.set(updated)
 
     def __init__(self,
                  name: str,
@@ -156,6 +189,7 @@ class SafeAgent(Agent):
                         
                         if approval_cb and not self._skip_approvals:
                             # Create a SafeAgent wrapping the returned agent
+                            # Inherit safe tool settings from parent
                             safe_agent = SafeAgent(
                                 name=agent.name,
                                 tools=agent.tools,
@@ -168,8 +202,8 @@ class SafeAgent(Agent):
                                 prompt=getattr(agent, 'prompt', None),
                                 # SafeAgent params - inherit from parent
                                 approval_callback=approval_cb,
-                                safe_tool_names=list(self._safe_tool_names),
-                                safe_tool_patterns=[p.pattern for p in self._safe_tool_patterns],
+                                safe_tool_names=list(self._safe_tool_names),  # Inherit parent's safe tools
+                                safe_tool_patterns=[p.pattern for p in self._safe_tool_patterns],  # Inherit patterns
                                 skip_approvals=self._skip_approvals,
                                 halt_on_rejection=self.halt_on_rejection,
                                 debug_mode=self.debug_mode,
@@ -221,14 +255,30 @@ class SafeAgent(Agent):
             print(f"[SafeAgent] Approval callback set for {self.name}", file=sys.stderr)
     
     def is_tool_safe(self, tool: Tool) -> bool:
-        """Check if a tool is considered safe and doesn't need approval."""
+        """Check if a tool is considered safe and doesn't need approval.
+        
+        Checks both instance-level and global safe tool settings.
+        """
         if self._skip_approvals:
             return True
+            
+        # Check instance-level safe tools
         if tool.name in self._safe_tool_names:
             return True
         for pattern in self._safe_tool_patterns:
             if pattern.match(tool.name):
                 return True
+                
+        # Check global safe tools
+        global_names = _global_safe_tool_names.get()
+        if tool.name in global_names:
+            return True
+        
+        global_patterns = _global_safe_tool_patterns.get()
+        for pattern in global_patterns:
+            if pattern.match(tool.name):
+                return True
+                
         return False
 
     def add_safe_tool(self, tool_name: str) -> None:
@@ -336,7 +386,9 @@ class SafeAgent(Agent):
 
             if approved:
                 if always_approve:
-                    self.add_safe_tool(tool.name)  # Remember for the rest of the session
+                    # Add to both instance and global safe lists
+                    self.add_safe_tool(tool.name)  # Instance level
+                    self.add_global_safe_tool(tool.name)  # Global level for all agents
                 return await original_on_invoke(context, params_json)
 
             # --- Rejected path ---------------------------------------------------

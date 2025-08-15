@@ -25,11 +25,19 @@ async def _default_build_agent(
 
     logger.info("Building agent using internal default builder...")
     
-    # Set global approval callback if we have one
+    # Set global approval callback and safe tools if we have them
     # This will be available to all SafeAgent instances including handoffs
     if approval_callback:
         from omniagents.core.agents.safe import SafeAgent
         SafeAgent.set_global_approval_callback(approval_callback)
+    
+    # Set global safe tool settings
+    if spec.safe_agent_options:
+        from omniagents.core.agents.safe import SafeAgent
+        SafeAgent.set_global_safe_tools(
+            tool_names=spec.safe_agent_options.safe_tool_names,
+            tool_patterns=spec.safe_agent_options.safe_tool_patterns
+        )
     
     # Get core config from spec/settings
     agent_name = spec.name
