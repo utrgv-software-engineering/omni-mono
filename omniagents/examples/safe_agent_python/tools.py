@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from omniagents.core import function_tool
+from omniagents import function_tool
 from datetime import datetime
 import random
 

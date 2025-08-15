@@ -6,8 +6,7 @@ from time import sleep
 
 from dotenv import load_dotenv
 from agents import Agent
-from omniagents.core.runtime.runner import Runner
-from omniagents.core import function_tool
+from omniagents import Runner, function_tool
 
 # Load environment variables from .env file
 load_dotenv()

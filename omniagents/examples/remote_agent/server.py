@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from agents import Agent
-from omniagents.core.runtime.runner import Runner
-from omniagents.core import function_tool
+from omniagents import Runner, function_tool
 from datetime import datetime
 import random
 
