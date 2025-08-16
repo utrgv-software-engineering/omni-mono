@@ -123,7 +123,10 @@ async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: i
 
     # Use Runner to run the agent
     from agents import RunConfig
-    run_config = RunConfig()
+    run_config = RunConfig(
+        group_id=f"session_{session.id}",
+        workflow_name="omniagents_conversation"
+    )
     
     # Import Runner locally to avoid module-level import
     from agents import Runner as _Runner
