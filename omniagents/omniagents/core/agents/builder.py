@@ -94,7 +94,7 @@ async def _default_build_agent(
     from agents.model_settings import ModelSettings
     from agents.models._openai_shared import get_default_openai_client
 
-    logger.info(f"Building agent '{spec.name}' using internal default builder...")
+    logger.debug(f"Building agent '{spec.name}' using internal default builder...")
     
     # Set global approval callback and safe tools if we have them
     # This will be available to all SafeAgent instances including handoffs
