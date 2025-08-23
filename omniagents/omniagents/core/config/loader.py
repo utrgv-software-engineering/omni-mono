@@ -121,6 +121,23 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
     debug_flag = config.get('debug', False)
     page_title_suffix = config.get('page_title_suffix', " (Debug Mode)" if debug_flag else "")
     model_name_from_config = config.get('model') # Get model name from YAML
+    
+    # --- New Agent Parameters ---
+    handoff_description = config.get('handoff_description')  # Optional description for handoffs
+    reset_tool_choice = config.get('reset_tool_choice', True)  # Default to True
+    tool_use_behavior = config.get('tool_use_behavior', 'run_llm_again')  # Default behavior
+    
+    # Validate tool_use_behavior
+    valid_behaviors = ['run_llm_again', 'stop_on_first_tool']
+    if tool_use_behavior not in valid_behaviors:
+        print(f"Warning: Invalid tool_use_behavior '{tool_use_behavior}'. Using default 'run_llm_again'.")
+        tool_use_behavior = 'run_llm_again'
+    
+    # --- Model Settings ---
+    model_settings_config = config.get('model_settings', {})
+    if not isinstance(model_settings_config, dict):
+        print(f"Warning: 'model_settings' should be a dictionary. Ignoring.")
+        model_settings_config = {}
 
     # --- Agent Instructions ---
     base_dir = config_file.parent
@@ -207,6 +224,12 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
     mcp_url_key = config.get('mcp_url_setting_key', 'mcp_url')
     mcp_token_key = config.get('mcp_token_setting_key', 'mcp_auth_token')
     show_mcp_indicator = config.get('show_mcp_status_indicator', True)
+    
+    # Extended MCP config
+    mcp_config_from_yaml = config.get('mcp_config', {})
+    if not isinstance(mcp_config_from_yaml, dict):
+        print(f"Warning: 'mcp_config' should be a dictionary. Using empty dict.")
+        mcp_config_from_yaml = {}
 
     # --- Settings ---
     # Start with default OpenAI settings
@@ -278,6 +301,11 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
         available_tools=selected_tool_functions if not remote_ws_url else [],
         model_name=model_name_from_config if not remote_ws_url else None,
         max_turns=max_turns_cfg,
+        handoff_description=handoff_description,
+        reset_tool_choice=reset_tool_choice,
+        tool_use_behavior=tool_use_behavior,
+        model_settings=model_settings_config if model_settings_config else None,
+        mcp_config=mcp_config_from_yaml if mcp_config_from_yaml else None,
 
         # Agent Safety Config
         use_safe_agent=use_safe,

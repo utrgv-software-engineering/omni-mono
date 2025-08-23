@@ -45,6 +45,12 @@ async def _default_build_agent(
     instructions = spec.get_agent_instructions()
     tools = spec.available_tools
     mcp_servers_list = [mcp_server] if mcp_server else []
+    handoff_description = spec.handoff_description
+    reset_tool_choice = spec.reset_tool_choice
+    tool_use_behavior = spec.tool_use_behavior
+    
+    # MCP config - merge spec config with any defaults
+    mcp_config = spec.mcp_config if spec.mcp_config else {}
     
     # Only set the API key from settings if no custom client has been set
     # This preserves any client set via set_default_openai_client() (e.g., AsyncAzureOpenAI)
@@ -59,10 +65,19 @@ async def _default_build_agent(
     # Note: We don't create a client here anymore. The SDK will handle client resolution
     # through its provider chain, which respects set_default_openai_client() if called
     
-    # ModelSettings: use tool_choice when tools are available
-    if tools:
+    # Build ModelSettings from spec config or use defaults
+    if spec.model_settings:
+        # Create ModelSettings from the dictionary
+        model_settings_kwargs = spec.model_settings.copy()
+        # If tools are available and tool_choice not explicitly set, default to "auto"
+        if tools and 'tool_choice' not in model_settings_kwargs:
+            model_settings_kwargs['tool_choice'] = 'auto'
+        model_settings = ModelSettings(**model_settings_kwargs)
+    elif tools:
+        # Default settings with tool_choice when tools are available
         model_settings = ModelSettings(tool_choice="auto")
     else:
+        # Default settings without tools
         model_settings = ModelSettings()
     
     # Build the agent
@@ -73,6 +88,10 @@ async def _default_build_agent(
         model=model_name,
         model_settings=model_settings,
         mcp_servers=mcp_servers_list,
+        mcp_config=mcp_config,
+        handoff_description=handoff_description,
+        reset_tool_choice=reset_tool_choice,
+        tool_use_behavior=tool_use_behavior,
     )
     
     # Optionally wrap with SafeAgent
@@ -87,6 +106,10 @@ async def _default_build_agent(
             model=base_agent.model,
             model_settings=base_agent.model_settings,
             mcp_servers=base_agent.mcp_servers,
+            mcp_config=base_agent.mcp_config,
+            handoff_description=base_agent.handoff_description,
+            reset_tool_choice=base_agent.reset_tool_choice,
+            tool_use_behavior=base_agent.tool_use_behavior,
             approval_callback=approval_callback,
             safe_tool_names=opts.safe_tool_names,
             safe_tool_patterns=opts.safe_tool_patterns,

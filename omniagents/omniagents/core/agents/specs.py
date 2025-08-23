@@ -65,6 +65,11 @@ class AgentSpec:
     available_tools: List[Callable] = field(default_factory=list)
     model_name: Optional[str] = None # Model name used by default builder
     max_turns: int = 20  # Maximum turns per run (overrides Runner default)
+    handoff_description: Optional[str] = None  # Description when used as a handoff
+    reset_tool_choice: bool = True  # Reset tool choice after tool call
+    tool_use_behavior: str = "run_llm_again"  # How to handle tool use
+    model_settings: Optional[Dict[str, Any]] = None  # Model-specific settings
+    mcp_config: Optional[Dict[str, Any]] = None  # MCP configuration
 
     # --- Agent Safety Configuration ---
     use_safe_agent: bool = False

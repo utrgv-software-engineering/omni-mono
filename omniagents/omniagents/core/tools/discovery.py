@@ -11,19 +11,29 @@ from agents.tool import function_tool as original_function_tool
 
 # --- Wrapper Decorator --- #
 
-def function_tool(func: Callable) -> Callable:
+def function_tool(func: Callable = None, **kwargs) -> Callable:
     """
     A wrapper around agents.tool.function_tool that adds a marker
     attribute for easier discovery by the omniagents_core framework.
 
     Usage: Replace `from agents import function_tool` with
            `from omniagents_core import function_tool` in your tool files.
+    
+    Accepts all keyword arguments that agents.tool.function_tool accepts,
+    including strict_mode=False for non-strict schemas.
     """
-    # Apply the original decorator first
-    decorated_func = original_function_tool(func)
-    # Add our marker attribute
-    setattr(decorated_func, '_is_omniagents_core_tool', True)
-    return decorated_func
+    def decorator(f):
+        # Apply the original decorator with all passed kwargs
+        decorated_func = original_function_tool(f, **kwargs)
+        # Add our marker attribute
+        setattr(decorated_func, '_is_omniagents_core_tool', True)
+        return decorated_func
+    
+    # Handle both @function_tool and @function_tool(...) usage
+    if func is None:
+        return decorator
+    else:
+        return decorator(func)
 
 # --- Updated Discovery Function --- #
 
