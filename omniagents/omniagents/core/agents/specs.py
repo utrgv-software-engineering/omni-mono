@@ -98,6 +98,9 @@ class AgentSpec:
     # --- Agent Safety Configuration ---
     use_safe_agent: bool = False
     safe_agent_options: SafeAgentOptions = field(default_factory=SafeAgentOptions)
+    
+    # --- Tracing Configuration ---
+    tracing_config: Optional[Dict[str, Any]] = None
 
     # --- MCP Configuration ---
     uses_mcp: bool = False

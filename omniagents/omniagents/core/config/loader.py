@@ -606,6 +606,12 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
 
     final_settings_fields = list(combined_settings_fields_dict.values())
 
+    # --- Tracing Configuration ---
+    tracing_config = config.get('tracing')
+    if tracing_config and not isinstance(tracing_config, dict):
+        print(f"Warning: 'tracing' in {config_path} should be a dictionary. Ignoring.")
+        tracing_config = None
+    
     # --- UI/UX ---
     icon_map_config = config.get('icon_map', {})
     processed_icon_map = {} # Create a new dict for processed icons
@@ -665,6 +671,9 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
         # Agent Safety Config
         use_safe_agent=use_safe,
         safe_agent_options=safe_options,
+        
+        # Tracing Config
+        tracing_config=tracing_config,
 
         # MCP Config
         uses_mcp=uses_mcp,

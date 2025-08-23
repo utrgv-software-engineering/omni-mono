@@ -17,6 +17,11 @@ class Runner:
             self.spec = load_agent_spec_from_yaml(config_path)
         else:
             raise ValueError("Either spec or config_path must be provided")
+        
+        # Setup tracing if configured
+        if self.spec.tracing_config:
+            from omniagents.core.tracing import setup_tracing
+            setup_tracing(self.spec.tracing_config)
     
     @classmethod
     def from_agent(
