@@ -73,6 +73,97 @@ def _parse_theme_color(color_str: Optional[str], default: str) -> str:
         return default
     return color_str
 
+def _parse_inline_agent_spec(config: Dict[str, Any], base_dir: Path, parent_loading_stack: Set[Path]) -> 'AgentSpec':
+    """Parse an inline agent configuration into an AgentSpec.
+    
+    This is a simplified version of load_agent_spec_from_yaml for inline agents.
+    """
+    # Get basic agent info
+    agent_name = config.get('name', 'Inline Agent')
+    model_name = config.get('model', 'gpt-4o')
+    
+    # Handle instructions
+    instructions_func = _load_instructions(config, base_dir)
+    
+    # Parse tools (inline agents reference tools by name only)
+    tool_names = config.get('tools', [])
+    if not isinstance(tool_names, list):
+        print(f"Warning: 'tools' in inline agent should be a list. Using empty list.")
+        tool_names = []
+    
+    # Discover tools from parent's directory
+    all_discovered_functions = {}
+    tools_dir_path = (base_dir / "tools").resolve()
+    if tools_dir_path.is_dir():
+        from omniagents.core.tools.discovery import discover_functions_in_dir
+        tools_found = discover_functions_in_dir(str(tools_dir_path), False)
+        all_discovered_functions.update(tools_found)
+    
+    selected_tool_functions = []
+    for tool_name in tool_names:
+        if tool_name in all_discovered_functions:
+            selected_tool_functions.append(all_discovered_functions[tool_name])
+        else:
+            print(f"Warning: Tool '{tool_name}' not found for inline agent '{agent_name}'")
+    
+    # Parse model settings if provided
+    model_settings_config = config.get('model_settings', {})
+    if not isinstance(model_settings_config, dict):
+        model_settings_config = {}
+    
+    # Safety configuration
+    use_safe = config.get('use_safe_agent', True)
+    safe_options_config = config.get('safe_agent_options', {})
+    safe_options = SafeAgentOptions(
+        skip_approvals=safe_options_config.get('skip_approvals', False),
+        halt_on_rejection=safe_options_config.get('halt_on_rejection', True),
+        safe_tool_names=safe_options_config.get('safe_tool_names', []),
+        safe_tool_patterns=safe_options_config.get('safe_tool_patterns', []),
+    )
+    
+    # Create minimal AgentSpec for inline agent
+    return AgentSpec(
+        # Basic Info
+        name=agent_name,
+        header_title=agent_name,
+        page_title=agent_name,
+        welcome_text=config.get('welcome_text', f"Hello from {agent_name}"),
+        client_storage_prefix=agent_name.lower().replace(' ', '_') + '.',
+        
+        # Agent Config
+        get_agent_instructions=instructions_func,
+        build_agent=None,
+        available_tools=selected_tool_functions,
+        model_name=model_name,
+        max_turns=config.get('max_turns', 20),
+        handoff_description=config.get('handoff_description'),
+        reset_tool_choice=config.get('reset_tool_choice', True),
+        tool_use_behavior=config.get('tool_use_behavior', 'run_llm_again'),
+        model_settings=model_settings_config if model_settings_config else None,
+        output_type=None,  # Simplified for inline agents
+        prompt=None,  # Simplified for inline agents
+        
+        # Nested handoffs for inline agents (if provided)
+        handoff_configs=[],  # Will be populated if inline agent has handoffs
+        
+        # Guardrails (simplified for inline agents)
+        input_guardrails=[],
+        output_guardrails=[],
+        
+        # Safety
+        use_safe_agent=use_safe,
+        safe_agent_options=safe_options,
+        
+        # MCP (not supported for inline agents)
+        uses_mcp=False,
+        
+        # UI/UX (minimal for inline agents)
+        settings_fields=[],
+        debug_flag=False,
+        theme_color="#2196F3",
+        layout="classic",
+    )
+
 def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Path]] = None) -> AgentSpec:
     """
     Loads agent configuration from a YAML file and builds an AgentSpec.
@@ -388,40 +479,55 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
         
         for handoff_item in handoffs_config:
             if isinstance(handoff_item, dict):
-                yaml_path = handoff_item.get('yaml')
-                if not yaml_path:
-                    print(f"Warning: Handoff item missing 'yaml' field in {config_path}. Skipping.")
-                    continue
-                
-                # Resolve path relative to current YAML file
-                handoff_yaml_path = (base_dir / yaml_path).resolve()
-                if not handoff_yaml_path.is_file():
-                    try:
-                        display_path = handoff_yaml_path.relative_to(Path.cwd())
-                    except ValueError:
-                        display_path = handoff_yaml_path
-                    print(f"Warning: Handoff agent YAML file not found: {display_path}. Skipping.")
-                    continue
-                
-                # Validate that we can load it without circular references
-                # This is a check - we'll actually load it later in the builder
-                try:
-                    load_agent_spec_from_yaml(str(handoff_yaml_path), _loading_stack)
-                except ValueError as e:
-                    if "Circular reference" in str(e):
-                        print(f"Warning: Circular reference detected for handoff {handoff_yaml_path}. Skipping.")
+                # Check if it's an external YAML reference
+                if 'yaml' in handoff_item:
+                    yaml_path = handoff_item.get('yaml')
+                    
+                    # Resolve path relative to current YAML file
+                    handoff_yaml_path = (base_dir / yaml_path).resolve()
+                    if not handoff_yaml_path.is_file():
+                        try:
+                            display_path = handoff_yaml_path.relative_to(Path.cwd())
+                        except ValueError:
+                            display_path = handoff_yaml_path
+                        print(f"Warning: Handoff agent YAML file not found: {display_path}. Skipping.")
                         continue
-                    raise
-                
-                # Create HandoffConfig
-                handoff_config = HandoffConfig(
-                    yaml_path=str(handoff_yaml_path),
-                    tool_name_override=handoff_item.get('tool_name_override'),
-                    tool_description_override=handoff_item.get('tool_description_override')
-                )
-                handoff_configs_list.append(handoff_config)
+                    
+                    # Create HandoffConfig for external agent
+                    # The actual YAML will be loaded during agent building
+                    handoff_config = HandoffConfig(
+                        yaml_path=str(handoff_yaml_path),
+                        tool_name_override=handoff_item.get('tool_name_override'),
+                        tool_description_override=handoff_item.get('tool_description_override')
+                    )
+                    handoff_configs_list.append(handoff_config)
+                    
+                # Check if it's an inline agent definition
+                elif 'inline' in handoff_item:
+                    inline_config = handoff_item.get('inline')
+                    if not isinstance(inline_config, dict):
+                        print(f"Warning: 'inline' value in handoff should be a dictionary. Skipping.")
+                        continue
+                    
+                    try:
+                        # Parse the inline agent configuration
+                        inline_spec = _parse_inline_agent_spec(inline_config, base_dir, _loading_stack)
+                        
+                        # Create HandoffConfig for inline agent
+                        handoff_config = HandoffConfig(
+                            inline_spec=inline_spec,
+                            tool_name_override=handoff_item.get('tool_name_override'),
+                            tool_description_override=handoff_item.get('tool_description_override')
+                        )
+                        handoff_configs_list.append(handoff_config)
+                    except Exception as e:
+                        print(f"Warning: Failed to parse inline agent: {e}. Skipping.")
+                        continue
+                        
+                else:
+                    print(f"Warning: Handoff item must have either 'yaml' or 'inline' field in {config_path}. Skipping.")
             else:
-                print(f"Warning: Invalid handoff item in {config_path}. Expected dict with 'yaml' field. Skipping.")
+                print(f"Warning: Invalid handoff item in {config_path}. Expected dict. Skipping.")
 
     # --- Safety Configuration ---
     use_safe = config.get('use_safe_agent', True) # Default to safe

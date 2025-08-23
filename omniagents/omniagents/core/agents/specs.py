@@ -53,9 +53,15 @@ class SafeAgentOptions:
 @dataclass
 class HandoffConfig:
     """Configuration for a handoff to another agent."""
-    yaml_path: str  # Path to the agent's YAML file
+    yaml_path: Optional[str] = None  # Path to the agent's YAML file (for external agents)
+    inline_spec: Optional['AgentSpec'] = None  # Inline agent specification (for inline agents)
     tool_name_override: Optional[str] = None  # Override the default tool name
     tool_description_override: Optional[str] = None  # Override the default tool description
+    
+    def __post_init__(self):
+        # Validate that exactly one of yaml_path or inline_spec is provided
+        if (self.yaml_path is None) == (self.inline_spec is None):
+            raise ValueError("HandoffConfig must have exactly one of 'yaml_path' or 'inline_spec'")
 
 @dataclass
 class AgentSpec:

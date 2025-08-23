@@ -29,18 +29,33 @@ async def _build_handoffs_from_configs(
     
     handoffs = []
     for handoff_config in handoff_configs:
-        yaml_path = Path(handoff_config.yaml_path).resolve()
-        
-        # Add to loading stack to track circular references
-        if yaml_path in _loading_stack:
-            logger.warning(f"Circular reference detected: {yaml_path} is already being loaded. Skipping.")
-            continue
-        
         try:
-            # Load the handoff agent spec with circular reference tracking
-            new_loading_stack = _loading_stack.copy()
-            new_loading_stack.add(yaml_path)
-            handoff_spec = load_agent_spec_from_yaml(str(yaml_path), new_loading_stack)
+            # Check if this is an external YAML reference or inline agent
+            if handoff_config.yaml_path:
+                # External YAML reference
+                yaml_path = Path(handoff_config.yaml_path).resolve()
+                
+                # Add to loading stack to track circular references
+                if yaml_path in _loading_stack:
+                    logger.warning(f"Circular reference detected: {yaml_path} is already being loaded. Skipping.")
+                    continue
+                
+                # Load the handoff agent spec
+                # Don't pass loading_stack to avoid confusion between loading and building phases
+                handoff_spec = load_agent_spec_from_yaml(str(yaml_path))
+                
+                # Add this path to building stack for recursive building
+                new_loading_stack = _loading_stack.copy()
+                new_loading_stack.add(yaml_path)
+                
+            elif handoff_config.inline_spec:
+                # Inline agent definition
+                handoff_spec = handoff_config.inline_spec
+                new_loading_stack = _loading_stack.copy()
+                
+            else:
+                logger.error("HandoffConfig has neither yaml_path nor inline_spec")
+                continue
             
             # Build the handoff agent
             handoff_agent = await _default_build_agent(
@@ -60,7 +75,8 @@ async def _build_handoffs_from_configs(
             handoffs.append(handoff_obj)
             
         except Exception as e:
-            logger.error(f"Failed to load handoff agent from {yaml_path}: {e}")
+            agent_identifier = handoff_config.yaml_path or handoff_config.inline_spec.name if handoff_config.inline_spec else "unknown"
+            logger.error(f"Failed to build handoff agent {agent_identifier}: {e}")
             continue
     
     return handoffs
@@ -78,7 +94,7 @@ async def _default_build_agent(
     from agents.model_settings import ModelSettings
     from agents.models._openai_shared import get_default_openai_client
 
-    logger.info("Building agent using internal default builder...")
+    logger.info(f"Building agent '{spec.name}' using internal default builder...")
     
     # Set global approval callback and safe tools if we have them
     # This will be available to all SafeAgent instances including handoffs
@@ -125,8 +141,11 @@ async def _default_build_agent(
     # This preserves any client set via set_default_openai_client() (e.g., AsyncAzureOpenAI)
     if get_default_openai_client() is None:
         api_key_from_settings = settings.get("openai_api_key")
+        # Fall back to environment variable if settings is empty or None
+        if not api_key_from_settings:
+            api_key_from_settings = os.getenv("OPENAI_API_KEY")
         if api_key_from_settings:
-            logger.debug("No custom client set, using API key from settings")
+            logger.debug("No custom client set, using API key from settings/environment")
             set_default_openai_key(api_key_from_settings, use_for_tracing=False)
     else:
         logger.debug("Custom client already set, skipping API key configuration")
