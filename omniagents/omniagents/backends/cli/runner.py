@@ -59,10 +59,29 @@ async def run_cli(
     Run an OmniAgents agent in CLI mode using the given YAML config and command-line args.
     """
     # Load environment variables
+    # First try the standard behavior (search from cwd upward)
     try:
         load_dotenv()
     except Exception:
         pass
+    
+    # If we have a config path, also try loading .env from the config's directory tree
+    # This handles the case where the user runs the command from a different directory
+    if config_path:
+        from pathlib import Path
+        config_dir = Path(config_path).resolve().parent
+        
+        # Walk up from config directory to find .env file
+        current = config_dir
+        while current != current.parent:
+            env_file = current / '.env'
+            if env_file.exists():
+                try:
+                    load_dotenv(env_file, override=True)
+                    break
+                except Exception:
+                    pass
+            current = current.parent
 
     # Determine spec: use provided in-memory spec or load from YAML
     if spec is None:

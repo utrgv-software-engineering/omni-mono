@@ -1,15 +1,69 @@
 """Core agent building functionality."""
 
 import os
-from typing import Dict, Any, Optional, TYPE_CHECKING
+from typing import Dict, Any, Optional, TYPE_CHECKING, List, Set
+from pathlib import Path
 
 from omniagents.core.utils.logging import get_logger
 
 if TYPE_CHECKING:
     from agents.mcp import MCPServerSse
-    from omniagents.core.agents.specs import AgentSpec, AgentLike
+    from omniagents.core.agents.specs import AgentSpec, AgentLike, HandoffConfig
+    from agents.handoffs import Handoff
 
 logger = get_logger(__name__)
+
+
+async def _build_handoffs_from_configs(
+    handoff_configs: List["HandoffConfig"],
+    settings: Dict[str, Any],
+    approval_callback: Optional[Any] = None,
+    _loading_stack: Optional[Set[Path]] = None,
+) -> List["Handoff"]:
+    """Build handoff objects from HandoffConfig list."""
+    from agents import handoff
+    from omniagents.core.config.loader import load_agent_spec_from_yaml
+    
+    if _loading_stack is None:
+        _loading_stack = set()
+    
+    handoffs = []
+    for handoff_config in handoff_configs:
+        yaml_path = Path(handoff_config.yaml_path).resolve()
+        
+        # Add to loading stack to track circular references
+        if yaml_path in _loading_stack:
+            logger.warning(f"Circular reference detected: {yaml_path} is already being loaded. Skipping.")
+            continue
+        
+        try:
+            # Load the handoff agent spec with circular reference tracking
+            new_loading_stack = _loading_stack.copy()
+            new_loading_stack.add(yaml_path)
+            handoff_spec = load_agent_spec_from_yaml(str(yaml_path), new_loading_stack)
+            
+            # Build the handoff agent
+            handoff_agent = await _default_build_agent(
+                settings=settings,
+                mcp_server=None,  # Handoff agents don't get MCP server
+                spec=handoff_spec,
+                approval_callback=approval_callback,
+                _loading_stack=new_loading_stack,
+            )
+            
+            # Create the handoff with optional overrides
+            handoff_obj = handoff(
+                agent=handoff_agent,
+                tool_name_override=handoff_config.tool_name_override,
+                tool_description_override=handoff_config.tool_description_override,
+            )
+            handoffs.append(handoff_obj)
+            
+        except Exception as e:
+            logger.error(f"Failed to load handoff agent from {yaml_path}: {e}")
+            continue
+    
+    return handoffs
 
 
 async def _default_build_agent(
@@ -17,6 +71,7 @@ async def _default_build_agent(
     mcp_server: Optional["MCPServerSse"],
     spec: "AgentSpec",
     approval_callback: Optional[Any] = None,
+    _loading_stack: Optional[Set[Path]] = None,
 ) -> "AgentLike":
     """Internal default function to build the agent instance."""
     from agents import Agent, set_default_openai_key
@@ -48,9 +103,23 @@ async def _default_build_agent(
     handoff_description = spec.handoff_description
     reset_tool_choice = spec.reset_tool_choice
     tool_use_behavior = spec.tool_use_behavior
+    output_type = spec.output_type
+    prompt = spec.prompt
+    input_guardrails = spec.input_guardrails
+    output_guardrails = spec.output_guardrails
     
     # MCP config - merge spec config with any defaults
     mcp_config = spec.mcp_config if spec.mcp_config else {}
+    
+    # Build handoffs from configs
+    handoffs = []
+    if spec.handoff_configs:
+        handoffs = await _build_handoffs_from_configs(
+            handoff_configs=spec.handoff_configs,
+            settings=settings,
+            approval_callback=approval_callback,
+            _loading_stack=_loading_stack,
+        )
     
     # Only set the API key from settings if no custom client has been set
     # This preserves any client set via set_default_openai_client() (e.g., AsyncAzureOpenAI)
@@ -89,9 +158,14 @@ async def _default_build_agent(
         model_settings=model_settings,
         mcp_servers=mcp_servers_list,
         mcp_config=mcp_config,
+        handoffs=handoffs,  # Add handoffs here
         handoff_description=handoff_description,
         reset_tool_choice=reset_tool_choice,
         tool_use_behavior=tool_use_behavior,
+        output_type=output_type,
+        prompt=prompt,
+        input_guardrails=input_guardrails,
+        output_guardrails=output_guardrails,
     )
     
     # Optionally wrap with SafeAgent
@@ -107,9 +181,14 @@ async def _default_build_agent(
             model_settings=base_agent.model_settings,
             mcp_servers=base_agent.mcp_servers,
             mcp_config=base_agent.mcp_config,
+            handoffs=base_agent.handoffs,  # Pass handoffs through
             handoff_description=base_agent.handoff_description,
             reset_tool_choice=base_agent.reset_tool_choice,
             tool_use_behavior=base_agent.tool_use_behavior,
+            output_type=base_agent.output_type,
+            prompt=base_agent.prompt,
+            input_guardrails=base_agent.input_guardrails,
+            output_guardrails=base_agent.output_guardrails,
             approval_callback=approval_callback,
             safe_tool_names=opts.safe_tool_names,
             safe_tool_patterns=opts.safe_tool_patterns,

@@ -1,12 +1,13 @@
 import yaml
 # import flet as ft # For theme colors if specified as strings - moved to Flet backend
 from pathlib import Path
-from typing import Dict, Any, List, Callable, Optional
+from typing import Dict, Any, List, Callable, Optional, Set
 
 # Core imports
-from omniagents.core.agents.specs import AgentSpec, AgentLike, SafeAgentOptions
+from omniagents.core.agents.specs import AgentSpec, AgentLike, SafeAgentOptions, HandoffConfig
 from omniagents.core.agents.specs import SettingField
 from omniagents.core.tools.discovery import discover_functions_in_dir
+from omniagents.core.guardrails.discovery import discover_guardrails_in_dir
 
 DEFAULT_SETTINGS_FIELDS = [
     SettingField(
@@ -72,23 +73,37 @@ def _parse_theme_color(color_str: Optional[str], default: str) -> str:
         return default
     return color_str
 
-def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
+def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Path]] = None) -> AgentSpec:
     """
     Loads agent configuration from a YAML file and builds an AgentSpec.
 
     Args:
         config_path: Path to the agent.yaml configuration file.
+        _loading_stack: Internal parameter for circular reference detection.
 
     Returns:
         An AgentSpec instance configured according to the YAML file.
 
     Raises:
         FileNotFoundError: If the config_path does not exist.
-        ValueError: If the configuration is invalid.
+        ValueError: If the configuration is invalid or circular references detected.
     """
-    config_file = Path(config_path)
+    config_file = Path(config_path).resolve()
+    
+    # Initialize loading stack for circular reference detection
+    if _loading_stack is None:
+        _loading_stack = set()
+    
+    # Check for circular references
+    if config_file in _loading_stack:
+        raise ValueError(f"Circular reference detected: {config_file} is already being loaded")
+    
+    # Add current file to loading stack
+    _loading_stack = _loading_stack.copy()
+    _loading_stack.add(config_file)
+    
     if not config_file.is_file():
-        raise FileNotFoundError(f"Configuration file not found: {config_file.resolve()}")
+        raise FileNotFoundError(f"Configuration file not found: {config_file}")
 
     try:
         with open(config_file, 'r', encoding='utf-8') as f:
@@ -133,11 +148,113 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
         print(f"Warning: Invalid tool_use_behavior '{tool_use_behavior}'. Using default 'run_llm_again'.")
         tool_use_behavior = 'run_llm_again'
     
+    # --- Output Type ---
+    output_type_config = config.get('output_type')  # Optional output type specification
+    output_type = None
+    if output_type_config:
+        # Map string type names to Python types
+        type_mapping = {
+            'str': str,
+            'string': str,
+            'dict': dict,
+            'dictionary': dict,
+            'list': list,
+            'array': list,
+            'int': int,
+            'integer': int,
+            'float': float,
+            'number': float,
+            'bool': bool,
+            'boolean': bool,
+            'any': None,  # None means no type constraint
+        }
+        if isinstance(output_type_config, str):
+            output_type = type_mapping.get(output_type_config.lower())
+            if output_type_config.lower() not in type_mapping:
+                print(f"Warning: Unknown output_type '{output_type_config}'. Supported types: {', '.join(type_mapping.keys())}. Ignoring.")
+        else:
+            print(f"Warning: 'output_type' should be a string. Got {type(output_type_config).__name__}. Ignoring.")
+    
+    # --- Prompt Configuration ---
+    prompt_config = config.get('prompt')  # Optional prompt configuration
+    prompt = None
+    if prompt_config:
+        if isinstance(prompt_config, dict):
+            # Validate required 'id' field
+            if 'id' not in prompt_config:
+                print(f"Warning: 'prompt' configuration must have an 'id' field. Ignoring.")
+            else:
+                # Create a Prompt TypedDict-compatible dictionary
+                prompt = {
+                    'id': str(prompt_config['id']),
+                }
+                # Add optional fields if present
+                if 'version' in prompt_config:
+                    prompt['version'] = str(prompt_config['version'])
+                if 'variables' in prompt_config:
+                    if isinstance(prompt_config['variables'], dict):
+                        prompt['variables'] = prompt_config['variables']
+                    else:
+                        print(f"Warning: 'prompt.variables' should be a dictionary. Ignoring variables field.")
+        else:
+            print(f"Warning: 'prompt' should be a dictionary with 'id', 'version' (optional), and 'variables' (optional). Got {type(prompt_config).__name__}. Ignoring.")
+    
     # --- Model Settings ---
     model_settings_config = config.get('model_settings', {})
     if not isinstance(model_settings_config, dict):
         print(f"Warning: 'model_settings' should be a dictionary. Ignoring.")
         model_settings_config = {}
+    
+    # Validate known ModelSettings parameters
+    valid_model_settings = {
+        'temperature': (float, int),
+        'top_p': (float, int),
+        'frequency_penalty': (float, int),
+        'presence_penalty': (float, int),
+        'tool_choice': (str, type(None)),  # "auto", "required", "none", or specific tool
+        'parallel_tool_calls': bool,
+        'truncation': str,  # "auto" or "disabled"
+        'max_tokens': int,
+        'reasoning': dict,  # Configuration for reasoning models
+        'verbosity': str,  # "low", "medium", or "high"
+        'metadata': dict,  # Metadata to include with model calls
+        'store': bool,  # Whether to store responses
+        'include_usage': bool,  # Include usage chunks
+        'response_include': list,  # Additional output data
+        'top_logprobs': int,  # Number of top tokens for logprobs
+        'extra_query': dict,  # Additional query fields
+        'extra_body': dict,  # Additional body fields
+        'extra_headers': dict,  # Additional headers
+        'extra_args': dict,  # Arbitrary keyword arguments
+    }
+    
+    # Validate and warn about invalid settings
+    keys_to_remove = []
+    for key, value in model_settings_config.items():
+        if key in valid_model_settings:
+            expected_types = valid_model_settings[key]
+            if not isinstance(expected_types, tuple):
+                expected_types = (expected_types,)
+            if not isinstance(value, expected_types):
+                type_names = '/'.join(t.__name__ for t in expected_types)
+                print(f"Warning: 'model_settings.{key}' should be {type_names}, got {type(value).__name__}. Ignoring.")
+                keys_to_remove.append(key)
+        else:
+            # Don't warn about unknown settings - they might be provider-specific
+            pass
+    
+    # Remove invalid keys after iteration
+    for key in keys_to_remove:
+        del model_settings_config[key]
+    
+    # Validate specific enum values
+    if 'truncation' in model_settings_config and model_settings_config['truncation'] not in ['auto', 'disabled']:
+        print(f"Warning: 'model_settings.truncation' should be 'auto' or 'disabled', got '{model_settings_config['truncation']}'. Ignoring.")
+        del model_settings_config['truncation']
+    
+    if 'verbosity' in model_settings_config and model_settings_config['verbosity'] not in ['low', 'medium', 'high']:
+        print(f"Warning: 'model_settings.verbosity' should be 'low', 'medium', or 'high', got '{model_settings_config['verbosity']}'. Ignoring.")
+        del model_settings_config['verbosity']
 
     # --- Agent Instructions ---
     base_dir = config_file.parent
@@ -208,6 +325,103 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
             display_path = tools_dir_path
         print(f"Warning: The following tools listed in '{config_path}' were not found in the agent's tools directory '{display_path}' or are not valid marked functions: {', '.join(missing_tools)}")
         # Continue without missing tools
+
+    # --- Guardrail Discovery and Selection ---
+    # Check the 'guardrails' subdirectory for guardrail definitions
+    input_guardrails_list = []
+    output_guardrails_list = []
+    
+    if not remote_ws_url:  # Only discover guardrails for local agents
+        guardrails_dir_path = (base_dir / "guardrails").resolve()
+        if guardrails_dir_path.is_dir():
+            # Discover guardrails (only verbose in debug mode)
+            discovered_input, discovered_output = discover_guardrails_in_dir(str(guardrails_dir_path), debug_flag)
+            if debug_flag:
+                print(f"Discovered guardrails from 'guardrails' subdirectory: {guardrails_dir_path}")
+                print(f"  Input guardrails: {list(discovered_input.keys())}")
+                print(f"  Output guardrails: {list(discovered_output.keys())}")
+        else:
+            discovered_input = {}
+            discovered_output = {}
+            if debug_flag:
+                print(f"No 'guardrails' subdirectory found at {guardrails_dir_path}")
+        
+        # Process input guardrails from config
+        input_guardrail_names = config.get('input_guardrails', [])
+        if not isinstance(input_guardrail_names, list):
+            print(f"Warning: 'input_guardrails' key in {config_path} should be a list of guardrail names. Ignoring.")
+            input_guardrail_names = []
+        
+        missing_input_guardrails = []
+        for guardrail_name in input_guardrail_names:
+            if guardrail_name in discovered_input:
+                input_guardrails_list.append(discovered_input[guardrail_name])
+            else:
+                missing_input_guardrails.append(guardrail_name)
+        
+        if missing_input_guardrails:
+            print(f"Warning: The following input guardrails listed in '{config_path}' were not found: {', '.join(missing_input_guardrails)}")
+        
+        # Process output guardrails from config
+        output_guardrail_names = config.get('output_guardrails', [])
+        if not isinstance(output_guardrail_names, list):
+            print(f"Warning: 'output_guardrails' key in {config_path} should be a list of guardrail names. Ignoring.")
+            output_guardrail_names = []
+        
+        missing_output_guardrails = []
+        for guardrail_name in output_guardrail_names:
+            if guardrail_name in discovered_output:
+                output_guardrails_list.append(discovered_output[guardrail_name])
+            else:
+                missing_output_guardrails.append(guardrail_name)
+        
+        if missing_output_guardrails:
+            print(f"Warning: The following output guardrails listed in '{config_path}' were not found: {', '.join(missing_output_guardrails)}")
+
+    # --- Handoffs Configuration ---
+    handoff_configs_list = []
+    if not remote_ws_url:  # Only process handoffs for local agents
+        handoffs_config = config.get('handoffs', [])
+        if not isinstance(handoffs_config, list):
+            print(f"Warning: 'handoffs' key in {config_path} should be a list. Ignoring.")
+            handoffs_config = []
+        
+        for handoff_item in handoffs_config:
+            if isinstance(handoff_item, dict):
+                yaml_path = handoff_item.get('yaml')
+                if not yaml_path:
+                    print(f"Warning: Handoff item missing 'yaml' field in {config_path}. Skipping.")
+                    continue
+                
+                # Resolve path relative to current YAML file
+                handoff_yaml_path = (base_dir / yaml_path).resolve()
+                if not handoff_yaml_path.is_file():
+                    try:
+                        display_path = handoff_yaml_path.relative_to(Path.cwd())
+                    except ValueError:
+                        display_path = handoff_yaml_path
+                    print(f"Warning: Handoff agent YAML file not found: {display_path}. Skipping.")
+                    continue
+                
+                # Validate that we can load it without circular references
+                # This is a check - we'll actually load it later in the builder
+                try:
+                    load_agent_spec_from_yaml(str(handoff_yaml_path), _loading_stack)
+                except ValueError as e:
+                    if "Circular reference" in str(e):
+                        print(f"Warning: Circular reference detected for handoff {handoff_yaml_path}. Skipping.")
+                        continue
+                    raise
+                
+                # Create HandoffConfig
+                handoff_config = HandoffConfig(
+                    yaml_path=str(handoff_yaml_path),
+                    tool_name_override=handoff_item.get('tool_name_override'),
+                    tool_description_override=handoff_item.get('tool_description_override')
+                )
+                handoff_configs_list.append(handoff_config)
+            else:
+                print(f"Warning: Invalid handoff item in {config_path}. Expected dict with 'yaml' field. Skipping.")
 
     # --- Safety Configuration ---
     use_safe = config.get('use_safe_agent', True) # Default to safe
@@ -306,6 +520,15 @@ def load_agent_spec_from_yaml(config_path: str) -> AgentSpec:
         tool_use_behavior=tool_use_behavior,
         model_settings=model_settings_config if model_settings_config else None,
         mcp_config=mcp_config_from_yaml if mcp_config_from_yaml else None,
+        output_type=output_type,
+        prompt=prompt,
+        
+        # Handoffs
+        handoff_configs=handoff_configs_list,
+        
+        # Guardrails
+        input_guardrails=input_guardrails_list,
+        output_guardrails=output_guardrails_list,
 
         # Agent Safety Config
         use_safe_agent=use_safe,

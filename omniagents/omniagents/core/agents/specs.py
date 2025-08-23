@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .app_base import AgentApp # Import only for type hinting
     from agents.mcp import MCPServerSse # Add the import here
+    from agents.guardrail import InputGuardrail, OutputGuardrail
 
 # --- Add SettingField definition here ---
 @dataclass
@@ -50,6 +51,13 @@ class SafeAgentOptions:
     safe_tool_patterns: List[str] = field(default_factory=list)
 
 @dataclass
+class HandoffConfig:
+    """Configuration for a handoff to another agent."""
+    yaml_path: str  # Path to the agent's YAML file
+    tool_name_override: Optional[str] = None  # Override the default tool name
+    tool_description_override: Optional[str] = None  # Override the default tool description
+
+@dataclass
 class AgentSpec:
     """Specification for configuring an AgentApp."""
     # --- Basic App Info ---
@@ -68,8 +76,17 @@ class AgentSpec:
     handoff_description: Optional[str] = None  # Description when used as a handoff
     reset_tool_choice: bool = True  # Reset tool choice after tool call
     tool_use_behavior: str = "run_llm_again"  # How to handle tool use
-    model_settings: Optional[Dict[str, Any]] = None  # Model-specific settings
+    model_settings: Optional[Dict[str, Any]] = None  # Model-specific settings (temperature, top_p, etc.)
     mcp_config: Optional[Dict[str, Any]] = None  # MCP configuration
+    output_type: Optional[type] = None  # Output type for structured responses
+    prompt: Optional[Dict[str, Any]] = None  # Prompt configuration for Responses API
+    
+    # --- Handoffs ---
+    handoff_configs: List[HandoffConfig] = field(default_factory=list)  # List of handoff configurations
+    
+    # --- Guardrails ---
+    input_guardrails: List[Any] = field(default_factory=list)  # List of InputGuardrail instances
+    output_guardrails: List[Any] = field(default_factory=list)  # List of OutputGuardrail instances
 
     # --- Agent Safety Configuration ---
     use_safe_agent: bool = False
