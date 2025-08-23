@@ -120,12 +120,18 @@ async def _default_build_agent(
     reset_tool_choice = spec.reset_tool_choice
     tool_use_behavior = spec.tool_use_behavior
     output_type = spec.output_type
+    output_type_strict = spec.output_type_strict
     prompt = spec.prompt
     input_guardrails = spec.input_guardrails
     output_guardrails = spec.output_guardrails
     
     # MCP config - merge spec config with any defaults
     mcp_config = spec.mcp_config if spec.mcp_config else {}
+    
+    # Handle output_type with AgentOutputSchema if needed
+    if output_type is not None:
+        from agents.agent_output import AgentOutputSchema
+        output_type = AgentOutputSchema(output_type, strict_json_schema=output_type_strict)
     
     # Build handoffs from configs
     handoffs = []

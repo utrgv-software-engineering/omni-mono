@@ -142,6 +142,7 @@ def _parse_inline_agent_spec(config: Dict[str, Any], base_dir: Path, parent_load
         tool_use_behavior=config.get('tool_use_behavior', 'run_llm_again'),
         model_settings=model_settings_config if model_settings_config else None,
         output_type=None,  # Simplified for inline agents
+        output_type_strict=True,  # Default to strict for inline agents
         prompt=None,  # Simplified for inline agents
         
         # Nested handoffs for inline agents (if provided)
@@ -230,12 +231,31 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
     # --- New Agent Parameters ---
     handoff_description = config.get('handoff_description')  # Optional description for handoffs
     reset_tool_choice = config.get('reset_tool_choice', True)  # Default to True
-    tool_use_behavior = config.get('tool_use_behavior', 'run_llm_again')  # Default behavior
+    tool_use_behavior_config = config.get('tool_use_behavior', 'run_llm_again')  # Default behavior
     
-    # Validate tool_use_behavior
-    valid_behaviors = ['run_llm_again', 'stop_on_first_tool']
-    if tool_use_behavior not in valid_behaviors:
-        print(f"Warning: Invalid tool_use_behavior '{tool_use_behavior}'. Using default 'run_llm_again'.")
+    # Parse tool_use_behavior - can be string or dict (StopAtTools)
+    tool_use_behavior = tool_use_behavior_config
+    if isinstance(tool_use_behavior_config, str):
+        # Validate string behaviors
+        valid_behaviors = ['run_llm_again', 'stop_on_first_tool']
+        if tool_use_behavior_config not in valid_behaviors:
+            print(f"Warning: Invalid tool_use_behavior '{tool_use_behavior_config}'. Using default 'run_llm_again'.")
+            tool_use_behavior = 'run_llm_again'
+    elif isinstance(tool_use_behavior_config, dict):
+        # Handle StopAtTools dict format
+        if 'stop_at_tool_names' in tool_use_behavior_config:
+            stop_at_tools = tool_use_behavior_config.get('stop_at_tool_names', [])
+            if not isinstance(stop_at_tools, list):
+                print(f"Warning: 'stop_at_tool_names' should be a list. Using default 'run_llm_again'.")
+                tool_use_behavior = 'run_llm_again'
+            else:
+                # Keep the dict format for StopAtTools
+                tool_use_behavior = {'stop_at_tool_names': stop_at_tools}
+        else:
+            print(f"Warning: tool_use_behavior dict must have 'stop_at_tool_names' field. Using default 'run_llm_again'.")
+            tool_use_behavior = 'run_llm_again'
+    else:
+        print(f"Warning: tool_use_behavior must be a string or dict. Got {type(tool_use_behavior_config).__name__}. Using default 'run_llm_again'.")
         tool_use_behavior = 'run_llm_again'
     
     # --- Output Type ---
@@ -264,6 +284,12 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
                 print(f"Warning: Unknown output_type '{output_type_config}'. Supported types: {', '.join(type_mapping.keys())}. Ignoring.")
         else:
             print(f"Warning: 'output_type' should be a string. Got {type(output_type_config).__name__}. Ignoring.")
+    
+    # --- Output Type Strict Mode ---
+    output_type_strict = config.get('output_type_strict', True)  # Default to True for strict JSON schema
+    if not isinstance(output_type_strict, bool):
+        print(f"Warning: 'output_type_strict' should be a boolean. Got {type(output_type_strict).__name__}. Using default True.")
+        output_type_strict = True
     
     # --- Prompt Configuration ---
     prompt_config = config.get('prompt')  # Optional prompt configuration
@@ -626,6 +652,7 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
         model_settings=model_settings_config if model_settings_config else None,
         mcp_config=mcp_config_from_yaml if mcp_config_from_yaml else None,
         output_type=output_type,
+        output_type_strict=output_type_strict,
         prompt=prompt,
         
         # Handoffs

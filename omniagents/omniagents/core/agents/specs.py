@@ -81,10 +81,11 @@ class AgentSpec:
     max_turns: int = 20  # Maximum turns per run (overrides Runner default)
     handoff_description: Optional[str] = None  # Description when used as a handoff
     reset_tool_choice: bool = True  # Reset tool choice after tool call
-    tool_use_behavior: str = "run_llm_again"  # How to handle tool use
+    tool_use_behavior: str | Dict[str, Any] = "run_llm_again"  # How to handle tool use (string or StopAtTools dict)
     model_settings: Optional[Dict[str, Any]] = None  # Model-specific settings (temperature, top_p, etc.)
     mcp_config: Optional[Dict[str, Any]] = None  # MCP configuration
     output_type: Optional[type] = None  # Output type for structured responses
+    output_type_strict: bool = True  # Whether to use strict JSON schema for output_type
     prompt: Optional[Dict[str, Any]] = None  # Prompt configuration for Responses API
     
     # --- Handoffs ---
