@@ -14,6 +14,7 @@ from omniagents.core.config.loader import load_agent_spec_from_yaml
 from omniagents.core.agents.factory import create_unified_agent
 from omniagents.core.agents.safe import SafeAgent
 from omniagents.core.session import Session
+from omniagents.core.debug import Debug
 
 ApprovalResult = Tuple[bool, bool, Optional[str]]
 
@@ -96,8 +97,11 @@ async def run_cli(
         env_val = os.getenv(field.key.upper())
         settings[field.key] = env_val if env_val not in (None, "") else field.default
 
+    # Initialize debug system if not already initialized
+    if args is not None:
+        Debug.init(cli_flag=getattr(args, "debug", False))
+    
     # Apply CLI overrides if args provided
-    spec.debug_flag = getattr(args, "debug", False) if args is not None else spec.debug_flag
     if args is not None:
         if getattr(args, "no_approval", False):
             spec.use_safe_agent = False
@@ -134,7 +138,7 @@ async def run_cli(
         token = settings.get(spec.mcp_token_setting_key)
         if token:
             mcp_params["headers"] = {"Authorization": f"Bearer {token}"}
-        if spec.debug_flag:
+        if Debug.enabled():
             print(f"MCP parameters: {mcp_params}")
         mcp_ctx = MCPServerSse(name=f"{spec.name} MCP Server", params=mcp_params)
 
@@ -194,7 +198,7 @@ async def run_cli(
                 break
             if not user_input:
                 continue
-            if spec.debug_flag:
+            if Debug.enabled():
                 print(f"[DEBUG] User input: {user_input}")
 
             user_msg = {"role": "user", "content": user_input}
@@ -228,15 +232,15 @@ async def run_cli(
                         print(f"\n\033[36m⏺\033[0m \033[1m{name}\033[0m({formatted_args})")
                     # Tool output: optionally debug-print
                     elif item.type == "tool_call_output_item":
-                        if spec.debug_flag:
+                        if Debug.enabled():
                             print(f"[DEBUG] Tool output: {item.output}")
                     # Chat message content
                     elif item.type == "message_output_item":
                         message_output = ItemHelpers.text_message_output(item)
-                        if spec.debug_flag:
+                        if Debug.enabled():
                             print(f"[DEBUG] Message building: {message_output}")
                     # Other events: debug only
-                    elif spec.debug_flag:
+                    elif Debug.enabled():
                         print(f"[DEBUG] Event: {event.type}, Item: {getattr(item, 'type', None)}")
 
             # Append assistant and tool items to conversation

@@ -107,7 +107,6 @@ class AgentSpec:
     # --- UI/UX Configuration ---
     icon_map: Dict[str, str] = field(default_factory=dict)
     settings_fields: List[SettingField] = field(default_factory=list)
-    debug_flag: bool = False
     page_title_suffix: str = ""
     theme_color: str = "#2196F3"  # Material Blue color
     # Layout mode for GUI. 'classic' shows all events in a single list,

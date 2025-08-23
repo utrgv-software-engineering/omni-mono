@@ -6,11 +6,7 @@ from typing import AsyncGenerator
 
 from agents import RunConfig, ItemHelpers
 from omniagents.core.session import append_message
-
-# ---------------------------------------------------------------------
-# Optional verbose logging controlled by env var
-# ---------------------------------------------------------------------
-DEBUG_SERVER = os.getenv("OMNIAGENTS_SERVER_DEBUG", "0") in ("1", "true", "True")
+from omniagents.core.debug import Debug
 
 # ---------------------------------------------------------------------
 # Helper: best-effort notify that swallows disconnect errors so the
@@ -118,7 +114,7 @@ async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: i
     session.history.append(user_msg)
     append_message(session.id, user_msg)
 
-    if DEBUG_SERVER:
+    if Debug.enabled():
         print(f"[srv] ▶ start_run  session={session.id[:8]} prompt={prompt[:80]!r} (hist={len(session.history)})")
 
     # Use Runner to run the agent
@@ -158,8 +154,8 @@ async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: i
                 # Ignore malformed items but keep streaming.
                 pass
 
-        if DEBUG_SERVER and method:
+        if Debug.enabled() and method:
             print(f"[srv]   → {method} run={payload.get('run_id','')} details={payload}")
 
-    if DEBUG_SERVER:
+    if Debug.enabled():
         print(f"[srv] ◀ end_run    session={session.id[:8]} hist={len(session.history)}") 

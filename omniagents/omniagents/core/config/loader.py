@@ -8,6 +8,7 @@ from omniagents.core.agents.specs import AgentSpec, AgentLike, SafeAgentOptions,
 from omniagents.core.agents.specs import SettingField
 from omniagents.core.tools.discovery import discover_functions_in_dir
 from omniagents.core.guardrails.discovery import discover_guardrails_in_dir
+from omniagents.core.debug import Debug
 
 DEFAULT_SETTINGS_FIELDS = [
     SettingField(
@@ -159,7 +160,6 @@ def _parse_inline_agent_spec(config: Dict[str, Any], base_dir: Path, parent_load
         
         # UI/UX (minimal for inline agents)
         settings_fields=[],
-        debug_flag=False,
         theme_color="#2196F3",
         layout="classic",
     )
@@ -224,8 +224,7 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
     default_storage_prefix = agent_name.lower().replace(' ', '_').replace('-','_') + '.'
     storage_prefix = config.get('client_storage_prefix', default_storage_prefix)
     welcome_text = config.get('welcome_text', f"Hello! I'm {agent_name}. How can I help you?")
-    debug_flag = config.get('debug', False)
-    page_title_suffix = config.get('page_title_suffix', " (Debug Mode)" if debug_flag else "")
+    page_title_suffix = config.get('page_title_suffix', "")
     model_name_from_config = config.get('model') # Get model name from YAML
     
     # --- New Agent Parameters ---
@@ -363,9 +362,9 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
     tools_dir_path = (base_dir / "tools").resolve()
     if tools_dir_path.is_dir():
         # Discover tools (only verbose in debug mode)
-        tools_found = discover_functions_in_dir(str(tools_dir_path), debug_flag)
+        tools_found = discover_functions_in_dir(str(tools_dir_path))
         all_discovered_functions.update(tools_found)
-        if debug_flag:
+        if Debug.enabled():
             print(f"Discovered tools from 'tools' subdirectory: {tools_dir_path}")
     
     # Then check any additional directories specified in the config
@@ -377,11 +376,11 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
     for tools_dir in additional_tools_dirs:
         additional_dir_path = (base_dir / tools_dir).resolve()
         if additional_dir_path.is_dir():
-            # Discover additional tools (only verbose in debug mode)
-            additional_tools = discover_functions_in_dir(str(additional_dir_path), debug_flag)
+            # Discover additional tools
+            additional_tools = discover_functions_in_dir(str(additional_dir_path))
             # Update with any new tools found (existing tools take precedence)
             all_discovered_functions.update(additional_tools)
-            if debug_flag:
+            if Debug.enabled():
                 print(f"Discovered additional tools from: {additional_dir_path}")
         else:
             # Show path relative to CWD for clearer error messages if run from workspace root
@@ -425,16 +424,16 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
     if not remote_ws_url:  # Only discover guardrails for local agents
         guardrails_dir_path = (base_dir / "guardrails").resolve()
         if guardrails_dir_path.is_dir():
-            # Discover guardrails (only verbose in debug mode)
-            discovered_input, discovered_output = discover_guardrails_in_dir(str(guardrails_dir_path), debug_flag)
-            if debug_flag:
+            # Discover guardrails
+            discovered_input, discovered_output = discover_guardrails_in_dir(str(guardrails_dir_path))
+            if Debug.enabled():
                 print(f"Discovered guardrails from 'guardrails' subdirectory: {guardrails_dir_path}")
                 print(f"  Input guardrails: {list(discovered_input.keys())}")
                 print(f"  Output guardrails: {list(discovered_output.keys())}")
         else:
             discovered_input = {}
             discovered_output = {}
-            if debug_flag:
+            if Debug.enabled():
                 print(f"No 'guardrails' subdirectory found at {guardrails_dir_path}")
         
         # Process input guardrails from config
@@ -649,7 +648,6 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
         # UI/UX Config
         icon_map=processed_icon_map, # Pass the processed map
         settings_fields=final_settings_fields,
-        debug_flag=debug_flag,
         page_title_suffix=page_title_suffix,
         theme_color=theme_color,
         layout=config.get('layout', 'classic'),

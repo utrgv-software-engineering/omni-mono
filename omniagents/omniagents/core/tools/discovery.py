@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Dict, Callable
 import traceback
+from omniagents.core.debug import Debug
 
 # Import the original decorator from the agents library
 from agents.tool import function_tool as original_function_tool
@@ -37,7 +38,7 @@ def function_tool(func: Callable = None, **kwargs) -> Callable:
 
 # --- Updated Discovery Function --- #
 
-def discover_functions_in_dir(base_dir: str = "tools", debug: bool = False) -> Dict[str, Callable]:
+def discover_functions_in_dir(base_dir: str = "tools", debug: bool = None) -> Dict[str, Callable]:
     """
     Discovers Python functions marked with the omniagents_core @function_tool
     decorator (which adds the '_is_omniagents_core_tool' attribute).
@@ -46,6 +47,7 @@ def discover_functions_in_dir(base_dir: str = "tools", debug: bool = False) -> D
 
     Args:
         base_dir: The directory path (relative or absolute) to scan for .py files.
+        debug: Deprecated parameter, uses Debug.enabled() instead.
 
     Returns:
         A dictionary mapping function names to the callable function objects.
@@ -57,7 +59,7 @@ def discover_functions_in_dir(base_dir: str = "tools", debug: bool = False) -> D
         print(f"Warning: Tool discovery directory '{base_dir}' not found or is not a directory.")
         return {}
 
-    if debug:
+    if Debug.enabled():
         print(f"Starting tool discovery (looking for marker) in directory: {base_path}")
 
     parent_path = str(base_path.parent)
@@ -85,7 +87,7 @@ def discover_functions_in_dir(base_dir: str = "tools", debug: bool = False) -> D
                 print(f"Warning: Skipping file {filepath} as it seems outside the expected parent directory {base_path.parent}")
                 continue
 
-                if debug:
+                if Debug.enabled():
                     print(f"Attempting to import module: {module_path} from {filepath}")
 
             try:
@@ -96,7 +98,7 @@ def discover_functions_in_dir(base_dir: str = "tools", debug: bool = False) -> D
                         if name in discovered_functions:
                             # always warn on duplicate names
                             print(f"Warning: Duplicate tool name '{name}' found (from {module_path}). Overwriting previous definition.")
-                        if debug:
+                        if Debug.enabled():
                             print(f"  Discovered marked tool: {name}")
                         discovered_functions[name] = obj
                     # Optionally log other functions found but not marked
@@ -115,6 +117,6 @@ def discover_functions_in_dir(base_dir: str = "tools", debug: bool = False) -> D
     finally:
         sys.path = original_sys_path
 
-    if debug:
+    if Debug.enabled():
         print(f"Completed tool discovery: Found {len(discovered_functions)} marked tools in '{base_dir}'.")
     return discovered_functions 

@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from omniagents import __version__
 from omniagents.core.config.loader import load_agent_spec_from_yaml
 from omniagents.core.runtime.runner import Runner
+from omniagents.core.debug import Debug
 
 def main():
     """Entry point for the omniagents CLI."""
@@ -157,11 +158,13 @@ def main():
         # Use the new Runner for all modes
         runner = Runner(config_path=args.config)
         
+        # Initialize debug system with CLI flag
+        Debug.init(cli_flag=args.debug)
+        
         # Pass all relevant args to the backend
         kwargs = {
             'config_path': args.config,
             'args': args,  # Pass all CLI args for backend-specific handling
-            'debug': args.debug,
             'session_id': getattr(args, 'session_id', None),
         }
         
@@ -304,7 +307,6 @@ def save_agent_as_py(config_path: str, output_path: str):
         lines.append(f"        SettingField(key={field.key!r}, label={field.label!r}, group={field.group!r}, default={field.default!r}, secret={field.secret}, hint={field.hint!r}),")
     lines.append("    ],")
 
-    lines.append(f"    debug_flag={spec.debug_flag},")
     lines.append(f"    page_title_suffix={spec.page_title_suffix!r},")
 
     # Theme color

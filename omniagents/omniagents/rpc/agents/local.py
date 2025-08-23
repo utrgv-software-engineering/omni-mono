@@ -152,7 +152,6 @@ class LocalAgent(UnifiedAgentBase):
                         safe_tool_patterns=opts.safe_tool_patterns,
                         skip_approvals=opts.skip_approvals,
                         halt_on_rejection=opts.halt_on_rejection,
-                        debug_mode=self.spec.debug_flag,
                     )
                     return safe_agent
                 

@@ -22,7 +22,6 @@ class TestFletUnifiedAgent:
         spec.page_title = "Test Agent"
         spec.welcome_text = "Welcome!"
         spec.client_storage_prefix = "test."
-        spec.debug_flag = False
         spec.remote_ws_url = None
         spec.remote_auth_token_key = None
         spec.use_safe_agent = False

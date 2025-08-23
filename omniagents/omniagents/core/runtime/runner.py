@@ -4,6 +4,7 @@ from typing import Optional, List, Any, Dict
 from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions
 from omniagents.core.config.loader import load_agent_spec_from_yaml, DEFAULT_SETTINGS_FIELDS
 from omniagents.core.runtime.loader import load_backend
+from omniagents.core.debug import Debug
 
 
 class Runner:
@@ -182,9 +183,11 @@ class Runner:
         
         args = parser.parse_args()
         
+        # Initialize debug system
+        Debug.init(cli_flag=args.debug)
+        
         # Build kwargs for run()
         kwargs = {
-            'debug': args.debug,
             'args': args,  # Pass full args for all backends
         }
         

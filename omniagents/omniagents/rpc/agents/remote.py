@@ -9,6 +9,7 @@ import os
 from omniagents.rpc import RpcMethodsBase, JsonRpcClient
 from omniagents.core.interfaces.agent import UnifiedAgentBase
 from ._events import map_notification_to_event
+from omniagents.core.debug import Debug
 
 
 class RemoteAgent(UnifiedAgentBase):
@@ -45,9 +46,6 @@ class RemoteAgent(UnifiedAgentBase):
         self._run_lock: asyncio.Lock = asyncio.Lock()
         self._event_queue: asyncio.Queue = asyncio.Queue()
         self._session_id: str | None = None
-        
-        # Optional debug logging
-        self.DEBUG_CLIENT = os.getenv("OMNIAGENTS_CLIENT_DEBUG", "0") in ("1", "true", "True")
 
     def get_all_tools(self) -> List[Any]:
         """Get all available tools (empty for remote agents)."""
@@ -72,7 +70,7 @@ class RemoteAgent(UnifiedAgentBase):
                 session_id=self._session_id
             )
 
-            if self.DEBUG_CLIENT and run_config is None:  # First call heuristic
+            if Debug.enabled() and run_config is None:  # First call heuristic
                 print(f"[cli] ⇢ raw start_run resp={resp!r}")
                 try:
                     print(f"[cli] ⇢ resp.result={getattr(resp, 'result', None)!r}")
@@ -82,12 +80,12 @@ class RemoteAgent(UnifiedAgentBase):
             # Extract and cache session_id if first run
             new_session_id = self._extract_session_id(resp)
             if new_session_id:
-                if self.DEBUG_CLIENT and self._session_id is None:
+                if Debug.enabled() and self._session_id is None:
                     print(f"[cli] ⎆ obtained session_id={new_session_id[:8]}")
                 self._session_id = new_session_id
 
             run_id = self._extract_run_id(resp)
-            if self.DEBUG_CLIENT:
+            if Debug.enabled():
                 print(f"[cli] ▶ run_id={run_id}  prompt={prompt[:60]!r}")
 
             # Stream events until run_end
@@ -96,13 +94,13 @@ class RemoteAgent(UnifiedAgentBase):
                 if msg["method"] == "run_end" and (
                     run_id is None or msg["params"].get("run_id") == run_id
                 ):
-                    if self.DEBUG_CLIENT:
+                    if Debug.enabled():
                         print(f"[cli] ◀ run_end  run_id={run_id}")
                     break
                 
                 event = map_notification_to_event(msg["method"], msg["params"])
                 if event:
-                    if self.DEBUG_CLIENT:
+                    if Debug.enabled():
                         print(f"[cli]   ← {msg['method']} details={msg['params']}")
                     yield event
 

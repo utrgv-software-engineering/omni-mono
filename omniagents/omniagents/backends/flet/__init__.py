@@ -2,6 +2,7 @@
 
 from omniagents.core.interfaces.backend import Backend
 from omniagents.core.agents.specs import AgentSpec
+from omniagents.core.debug import Debug
 
 
 class FletBackend:
@@ -52,12 +53,12 @@ class FletBackend:
                 pats = args.safe_patterns.split(",")
                 app.spec.safe_agent_options.safe_tool_patterns.extend([p.strip() for p in pats if p.strip()])
         
-        # Override debug mode if specified
-        if debug and debug != app.spec.debug_flag:
-            print("Overriding debug mode: Setting to True based on command line argument.")
-            app.spec.debug_flag = True
-            if "(Debug Mode)" not in app.spec.page_title_suffix:
-                app.spec.page_title_suffix += " (Debug Mode)"
+        # Initialize debug if not already initialized
+        Debug.init(cli_flag=debug)
+        
+        # Update page title suffix if debug is enabled
+        if Debug.enabled() and "(Debug Mode)" not in app.spec.page_title_suffix:
+            app.spec.page_title_suffix += " (Debug Mode)"
         
         # Run the Flet app directly
         print(f"Starting Flet app for agent: {app.spec.name}")

@@ -9,11 +9,12 @@ from typing import Dict, List, Tuple, Any
 import traceback
 
 from agents.guardrail import InputGuardrail, OutputGuardrail
+from omniagents.core.debug import Debug
 
 
 def discover_guardrails_in_dir(
     base_dir: str = "guardrails", 
-    debug: bool = False
+    debug: bool = None
 ) -> Tuple[Dict[str, InputGuardrail[Any]], Dict[str, OutputGuardrail[Any]]]:
     """
     Discovers InputGuardrail and OutputGuardrail instances in Python files.
@@ -24,7 +25,7 @@ def discover_guardrails_in_dir(
     
     Args:
         base_dir: The directory path (relative or absolute) to scan for .py files.
-        debug: If True, print debug information during discovery.
+        debug: Deprecated parameter, uses Debug.enabled() instead.
     
     Returns:
         A tuple of two dictionaries:
@@ -37,11 +38,11 @@ def discover_guardrails_in_dir(
     base_path = Path(base_dir).resolve()
     
     if not base_path.is_dir():
-        if debug:
+        if Debug.enabled():
             print(f"Warning: Guardrail discovery directory '{base_dir}' not found or is not a directory.")
         return input_guardrails, output_guardrails
     
-    if debug:
+    if Debug.enabled():
         print(f"Starting guardrail discovery in directory: {base_path}")
     
     parent_path = str(base_path.parent)
@@ -69,7 +70,7 @@ def discover_guardrails_in_dir(
                 print(f"Warning: Skipping file {filepath} as it seems outside the expected parent directory {base_path.parent}")
                 continue
             
-            if debug:
+            if Debug.enabled():
                 print(f"Attempting to import module: {module_path} from {filepath}")
             
             try:
@@ -85,7 +86,7 @@ def discover_guardrails_in_dir(
                         guardrail_name = obj.get_name() if hasattr(obj, 'get_name') else name
                         if guardrail_name in input_guardrails:
                             print(f"Warning: Duplicate input guardrail name '{guardrail_name}' found (from {module_path}). Overwriting previous definition.")
-                        if debug:
+                        if Debug.enabled():
                             print(f"  Discovered input guardrail: {guardrail_name}")
                         input_guardrails[guardrail_name] = obj
                     
@@ -94,7 +95,7 @@ def discover_guardrails_in_dir(
                         guardrail_name = obj.get_name() if hasattr(obj, 'get_name') else name
                         if guardrail_name in output_guardrails:
                             print(f"Warning: Duplicate output guardrail name '{guardrail_name}' found (from {module_path}). Overwriting previous definition.")
-                        if debug:
+                        if Debug.enabled():
                             print(f"  Discovered output guardrail: {guardrail_name}")
                         output_guardrails[guardrail_name] = obj
                         
@@ -110,7 +111,7 @@ def discover_guardrails_in_dir(
     finally:
         sys.path = original_sys_path
     
-    if debug:
+    if Debug.enabled():
         print(f"Completed guardrail discovery: Found {len(input_guardrails)} input guardrails and {len(output_guardrails)} output guardrails in '{base_dir}'.")
     
     return input_guardrails, output_guardrails
