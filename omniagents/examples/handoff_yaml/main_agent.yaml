@@ -1,0 +1,18 @@
+name: Main Assistant
+model: gpt-4o
+instructions_file: instructions.md
+welcome_text: "Hi! I can help with general questions, math problems, or time-related queries. What do you need?"
+
+# Configure handoffs to specialized agents
+handoffs:
+  - yaml: ./agents/math_agent.yaml
+  - yaml: ./agents/time_agent.yaml
+    tool_name_override: "transfer_to_timekeeper"
+    tool_description_override: "Get current time information from the Time Keeper"
+
+# Safety settings
+use_safe_agent: true
+safe_agent_options:
+  skip_approvals: false
+  halt_on_rejection: true
+  safe_tool_names: []
