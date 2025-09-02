@@ -101,6 +101,7 @@ class AgentSpec:
     
     # --- SDK Runner Context ---
     context: Optional[Any] = None  # Context passed to SDK Runner for dynamic instructions
+    build_context: Optional[Callable[[Dict[str, Any]], Any]] = None  # Factory to build context from variables
     
     # --- Tracing Configuration ---
     tracing_config: Optional[Dict[str, Any]] = None

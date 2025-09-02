@@ -22,11 +22,16 @@ class UserContext:
     user_name: str
     location: str
     age: int
+    timezone: str = "UTC"  # User's timezone
+    
+    def now(self) -> str:
+        """Get current time in user's timezone."""
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo(self.timezone)).strftime('%A, %B %d, %Y at %I:%M:%S %p')
 
 
 async def dynamic_instructions(context: RunContextWrapper[UserContext], agent: Agent) -> str:
     """Generate instructions dynamically using context variables."""
-    now = datetime.now()
     user = context.context  # Access the UserContext object
     
     return f"""You are a helpful assistant for {user.user_name}.
@@ -35,7 +40,7 @@ User Details:
 - Name: {user.user_name}
 - Age: {user.age}
 - Location: {user.location}
-- Current time: {now.strftime('%A, %B %d, %Y at %I:%M:%S %p')}
+- Current time: {user.now()}
 
 Always personalize your responses based on these details."""
 
@@ -52,7 +57,8 @@ def main():
     user_context = UserContext(
         user_name="Alice",
         location="San Francisco",
-        age=28
+        age=28,
+        timezone="America/Los_Angeles"
     )
     
     # Create agent with dynamic instructions

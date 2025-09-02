@@ -1,4 +1,6 @@
 import yaml
+import os
+import re
 # import flet as ft # For theme colors if specified as strings - moved to Flet backend
 from pathlib import Path
 from typing import Dict, Any, List, Callable, Optional, Set
@@ -31,6 +33,55 @@ DEFAULT_MCP_SETTINGS_FIELDS = [
     SettingField(key="mcp_url", label="MCP Server URL", group="MCP Server", default="", hint="e.g., http://localhost:3000/mcp/sse"),
     SettingField(key="mcp_auth_token", label="MCP Auth Token", group="MCP Server", secret=True, hint="Optional, if MCP server requires auth"),
 ]
+
+def _substitute_env_vars(value: Any) -> Any:
+    """Recursively substitute environment variables in strings.
+    
+    Supports:
+    - ${VAR_NAME} - Simple substitution, errors if not found
+    - ${VAR_NAME:-default} - With default value if not set
+    - ${VAR_NAME:?error message} - With custom error message if not set
+    
+    For dicts and lists, recursively processes all values.
+    """
+    if isinstance(value, str):
+        # Pattern to match ${VAR} or ${VAR:-default} or ${VAR:?error}
+        pattern = r'\$\{([^}:]+)(?::([?-])([^}]*))?\}'
+        
+        def replace_var(match):
+            var_name = match.group(1)
+            operator = match.group(2)
+            default_or_error = match.group(3) or ''
+            
+            env_value = os.getenv(var_name)
+            
+            if env_value is not None:
+                return env_value
+            elif operator == '-':
+                # Use default value
+                return default_or_error
+            elif operator == '?':
+                # Error with custom message
+                error_msg = default_or_error or f"Environment variable {var_name} is not set"
+                raise ValueError(error_msg)
+            else:
+                # No operator, error if not found
+                raise ValueError(f"Environment variable {var_name} is not set")
+        
+        # Only do substitution if the pattern is found
+        if re.search(pattern, value):
+            return re.sub(pattern, replace_var, value)
+        return value
+    
+    elif isinstance(value, dict):
+        return {k: _substitute_env_vars(v) for k, v in value.items()}
+    
+    elif isinstance(value, list):
+        return [_substitute_env_vars(item) for item in value]
+    
+    else:
+        # For other types (int, bool, None, etc), return as-is
+        return value
 
 def _load_instructions(config: Dict[str, Any], base_dir: Path) -> Callable[[], str]:
     """Creates a function to load instructions based on YAML config, resolving relative to base_dir."""
@@ -612,8 +663,23 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
         print(f"Warning: 'tracing' in {config_path} should be a dictionary. Ignoring.")
         tracing_config = None
     
-    # --- Context for dynamic instructions ---
-    context_config = config.get('context')
+    # --- Variables for dynamic instructions ---
+    # Variables support environment variable substitution
+    variables_config = config.get('variables')
+    
+    # Apply environment variable substitution if variables are provided
+    if variables_config is not None:
+        try:
+            # Apply environment variable substitution to variables
+            context_config = _substitute_env_vars(variables_config)
+            if Debug.enabled():
+                print(f"Variables after substitution: {context_config}")
+        except ValueError as e:
+            print(f"Error substituting environment variables: {e}")
+            raise
+    else:
+        # No variables provided, context will be None
+        context_config = None
     
     # --- UI/UX ---
     icon_map_config = config.get('icon_map', {})

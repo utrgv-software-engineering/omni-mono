@@ -2,10 +2,13 @@
 Example 3: OmniAgents Python - Dynamic Function with Context
 This shows how to use a dynamic function that returns strings with context placeholders.
 Combines runtime-generated content (like current time) with context substitution.
+Demonstrates using a dataclass for typed context with dynamic additions.
 """
 
 import os
 from datetime import datetime
+from dataclasses import dataclass, field
+from typing import Optional
 from dotenv import load_dotenv
 
 from agents import Agent
@@ -17,23 +20,55 @@ import agentio  # Import AgentIO for tracing
 load_dotenv()
 
 
-async def dynamic_instructions_with_context(context_wrapper: RunContextWrapper[dict], agent: Agent) -> str:
+@dataclass
+class UserContext:
+    """Typed context for the time-aware assistant."""
+    user_name: str
+    location: str
+    age: int
+    timezone: str = "UTC"
+    
+    def now(self) -> str:
+        """Get current time in user's timezone."""
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo(self.timezone)).strftime('%A, %B %d, %Y at %I:%M:%S %p')
+
+
+async def dynamic_instructions_with_context(context_wrapper: RunContextWrapper[UserContext], agent: Agent) -> str:
     """Generate instructions template with dynamic content.
     
-    This function can add dynamic values to the context by modifying context_wrapper.context,
-    then return a clean Jinja2 template that uses all values uniformly.
+    Since now() is a method on the context, we can call it in the template.
+    This function returns a Jinja2 template that uses context fields and methods.
     """
-    # Add dynamic values to the context (we know it's a dict because of Agent[dict])
-    context_wrapper.context['now'] = datetime.now().strftime('%A, %B %d, %Y at %I:%M:%S %p')
-    
-    # Return a clean Jinja2 template
+    # Return a clean Jinja2 template that calls the now() method
     return """You are a helpful assistant for {{ user_name }}.
     
-Current time: {{ now }}
+Current time: {{ now() }}
 User location: {{ location }}
 User age: {{ age }}
 
 Always personalize your responses and be aware of the current time."""
+
+
+def build_context_from_variables(variables: dict) -> UserContext:
+    """Factory function to build typed context from variables.
+    
+    This pattern provides consistency between local and remote execution:
+    - Local: Variables are passed to this factory to build context
+    - Remote: Client sends variables dict, server uses this factory
+    - Server mode: Remote clients send variables, this factory constructs context
+    
+    The factory handles:
+    - Missing fields (with defaults)
+    - Extra fields (ignored)
+    - Type conversions
+    """
+    return UserContext(
+        user_name=variables.get('user_name', 'Guest'),
+        location=variables.get('location', 'Unknown'),
+        age=variables.get('age', 0),
+        timezone=variables.get('timezone', 'UTC')
+    )
 
 
 def main():
@@ -45,21 +80,25 @@ def main():
         resume="never"  # Always create a new trace
     )
     
-    # Use Agent[dict] to make it clear we're using dict context
-    agent = Agent[dict](
+    # Use Agent[UserContext] with typed context
+    agent = Agent[UserContext](
         name="Time-Aware Assistant",
         instructions=dynamic_instructions_with_context,
         tools=[],
         model="gpt-4o-mini",
     )
     
+    # Use variables + factory pattern for consistency
+    # This works the same for both local and remote execution
     runner = Runner.from_agent(
         agent,
-        context={
+        variables={
             "user_name": "Bob",
             "location": "New York",
-            "age": 35
+            "age": 35,
+            "timezone": "America/New_York"
         },
+        build_context=build_context_from_variables,
         welcome_text="Hello! I'm your time-aware personal assistant.",
     )
     

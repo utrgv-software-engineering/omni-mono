@@ -17,10 +17,10 @@ python 1_sdk_native.py
 
 ### 2. OmniAgents String Instructions (`2_omniagents_string.py`)
 
-Simple string instructions with `{variable}` placeholders:
-- Define static instructions with placeholders
-- Pass variables via `dynamic_variables` parameter
-- Variables are automatically formatted into instructions
+String instructions with variables → context factory pattern:
+- Uses `variables` dict + `build_context` factory for consistency
+- Define static instructions with Jinja2 placeholders
+- Same pattern as example 3 but with static instructions
 
 ```bash
 python 2_omniagents_string.py
@@ -28,13 +28,18 @@ python 2_omniagents_string.py
 
 ### 3. OmniAgents Dynamic Function (`3_omniagents_function.py`)
 
-Dynamic function that combines runtime content with variables:
-- Function generates instructions at runtime (e.g., current time)
-- Can still use `{variable}` placeholders in the returned string
-- Best of both worlds: dynamic content + variable substitution
+Dynamic function with variables → context factory pattern:
+- Uses `variables` dict + `build_context` factory for consistency
+- Same pattern works for local, server, and remote execution
+- Factory handles missing fields, extra fields, and type conversions
+- Function modifies typed context at runtime (e.g., current time)
 
 ```bash
+# Run locally
 python 3_omniagents_function.py
+
+# Run as server (for remote clients)
+python 3_omniagents_function.py --mode server --port 8000
 ```
 
 ### 4. OmniAgents YAML Approach (`4_omniagents_yaml.yaml`)
@@ -53,29 +58,36 @@ python -m omniagents.cli run -c examples/dynamic_instructions/4_omniagents_yaml.
 | Approach | Pros | Cons |
 |----------|------|------|
 | **SDK Native** | Type-safe, full control, tools get typed context | Requires context object, more boilerplate |
-| **OmniAgents String** | Simple context substitution in instructions | Context is dict, not typed |
-| **OmniAgents Function** | Dynamic content + context substitution | Still uses dict context |
-| **OmniAgents YAML** | No code required, easy to modify | Static context only |
+| **OmniAgents String** | Variables → context pattern, simple Jinja2 templates | Static instructions only |
+| **OmniAgents Function** | Variables → context with runtime modifications | Requires function for dynamic content |
+| **OmniAgents YAML** | No code required, env var substitution | No type safety at YAML level |
 
 ## When to Use Each
 
-- **SDK Native**: When you need type safety and tools that access typed context
-- **OmniAgents String**: When you want simple context substitution in instruction strings
-- **OmniAgents Function**: When you need dynamic instructions with context substitution
-- **OmniAgents YAML**: When you want configuration-driven agents without writing code
+- **SDK Native**: When you need full control and tools that access typed context directly
+- **OmniAgents String**: When you want consistent variables → context pattern with static instructions
+- **OmniAgents Function**: When you need variables → context with runtime-generated content
+- **OmniAgents YAML**: When you want configuration-driven agents with environment variable support
 
 ## Context Features in OmniAgents
 
 OmniAgents extends the SDK's context system:
-- **Context substitution**: Use `{context.field}` placeholders in instruction strings
+- **Type-safe contexts**: Full support for dataclasses, Pydantic models, and dicts
+- **Jinja2 templates**: Use `{{ field }}` placeholders in instruction strings
 - **Unified system**: Same context is available to both instructions and tools
 - **YAML support**: Define default context in YAML configuration
 - **SDK compatible**: Context is passed through to SDK's `Runner.run()` for tools
 - **RPC support**: Remote clients can pass context dynamically per request
 
 The context serves dual purposes:
-1. String substitution in instructions via `{context.field}` syntax
+1. Template substitution in instructions via Jinja2 `{{ field }}` syntax
 2. Tool access via `RunContextWrapper` (standard SDK pattern)
+
+OmniAgents automatically converts various context types:
+- **Dataclasses**: Converted via `asdict()` for Jinja2 rendering
+- **Pydantic models**: Converted via `model_dump()`
+- **Plain objects**: Converted via `vars()`
+- **Dictionaries**: Used directly
 
 ## Remote Client with Dynamic Context (`remote_client.py`)
 

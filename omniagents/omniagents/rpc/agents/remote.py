@@ -26,14 +26,14 @@ class RemoteAgent(UnifiedAgentBase):
     model_settings: Dict[str, Any] = {}
     mcp_servers = None
 
-    def __init__(self, url: str, token: str | None = None, context: Dict[str, Any] | None = None) -> None:
+    def __init__(self, url: str, token: str | None = None, variables: Dict[str, Any] | None = None) -> None:
         """
         Initialize remote agent.
         
         Args:
             url: WebSocket URL of the remote agent server
             token: Optional authentication token
-            context: Optional context dictionary for dynamic instructions
+            variables: Optional initial variables dictionary for context construction
         """
         super().__init__()
         
@@ -47,7 +47,7 @@ class RemoteAgent(UnifiedAgentBase):
         self._run_lock: asyncio.Lock = asyncio.Lock()
         self._event_queue: asyncio.Queue = asyncio.Queue()
         self._session_id: str | None = None
-        self._context = context or {}
+        self._variables = variables or {}
 
     def get_all_tools(self) -> List[Any]:
         """Get all available tools (empty for remote agents)."""
@@ -72,9 +72,9 @@ class RemoteAgent(UnifiedAgentBase):
                 "session_id": self._session_id
             }
             
-            # Only send context on first run (when we don't have a session_id yet)
-            if self._session_id is None and self._context:
-                start_params["context"] = self._context
+            # Only send variables on first run (when we don't have a session_id yet)
+            if self._session_id is None and self._variables:
+                start_params["variables"] = self._variables
 
             # Start run on remote server
             resp = await self._client.other.start_run(**start_params)

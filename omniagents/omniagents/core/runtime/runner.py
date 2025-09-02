@@ -34,7 +34,9 @@ class Runner:
         halt_on_rejection: bool = True,
         safe_tool_names: Optional[List[str]] = None,
         safe_tool_patterns: Optional[List[str]] = None,
-        context: Optional[Any] = None
+        context: Optional[Any] = None,
+        variables: Optional[Dict[str, Any]] = None,
+        build_context: Optional[Any] = None
     ) -> "Runner":
         """
         Create a Runner from an existing agents.Agent instance.
@@ -57,6 +59,16 @@ class Runner:
         async def _builder(settings: Dict[str, Any], mcp, spec) -> Any:
             return agent
         
+        # Handle context construction
+        # If variables are provided, use build_context to construct context
+        # Otherwise, use the provided context directly
+        final_context = context
+        if variables and build_context:
+            final_context = build_context(variables)
+        elif variables and not build_context:
+            # If variables provided but no factory, use variables as context (dict mode)
+            final_context = variables
+        
         # Create spec from agent
         spec = AgentSpec(
             name=name,
@@ -76,7 +88,8 @@ class Runner:
                 safe_tool_patterns=safe_tool_patterns or [],
             ),
             settings_fields=list(DEFAULT_SETTINGS_FIELDS),
-            context=context  # Pass context for SDK Runner
+            context=final_context,  # Pass the constructed context
+            build_context=build_context  # Keep factory for server mode
         )
         
         return cls(spec=spec)
