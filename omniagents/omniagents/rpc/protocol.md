@@ -49,12 +49,13 @@ result = agent.run_streamed([{"role": "user", "content": "Hello"}])
 
 ## RPC Methods
 
-### start_run(prompt: str, session_id?: str)
-Start a new agent run with the given prompt.
+### start_run(prompt: str, session_id?: str, context?: dict)
+Start a new agent run with the given prompt and optional context.
 
 **Parameters:**
 - `prompt` (string): User message to send to the agent
 - `session_id` (string, optional): ID of existing session to continue
+- `context` (dict, optional): Runtime context variables for dynamic instructions
 
 **Returns:**
 ```json

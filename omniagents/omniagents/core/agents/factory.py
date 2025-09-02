@@ -41,7 +41,7 @@ async def create_unified_agent(
         if spec.remote_auth_token_key:
             token = os.getenv(spec.remote_auth_token_key)
         
-        agent = RemoteAgent(spec.remote_ws_url, token)
+        agent = RemoteAgent(spec.remote_ws_url, token, context=spec.context)
         
         # Override properties from spec if provided
         if spec.name:

@@ -119,8 +119,12 @@ class AgentService(RpcMethodsBase):
         self._pending_approvals[approval_id] = fut
         return await fut  # -> (approved, always_approve, error_message)
 
-    async def start_run(self, prompt: str, session_id: str | None = None) -> dict:  # noqa: D401
+    async def start_run(self, prompt: str, session_id: str | None = None, context: dict | None = None) -> dict:  # noqa: D401
         sess: Session = sm.get_or_create(session_id)
+        
+        # Store context in session for this run
+        if context:
+            sess.context = context
 
         # Track current channel for real-time notifications.
         if self.channel not in sess.channels:
@@ -178,7 +182,9 @@ class AgentService(RpcMethodsBase):
 
         async def _worker():
             try:
-                await stream_agent(agent, prompt, sess, self.channel, max_turns=self.spec.max_turns, context=self.spec.context)
+                # Use runtime context if provided, otherwise fall back to spec context
+                runtime_context = getattr(sess, 'context', None) or self.spec.context
+                await stream_agent(agent, prompt, sess, self.channel, max_turns=self.spec.max_turns, context=runtime_context)
             finally:
                 # Inform client the run finished
                 await self.channel.async_call(

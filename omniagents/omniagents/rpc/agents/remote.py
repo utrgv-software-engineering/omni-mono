@@ -26,13 +26,14 @@ class RemoteAgent(UnifiedAgentBase):
     model_settings: Dict[str, Any] = {}
     mcp_servers = None
 
-    def __init__(self, url: str, token: str | None = None) -> None:
+    def __init__(self, url: str, token: str | None = None, context: Dict[str, Any] | None = None) -> None:
         """
         Initialize remote agent.
         
         Args:
             url: WebSocket URL of the remote agent server
             token: Optional authentication token
+            context: Optional context dictionary for dynamic instructions
         """
         super().__init__()
         
@@ -46,6 +47,7 @@ class RemoteAgent(UnifiedAgentBase):
         self._run_lock: asyncio.Lock = asyncio.Lock()
         self._event_queue: asyncio.Queue = asyncio.Queue()
         self._session_id: str | None = None
+        self._context = context or {}
 
     def get_all_tools(self) -> List[Any]:
         """Get all available tools (empty for remote agents)."""
@@ -67,7 +69,8 @@ class RemoteAgent(UnifiedAgentBase):
             # Start run on remote server
             resp = await self._client.other.start_run(
                 prompt=prompt, 
-                session_id=self._session_id
+                session_id=self._session_id,
+                context=self._context
             )
 
             if Debug.enabled() and run_config is None:  # First call heuristic
