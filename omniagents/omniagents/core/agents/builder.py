@@ -93,6 +93,7 @@ async def _default_build_agent(
     from agents import Agent, set_default_openai_key
     from agents.model_settings import ModelSettings
     from agents.models._openai_shared import get_default_openai_client
+    from omniagents.core.utils.jinja_instructions import process_instructions
 
     logger.debug(f"Building agent '{spec.name}' using internal default builder...")
     
@@ -113,7 +114,7 @@ async def _default_build_agent(
     # Get core config from spec/settings
     agent_name = spec.name
     model_name = spec.model_name or settings.get("model_name", "gpt-4o")
-    instructions = spec.get_agent_instructions()
+    instructions = process_instructions(spec.get_agent_instructions())
     tools = spec.available_tools
     mcp_servers_list = [mcp_server] if mcp_server else []
     handoff_description = spec.handoff_description

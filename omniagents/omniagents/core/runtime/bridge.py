@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import asyncio
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional, Any
 
 from agents import RunConfig, ItemHelpers
 from omniagents.core.session import append_message
@@ -94,7 +94,7 @@ def _stream_event_payload(item, run_id: str):
     return None, None
 
 
-async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: int = 20) -> None:  # noqa: D401
+async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: int = 20, context: Optional[Any] = None) -> None:  # noqa: D401
     """Drive agent.run_streamed and forward events to *rpc_channel*.
 
     ``rpc_channel`` is the :class:`RpcMethodsBase` instance attached to the
@@ -126,7 +126,7 @@ async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: i
     
     # Import Runner locally to avoid module-level import
     from agents import Runner as _Runner
-    result = _Runner.run_streamed(agent, agent_input, max_turns=max_turns, run_config=run_config)
+    result = _Runner.run_streamed(agent, agent_input, context=context, max_turns=max_turns, run_config=run_config)
 
     async for event in result.stream_events():
         # Skip low-level / uninterested event types

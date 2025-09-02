@@ -34,7 +34,7 @@ class Runner:
         halt_on_rejection: bool = True,
         safe_tool_names: Optional[List[str]] = None,
         safe_tool_patterns: Optional[List[str]] = None,
-        **kwargs
+        context: Optional[Any] = None
     ) -> "Runner":
         """
         Create a Runner from an existing agents.Agent instance.
@@ -42,8 +42,13 @@ class Runner:
         This is a convenience method that creates an AgentSpec from the agent
         and returns a Runner configured to use it.
         """
+        from omniagents.core.utils.jinja_instructions import process_instructions
+        
         name = getattr(agent, "name", "agent")
-        instr = agent.instructions() if callable(agent.instructions) else agent.instructions
+        
+        # Process instructions through Jinja2 - converts string to callable
+        # This ensures instructions are re-rendered on every run, not just at creation
+        agent.instructions = process_instructions(agent.instructions)
         
         # Generate storage prefix from agent name
         storage_prefix = name.lower().replace(" ", "_") + "."
@@ -57,9 +62,9 @@ class Runner:
             name=name,
             header_title=name,
             page_title=name,
-            welcome_text=welcome_text or instr,
+            welcome_text=welcome_text,
             client_storage_prefix=storage_prefix,
-            get_agent_instructions=lambda: instr,
+            get_agent_instructions=lambda: agent.instructions,
             build_agent=_builder,  # Always use custom builder
             available_tools=getattr(agent, "tools", []),
             model_name=getattr(agent, "model", None),
@@ -71,7 +76,7 @@ class Runner:
                 safe_tool_patterns=safe_tool_patterns or [],
             ),
             settings_fields=list(DEFAULT_SETTINGS_FIELDS),
-            **kwargs  # Allow additional spec parameters
+            context=context  # Pass context for SDK Runner
         )
         
         return cls(spec=spec)

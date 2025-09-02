@@ -99,6 +99,9 @@ class AgentSpec:
     use_safe_agent: bool = False
     safe_agent_options: SafeAgentOptions = field(default_factory=SafeAgentOptions)
     
+    # --- SDK Runner Context ---
+    context: Optional[Any] = None  # Context passed to SDK Runner for dynamic instructions
+    
     # --- Tracing Configuration ---
     tracing_config: Optional[Dict[str, Any]] = None
 

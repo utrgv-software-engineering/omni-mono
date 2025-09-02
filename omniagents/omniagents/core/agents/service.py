@@ -178,7 +178,7 @@ class AgentService(RpcMethodsBase):
 
         async def _worker():
             try:
-                await stream_agent(agent, prompt, sess, self.channel, max_turns=self.spec.max_turns)
+                await stream_agent(agent, prompt, sess, self.channel, max_turns=self.spec.max_turns, context=self.spec.context)
             finally:
                 # Inform client the run finished
                 await self.channel.async_call(

@@ -612,6 +612,9 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
         print(f"Warning: 'tracing' in {config_path} should be a dictionary. Ignoring.")
         tracing_config = None
     
+    # --- Context for dynamic instructions ---
+    context_config = config.get('context')
+    
     # --- UI/UX ---
     icon_map_config = config.get('icon_map', {})
     processed_icon_map = {} # Create a new dict for processed icons
@@ -671,6 +674,9 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
         # Agent Safety Config
         use_safe_agent=use_safe,
         safe_agent_options=safe_options,
+        
+        # SDK Runner Context
+        context=context_config,
         
         # Tracing Config
         tracing_config=tracing_config,
