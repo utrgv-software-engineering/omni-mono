@@ -71,7 +71,27 @@ OmniAgents extends the SDK's context system:
 - **Unified system**: Same context is available to both instructions and tools
 - **YAML support**: Define default context in YAML configuration
 - **SDK compatible**: Context is passed through to SDK's `Runner.run()` for tools
+- **RPC support**: Remote clients can pass context dynamically per request
 
 The context serves dual purposes:
 1. String substitution in instructions via `{context.field}` syntax
 2. Tool access via `RunContextWrapper` (standard SDK pattern)
+
+## Remote Client with Dynamic Context (`remote_client.py`)
+
+Demonstrates how external applications (web widgets, mobile apps) can pass context to a remote agent:
+
+1. Start the server with the string template example:
+```bash
+python examples/dynamic_instructions/2_omniagents_string.py --mode server --port 8000
+```
+
+2. Run the client that passes different contexts:
+```bash
+python examples/dynamic_instructions/remote_client.py
+```
+
+This simulates real-world scenarios like:
+- Hotel booking widget passing `hotel_id` and `user_id`
+- SaaS platform passing tenant and user context
+- Multi-brand chatbot receiving brand-specific context
