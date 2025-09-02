@@ -3,6 +3,14 @@ model: gpt-4o
 instructions_file: instructions.md
 welcome_text: "I'm an agent with input and output guardrails. Try asking me something!"
 
+# Enable AgentIO tracing
+tracing:
+  provider: agentio
+  project: guardrails_yaml_demo
+  name: guardrails_agent
+  settings:
+    resume: never  # Always create a new trace
+
 # Guardrails configuration
 input_guardrails:
   - check_offensive_content

@@ -9,6 +9,14 @@ safe_agent_options:
   safe_tool_names: []
   safe_tool_patterns: []
 
+# Enable AgentIO tracing
+tracing:
+  provider: agentio
+  project: safe_agent_yaml_demo
+  name: safe_tool_demo_yaml
+  settings:
+    resume: never  # Always create a new trace
+
 tools:
   - get_current_time
   - flip_coin

@@ -7,6 +7,7 @@ from time import sleep
 from dotenv import load_dotenv
 from agents import Agent
 from omniagents import Runner, function_tool
+import agentio  # Import AgentIO for tracing
 
 # Load environment variables from .env file
 load_dotenv()
@@ -37,6 +38,13 @@ def build_agent() -> Agent:
 
 
 def main() -> None:
+    # Initialize AgentIO tracing
+    agentio.init(
+        project="basic_python_demo",
+        name="tool_demo",
+        resume="never"  # Always create a new trace
+    )
+    
     runner = Runner.from_agent(
         build_agent(), 
         welcome_text="Ask me the time or to flip a coin!", 

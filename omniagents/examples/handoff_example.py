@@ -3,6 +3,7 @@ from __future__ import annotations
 from dotenv import load_dotenv
 from agents import Agent, handoff
 from omniagents import Runner, function_tool
+import agentio  # Import AgentIO for tracing
 
 # Load environment variables from .env file
 load_dotenv()
@@ -59,6 +60,13 @@ def build_agent() -> Agent:
 
 
 def main() -> None:
+    # Initialize AgentIO tracing
+    agentio.init(
+        project="handoff_demo",
+        name="multi_agent_handoff",
+        resume="never"  # Always create a new trace
+    )
+    
     runner = Runner.from_agent(
         build_agent(),
         welcome_text="Hi! I can help with general questions, math, or time. What do you need?",
