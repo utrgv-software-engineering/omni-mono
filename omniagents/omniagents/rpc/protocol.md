@@ -10,6 +10,7 @@ The Remote Agent Protocol is a JSON-RPC 2.0 based protocol for communicating wit
 - **Streaming Events**: Real-time updates during agent execution
 - **Tool Approval**: Support for human-in-the-loop tool execution
 - **Session Management**: List, archive, and manage conversation sessions
+- **Context Management**: Initial context sent once per session, server maintains state
 
 ## Transport
 
@@ -26,7 +27,11 @@ OmniAgents provides two reference implementations:
 from omniagents.rpc.agents import RemoteAgent
 
 # Connect to remote agent server
-agent = RemoteAgent("ws://localhost:8000/ws", token="optional-auth-token")
+agent = RemoteAgent(
+    "ws://localhost:8000/ws", 
+    token="optional-auth-token",
+    context={"user_id": "123", "role": "admin"}  # Optional context
+)
 
 # Use like any other agent
 result = agent.run_streamed([{"role": "user", "content": "Hello"}])
@@ -55,7 +60,7 @@ Start a new agent run with the given prompt and optional context.
 **Parameters:**
 - `prompt` (string): User message to send to the agent
 - `session_id` (string, optional): ID of existing session to continue
-- `context` (dict, optional): Runtime context variables for dynamic instructions
+- `context` (dict, optional): Initial context for the session. Only sent on first run (when session_id is not provided). The server maintains and manages context state after initialization
 
 **Returns:**
 ```json
@@ -243,8 +248,11 @@ endpoint.register_route(app, "/ws")
 ```python
 from omniagents.rpc.agents import RemoteAgent
 
-# Connect to server
-agent = RemoteAgent("ws://server:8000/ws")
+# Connect to server with optional context
+agent = RemoteAgent(
+    "ws://server:8000/ws",
+    context={"user_id": "user123", "preferences": {}}
+)
 
 # Stream agent responses
 async def chat():

@@ -66,12 +66,18 @@ class RemoteAgent(UnifiedAgentBase):
             # Extract prompt from last user message
             prompt = messages[-1]["content"] if messages else ""
 
+            # Prepare start_run parameters
+            start_params = {
+                "prompt": prompt,
+                "session_id": self._session_id
+            }
+            
+            # Only send context on first run (when we don't have a session_id yet)
+            if self._session_id is None and self._context:
+                start_params["context"] = self._context
+
             # Start run on remote server
-            resp = await self._client.other.start_run(
-                prompt=prompt, 
-                session_id=self._session_id,
-                context=self._context
-            )
+            resp = await self._client.other.start_run(**start_params)
 
             if Debug.enabled() and run_config is None:  # First call heuristic
                 print(f"[cli] ⇢ raw start_run resp={resp!r}")
