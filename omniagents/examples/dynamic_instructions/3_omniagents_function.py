@@ -1,13 +1,13 @@
 """
 Example 3: OmniAgents Python - Dynamic Function with Context
 This shows how to use a dynamic function that returns strings with context placeholders.
-Combines runtime-generated content (like current time) with context substitution.
-Demonstrates using a dataclass for typed context with dynamic additions.
+Combines runtime-generated content with context substitution.
+Demonstrates fetching user data based on user_id.
 """
 
 import os
 from datetime import datetime
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 from dotenv import load_dotenv
 
@@ -23,6 +23,7 @@ load_dotenv()
 @dataclass
 class UserContext:
     """Typed context for the time-aware assistant."""
+    user_id: str
     user_name: str
     location: str
     age: int
@@ -41,13 +42,33 @@ async def dynamic_instructions_with_context(context_wrapper: RunContextWrapper[U
     This function returns a Jinja2 template that uses context fields and methods.
     """
     # Return a clean Jinja2 template that calls the now() method
-    return """You are a helpful assistant for {{ user_name }}.
+    return """You are a helpful assistant for {{ user_name }} (User ID: {{ user_id }}).
     
 Current time: {{ now() }}
 User location: {{ location }}
 User age: {{ age }}
 
 Always personalize your responses and be aware of the current time."""
+
+
+def fetch_user_profile(user_id: str) -> Optional[dict]:
+    """Simulate fetching user profile from an API or database."""
+    # In production, this would be an actual API call or database query
+    profiles = {
+        "user_001": {
+            "name": "Alice Johnson",
+            "location": "San Francisco",
+            "age": 28,
+            "timezone": "America/Los_Angeles"
+        },
+        "user_002": {
+            "name": "Bob Smith",
+            "location": "New York",
+            "age": 35,
+            "timezone": "America/New_York"
+        }
+    }
+    return profiles.get(user_id)
 
 
 def build_context_from_variables(variables: dict) -> UserContext:
@@ -63,12 +84,28 @@ def build_context_from_variables(variables: dict) -> UserContext:
     - Extra fields (ignored)
     - Type conversions
     """
-    return UserContext(
-        user_name=variables.get('user_name', 'Guest'),
-        location=variables.get('location', 'Unknown'),
-        age=variables.get('age', 0),
-        timezone=variables.get('timezone', 'UTC')
-    )
+    user_id = variables.get('user_id', 'anonymous')
+    
+    # Fetch full user profile based on user_id
+    profile = fetch_user_profile(user_id)
+    
+    if profile:
+        return UserContext(
+            user_id=user_id,
+            user_name=profile['name'],
+            location=profile['location'],
+            age=profile['age'],
+            timezone=profile['timezone']
+        )
+    else:
+        # Defaults for unknown users
+        return UserContext(
+            user_id=user_id,
+            user_name='Guest',
+            location='Unknown',
+            age=0,
+            timezone='UTC'
+        )
 
 
 def main():
@@ -93,10 +130,7 @@ def main():
     runner = Runner.from_agent(
         agent,
         variables={
-            "user_name": "Bob",
-            "location": "New York",
-            "age": 35,
-            "timezone": "America/New_York"
+            "user_id": "user_002"  # Only pass user_id, factory fetches the rest
         },
         build_context=build_context_from_variables,
         welcome_text="Hello! I'm your time-aware personal assistant.",

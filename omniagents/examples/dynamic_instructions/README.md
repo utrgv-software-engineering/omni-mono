@@ -17,10 +17,11 @@ python 1_sdk_native.py
 
 ### 2. OmniAgents String Instructions (`2_omniagents_string.py`)
 
-String instructions with variables → context factory pattern:
-- Uses `variables` dict + `build_context` factory for consistency
+String instructions with user_id → context factory pattern:
+- Client only passes `user_id` in variables dict
+- `build_context` factory fetches full user data from database/API
 - Define static instructions with Jinja2 placeholders
-- Same pattern as example 3 but with static instructions
+- Simulates real-world pattern where minimal data is sent from client
 
 ```bash
 python 2_omniagents_string.py
@@ -28,8 +29,9 @@ python 2_omniagents_string.py
 
 ### 3. OmniAgents Dynamic Function (`3_omniagents_function.py`)
 
-Dynamic function with variables → context factory pattern:
-- Uses `variables` dict + `build_context` factory for consistency
+Dynamic function with user_id → context factory pattern:
+- Client only passes `user_id` in variables dict
+- Factory fetches complete user profile from database/API
 - Same pattern works for local, server, and remote execution
 - Factory handles missing fields, extra fields, and type conversions
 - Function modifies typed context at runtime (e.g., current time)

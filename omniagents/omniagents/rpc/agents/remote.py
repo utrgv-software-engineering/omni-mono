@@ -26,14 +26,15 @@ class RemoteAgent(UnifiedAgentBase):
     model_settings: Dict[str, Any] = {}
     mcp_servers = None
 
-    def __init__(self, url: str, token: str | None = None, variables: Dict[str, Any] | None = None) -> None:
+    def __init__(self, url: str, token: str | None = None, variables: Dict[str, Any] | None = None, context: Any | None = None) -> None:
         """
         Initialize remote agent.
         
         Args:
             url: WebSocket URL of the remote agent server
             token: Optional authentication token
-            variables: Optional initial variables dictionary for context construction
+            variables: Optional variables dictionary for server-side context construction
+            context: Optional pre-built context to use as-is
         """
         super().__init__()
         
@@ -47,7 +48,8 @@ class RemoteAgent(UnifiedAgentBase):
         self._run_lock: asyncio.Lock = asyncio.Lock()
         self._event_queue: asyncio.Queue = asyncio.Queue()
         self._session_id: str | None = None
-        self._variables = variables or {}
+        self._variables = variables
+        self._context = context
 
     def get_all_tools(self) -> List[Any]:
         """Get all available tools (empty for remote agents)."""
@@ -72,9 +74,12 @@ class RemoteAgent(UnifiedAgentBase):
                 "session_id": self._session_id
             }
             
-            # Only send variables on first run (when we don't have a session_id yet)
-            if self._session_id is None and self._variables:
-                start_params["variables"] = self._variables
+            # Only send variables/context on first run (when we don't have a session_id yet)
+            if self._session_id is None:
+                if self._variables is not None:
+                    start_params["variables"] = self._variables
+                if self._context is not None:
+                    start_params["context"] = self._context
 
             # Start run on remote server
             resp = await self._client.other.start_run(**start_params)

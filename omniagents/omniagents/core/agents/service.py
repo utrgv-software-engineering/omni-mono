@@ -119,12 +119,14 @@ class AgentService(RpcMethodsBase):
         self._pending_approvals[approval_id] = fut
         return await fut  # -> (approved, always_approve, error_message)
 
-    async def start_run(self, prompt: str, session_id: str | None = None, variables: dict | None = None) -> dict:  # noqa: D401
+    async def start_run(self, prompt: str, session_id: str | None = None, variables: dict | None = None, context: Any | None = None) -> dict:  # noqa: D401
         sess: Session = sm.get_or_create(session_id)
         
-        # Store variables in session for context construction
-        if variables:
+        # Store variables and/or context in session
+        if variables is not None:
             sess.variables = variables
+        if context is not None:
+            sess.context = context
 
         # Track current channel for real-time notifications.
         if self.channel not in sess.channels:
@@ -182,15 +184,22 @@ class AgentService(RpcMethodsBase):
 
         async def _worker():
             try:
-                # Build context from variables if provided
-                if hasattr(sess, 'variables') and sess.variables:
-                    # Use factory if available, otherwise use variables as context
+                # Determine runtime context with clear priority:
+                # 1. If client sent context, use it as-is
+                # 2. If client sent variables, transform them with build_context (if available)
+                # 3. Fall back to spec context
+                if hasattr(sess, 'context') and sess.context is not None:
+                    # Client provided pre-built context - use as-is
+                    runtime_context = sess.context
+                elif hasattr(sess, 'variables') and sess.variables is not None:
+                    # Client provided variables - transform if factory available
                     if self.spec.build_context:
                         runtime_context = self.spec.build_context(sess.variables)
                     else:
+                        # No factory, use variables as context (dict mode)
                         runtime_context = sess.variables
                 else:
-                    # Fall back to spec context
+                    # No client data - use spec's default context
                     runtime_context = self.spec.context
                 await stream_agent(agent, prompt, sess, self.channel, max_turns=self.spec.max_turns, context=runtime_context)
             finally:

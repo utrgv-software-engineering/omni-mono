@@ -100,7 +100,8 @@ class AgentSpec:
     safe_agent_options: SafeAgentOptions = field(default_factory=SafeAgentOptions)
     
     # --- SDK Runner Context ---
-    context: Optional[Any] = None  # Context passed to SDK Runner for dynamic instructions
+    context: Optional[Any] = None  # Pre-built context passed to SDK Runner
+    variables: Optional[Dict[str, Any]] = None  # Variables to be transformed via build_context
     build_context: Optional[Callable[[Dict[str, Any]], Any]] = None  # Factory to build context from variables
     
     # --- Tracing Configuration ---

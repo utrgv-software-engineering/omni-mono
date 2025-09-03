@@ -63,11 +63,13 @@ class Runner:
         # If variables are provided, use build_context to construct context
         # Otherwise, use the provided context directly
         final_context = context
+        final_variables = variables
         if variables and build_context:
             final_context = build_context(variables)
         elif variables and not build_context:
             # If variables provided but no factory, use variables as context (dict mode)
             final_context = variables
+            final_variables = None  # Don't store variables separately in this case
         
         # Create spec from agent
         spec = AgentSpec(
@@ -89,6 +91,7 @@ class Runner:
             ),
             settings_fields=list(DEFAULT_SETTINGS_FIELDS),
             context=final_context,  # Pass the constructed context
+            variables=final_variables,  # Store variables separately if they exist
             build_context=build_context  # Keep factory for server mode
         )
         
@@ -101,7 +104,8 @@ class Runner:
         *,
         name: str = "Remote Agent",
         welcome_text: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None,
+        context: Optional[Any] = None,
+        variables: Optional[Dict[str, Any]] = None,
         token: Optional[str] = None,
         token_env_var: Optional[str] = None
     ) -> "Runner":
@@ -112,9 +116,15 @@ class Runner:
             url: WebSocket URL of the remote agent server (e.g., "ws://localhost:8000/ws")
             name: Display name for the agent
             welcome_text: Optional welcome message to display
-            context: Optional context dictionary for dynamic instructions
+            context: Optional pre-built context to use as-is on the server
+            variables: Optional variables dict for server-side context construction
             token: Optional authentication token (direct value)
             token_env_var: Optional environment variable name containing the token
+            
+        Note:
+            - Use 'variables' when you want the server to build context (e.g., {"user_id": "123"})
+            - Use 'context' when you have a pre-built context to use as-is
+            - You can specify both if the server needs to handle both patterns
             
         Returns:
             A Runner configured to connect to the remote agent
@@ -129,7 +139,7 @@ class Runner:
         # Generate storage prefix from agent name
         storage_prefix = name.lower().replace(" ", "_") + "."
         
-        # Create spec for remote agent
+        # Create spec for remote agent with both context and variables
         spec = AgentSpec(
             name=name,
             header_title=name,
@@ -141,6 +151,7 @@ class Runner:
             remote_ws_url=url,
             remote_auth_token_key=token_env_var,
             context=context,
+            variables=variables,
             settings_fields=list(DEFAULT_SETTINGS_FIELDS)
         )
         
