@@ -145,9 +145,17 @@ type Model struct {
 
 // Message represents a chat message
 type Message struct {
-	Role     string // "user", "assistant", "tool_call", "tool_result"
+	Role     string // "user", "assistant", "tool_call", "tool_result", "approval_request"
 	Content  string
 	ToolCall *ToolCallInfo
+	Approval *ToolApprovalInfo  // For approval_request messages
+}
+
+// ToolApprovalInfo contains approval request details
+type ToolApprovalInfo struct {
+	ApprovalID string
+	Tool       string
+	Arguments  string
 }
 
 // ToolCallInfo contains tool call details
@@ -295,7 +303,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			if m.state == StateApprovalRequired {
-				// Cancel approval
+				// Cancel approval - remove approval message
+				for i := len(m.messages) - 1; i >= 0; i-- {
+					if m.messages[i].Role == "approval_request" {
+						m.messages = append(m.messages[:i], m.messages[i+1:]...)
+						break
+					}
+				}
 				m.state = StateReady
 				m.pendingTool = nil
 				m.approvalList = list.Model{}  // Clear the list
@@ -405,7 +419,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		footerLines := 5  // Input area + help (3 lines input + 2 lines help)
 		if m.state == StateApprovalRequired {
-			footerLines = 12  // Approval list dialog
+			footerLines = 3  // Just help text when approval is in the message list
 		}
 		m.viewport.Height = msg.Height - headerLines - footerLines
 
@@ -443,6 +457,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ToolCalledMsg:
 		// Clear any pending approval state when a tool is called
 		if m.state == StateApprovalRequired {
+			// Remove approval message from messages
+			for i := len(m.messages) - 1; i >= 0; i-- {
+				if m.messages[i].Role == "approval_request" {
+					m.messages = append(m.messages[:i], m.messages[i+1:]...)
+					break
+				}
+			}
 			m.state = StateWaitingForResponse
 			m.pendingTool = nil
 			m.approvalList = list.Model{}
@@ -472,6 +493,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case MessageOutputMsg:
 		// Clear any pending approval state when we get a message
 		if m.state == StateApprovalRequired {
+			// Remove approval message from messages
+			for i := len(m.messages) - 1; i >= 0; i-- {
+				if m.messages[i].Role == "approval_request" {
+					m.messages = append(m.messages[:i], m.messages[i+1:]...)
+					break
+				}
+			}
 			m.state = StateWaitingForResponse
 			m.pendingTool = nil
 			m.approvalList = list.Model{}
@@ -498,6 +526,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Create approval list
 		m.approvalList = CreateApprovalList(msg.Tool, msg.Arguments)
+		// Add approval message to the message list
+		m.messages = append(m.messages, Message{
+			Role: "approval_request",
+			Approval: &ToolApprovalInfo{
+				ApprovalID: msg.ApprovalID,
+				Tool:       msg.Tool,
+				Arguments:  msg.Arguments,
+			},
+		})
 		m.updateViewport()
 
 	case RunStartedMsg:
@@ -615,9 +652,10 @@ func (m Model) View() string {
 	// Messages viewport
 	middle = m.viewport.View()
 	
-	// Footer (input or approval dialog)
-	if m.state == StateApprovalRequired && m.pendingTool != nil {
-		footer = m.renderApprovalDialog()
+	// Footer (input or help text)
+	if m.state == StateApprovalRequired {
+		// Show help text for approval navigation
+		footer = m.getContextualHelp()
 	} else {
 		footer = m.renderInput()
 	}
@@ -931,7 +969,7 @@ func (m Model) renderStatusLine() string {
 		status = "Thinking..."
 		showSpinner = true
 	case StateApprovalRequired:
-		status = "Approval Required"
+		status = "" // Don't show status - approval dialog is in message list
 		showSpinner = false
 	case StateConnecting:
 		status = "Connecting..."
@@ -968,7 +1006,12 @@ func (m Model) renderMessages() string {
 	}
 
 	for _, msg := range m.messages {
-		rendered := renderMessage(msg, m.debugMode, m.pulseFrame)
+		// Pass approvalList only for approval_request messages
+		var listPtr *list.Model
+		if msg.Role == "approval_request" && m.state == StateApprovalRequired {
+			listPtr = &m.approvalList
+		}
+		rendered := renderMessage(msg, m.debugMode, m.pulseFrame, listPtr)
 		s.WriteString(rendered)
 	}
 
@@ -1080,49 +1123,6 @@ func (m Model) getContextualHelp() string {
 	return helpStyle.Render(strings.Join(helpStrs, " • "))
 }
 
-func (m Model) renderApprovalDialog() string {
-	// If not in approval state, don't render anything
-	if m.state != StateApprovalRequired {
-		return ""
-	}
-	
-	// If somehow we're in approval state but have no pending tool, return empty
-	// This shouldn't happen but let's be defensive
-	if m.pendingTool == nil {
-		return ""
-	}
-
-	// Render the approval list
-	listView := m.approvalList.View()
-	
-	// Add custom help text matching main UI style
-	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	helpText := helpStyle.Render("↑/↓ navigate • enter select • esc cancel")
-	
-	// Add tool arguments info if they're long
-	var argsInfo string
-	if len(m.pendingTool.Arguments) > 100 {
-		argsStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("245")).
-			Italic(true).
-			Width(60).
-			PaddingTop(1)
-		argsInfo = argsStyle.Render(fmt.Sprintf("Arguments: %s", m.pendingTool.Arguments))
-	}
-	
-	// Build the complete view
-	var result strings.Builder
-	result.WriteString(listView)
-	result.WriteString("\n\n")
-	result.WriteString(helpText)
-	
-	if argsInfo != "" {
-		result.WriteString("\n")
-		result.WriteString(argsInfo)
-	}
-	
-	return result.String()
-}
 
 func (m Model) renderError() string {
 	errorStyle := lipgloss.NewStyle().
@@ -1278,6 +1278,14 @@ func (m Model) handleApprovalListChoice() (Model, tea.Cmd) {
 
 	// Save approval ID before clearing
 	approvalID := m.pendingTool.ApprovalID
+	
+	// Remove approval message from messages
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		if m.messages[i].Role == "approval_request" {
+			m.messages = append(m.messages[:i], m.messages[i+1:]...)
+			break
+		}
+	}
 	
 	// Change state FIRST before clearing approval data
 	m.state = StateWaitingForResponse

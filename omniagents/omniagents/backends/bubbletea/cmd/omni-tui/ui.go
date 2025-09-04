@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/iancoleman/orderedmap"
@@ -208,7 +209,7 @@ func getGlamourRenderer() *glamour.TermRenderer {
 }
 
 // renderMessage renders a single message with appropriate formatting
-func renderMessage(msg Message, debugMode bool, pulseFrame int) string {
+func renderMessage(msg Message, debugMode bool, pulseFrame int, approvalList *list.Model) string {
 	switch msg.Role {
 	case "user":
 		return renderUserMessage(msg)
@@ -219,6 +220,11 @@ func renderMessage(msg Message, debugMode bool, pulseFrame int) string {
 	case "tool_result":
 		// Always show tool results, not just in debug mode
 		return renderToolResult(msg)
+	case "approval_request":
+		if approvalList != nil {
+			return renderApprovalRequest(msg, *approvalList)
+		}
+		return ""
 	default:
 		return ""
 	}
@@ -351,6 +357,12 @@ func renderToolResult(msg Message) string {
 
 // formatToolArguments formats tool arguments for display
 func formatToolArguments(argsStr string) string {
+	return formatToolArgumentsWithLimit(argsStr, 100)
+}
+
+// formatToolArgumentsWithLimit formats tool arguments with a custom length limit
+// Pass 0 or negative value for maxLen to disable truncation
+func formatToolArgumentsWithLimit(argsStr string, maxLen int) string {
 	// Try to parse as JSON using orderedmap to preserve field order
 	om := orderedmap.New()
 	if err := json.Unmarshal([]byte(argsStr), om); err == nil {
@@ -396,15 +408,16 @@ func formatToolArguments(argsStr string) string {
 		
 		// Join with commas
 		formatted := strings.Join(parts, ", ")
-		if len(formatted) > 100 {
-			formatted = formatted[:97] + "..."
+		// Only truncate if maxLen is positive
+		if maxLen > 0 && len(formatted) > maxLen {
+			formatted = formatted[:maxLen-3] + "..."
 		}
 		return formatted
 	}
 
-	// Not JSON or failed to parse, return as-is (truncated)
-	if len(argsStr) > 100 {
-		return argsStr[:97] + "..."
+	// Not JSON or failed to parse, return as-is (truncated if needed)
+	if maxLen > 0 && len(argsStr) > maxLen {
+		return argsStr[:maxLen-3] + "..."
 	}
 	return argsStr
 }
@@ -458,6 +471,107 @@ func renderWelcome(welcomeText string) string {
 	}
 	
 	return result + "\n"
+}
+
+// renderApprovalRequest renders an approval request dialog in the message list
+func renderApprovalRequest(msg Message, approvalList list.Model) string {
+	if msg.Approval == nil {
+		return ""
+	}
+
+	// Create a custom box with all the information
+	// Since the list component doesn't handle multi-line titles well
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("226")).
+		Padding(1, 2).
+		Width(70)
+
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("226"))
+
+	argsStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("245"))
+
+	var content strings.Builder
+	
+	// Title
+	content.WriteString(titleStyle.Render(fmt.Sprintf("Tool Approval: %s", msg.Approval.Tool)))
+	content.WriteString("\n\n")
+	
+	// Arguments - handle word wrapping properly
+	// We need to wrap at ~65 chars (70 width - padding - border)
+	maxArgWidth := 65
+	argsLabel := "Arguments: "
+	
+	// First line with label
+	if len(argsLabel) + len(msg.Approval.Arguments) <= maxArgWidth {
+		// Fits on one line
+		content.WriteString(argsStyle.Render(argsLabel + msg.Approval.Arguments))
+	} else {
+		// Need to wrap
+		remaining := msg.Approval.Arguments
+		firstLineLen := maxArgWidth - len(argsLabel)
+		
+		if len(remaining) > firstLineLen {
+			// First line with label
+			content.WriteString(argsStyle.Render(argsLabel + remaining[:firstLineLen]))
+			content.WriteString("\n")
+			remaining = remaining[firstLineLen:]
+			
+			// Continue on next lines with indent
+			indent := "           " // Same width as "Arguments: "
+			for len(remaining) > 0 {
+				lineLen := len(remaining)
+				if lineLen > maxArgWidth {
+					lineLen = maxArgWidth
+				}
+				content.WriteString(argsStyle.Render(indent + remaining[:lineLen]))
+				remaining = remaining[lineLen:]
+				if len(remaining) > 0 {
+					content.WriteString("\n")
+				}
+			}
+		} else {
+			content.WriteString(argsStyle.Render(argsLabel + remaining))
+		}
+	}
+	content.WriteString("\n\n")
+	
+	// Add the list items from approvalList
+	// We'll just render the raw list without its chrome
+	listView := approvalList.View()
+	// Try to extract just the list items from the view
+	// The list view includes the title and items, we want to skip the title
+	lines := strings.Split(listView, "\n")
+	// Skip the title lines and just get the items
+	itemsStarted := false
+	for _, line := range lines {
+		// Skip empty lines before items
+		if !itemsStarted && strings.TrimSpace(line) == "" {
+			continue
+		}
+		// Skip the title line
+		if !itemsStarted && strings.Contains(line, "Tool Approval:") {
+			continue
+		}
+		// Skip the "..." line
+		if !itemsStarted && strings.TrimSpace(line) == "..." {
+			continue
+		}
+		// Now we're at the items
+		if strings.Contains(line, "Approve") || strings.Contains(line, "Deny") {
+			itemsStarted = true
+			content.WriteString(line)
+			content.WriteString("\n")
+		} else if itemsStarted && strings.TrimSpace(line) != "" {
+			content.WriteString(line)
+			content.WriteString("\n")
+		}
+	}
+
+	return boxStyle.Render(content.String()) + "\n\n"
 }
 
 // renderStatusBar renders a status bar at the bottom

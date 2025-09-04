@@ -71,7 +71,7 @@ func CreateApprovalList(toolName, toolArgs string) list.Model {
 		},
 	}
 
-	const listWidth = 60
+	const listWidth = 70  // Increased width to accommodate arguments
 	
 	// Create list with enough height to show all items without pagination
 	delegate := ApprovalDelegate{}
@@ -79,16 +79,15 @@ func CreateApprovalList(toolName, toolArgs string) list.Model {
 	spacing := delegate.Spacing()
 	totalItemsHeight := len(items)*itemHeight + (len(items)-1)*spacing
 	
-	// Add extra height for title (no built-in help anymore)
-	listHeight := totalItemsHeight + 2
+	// Add extra height for title and arguments display
+	// Title (1 line) + arguments (2-3 lines) + spacing (1 line) + items
+	listHeight := totalItemsHeight + 5
 	
 	l := list.New(items, delegate, listWidth, listHeight)
 	
-	// Format the title with tool info
+	// Set title to just the tool name
+	// Arguments will be rendered separately in renderApprovalRequest
 	title := fmt.Sprintf("Tool Approval: %s", toolName)
-	if len(toolArgs) > 50 {
-		toolArgs = toolArgs[:47] + "..."
-	}
 	l.Title = title
 	l.Styles.Title = approvalTitleStyle
 	
