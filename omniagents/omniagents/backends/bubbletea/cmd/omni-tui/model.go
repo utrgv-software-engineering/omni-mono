@@ -805,18 +805,18 @@ func (m Model) createSimpleASCII(text string) []string {
 		case 'B':
 			line1 += "█▄▄ "
 			line2 += "█▄█ "
-			line3 += "▄▄█ "
+			line3 += "▀▀▀ "
 		case 'C':
 			line1 += "█▀▀ "
 			line2 += "█   "
-			line3 += "▀▄▄ "
+			line3 += "▀▀▀ "
 		case 'D':
 			line1 += "█▀▄ "
 			line2 += "█ █ "
-			line3 += "▀▀  "
+			line3 += "▀▀▀ "
 		case 'E':
 			line1 += "█▀▀ "
-			line2 += "██▄ "
+			line2 += "█▀▄ "
 			line3 += "▀▀▀ "
 		case 'F':
 			line1 += "█▀▀ "
@@ -824,7 +824,7 @@ func (m Model) createSimpleASCII(text string) []string {
 			line3 += "▀   "
 		case 'G':
 			line1 += "█▀▀ "
-			line2 += "█▄█ "
+			line2 += "█ █ "
 			line3 += "▀▀▀ "
 		case 'H':
 			line1 += "█ █ "
@@ -845,7 +845,7 @@ func (m Model) createSimpleASCII(text string) []string {
 		case 'L':
 			line1 += "█   "
 			line2 += "█   "
-			line3 += "▀▄▄ "
+			line3 += "▀▀▀ "
 		case 'M':
 			line1 += "█▀▄▀█ "
 			line2 += "█ ▀ █ "
@@ -873,7 +873,7 @@ func (m Model) createSimpleASCII(text string) []string {
 		case 'S':
 			line1 += "█▀▀ "
 			line2 += "▀▀█ "
-			line3 += "▄▄▀ "
+			line3 += "▀▀▀ "
 		case 'T':
 			line1 += "▀█▀ "
 			line2 += " █  "
@@ -901,7 +901,7 @@ func (m Model) createSimpleASCII(text string) []string {
 		case 'Z':
 			line1 += "▀▀█ "
 			line2 += "▄▀  "
-			line3 += "▀▄▄ "
+			line3 += "▀▀▀ "
 		case '0':
 			line1 += "█▀█ "
 			line2 += "█▄█ "
@@ -911,13 +911,13 @@ func (m Model) createSimpleASCII(text string) []string {
 			line2 += " █ "
 			line3 += " ▀ "
 		case '2':
-			line1 += "▀█ "
-			line2 += "▄▀ "
-			line3 += "▀▄ "
+			line1 += "▀▀█ "
+			line2 += "▄▀  "
+			line3 += "▀▀▀ "
 		case '3':
 			line1 += "▀▀█ "
 			line2 += "▄▄█ "
-			line3 += "▄▄▀ "
+			line3 += "▀▀▀ "
 		case '4':
 			line1 += "█ █ "
 			line2 += "▀▀█ "
@@ -925,7 +925,7 @@ func (m Model) createSimpleASCII(text string) []string {
 		case '5':
 			line1 += "█▀▀ "
 			line2 += "▀▀█ "
-			line3 += "▄▄▀ "
+			line3 += "▀▀▀ "
 		case '6':
 			line1 += "█▄▄ "
 			line2 += "█▄█ "
@@ -941,7 +941,7 @@ func (m Model) createSimpleASCII(text string) []string {
 		case '9':
 			line1 += "█▀█ "
 			line2 += "▀▀█ "
-			line3 += "▄▄▀ "
+			line3 += "▀▀▀ "
 		default:
 			// For any other character, use the character itself
 			line1 += string(char) + "  "

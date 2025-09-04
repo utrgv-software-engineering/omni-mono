@@ -42,6 +42,228 @@ var (
 	glamourRenderer *glamour.TermRenderer
 )
 
+// RichOutput represents the rich tool output format
+type RichOutput struct {
+	OmniOutput   bool                   `json:"__omni_output__"`
+	Value        interface{}            `json:"value"`
+	DisplayType  string                 `json:"display_type"`
+	Summary      string                 `json:"summary"`
+	Preview      string                 `json:"preview,omitempty"`
+	Truncated    bool                   `json:"truncated"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// parseRichOutput attempts to parse tool output as rich format
+func parseRichOutput(output string) *RichOutput {
+	var rich RichOutput
+	if err := json.Unmarshal([]byte(output), &rich); err != nil {
+		return nil
+	}
+	
+	// Verify it's actually rich output format
+	if !rich.OmniOutput {
+		return nil
+	}
+	
+	return &rich
+}
+
+// formatRichPreview formats preview content based on display type
+func formatRichPreview(rich *RichOutput) string {
+	var result strings.Builder
+	previewLines := strings.Split(rich.Preview, "\n")
+	maxPreviewLines := 10
+	
+	// Choose preview style based on display type
+	var previewStyle lipgloss.Style
+	switch rich.DisplayType {
+	case "error":
+		// Error output in red
+		previewStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("196")) // Red
+			
+	case "search_results":
+		// Search results need special handling
+		return formatSearchResults(rich)
+		
+	case "directory_listing":
+		// Directory listing with file type indicators
+		return formatDirectoryListing(rich)
+		
+	default:
+		// All other types use the default style
+		previewStyle = toolResultStyle
+	}
+	
+	// Show preview lines with proper indentation
+	for i, line := range previewLines {
+		if i >= maxPreviewLines {
+			break
+		}
+		result.WriteString(previewStyle.Render("     " + line))
+		result.WriteString("\n")
+	}
+	
+	// Add truncation indicator if needed
+	if rich.Truncated {
+		result.WriteString(formatTruncationIndicator(rich, len(previewLines), maxPreviewLines))
+	}
+	
+	return result.String()
+}
+
+// formatTruncationIndicator creates a truncation message based on metadata
+func formatTruncationIndicator(rich *RichOutput, shownLines, maxShown int) string {
+	truncationStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("245")). // Darker gray
+		Italic(true)
+	
+	// Build truncation message based on metadata
+	truncMsg := "     ..."
+	
+	if rich.Metadata != nil {
+		// Check for line count information
+		if totalLines, ok := rich.Metadata["line_count"].(float64); ok {
+			if shownLines > maxShown {
+				shownLines = maxShown
+			}
+			remaining := int(totalLines) - shownLines
+			if remaining > 0 {
+				truncMsg = fmt.Sprintf("     ... +%d more lines", remaining)
+			}
+		} else if totalBytes, ok := rich.Metadata["total_bytes"].(float64); ok {
+			// Alternative: show bytes if lines not available
+			truncMsg = fmt.Sprintf("     ... (%d bytes total)", int(totalBytes))
+		}
+		
+		// Special handling for command output
+		if rich.DisplayType == "command" {
+			if exitCode, ok := rich.Metadata["exit_code"].(float64); ok {
+				exitStyle := truncationStyle
+				if exitCode != 0 {
+					// Show non-zero exit codes in yellow
+					exitStyle = lipgloss.NewStyle().
+						Foreground(lipgloss.Color("226")). // Yellow
+						Italic(true)
+				}
+				truncMsg += exitStyle.Render(fmt.Sprintf(" (exit: %d)", int(exitCode)))
+			}
+		}
+	}
+	
+	return truncationStyle.Render(truncMsg) + "\n"
+}
+
+// formatSearchResults formats search results with match highlighting
+func formatSearchResults(rich *RichOutput) string {
+	var result strings.Builder
+	lines := strings.Split(rich.Preview, "\n")
+	
+	fileStyle := lipgloss.NewStyle().Bold(true)
+	matchStyle := lipgloss.NewStyle() // No special formatting
+	lineNumStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")) // Keep gray for line numbers
+	
+	for i, line := range lines {
+		if i >= 10 {
+			break
+		}
+		
+		// Check if this looks like a filename line (e.g., "path/to/file: 3 matches")
+		if strings.Contains(line, ": ") && strings.Contains(line, "match") {
+			result.WriteString("     ")
+			result.WriteString(fileStyle.Render(line))
+			result.WriteString("\n")
+		} else if strings.Contains(line, "Line ") {
+			// Match line (e.g., "Line 42: # TODO: implement")
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				result.WriteString("       ")
+				result.WriteString(lineNumStyle.Render(parts[0] + ":"))
+				result.WriteString(matchStyle.Render(parts[1]))
+				result.WriteString("\n")
+			} else {
+				result.WriteString("       " + line + "\n")
+			}
+		} else {
+			result.WriteString("     " + line + "\n")
+		}
+	}
+	
+	if rich.Truncated {
+		result.WriteString(formatTruncationIndicator(rich, len(lines), 10))
+	}
+	
+	return result.String()
+}
+
+// formatDirectoryListing formats directory listings with file type indicators
+func formatDirectoryListing(rich *RichOutput) string {
+	var result strings.Builder
+	lines := strings.Split(rich.Preview, "\n")
+	
+	dirStyle := lipgloss.NewStyle().Bold(true) // Bold for directories
+	fileStyle := lipgloss.NewStyle()            // Normal for files  
+	execStyle := lipgloss.NewStyle()            // Normal for executables
+	
+	for i, line := range lines {
+		if i >= 10 {
+			break
+		}
+		
+		// Simple heuristic: directories often end with /
+		// Executables might have specific extensions or indicators
+		if strings.HasSuffix(line, "/") {
+			result.WriteString("     ")
+			result.WriteString(dirStyle.Render(line))
+			result.WriteString("\n")
+		} else if strings.Contains(line, ".exe") || strings.Contains(line, ".sh") || 
+			      strings.Contains(line, ".bat") || strings.HasPrefix(line, "*") {
+			result.WriteString("     ")
+			result.WriteString(execStyle.Render(line))
+			result.WriteString("\n")
+		} else {
+			result.WriteString("     ")
+			result.WriteString(fileStyle.Render(line))
+			result.WriteString("\n")
+		}
+	}
+	
+	if rich.Truncated {
+		// Show file count if available
+		if rich.Metadata != nil {
+			if fileCount, ok := rich.Metadata["file_count"].(float64); ok {
+				if dirCount, ok := rich.Metadata["dir_count"].(float64); ok {
+					truncStyle := lipgloss.NewStyle().
+						Foreground(lipgloss.Color("245")).
+						Italic(true)
+					msg := fmt.Sprintf("     ... %d files, %d directories total", 
+						int(fileCount), int(dirCount))
+					result.WriteString(truncStyle.Render(msg))
+					result.WriteString("\n")
+					return result.String()
+				}
+			}
+		}
+		result.WriteString(formatTruncationIndicator(rich, len(lines), 10))
+	}
+	
+	return result.String()
+}
+
+// getDisplayTypeStyle returns icon and style for each display type
+func getDisplayTypeStyle(displayType string) (string, lipgloss.Style) {
+	switch displayType {
+	case "error":
+		// Errors in red
+		return "", lipgloss.NewStyle().
+			Foreground(lipgloss.Color("196")). // Red
+			Bold(true)
+	default:
+		// All other display types use bold only
+		return "", lipgloss.NewStyle().Bold(true)
+	}
+}
+
 // getGlamourRenderer returns a cached glamour renderer
 func getGlamourRenderer() *glamour.TermRenderer {
 	if glamourRenderer == nil {
@@ -338,8 +560,18 @@ func renderToolResult(msg Message) string {
 		return ""
 	}
 
-	// Truncate long results
+	// Try to parse as rich output format
+	richOutput := parseRichOutput(msg.ToolCall.Result)
+	
+	// Phase 2: Basic formatting for rich output (summary + preview)
+	if richOutput != nil {
+		return renderRichToolResult(richOutput)
+	}
+	
+	// Fallback to plain text rendering for non-rich output
 	result := msg.ToolCall.Result
+	
+	// Truncate long results
 	if len(result) > 500 {
 		result = result[:500] + "..."
 	}
@@ -353,6 +585,59 @@ func renderToolResult(msg Message) string {
 	}
 
 	return formatted
+}
+
+// renderRichToolResult renders tool output in rich format (Phase 3)
+func renderRichToolResult(rich *RichOutput) string {
+	var result strings.Builder
+	
+	// Get type-specific formatting
+	icon, summaryStyle := getDisplayTypeStyle(rich.DisplayType)
+	
+	// Start with the summary line with type indicator
+	result.WriteString("  └─ ")
+	if icon != "" {
+		result.WriteString(icon + " ")
+	}
+	result.WriteString(summaryStyle.Render(rich.Summary))
+	result.WriteString("\n")
+	
+	// Add preview if available with type-specific formatting
+	if rich.Preview != "" {
+		// Apply type-specific preview formatting
+		result.WriteString(formatRichPreview(rich))
+	} else if rich.Value != nil {
+		// If no preview but we have a value, show a snippet of the value
+		var valueStr string
+		switch v := rich.Value.(type) {
+		case string:
+			valueStr = v
+		default:
+			if jsonBytes, err := json.Marshal(v); err == nil {
+				valueStr = string(jsonBytes)
+			}
+		}
+		
+		if valueStr != "" {
+			lines := strings.Split(valueStr, "\n")
+			for i, line := range lines {
+				if i >= 5 { // Limit to 5 lines if no explicit preview
+					if len(lines) > 5 {
+						truncStyle := lipgloss.NewStyle().
+							Foreground(lipgloss.Color("245")).
+							Italic(true)
+						result.WriteString(truncStyle.Render(fmt.Sprintf("     ... +%d more lines", len(lines)-5)))
+						result.WriteString("\n")
+					}
+					break
+				}
+				result.WriteString(toolResultStyle.Render("     " + line))
+				result.WriteString("\n")
+			}
+		}
+	}
+	
+	return result.String()
 }
 
 // formatToolArguments formats tool arguments for display
