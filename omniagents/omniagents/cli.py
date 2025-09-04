@@ -61,9 +61,9 @@ def main():
     run_parser = subparsers.add_parser("run", help="Run an agent")
     run_parser.add_argument(
         "--mode", "-m",
-        choices=["gui", "cli", "server"],
+        choices=["gui", "cli", "server", "bubbletea", "tui"],
         default="gui",
-        help="Run mode: 'gui' (default) for graphical UI, 'cli' for command-line interface, 'server' for JSON-RPC server"
+        help="Run mode: 'gui' (default) for graphical UI, 'cli' for command-line interface, 'server' for JSON-RPC server, 'bubbletea'/'tui' for Bubble Tea TUI"
     )
     run_parser.add_argument(
         "--config",

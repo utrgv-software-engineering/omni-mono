@@ -14,6 +14,7 @@ import inspect
 
 from omniagents.rpc import RpcMethodsBase
 from omniagents.core.agents.specs import AgentSpec
+from omniagents.core.agents.safe import SafeAgent
 from omniagents.core.session import sm, Session, append_message
 from omniagents.core.runtime.bridge import stream_agent
 from omniagents.core.agents.builder import _default_build_agent
@@ -170,7 +171,30 @@ class AgentService(RpcMethodsBase):
             
             # Use the spec's build_agent method if available, otherwise use default
             if self.spec.build_agent:
-                sess.agent = await self.spec.build_agent({}, None, stub_app)
+                agent = await self.spec.build_agent({}, None, stub_app)
+                
+                # If safe mode is enabled and agent is not already a SafeAgent, wrap it
+                if self.spec.use_safe_agent and approval_callback and not isinstance(agent, SafeAgent):
+                    opts = self.spec.safe_agent_options
+                    
+                    agent = SafeAgent(
+                        name=agent.name,
+                        tools=agent.tools,
+                        instructions=agent.instructions,
+                        model=agent.model,
+                        model_settings=getattr(agent, 'model_settings', None),
+                        mcp_servers=getattr(agent, 'mcp_servers', []) or [],
+                        handoffs=getattr(agent, 'handoffs', []),
+                        handoff_description=getattr(agent, 'handoff_description', None),
+                        prompt=getattr(agent, 'prompt', None),
+                        approval_callback=approval_callback,
+                        safe_tool_names=opts.safe_tool_names,
+                        safe_tool_patterns=opts.safe_tool_patterns,
+                        skip_approvals=opts.skip_approvals,
+                        halt_on_rejection=opts.halt_on_rejection,
+                    )
+                
+                sess.agent = agent
             else:
                 from omniagents.core.agents.builder import _default_build_agent
                 sess.agent = await _default_build_agent(

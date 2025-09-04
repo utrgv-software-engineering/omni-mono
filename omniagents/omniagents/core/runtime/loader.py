@@ -36,6 +36,8 @@ def load_backend(backend_name: str) -> Optional[Any]:
         'flet': 'omniagents.backends.flet:FletBackend',
         'gui': 'omniagents.backends.flet:FletBackend',  # Alias for flet
         'server': 'omniagents.backends.server:ServerBackend',
+        'bubbletea': 'omniagents.backends.bubbletea:BubbleTeaBackend',
+        'tui': 'omniagents.backends.bubbletea:BubbleTeaBackend',  # Alias for bubbletea
     }
     
     if backend_name in backend_modules:

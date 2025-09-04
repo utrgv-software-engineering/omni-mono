@@ -36,7 +36,8 @@ class Runner:
         safe_tool_patterns: Optional[List[str]] = None,
         context: Optional[Any] = None,
         variables: Optional[Dict[str, Any]] = None,
-        build_context: Optional[Any] = None
+        build_context: Optional[Any] = None,
+        max_turns: int = 20
     ) -> "Runner":
         """
         Create a Runner from an existing agents.Agent instance.
@@ -92,7 +93,8 @@ class Runner:
             settings_fields=list(DEFAULT_SETTINGS_FIELDS),
             context=final_context,  # Pass the constructed context
             variables=final_variables,  # Store variables separately if they exist
-            build_context=build_context  # Keep factory for server mode
+            build_context=build_context,  # Keep factory for server mode
+            max_turns=max_turns  # Pass through max_turns parameter
         )
         
         return cls(spec=spec)
@@ -198,7 +200,7 @@ class Runner:
         common_group = parser.add_argument_group('common arguments')
         common_group.add_argument(
             "--mode", "-m",
-            choices=["gui", "cli", "server"],
+            choices=["gui", "cli", "server", "bubbletea", "tui"],
             default=default_mode,
             help=f"Execution mode (default: {default_mode})"
         )
