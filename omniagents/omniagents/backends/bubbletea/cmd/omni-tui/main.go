@@ -73,7 +73,7 @@ func main() {
 	p := tea.NewProgram(
 		model,
 		tea.WithAltScreen(),       // Use alternate screen buffer
-		tea.WithMouseAllMotion(),  // Enable full mouse/trackpad support including scrolling
+		tea.WithMouseCellMotion(), // Mouse support with cell-level motion (less frequent events)
 	)
 
 	// Run the program

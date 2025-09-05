@@ -153,11 +153,11 @@ class SafeAgent(Agent):
         # Wrap handoffs to automatically wrap returned agents in SafeAgent
         self.handoffs = self._wrap_handoffs(handoffs)
 
-        # Custom tool use behavior setup (optional, depends if base Agent has it)
-        self._original_tool_use_behavior = None
-        if hasattr(self, 'tool_use_behavior') and callable(self.tool_use_behavior):
-            self._original_tool_use_behavior = self.tool_use_behavior
-            self.tool_use_behavior = self._custom_tool_use_behavior
+        # Custom tool use behavior setup
+        # Store the original tool_use_behavior (could be string, dict, or function)
+        self._original_tool_use_behavior = getattr(self, 'tool_use_behavior', 'run_llm_again')
+        # Always set our custom behavior to intercept and check halt state
+        self.tool_use_behavior = self._custom_tool_use_behavior
 
         if Debug.enabled():
             print(f"[SafeAgent] Initialized: skip={self._skip_approvals}, halt={self.halt_on_rejection}, "
@@ -321,14 +321,37 @@ class SafeAgent(Agent):
             # Return final output with empty message to stop processing
             return ToolsToFinalOutputResult(is_final_output=True, final_output="")
 
-        # Delegate to original if it exists
-        if self._original_tool_use_behavior and callable(self._original_tool_use_behavior):
-            if inspect.iscoroutinefunction(self._original_tool_use_behavior):
-                return await self._original_tool_use_behavior(ctx, tool_results)
+        # Handle different types of original tool_use_behavior
+        original = self._original_tool_use_behavior
+        
+        # If it's callable (a custom function), call it
+        if callable(original):
+            if inspect.iscoroutinefunction(original):
+                return await original(ctx, tool_results)
             else:
-                return self._original_tool_use_behavior(ctx, tool_results)
-
-        # Default behavior: continue processing
+                return original(ctx, tool_results)
+        
+        # Handle string literals (default agent behaviors)
+        elif isinstance(original, str):
+            if original == "run_llm_again":
+                # Default behavior: continue processing
+                return ToolsToFinalOutputResult(is_final_output=False, final_output=None)
+            elif original == "stop_on_first_tool":
+                # Stop on first tool call
+                if tool_results:
+                    first_result = tool_results[0]
+                    return ToolsToFinalOutputResult(is_final_output=True, final_output=first_result.output)
+                return ToolsToFinalOutputResult(is_final_output=False, final_output=None)
+        
+        # Handle StopAtTools dict
+        elif isinstance(original, dict) and "stop_at_tool_names" in original:
+            stop_at_names = original["stop_at_tool_names"]
+            for result in tool_results:
+                if hasattr(result, 'name') and result.name in stop_at_names:
+                    return ToolsToFinalOutputResult(is_final_output=True, final_output=result.output)
+            return ToolsToFinalOutputResult(is_final_output=False, final_output=None)
+        
+        # Default fallback: continue processing
         return ToolsToFinalOutputResult(is_final_output=False, final_output=None)
 
     def wrap_tool_with_approval(self, tool: Tool) -> Tool:

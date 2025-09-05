@@ -304,18 +304,47 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			if m.state == StateApprovalRequired {
-				// Cancel approval - remove approval message
+				// Deny the approval when Escape is pressed
+				// Save approval ID before clearing
+				approvalID := m.pendingTool.ApprovalID
+				
+				// Remove approval message from messages
 				for i := len(m.messages) - 1; i >= 0; i-- {
 					if m.messages[i].Role == "approval_request" {
 						m.messages = append(m.messages[:i], m.messages[i+1:]...)
 						break
 					}
 				}
-				m.state = StateReady
+				
+				// Change state to waiting for response (agent continues)
+				m.state = StateWaitingForResponse
 				m.pendingTool = nil
 				m.approvalList = list.Model{}  // Clear the list
+				
+				// Recalculate viewport height for new footer size
+				headerLines := 0
+				if len(m.messages) == 0 {
+					headerLines = 5
+					if m.sessionID != "" {
+						headerLines = 7
+					}
+				}
+				footerLines := 5  // Back to input footer size
+				m.viewport.Height = m.height - headerLines - footerLines
 				m.updateViewport()
-				return m, nil
+				
+				// Send denial response to server AND clear screen to force full redraw
+				return m, tea.Batch(
+					tea.ClearScreen,
+					func() tea.Msg {
+						// Send denial (approved=false, alwaysApprove=false)
+						err := m.rpcClient.ToolApprovalResponse(approvalID, false, false)
+						if err != nil {
+							return ErrorMsg{Error: err}
+						}
+						return nil
+					},
+				)
 			}
 			return m, tea.Quit
 
@@ -1080,7 +1109,7 @@ func (m Model) getContextualHelp() string {
 			),
 			key.NewBinding(
 				key.WithKeys("esc"),
-				key.WithHelp("esc", "cancel"),
+				key.WithHelp("esc", "deny"),
 			),
 		}
 	case StateSessionList:
