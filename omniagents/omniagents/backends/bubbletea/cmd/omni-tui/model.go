@@ -486,19 +486,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateViewport()
 
 	case ToolCalledMsg:
-		// Clear any pending approval state when a tool is called
-		if m.state == StateApprovalRequired {
-			// Remove approval message from messages
-			for i := len(m.messages) - 1; i >= 0; i-- {
-				if m.messages[i].Role == "approval_request" {
-					m.messages = append(m.messages[:i], m.messages[i+1:]...)
-					break
-				}
-			}
-			m.state = StateWaitingForResponse
-			m.pendingTool = nil
-			m.approvalList = list.Model{}
-		}
+		// Don't clear approval state - let user handle it
 		m.messages = append(m.messages, Message{
 			Role: "tool_call",
 			ToolCall: &ToolCallInfo{
@@ -523,19 +511,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateViewport()
 
 	case MessageOutputMsg:
-		// Clear any pending approval state when we get a message
-		if m.state == StateApprovalRequired {
-			// Remove approval message from messages
-			for i := len(m.messages) - 1; i >= 0; i-- {
-				if m.messages[i].Role == "approval_request" {
-					m.messages = append(m.messages[:i], m.messages[i+1:]...)
-					break
-				}
-			}
-			m.state = StateWaitingForResponse
-			m.pendingTool = nil
-			m.approvalList = list.Model{}
-		}
+		// Don't clear approval state - let user handle it
 		// Update or create assistant message
 		if len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == "assistant" {
 			// Update existing assistant message
@@ -579,10 +555,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		
 	case RunEndMsg:
-		m.state = StateReady
+		// Only change state to Ready if not waiting for approval
+		if m.state != StateApprovalRequired {
+			m.state = StateReady
+		}
 		m.currentRunID = ""
-		m.pendingTool = nil
-		m.approvalList = list.Model{}  // Clear any leftover approval list
+		// Don't clear pendingTool or approvalList - let user handle approval
 		m.updateViewport()
 		
 	case SessionsListedMsg:
@@ -1045,7 +1023,8 @@ func (m Model) renderMessages() string {
 		if msg.Role == "approval_request" && m.state == StateApprovalRequired {
 			listPtr = &m.approvalList
 		}
-		rendered := renderMessage(msg, m.debugMode, m.pulseFrame, listPtr)
+		// Pass terminal width for smart truncation
+		rendered := renderMessageWithWidth(msg, m.debugMode, m.pulseFrame, listPtr, m.width)
 		s.WriteString(rendered)
 	}
 

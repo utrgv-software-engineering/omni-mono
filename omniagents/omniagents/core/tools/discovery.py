@@ -3,13 +3,12 @@ import importlib
 import inspect
 import sys
 from pathlib import Path
-from typing import Dict, Callable
+from typing import Dict, Callable, Optional, Any, Tuple
 import traceback
 from omniagents.core.debug import Debug
 
 # Import the original decorator from the agents library
 from agents.tool import function_tool as original_function_tool
-from typing import Any, Dict
 
 # --- Rich Tool Output Class --- #
 
@@ -93,6 +92,117 @@ def rich_function_tool(func: Callable = None, **kwargs) -> Callable:
         return decorator
     else:
         return decorator(func)
+
+# --- Approval Metadata Registry --- #
+
+_approval_metadata_registry: Dict[str, Tuple[Callable, inspect.Signature]] = {}
+
+def approval_metadata(tool: str = None):
+    """
+    Decorator for approval metadata generators with same signature as tool.
+    
+    The decorated function should have the same parameter signature as the tool
+    it provides metadata for, and return a dictionary with metadata for the
+    approval UI.
+    
+    Usage:
+        @approval_metadata()  # Auto-detects tool name from function name
+        def edit_file_approval(file_path: str, old_text: str, new_text: str) -> dict:
+            return {
+                "display_type": "diff",
+                "summary": f"Edit {file_path}",
+                ...
+            }
+    
+        @approval_metadata(tool="my_tool")  # Explicit tool name
+        def generate_metadata(param1: str, param2: int) -> dict:
+            return {...}
+    
+    The metadata dictionary can contain:
+        - display_type: UI hint for rendering (e.g., "diff", "file_write", "table", etc.)
+        - summary: Brief description of the operation
+        - value: The actual data to display (diffs, content, etc.)
+        - preview: A preview string for the UI
+        - metadata: Additional context (file paths, operations, stats, etc.)
+        - truncated: Boolean indicating if content was truncated
+    """
+    def decorator(func: Callable):
+        tool_name = tool
+        if not tool_name:
+            # Auto-detect tool name from function name
+            # Supports patterns: tool_name_approval, tool_name_metadata
+            name = func.__name__
+            if name.endswith("_approval"):
+                tool_name = name[:-9]  # Remove "_approval" suffix
+            elif name.endswith("_metadata"):
+                tool_name = name[:-9]  # Remove "_metadata" suffix
+            else:
+                raise ValueError(
+                    f"Cannot auto-detect tool name from '{name}'. "
+                    f"Function name should end with '_approval' or '_metadata', "
+                    f"or use @approval_metadata(tool='name') explicitly."
+                )
+        
+        # Store the function and its signature for later use
+        sig = inspect.signature(func)
+        _approval_metadata_registry[tool_name] = (func, sig)
+        
+        # Mark the function as a metadata generator for debugging
+        setattr(func, '_is_approval_metadata', True)
+        setattr(func, '_tool_name', tool_name)
+        
+        if Debug.enabled():
+            print(f"Registered approval metadata for tool '{tool_name}' from function '{func.__name__}'")
+        
+        return func  # Return the function unchanged
+    
+    return decorator
+
+def get_approval_metadata(tool_name: str, args: dict) -> Optional[Dict[str, Any]]:
+    """
+    Get approval metadata for a tool by calling the registered generator.
+    
+    Args:
+        tool_name: The name of the tool
+        args: The arguments dictionary from the tool call
+    
+    Returns:
+        A dictionary with metadata for the approval UI, or None if no
+        metadata generator is registered for this tool.
+    """
+    entry = _approval_metadata_registry.get(tool_name)
+    if not entry:
+        return None
+    
+    func, sig = entry
+    
+    # Build kwargs from args dict based on the function's signature
+    kwargs = {}
+    for param_name, param in sig.parameters.items():
+        if param_name in args:
+            # Use the value from args
+            kwargs[param_name] = args[param_name]
+        elif param.default is not param.empty:
+            # Use the parameter's default value
+            kwargs[param_name] = param.default
+        # If the parameter is required but not in args, the function call
+        # will fail with an appropriate TypeError
+    
+    try:
+        # Call the metadata generator with unpacked parameters
+        metadata = func(**kwargs)
+        
+        if Debug.enabled():
+            print(f"Generated approval metadata for tool '{tool_name}'")
+        
+        return metadata
+        
+    except Exception as e:
+        if Debug.enabled():
+            print(f"Error generating approval metadata for tool '{tool_name}': {e}")
+            import traceback
+            traceback.print_exc()
+        return None
 
 # --- Updated Discovery Function --- #
 

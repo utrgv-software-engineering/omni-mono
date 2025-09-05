@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/alecthomas/chroma/quick"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
@@ -115,13 +118,26 @@ func formatRichPreview(rich *RichMetadata) string {
 		previewStyle = toolResultStyle
 	}
 	
-	// Show preview lines with proper indentation
-	for i, line := range previewLines {
-		if i >= maxPreviewLines {
+	// Show preview lines with proper indentation and wrapping
+	// Calculate available width (assume 80 char terminal - 5 spaces indent)
+	maxLineWidth := 75
+	linesShown := 0
+	
+	for _, line := range previewLines {
+		if linesShown >= maxPreviewLines {
 			break
 		}
-		result.WriteString(previewStyle.Render("     " + line))
-		result.WriteString("\n")
+		
+		// Wrap long lines at character boundaries
+		wrappedParts := wrapLineHard(line, maxLineWidth)
+		for _, part := range wrappedParts {
+			if linesShown >= maxPreviewLines {
+				break
+			}
+			result.WriteString(previewStyle.Render("     " + part))
+			result.WriteString("\n")
+			linesShown++
+		}
 	}
 	
 	// Add truncation indicator if needed
@@ -452,13 +468,18 @@ func getGlamourRenderer() *glamour.TermRenderer {
 
 // renderMessage renders a single message with appropriate formatting
 func renderMessage(msg Message, debugMode bool, pulseFrame int, approvalList *list.Model) string {
+	return renderMessageWithWidth(msg, debugMode, pulseFrame, approvalList, 0)
+}
+
+// renderMessageWithWidth renders a single message with width-aware formatting
+func renderMessageWithWidth(msg Message, debugMode bool, pulseFrame int, approvalList *list.Model, termWidth int) string {
 	switch msg.Role {
 	case "user":
 		return renderUserMessage(msg)
 	case "assistant":
 		return renderAssistantMessage(msg)
 	case "tool_call":
-		return renderToolCall(msg, debugMode, pulseFrame)
+		return renderToolCallWithWidth(msg, debugMode, pulseFrame, termWidth)
 	case "tool_result":
 		// Always show tool results, not just in debug mode
 		return renderToolResult(msg)
@@ -539,12 +560,14 @@ func renderAssistantMessage(msg Message) string {
 
 // renderToolCall renders a tool call with formatted arguments
 func renderToolCall(msg Message, debugMode bool, pulseFrame int) string {
+	return renderToolCallWithWidth(msg, debugMode, pulseFrame, 0)
+}
+
+// renderToolCallWithWidth renders a tool call with width-aware formatting
+func renderToolCallWithWidth(msg Message, debugMode bool, pulseFrame int, termWidth int) string {
 	if msg.ToolCall == nil {
 		return ""
 	}
-
-	// Parse and format arguments
-	formattedArgs := formatToolArguments(msg.ToolCall.Arguments)
 
 	// Create pulsing dot for running tools
 	var indicator string
@@ -560,10 +583,27 @@ func renderToolCall(msg Message, debugMode bool, pulseFrame int) string {
 		indicator = toolStyle.Render("⏺")
 	}
 	
-	toolName := toolNameStyle.Render(msg.ToolCall.Name)
+	toolName := msg.ToolCall.Name
+	
+	// Calculate available width for arguments
+	// Format: "⏺ toolName(args)"
+	// Account for: indicator (2) + space (1) + tool name + "(" + ")" 
+	availableWidth := termWidth
+	if availableWidth <= 0 {
+		// Default width if not provided
+		availableWidth = 80
+	}
+	// Subtract fixed elements: "⏺ " (2) + "(" (1) + ")" (1)
+	availableWidth = availableWidth - 2 - len(toolName) - 2
+	
+	// Parse and format arguments with smart truncation
+	formattedArgs := formatToolArgumentsSmart(msg.ToolCall.Arguments, availableWidth)
+	
+	// Apply styling to tool name after calculation
+	toolNameStyled := toolNameStyle.Render(toolName)
 	
 	// Start with spacing and add spacing at the end
-	result := fmt.Sprintf("%s %s(%s)\n", indicator, toolName, formattedArgs)
+	result := fmt.Sprintf("%s %s(%s)\n", indicator, toolNameStyled, formattedArgs)
 
 	// Always add result if available (not just in debug mode)
 	if msg.ToolCall.Result != "" {
@@ -599,9 +639,33 @@ func renderToolResult(msg Message) string {
 	// Format as indented output with a more visible style
 	lines := strings.Split(result, "\n")
 	// Apply the same style to both the prefix and the content for consistency
-	formatted := toolResultStyle.Render("  └─ " + lines[0]) + "\n"
-	for i := 1; i < len(lines) && i < 10; i++ {
-		formatted += toolResultStyle.Render("     " + lines[i]) + "\n"
+	// Calculate available width (assume 80 char terminal - 5 spaces indent for └─ prefix)
+	maxLineWidth := 75
+	
+	// Handle first line with the └─ prefix
+	formatted := ""
+	if len(lines) > 0 {
+		firstLineWrapped := wrapLineHard(lines[0], maxLineWidth-3) // -3 for "└─ "
+		if len(firstLineWrapped) > 0 {
+			formatted = toolResultStyle.Render("  └─ " + firstLineWrapped[0]) + "\n"
+			// Add any wrapped portions of the first line
+			for j := 1; j < len(firstLineWrapped); j++ {
+				formatted += toolResultStyle.Render("     " + firstLineWrapped[j]) + "\n"
+			}
+		}
+	}
+	
+	// Handle remaining lines with wrapping
+	linesShown := 1
+	for i := 1; i < len(lines) && linesShown < 10; i++ {
+		wrappedParts := wrapLineHard(lines[i], maxLineWidth)
+		for _, part := range wrappedParts {
+			if linesShown >= 10 {
+				break
+			}
+			formatted += toolResultStyle.Render("     " + part) + "\n"
+			linesShown++
+		}
 	}
 
 	return formatted
@@ -663,6 +727,165 @@ func renderRichToolResult(rich *RichMetadata, plainOutput string) string {
 // formatToolArguments formats tool arguments for display
 func formatToolArguments(argsStr string) string {
 	return formatToolArgumentsWithLimit(argsStr, 100)
+}
+
+// formatToolArgumentsSmart formats tool arguments with intelligent truncation
+// It tries to keep the structure readable while fitting within the available width
+func formatToolArgumentsSmart(argsStr string, availableWidth int) string {
+	// Minimum width to show anything useful
+	if availableWidth < 10 {
+		return "..."
+	}
+
+	// Try to parse as JSON using orderedmap to preserve field order
+	om := orderedmap.New()
+	if err := json.Unmarshal([]byte(argsStr), om); err == nil {
+		// Successfully parsed as JSON object
+		parts := []string{}
+		ellipsisLen := 3 // "..."
+		commaSpaceLen := 2 // ", "
+		
+		// First pass: collect all formatted arguments
+		allParts := []struct {
+			key   string
+			value string
+			full  string // Full "key: value" string
+		}{}
+		
+		for _, k := range om.Keys() {
+			v, _ := om.Get(k)
+			
+			// Format value based on type
+			var valueStr string
+			switch val := v.(type) {
+			case string:
+				// Quote strings
+				valueStr = fmt.Sprintf("%q", val)
+			case float64:
+				// Format numbers
+				if val == float64(int(val)) {
+					valueStr = fmt.Sprintf("%d", int(val))
+				} else {
+					valueStr = fmt.Sprintf("%g", val)
+				}
+			case bool:
+				valueStr = fmt.Sprintf("%v", val)
+			case nil:
+				valueStr = "null"
+			default:
+				// Complex types: arrays, objects
+				if jsonBytes, err := json.Marshal(val); err == nil {
+					valueStr = string(jsonBytes)
+				} else {
+					valueStr = fmt.Sprintf("%v", val)
+				}
+			}
+			
+			fullArg := fmt.Sprintf("%s: %s", k, valueStr)
+			allParts = append(allParts, struct {
+				key   string
+				value string
+				full  string
+			}{
+				key:   k,
+				value: valueStr,
+				full:  fullArg,
+			})
+		}
+		
+		// Strategy: Include as many complete arguments as possible
+		// If a single argument is too long, truncate its value
+		currentLen := 0
+		lastFullIndex := -1
+		
+		for i, part := range allParts {
+			// Calculate length with comma if not first item
+			argLen := len(part.full)
+			if i > 0 {
+				argLen += commaSpaceLen
+			}
+			
+			// Check if we can fit this argument completely
+			if currentLen + argLen <= availableWidth {
+				parts = append(parts, part.full)
+				currentLen += argLen
+				lastFullIndex = i
+			} else {
+				// Can't fit this argument completely
+				// Try to fit a truncated version of this argument
+				remainingSpace := availableWidth - currentLen
+				if i > 0 {
+					remainingSpace -= commaSpaceLen
+				}
+				
+				// Only truncate if we have reasonable space (key + ": " + at least some value + "...")
+				minArgLen := len(part.key) + 2 + 4 + ellipsisLen // "key: X..."
+				
+				if remainingSpace >= minArgLen && i == 0 {
+					// Truncate the first argument if it's the only one that fits
+					maxValueLen := remainingSpace - len(part.key) - 2 - ellipsisLen
+					if maxValueLen > 0 {
+						truncatedValue := part.value
+						if len(truncatedValue) > maxValueLen {
+							// Handle quoted strings specially to keep quotes
+							if strings.HasPrefix(truncatedValue, "\"") && strings.HasSuffix(truncatedValue, "\"") {
+								// Truncate inside the quotes
+								innerContent := truncatedValue[1:len(truncatedValue)-1]
+								if len(innerContent) > maxValueLen-2 { // Account for quotes
+									truncatedValue = fmt.Sprintf("\"%s...\"", innerContent[:maxValueLen-5])
+								}
+							} else {
+								truncatedValue = truncatedValue[:maxValueLen] + "..."
+							}
+						}
+						parts = append(parts, fmt.Sprintf("%s: %s", part.key, truncatedValue))
+					} else {
+						// Just show ellipsis if we can't show anything useful
+						parts = append(parts, "...")
+					}
+					break
+				} else if lastFullIndex >= 0 && i > lastFullIndex {
+					// We've already added some complete arguments
+					// Add ellipsis to indicate there are more
+					if currentLen + commaSpaceLen + ellipsisLen <= availableWidth {
+						parts = append(parts, "...")
+					}
+					break
+				} else if remainingSpace >= len(part.key) + 6 {
+					// Try to at least show "key: ..."
+					parts = append(parts, fmt.Sprintf("%s: ...", part.key))
+					break
+				} else {
+					// Can't fit anything useful, just use ellipsis
+					if len(parts) > 0 {
+						// We have some args already, add ellipsis
+						if currentLen + commaSpaceLen + ellipsisLen <= availableWidth {
+							parts = append(parts, "...")
+						}
+					} else {
+						// Nothing fits, just show ellipsis
+						parts = append(parts, "...")
+					}
+					break
+				}
+			}
+		}
+		
+		return strings.Join(parts, ", ")
+	}
+
+	// Not JSON or failed to parse
+	// Simple truncation for non-JSON arguments
+	if len(argsStr) <= availableWidth {
+		return argsStr
+	}
+	
+	ellipsisLen := 3
+	if availableWidth > ellipsisLen {
+		return argsStr[:availableWidth-ellipsisLen] + "..."
+	}
+	
+	return "..."
 }
 
 // formatToolArgumentsWithLimit formats tool arguments with a custom length limit
@@ -757,6 +980,31 @@ func wrapText(text string, width int) []string {
 	}
 
 	return lines
+}
+
+// wrapLineHard wraps a single line at character boundaries to fit within maxWidth
+// Preserves exact content including spaces and special characters
+func wrapLineHard(line string, maxWidth int) []string {
+	if maxWidth <= 0 {
+		return []string{line}
+	}
+	
+	if len(line) <= maxWidth {
+		return []string{line}
+	}
+	
+	var wrapped []string
+	for len(line) > 0 {
+		if len(line) <= maxWidth {
+			wrapped = append(wrapped, line)
+			break
+		}
+		// Take maxWidth characters
+		wrapped = append(wrapped, line[:maxWidth])
+		line = line[maxWidth:]
+	}
+	
+	return wrapped
 }
 
 // renderWelcome renders the welcome message
@@ -976,6 +1224,8 @@ func renderDiffApproval(msg Message, approvalList list.Model) string {
 			for _, line := range diffLines {
 				
 				lineStr, _ := line.(string)
+				// Strip trailing newlines - we'll manage line breaks ourselves
+				lineStr = strings.TrimSuffix(lineStr, "\n")
 				
 				// Skip file headers (---/+++) as they're redundant with the title
 				if strings.HasPrefix(lineStr, "+++") || strings.HasPrefix(lineStr, "---") {
@@ -1093,6 +1343,7 @@ func renderDiffApproval(msg Message, approvalList list.Model) string {
 						oldLine++
 						newLine++
 					}
+					// Add newline after each diff line
 					content.WriteString("\n")
 				}
 			}
@@ -1148,49 +1399,107 @@ func renderFileWriteApproval(msg Message, approvalList list.Model) string {
 		summary = s
 	}
 	
-	content.WriteString(titleStyle.Render(fmt.Sprintf("Tool Approval: %s", summary)))
+	content.WriteString(titleStyle.Render(summary))
 	content.WriteString("\n\n")
 
-	// Show file metadata
-	if metadata, ok := msg.Approval.Metadata["metadata"].(map[string]interface{}); ok {
-		if filePath, ok := metadata["file_path"].(string); ok && filePath != "" {
-			content.WriteString(infoStyle.Render("File: "))
-			content.WriteString(filePath)
-			content.WriteString("\n")
-		}
-		
-		if operation, ok := metadata["operation"].(string); ok {
-			content.WriteString(infoStyle.Render("Operation: "))
-			content.WriteString(strings.Title(operation))
-			content.WriteString("\n")
-		}
-		
-		if lineCount, ok := metadata["line_count"].(float64); ok {
-			content.WriteString(infoStyle.Render(fmt.Sprintf("Lines: %.0f", lineCount)))
-			content.WriteString("\n")
-		}
-		
-		if sizeBytes, ok := metadata["size_bytes"].(float64); ok {
-			content.WriteString(infoStyle.Render(fmt.Sprintf("Size: %.0f bytes", sizeBytes)))
-			content.WriteString("\n")
-		}
+	// Show full content with syntax highlighting (not just preview)
+	// First try to get the full content from the value field
+	var codeContent string
+	if value, ok := msg.Approval.Metadata["value"].(string); ok && value != "" {
+		codeContent = value
+		// Don't show "Content:" label - just show the content directly
+	} else if preview, ok := msg.Approval.Metadata["preview"].(string); ok && preview != "" {
+		// Fallback to preview if value is not available
+		codeContent = preview
+		content.WriteString(infoStyle.Render("Preview:"))
+		content.WriteString("\n")
 	}
 	
-	content.WriteString("\n")
-
-	// Show preview if available
-	if preview, ok := msg.Approval.Metadata["preview"].(string); ok && preview != "" {
-		content.WriteString(infoStyle.Render("Preview:\n"))
-		lines := strings.Split(preview, "\n")
-		for i, line := range lines {
-			if i >= 10 { // Limit preview lines
-				if truncated, ok := msg.Approval.Metadata["truncated"].(bool); ok && truncated {
-					content.WriteString(contentStyle.Render("... (content truncated) ..."))
+	if codeContent != "" {
+		// Detect language from file extension
+		var language string
+		if metadata, ok := msg.Approval.Metadata["metadata"].(map[string]interface{}); ok {
+			if filePath, ok := metadata["file_path"].(string); ok {
+				ext := filepath.Ext(filePath)
+				switch ext {
+				case ".go":
+					language = "go"
+				case ".py":
+					language = "python"
+				case ".js":
+					language = "javascript"
+				case ".ts":
+					language = "typescript"
+				case ".tsx", ".jsx":
+					language = "typescript"
+				case ".java":
+					language = "java"
+				case ".cpp", ".cc", ".cxx":
+					language = "cpp"
+				case ".c", ".h":
+					language = "c"
+				case ".rs":
+					language = "rust"
+				case ".rb":
+					language = "ruby"
+				case ".php":
+					language = "php"
+				case ".sh", ".bash":
+					language = "bash"
+				case ".yaml", ".yml":
+					language = "yaml"
+				case ".json":
+					language = "json"
+				case ".xml":
+					language = "xml"
+				case ".html", ".htm":
+					language = "html"
+				case ".css":
+					language = "css"
+				case ".scss", ".sass":
+					language = "scss"
+				case ".sql":
+					language = "sql"
+				case ".md", ".markdown":
+					language = "markdown"
+				case ".toml":
+					language = "toml"
+				case ".ini":
+					language = "ini"
+				case ".dockerfile", ".Dockerfile":
+					language = "dockerfile"
 				}
-				break
 			}
-			content.WriteString(contentStyle.Render(line))
-			content.WriteString("\n")
+		}
+		
+		// Use Chroma directly for syntax highlighting
+		if language != "" {
+			// Use a buffer to capture the highlighted output
+			var buf bytes.Buffer
+			
+			// Use the same style as Glamour (charm) for consistency
+			err := quick.Highlight(&buf, codeContent, language, "terminal256", "monokai")
+			if err == nil {
+				// Successfully highlighted - output the result
+				highlightedContent := buf.String()
+				// The output from Chroma should have correct newlines
+				content.WriteString(highlightedContent)
+				if !strings.HasSuffix(highlightedContent, "\n") {
+					content.WriteString("\n")
+				}
+			} else {
+				// Fallback to plain text if highlighting fails
+				content.WriteString(contentStyle.Render(codeContent))
+				if !strings.HasSuffix(codeContent, "\n") {
+					content.WriteString("\n")
+				}
+			}
+		} else {
+			// No language detected or plain text file, use plain rendering
+			content.WriteString(contentStyle.Render(codeContent))
+			if !strings.HasSuffix(codeContent, "\n") {
+				content.WriteString("\n")
+			}
 		}
 	}
 	

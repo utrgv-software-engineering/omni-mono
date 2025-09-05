@@ -315,8 +315,20 @@ class SafeAgent(Agent):
             print("[SafeAgent] Cleared all safe tools and patterns", file=sys.stderr)
     
     def _compute_approval_metadata(self, tool_name: str, args: Dict) -> Optional[Dict[str, Any]]:
-        """Compute rich metadata for tool approvals matching RichToolOutput pattern."""
+        """Compute rich metadata for tool approvals.
         
+        First checks for registered metadata generators via the @approval_metadata decorator,
+        then falls back to built-in metadata for common tools.
+        """
+        from omniagents.core.tools import get_approval_metadata
+        
+        # First try to get metadata from registered generators
+        metadata = get_approval_metadata(tool_name, args)
+        if metadata is not None:
+            return metadata
+        
+        # Fall back to built-in metadata for backwards compatibility
+        # These can be removed once tools define their own metadata
         if tool_name == "edit_file":
             file_path = args.get("file_path", "")
             old_text = args.get("old_text", "")

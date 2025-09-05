@@ -5,6 +5,8 @@ from .discovery import (
     rich_function_tool,
     RichToolOutput,
     discover_functions_in_dir,
+    approval_metadata,
+    get_approval_metadata,
 )
 
 __all__ = [
@@ -12,4 +14,6 @@ __all__ = [
     "rich_function_tool", 
     "RichToolOutput",
     "discover_functions_in_dir",
+    "approval_metadata",
+    "get_approval_metadata",
 ]
