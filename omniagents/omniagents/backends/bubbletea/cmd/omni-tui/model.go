@@ -304,7 +304,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.Type {
-		case tea.KeyCtrlC, tea.KeyEsc:
+		case tea.KeyCtrlC:
+			// Ctrl+C always quits the application
+			return m, tea.Quit
+		
+		case tea.KeyEsc:
 			if m.state == StateApprovalRequired {
 				// Deny the approval when Escape is pressed
 				// Save approval ID before clearing
@@ -347,8 +351,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return nil
 					},
 				)
+			} else if m.state == StateWaitingForResponse && m.currentRunID != "" {
+				// Cancel the current run when Escape is pressed during execution
+				runID := m.currentRunID
+				m.currentRunID = ""  // Clear immediately to prevent double cancellation
+				
+				// Mark any running tool calls as cancelled
+				for i := len(m.messages) - 1; i >= 0; i-- {
+					if m.messages[i].Role == "tool_call" && m.messages[i].ToolCall != nil {
+						if m.messages[i].ToolCall.Result == "" {
+							// Tool was still running, mark as cancelled
+							m.messages[i].ToolCall.Result = "[Cancelled]"
+							m.messages[i].ToolCall.Running = false
+						}
+					}
+				}
+				
+				// Change state back to ready
+				m.state = StateReady
+				
+				// Add a message indicating cancellation
+				m.messages = append(m.messages, Message{
+					Role:    "assistant",
+					Content: "[Run cancelled by user]",
+				})
+				m.updateViewport()
+				
+				// Send stop_run command to server
+				return m, func() tea.Msg {
+					err := m.rpcClient.StopRun(runID)
+					if err != nil {
+						return ErrorMsg{Error: err}
+					}
+					return nil
+				}
 			}
-			return m, tea.Quit
+			// In other states, ESC does nothing (no longer quits)
 
 		case tea.KeyEnter:
 			if m.state == StateApprovalRequired {
@@ -992,7 +1030,11 @@ func (m Model) renderStatusLine() string {
 		status = "" // Don't show Ready status
 		showSpinner = false
 	case StateWaitingForResponse:
-		status = "Thinking..."
+		if m.currentRunID != "" {
+			status = "Thinking... (esc to cancel)"
+		} else {
+			status = "Thinking..."
+		}
 		showSpinner = true
 	case StateApprovalRequired:
 		status = "" // Don't show status - approval dialog is in message list
@@ -1088,6 +1130,10 @@ func (m Model) getContextualHelp() string {
 		}
 	case StateWaitingForResponse:
 		contextKeys = []key.Binding{
+			key.NewBinding(
+				key.WithKeys("esc"),
+				key.WithHelp("esc", "cancel"),
+			),
 			key.NewBinding(
 				key.WithKeys("ctrl+c"),
 				key.WithHelp("ctrl+c", "quit"),

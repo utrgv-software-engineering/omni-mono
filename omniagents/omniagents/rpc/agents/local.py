@@ -77,6 +77,7 @@ class LocalAgent(UnifiedAgentBase):
         self._server_transport: Optional[InMemoryTransport] = None
         self._event_queue: asyncio.Queue = asyncio.Queue()
         self._session_id: Optional[str] = None
+        self._current_run_id: Optional[str] = None
         self._initialized = False
         
         # Set agent properties from spec
@@ -300,6 +301,9 @@ class LocalAgent(UnifiedAgentBase):
             else:
                 run_id = None
             
+            # Store current run_id for potential cancellation
+            self._current_run_id = run_id
+            
             # Stream events until run_end
             while True:
                 event_data = await self._event_queue.get()
@@ -307,6 +311,8 @@ class LocalAgent(UnifiedAgentBase):
                 if event_data["method"] == "run_end":
                     params = event_data.get("params", {})
                     if not run_id or params.get("run_id") == run_id:
+                        # Clear current run_id when run ends
+                        self._current_run_id = None
                         break
                 
                 # Convert to StreamEvent
@@ -336,6 +342,27 @@ class LocalAgent(UnifiedAgentBase):
         """Archive a session."""
         await self._ensure_client()
         await self._rpc_client.other.archive_session(session_id=session_id)
+    
+    async def stop_run(self) -> bool:
+        """
+        Stop the currently running agent execution.
+        
+        Returns:
+            bool: True if the run was successfully cancelled, False otherwise
+        """
+        if not self._current_run_id:
+            return False
+        
+        await self._ensure_client()
+        try:
+            response = await self._rpc_client.other.stop_run(run_id=self._current_run_id)
+            result = getattr(response, "result", response)
+            if result:
+                # Clear the run_id since we've cancelled it
+                self._current_run_id = None
+            return result
+        except Exception:
+            return False
     
     # Context manager support for resource cleanup
     async def __aenter__(self):

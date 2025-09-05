@@ -641,6 +641,14 @@ func renderToolResult(msg Message) string {
 		return ""
 	}
 
+	// Special handling for cancelled tools
+	if msg.ToolCall.Result == "[Cancelled]" {
+		cancelledStyle := lipgloss.NewStyle().
+			Foreground(Styles.Warning.GetForeground()).
+			Italic(true)
+		return cancelledStyle.Render("  └─ Cancelled by user") + "\n"
+	}
+
 	// Check if we have rich metadata
 	richMetadata := parseRichMetadata(msg.ToolCall.Metadata)
 	

@@ -48,6 +48,7 @@ class RemoteAgent(UnifiedAgentBase):
         self._run_lock: asyncio.Lock = asyncio.Lock()
         self._event_queue: asyncio.Queue = asyncio.Queue()
         self._session_id: str | None = None
+        self._current_run_id: str | None = None
         self._variables = variables
         self._context = context
 
@@ -101,6 +102,9 @@ class RemoteAgent(UnifiedAgentBase):
             run_id = self._extract_run_id(resp)
             if Debug.enabled():
                 print(f"[cli] ▶ run_id={run_id}  prompt={prompt[:60]!r}")
+            
+            # Store current run_id for potential cancellation
+            self._current_run_id = run_id
 
             # Stream events until run_end
             while True:
@@ -110,6 +114,8 @@ class RemoteAgent(UnifiedAgentBase):
                 ):
                     if Debug.enabled():
                         print(f"[cli] ◀ run_end  run_id={run_id}")
+                    # Clear current run_id when run ends
+                    self._current_run_id = None
                     break
                 
                 event = map_notification_to_event(msg["method"], msg["params"])
@@ -138,6 +144,29 @@ class RemoteAgent(UnifiedAgentBase):
         await self._ensure_client()
         resp = await self._client.other.archive_session(session_id=session_id)
         return getattr(resp, "result", resp)
+
+    async def stop_run(self) -> bool:
+        """
+        Stop the currently running agent execution.
+        
+        Returns:
+            bool: True if the run was successfully cancelled, False otherwise
+        """
+        if not self._current_run_id:
+            return False
+        
+        await self._ensure_client()
+        try:
+            resp = await self._client.other.stop_run(run_id=self._current_run_id)
+            result = getattr(resp, "result", resp)
+            if result:
+                # Clear the run_id since we've cancelled it
+                self._current_run_id = None
+            return result
+        except Exception as e:
+            if Debug.enabled():
+                print(f"[cli] ✗ stop_run failed: {e}")
+            return False
 
     async def _ensure_client(self):
         """Ensure RPC client is connected."""

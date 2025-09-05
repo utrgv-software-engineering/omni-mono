@@ -313,6 +313,17 @@ async def chat():
             print(f"Agent: {event.item.raw_item.content[0].text}")
         elif event.type == "tool_called":
             print(f"Calling tool: {event.item.name}")
+
+# Cancel a running agent
+async def cancel_example():
+    # Start a long-running task
+    messages = [{"role": "user", "content": "Perform a complex analysis"}]
+    task = asyncio.create_task(chat())
+    
+    # Cancel after some time
+    await asyncio.sleep(5)
+    success = await agent.stop_run()
+    print(f"Cancellation {'succeeded' if success else 'failed'}")
 ```
 
 This protocol enables seamless integration of remote AI agents while maintaining the same interface as local agents.

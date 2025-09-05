@@ -133,45 +133,101 @@ async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: i
     if Debug.enabled():
         print(f"[srv] ▶ start_run  session={session.id[:8]} prompt={prompt[:80]!r} (hist={len(session.history)})")
 
-    # Use Runner to run the agent
-    from agents import RunConfig
-    run_config = RunConfig(
-        group_id=f"session_{session.id}",
-        workflow_name="omniagents_conversation"
-    )
+    # Track pending tool calls that need results
+    pending_tool_calls = {}
     
-    # Import Runner locally to avoid module-level import
-    from agents import Runner as _Runner
-    result = _Runner.run_streamed(agent, agent_input, context=context, max_turns=max_turns, run_config=run_config)
+    try:
+        # Use Runner to run the agent
+        from agents import RunConfig
+        run_config = RunConfig(
+            group_id=f"session_{session.id}",
+            workflow_name="omniagents_conversation"
+        )
+        
+        # Import Runner locally to avoid module-level import
+        from agents import Runner as _Runner
+        result = _Runner.run_streamed(agent, agent_input, context=context, max_turns=max_turns, run_config=run_config)
 
-    async for event in result.stream_events():
-        # Skip low-level / uninterested event types
-        if event.type not in ("run_item_stream_event",):
-            continue
+        async for event in result.stream_events():
+            # Skip low-level / uninterested event types
+            if event.type not in ("run_item_stream_event",):
+                continue
 
-        item = event.item
-        method, payload = _stream_event_payload(item, run_id=asyncio.current_task().get_name())
-        if method:
-            # Push event to client; if the WebSocket is already closed we
-            # remember the payload so it can be replayed when the user
-            # reconnects.
-            delivered = await _broadcast(session, method, payload)
-            if not delivered:
-                session.pending_events.append((method, payload))
+            item = event.item
+            method, payload = _stream_event_payload(item, run_id=asyncio.current_task().get_name())
+            
+            # Track tool calls that need results
+            if method == "tool_called" and payload.get("call_id"):
+                call_id = payload["call_id"]
+                tool_name = payload.get("tool", "unknown")
+                pending_tool_calls[call_id] = tool_name
+            elif method == "tool_result" and payload.get("call_id"):
+                # Tool got a result, remove from pending
+                call_id = payload["call_id"]
+                pending_tool_calls.pop(call_id, None)
+            
+            if method:
+                # Push event to client; if the WebSocket is already closed we
+                # remember the payload so it can be replayed when the user
+                # reconnects.
+                delivered = await _broadcast(session, method, payload)
+                if not delivered:
+                    session.pending_events.append((method, payload))
 
-        # Persist item into session history when it reaches a finalised form
-        if hasattr(item, "to_input_item"):
-            try:
-                inp = item.to_input_item()
-                if inp:
-                    session.history.append(inp)
-                    append_message(session.id, inp)
-            except Exception:
-                # Ignore malformed items but keep streaming.
-                pass
+            # Persist item into session history when it reaches a finalised form
+            if hasattr(item, "to_input_item"):
+                try:
+                    inp = item.to_input_item()
+                    if inp:
+                        session.history.append(inp)
+                        append_message(session.id, inp)
+                except Exception:
+                    # Ignore malformed items but keep streaming.
+                    pass
 
-        if Debug.enabled() and method:
-            print(f"[srv]   → {method} run={payload.get('run_id','')} details={payload}")
-
-    if Debug.enabled():
-        print(f"[srv] ◀ end_run    session={session.id[:8]} hist={len(session.history)}") 
+            if Debug.enabled() and method:
+                print(f"[srv]   → {method} run={payload.get('run_id','')} details={payload}")
+                
+    except asyncio.CancelledError:
+        # Run was cancelled - the finally block will handle pending tool calls
+        if Debug.enabled():
+            print(f"[srv] ✗ Run cancelled")
+        # Re-raise to let the caller handle it
+        raise
+    except Exception as e:
+        # Any other exception - the finally block will handle pending tool calls
+        if Debug.enabled():
+            print(f"[srv] ✗ Error during run: {e}")
+        # Re-raise the original exception
+        raise
+    finally:
+        # Handle any pending tool calls that didn't get results
+        # This covers both cancellation and unexpected termination
+        if pending_tool_calls:
+            if Debug.enabled():
+                print(f"[srv] ✗ Run ended with {len(pending_tool_calls)} pending tool calls")
+            
+            for call_id, tool_name in pending_tool_calls.items():
+                # Add a tool result indicating the run was interrupted
+                cancelled_result = {
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": "[Cancelled by user]"
+                }
+                session.history.append(cancelled_result)
+                append_message(session.id, cancelled_result)
+                
+                # Also send the result as an event to the client  
+                cancelled_payload = {
+                    "run_id": asyncio.current_task().get_name() if asyncio.current_task() else "",
+                    "tool": tool_name,
+                    "output": "[Cancelled by user]",
+                    "call_id": call_id
+                }
+                await _broadcast(session, "tool_result", cancelled_payload)
+                
+                if Debug.enabled():
+                    print(f"[srv]   → tool_result (cancelled) call_id={call_id} tool={tool_name}")
+        
+        if Debug.enabled():
+            print(f"[srv] ◀ end_run    session={session.id[:8]} hist={len(session.history)})")

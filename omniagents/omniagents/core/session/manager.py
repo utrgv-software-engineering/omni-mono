@@ -75,7 +75,12 @@ class SessionManager:  # noqa: D101
         sess = self._task_map.get(run_id)
         if not sess or not sess.current_task:
             return False
-        sess.current_task.cancel()
+        task = sess.current_task
+        # Cancel the task - this will raise CancelledError in the task
+        task.cancel()
+        # Clear the task reference so new runs can start immediately
+        # The task will still run its cleanup but won't block new runs
+        sess.current_task = None
         return True
 
     def archive_session(self, session_id: str) -> bool:  # noqa: D401
