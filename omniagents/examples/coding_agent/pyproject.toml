@@ -1,0 +1,24 @@
+[project]
+name = "openai-agents-lesson-1"
+version = "0.1.0"
+description = "Lesson 1: Building Your First Agent with OpenAI Agents"
+readme = "README.md"
+dependencies = [
+    "openai",
+    "openai-agents",
+    "python-dotenv",
+    "omniagents @ git+https://github.com/utrgv-software-engineering/omniagents.git@main#egg=omniagents",
+    "markitdown[all,docx,pdf]>=0.1.1",
+    "pathspec>=0.12"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_functions = "test_*"
+pythonpath = ["."]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+]
