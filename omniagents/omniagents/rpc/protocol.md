@@ -8,9 +8,10 @@ The Remote Agent Protocol is a JSON-RPC 2.0 based protocol for communicating wit
 
 - **Stateful Sessions**: Maintain conversation history across multiple interactions
 - **Streaming Events**: Real-time updates during agent execution
-- **Tool Approval**: Support for human-in-the-loop tool execution
+- **Tool Approval**: Support for human-in-the-loop tool execution with rich metadata
 - **Session Management**: List, archive, and manage conversation sessions
 - **Variables Management**: Initial variables sent once per session, server constructs and maintains typed context
+- **Rich Tool Output**: Tools can return metadata for enhanced UI rendering alongside LLM-intended text
 
 ## Variables vs Context
 
@@ -24,6 +25,16 @@ This separation allows:
 2. Servers to maintain type-safe context objects
 3. Graceful handling of extra fields from clients
 4. Clear distinction between transport format and runtime state
+
+## Metadata Support
+
+The protocol supports optional metadata fields for enhanced UI experiences:
+
+### Tool Approval Metadata
+The `tool_approval_request` event may include a `metadata` field containing structured information for rich approval dialogs (diffs, previews, etc.) instead of displaying raw JSON arguments.
+
+### Tool Result Metadata  
+The `tool_result` event may include a `metadata` field containing UI-specific data (charts, tables, visualizations) separate from the text output sent to the agent.
 
 ## Transport
 
@@ -125,13 +136,14 @@ Archive a conversation session.
 true
 ```
 
-### tool_approval_response(approval_id: string, approved: boolean, always_approve?: boolean)
+### tool_approval_response(approval_id: string, approved: boolean, always_approve?: boolean, error_message?: string)
 Respond to a tool approval request (safe mode only).
 
 **Parameters:**
 - `approval_id` (string): ID from the approval request
 - `approved` (boolean): Whether to approve the tool execution
 - `always_approve` (boolean, optional): Auto-approve this tool for the session
+- `error_message` (string, optional): Error message to provide when rejecting a tool
 
 **Returns:**
 ```json
@@ -163,10 +175,17 @@ The server sends notifications during agent runs:
   "params": {
     "tool": "search_web",
     "output": "Found 10 articles...",
-    "call_id": "call-123"
+    "call_id": "call-123",
+    "metadata": {
+      "chart_data": {...},
+      "display_type": "table",
+      "additional_info": {...}
+    }
   }
 }
 ```
+
+**Note:** The `metadata` field is optional and contains UI-specific data for rich client-side rendering, separate from the text output sent to the agent.
 
 ### message_output
 ```json
@@ -187,10 +206,27 @@ The server sends notifications during agent runs:
   "params": {
     "approval_id": "approval-123",
     "tool": "delete_file",
-    "arguments": "{\"path\": \"/important/file.txt\"}"
+    "arguments": "{\"path\": \"/important/file.txt\"}",
+    "metadata": {
+      "display_type": "file_delete",
+      "summary": "Delete /important/file.txt",
+      "preview": "This will permanently delete the file",
+      "file_info": {
+        "size": 1024,
+        "modified": "2024-01-01T00:00:00Z"
+      }
+    }
   }
 }
 ```
+
+**Note:** The `metadata` field is optional and provides rich UI hints for tool approval dialogs. Common metadata fields include:
+- `display_type`: UI rendering hint (e.g., "diff", "file_write", "table", "custom")
+- `summary`: Brief description of the operation
+- `preview`: Preview text for the UI
+- `value`: The actual data to display (diffs, content, etc.)
+- `metadata`: Additional context (file paths, operations, stats, etc.)
+- `truncated`: Boolean indicating if content was truncated
 
 ### run_end
 ```json

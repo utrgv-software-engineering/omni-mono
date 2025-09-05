@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -174,9 +175,9 @@ func NewModel(client *RPCClient, agentName string, welcomeText string, safeMode 
 	// Initialize text input
 	ti := textinput.New()
 	ti.Placeholder = "Type your message..."
-	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245")) // Lighter gray
+	ti.PlaceholderStyle = Styles.Help
 	ti.Prompt = "> "
-	ti.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("205")) // Pink/magenta
+	ti.PromptStyle = Styles.InputPrompt  // Use green accent for input prompt
 	ti.Focus()
 	ti.CharLimit = 2000
 	ti.Width = 80
@@ -187,14 +188,14 @@ func NewModel(client *RPCClient, agentName string, welcomeText string, safeMode 
 	// Initialize spinner
 	s := spinner.New()
 	s.Spinner = spinner.Dot
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	s.Style = Styles.Spinner
 
 	// Initialize paginator
 	p := paginator.New()
 	p.Type = paginator.Dots
 	p.PerPage = 10
-	p.ActiveDot = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("•")
-	p.InactiveDot = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("•")
+	p.ActiveDot = Styles.Spinner.Render("•")
+	p.InactiveDot = Styles.Help.Render("•")
 
 	// Initialize help
 	h := help.New()
@@ -721,7 +722,7 @@ func (m Model) renderHeader() string {
 	// Add session ID underneath if present
 	if m.sessionID != "" {
 		sessionStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("245")).
+			Foreground(Styles.SessionSubtitle.GetForeground()).
 			Italic(true)
 		sessionInfo := fmt.Sprintf("Session: %s", m.sessionID[:8])
 		result.WriteString("\n")
@@ -751,9 +752,22 @@ func (m Model) applyHorizontalGradient(text string) string {
 	lines := strings.Split(text, "\n")
 	var result strings.Builder
 	
-	// Create gradient colors using colorful library for smooth blending
-	startColor, _ := colorful.Hex("#fe5ffe") // Bright magenta-pink
-	endColor, _ := colorful.Hex("#6b4fff")   // Blue-purple
+	// Create gradient colors using theme colors
+	endHex := "#bb9af7" // default fallback (header color)
+	
+	if CurrentTheme != nil && CurrentTheme.Colors.UI.Header != "" {
+		endHex = CurrentTheme.Colors.UI.Header
+	}
+	
+	// Parse the end color and create a brighter/shifted version for start
+	endColor, _ := colorful.Hex(endHex)
+	h, s, l := endColor.Hsl()
+	
+	// Shift hue by 30 degrees and increase lightness for gradient start
+	startColor := colorful.Hsl(h+30, s, math.Min(l+0.2, 0.9))
+	
+	// Swap them so we go from bright to theme color
+	startColor, endColor = endColor, startColor
 	
 	for lineIdx, line := range lines {
 		runes := []rune(line)
@@ -996,7 +1010,7 @@ func (m Model) renderStatusLine() string {
 	}
 
 	statusStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("205")).  // Same color as spinner
+		Foreground(Styles.Spinner.GetForeground()).
 		Italic(true)
 
 	// Match the alignment of messages (2-char prefix like "> " or "⏺ ")
@@ -1132,18 +1146,18 @@ func (m Model) getContextualHelp() string {
 		helpStrs[i] = k.Help().Key + " " + k.Help().Desc
 	}
 	
-	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")) // Lighter gray for better readability
+	helpStyle := Styles.Help
 	return helpStyle.Render(strings.Join(helpStrs, " • "))
 }
 
 
 func (m Model) renderError() string {
 	errorStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("196")).
+		Foreground(Styles.Error.GetForeground()).
 		Bold(true)
 
 	helpStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("241"))
+		Foreground(Styles.Debug.GetForeground())
 
 	var output strings.Builder
 	output.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v", m.err)))
@@ -1157,7 +1171,7 @@ func (m Model) renderError() string {
 
 func (m Model) renderConnecting() string {
 	connectStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("33"))
+		Foreground(Styles.Info.GetForeground())
 
 	return connectStyle.Render("Connecting to server...")
 }
@@ -1166,7 +1180,7 @@ func (m Model) renderSessionList() string {
 	var s strings.Builder
 
 	headerStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("62")).
+		Foreground(Styles.SessionTitle.GetForeground()).
 		Bold(true)
 
 	s.WriteString(headerStyle.Render("Select a session or press Tab to create new:"))
@@ -1207,7 +1221,7 @@ func (m Model) renderSessionList() string {
 	}
 	
 	// Instructions
-	infoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	infoStyle := Styles.Help
 	s.WriteString(infoStyle.Render("↑↓ navigate items • ←→ change page • Enter select • Tab new session"))
 
 	return s.String()

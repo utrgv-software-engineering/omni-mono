@@ -9,13 +9,21 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Approval option styles
+// Approval option styles - these are initialized from theme
 var (
-	approvalTitleStyle        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("226"))
-	approvalItemStyle         = lipgloss.NewStyle().PaddingLeft(2)
-	approvalSelectedItemStyle = lipgloss.NewStyle().PaddingLeft(0).Foreground(lipgloss.Color("205")).Bold(true)
-	approvalDescStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).PaddingLeft(4)
+	approvalTitleStyle        lipgloss.Style
+	approvalItemStyle         lipgloss.Style
+	approvalSelectedItemStyle lipgloss.Style
+	approvalDescStyle         lipgloss.Style
 )
+
+// initApprovalStyles initializes approval styles from theme
+func initApprovalStyles() {
+	approvalTitleStyle = Styles.ApprovalTitle
+	approvalItemStyle = Styles.ApprovalOption.Copy().PaddingLeft(2)
+	approvalSelectedItemStyle = Styles.ApprovalSelected.Copy().PaddingLeft(0)
+	approvalDescStyle = Styles.Help.Copy().PaddingLeft(4)
+}
 
 // ApprovalOption represents a choice in the approval dialog
 type ApprovalOption struct {

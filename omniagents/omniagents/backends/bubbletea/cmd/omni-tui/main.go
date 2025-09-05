@@ -20,6 +20,8 @@ func main() {
 		debug       bool
 		standalone  bool
 		resume      bool
+		themeName   string
+		saveTheme   bool
 	)
 
 	// Parse command line flags
@@ -32,6 +34,8 @@ func main() {
 	flag.BoolVar(&resume, "resume", false, "Show session list to resume a previous session")
 	flag.BoolVar(&debug, "debug", false, "Enable debug mode")
 	flag.BoolVar(&standalone, "standalone", false, "Run in standalone mode (connect to external server)")
+	flag.StringVar(&themeName, "theme", "", "Color theme to use (e.g., tokyonight)")
+	flag.BoolVar(&saveTheme, "save-theme", false, "Save the theme choice to config")
 	flag.Parse()
 
 	// Validate required parameters
@@ -62,6 +66,33 @@ func main() {
 	if debug {
 		os.Setenv("OMNI_DEBUG", "1")
 	}
+
+	// Load theme
+	if themeName == "" {
+		// No theme specified on command line, use preference
+		themeName = GetThemePreference()
+	}
+	
+	if err := LoadTheme(themeName); err != nil {
+		// Fall back to default theme if specified theme not found
+		if debug {
+			fmt.Fprintf(os.Stderr, "[DEBUG] Theme '%s' not found, using default\n", themeName)
+		}
+		LoadDefaultTheme()
+	}
+	
+	// Save theme preference if requested
+	if saveTheme && themeName != "" {
+		if err := SaveThemePreference(themeName); err != nil {
+			if debug {
+				fmt.Fprintf(os.Stderr, "[DEBUG] Failed to save theme preference: %v\n", err)
+			}
+		}
+	}
+	
+	// Initialize styles from theme
+	initStyles()
+	initApprovalStyles()
 
 	// Create RPC client
 	client := NewRPCClient(serverURL, token)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -14,38 +15,34 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/iancoleman/orderedmap"
+	"github.com/lucasb-eyer/go-colorful"
 )
 
-// Style definitions
+// Glamour renderer for markdown (lazy initialized)
+var glamourRenderer *glamour.TermRenderer
+
+// Legacy style definitions - these will be replaced by theme styles
+// but kept for backward compatibility during transition
 var (
-	userStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("10")) // Green
-
-	assistantStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("15")) // White
-
-	toolStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("14")). // Cyan
-			Bold(true)
-
-	toolNameStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("14")). // Cyan
-			Bold(true)
-
-	toolResultStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252")) // Much lighter gray, almost white for better visibility
-
-	errorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("196")). // Red
-			Bold(true)
-
-	debugStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("241")). // Gray
-			Italic(true)
-	
-	// Glamour renderer for markdown (lazy initialized)
-	glamourRenderer *glamour.TermRenderer
+	userStyle       lipgloss.Style
+	assistantStyle  lipgloss.Style
+	toolStyle       lipgloss.Style
+	toolNameStyle   lipgloss.Style
+	toolResultStyle lipgloss.Style
+	errorStyle      lipgloss.Style
+	debugStyle      lipgloss.Style
 )
+
+// initStyles initializes the style variables from the theme
+func initStyles() {
+	userStyle = Styles.UserMessage
+	assistantStyle = Styles.AssistantMessage
+	toolStyle = Styles.ToolName
+	toolNameStyle = Styles.ToolName
+	toolResultStyle = Styles.ToolResult
+	errorStyle = Styles.Error
+	debugStyle = Styles.Debug
+}
 
 // RichMetadata represents the rich tool output metadata
 type RichMetadata struct {
@@ -103,7 +100,7 @@ func formatRichPreview(rich *RichMetadata) string {
 	case "error":
 		// Error output in red
 		previewStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("196")) // Red
+			Foreground(Styles.Error.GetForeground())
 			
 	case "search_results":
 		// Search results need special handling
@@ -151,7 +148,7 @@ func formatRichPreview(rich *RichMetadata) string {
 // formatTruncationIndicator creates a truncation message based on metadata
 func formatTruncationIndicator(rich *RichMetadata, shownLines, maxShown int) string {
 	truncationStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("245")). // Darker gray
+		Foreground(Styles.Help.GetForeground()).
 		Italic(true)
 	
 	// Build truncation message based on metadata
@@ -179,7 +176,7 @@ func formatTruncationIndicator(rich *RichMetadata, shownLines, maxShown int) str
 				if exitCode != 0 {
 					// Show non-zero exit codes in yellow
 					exitStyle = lipgloss.NewStyle().
-						Foreground(lipgloss.Color("226")). // Yellow
+						Foreground(Styles.Warning.GetForeground()).
 						Italic(true)
 				}
 				truncMsg += exitStyle.Render(fmt.Sprintf(" (exit: %d)", int(exitCode)))
@@ -197,7 +194,7 @@ func formatSearchResults(rich *RichMetadata) string {
 	
 	fileStyle := lipgloss.NewStyle().Bold(true)
 	matchStyle := lipgloss.NewStyle() // No special formatting
-	lineNumStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")) // Keep gray for line numbers
+	lineNumStyle := Styles.Help
 	
 	for i, line := range lines {
 		if i >= 10 {
@@ -270,7 +267,7 @@ func formatDirectoryListing(rich *RichMetadata) string {
 			if fileCount, ok := rich.Metadata["file_count"].(float64); ok {
 				if dirCount, ok := rich.Metadata["dir_count"].(float64); ok {
 					truncStyle := lipgloss.NewStyle().
-						Foreground(lipgloss.Color("245")).
+						Foreground(Styles.Help.GetForeground()).
 						Italic(true)
 					msg := fmt.Sprintf("     ... %d files, %d directories total", 
 						int(fileCount), int(dirCount))
@@ -292,7 +289,7 @@ func getDisplayTypeStyle(displayType string) (string, lipgloss.Style) {
 	case "error":
 		// Errors in red
 		return "", lipgloss.NewStyle().
-			Foreground(lipgloss.Color("196")). // Red
+			Foreground(Styles.Error.GetForeground()).
 			Bold(true)
 	default:
 		// All other display types use bold only
@@ -303,12 +300,19 @@ func getDisplayTypeStyle(displayType string) (string, lipgloss.Style) {
 // getGlamourRenderer returns a cached glamour renderer
 func getGlamourRenderer() *glamour.TermRenderer {
 	if glamourRenderer == nil {
+		// Get the color from the current theme
+		documentColor := "252" // default
+		if CurrentTheme != nil && CurrentTheme.Colors.Semantic.AssistantMessage != "" {
+			// Strip the # from hex colors for glamour
+			documentColor = strings.TrimPrefix(CurrentTheme.Colors.Semantic.AssistantMessage, "#")
+		}
+		
 		// Custom style based on dark theme but with no margins
-		customStyle := `{
+		customStyle := fmt.Sprintf(`{
 			"document": {
 				"block_prefix": "",
 				"block_suffix": "\n",
-				"color": "252",
+				"color": "%s",
 				"margin": 0
 			},
 			"paragraph": {
@@ -455,7 +459,7 @@ func getGlamourRenderer() *glamour.TermRenderer {
 				"color": "203",
 				"background_color": "236"
 			}
-		}`
+		}`, documentColor)
 		
 		r, _ := glamour.NewTermRenderer(
 			glamour.WithStylesFromJSONBytes([]byte(customStyle)),
@@ -495,14 +499,15 @@ func renderMessageWithWidth(msg Message, debugMode bool, pulseFrame int, approva
 
 // renderUserMessage renders a user message
 func renderUserMessage(msg Message) string {
-	prefix := userStyle.Render("> ")
+	// Use accent color for the prompt indicator
+	prefix := Styles.MessagePrompt.Render("> ")
 	content := msg.Content
 
 	// Wrap long lines
 	lines := wrapText(content, 80)
-	result := prefix + lines[0] + "\n"
+	result := prefix + userStyle.Render(lines[0]) + "\n"
 	for i := 1; i < len(lines); i++ {
-		result += "  " + lines[i] + "\n"
+		result += "  " + userStyle.Render(lines[i]) + "\n"
 	}
 	
 	// Add spacing after user message
@@ -573,10 +578,26 @@ func renderToolCallWithWidth(msg Message, debugMode bool, pulseFrame int, termWi
 	var indicator string
 	if msg.ToolCall.Result == "" {
 		// Tool is still running - create pulsing dot
-		// Use different brightness levels based on pulse frame
-		brightness := []string{"237", "240", "243", "246", "249", "246", "243", "240"}
-		color := brightness[pulseFrame%8]
-		pulsingDot := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render("⏺")
+		// Create a pulsing effect by varying the alpha/brightness
+		// We'll create a gradient of colors from dim to bright
+		baseHex := strings.TrimPrefix(CurrentTheme.Colors.Semantic.ToolName, "#")
+		if baseHex == "" {
+			baseHex = "bb9af7" // fallback
+		}
+		
+		// Parse the base color
+		baseColor, _ := colorful.Hex("#" + baseHex)
+		h, s, l := baseColor.Hsl()
+		
+		// Create brightness variations for pulsing
+		// Use sine wave for smooth pulsing (-1 to 1)
+		pulseFactor := math.Sin(float64(pulseFrame) * math.Pi / 4.0)
+		// Vary lightness ±20% around the original, capped at both ends
+		newL := l + (0.2 * pulseFactor)
+		newL = math.Max(0.2, math.Min(newL, 0.8)) // Keep between 20% and 80% lightness
+		
+		pulseColor := colorful.Hsl(h, s, newL)
+		pulsingDot := lipgloss.NewStyle().Foreground(lipgloss.Color(pulseColor.Hex())).Render("⏺")
 		indicator = pulsingDot
 	} else {
 		// Tool has completed - use static dot
@@ -709,7 +730,7 @@ func renderRichToolResult(rich *RichMetadata, plainOutput string) string {
 			if i >= 5 { // Limit to 5 lines if no explicit preview
 				if len(lines) > 5 {
 					truncStyle := lipgloss.NewStyle().
-						Foreground(lipgloss.Color("245")).
+						Foreground(Styles.Help.GetForeground()).
 						Italic(true)
 					result.WriteString(truncStyle.Render(fmt.Sprintf("     ... +%d more lines", len(lines)-5)))
 					result.WriteString("\n")
@@ -1014,7 +1035,7 @@ func renderWelcome(welcomeText string) string {
 	}
 
 	welcomeStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("245")).
+		Foreground(Styles.Help.GetForeground()).
 		Italic(true)
 
 	lines := wrapText(welcomeText, 78)
@@ -1054,16 +1075,16 @@ func renderTextApproval(msg Message, approvalList list.Model) string {
 	// Since the list component doesn't handle multi-line titles well
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("226")).
+		BorderForeground(Styles.ApprovalTitle.GetForeground()).
 		Padding(1, 2).
 		Width(70)
 
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("226"))
+		Foreground(Styles.ApprovalTitle.GetForeground())
 
 	argsStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("245"))
+		Foreground(Styles.Help.GetForeground())
 
 	var content strings.Builder
 	
@@ -1148,8 +1169,8 @@ func renderTextApproval(msg Message, approvalList list.Model) string {
 // renderStatusBar renders a status bar at the bottom
 func renderStatusBar(state AppState, sessionID string, width int) string {
 	statusStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("235")).
-		Foreground(lipgloss.Color("250")).
+		Background(lipgloss.Color(CurrentTheme.Colors.UI.Border)).
+		Foreground(lipgloss.Color(CurrentTheme.Colors.Primary.Foreground)).
 		Width(width).
 		Padding(0, 1)
 
@@ -1184,18 +1205,18 @@ func renderStatusBar(state AppState, sessionID string, width int) string {
 func renderDiffApproval(msg Message, approvalList list.Model) string {
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("226")).
+		BorderForeground(Styles.ApprovalTitle.GetForeground()).
 		Padding(1, 2).
 		Width(80) // Wider for diffs
 
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("226"))
+		Foreground(Styles.ApprovalTitle.GetForeground())
 
 	// Styles for diff lines
-	additionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("46"))  // Green
-	deletionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")) // Red
-	contextStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))  // Gray
+	additionStyle := Styles.Info  // Use info color for additions
+	deletionStyle := Styles.Error // Use error color for deletions
+	contextStyle := Styles.Help   // Use help color for context
 
 	var content strings.Builder
 
@@ -1380,16 +1401,16 @@ func renderDiffApproval(msg Message, approvalList list.Model) string {
 func renderFileWriteApproval(msg Message, approvalList list.Model) string {
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("226")).
+		BorderForeground(Styles.ApprovalTitle.GetForeground()).
 		Padding(1, 2).
 		Width(75)
 
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("226"))
+		Foreground(Styles.ApprovalTitle.GetForeground())
 
-	infoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("33"))  // Blue
-	contentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")) // Gray
+	infoStyle := Styles.Info    // Use info color
+	contentStyle := Styles.Help  // Use help color
 
 	var content strings.Builder
 

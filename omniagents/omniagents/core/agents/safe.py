@@ -11,7 +11,6 @@ import sys
 import os
 import inspect
 import asyncio # Added asyncio import
-import difflib
 from typing import Any, Dict, List, Optional, Set, Pattern, Callable, Tuple, Awaitable # Added Tuple import
 import contextvars
 
@@ -317,133 +316,12 @@ class SafeAgent(Agent):
     def _compute_approval_metadata(self, tool_name: str, args: Dict) -> Optional[Dict[str, Any]]:
         """Compute rich metadata for tool approvals.
         
-        First checks for registered metadata generators via the @approval_metadata decorator,
-        then falls back to built-in metadata for common tools.
+        Returns metadata from registered generators via the @approval_metadata decorator.
         """
         from omniagents.core.tools import get_approval_metadata
         
-        # First try to get metadata from registered generators
-        metadata = get_approval_metadata(tool_name, args)
-        if metadata is not None:
-            return metadata
-        
-        # Fall back to built-in metadata for backwards compatibility
-        # These can be removed once tools define their own metadata
-        if tool_name == "edit_file":
-            file_path = args.get("file_path", "")
-            old_text = args.get("old_text", "")
-            new_text = args.get("new_text", "")
-            
-            # Generate unified diff
-            diff_lines = list(difflib.unified_diff(
-                old_text.splitlines(keepends=True),
-                new_text.splitlines(keepends=True),
-                fromfile=file_path,
-                tofile=file_path,
-                lineterm='',
-                n=3
-            ))
-            
-            # Create preview (first few lines of diff)
-            preview_lines = diff_lines[:20] if diff_lines else ["No changes"]
-            preview = ''.join(preview_lines)
-            
-            return {
-                "value": {                     # Actual diff data
-                    "old_text": old_text,
-                    "new_text": new_text,
-                    "diff_lines": diff_lines
-                },
-                "display_type": "diff",        # UI hint for diff rendering
-                "summary": f"Edit {os.path.basename(file_path) if file_path else 'file'}",
-                "preview": preview,
-                "truncated": len(diff_lines) > 20,
-                "metadata": {                  # Additional context
-                    "file_path": file_path,
-                    "operation": "edit",
-                    "additions": sum(1 for l in diff_lines if l.startswith('+')),
-                    "deletions": sum(1 for l in diff_lines if l.startswith('-')),
-                    "total_lines": len(diff_lines)
-                }
-            }
-        
-        elif tool_name == "write_file":
-            file_path = args.get("file_path", "")
-            content = args.get("content", "")
-            append = args.get("append", False)
-            
-            # Try to read existing file content for diff
-            old_content = ""
-            file_exists = False
-            try:
-                if file_path and os.path.exists(file_path):
-                    with open(file_path, 'r') as f:
-                        old_content = f.read()
-                    file_exists = True
-            except Exception:
-                pass  # If we can't read it, just show preview without diff
-            
-            # If file exists, create a diff
-            if file_exists:
-                # Determine new content based on operation
-                if append:
-                    new_content = old_content + content
-                else:
-                    new_content = content
-                
-                # Generate unified diff
-                diff_lines = list(difflib.unified_diff(
-                    old_content.splitlines(keepends=True),
-                    new_content.splitlines(keepends=True),
-                    fromfile=file_path,
-                    tofile=file_path,
-                    lineterm='',
-                    n=3
-                ))
-                
-                # Create preview from diff
-                preview_lines = diff_lines[:20] if diff_lines else ["No changes"]
-                preview = ''.join(preview_lines)
-                
-                return {
-                    "value": {
-                        "old_text": old_content[:1000],  # Truncated for memory
-                        "new_text": new_content[:1000],
-                        "diff_lines": diff_lines
-                    },
-                    "display_type": "diff",  # Use diff display like edit_file
-                    "summary": f"{'Append to' if append else 'Overwrite'} {os.path.basename(file_path) if file_path else 'file'}",
-                    "preview": preview,
-                    "truncated": len(diff_lines) > 20,
-                    "metadata": {
-                        "file_path": file_path,
-                        "operation": "append" if append else "overwrite",
-                        "additions": sum(1 for l in diff_lines if l.startswith('+')),
-                        "deletions": sum(1 for l in diff_lines if l.startswith('-')),
-                        "total_lines": len(diff_lines)
-                    }
-                }
-            else:
-                # New file creation - show preview without diff
-                lines = content.splitlines() if isinstance(content, str) else []
-                preview = '\n'.join(lines[:10])
-                
-                return {
-                    "value": content[:1000] if isinstance(content, str) else "",  # Truncated content
-                    "display_type": "file_write",
-                    "summary": f"Create {os.path.basename(file_path) if file_path else 'file'}",
-                    "preview": preview,
-                    "truncated": len(content) > 1000 or len(lines) > 10 if isinstance(content, str) else False,
-                    "metadata": {
-                        "file_path": file_path,
-                        "operation": "create",
-                        "size_bytes": len(content) if isinstance(content, str) else 0,
-                        "line_count": len(lines)
-                    }
-                }
-        
-        # Return None for tools without special metadata
-        return None
+        # Get metadata from registered generators
+        return get_approval_metadata(tool_name, args)
 
     async def _custom_tool_use_behavior(self, ctx, tool_results):
         """Custom tool use behavior that checks for the halt flag."""
