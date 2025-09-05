@@ -78,12 +78,28 @@ def _stream_event_payload(item, run_id: str):
         except Exception:
             pass
 
-        return "tool_result", {
+        # Extract metadata from RichToolOutput if present
+        output = getattr(item, "output", "")
+        ui_metadata = {}
+        
+        # Check if output is a RichToolOutput instance
+        from omniagents.core.tools import RichToolOutput
+        if isinstance(output, RichToolOutput):
+            ui_metadata = output.ui_metadata
+            # String conversion will use __str__ which returns only llm_output
+        
+        payload = {
             "run_id": run_id,
             "tool": getattr(item, "name", "<tool>"),
-            "output": str(getattr(item, "output", "")),
+            "output": str(output),  # This calls __str__ for RichToolOutput
             **({"call_id": call_id} if call_id else {})
         }
+        
+        # Only include metadata if it's not empty
+        if ui_metadata:
+            payload["metadata"] = ui_metadata
+            
+        return "tool_result", payload
     elif item.type == "message_output_item":
         text = ItemHelpers.text_message_output(item)
         return "message_output", {

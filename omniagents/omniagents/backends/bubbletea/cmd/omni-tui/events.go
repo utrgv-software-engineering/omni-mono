@@ -13,9 +13,10 @@ type ToolCalledEvent struct {
 }
 
 type ToolResultEvent struct {
-	Tool   string `json:"tool"`
-	Output string `json:"output"`
-	CallID string `json:"call_id"`
+	Tool     string                 `json:"tool"`
+	Output   string                 `json:"output"`
+	CallID   string                 `json:"call_id"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
 type MessageOutputEvent struct {

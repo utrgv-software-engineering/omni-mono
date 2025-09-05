@@ -9,8 +9,36 @@ from omniagents.core.debug import Debug
 
 # Import the original decorator from the agents library
 from agents.tool import function_tool as original_function_tool
+from typing import Any, Dict
 
-# --- Wrapper Decorator --- #
+# --- Rich Tool Output Class --- #
+
+class RichToolOutput:
+    """
+    A wrapper for tool outputs that separates LLM-intended text from UI metadata.
+    
+    When stringified, only returns the LLM output to avoid polluting the context window.
+    The UI metadata is preserved for client-side rendering.
+    """
+    
+    def __init__(self, llm_output: str, ui_metadata: Dict[str, Any] = None):
+        """
+        Args:
+            llm_output: The text output intended for the LLM context
+            ui_metadata: Additional data for UI rendering (charts, tables, etc.)
+        """
+        self.llm_output = llm_output
+        self.ui_metadata = ui_metadata or {}
+    
+    def __str__(self):
+        """Return only the LLM-intended output when converted to string."""
+        return self.llm_output
+    
+    def __repr__(self):
+        """Debug representation showing both outputs."""
+        return f"RichToolOutput(llm='{self.llm_output[:50]}...', metadata_keys={list(self.ui_metadata.keys())})"
+
+# --- Wrapper Decorators --- #
 
 def function_tool(func: Callable = None, **kwargs) -> Callable:
     """
@@ -31,6 +59,36 @@ def function_tool(func: Callable = None, **kwargs) -> Callable:
         return decorated_func
     
     # Handle both @function_tool and @function_tool(...) usage
+    if func is None:
+        return decorator
+    else:
+        return decorator(func)
+
+def rich_function_tool(func: Callable = None, **kwargs) -> Callable:
+    """
+    A decorator for tools that return RichToolOutput with separate LLM and UI components.
+    
+    This is a wrapper around agents.tool.function_tool that adds marker attributes
+    for rich output support. Tools must return a RichToolOutput instance.
+    
+    Usage:
+        @rich_function_tool
+        async def analyze_data(data: str) -> RichToolOutput:
+            analysis = "Found 5 anomalies"
+            metadata = {"chart": {...}, "stats": {...}}
+            return RichToolOutput(analysis, metadata)
+    
+    Accepts all keyword arguments that agents.tool.function_tool accepts.
+    """
+    def decorator(f):
+        # Apply the original decorator with all passed kwargs
+        decorated_func = original_function_tool(f, **kwargs)
+        # Add our marker attributes
+        setattr(decorated_func, '_is_omniagents_core_tool', True)
+        setattr(decorated_func, '_is_rich_tool', True)
+        return decorated_func
+    
+    # Handle both @rich_function_tool and @rich_function_tool(...) usage
     if func is None:
         return decorator
     else:

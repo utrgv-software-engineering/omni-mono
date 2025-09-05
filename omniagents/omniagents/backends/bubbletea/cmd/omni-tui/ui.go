@@ -42,34 +42,52 @@ var (
 	glamourRenderer *glamour.TermRenderer
 )
 
-// RichOutput represents the rich tool output format
-type RichOutput struct {
-	OmniOutput   bool                   `json:"__omni_output__"`
-	Value        interface{}            `json:"value"`
-	DisplayType  string                 `json:"display_type"`
-	Summary      string                 `json:"summary"`
-	Preview      string                 `json:"preview,omitempty"`
-	Truncated    bool                   `json:"truncated"`
-	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+// RichMetadata represents the rich tool output metadata
+type RichMetadata struct {
+	DisplayType string                 `json:"display_type"`
+	Summary     string                 `json:"summary"`
+	Preview     string                 `json:"preview,omitempty"`
+	Truncated   bool                   `json:"truncated"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"` // Contains all tool-specific metadata
+	Chart       map[string]interface{} `json:"chart,omitempty"`
+	Table       map[string]interface{} `json:"table,omitempty"`
 }
 
-// parseRichOutput attempts to parse tool output as rich format
-func parseRichOutput(output string) *RichOutput {
-	var rich RichOutput
-	if err := json.Unmarshal([]byte(output), &rich); err != nil {
+// parseRichMetadata converts metadata map to typed struct
+func parseRichMetadata(metadata map[string]interface{}) *RichMetadata {
+	if metadata == nil {
 		return nil
 	}
 	
-	// Verify it's actually rich output format
-	if !rich.OmniOutput {
-		return nil
+	rich := &RichMetadata{}
+	
+	if v, ok := metadata["display_type"].(string); ok {
+		rich.DisplayType = v
+	}
+	if v, ok := metadata["summary"].(string); ok {
+		rich.Summary = v
+	}
+	if v, ok := metadata["preview"].(string); ok {
+		rich.Preview = v
+	}
+	if v, ok := metadata["truncated"].(bool); ok {
+		rich.Truncated = v
+	}
+	if v, ok := metadata["metadata"].(map[string]interface{}); ok {
+		rich.Metadata = v
+	}
+	if v, ok := metadata["chart"].(map[string]interface{}); ok {
+		rich.Chart = v
+	}
+	if v, ok := metadata["table"].(map[string]interface{}); ok {
+		rich.Table = v
 	}
 	
-	return &rich
+	return rich
 }
 
 // formatRichPreview formats preview content based on display type
-func formatRichPreview(rich *RichOutput) string {
+func formatRichPreview(rich *RichMetadata) string {
 	var result strings.Builder
 	previewLines := strings.Split(rich.Preview, "\n")
 	maxPreviewLines := 10
@@ -113,7 +131,7 @@ func formatRichPreview(rich *RichOutput) string {
 }
 
 // formatTruncationIndicator creates a truncation message based on metadata
-func formatTruncationIndicator(rich *RichOutput, shownLines, maxShown int) string {
+func formatTruncationIndicator(rich *RichMetadata, shownLines, maxShown int) string {
 	truncationStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("245")). // Darker gray
 		Italic(true)
@@ -155,7 +173,7 @@ func formatTruncationIndicator(rich *RichOutput, shownLines, maxShown int) strin
 }
 
 // formatSearchResults formats search results with match highlighting
-func formatSearchResults(rich *RichOutput) string {
+func formatSearchResults(rich *RichMetadata) string {
 	var result strings.Builder
 	lines := strings.Split(rich.Preview, "\n")
 	
@@ -197,7 +215,7 @@ func formatSearchResults(rich *RichOutput) string {
 }
 
 // formatDirectoryListing formats directory listings with file type indicators
-func formatDirectoryListing(rich *RichOutput) string {
+func formatDirectoryListing(rich *RichMetadata) string {
 	var result strings.Builder
 	lines := strings.Split(rich.Preview, "\n")
 	
@@ -560,15 +578,15 @@ func renderToolResult(msg Message) string {
 		return ""
 	}
 
-	// Try to parse as rich output format
-	richOutput := parseRichOutput(msg.ToolCall.Result)
+	// Check if we have rich metadata
+	richMetadata := parseRichMetadata(msg.ToolCall.Metadata)
 	
-	// Phase 2: Basic formatting for rich output (summary + preview)
-	if richOutput != nil {
-		return renderRichToolResult(richOutput)
+	// Use rich formatting if metadata is available
+	if richMetadata != nil && richMetadata.DisplayType != "" {
+		return renderRichToolResult(richMetadata, msg.ToolCall.Result)
 	}
 	
-	// Fallback to plain text rendering for non-rich output
+	// Fallback to plain text rendering
 	result := msg.ToolCall.Result
 	
 	// Truncate long results
@@ -587,8 +605,8 @@ func renderToolResult(msg Message) string {
 	return formatted
 }
 
-// renderRichToolResult renders tool output in rich format (Phase 3)
-func renderRichToolResult(rich *RichOutput) string {
+// renderRichToolResult renders tool output in rich format
+func renderRichToolResult(rich *RichMetadata, plainOutput string) string {
 	var result strings.Builder
 	
 	// Get type-specific formatting
@@ -599,41 +617,41 @@ func renderRichToolResult(rich *RichOutput) string {
 	if icon != "" {
 		result.WriteString(icon + " ")
 	}
-	result.WriteString(summaryStyle.Render(rich.Summary))
+	
+	// Use summary if available, otherwise use first line of output
+	summary := rich.Summary
+	if summary == "" {
+		lines := strings.Split(plainOutput, "\n")
+		if len(lines) > 0 {
+			summary = lines[0]
+			if len(summary) > 80 {
+				summary = summary[:77] + "..."
+			}
+		}
+	}
+	result.WriteString(summaryStyle.Render(summary))
 	result.WriteString("\n")
 	
 	// Add preview if available with type-specific formatting
 	if rich.Preview != "" {
 		// Apply type-specific preview formatting
 		result.WriteString(formatRichPreview(rich))
-	} else if rich.Value != nil {
-		// If no preview but we have a value, show a snippet of the value
-		var valueStr string
-		switch v := rich.Value.(type) {
-		case string:
-			valueStr = v
-		default:
-			if jsonBytes, err := json.Marshal(v); err == nil {
-				valueStr = string(jsonBytes)
-			}
-		}
-		
-		if valueStr != "" {
-			lines := strings.Split(valueStr, "\n")
-			for i, line := range lines {
-				if i >= 5 { // Limit to 5 lines if no explicit preview
-					if len(lines) > 5 {
-						truncStyle := lipgloss.NewStyle().
-							Foreground(lipgloss.Color("245")).
-							Italic(true)
-						result.WriteString(truncStyle.Render(fmt.Sprintf("     ... +%d more lines", len(lines)-5)))
-						result.WriteString("\n")
-					}
-					break
+	} else if plainOutput != "" {
+		// If no preview, show a snippet of the plain output
+		lines := strings.Split(plainOutput, "\n")
+		for i, line := range lines {
+			if i >= 5 { // Limit to 5 lines if no explicit preview
+				if len(lines) > 5 {
+					truncStyle := lipgloss.NewStyle().
+						Foreground(lipgloss.Color("245")).
+						Italic(true)
+					result.WriteString(truncStyle.Render(fmt.Sprintf("     ... +%d more lines", len(lines)-5)))
+					result.WriteString("\n")
 				}
-				result.WriteString(toolResultStyle.Render("     " + line))
-				result.WriteString("\n")
+				break
 			}
+			result.WriteString(toolResultStyle.Render("     " + line))
+			result.WriteString("\n")
 		}
 	}
 	

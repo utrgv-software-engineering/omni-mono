@@ -164,7 +164,8 @@ type ToolCallInfo struct {
 	Arguments string
 	CallID    string
 	Result    string
-	Running   bool  // Track if tool is currently executing
+	Metadata  map[string]interface{} // Rich output metadata
+	Running   bool                   // Track if tool is currently executing
 }
 
 // NewModel creates a new application model
@@ -484,6 +485,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.messages[i].Role == "tool_call" && m.messages[i].ToolCall != nil {
 				if m.messages[i].ToolCall.CallID == msg.CallID {
 					m.messages[i].ToolCall.Result = msg.Output
+					m.messages[i].ToolCall.Metadata = msg.Metadata
 					break
 				}
 			}
