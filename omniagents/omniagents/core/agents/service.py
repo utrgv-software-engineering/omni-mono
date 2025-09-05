@@ -18,6 +18,7 @@ from omniagents.core.agents.safe import SafeAgent
 from omniagents.core.session import sm, Session, append_message
 from omniagents.core.runtime.bridge import stream_agent
 from omniagents.core.agents.builder import _default_build_agent
+from omniagents.core.debug import Debug
 
 
 # Optional verbose logging controlled by env var
@@ -100,7 +101,7 @@ class AgentService(RpcMethodsBase):
     #  waits for the matching response.
     # ------------------------------------------------------------------
 
-    async def _request_tool_approval(self, tool_name: str, formatted_args: str, _sess: Session | None = None):  # noqa: D401
+    async def _request_tool_approval(self, tool_name: str, formatted_args: str, metadata: Optional[Dict[str, Any]] = None, _sess: Session | None = None):  # noqa: D401
         """Ask the client for approval; buffer request if not delivered."""
 
         approval_id = uuid.uuid4().hex
@@ -109,7 +110,14 @@ class AgentService(RpcMethodsBase):
             "tool": tool_name,
             "arguments": formatted_args,
         }
+        
+        # Add metadata if present (backward compatible)
+        if metadata:
+            payload["metadata"] = metadata
 
+        if Debug.enabled():
+            print(f"[srv]   → tool_approval_request approval_id={approval_id} details={payload}")
+            
         delivered = await self._safe_notify(self.channel, "tool_approval_request", payload)
         if not delivered and _sess is not None:
             # Socket gone – remember so we can replay later
@@ -160,7 +168,7 @@ class AgentService(RpcMethodsBase):
             # Create approval callback that captures session context
             approval_callback = None
             if self.spec.use_safe_agent:
-                approval_callback = lambda name, args: self._request_tool_approval(name, args, _sess=sess)
+                approval_callback = lambda name, args, metadata=None: self._request_tool_approval(name, args, metadata, _sess=sess)
             
             # Build agent using spec's build_agent method
             from types import SimpleNamespace

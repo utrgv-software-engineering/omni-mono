@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -782,6 +784,24 @@ func renderApprovalRequest(msg Message, approvalList list.Model) string {
 		return ""
 	}
 
+	// Check for rich metadata and use appropriate renderer
+	if msg.Approval.Metadata != nil {
+		if displayType, ok := msg.Approval.Metadata["display_type"].(string); ok {
+			switch displayType {
+			case "diff":
+				return renderDiffApproval(msg, approvalList)
+			case "file_write":
+				return renderFileWriteApproval(msg, approvalList)
+			}
+		}
+	}
+
+	// Default rendering for regular approvals
+	return renderTextApproval(msg, approvalList)
+}
+
+// renderTextApproval renders a standard text-based approval
+func renderTextApproval(msg Message, approvalList list.Model) string {
 	// Create a custom box with all the information
 	// Since the list component doesn't handle multi-line titles well
 	boxStyle := lipgloss.NewStyle().
@@ -910,4 +930,286 @@ func renderStatusBar(state AppState, sessionID string, width int) string {
 	status += " | Ctrl+C to exit"
 
 	return statusStyle.Render(status)
+}
+
+// renderDiffApproval renders an approval request with diff visualization
+func renderDiffApproval(msg Message, approvalList list.Model) string {
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("226")).
+		Padding(1, 2).
+		Width(80) // Wider for diffs
+
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("226"))
+
+	// Styles for diff lines
+	additionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("46"))  // Green
+	deletionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")) // Red
+	contextStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))  // Gray
+
+	var content strings.Builder
+
+	// Title with file path if available
+	title := fmt.Sprintf("Tool Approval: %s", msg.Approval.Tool)
+	if metadata, ok := msg.Approval.Metadata["metadata"].(map[string]interface{}); ok {
+		if filePath, ok := metadata["file_path"].(string); ok && filePath != "" {
+			title = fmt.Sprintf("Tool Approval: %s - %s", msg.Approval.Tool, filePath)
+		}
+	}
+	content.WriteString(titleStyle.Render(title))
+	content.WriteString("\n\n")
+
+	// Extract and render diff lines
+	if value, ok := msg.Approval.Metadata["value"].(map[string]interface{}); ok {
+		if diffLines, ok := value["diff_lines"].([]interface{}); ok && len(diffLines) > 0 {
+			content.WriteString("Changes:\n")
+			
+			// Track line numbers for both old and new file
+			oldLine := 0
+			newLine := 0
+			inHunk := false
+			hunkCount := 0
+			
+			// Show all diff lines - hunking already limits to relevant changes
+			for _, line := range diffLines {
+				
+				lineStr, _ := line.(string)
+				
+				// Skip file headers (---/+++) as they're redundant with the title
+				if strings.HasPrefix(lineStr, "+++") || strings.HasPrefix(lineStr, "---") {
+					continue
+				}
+				
+				// Parse hunk headers to get line numbers
+				if strings.HasPrefix(lineStr, "@@") {
+					// Extract line numbers from hunk header
+					if matches := regexp.MustCompile(`@@ -(\d+)(?:,\d+)? \+(\d+)(?:,(\d+))? @@`).FindStringSubmatch(lineStr); len(matches) > 0 {
+						oldLine, _ = strconv.Atoi(matches[1])
+						newLine, _ = strconv.Atoi(matches[2])
+						
+						// Add separator between hunks
+						if hunkCount > 0 {
+							content.WriteString(contextStyle.Render("\n  ...\n\n"))
+						}
+						
+						inHunk = true
+						hunkCount++
+					}
+				} else if inHunk {
+					// Calculate max line width (box width - padding - borders - line number space)
+					maxLineWidth := 80 - 4 - 2 - 7  // ~67 chars for content
+					
+					// Format diff lines with line numbers
+					if strings.HasPrefix(lineStr, "+") && !strings.HasPrefix(lineStr, "+++") {
+						// Addition lines - show new line number
+						lineNumStr := fmt.Sprintf("%4d ", newLine)
+						lineContent := strings.TrimPrefix(lineStr, "+")
+						
+						// Wrap long lines
+						if len(lineContent) > maxLineWidth {
+							content.WriteString(contextStyle.Render(lineNumStr))
+							content.WriteString(additionStyle.Render("+ "))
+							
+							// Split and wrap the line
+							for i := 0; i < len(lineContent); i += maxLineWidth {
+								end := i + maxLineWidth
+								if end > len(lineContent) {
+									end = len(lineContent)
+								}
+								
+								if i > 0 {
+									// Continuation line - indent without line number
+									content.WriteString("\n")
+									content.WriteString(contextStyle.Render("     "))  // Space for line number
+									content.WriteString(additionStyle.Render("  "))    // Space for +/- indicator
+								}
+								content.WriteString(additionStyle.Render(lineContent[i:end]))
+							}
+						} else {
+							content.WriteString(contextStyle.Render(lineNumStr))
+							content.WriteString(additionStyle.Render("+ " + lineContent))
+						}
+						newLine++
+					} else if strings.HasPrefix(lineStr, "-") && !strings.HasPrefix(lineStr, "---") {
+						// Deletion lines - show old line number
+						lineNumStr := fmt.Sprintf("%4d ", oldLine)
+						lineContent := strings.TrimPrefix(lineStr, "-")
+						
+						// Wrap long lines
+						if len(lineContent) > maxLineWidth {
+							content.WriteString(contextStyle.Render(lineNumStr))
+							content.WriteString(deletionStyle.Render("- "))
+							
+							// Split and wrap the line
+							for i := 0; i < len(lineContent); i += maxLineWidth {
+								end := i + maxLineWidth
+								if end > len(lineContent) {
+									end = len(lineContent)
+								}
+								
+								if i > 0 {
+									// Continuation line - indent without line number
+									content.WriteString("\n")
+									content.WriteString(contextStyle.Render("     "))  // Space for line number
+									content.WriteString(deletionStyle.Render("  "))    // Space for +/- indicator
+								}
+								content.WriteString(deletionStyle.Render(lineContent[i:end]))
+							}
+						} else {
+							content.WriteString(contextStyle.Render(lineNumStr))
+							content.WriteString(deletionStyle.Render("- " + lineContent))
+						}
+						oldLine++
+					} else {
+						// Context lines - show new line number
+						lineNumStr := fmt.Sprintf("%4d ", newLine)
+						
+						// Wrap long lines
+						if len(lineStr) > maxLineWidth {
+							content.WriteString(contextStyle.Render(lineNumStr))
+							content.WriteString(contextStyle.Render("  "))
+							
+							// Split and wrap the line
+							for i := 0; i < len(lineStr); i += maxLineWidth {
+								end := i + maxLineWidth
+								if end > len(lineStr) {
+									end = len(lineStr)
+								}
+								
+								if i > 0 {
+									// Continuation line - indent without line number
+									content.WriteString("\n")
+									content.WriteString(contextStyle.Render("     "))  // Space for line number
+									content.WriteString(contextStyle.Render("  "))     // Space for +/- indicator
+								}
+								content.WriteString(contextStyle.Render(lineStr[i:end]))
+							}
+						} else {
+							content.WriteString(contextStyle.Render(lineNumStr))
+							content.WriteString(contextStyle.Render("  " + lineStr))
+						}
+						oldLine++
+						newLine++
+					}
+					content.WriteString("\n")
+				}
+			}
+		} else {
+			// No diff lines available, fall back to showing arguments
+			content.WriteString(contextStyle.Render("Arguments: " + msg.Approval.Arguments))
+		}
+	} else {
+		// No value metadata, show arguments
+		content.WriteString(contextStyle.Render("Arguments: " + msg.Approval.Arguments))
+	}
+	
+	content.WriteString("\n")
+	
+	// Add the approval options from the list
+	listView := approvalList.View()
+	lines := strings.Split(listView, "\n")
+	itemsStarted := false
+	for _, line := range lines {
+		if strings.Contains(line, "Approve") || strings.Contains(line, "Deny") {
+			itemsStarted = true
+			content.WriteString(line)
+			content.WriteString("\n")
+		} else if itemsStarted && strings.TrimSpace(line) != "" && !strings.Contains(line, "Tool Approval:") {
+			content.WriteString(line)
+			content.WriteString("\n")
+		}
+	}
+
+	return boxStyle.Render(content.String()) + "\n\n"
+}
+
+// renderFileWriteApproval renders an approval request for file write operations
+func renderFileWriteApproval(msg Message, approvalList list.Model) string {
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("226")).
+		Padding(1, 2).
+		Width(75)
+
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("226"))
+
+	infoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("33"))  // Blue
+	contentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")) // Gray
+
+	var content strings.Builder
+
+	// Extract metadata
+	summary := "File Write"
+	if s, ok := msg.Approval.Metadata["summary"].(string); ok {
+		summary = s
+	}
+	
+	content.WriteString(titleStyle.Render(fmt.Sprintf("Tool Approval: %s", summary)))
+	content.WriteString("\n\n")
+
+	// Show file metadata
+	if metadata, ok := msg.Approval.Metadata["metadata"].(map[string]interface{}); ok {
+		if filePath, ok := metadata["file_path"].(string); ok && filePath != "" {
+			content.WriteString(infoStyle.Render("File: "))
+			content.WriteString(filePath)
+			content.WriteString("\n")
+		}
+		
+		if operation, ok := metadata["operation"].(string); ok {
+			content.WriteString(infoStyle.Render("Operation: "))
+			content.WriteString(strings.Title(operation))
+			content.WriteString("\n")
+		}
+		
+		if lineCount, ok := metadata["line_count"].(float64); ok {
+			content.WriteString(infoStyle.Render(fmt.Sprintf("Lines: %.0f", lineCount)))
+			content.WriteString("\n")
+		}
+		
+		if sizeBytes, ok := metadata["size_bytes"].(float64); ok {
+			content.WriteString(infoStyle.Render(fmt.Sprintf("Size: %.0f bytes", sizeBytes)))
+			content.WriteString("\n")
+		}
+	}
+	
+	content.WriteString("\n")
+
+	// Show preview if available
+	if preview, ok := msg.Approval.Metadata["preview"].(string); ok && preview != "" {
+		content.WriteString(infoStyle.Render("Preview:\n"))
+		lines := strings.Split(preview, "\n")
+		for i, line := range lines {
+			if i >= 10 { // Limit preview lines
+				if truncated, ok := msg.Approval.Metadata["truncated"].(bool); ok && truncated {
+					content.WriteString(contentStyle.Render("... (content truncated) ..."))
+				}
+				break
+			}
+			content.WriteString(contentStyle.Render(line))
+			content.WriteString("\n")
+		}
+	}
+	
+	content.WriteString("\n")
+	
+	// Add the approval options
+	listView := approvalList.View()
+	lines := strings.Split(listView, "\n")
+	itemsStarted := false
+	for _, line := range lines {
+		if strings.Contains(line, "Approve") || strings.Contains(line, "Deny") {
+			itemsStarted = true
+			content.WriteString(line)
+			content.WriteString("\n")
+		} else if itemsStarted && strings.TrimSpace(line) != "" && !strings.Contains(line, "Tool Approval:") {
+			content.WriteString(line)
+			content.WriteString("\n")
+		}
+	}
+
+	return boxStyle.Render(content.String()) + "\n\n"
 }

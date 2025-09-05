@@ -24,9 +24,10 @@ type MessageOutputEvent struct {
 }
 
 type ToolApprovalRequestEvent struct {
-	ApprovalID string `json:"approval_id"`
-	Tool       string `json:"tool"`
-	Arguments  string `json:"arguments"`
+	ApprovalID string                 `json:"approval_id"`
+	Tool       string                 `json:"tool"`
+	Arguments  string                 `json:"arguments"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 type RunEndEvent struct {

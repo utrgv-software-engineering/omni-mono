@@ -156,6 +156,7 @@ type ToolApprovalInfo struct {
 	ApprovalID string
 	Tool       string
 	Arguments  string
+	Metadata   map[string]interface{} // Rich metadata for approval UI
 }
 
 // ToolCallInfo contains tool call details
@@ -554,16 +555,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			ApprovalID: msg.ApprovalID,
 			Tool:       msg.Tool,
 			Arguments:  msg.Arguments,
+			Metadata:   msg.Metadata,
 		}
-		// Create approval list
+		// Create approval list (pass metadata for potential future use)
 		m.approvalList = CreateApprovalList(msg.Tool, msg.Arguments)
-		// Add approval message to the message list
+		// Add approval message to the message list with metadata
 		m.messages = append(m.messages, Message{
 			Role: "approval_request",
 			Approval: &ToolApprovalInfo{
 				ApprovalID: msg.ApprovalID,
 				Tool:       msg.Tool,
 				Arguments:  msg.Arguments,
+				Metadata:   msg.Metadata,
 			},
 		})
 		m.updateViewport()
@@ -616,10 +619,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.spinner, spinnerCmd = m.spinner.Update(msg)
 	cmds = append(cmds, spinnerCmd)
 	
-	// If spinner ticked and we're showing a status, update the viewport
+	// If spinner ticked and we're showing a status, update the viewport content only
 	if _, isSpinnerTick := msg.(spinner.TickMsg); isSpinnerTick {
 		if m.state == StateWaitingForResponse || m.state == StateConnecting {
-			m.updateViewport()
+			m.updateViewportContent()  // Use content-only update to preserve scroll
 		}
 	}
 	
@@ -637,7 +640,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if hasRunningTools {
 			// Advance pulse frame
 			m.pulseFrame = (m.pulseFrame + 1) % 8  // 8 frames for smooth pulse
-			m.updateViewport()
+			m.updateViewportContent()  // Use content-only update to preserve scroll
 		}
 		
 		// Continue the pulse animation
@@ -1377,4 +1380,18 @@ func (m Model) selectSession() (Model, tea.Cmd) {
 func (m *Model) updateViewport() {
 	m.viewport.SetContent(m.renderMessages())
 	m.viewport.GotoBottom()
+}
+
+// updateViewportContent updates the viewport content without changing scroll position
+func (m *Model) updateViewportContent() {
+	// Save current scroll position
+	oldYOffset := m.viewport.YOffset
+	oldYPosition := m.viewport.YPosition
+	
+	// Update content
+	m.viewport.SetContent(m.renderMessages())
+	
+	// Restore scroll position
+	m.viewport.YOffset = oldYOffset
+	m.viewport.YPosition = oldYPosition
 }

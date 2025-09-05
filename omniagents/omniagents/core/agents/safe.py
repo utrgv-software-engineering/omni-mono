@@ -8,8 +8,10 @@ allowing user approval before tools are executed.
 import json
 import re
 import sys
+import os
 import inspect
 import asyncio # Added asyncio import
+import difflib
 from typing import Any, Dict, List, Optional, Set, Pattern, Callable, Tuple, Awaitable # Added Tuple import
 import contextvars
 
@@ -20,7 +22,7 @@ from omniagents.core.debug import Debug
 
 # Type hinting for the approval callback result
 ApprovalResult = Tuple[bool, bool, Optional[str]]
-ApprovalCallback = Callable[[str, str], Awaitable[ApprovalResult]]
+ApprovalCallback = Callable[[str, str, Optional[Dict[str, Any]]], Awaitable[ApprovalResult]]
 
 # Context variable to store the approval callback for the current execution
 _approval_callback_context: contextvars.ContextVar[Optional[ApprovalCallback]] = contextvars.ContextVar(
@@ -57,7 +59,7 @@ class SafeAgent(Agent):
     """
 
     @staticmethod
-    async def auto_approval_callback(tool_name: str, formatted_args: str) -> ApprovalResult:
+    async def auto_approval_callback(tool_name: str, formatted_args: str, metadata: Optional[Dict[str, Any]] = None) -> ApprovalResult:
         """Automatic approval callback that always approves tools."""
         return True, False, None # approved=True, always_approve=False, error_msg=None
     
@@ -311,6 +313,125 @@ class SafeAgent(Agent):
         self._safe_tool_patterns.clear()
         if Debug.enabled():
             print("[SafeAgent] Cleared all safe tools and patterns", file=sys.stderr)
+    
+    def _compute_approval_metadata(self, tool_name: str, args: Dict) -> Optional[Dict[str, Any]]:
+        """Compute rich metadata for tool approvals matching RichToolOutput pattern."""
+        
+        if tool_name == "edit_file":
+            file_path = args.get("file_path", "")
+            old_text = args.get("old_text", "")
+            new_text = args.get("new_text", "")
+            
+            # Generate unified diff
+            diff_lines = list(difflib.unified_diff(
+                old_text.splitlines(keepends=True),
+                new_text.splitlines(keepends=True),
+                fromfile=file_path,
+                tofile=file_path,
+                lineterm='',
+                n=3
+            ))
+            
+            # Create preview (first few lines of diff)
+            preview_lines = diff_lines[:20] if diff_lines else ["No changes"]
+            preview = ''.join(preview_lines)
+            
+            return {
+                "value": {                     # Actual diff data
+                    "old_text": old_text,
+                    "new_text": new_text,
+                    "diff_lines": diff_lines
+                },
+                "display_type": "diff",        # UI hint for diff rendering
+                "summary": f"Edit {os.path.basename(file_path) if file_path else 'file'}",
+                "preview": preview,
+                "truncated": len(diff_lines) > 20,
+                "metadata": {                  # Additional context
+                    "file_path": file_path,
+                    "operation": "edit",
+                    "additions": sum(1 for l in diff_lines if l.startswith('+')),
+                    "deletions": sum(1 for l in diff_lines if l.startswith('-')),
+                    "total_lines": len(diff_lines)
+                }
+            }
+        
+        elif tool_name == "write_file":
+            file_path = args.get("file_path", "")
+            content = args.get("content", "")
+            append = args.get("append", False)
+            
+            # Try to read existing file content for diff
+            old_content = ""
+            file_exists = False
+            try:
+                if file_path and os.path.exists(file_path):
+                    with open(file_path, 'r') as f:
+                        old_content = f.read()
+                    file_exists = True
+            except Exception:
+                pass  # If we can't read it, just show preview without diff
+            
+            # If file exists, create a diff
+            if file_exists:
+                # Determine new content based on operation
+                if append:
+                    new_content = old_content + content
+                else:
+                    new_content = content
+                
+                # Generate unified diff
+                diff_lines = list(difflib.unified_diff(
+                    old_content.splitlines(keepends=True),
+                    new_content.splitlines(keepends=True),
+                    fromfile=file_path,
+                    tofile=file_path,
+                    lineterm='',
+                    n=3
+                ))
+                
+                # Create preview from diff
+                preview_lines = diff_lines[:20] if diff_lines else ["No changes"]
+                preview = ''.join(preview_lines)
+                
+                return {
+                    "value": {
+                        "old_text": old_content[:1000],  # Truncated for memory
+                        "new_text": new_content[:1000],
+                        "diff_lines": diff_lines
+                    },
+                    "display_type": "diff",  # Use diff display like edit_file
+                    "summary": f"{'Append to' if append else 'Overwrite'} {os.path.basename(file_path) if file_path else 'file'}",
+                    "preview": preview,
+                    "truncated": len(diff_lines) > 20,
+                    "metadata": {
+                        "file_path": file_path,
+                        "operation": "append" if append else "overwrite",
+                        "additions": sum(1 for l in diff_lines if l.startswith('+')),
+                        "deletions": sum(1 for l in diff_lines if l.startswith('-')),
+                        "total_lines": len(diff_lines)
+                    }
+                }
+            else:
+                # New file creation - show preview without diff
+                lines = content.splitlines() if isinstance(content, str) else []
+                preview = '\n'.join(lines[:10])
+                
+                return {
+                    "value": content[:1000] if isinstance(content, str) else "",  # Truncated content
+                    "display_type": "file_write",
+                    "summary": f"Create {os.path.basename(file_path) if file_path else 'file'}",
+                    "preview": preview,
+                    "truncated": len(content) > 1000 or len(lines) > 10 if isinstance(content, str) else False,
+                    "metadata": {
+                        "file_path": file_path,
+                        "operation": "create",
+                        "size_bytes": len(content) if isinstance(content, str) else 0,
+                        "line_count": len(lines)
+                    }
+                }
+        
+        # Return None for tools without special metadata
+        return None
 
     async def _custom_tool_use_behavior(self, ctx, tool_results):
         """Custom tool use behavior that checks for the halt flag."""
@@ -403,7 +524,10 @@ class SafeAgent(Agent):
             except Exception:
                 formatted_args = params_json[:200] + ("..." if len(params_json) > 200 else "")
 
-            approved, always_approve, error_msg = await approval_callback(tool.name, formatted_args)
+            # Compute metadata for rich approval UI
+            metadata = self._compute_approval_metadata(tool.name, args_dict if 'args_dict' in locals() else {})
+            
+            approved, always_approve, error_msg = await approval_callback(tool.name, formatted_args, metadata)
 
             if approved:
                 if always_approve:
