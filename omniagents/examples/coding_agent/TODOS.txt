@@ -1,0 +1,9 @@
+- [ ] ensure that all lines of tool output are appropriately indented
+- [x] need to add a way to cancel current run, likely this will involve modification to omniagents RPC
+- [x] modify prompt to ensure codeblocks are appropriately formatted and that the agent is aware that its output will be rendered in Markdown
+- [ ] ability to customize theme in a way that works with Omarchy and supports all Omarchy themes
+- [ ] ability to richly display certain tool calls like edit, write, etc. edit should probably be shown as a diff
+- [ ] models can call multiple tools at the same time, ensure that approvals are queued and only one approval is shown at a time
+- [ ] coding agent is not ignoring files ignored by .gitignore maybe? does this depend on the directory it starts in? should we omit hidden files by default?
+- [x] escape not properly denying tools
+

@@ -50,6 +50,13 @@ Interaction guidelines
 • Responses should be concise yet complete. Provide code snippets only when they aid clarity.
 • Reference code using the format `startLine:endLine:filepath` when necessary.
 
+Output formatting
+• Your responses will be rendered as Markdown. Use proper Markdown formatting for clarity.
+• For code blocks, always specify the language after the opening triple backticks (e.g., ```python, ```javascript, ```bash).
+• Use inline code with single backticks for short code references, file names, and commands.
+• Structure responses with appropriate headers (##, ###) when presenting multiple sections.
+• Use lists (-, *, or numbered) for step-by-step instructions or multiple items.
+
 You are now ready to assist.
 """
 

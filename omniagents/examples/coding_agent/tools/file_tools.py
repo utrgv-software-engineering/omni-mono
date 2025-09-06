@@ -1,109 +1,69 @@
 import os
 import glob
 import re
-from typing import Dict, Any, List, Optional
-from omniagents.core.tools import rich_function_tool, function_tool, RichToolOutput
-import pathlib
+import difflib
+from typing import List, Optional
+from omniagents.core.tools import rich_function_tool, RichToolOutput, approval_metadata
 from functools import lru_cache
+import pygit2
 
-# Optional dependency: pathspec is lightweight and allows us to honor .gitignore
-# If it is not available at runtime we simply fall back to previous behaviour.
-try:
-    import pathspec  # type: ignore
-except ImportError:  # pragma: no cover – pathspec should be present via pyproject
-    pathspec = None
-    
-def _load_gitignore_spec(start_dir: str = "."):
-    """Return a PathSpec compiled from every .gitignore under *start_dir*.
+# --- libgit2-backed ignore (no fallbacks) ---
 
-    If pathspec is not installed or no .gitignore files are found, returns None.
-    The resulting matcher uses Git's ``gitwildmatch`` syntax.
+@lru_cache(maxsize=16)
+def _get_pygit2_repo(start_dir: str = "."):
+    """Discover and return a pygit2.Repository for start_dir.
+
+    Returns None if start_dir is not inside a Git repository.
     """
-    if pathspec is None:
+    abspath = os.path.abspath(start_dir)
+    gitdir = pygit2.discover_repository(abspath)
+    if not gitdir:
         return None
+    return pygit2.Repository(gitdir)
 
-    patterns: list[str] = []
-
-    # 1) Collect .gitignore files from *start_dir* upward to filesystem root.
-    current = os.path.abspath(start_dir)
-    while True:
-        candidate = os.path.join(current, ".gitignore")
-        if os.path.isfile(candidate):
-            try:
-                with open(candidate, "r", encoding="utf-8", errors="ignore") as fh:
-                    for raw in fh:
-                        stripped = raw.rstrip("\n")
-                        if stripped.strip() == "" or stripped.lstrip().startswith("#"):
-                            continue
-                        if stripped in {"*", "/*"}:
-                            continue
-                        patterns.append(stripped)
-            except OSError:
-                pass
-
-        parent = os.path.dirname(current)
-        if parent == current:
-            break  # reached filesystem root
-        current = parent
-
-    # 2) Also walk downward from *start_dir*, but avoid large ignored folders to
-    #    pick up nested .gitignore rules that matter (e.g., in sub-modules).
-    for root, dirs, files in os.walk(start_dir):
-        for ignore_dir in [".git", ".venv", "venv", "env", "ENV"]:
-            if ignore_dir in dirs:
-                dirs.remove(ignore_dir)
-        if ".gitignore" in files and root != start_dir:  # we've already read start_dir above
-            gitignore_path = os.path.join(root, ".gitignore")
-            try:
-                with open(gitignore_path, "r", encoding="utf-8", errors="ignore") as fh:
-                    for raw in fh:
-                        stripped = raw.rstrip("\n")
-                        if stripped.strip() == "" or stripped.lstrip().startswith("#"):
-                            continue
-                        if stripped in {"*", "/*"}:
-                            continue
-                        # Prefix nested rules with the sub-directory so they
-                        # evaluate correctly relative to the repo root.
-                        rel_prefix = os.path.relpath(root, start_dir)
-                        patterns.append(os.path.join(rel_prefix, stripped))
-            except OSError:
-                pass
-
-    if not patterns:
-        return None
-
-    try:
-        return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
-    except Exception:
-        # Any parsing error falls back to None
-        return None
-
-
-@lru_cache(maxsize=4)
-def _get_gitignore_spec(start_dir: str = "."):
-    """Cached wrapper for _load_gitignore_spec."""
-    return _load_gitignore_spec(start_dir)
-
-
+@lru_cache(maxsize=65536)
 def _is_ignored(path: str, repo_root: str = ".") -> bool:
-    """Return True if *path* matches any .gitignore pattern."""
-    spec = _get_gitignore_spec(repo_root)
-    if spec is None:
+    """Return True if path is ignored by Git, using libgit2 via pygit2 only.
+
+    No subprocess and no pathspec fallback. Outside a Git repo, returns False.
+    """
+    repo = _get_pygit2_repo(repo_root)
+    if repo is None or not getattr(repo, "workdir", None):
+        # Not in a Git repo; Git ignore semantics don't apply
         return False
-    # pathspec expects POSIX style relative paths
+
+    abspath = os.path.abspath(path)
     try:
-        rel_path = os.path.relpath(path, repo_root)
+        rel = os.path.relpath(abspath, repo.workdir)
     except ValueError:
-        # path on different drive etc.
+        # Different drive or otherwise outside workdir
         return False
-    matched = spec.match_file(rel_path)
-    if not matched and os.path.isdir(path):
-        # Some patterns in .gitignore are written with a trailing slash, which
-        # pathspec expects to see in the candidate path. For directories we
-        # retry with an appended slash so that a rule like ".venv/" correctly
-        # matches the ".venv" folder itself.
-        matched = spec.match_file(rel_path + "/")
-    return matched
+
+    # Outside workdir => not ignored by this repo
+    if rel.startswith(".."):
+        return False
+
+    # Prefer native ignore API which handles both files and directories
+    if hasattr(repo, "path_is_ignored"):
+        # For directories, we need to add a trailing slash for proper gitignore matching
+        check_path = rel
+        if os.path.isdir(abspath) and not check_path.endswith('/'):
+            check_path = rel + '/'
+        return bool(repo.path_is_ignored(check_path))
+
+    # status_file only works for files, not directories
+    if os.path.isdir(abspath):
+        # Without is_path_ignored, we need to check .gitignore patterns manually
+        # For now, return False to avoid errors (directories won't be filtered)
+        return False
+
+    try:
+        flags = repo.status_file(rel)
+        ignored_flag = getattr(pygit2, "GIT_STATUS_IGNORED", 0x1000)
+        return bool(flags & ignored_flag)
+    except Exception:
+        # If status_file fails for any reason, assume not ignored
+        return False
 
 @rich_function_tool
 def glob_files(pattern: str, path: Optional[str]) -> RichToolOutput:
@@ -775,3 +735,132 @@ def write_file(file_path: str, content: str, append: Optional[bool]) -> RichTool
         }
         
         return RichToolOutput(llm_output, ui_metadata)
+
+# --- Approval Metadata Generators --- #
+# These functions generate rich metadata for tool approvals to enhance the UI
+
+@approval_metadata()
+def edit_file_approval(file_path: str, old_text: str, new_text: str) -> dict:
+    """Generate approval metadata for edit_file tool."""
+    
+    # Generate unified diff
+    diff_lines = list(difflib.unified_diff(
+        old_text.splitlines(keepends=True),
+        new_text.splitlines(keepends=True),
+        fromfile=file_path,
+        tofile=file_path,
+        lineterm='',
+        n=3  # Number of context lines
+    ))
+    
+    # Create preview (first few lines of diff)
+    preview_lines = diff_lines[:20] if diff_lines else ["No changes"]
+    preview = ''.join(preview_lines)
+    
+    # Count additions and deletions
+    additions = sum(1 for l in diff_lines if l.startswith('+') and not l.startswith('+++'))
+    deletions = sum(1 for l in diff_lines if l.startswith('-') and not l.startswith('---'))
+    
+    return {
+        "display_type": "diff",  # Tell UI to use diff renderer
+        "summary": f"Edit {os.path.basename(file_path) if file_path else 'file'}",
+        "value": {
+            "old_text": old_text,
+            "new_text": new_text,
+            "diff_lines": diff_lines
+        },
+        "preview": preview,
+        "truncated": len(diff_lines) > 20,
+        "metadata": {
+            "file_path": file_path,
+            "operation": "edit",
+            "additions": additions,
+            "deletions": deletions,
+            "total_lines": len(diff_lines)
+        }
+    }
+
+@approval_metadata()
+def write_file_approval(file_path: str, content: str, append: Optional[bool]) -> dict:
+    """Generate approval metadata for write_file tool."""
+    
+    # Default to overwrite if not specified
+    if append is None:
+        append = False
+    
+    # Try to read existing file content for diff
+    old_content = ""
+    file_exists = False
+    try:
+        if file_path and os.path.exists(file_path):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                old_content = f.read()
+            file_exists = True
+    except Exception:
+        pass  # If we can't read it, just show preview without diff
+    
+    # If file exists and we can show a diff
+    if file_exists:
+        # Determine new content based on operation
+        if append:
+            new_content = old_content + content
+        else:
+            new_content = content
+        
+        # Generate unified diff
+        diff_lines = list(difflib.unified_diff(
+            old_content.splitlines(keepends=True),
+            new_content.splitlines(keepends=True),
+            fromfile=file_path,
+            tofile=file_path,
+            lineterm='',
+            n=3
+        ))
+        
+        # Create preview from diff
+        preview_lines = diff_lines[:20] if diff_lines else ["No changes"]
+        preview = ''.join(preview_lines)
+        
+        # Count additions and deletions
+        additions = sum(1 for l in diff_lines if l.startswith('+') and not l.startswith('+++'))
+        deletions = sum(1 for l in diff_lines if l.startswith('-') and not l.startswith('---'))
+        
+        return {
+            "display_type": "diff",  # Use diff display for existing files
+            "summary": f"{'Append to' if append else 'Overwrite'} {os.path.basename(file_path)}",
+            "value": {
+                "old_text": old_content[:1000],  # Truncate for memory
+                "new_text": new_content[:1000],
+                "diff_lines": diff_lines
+            },
+            "preview": preview,
+            "truncated": len(diff_lines) > 20,
+            "metadata": {
+                "file_path": file_path,
+                "operation": "append" if append else "overwrite",
+                "additions": additions,
+                "deletions": deletions,
+                "total_lines": len(diff_lines),
+                "file_exists": True
+            }
+        }
+    else:
+        # New file creation - show preview without diff
+        lines = content.splitlines()
+        preview_lines = lines[:10]
+        preview = '\n'.join(preview_lines)
+        
+        return {
+            "display_type": "file_write",
+            "summary": f"Create {os.path.basename(file_path)}",
+            "value": content[:1000],  # Truncated content
+            "preview": preview,
+            "truncated": len(content) > 1000 or len(lines) > 10,
+            "metadata": {
+                "file_path": file_path,
+                "operation": "create",
+                "size_bytes": len(content),
+                "line_count": len(lines),
+                "file_exists": False
+            }
+        }
