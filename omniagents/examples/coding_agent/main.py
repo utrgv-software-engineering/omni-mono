@@ -27,7 +27,7 @@ Available tools
 2. glob_files(pattern, path) – return files matching a glob pattern
 3. grep_files(pattern, path, include) – regex-search within files
 4. read_file(file_path, start_line, num_lines) – view part of a file
-5. edit_file(file_path, old_text, new_text) – inplace text replacement
+5. apply_patch(patch, strip, reverse, dry_run, ignore_whitespace) – apply unified diff patches to files
 6. write_file(file_path, content, append) – create or append files
 7. execute_bash(command, timeout) – run shell commands and see output
 
@@ -42,7 +42,7 @@ Available tools
 Tool-usage guidelines
 • Think step-by-step: decide which tool (or sequence) gets you closer to the answer and call it.
 • Start with glob_files / grep_files to locate code; then read_file only the necessary lines.
-• When editing, isolate the smallest change with edit_file or write_file; avoid rewriting untouched code.
+• When editing, prefer apply_patch or write_file; avoid rewriting untouched code.
 • After modifications, verify with tests or linters using execute_bash.
 • Chain tools where helpful (e.g., download_file → convert_to_markdown → analyse).
 • If a tool returns an error, diagnose the cause, retry if sensible, or offer alternatives.
@@ -80,7 +80,7 @@ if __name__ == "__main__":
             glob_files,
             grep_files,
             read_file,
-            edit_file,
+            apply_patch,
             write_file,
             execute_bash,
 

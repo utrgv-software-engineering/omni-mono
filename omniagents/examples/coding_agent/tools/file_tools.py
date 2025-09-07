@@ -2,10 +2,14 @@ import os
 import glob
 import re
 import difflib
-from typing import List, Optional
+from typing import List, Optional, Dict, Tuple, Union
 from omniagents.core.tools import rich_function_tool, RichToolOutput, approval_metadata
 from functools import lru_cache
 import pygit2
+
+# ----------------------------
+# Hidden/Git ignore utilities
+# ----------------------------
 
 # --- libgit2-backed ignore (no fallbacks) ---
 
@@ -65,14 +69,50 @@ def _is_ignored(path: str, repo_root: str = ".") -> bool:
         # If status_file fails for any reason, assume not ignored
         return False
 
+@lru_cache(maxsize=65536)
+def _has_hidden_segment(path: str) -> bool:
+    """Return True if any path segment is a hidden name (starts with a dot).
+
+    This treats files or any ancestor directory starting with '.' as hidden.
+    """
+    try:
+        norm = os.path.normpath(path)
+        # Split into components and check any that start with '.'
+        for part in norm.split(os.sep):
+            if part.startswith('.') and part not in ('.', '..'):
+                return True
+        return False
+    except Exception:
+        return False
+
+def _should_skip(
+    candidate_path: str,
+    repo_root: str,
+    respect_gitignore: bool,
+    ignore_hidden: bool,
+) -> bool:
+    """Return True if candidate should be excluded based on flags."""
+    if respect_gitignore and _is_ignored(candidate_path, repo_root):
+        return True
+    if ignore_hidden and _has_hidden_segment(candidate_path):
+        return True
+    return False
+
 @rich_function_tool
-def glob_files(pattern: str, path: Optional[str]) -> RichToolOutput:
+def glob_files(
+    pattern: str,
+    path: Optional[str],
+    ignore_hidden: Optional[bool] = None,
+    respect_gitignore: Optional[bool] = None,
+) -> RichToolOutput:
     """
     Finds files based on pattern matching using glob patterns.
     
     Args:
         pattern: The glob pattern to match files (e.g., "*.py", "**/*.json")
         path: The directory to search in
+        ignore_hidden: If True, exclude files/dirs with any hidden segment (names starting with '.')
+        respect_gitignore: If True, exclude paths ignored by Git (.gitignore, .git/info/exclude, etc.)
         
     Returns:
         Tuple of (llm_output, ui_metadata) where:
@@ -94,19 +134,30 @@ def glob_files(pattern: str, path: Optional[str]) -> RichToolOutput:
         # Find all JSON files recursively
         glob_files("**/*.json", path="./")
         
+        # Include hidden files and gitignored files
+        glob_files("**/*", path="./", ignore_hidden=False, respect_gitignore=False)
+        
         # Find all log files in a specific directory
         glob_files("*.log", path="/var/log")
     """
     try:
-        # Default to current directory if path is not provided
+        # Defaults
         if path is None:
             path = "."
+        if ignore_hidden is None:
+            ignore_hidden = False  # preserve current behavior
+        if respect_gitignore is None:
+            respect_gitignore = True  # preserve current behavior
             
         # Construct the full glob pattern
         full_pattern = os.path.join(path, pattern)
         
         # Find matching files
-        matches = [p for p in glob.glob(full_pattern, recursive=True) if not _is_ignored(p, path)]
+        matches = [
+            p
+            for p in glob.glob(full_pattern, recursive=True)
+            if not _should_skip(p, path, respect_gitignore, ignore_hidden)
+        ]
         
         # Sort matches by modification time (newest first)
         matches.sort(key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
@@ -143,7 +194,9 @@ def glob_files(pattern: str, path: Optional[str]) -> RichToolOutput:
                 "match_count": len(matches),
                 "search_type": "glob",
                 "scope": path or "./",
-                "preview_count": len(preview_matches)
+                "preview_count": len(preview_matches),
+                "ignore_hidden": bool(ignore_hidden),
+                "respect_gitignore": bool(respect_gitignore),
             }
         }
         
@@ -160,14 +213,22 @@ def glob_files(pattern: str, path: Optional[str]) -> RichToolOutput:
             "metadata": {
                 "error_type": "glob_error",
                 "pattern": pattern,
-                "path": path
+                "path": path,
+                "ignore_hidden": bool(ignore_hidden) if ignore_hidden is not None else None,
+                "respect_gitignore": bool(respect_gitignore) if respect_gitignore is not None else None,
             }
         }
         
         return RichToolOutput(llm_output, ui_metadata)
 
 @rich_function_tool
-def grep_files(pattern: str, path: Optional[str], include: Optional[str]) -> RichToolOutput:
+def grep_files(
+    pattern: str,
+    path: Optional[str],
+    include: Optional[str],
+    ignore_hidden: Optional[bool] = None,
+    respect_gitignore: Optional[bool] = None,
+) -> RichToolOutput:
     """
     Searches for patterns in file contents using regular expressions.
     
@@ -175,6 +236,8 @@ def grep_files(pattern: str, path: Optional[str], include: Optional[str]) -> Ric
         pattern: The regular expression pattern to search for
         path: The directory to search in
         include: Optional file pattern to filter which files to search (e.g., "*.py")
+        ignore_hidden: If True, exclude files/dirs with any hidden segment (names starting with '.')
+        respect_gitignore: If True, exclude paths ignored by Git (.gitignore, .git/info/exclude, etc.)
         
     Returns:
         Tuple of (llm_output, ui_metadata) where:
@@ -195,11 +258,18 @@ def grep_files(pattern: str, path: Optional[str], include: Optional[str]) -> Ric
         
         # Find all imports in Python files
         grep_files("^import\\s+\\w+", path="./", include="*.py")
+        
+        # Search all tracked files, including hidden ones
+        grep_files("TODO", path="./", include=None, ignore_hidden=False, respect_gitignore=True)
     """
     try:
-        # Default to current directory if path is not provided
+        # Defaults
         if path is None:
             path = "."
+        if ignore_hidden is None:
+            ignore_hidden = False
+        if respect_gitignore is None:
+            respect_gitignore = True
             
         results = []
         total_matches = 0
@@ -218,7 +288,7 @@ def grep_files(pattern: str, path: Optional[str], include: Optional[str]) -> Ric
 
         # Perform glob search directly to avoid relying on the decorated glob_files tool
         for candidate in glob.glob(search_pattern, recursive=True):
-            if os.path.isfile(candidate) and not _is_ignored(candidate, base_dir):
+            if os.path.isfile(candidate) and not _should_skip(candidate, base_dir, respect_gitignore, ignore_hidden):
                 files_to_search.append(candidate)
         
         # Sort files by modification time (newest first)
@@ -292,7 +362,9 @@ def grep_files(pattern: str, path: Optional[str], include: Optional[str]) -> Ric
                 "file_count": len(results),
                 "search_type": "grep",
                 "scope": f"{include or '*'} in {path or './'}",
-                "preview_files": min(len(results), preview_limit)
+                "preview_files": min(len(results), preview_limit),
+                "ignore_hidden": bool(ignore_hidden),
+                "respect_gitignore": bool(respect_gitignore),
             }
         }
         
@@ -308,20 +380,29 @@ def grep_files(pattern: str, path: Optional[str], include: Optional[str]) -> Ric
             "truncated": False,
             "metadata": {
                 "error_type": "grep_error",
-                "pattern": pattern
+                "pattern": pattern,
+                "ignore_hidden": bool(ignore_hidden) if ignore_hidden is not None else None,
+                "respect_gitignore": bool(respect_gitignore) if respect_gitignore is not None else None,
             }
         }
         
         return RichToolOutput(llm_output, ui_metadata)
 
 @rich_function_tool
-def list_directory(path: str, recursive: Optional[bool]) -> RichToolOutput:
+def list_directory(
+    path: str,
+    recursive: Optional[bool],
+    ignore_hidden: Optional[bool] = None,
+    respect_gitignore: Optional[bool] = None,
+) -> RichToolOutput:
     """
     Lists files and directories in the specified path.
     
     Args:
         path: The directory path to list contents of
         recursive: Whether to list contents recursively
+        ignore_hidden: If True, exclude files/dirs with names starting with '.' (and their contents)
+        respect_gitignore: If True, exclude paths ignored by Git (.gitignore, .git/info/exclude, etc.)
         
     Returns:
         Tuple of (llm_output, ui_metadata) where:
@@ -338,20 +419,30 @@ def list_directory(path: str, recursive: Optional[bool]) -> RichToolOutput:
         
         # List contents of a specific directory recursively
         list_directory("/path/to/directory", recursive=True)
+        
+        # Show everything, including hidden and gitignored
+        list_directory(".", recursive=True, ignore_hidden=False, respect_gitignore=False)
     """
     try:
-        # Default to non-recursive if not specified
+        # Defaults
         if recursive is None:
             recursive = False
+        if ignore_hidden is None:
+            ignore_hidden = False  # Preserve current default behavior
+        if respect_gitignore is None:
+            respect_gitignore = True  # Preserve current default behavior
             
         files = []
         directories = []
         
         if recursive:
             for root, dirs, filenames in os.walk(path):
-                # Remove ignored directories so os.walk does NOT recurse into
+                # Remove ignored/hidden directories so os.walk does NOT recurse into
                 # them, preventing huge listings (e.g., .venv)
-                dirs[:] = [d for d in dirs if not _is_ignored(os.path.join(root, d), path)]
+                dirs[:] = [
+                    d for d in dirs
+                    if not _should_skip(os.path.join(root, d), path, respect_gitignore, ignore_hidden)
+                ]
                 
                 # Add directories that are not ignored
                 for dir_name in dirs:
@@ -361,17 +452,17 @@ def list_directory(path: str, recursive: Optional[bool]) -> RichToolOutput:
                 # Add files
                 for filename in filenames:
                     file_path = os.path.join(root, filename)
-                    if not _is_ignored(file_path, path):
+                    if not _should_skip(file_path, path, respect_gitignore, ignore_hidden):
                         files.append(file_path)
         else:
             # List only the specified directory
             with os.scandir(path) as entries:
                 for entry in entries:
                     if entry.is_file():
-                        if not _is_ignored(entry.path, path):
+                        if not _should_skip(entry.path, path, respect_gitignore, ignore_hidden):
                             files.append(entry.path)
                     elif entry.is_dir():
-                        if not _is_ignored(entry.path, path):
+                        if not _should_skip(entry.path, path, respect_gitignore, ignore_hidden):
                             directories.append(entry.path)
         
         # Sort by name
@@ -422,7 +513,9 @@ def list_directory(path: str, recursive: Optional[bool]) -> RichToolOutput:
                 "dir_count": len(directories),
                 "total_count": total_items,
                 "recursive": recursive,
-                "preview_count": min(total_items, preview_limit)
+                "preview_count": min(total_items, preview_limit),
+                "ignore_hidden": bool(ignore_hidden),
+                "respect_gitignore": bool(respect_gitignore),
             }
         }
         
@@ -438,7 +531,9 @@ def list_directory(path: str, recursive: Optional[bool]) -> RichToolOutput:
             "truncated": False,
             "metadata": {
                 "error_type": "directory_error",
-                "path": path
+                "path": path,
+                "ignore_hidden": bool(ignore_hidden) if ignore_hidden is not None else None,
+                "respect_gitignore": bool(respect_gitignore) if respect_gitignore is not None else None,
             }
         }
         
@@ -591,10 +686,10 @@ def edit_file(
         
     Caveats:
         - Escapes vs newlines in code: If you intend to insert a literal backslash-n in a string (e.g. Go/Java/C),
-          pass the two characters backslash and n (written as "\n"). Using a newline escape inserts an actual
+          pass the two characters backslash and n (written as "\\n"). Using a newline escape inserts an actual
           newline character into the file.
         - Literal vs regex: old_text is treated literally unless regex=True. For multi-line literals, include actual
-          newline characters in old_text; for inserting the literal two-character sequence backslash-n, use "\n".
+          newline characters in old_text; for inserting the literal two-character sequence backslash-n, use "\\n".
         - Range semantics: start_line/end_line are 1-based and inclusive. Lines outside the range are left unchanged.
         
     Examples:
@@ -607,7 +702,7 @@ def edit_file(
         # Regex replacement in a specific range, dry run with expected count
         edit_file(
             "/path/to/file.go",
-            old_text=r"fmt\.Fprintf\(.*\)",
+            old_text=r"fmt\\.Fprintf\\(.*\\)",
             new_text="fmt.Fprintln(w, msg)",
             regex=True,
             start_line=100,
@@ -811,10 +906,10 @@ def write_file(file_path: str, content: str, append: Optional[bool]) -> RichTool
         
     Examples:
         # Create a new Python file
-        write_file("/path/to/new_file.py", "def hello_world():\n    print('Hello, world!')", append=False)
+        write_file("/path/to/new_file.py", "def hello_world():\\n    print('Hello, world!')", append=False)
         
         # Append to a log file
-        write_file("/path/to/log.txt", "New log entry\n", append=True)
+        write_file("/path/to/log.txt", "New log entry\\n", append=True)
     """
     try:
         # Default to overwrite if not specified
@@ -1048,3 +1143,674 @@ def write_file_approval(file_path: str, content: str, append: Optional[bool]) ->
                 "file_exists": False
             }
         }
+
+# ==================== CODEX APPLY_PATCH IMPLEMENTATION ====================
+
+# Patch parsing types
+class Hunk:
+    """Represents a single file operation in a patch"""
+    pass
+
+class AddFile(Hunk):
+    def __init__(self, path: str, contents: str):
+        self.path = os.path.abspath(path) if not os.path.isabs(path) else path
+        self.contents = contents
+
+class DeleteFile(Hunk):
+    def __init__(self, path: str):
+        self.path = os.path.abspath(path) if not os.path.isabs(path) else path
+
+class UpdateFile(Hunk):
+    def __init__(self, path: str, chunks: List['UpdateFileChunk'], move_path: Optional[str] = None):
+        self.path = os.path.abspath(path) if not os.path.isabs(path) else path
+        self.move_path = os.path.abspath(move_path) if move_path and not os.path.isabs(move_path) else move_path
+        self.chunks = chunks
+
+class UpdateFileChunk:
+    """Represents a chunk of changes within an UpdateFile hunk"""
+    def __init__(self, old_lines: List[str], new_lines: List[str], context_headers: List[str] = None, is_end_of_file: bool = False):
+        self.old_lines = old_lines
+        self.new_lines = new_lines
+        self.context_headers = context_headers or []
+        self.is_end_of_file = is_end_of_file
+
+def parse_patch(patch_text: str) -> List[Hunk]:
+    """
+    Parse Codex's custom patch format into Hunk objects.
+    
+    Format:
+    *** Begin Patch
+    *** Add File: path
+    +content lines
+    *** Update File: path
+    *** Move to: new_path (optional)
+    @@ optional context header
+    - old lines
+    + new lines
+      context lines (space prefix)
+    *** Delete File: path
+    *** End Patch
+    """
+    lines = patch_text.split('\n')
+    hunks = []
+    i = 0
+    
+    # Find start of patch
+    while i < len(lines) and not lines[i].strip().startswith('*** Begin Patch'):
+        i += 1
+    
+    if i >= len(lines):
+        raise ValueError("Invalid patch: missing '*** Begin Patch'")
+    
+    i += 1  # Skip Begin Patch line
+    
+    while i < len(lines):
+        line = lines[i].strip()
+        
+        if line.startswith('*** End Patch'):
+            break
+            
+        elif line.startswith('*** Add File:'):
+            path = line[len('*** Add File:'):].strip()
+            i += 1
+            content_lines = []
+            
+            while i < len(lines):
+                if lines[i].startswith('*** '):
+                    break
+                if lines[i].startswith('+'):
+                    content_lines.append(lines[i][1:])
+                i += 1
+            
+            contents = '\n'.join(content_lines)
+            if content_lines:
+                contents += '\n'
+            hunks.append(AddFile(path, contents))
+            
+        elif line.startswith('*** Delete File:'):
+            path = line[len('*** Delete File:'):].strip()
+            hunks.append(DeleteFile(path))
+            i += 1
+            
+        elif line.startswith('*** Update File:'):
+            path = line[len('*** Update File:'):].strip()
+            i += 1
+            
+            # Check for Move to
+            move_path = None
+            if i < len(lines) and lines[i].strip().startswith('*** Move to:'):
+                move_path = lines[i].strip()[len('*** Move to:'):].strip()
+                i += 1
+            
+            # Parse chunks
+            chunks = []
+            while i < len(lines):
+                if lines[i].strip().startswith('*** '):
+                    break
+                    
+                # Parse chunk starting with @@ or plain content
+                if lines[i].startswith('@@'):
+                    # Context header
+                    context_headers = []
+                    header = lines[i][2:].strip()
+                    if header:
+                        context_headers.append(header)
+                    i += 1
+                    
+                    # Collect old and new lines for this chunk
+                    old_lines = []
+                    new_lines = []
+                    is_end_of_file = False
+                    
+                    while i < len(lines):
+                        if lines[i].startswith('@@') or lines[i].strip().startswith('*** '):
+                            break
+                        
+                        if lines[i].strip() == '*** End of File':
+                            is_end_of_file = True
+                            i += 1
+                            break
+                            
+                        if lines[i].startswith('-'):
+                            old_lines.append(lines[i][1:])
+                        elif lines[i].startswith('+'):
+                            new_lines.append(lines[i][1:])
+                        elif lines[i].startswith(' '):
+                            # Context line - add to both
+                            old_lines.append(lines[i][1:])
+                            new_lines.append(lines[i][1:])
+                        i += 1
+                    
+                    if old_lines or new_lines:
+                        chunks.append(UpdateFileChunk(old_lines, new_lines, context_headers, is_end_of_file))
+                else:
+                    i += 1
+            
+            if chunks:
+                hunks.append(UpdateFile(path, chunks, move_path))
+        else:
+            i += 1
+    
+    return hunks
+
+def seek_sequence(lines: List[str], pattern: List[str], start: int, eof: bool) -> Optional[int]:
+    """
+    Attempt to find the sequence of pattern lines within lines beginning at or after start.
+    Returns the starting index of the match or None if not found.
+    
+    Matches are attempted with decreasing strictness:
+    1. Exact match
+    2. Ignoring trailing whitespace
+    3. Ignoring leading and trailing whitespace
+    4. Unicode normalization (smart quotes to ASCII, etc.)
+    
+    When eof is True, first try starting at end-of-file.
+    """
+    if not pattern:
+        return start
+    
+    # Pattern longer than available input - no possible match
+    if len(pattern) > len(lines):
+        return None
+    
+    search_start = len(lines) - len(pattern) if (eof and len(lines) >= len(pattern)) else start
+    
+    # Pass 1: Exact match
+    for i in range(search_start, len(lines) - len(pattern) + 1):
+        if lines[i:i + len(pattern)] == pattern:
+            return i
+    
+    # Pass 2: Ignore trailing whitespace
+    for i in range(search_start, len(lines) - len(pattern) + 1):
+        match = True
+        for j, pat in enumerate(pattern):
+            if lines[i + j].rstrip() != pat.rstrip():
+                match = False
+                break
+        if match:
+            return i
+    
+    # Pass 3: Ignore all leading/trailing whitespace
+    for i in range(search_start, len(lines) - len(pattern) + 1):
+        match = True
+        for j, pat in enumerate(pattern):
+            if lines[i + j].strip() != pat.strip():
+                match = False
+                break
+        if match:
+            return i
+    
+    # Pass 4: Unicode normalization
+    def normalize(s: str) -> str:
+        """Normalize Unicode punctuation to ASCII equivalents"""
+        s = s.strip()
+        replacements = {
+            '\u2010': '-', '\u2011': '-', '\u2012': '-', '\u2013': '-',  # Dashes
+            '\u2014': '-', '\u2015': '-', '\u2212': '-',
+            '\u2018': "'", '\u2019': "'", '\u201A': "'", '\u201B': "'",  # Single quotes
+            '\u201C': '"', '\u201D': '"', '\u201E': '"', '\u201F': '"',  # Double quotes
+            '\u00A0': ' ', '\u2002': ' ', '\u2003': ' ', '\u2004': ' ',  # Spaces
+            '\u2005': ' ', '\u2006': ' ', '\u2007': ' ', '\u2008': ' ',
+            '\u2009': ' ', '\u200A': ' ', '\u202F': ' ', '\u205F': ' ',
+            '\u3000': ' '
+        }
+        for old, new in replacements.items():
+            s = s.replace(old, new)
+        return s
+    
+    for i in range(search_start, len(lines) - len(pattern) + 1):
+        match = True
+        for j, pat in enumerate(pattern):
+            if normalize(lines[i + j]) != normalize(pat):
+                match = False
+                break
+        if match:
+            return i
+    
+    return None
+
+def apply_hunks(hunks: List[Hunk]) -> Dict[str, str]:
+    """
+    Apply the parsed hunks and return affected files summary.
+    Returns dict with keys: 'added', 'modified', 'deleted' containing file paths
+    """
+    added = []
+    modified = []
+    deleted = []
+    
+    for hunk in hunks:
+        if isinstance(hunk, AddFile):
+            # Create parent directories if needed
+            parent = os.path.dirname(hunk.path)
+            if parent and not os.path.exists(parent):
+                os.makedirs(parent, exist_ok=True)
+            
+            with open(hunk.path, 'w', encoding='utf-8') as f:
+                f.write(hunk.contents)
+            added.append(hunk.path)
+            
+        elif isinstance(hunk, DeleteFile):
+            if os.path.exists(hunk.path):
+                os.remove(hunk.path)
+                deleted.append(hunk.path)
+            else:
+                raise FileNotFoundError(f"Cannot delete non-existent file: {hunk.path}")
+                
+        elif isinstance(hunk, UpdateFile):
+            # Read original file
+            with open(hunk.path, 'r', encoding='utf-8') as f:
+                original = f.read()
+            
+            lines = original.splitlines()
+            
+            # Compute replacements for each chunk
+            replacements = []
+            line_index = 0
+            
+            for chunk in hunk.chunks:
+                # Find where to apply this chunk
+                pattern = chunk.old_lines
+                found = seek_sequence(lines, pattern, line_index, chunk.is_end_of_file)
+                
+                # Retry without trailing empty line if not found
+                if found is None and pattern and pattern[-1] == '':
+                    pattern = pattern[:-1]
+                    new_lines = chunk.new_lines
+                    if new_lines and new_lines[-1] == '':
+                        new_lines = new_lines[:-1]
+                    found = seek_sequence(lines, pattern, line_index, chunk.is_end_of_file)
+                else:
+                    new_lines = chunk.new_lines
+                
+                if found is not None:
+                    replacements.append((found, len(pattern), new_lines))
+                    line_index = found + len(pattern)
+                else:
+                    # Use context headers to help locate if available
+                    context_hint = f" (context: {', '.join(chunk.context_headers)})" if chunk.context_headers else ""
+                    raise ValueError(f"Failed to find lines to replace in {hunk.path}{context_hint}")
+            
+            # Apply replacements in reverse order to maintain indices
+            for start_idx, old_len, new_lines in reversed(replacements):
+                # Remove old lines
+                for _ in range(old_len):
+                    if start_idx < len(lines):
+                        del lines[start_idx]
+                
+                # Insert new lines
+                for offset, new_line in enumerate(new_lines):
+                    lines.insert(start_idx + offset, new_line)
+            
+            # Write result
+            new_content = '\n'.join(lines)
+            if lines and not new_content.endswith('\n'):
+                new_content += '\n'
+            
+            if hunk.move_path:
+                # Write to new location
+                parent = os.path.dirname(hunk.move_path)
+                if parent and not os.path.exists(parent):
+                    os.makedirs(parent, exist_ok=True)
+                
+                with open(hunk.move_path, 'w', encoding='utf-8') as f:
+                    f.write(new_content)
+                
+                # Remove original
+                os.remove(hunk.path)
+                modified.append(hunk.move_path)
+            else:
+                with open(hunk.path, 'w', encoding='utf-8') as f:
+                    f.write(new_content)
+                modified.append(hunk.path)
+    
+    return {
+        'added': added,
+        'modified': modified,
+        'deleted': deleted
+    }
+
+@approval_metadata()
+def apply_patch_approval(
+    patch: str,
+    **kwargs,
+) -> dict:
+    """Generate approval metadata for apply_patch tool."""
+    # Build a unified diff for each file operation so Bubble Tea can render a proper diff view
+    # If we fail to parse or generate a proper diff, we fall back to showing the raw patch text
+
+    def _simulate_update(original_text: str, upd: UpdateFile) -> str:
+        """Apply UpdateFile chunks to original_text and return the new content (no write)."""
+        lines = original_text.splitlines()
+        replacements: List[Tuple[int, int, List[str]]] = []
+        line_index = 0
+
+        for chunk in upd.chunks:
+            pattern = chunk.old_lines
+            found = seek_sequence(lines, pattern, line_index, chunk.is_end_of_file)
+
+            # Retry without trailing empty line if not found
+            if found is None and pattern and pattern[-1] == '':
+                pattern = pattern[:-1]
+                new_lines = chunk.new_lines
+                if new_lines and new_lines[-1] == '':
+                    new_lines = new_lines[:-1]
+                found = seek_sequence(lines, pattern, line_index, chunk.is_end_of_file)
+            else:
+                new_lines = chunk.new_lines
+
+            if found is None:
+                # If we can't find the pattern, raise to trigger fallback
+                context_hint = f" (context: {', '.join(chunk.context_headers)})" if chunk.context_headers else ""
+                raise ValueError(f"Failed to locate patch chunk in {upd.path}{context_hint}")
+
+            replacements.append((found, len(pattern), new_lines))
+            line_index = found + len(pattern)
+
+        # Apply replacements in reverse order
+        for start_idx, old_len, new_lines in reversed(replacements):
+            # Remove old
+            for _ in range(old_len):
+                if start_idx < len(lines):
+                    del lines[start_idx]
+            # Insert new
+            for offset, new_line in enumerate(new_lines):
+                lines.insert(start_idx + offset, new_line)
+
+        new_content = '\n'.join(lines)
+        if lines and not new_content.endswith('\n'):
+            new_content += '\n'
+        return new_content
+
+    try:
+        hunks = parse_patch(patch)
+        file_count = len(hunks)
+
+        # Count operations
+        adds = sum(1 for h in hunks if isinstance(h, AddFile))
+        deletes = sum(1 for h in hunks if isinstance(h, DeleteFile))
+        updates = sum(1 for h in hunks if isinstance(h, UpdateFile))
+
+        summary = f"Apply patch ({adds} adds, {updates} updates, {deletes} deletes)"
+
+        # Build combined diff_lines covering all file operations
+        combined_diff: List[str] = []
+
+        for h in hunks:
+            if isinstance(h, AddFile):
+                # Show diff from /dev/null to new file
+                new_lines = h.contents.splitlines(keepends=True)
+                file_diff = list(difflib.unified_diff(
+                    [],
+                    new_lines,
+                    fromfile="/dev/null",
+                    tofile=h.path,
+                    lineterm='',
+                    n=3,
+                ))
+                combined_diff.extend(file_diff)
+            elif isinstance(h, DeleteFile):
+                try:
+                    with open(h.path, 'r', encoding='utf-8', errors='replace') as f:
+                        old_text = f.read()
+                except Exception:
+                    # If file doesn't exist or can't be read, show a synthetic header
+                    old_text = ''
+                old_lines = old_text.splitlines(keepends=True)
+                file_diff = list(difflib.unified_diff(
+                    old_lines,
+                    [],
+                    fromfile=h.path,
+                    tofile="/dev/null",
+                    lineterm='',
+                    n=3,
+                ))
+                combined_diff.extend(file_diff)
+            elif isinstance(h, UpdateFile):
+                try:
+                    with open(h.path, 'r', encoding='utf-8', errors='replace') as f:
+                        original_text = f.read()
+                except Exception:
+                    # If we can't read the original file, we can't compute a real diff
+                    # Fallback to a pseudo-diff using new lines only
+                    original_text = ''
+
+                try:
+                    new_text = _simulate_update(original_text, h)
+                    fromfile = h.path
+                    tofile = h.move_path or h.path
+                    old_lines = original_text.splitlines(keepends=True)
+                    new_lines = new_text.splitlines(keepends=True)
+                    file_diff = list(difflib.unified_diff(
+                        old_lines,
+                        new_lines,
+                        fromfile=fromfile,
+                        tofile=tofile,
+                        lineterm='',
+                        n=3,
+                    ))
+                    combined_diff.extend(file_diff)
+                except Exception:
+                    # If simulation fails, add a clear separator and include raw patch fragment
+                    combined_diff.append(f"--- {h.path}")
+                    combined_diff.append(f"+++ {h.move_path or h.path}")
+                    # Add a marker so users know this is a fallback
+                    combined_diff.append(f"@@ Unable to compute exact diff for {h.path} @@")
+                    # Include context headers if present to help humans
+                    for chunk in h.chunks:
+                        for header in chunk.context_headers:
+                            combined_diff.append(f"@@ {header}")
+                        for old_line in chunk.old_lines:
+                            combined_diff.append("-" + old_line)
+                        for new_line in chunk.new_lines:
+                            combined_diff.append("+" + new_line)
+
+        # If we didn't produce any diff (e.g., empty patch), fall back to raw patch content
+        if not combined_diff:
+            combined_diff = patch.splitlines()
+
+        # Compute a preview and truncation flag
+        preview_lines = combined_diff[:80] if combined_diff else ["No changes"]
+        preview = ''.join(preview_lines) if combined_diff and isinstance(combined_diff[0], str) and combined_diff[0].endswith('\n') else '\n'.join(preview_lines)
+
+        # Count added/removed lines for metadata (skip headers)
+        additions = sum(1 for l in combined_diff if isinstance(l, str) and l.startswith('+') and not l.startswith('+++'))
+        deletions = sum(1 for l in combined_diff if isinstance(l, str) and l.startswith('-') and not l.startswith('---'))
+
+        return {
+            "display_type": "diff",
+            "summary": summary,
+            "value": {
+                # Bubble Tea diff renderer expects a list of lines without newlines
+                "diff_lines": [ln[:-1] if ln.endswith('\n') else ln for ln in combined_diff],
+                "diff_text": patch,
+            },
+            "preview": preview,
+            "truncated": len(combined_diff) > 80,
+            "metadata": {
+                "operation": "apply_patch",
+                "file_count": file_count,
+                "additions": additions,
+                "deletions": deletions,
+            },
+        }
+    except Exception:
+        # Fallback: show raw patch text, still as a diff display so the UI reserves space
+        lines = patch.splitlines()
+        preview = '\n'.join(lines[:30]) if lines else "Empty patch"
+        return {
+            "display_type": "diff",
+            "summary": "Apply patch",
+            "value": {
+                "diff_lines": lines,
+                "diff_text": patch,
+            },
+            "preview": preview,
+            "truncated": len(lines) > 30,
+            "metadata": {
+                "operation": "apply_patch",
+                "file_count": 0,
+            },
+        }
+
+@rich_function_tool
+def apply_patch(
+    patch: str,
+) -> RichToolOutput:
+    """
+    Use the apply_patch tool to edit files. Your patch uses a custom format designed for easy AI generation.
+    
+    Args:
+        patch: The entire contents of the apply_patch command in the format below
+        
+    PATCH FORMAT - You create patches like this:
+    
+    *** Begin Patch
+    [ one or more file sections ]
+    *** End Patch
+    
+    Within that envelope, you can perform three types of file operations:
+    
+    1. CREATE A NEW FILE:
+    *** Add File: <path>
+    +<line 1 of content>
+    +<line 2 of content>
+    +<etc...>
+    
+    2. DELETE AN EXISTING FILE:
+    *** Delete File: <path>
+    
+    3. UPDATE AN EXISTING FILE:
+    *** Update File: <path>
+    *** Move to: <new_path>  (optional - use this to rename the file)
+    @@ <optional context header to help locate the change>
+    -<old line to remove>
+    -<another old line to remove>
+    +<new line to add>
+    +<another new line to add>
+     <context line that stays the same (space prefix)>
+    *** End of File  (optional - use when editing at end of file)
+    
+    IMPORTANT RULES:
+    - ALWAYS include '*** Begin Patch' and '*** End Patch' wrapper
+    - ALWAYS include a header (*** Add File / *** Delete File / *** Update File)
+    - For new files, EVERY line must start with '+' 
+    - For updates, use '-' for lines to remove, '+' for lines to add, ' ' (space) for context
+    - File paths should be relative, not absolute (use 'src/main.py' not '/home/user/src/main.py')
+    - Context lines help locate where to make changes - include 3 lines before and after changes
+    
+    CONTEXT HEADERS (@@ lines):
+    Use @@ headers to specify WHERE in the file to make changes:
+    - '@@ def function_name():' - make changes in this function
+    - '@@ class ClassName:' - make changes in this class
+    - '@@ # Section Header' - make changes near this comment
+    You can use multiple @@ headers to narrow down the location:
+    @@ class MyClass:
+    @@ def my_method():
+    
+    FUZZY MATCHING:
+    The tool uses fuzzy matching to find the code to replace:
+    - Exact match is tried first
+    - Then ignoring trailing whitespace
+    - Then ignoring all leading/trailing whitespace  
+    - Finally with Unicode normalization (smart quotes→ASCII, em-dash→hyphen, etc.)
+    This means minor formatting differences won't break your patches!
+    
+    COMPLETE EXAMPLE - Multiple operations in one patch:
+    *** Begin Patch
+    *** Add File: hello.txt
+    +Hello world
+    +This is a new file
+    *** Update File: src/app.py
+    *** Move to: src/main.py
+    @@ def greet():
+     print("Starting greeting")
+    -print("Hi")
+    +print("Hello, world!")
+     print("Greeting complete")
+    *** Delete File: obsolete.txt
+    *** End Patch
+    
+    TIPS FOR SUCCESS:
+    - Include enough context lines to uniquely identify where to make changes
+    - Use @@ headers when editing specific functions or classes
+    - The tool will try hard to match your patterns even with whitespace differences
+    - When creating files, remember the '+' prefix on EVERY line
+    - You can combine multiple file operations in a single patch
+    """
+    try:
+        # Parse the patch
+        hunks = parse_patch(patch)
+        
+        if not hunks:
+            llm_output = "No changes in patch"
+            ui_metadata = {
+                "value": "No changes in patch",
+                "display_type": "info",
+                "summary": "Empty patch",
+                "preview": "No changes to apply",
+                "truncated": False,
+                "metadata": {
+                    "operation": "apply_patch",
+                    "changes": 0
+                }
+            }
+            return RichToolOutput(llm_output, ui_metadata)
+        
+        # Apply the hunks
+        results = apply_hunks(hunks)
+        
+        # Format summary
+        summary_lines = []
+        if results['added']:
+            summary_lines.append(f"Added {len(results['added'])} files:")
+            for path in results['added']:
+                summary_lines.append(f"  A {path}")
+        
+        if results['modified']:
+            summary_lines.append(f"Modified {len(results['modified'])} files:")
+            for path in results['modified']:
+                summary_lines.append(f"  M {path}")
+        
+        if results['deleted']:
+            summary_lines.append(f"Deleted {len(results['deleted'])} files:")
+            for path in results['deleted']:
+                summary_lines.append(f"  D {path}")
+        
+        llm_output = "Patch applied successfully.\n" + '\n'.join(summary_lines)
+        
+        # Create UI metadata
+        total_changes = len(results['added']) + len(results['modified']) + len(results['deleted'])
+        
+        ui_metadata = {
+            "value": results,
+            "display_type": "patch_result",
+            "summary": f"Applied patch: {total_changes} file(s) changed",
+            "preview": '\n'.join(summary_lines[:20]),
+            "truncated": len(summary_lines) > 20,
+            "metadata": {
+                "operation": "apply_patch",
+                "added": len(results['added']),
+                "modified": len(results['modified']),
+                "deleted": len(results['deleted']),
+                "total_changes": total_changes
+            }
+        }
+        
+        return RichToolOutput(llm_output, ui_metadata)
+        
+    except Exception as e:
+        llm_output = f"Error applying patch: {str(e)}"
+        
+        ui_metadata = {
+            "value": f"Error applying patch: {str(e)}",
+            "display_type": "error",
+            "summary": "Patch application failed",
+            "preview": str(e),
+            "truncated": False,
+            "metadata": {
+                "error_type": "patch_error",
+                "error_message": str(e)
+            }
+        }
+        
+        return RichToolOutput(llm_output, ui_metadata)
