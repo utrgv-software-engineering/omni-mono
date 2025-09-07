@@ -212,7 +212,9 @@ def grep_files(pattern: str, path: Optional[str], include: Optional[str]) -> Ric
 
         # Build the glob pattern based on include or default recursive search
         base_dir = path or "."
-        search_pattern = os.path.join(base_dir, include if include is not None else "**")
+        # NOTE: When include is None we want to search ALL files recursively.
+        # Using "**" alone returns directories in Python's glob; we need "**/*" to include files.
+        search_pattern = os.path.join(base_dir, include if include is not None else "**/*")
 
         # Perform glob search directly to avoid relying on the decorated glob_files tool
         for candidate in glob.glob(search_pattern, recursive=True):
