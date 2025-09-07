@@ -417,9 +417,34 @@ func (m *CustomTextarea) Length() int {
 	return l + len(m.value) - 1
 }
 
-// LineCount returns the number of lines that are currently in the text input.
+// LineCount returns the number of logical lines (separated by newlines)
+// that are currently in the text input. Note this does not account for
+// soft-wrapped lines due to width constraints.
 func (m *CustomTextarea) LineCount() int {
 	return len(m.value)
+}
+
+// VisibleLineCount returns the number of on-screen lines needed to
+// render the current value given the current width, i.e. it accounts
+// for soft-wrapped lines. This is useful for auto-growing the
+// textarea height so that long lines that wrap are fully visible.
+func (m *CustomTextarea) VisibleLineCount() int {
+	if m.value == nil || len(m.value) == 0 {
+		return 1
+	}
+	visible := 0
+	for _, line := range m.value {
+		wrapped := wrap(line, m.width)
+		if len(wrapped) == 0 {
+			visible += 1
+		} else {
+			visible += len(wrapped)
+		}
+	}
+	if visible < 1 {
+		visible = 1
+	}
+	return visible
 }
 
 // Line returns the line position.

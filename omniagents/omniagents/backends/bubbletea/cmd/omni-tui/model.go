@@ -806,7 +806,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input, cmd = m.input.Update(msg)
 
 		// Smart auto-grow: always expand to fit content, with viewport constraints
-		lineCount := m.input.LineCount()
+		// Count visible (wrapped) lines so the textarea grows when a single long line wraps
+		lineCount := m.input.VisibleLineCount()
 
 		// Calculate max allowed height for textarea
 		// Allow it to take up to 50% of screen height or 20 lines, whichever is smaller
