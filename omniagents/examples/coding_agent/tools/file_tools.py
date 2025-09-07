@@ -1740,7 +1740,7 @@ def apply_patch(
     try:
         # Parse the patch
         hunks = parse_patch(patch)
-        
+
         if not hunks:
             llm_output = "No changes in patch"
             ui_metadata = {
@@ -1755,52 +1755,178 @@ def apply_patch(
                 }
             }
             return RichToolOutput(llm_output, ui_metadata)
-        
-        # Apply the hunks
+
+        # Before applying, compute a combined unified diff just like apply_patch_approval
+        # so we can show a helpful diff preview in the tool result as well.
+        def _simulate_update(original_text: str, upd: UpdateFile) -> str:
+            """Apply UpdateFile chunks to original_text and return the new content (no write)."""
+            lines = original_text.splitlines()
+            replacements: List[Tuple[int, int, List[str]]] = []
+            line_index = 0
+
+            for chunk in upd.chunks:
+                pattern = chunk.old_lines
+                found = seek_sequence(lines, pattern, line_index, chunk.is_end_of_file)
+
+                # Retry without trailing empty line if not found
+                if found is None and pattern and pattern[-1] == '':
+                    pattern = pattern[:-1]
+                    new_lines = chunk.new_lines
+                    if new_lines and new_lines[-1] == '':
+                        new_lines = new_lines[:-1]
+                    found = seek_sequence(lines, pattern, line_index, chunk.is_end_of_file)
+                else:
+                    new_lines = chunk.new_lines
+
+                if found is None:
+                    context_hint = f" (context: {', '.join(chunk.context_headers)})" if chunk.context_headers else ""
+                    raise ValueError(f"Failed to locate patch chunk in {upd.path}{context_hint}")
+
+                replacements.append((found, len(pattern), new_lines))
+                line_index = found + len(pattern)
+
+            # Apply replacements in reverse order
+            for start_idx, old_len, new_lines in reversed(replacements):
+                for _ in range(old_len):
+                    if start_idx < len(lines):
+                        del lines[start_idx]
+                for offset, new_line in enumerate(new_lines):
+                    lines.insert(start_idx + offset, new_line)
+
+            new_content = '\n'.join(lines)
+            if lines and not new_content.endswith('\n'):
+                new_content += '\n'
+            return new_content
+
+        # Operation counts for summary
+        adds = sum(1 for h in hunks if isinstance(h, AddFile))
+        deletes = sum(1 for h in hunks if isinstance(h, DeleteFile))
+        updates = sum(1 for h in hunks if isinstance(h, UpdateFile))
+
+        combined_diff: List[str] = []
+
+        for h in hunks:
+            if isinstance(h, AddFile):
+                new_lines = h.contents.splitlines(keepends=True)
+                file_diff = list(difflib.unified_diff(
+                    [],
+                    new_lines,
+                    fromfile="/dev/null",
+                    tofile=h.path,
+                    lineterm='',
+                    n=3,
+                ))
+                combined_diff.extend(file_diff)
+            elif isinstance(h, DeleteFile):
+                try:
+                    with open(h.path, 'r', encoding='utf-8', errors='replace') as f:
+                        old_text = f.read()
+                except Exception:
+                    old_text = ''
+                old_lines = old_text.splitlines(keepends=True)
+                file_diff = list(difflib.unified_diff(
+                    old_lines,
+                    [],
+                    fromfile=h.path,
+                    tofile="/dev/null",
+                    lineterm='',
+                    n=3,
+                ))
+                combined_diff.extend(file_diff)
+            elif isinstance(h, UpdateFile):
+                try:
+                    with open(h.path, 'r', encoding='utf-8', errors='replace') as f:
+                        original_text = f.read()
+                except Exception:
+                    original_text = ''
+
+                try:
+                    new_text = _simulate_update(original_text, h)
+                    fromfile = h.path
+                    tofile = h.move_path or h.path
+                    old_lines = original_text.splitlines(keepends=True)
+                    new_lines = new_text.splitlines(keepends=True)
+                    file_diff = list(difflib.unified_diff(
+                        old_lines,
+                        new_lines,
+                        fromfile=fromfile,
+                        tofile=tofile,
+                        lineterm='',
+                        n=3,
+                    ))
+                    combined_diff.extend(file_diff)
+                except Exception:
+                    combined_diff.append(f"--- {h.path}")
+                    combined_diff.append(f"+++ {h.move_path or h.path}")
+                    combined_diff.append(f"@@ Unable to compute exact diff for {h.path} @@")
+                    for chunk in h.chunks:
+                        for header in chunk.context_headers:
+                            combined_diff.append(f"@@ {header}")
+                        for old_line in chunk.old_lines:
+                            combined_diff.append("-" + old_line)
+                        for new_line in chunk.new_lines:
+                            combined_diff.append("+" + new_line)
+
+        if not combined_diff:
+            combined_diff = patch.splitlines()
+
+        preview_lines = combined_diff[:80] if combined_diff else ["No changes"]
+        preview = ''.join(preview_lines) if combined_diff and isinstance(combined_diff[0], str) and combined_diff[0].endswith('\n') else '\n'.join(preview_lines)
+
+        additions = sum(1 for l in combined_diff if isinstance(l, str) and l.startswith('+') and not l.startswith('+++'))
+        deletions = sum(1 for l in combined_diff if isinstance(l, str) and l.startswith('-') and not l.startswith('---'))
+
+        # Now apply the hunks to actually write the changes
         results = apply_hunks(hunks)
-        
-        # Format summary
+
+        # Build LLM-facing summary
         summary_lines = []
         if results['added']:
             summary_lines.append(f"Added {len(results['added'])} files:")
             for path in results['added']:
                 summary_lines.append(f"  A {path}")
-        
         if results['modified']:
             summary_lines.append(f"Modified {len(results['modified'])} files:")
             for path in results['modified']:
                 summary_lines.append(f"  M {path}")
-        
         if results['deleted']:
             summary_lines.append(f"Deleted {len(results['deleted'])} files:")
             for path in results['deleted']:
                 summary_lines.append(f"  D {path}")
-        
+
         llm_output = "Patch applied successfully.\n" + '\n'.join(summary_lines)
-        
-        # Create UI metadata
+
         total_changes = len(results['added']) + len(results['modified']) + len(results['deleted'])
-        
         ui_metadata = {
-            "value": results,
-            "display_type": "patch_result",
-            "summary": f"Applied patch: {total_changes} file(s) changed",
-            "preview": '\n'.join(summary_lines[:20]),
-            "truncated": len(summary_lines) > 20,
+            "display_type": "diff",
+            "summary": f"Applied patch ({adds} adds, {updates} updates, {deletes} deletes) — {total_changes} file(s) changed",
+            "value": {
+                # Bubble Tea diff renderer expects lines without trailing newlines
+                "diff_lines": [ln[:-1] if isinstance(ln, str) and ln.endswith('\n') else ln for ln in combined_diff],
+                "diff_text": patch,
+            },
+            "preview": preview,
+            "truncated": len(combined_diff) > 80,
             "metadata": {
                 "operation": "apply_patch",
-                "added": len(results['added']),
-                "modified": len(results['modified']),
-                "deleted": len(results['deleted']),
-                "total_changes": total_changes
-            }
+                "file_count": len(hunks),
+                "additions": additions,
+                "deletions": deletions,
+                "added_files": results.get('added', []),
+                "modified_files": results.get('modified', []),
+                "deleted_files": results.get('deleted', []),
+                "added_count": len(results.get('added', [])),
+                "modified_count": len(results.get('modified', [])),
+                "deleted_count": len(results.get('deleted', [])),
+                "total_changes": total_changes,
+            },
         }
-        
+
         return RichToolOutput(llm_output, ui_metadata)
-        
+
     except Exception as e:
         llm_output = f"Error applying patch: {str(e)}"
-        
+
         ui_metadata = {
             "value": f"Error applying patch: {str(e)}",
             "display_type": "error",
@@ -1812,5 +1938,5 @@ def apply_patch(
                 "error_message": str(e)
             }
         }
-        
+
         return RichToolOutput(llm_output, ui_metadata)
