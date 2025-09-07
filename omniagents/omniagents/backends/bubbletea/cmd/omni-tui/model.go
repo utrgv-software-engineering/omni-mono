@@ -1,10 +1,11 @@
 package main
 
 import (
-	"fmt"
-	"os"
-	"strings"
-	"time"
+    "fmt"
+    "os"
+    "strings"
+    "time"
+    "strconv"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
@@ -141,8 +142,11 @@ type Model struct {
 	pulseFrame int
 	pulseTimer int
 
-	// Double Ctrl+C tracking
-	firstCtrlCTime *time.Time // Track when first Ctrl+C was pressed
+    // Double Ctrl+C tracking
+    firstCtrlCTime *time.Time // Track when first Ctrl+C was pressed
+
+    // Usage tracking (updated via token events and run_end)
+    usageTotals *UsageDetails
 }
 
 // Message represents a chat message
@@ -585,12 +589,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		topSpacing := 2 // Always 2 lines of top spacing
 		m.viewport.Height = msg.Height - headerLines - footerLines - topSpacing
 
-		// Update textarea width
-		// Footer no longer has padding, so full width minus border (2 chars)
-		m.input.SetWidth(msg.Width - 2)
+        // Update textarea width
+        // Pass full width; textarea.SetWidth accounts for border frame size
+        m.input.SetWidth(msg.Width)
 
 		// Update help width
 		m.help.Width = msg.Width - 4
+
+		// If showing approval dialog, resize the approval list to match inner box width
+		if m.state == StateApprovalRequired {
+			listWidth := m.viewport.Width - 6 // borders (2) + padding (4)
+			if listWidth < 30 {
+				listWidth = 30
+			}
+			m.approvalList.SetSize(listWidth, m.approvalList.Height())
+		}
 
 	case ConnectedMsg:
 		if m.debugMode {
@@ -675,8 +688,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Arguments:  msg.Arguments,
 			Metadata:   msg.Metadata,
 		}
-		// Create approval list (pass metadata for potential future use)
-		m.approvalList = CreateApprovalList(msg.Tool, msg.Arguments)
+		// Create approval list sized to the inner width of the approval box
+		listWidth := m.viewport.Width - 6 // borders (2) + padding (4)
+		if listWidth < 30 {
+			listWidth = 30
+		}
+		m.approvalList = CreateApprovalList(msg.Tool, msg.Arguments, listWidth)
 		// Add approval message to the message list with metadata
 		m.messages = append(m.messages, Message{
 			Role: "approval_request",
@@ -695,6 +712,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.sessionID == "" && msg.SessionID != "" {
 			m.sessionID = msg.SessionID
 		}
+        // Reset usage totals at the start of a run
+        m.usageTotals = nil
 
 	case RunEndMsg:
 		// Only change state to Ready if not waiting for approval
@@ -702,8 +721,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = StateReady
 		}
 		m.currentRunID = ""
+        // Capture final usage totals if provided
+        if msg.Usage != nil {
+            totals := *msg.Usage
+            m.usageTotals = &totals
+        }
 		// Don't clear pendingTool or approvalList - let user handle approval
 		m.updateViewport()
+
+    case TokenUsageMsg:
+        // Update running totals so footer can reflect near-real-time usage
+        totals := msg.Totals
+        m.usageTotals = &totals
 
 	case RPCReadyMsg:
 		if m.debugMode {
@@ -932,7 +961,7 @@ func (m Model) View() string {
 	if middleHeight > 0 {
 		middleStyle := lipgloss.NewStyle().
 			Height(middleHeight).
-			Width(m.width)
+			Width(m.viewport.Width)
 		middle = middleStyle.Render(middle)
 	}
 
@@ -1295,8 +1324,8 @@ func (m Model) renderMessages() string {
 		if msg.Role == "approval_request" && m.state == StateApprovalRequired {
 			listPtr = &m.approvalList
 		}
-		// Pass terminal width for smart truncation
-		rendered := renderMessageWithWidth(msg, m.debugMode, m.pulseFrame, listPtr, m.width)
+		// Pass viewport content width for correct wrapping inside the messages area
+		rendered := renderMessageWithWidth(msg, m.debugMode, m.pulseFrame, listPtr, m.viewport.Width)
 		s.WriteString(rendered)
 	}
 
@@ -1311,21 +1340,95 @@ func (m Model) renderMessages() string {
 }
 
 func (m Model) renderInput() string {
-	var s strings.Builder
+    var s strings.Builder
 
-	// Input field (no padding - border aligns with message indicators)
-	s.WriteString(m.input.View())
-	s.WriteString("\n")
+    // Input field (no padding - border aligns with message indicators)
+    s.WriteString(m.input.View())
+    s.WriteString("\n")
 
-	// Help text (with padding to align with message content)
-	helpView := m.getContextualHelp()
-	if helpView != "" {
-		// Add 2 spaces to align help text with message content
-		s.WriteString("  " + helpView)
-		s.WriteString("\n") // Empty line after help text
-	}
+    // Footer line: help on the left, usage (tokens) on the right
+    usage := m.getUsageFooterText()
+    helpView := m.getContextualHelp()
+    if usage != "" || helpView != "" {
+        // We want the help text aligned with the message prompt (which sits
+        // after two leading spaces in the middle section). So add two leading
+        // spaces here. Do not add trailing spaces so the token text ends at
+        // the last column (as desired).
+        s.WriteString("  ") // left outer padding to align with messages
 
-	return s.String()
+        // Available content width after the 2-space left padding and a symmetric
+        // 2-column right margin so the token info is indented from the right edge
+        // the same amount the help is indented from the left.
+        contentWidth := m.width - 4
+        left := helpView                    // help already styled
+        right := Styles.Help.Render(usage)  // subtle token info on the right
+        // Compute visual widths (ignore ANSI sequences)
+        leftW := lipgloss.Width(left)
+        rightW := lipgloss.Width(right)
+
+        // Space between left text and right text
+        gap := contentWidth - leftW - rightW
+        if gap < 1 {
+            gap = 1
+        }
+
+        // Left content
+        s.WriteString(left)
+        // Gap between left and right content
+        s.WriteString(strings.Repeat(" ", gap))
+        // Right content
+        s.WriteString(right)
+        // No trailing padding; the 2-column right margin is implicit by reducing
+        // contentWidth above so the token ends two columns before the edge.
+        s.WriteString("\n")
+    }
+
+    return s.String()
+}
+
+// getUsageFooterText formats the usage summary for the footer
+func (m Model) getUsageFooterText() string {
+    if m.usageTotals == nil {
+        return ""
+    }
+    u := m.usageTotals
+    // Show only total tokens
+    return fmt.Sprintf("total %s", formatWithCommas(u.TotalTokens))
+}
+
+// formatWithCommas formats an integer with thousands separators (e.g., 12345 -> "12,345")
+func formatWithCommas(n int) string {
+    // Handle negative numbers
+    neg := n < 0
+    if neg {
+        n = -n
+    }
+
+    s := strconv.Itoa(n)
+    l := len(s)
+    if l <= 3 {
+        if neg {
+            return "-" + s
+        }
+        return s
+    }
+
+    // Determine length of the first group
+    first := l % 3
+    if first == 0 {
+        first = 3
+    }
+
+    var b strings.Builder
+    if neg {
+        b.WriteByte('-')
+    }
+    b.WriteString(s[:first])
+    for i := first; i < l; i += 3 {
+        b.WriteByte(',')
+        b.WriteString(s[i : i+3])
+    }
+    return b.String()
 }
 
 // getContextualHelp returns help text based on current state

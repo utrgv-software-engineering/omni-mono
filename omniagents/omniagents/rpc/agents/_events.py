@@ -118,7 +118,8 @@ def map_notification_to_event(method: str, payload: Dict[str, Any]):
         return new_item_event("tool_approval_request", payload)
     
     elif method == "token":
-        # Ignore token events for now
-        return None
+        # Wrap usage (token) update as a stream event
+        # Consumers can check event.name == "token_usage" and inspect event.item (payload dict)
+        return new_item_event("token_usage", payload)
     
     return None

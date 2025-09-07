@@ -60,7 +60,8 @@ func (d ApprovalDelegate) Render(w io.Writer, m list.Model, index int, listItem 
 }
 
 // CreateApprovalList creates a new list for tool approval
-func CreateApprovalList(toolName, toolArgs string) list.Model {
+// width should be the inner content width of the approval box (i.e., viewport width minus borders and padding)
+func CreateApprovalList(toolName, toolArgs string, width int) list.Model {
 	items := []list.Item{
 		ApprovalOption{
 			Title:       "1. Approve Once",
@@ -79,7 +80,14 @@ func CreateApprovalList(toolName, toolArgs string) list.Model {
 		},
 	}
 
-	const listWidth = 70  // Increased width to accommodate arguments
+	// Determine list width with sensible defaults and minimums
+	listWidth := width
+	if listWidth <= 0 {
+		listWidth = 70 // fallback default
+	}
+	if listWidth < 30 {
+		listWidth = 30 // prevent overly narrow rendering
+	}
 	
 	// Create list with enough height to show all items without pagination
 	delegate := ApprovalDelegate{}

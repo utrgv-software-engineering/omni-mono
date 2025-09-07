@@ -5,6 +5,7 @@ import asyncio
 from typing import AsyncGenerator, Optional, Any
 
 from agents import RunConfig, ItemHelpers
+from openai.types.responses import ResponseCompletedEvent
 from omniagents.core.session import append_message
 from omniagents.core.debug import Debug
 
@@ -110,7 +111,7 @@ def _stream_event_payload(item, run_id: str):
     return None, None
 
 
-async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: int = 20, context: Optional[Any] = None) -> None:  # noqa: D401
+async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: int = 20, context: Optional[Any] = None) -> dict | None:  # noqa: D401
     """Drive agent.run_streamed and forward events to *rpc_channel*.
 
     ``rpc_channel`` is the :class:`RpcMethodsBase` instance attached to the
@@ -136,6 +137,17 @@ async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: i
     # Track pending tool calls that need results
     pending_tool_calls = {}
     
+    # Track usage across turns
+    last_usage_totals = {
+        "requests": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "input_tokens_details": {"cached_tokens": 0},
+        "output_tokens_details": {"reasoning_tokens": 0},
+    }
+    turn_counter = 0
+
     try:
         # Use Runner to run the agent
         from agents import RunConfig
@@ -149,6 +161,46 @@ async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: i
         result = _Runner.run_streamed(agent, agent_input, context=context, max_turns=max_turns, run_config=run_config)
 
         async for event in result.stream_events():
+            # Handle raw response events to emit usage on turn completion
+            if event.type == "raw_response_event":
+                data = getattr(event, "data", None)
+                if isinstance(data, ResponseCompletedEvent) and data.response and data.response.usage:
+                    # Use the usage directly from OpenAI's response (already cumulative)
+                    # This bypasses the agents library's incorrect double-accumulation
+                    raw_usage = data.response.usage
+                    current_totals = {
+                        "requests": turn_counter + 1,  # Increment request count ourselves
+                        "input_tokens": raw_usage.input_tokens,
+                        "output_tokens": raw_usage.output_tokens,
+                        "total_tokens": raw_usage.total_tokens,
+                        "input_tokens_details": {"cached_tokens": getattr(raw_usage.input_tokens_details, "cached_tokens", 0) if raw_usage.input_tokens_details else 0},
+                        "output_tokens_details": {"reasoning_tokens": getattr(raw_usage.output_tokens_details, "reasoning_tokens", 0) if raw_usage.output_tokens_details else 0},
+                    }
+                    delta = {
+                        "requests": current_totals["requests"] - last_usage_totals["requests"],
+                        "input_tokens": current_totals["input_tokens"] - last_usage_totals["input_tokens"],
+                        "output_tokens": current_totals["output_tokens"] - last_usage_totals["output_tokens"],
+                        "total_tokens": current_totals["total_tokens"] - last_usage_totals["total_tokens"],
+                        "input_tokens_details": {
+                            "cached_tokens": current_totals["input_tokens_details"]["cached_tokens"] - last_usage_totals["input_tokens_details"]["cached_tokens"],
+                        },
+                        "output_tokens_details": {
+                            "reasoning_tokens": current_totals["output_tokens_details"]["reasoning_tokens"] - last_usage_totals["output_tokens_details"]["reasoning_tokens"],
+                        },
+                    }
+                    turn_counter += 1
+                    usage_payload = {
+                        "run_id": asyncio.current_task().get_name(),
+                        "turn": turn_counter,
+                        "delta": delta,
+                        "totals": current_totals,
+                        "response_id": getattr(data.response, "id", None),
+                    }
+                    await _broadcast(session, "token", usage_payload)
+                    last_usage_totals = current_totals
+                # Continue to next event after handling raw response
+                continue
+
             # Skip low-level / uninterested event types
             if event.type not in ("run_item_stream_event",):
                 continue
@@ -231,3 +283,6 @@ async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: i
         
         if Debug.enabled():
             print(f"[srv] ◀ end_run    session={session.id[:8]} hist={len(session.history)})")
+
+    # Return the last known aggregate usage totals for inclusion in run_end (if the caller wants it)
+    return last_usage_totals

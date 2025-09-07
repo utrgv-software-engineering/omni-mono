@@ -12,6 +12,7 @@ The Remote Agent Protocol is a JSON-RPC 2.0 based protocol for communicating wit
 - **Session Management**: List, archive, and manage conversation sessions
 - **Variables Management**: Initial variables sent once per session, server constructs and maintains typed context
 - **Rich Tool Output**: Tools can return metadata for enhanced UI rendering alongside LLM-intended text
+- **Usage Tracking**: Optional per-turn and aggregate token usage updates during and after runs
 
 ## Variables vs Context
 
@@ -246,10 +247,54 @@ The server sends notifications during agent runs:
   "jsonrpc": "2.0",
   "method": "run_end",
   "params": {
-    "run_id": "run-123"
+    "run_id": "run-123",
+    "end_reason": "completed",
+    "usage": {
+      "requests": 3,
+      "input_tokens": 1423,
+      "output_tokens": 812,
+      "total_tokens": 2235,
+      "input_tokens_details": {"cached_tokens": 120},
+      "output_tokens_details": {"reasoning_tokens": 64}
+    }
   }
 }
 ```
+
+### usage (token utilization)
+The server may stream usage updates at the end of each model turn. This allows clients to show costs and token consumption in near real time.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "token",
+  "params": {
+    "run_id": "run-123",
+    "turn": 2,
+    "response_id": "resp_abc123",
+    "delta": {
+      "requests": 1,
+      "input_tokens": 512,
+      "output_tokens": 210,
+      "total_tokens": 722,
+      "input_tokens_details": {"cached_tokens": 0},
+      "output_tokens_details": {"reasoning_tokens": 0}
+    },
+    "totals": {
+      "requests": 2,
+      "input_tokens": 970,
+      "output_tokens": 390,
+      "total_tokens": 1360,
+      "input_tokens_details": {"cached_tokens": 32},
+      "output_tokens_details": {"reasoning_tokens": 16}
+    }
+  }
+}
+```
+
+Notes:
+- The server emits a "token" notification after each model response completes. The "delta" object represents the usage for that single turn; "totals" is the aggregate since the start of the run.
+- The final aggregate usage is also included in the run_end event.
 
 ## Authentication
 

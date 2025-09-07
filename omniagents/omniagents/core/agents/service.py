@@ -216,6 +216,7 @@ class AgentService(RpcMethodsBase):
 
         async def _worker():
             end_reason = "error"  # Default in case of unexpected exception
+            final_usage: dict | None = None
             try:
                 # Determine runtime context with clear priority:
                 # 1. If client sent context, use it as-is
@@ -234,7 +235,14 @@ class AgentService(RpcMethodsBase):
                 else:
                     # No client data - use spec's default context
                     runtime_context = self.spec.context
-                await stream_agent(agent, prompt, sess, self.channel, max_turns=self.spec.max_turns, context=runtime_context)
+                final_usage = await stream_agent(
+                    agent,
+                    prompt,
+                    sess,
+                    self.channel,
+                    max_turns=self.spec.max_turns,
+                    context=runtime_context,
+                )
                 end_reason = "completed"
             except asyncio.CancelledError:
                 # Task was cancelled (e.g., via stop_run)
@@ -242,9 +250,13 @@ class AgentService(RpcMethodsBase):
                 raise  # Re-raise to properly mark task as cancelled
             finally:
                 # Inform client the run finished
-                await self.channel.async_call(
-                    "run_end", args={"run_id": asyncio.current_task().get_name(), "end_reason": end_reason}
-                )
+                payload = {
+                    "run_id": asyncio.current_task().get_name(),
+                    "end_reason": end_reason,
+                }
+                if final_usage is not None:
+                    payload["usage"] = final_usage
+                await self.channel.async_call("run_end", args=payload)
 
         task_name = f"run_{uuid.uuid4().hex}"
         _debug_rpc(
