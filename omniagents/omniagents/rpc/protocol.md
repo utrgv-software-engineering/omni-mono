@@ -13,6 +13,7 @@ The Remote Agent Protocol is a JSON-RPC 2.0 based protocol for communicating wit
 - **Variables Management**: Initial variables sent once per session, server constructs and maintains typed context
 - **Rich Tool Output**: Tools can return metadata for enhanced UI rendering alongside LLM-intended text
 - **Usage Tracking**: Optional per-turn and aggregate token usage updates during and after runs
+- **Model Info with Usage**: The current model metadata (e.g., model id, context window, truncation mode, max output tokens) is included with usage updates so clients always see the active model per turn
 
 ## Variables vs Context
 
@@ -112,6 +113,8 @@ Cancel an active agent run.
 ```json
 true
 ```
+
+Note: Model/capability metadata is provided inline with usage events (see below) to account for cases where a server may switch models mid-conversation or between resumptions.
 
 ### list_sessions()
 Get list of all conversation sessions with message previews.
@@ -249,6 +252,10 @@ The server sends notifications during agent runs:
   "params": {
     "run_id": "run-123",
     "end_reason": "completed",
+    "model": "gpt-4o-mini",
+    "context_window": 128000,
+    "max_output_tokens": 2048,
+    "truncation": "auto",
     "usage": {
       "requests": 3,
       "input_tokens": 1423,
@@ -272,6 +279,10 @@ The server may stream usage updates at the end of each model turn. This allows c
     "run_id": "run-123",
     "turn": 2,
     "response_id": "resp_abc123",
+    "model": "gpt-4o-mini",
+    "context_window": 128000,
+    "max_output_tokens": 2048,
+    "truncation": "auto",
     "delta": {
       "requests": 1,
       "input_tokens": 512,
@@ -294,7 +305,9 @@ The server may stream usage updates at the end of each model turn. This allows c
 
 Notes:
 - The server emits a "token" notification after each model response completes. The "delta" object represents the usage for that single turn; "totals" is the aggregate since the start of the run.
-- The final aggregate usage is also included in the run_end event.
+- Model metadata is included with each token event so clients always see the model used for that turn. A server may change models mid-conversation.
+- If present, "context_window" indicates the maximum input tokens the model can accept for that turn. Clients should consider reserving space for "max_output_tokens" when estimating whether the next call will fit.
+- The final aggregate usage and last-known model metadata are also included in the run_end event.
 
 ## Authentication
 

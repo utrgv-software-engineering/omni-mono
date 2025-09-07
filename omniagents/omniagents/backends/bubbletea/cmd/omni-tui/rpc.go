@@ -14,16 +14,16 @@ import (
 
 // RPCClient handles JSON-RPC communication with the Python server
 type RPCClient struct {
-	conn       *websocket.Conn
-	url        string
-	token      string
-	nextID     int32
-	pending    map[string]chan json.RawMessage
-	mu         sync.RWMutex
-	handlers   map[string]func(json.RawMessage)
-	connected  bool
-	closeChan  chan struct{}
-	onReady    func()  // Callback when receiveLoop is ready
+	conn      *websocket.Conn
+	url       string
+	token     string
+	nextID    int32
+	pending   map[string]chan json.RawMessage
+	mu        sync.RWMutex
+	handlers  map[string]func(json.RawMessage)
+	connected bool
+	closeChan chan struct{}
+	onReady   func() // Callback when receiveLoop is ready
 }
 
 // NewRPCClient creates a new RPC client
@@ -64,11 +64,11 @@ func (c *RPCClient) Connect() error {
 	// Connect to WebSocket with timeout
 	dialer := websocket.DefaultDialer
 	dialer.HandshakeTimeout = 10 * time.Second
-	
+
 	if debug {
 		fmt.Fprintf(os.Stderr, "[DEBUG] Starting WebSocket handshake...\n")
 	}
-	
+
 	conn, resp, err := dialer.Dial(u.String(), nil)
 	if err != nil {
 		if debug && resp != nil {
@@ -76,7 +76,7 @@ func (c *RPCClient) Connect() error {
 		}
 		return fmt.Errorf("failed to connect to %s: %w", u.String(), err)
 	}
-	
+
 	if debug {
 		fmt.Fprintf(os.Stderr, "[DEBUG] WebSocket connection established successfully\n")
 		if resp != nil {
@@ -89,7 +89,7 @@ func (c *RPCClient) Connect() error {
 
 	// Start receive loop
 	go c.receiveLoop()
-	
+
 	if debug {
 		fmt.Fprintf(os.Stderr, "[DEBUG] Receive loop started\n")
 	}
@@ -111,12 +111,12 @@ func (c *RPCClient) Close() error {
 func (c *RPCClient) receiveLoop() {
 	// Small delay to ensure goroutine is scheduled and ready
 	time.Sleep(10 * time.Millisecond)
-	
+
 	// Signal that the receive loop is ready
 	if c.onReady != nil {
 		c.onReady()
 	}
-	
+
 	for {
 		select {
 		case <-c.closeChan:
@@ -178,7 +178,7 @@ func (c *RPCClient) receiveLoop() {
 // call makes an RPC call and waits for the response
 func (c *RPCClient) call(method string, params interface{}) (json.RawMessage, error) {
 	debug := os.Getenv("OMNI_DEBUG") == "1"
-	
+
 	if !c.connected {
 		return nil, fmt.Errorf("not connected")
 	}
@@ -197,7 +197,7 @@ func (c *RPCClient) call(method string, params interface{}) (json.RawMessage, er
 	if err != nil {
 		return nil, err
 	}
-	
+
 	if debug {
 		fmt.Fprintf(os.Stderr, "[DEBUG] RPC call: sending request: %s\n", string(data))
 	}
@@ -218,7 +218,7 @@ func (c *RPCClient) call(method string, params interface{}) (json.RawMessage, er
 		c.mu.Unlock()
 		return nil, err
 	}
-	
+
 	if debug {
 		fmt.Fprintf(os.Stderr, "[DEBUG] RPC call: waiting for response on channel for id %s\n", idStr)
 	}
@@ -297,7 +297,7 @@ func (c *RPCClient) ListSessions() ([]Session, error) {
 	if debug {
 		fmt.Fprintf(os.Stderr, "[DEBUG] ListSessions: calling list_sessions RPC\n")
 	}
-	
+
 	result, err := c.call("list_sessions", nil)
 	if err != nil {
 		if debug {
@@ -354,12 +354,12 @@ func (m *SessionMessage) GetContentText() string {
 	if m == nil || m.Content == nil {
 		return ""
 	}
-	
+
 	// Handle string content
 	if str, ok := m.Content.(string); ok {
 		return str
 	}
-	
+
 	// Handle array content (OpenAI format)
 	if arr, ok := m.Content.([]interface{}); ok {
 		for _, item := range arr {
@@ -372,7 +372,7 @@ func (m *SessionMessage) GetContentText() string {
 			}
 		}
 	}
-	
+
 	return ""
 }
 

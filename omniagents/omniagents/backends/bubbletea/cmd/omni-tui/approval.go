@@ -49,10 +49,10 @@ func (d ApprovalDelegate) Render(w io.Writer, m list.Model, index int, listItem 
 
 	// Combine title and description on one line
 	str := fmt.Sprintf("%s - %s", i.Title, i.Description)
-	
+
 	if index == m.Index() {
 		// Selected item with arrow
-		fmt.Fprint(w, approvalSelectedItemStyle.Render("▶ " + str))
+		fmt.Fprint(w, approvalSelectedItemStyle.Render("▶ "+str))
 	} else {
 		// Unselected item with padding
 		fmt.Fprint(w, approvalItemStyle.Render(str))
@@ -69,7 +69,7 @@ func CreateApprovalList(toolName, toolArgs string, width int) list.Model {
 			Value:       "yes",
 		},
 		ApprovalOption{
-			Title:       "2. Always Approve", 
+			Title:       "2. Always Approve",
 			Description: "Allow this and future calls in this session",
 			Value:       "always",
 		},
@@ -88,33 +88,33 @@ func CreateApprovalList(toolName, toolArgs string, width int) list.Model {
 	if listWidth < 30 {
 		listWidth = 30 // prevent overly narrow rendering
 	}
-	
+
 	// Create list with enough height to show all items without pagination
 	delegate := ApprovalDelegate{}
 	itemHeight := delegate.Height()
 	spacing := delegate.Spacing()
 	totalItemsHeight := len(items)*itemHeight + (len(items)-1)*spacing
-	
+
 	// Add extra height for title and arguments display
 	// Title (1 line) + arguments (2-3 lines) + spacing (1 line) + items
 	listHeight := totalItemsHeight + 5
-	
+
 	l := list.New(items, delegate, listWidth, listHeight)
-	
+
 	// Set title to just the tool name
 	// Arguments will be rendered separately in renderApprovalRequest
 	title := fmt.Sprintf("Tool Approval: %s", toolName)
 	l.Title = title
 	l.Styles.Title = approvalTitleStyle
-	
+
 	// Disable features we don't need
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(false)
-	l.SetShowPagination(false)  // Explicitly disable pagination
-	l.SetShowHelp(false)  // Disable built-in help to use our custom help
-	
+	l.SetShowPagination(false) // Explicitly disable pagination
+	l.SetShowHelp(false)       // Disable built-in help to use our custom help
+
 	// Ensure we show all items
 	l.DisableQuitKeybindings()
-	
+
 	return l
 }

@@ -1,11 +1,11 @@
 package main
 
 import (
-    "fmt"
-    "os"
-    "strings"
-    "time"
-    "strconv"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
@@ -142,11 +142,15 @@ type Model struct {
 	pulseFrame int
 	pulseTimer int
 
-    // Double Ctrl+C tracking
-    firstCtrlCTime *time.Time // Track when first Ctrl+C was pressed
+	// Double Ctrl+C tracking
+	firstCtrlCTime *time.Time // Track when first Ctrl+C was pressed
 
-    // Usage tracking (updated via token events and run_end)
-    usageTotals *UsageDetails
+	// Usage tracking (updated via token events and run_end)
+	usageTotals *UsageDetails
+	// Current model info and last-turn delta input tokens
+	modelName         string
+	contextWindow     int
+	lastDeltaInputTok int
 }
 
 // Message represents a chat message
@@ -589,9 +593,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		topSpacing := 2 // Always 2 lines of top spacing
 		m.viewport.Height = msg.Height - headerLines - footerLines - topSpacing
 
-        // Update textarea width
-        // Pass full width; textarea.SetWidth accounts for border frame size
-        m.input.SetWidth(msg.Width)
+		// Update textarea width
+		// Pass full width; textarea.SetWidth accounts for border frame size
+		m.input.SetWidth(msg.Width)
 
 		// Update help width
 		m.help.Width = msg.Width - 4
@@ -712,8 +716,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.sessionID == "" && msg.SessionID != "" {
 			m.sessionID = msg.SessionID
 		}
-        // Reset usage totals at the start of a run
-        m.usageTotals = nil
+		// Reset usage totals at the start of a run
+		m.usageTotals = nil
 
 	case RunEndMsg:
 		// Only change state to Ready if not waiting for approval
@@ -721,18 +725,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = StateReady
 		}
 		m.currentRunID = ""
-        // Capture final usage totals if provided
-        if msg.Usage != nil {
-            totals := *msg.Usage
-            m.usageTotals = &totals
-        }
+		// Capture final usage totals if provided
+		if msg.Usage != nil {
+			totals := *msg.Usage
+			m.usageTotals = &totals
+		}
+		// Capture final model info if provided
+		if msg.Model != "" {
+			m.modelName = msg.Model
+		}
+		if msg.ContextWindow > 0 {
+			m.contextWindow = msg.ContextWindow
+		}
 		// Don't clear pendingTool or approvalList - let user handle approval
 		m.updateViewport()
 
-    case TokenUsageMsg:
-        // Update running totals so footer can reflect near-real-time usage
-        totals := msg.Totals
-        m.usageTotals = &totals
+	case TokenUsageMsg:
+		// Update running totals so footer can reflect near-real-time usage
+		totals := msg.Totals
+		m.usageTotals = &totals
+		// Update model and context window if provided
+		if msg.Model != "" {
+			m.modelName = msg.Model
+		}
+		if msg.ContextWindow > 0 {
+			m.contextWindow = msg.ContextWindow
+		}
+		// Track last turn's input tokens for context usage estimation
+		m.lastDeltaInputTok = msg.Delta.InputTokens
 
 	case RPCReadyMsg:
 		if m.debugMode {
@@ -1340,95 +1360,116 @@ func (m Model) renderMessages() string {
 }
 
 func (m Model) renderInput() string {
-    var s strings.Builder
+	var s strings.Builder
 
-    // Input field (no padding - border aligns with message indicators)
-    s.WriteString(m.input.View())
-    s.WriteString("\n")
+	// Input field (no padding - border aligns with message indicators)
+	s.WriteString(m.input.View())
+	s.WriteString("\n")
 
-    // Footer line: help on the left, usage (tokens) on the right
-    usage := m.getUsageFooterText()
-    helpView := m.getContextualHelp()
-    if usage != "" || helpView != "" {
-        // We want the help text aligned with the message prompt (which sits
-        // after two leading spaces in the middle section). So add two leading
-        // spaces here. Do not add trailing spaces so the token text ends at
-        // the last column (as desired).
-        s.WriteString("  ") // left outer padding to align with messages
+	// Footer line: help on the left, usage (context remaining) on the right
+	usage, pct, hasPct := m.getUsageFooterText()
+	helpView := m.getContextualHelp()
+	if usage != "" || helpView != "" {
+		// We want the help text aligned with the message prompt (which sits
+		// after two leading spaces in the middle section). So add two leading
+		// spaces here. Do not add trailing spaces so the token text ends at
+		// the last column (as desired).
+		s.WriteString("  ") // left outer padding to align with messages
 
-        // Available content width after the 2-space left padding and a symmetric
-        // 2-column right margin so the token info is indented from the right edge
-        // the same amount the help is indented from the left.
-        contentWidth := m.width - 4
-        left := helpView                    // help already styled
-        right := Styles.Help.Render(usage)  // subtle token info on the right
-        // Compute visual widths (ignore ANSI sequences)
-        leftW := lipgloss.Width(left)
-        rightW := lipgloss.Width(right)
+		// Available content width after the 2-space left padding and a symmetric
+		// 2-column right margin so the token info is indented from the right edge
+		// the same amount the help is indented from the left.
+		contentWidth := m.width - 4
+		left := helpView // help already styled
+		// Choose style based on remaining context percentage
+		rightStyle := Styles.Help
+		if hasPct {
+			if pct <= 10 {
+				rightStyle = Styles.Error
+			} else if pct <= 25 {
+				rightStyle = Styles.Warning
+			}
+		}
+		right := rightStyle.Render(usage)
+		// Compute visual widths (ignore ANSI sequences)
+		leftW := lipgloss.Width(left)
+		rightW := lipgloss.Width(right)
 
-        // Space between left text and right text
-        gap := contentWidth - leftW - rightW
-        if gap < 1 {
-            gap = 1
-        }
+		// Space between left text and right text
+		gap := contentWidth - leftW - rightW
+		if gap < 1 {
+			gap = 1
+		}
 
-        // Left content
-        s.WriteString(left)
-        // Gap between left and right content
-        s.WriteString(strings.Repeat(" ", gap))
-        // Right content
-        s.WriteString(right)
-        // No trailing padding; the 2-column right margin is implicit by reducing
-        // contentWidth above so the token ends two columns before the edge.
-        s.WriteString("\n")
-    }
+		// Left content
+		s.WriteString(left)
+		// Gap between left and right content
+		s.WriteString(strings.Repeat(" ", gap))
+		// Right content
+		s.WriteString(right)
+		// No trailing padding; the 2-column right margin is implicit by reducing
+		// contentWidth above so the token ends two columns before the edge.
+		s.WriteString("\n")
+	}
 
-    return s.String()
+	return s.String()
 }
 
 // getUsageFooterText formats the usage summary for the footer
-func (m Model) getUsageFooterText() string {
-    if m.usageTotals == nil {
-        return ""
-    }
-    u := m.usageTotals
-    // Show only total tokens
-    return fmt.Sprintf("total %s", formatWithCommas(u.TotalTokens))
+func (m Model) getUsageFooterText() (string, int, bool) {
+	// Prefer showing model + context remaining percentage if available
+	if m.modelName != "" && m.contextWindow > 0 && m.lastDeltaInputTok >= 0 {
+		remaining := m.contextWindow - m.lastDeltaInputTok
+		if remaining < 0 {
+			remaining = 0
+		}
+		pct := 0
+		if m.contextWindow > 0 {
+			pct = (remaining * 100) / m.contextWindow
+			if pct < 0 {
+				pct = 0
+			} else if pct > 100 {
+				pct = 100
+			}
+		}
+		return fmt.Sprintf("context remaining: %d%% • %s", pct, m.modelName), pct, true
+	}
+	return "", 0, false
 }
 
 // formatWithCommas formats an integer with thousands separators (e.g., 12345 -> "12,345")
 func formatWithCommas(n int) string {
-    // Handle negative numbers
-    neg := n < 0
-    if neg {
-        n = -n
-    }
+	// Handle negative numbers
+	neg := n < 0
+	if neg {
+		n = -n
+	}
 
-    s := strconv.Itoa(n)
-    l := len(s)
-    if l <= 3 {
-        if neg {
-            return "-" + s
-        }
-        return s
-    }
+	s := strconv.Itoa(n)
+	l := len(s)
+	if l <= 3 {
+		if neg {
+			return "-" + s
+		}
+		return s
+	}
 
-    // Determine length of the first group
-    first := l % 3
-    if first == 0 {
-        first = 3
-    }
+	// Determine length of the first group
+	first := l % 3
+	if first == 0 {
+		first = 3
+	}
 
-    var b strings.Builder
-    if neg {
-        b.WriteByte('-')
-    }
-    b.WriteString(s[:first])
-    for i := first; i < l; i += 3 {
-        b.WriteByte(',')
-        b.WriteString(s[i : i+3])
-    }
-    return b.String()
+	var b strings.Builder
+	if neg {
+		b.WriteByte('-')
+	}
+	b.WriteString(s[:first])
+	for i := first; i < l; i += 3 {
+		b.WriteByte(',')
+		b.WriteString(s[i : i+3])
+	}
+	return b.String()
 }
 
 // getContextualHelp returns help text based on current state

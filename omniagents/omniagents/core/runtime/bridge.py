@@ -111,7 +111,16 @@ def _stream_event_payload(item, run_id: str):
     return None, None
 
 
-async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: int = 20, context: Optional[Any] = None) -> dict | None:  # noqa: D401
+async def stream_agent(
+    agent,
+    prompt: str,
+    session,
+    rpc_channel,
+    *,
+    max_turns: int = 20,
+    context: Optional[Any] = None,
+    context_window: Optional[int] = None,
+) -> dict | None:  # noqa: D401
     """Drive agent.run_streamed and forward events to *rpc_channel*.
 
     ``rpc_channel`` is the :class:`RpcMethodsBase` instance attached to the
@@ -148,6 +157,14 @@ async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: i
     }
     turn_counter = 0
 
+    # Track latest model info seen during the run (can change across turns)
+    last_model_info = {
+        "model": getattr(agent, "model", None),
+        "context_window": context_window,
+        "max_output_tokens": getattr(getattr(agent, "model_settings", None), "max_tokens", None),
+        "truncation": getattr(getattr(agent, "model_settings", None), "truncation", None),
+    }
+
     try:
         # Use Runner to run the agent
         from agents import RunConfig
@@ -168,6 +185,10 @@ async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: i
                     # Use the usage directly from OpenAI's response (already cumulative)
                     # This bypasses the agents library's incorrect double-accumulation
                     raw_usage = data.response.usage
+                    # Try to capture the actual model used for this turn (if provided by provider)
+                    model_used = getattr(data.response, "model", None)
+                    if model_used:
+                        last_model_info["model"] = model_used
                     current_totals = {
                         "requests": turn_counter + 1,  # Increment request count ourselves
                         "input_tokens": raw_usage.input_tokens,
@@ -195,7 +216,16 @@ async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: i
                         "delta": delta,
                         "totals": current_totals,
                         "response_id": getattr(data.response, "id", None),
+                        # Optional model info so clients can adjust UI per-turn
+                        "model": last_model_info.get("model"),
+                        "context_window": last_model_info.get("context_window"),
+                        "max_output_tokens": last_model_info.get("max_output_tokens"),
+                        "truncation": last_model_info.get("truncation"),
                     }
+                    # Drop None values to avoid sending JSON null for optional fields
+                    for key in ["model", "context_window", "max_output_tokens", "truncation"]:
+                        if usage_payload.get(key) is None:
+                            usage_payload.pop(key, None)
                     await _broadcast(session, "token", usage_payload)
                     last_usage_totals = current_totals
                 # Continue to next event after handling raw response
@@ -284,5 +314,11 @@ async def stream_agent(agent, prompt: str, session, rpc_channel, *, max_turns: i
         if Debug.enabled():
             print(f"[srv] ◀ end_run    session={session.id[:8]} hist={len(session.history)})")
 
-    # Return the last known aggregate usage totals for inclusion in run_end (if the caller wants it)
-    return last_usage_totals
+    # Return final details for inclusion in run_end
+    return {
+        "usage": last_usage_totals,
+        "model": last_model_info.get("model"),
+        "context_window": last_model_info.get("context_window"),
+        "max_output_tokens": last_model_info.get("max_output_tokens"),
+        "truncation": last_model_info.get("truncation"),
+    }

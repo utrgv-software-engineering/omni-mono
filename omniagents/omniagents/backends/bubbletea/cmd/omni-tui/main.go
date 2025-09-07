@@ -51,7 +51,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "    %s --standalone --server ws://localhost:8000/ws --token mytoken\n", os.Args[0])
 		os.Exit(1)
 	}
-	
+
 	// If running in standalone mode, show connection info
 	if standalone {
 		fmt.Fprintf(os.Stderr, "Running in standalone mode\n")
@@ -72,7 +72,7 @@ func main() {
 		// No theme specified on command line, use preference
 		themeName = GetThemePreference()
 	}
-	
+
 	if err := LoadTheme(themeName); err != nil {
 		// Fall back to default theme if specified theme not found
 		if debug {
@@ -80,7 +80,7 @@ func main() {
 		}
 		LoadDefaultTheme()
 	}
-	
+
 	// Save theme preference if requested
 	if saveTheme && themeName != "" {
 		if err := SaveThemePreference(themeName); err != nil {
@@ -89,7 +89,7 @@ func main() {
 			}
 		}
 	}
-	
+
 	// Initialize styles from theme
 	initStyles()
 	initApprovalStyles()

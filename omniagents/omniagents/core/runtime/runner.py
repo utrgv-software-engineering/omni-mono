@@ -37,7 +37,8 @@ class Runner:
         context: Optional[Any] = None,
         variables: Optional[Dict[str, Any]] = None,
         build_context: Optional[Any] = None,
-        max_turns: int = 20
+        max_turns: int = 20,
+        context_window: Optional[int] = None,
     ) -> "Runner":
         """
         Create a Runner from an existing agents.Agent instance.
@@ -83,6 +84,7 @@ class Runner:
             build_agent=_builder,  # Always use custom builder
             available_tools=getattr(agent, "tools", []),
             model_name=getattr(agent, "model", None),
+            context_window=context_window,
             use_safe_agent=safe,
             safe_agent_options=SafeAgentOptions(
                 skip_approvals=skip_approvals,

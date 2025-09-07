@@ -114,7 +114,11 @@ if __name__ == "__main__":
             "scholar_search",
             "convert_to_markdown",
         ],
-        max_turns=100
+        max_turns=100,
+        # Context window (input tokens) for the configured model.
+        # Clients can use this to warn when approaching the limit.
+        # Adjust based on the actual model you use.
+        context_window=128000,
     )
 
     # Launch

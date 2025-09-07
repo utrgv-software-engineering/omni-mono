@@ -341,6 +341,18 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
     if not isinstance(output_type_strict, bool):
         print(f"Warning: 'output_type_strict' should be a boolean. Got {type(output_type_strict).__name__}. Using default True.")
         output_type_strict = True
+
+    # --- Context Window (optional, top-level) ---
+    context_window = config.get('context_window')
+    if context_window is not None:
+        try:
+            context_window = int(context_window)
+            if context_window <= 0:
+                print("Warning: 'context_window' should be a positive integer. Ignoring.")
+                context_window = None
+        except Exception:
+            print(f"Warning: 'context_window' should be an integer. Got {type(context_window).__name__}. Ignoring.")
+            context_window = None
     
     # --- Prompt Configuration ---
     prompt_config = config.get('prompt')  # Optional prompt configuration
@@ -708,65 +720,66 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
 
     # --- Construct AgentSpec ---
     spec = AgentSpec(
-        # Basic Info
-        name=agent_name,
-        header_title=header_title,
-        page_title=page_title,
-        welcome_text=welcome_text,
-        client_storage_prefix=storage_prefix,
+            # Basic Info
+            name=agent_name,
+            header_title=header_title,
+            page_title=page_title,
+            welcome_text=welcome_text,
+            client_storage_prefix=storage_prefix,
 
-        # Agent Config
-        get_agent_instructions=get_instructions_func,
-        build_agent=build_agent_func, # Defer to internal builder
-        available_tools=selected_tool_functions if not remote_ws_url else [],
-        model_name=model_name_from_config if not remote_ws_url else None,
-        max_turns=max_turns_cfg,
-        handoff_description=handoff_description,
-        reset_tool_choice=reset_tool_choice,
-        tool_use_behavior=tool_use_behavior,
-        model_settings=model_settings_config if model_settings_config else None,
-        mcp_config=mcp_config_from_yaml if mcp_config_from_yaml else None,
-        output_type=output_type,
-        output_type_strict=output_type_strict,
-        prompt=prompt,
+            # Agent Config
+            get_agent_instructions=get_instructions_func,
+            build_agent=build_agent_func, # Defer to internal builder
+            available_tools=selected_tool_functions if not remote_ws_url else [],
+            model_name=model_name_from_config if not remote_ws_url else None,
+            context_window=context_window,
+            max_turns=max_turns_cfg,
+            handoff_description=handoff_description,
+            reset_tool_choice=reset_tool_choice,
+            tool_use_behavior=tool_use_behavior,
+            model_settings=model_settings_config if model_settings_config else None,
+            mcp_config=mcp_config_from_yaml if mcp_config_from_yaml else None,
+            output_type=output_type,
+            output_type_strict=output_type_strict,
+            prompt=prompt,
         
-        # Handoffs
-        handoff_configs=handoff_configs_list,
+            # Handoffs
+            handoff_configs=handoff_configs_list,
         
-        # Guardrails
-        input_guardrails=input_guardrails_list,
-        output_guardrails=output_guardrails_list,
+            # Guardrails
+            input_guardrails=input_guardrails_list,
+            output_guardrails=output_guardrails_list,
 
-        # Agent Safety Config
-        use_safe_agent=use_safe,
-        safe_agent_options=safe_options,
+            # Agent Safety Config
+            use_safe_agent=use_safe,
+            safe_agent_options=safe_options,
         
-        # SDK Runner Context
-        context=context_config,
+            # SDK Runner Context
+            context=context_config,
         
-        # Tracing Config
-        tracing_config=tracing_config,
+            # Tracing Config
+            tracing_config=tracing_config,
 
-        # MCP Config
-        uses_mcp=uses_mcp,
-        mcp_url_setting_key=mcp_url_key,
-        mcp_token_setting_key=mcp_token_key,
-        show_mcp_status_indicator=show_mcp_indicator,
+            # MCP Config
+            uses_mcp=uses_mcp,
+            mcp_url_setting_key=mcp_url_key,
+            mcp_token_setting_key=mcp_token_key,
+            show_mcp_status_indicator=show_mcp_indicator,
 
-        # UI/UX Config
-        icon_map=processed_icon_map, # Pass the processed map
-        settings_fields=final_settings_fields,
-        page_title_suffix=page_title_suffix,
-        theme_color=theme_color,
-        layout=config.get('layout', 'classic'),
+            # UI/UX Config
+            icon_map=processed_icon_map, # Pass the processed map
+            settings_fields=final_settings_fields,
+            page_title_suffix=page_title_suffix,
+            theme_color=theme_color,
+            layout=config.get('layout', 'classic'),
 
-        # Remote agent metadata
-        remote_ws_url=remote_ws_url,
-        remote_auth_token_key=remote_token_env,
+            # Remote agent metadata
+            remote_ws_url=remote_ws_url,
+            remote_auth_token_key=remote_token_env,
 
-        # Optional Customizations (Not typically set via simple YAML)
-        header_controls_builder=None,
-        cleanup_handler=None,
+            # Optional Customizations (Not typically set via simple YAML)
+            header_controls_builder=None,
+            cleanup_handler=None,
     )
 
     return spec 

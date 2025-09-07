@@ -216,7 +216,7 @@ class AgentService(RpcMethodsBase):
 
         async def _worker():
             end_reason = "error"  # Default in case of unexpected exception
-            final_usage: dict | None = None
+            final_details: dict | None = None
             try:
                 # Determine runtime context with clear priority:
                 # 1. If client sent context, use it as-is
@@ -235,13 +235,14 @@ class AgentService(RpcMethodsBase):
                 else:
                     # No client data - use spec's default context
                     runtime_context = self.spec.context
-                final_usage = await stream_agent(
+                final_details = await stream_agent(
                     agent,
                     prompt,
                     sess,
                     self.channel,
                     max_turns=self.spec.max_turns,
                     context=runtime_context,
+                    context_window=getattr(self.spec, "context_window", None),
                 )
                 end_reason = "completed"
             except asyncio.CancelledError:
@@ -254,8 +255,19 @@ class AgentService(RpcMethodsBase):
                     "run_id": asyncio.current_task().get_name(),
                     "end_reason": end_reason,
                 }
-                if final_usage is not None:
-                    payload["usage"] = final_usage
+                if isinstance(final_details, dict):
+                    # Extract usage if present
+                    if "usage" in final_details:
+                        payload["usage"] = final_details["usage"]
+                    # Attach last-known model info for clients
+                    if final_details.get("model") is not None:
+                        payload["model"] = final_details.get("model")
+                    if final_details.get("context_window") is not None:
+                        payload["context_window"] = final_details.get("context_window")
+                    if final_details.get("max_output_tokens") is not None:
+                        payload["max_output_tokens"] = final_details.get("max_output_tokens")
+                    if final_details.get("truncation") is not None:
+                        payload["truncation"] = final_details.get("truncation")
                 await self.channel.async_call("run_end", args=payload)
 
         task_name = f"run_{uuid.uuid4().hex}"
@@ -330,3 +342,5 @@ class AgentService(RpcMethodsBase):
         """Archive *session_id* so clients can hide it."""
         _debug_rpc("archive_session", {"session_id": session_id})
         return sm.archive_session(session_id)
+
+    # (Removed) get_model_info: model metadata is now sent inline with usage events

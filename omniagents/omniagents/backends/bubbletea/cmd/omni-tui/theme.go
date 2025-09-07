@@ -18,9 +18,9 @@ type Theme struct {
 
 // ThemeColors defines all the colors used in the theme
 type ThemeColors struct {
-	Primary   PrimaryColors   `yaml:"primary"`
-	Semantic  SemanticColors  `yaml:"semantic"`
-	UI        UIColors        `yaml:"ui"`
+	Primary  PrimaryColors  `yaml:"primary"`
+	Semantic SemanticColors `yaml:"semantic"`
+	UI       UIColors       `yaml:"ui"`
 }
 
 // PrimaryColors are the base colors
@@ -48,11 +48,11 @@ type UIColors struct {
 	Cursor    string `yaml:"cursor"`
 	Header    string `yaml:"header"`
 	Help      string `yaml:"help"`
-	
+
 	// Gradient colors for ASCII art header
 	HeaderGradientStart string `yaml:"header_gradient_start"`
 	HeaderGradientEnd   string `yaml:"header_gradient_end"`
-	
+
 	// Additional UI elements
 	InputBorder      string `yaml:"input_border"`
 	InputText        string `yaml:"input_text"`
@@ -67,6 +67,7 @@ type UIColors struct {
 }
 
 // Embed built-in themes
+//
 //go:embed themes/*.yaml
 var builtinThemes embed.FS
 
@@ -84,7 +85,7 @@ type ThemeStyles struct {
 	Warning          lipgloss.Style
 	Info             lipgloss.Style
 	Debug            lipgloss.Style
-	
+
 	// UI styles
 	Border           lipgloss.Style
 	Selection        lipgloss.Style
@@ -127,12 +128,12 @@ func LoadTheme(name string) error {
 	if err != nil {
 		return fmt.Errorf("failed to read built-in theme %s: %w", name, err)
 	}
-	
+
 	var theme Theme
 	if err := yaml.Unmarshal(data, &theme); err != nil {
 		return fmt.Errorf("failed to parse theme %s: %w", name, err)
 	}
-	
+
 	CurrentTheme = &theme
 	compileStyles()
 	return nil
@@ -154,10 +155,10 @@ func compileStyles() {
 
 	Styles.AssistantMessage = lipgloss.NewStyle().
 		Foreground(lipgloss.Color(c.Semantic.AssistantMessage))
-	
+
 	// Debug: print what color we're using
 	if os.Getenv("OMNI_DEBUG") == "1" {
-		fmt.Fprintf(os.Stderr, "[DEBUG] Theme colors loaded - Assistant: %s, User: %s\n", 
+		fmt.Fprintf(os.Stderr, "[DEBUG] Theme colors loaded - Assistant: %s, User: %s\n",
 			c.Semantic.AssistantMessage, c.Semantic.UserMessage)
 	}
 
@@ -195,7 +196,7 @@ func compileStyles() {
 
 	Styles.Help = lipgloss.NewStyle().
 		Foreground(lipgloss.Color(c.UI.Help))
-	
+
 	// Additional UI styles with fallbacks
 	if c.UI.InputBorder != "" {
 		Styles.InputBorder = lipgloss.NewStyle().
@@ -203,7 +204,7 @@ func compileStyles() {
 	} else {
 		Styles.InputBorder = Styles.Border
 	}
-	
+
 	if c.UI.InputText != "" {
 		Styles.InputText = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(c.UI.InputText))
@@ -211,28 +212,28 @@ func compileStyles() {
 		Styles.InputText = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(c.Primary.Foreground))
 	}
-	
+
 	if c.UI.InputPrompt != "" {
 		Styles.InputPrompt = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(c.UI.InputPrompt))
 	} else {
-		Styles.InputPrompt = Styles.Info  // Fallback to info color
+		Styles.InputPrompt = Styles.Info // Fallback to info color
 	}
-	
+
 	if c.UI.MessagePrompt != "" {
 		Styles.MessagePrompt = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(c.UI.MessagePrompt))
 	} else {
-		Styles.MessagePrompt = Styles.Info  // Fallback to info color
+		Styles.MessagePrompt = Styles.Info // Fallback to info color
 	}
-	
+
 	if c.UI.Spinner != "" {
 		Styles.Spinner = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(c.UI.Spinner))
 	} else {
 		Styles.Spinner = Styles.Info
 	}
-	
+
 	if c.UI.SessionTitle != "" {
 		Styles.SessionTitle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(c.UI.SessionTitle)).
@@ -240,14 +241,14 @@ func compileStyles() {
 	} else {
 		Styles.SessionTitle = Styles.Header
 	}
-	
+
 	if c.UI.SessionSubtitle != "" {
 		Styles.SessionSubtitle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(c.UI.SessionSubtitle))
 	} else {
 		Styles.SessionSubtitle = Styles.Help
 	}
-	
+
 	if c.UI.ApprovalTitle != "" {
 		Styles.ApprovalTitle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(c.UI.ApprovalTitle)).
@@ -255,14 +256,14 @@ func compileStyles() {
 	} else {
 		Styles.ApprovalTitle = Styles.Warning
 	}
-	
+
 	if c.UI.ApprovalOption != "" {
 		Styles.ApprovalOption = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(c.UI.ApprovalOption))
 	} else {
 		Styles.ApprovalOption = Styles.Help
 	}
-	
+
 	if c.UI.ApprovalSelected != "" {
 		Styles.ApprovalSelected = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(c.UI.ApprovalSelected)).
@@ -308,7 +309,7 @@ func GetThemePreference() string {
 	// Check config file
 	homeDir, _ := os.UserHomeDir()
 	configPath := filepath.Join(homeDir, ".config", "omniagents", "config.yaml")
-	
+
 	if data, err := os.ReadFile(configPath); err == nil {
 		var config struct {
 			Theme string `yaml:"theme"`

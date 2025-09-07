@@ -78,6 +78,9 @@ class AgentSpec:
     build_agent: Optional[Callable[[Dict[str, Any], Optional[MCPServerSse], 'AgentApp'], Awaitable[AgentLike]]]
     available_tools: List[Callable] = field(default_factory=list)
     model_name: Optional[str] = None # Model name used by default builder
+    # Optional maximum input context window (tokens). This is model capability metadata, not a
+    # runtime call parameter. If provided, clients can warn when approaching limits.
+    context_window: Optional[int] = None
     max_turns: int = 20  # Maximum turns per run (overrides Runner default)
     handoff_description: Optional[str] = None  # Description when used as a handoff
     reset_tool_choice: bool = True  # Reset tool choice after tool call
