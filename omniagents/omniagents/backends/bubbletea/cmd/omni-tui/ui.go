@@ -46,22 +46,23 @@ func initStyles() {
 
 // RichMetadata represents the rich tool output metadata
 type RichMetadata struct {
-	DisplayType string                 `json:"display_type"`
-	Summary     string                 `json:"summary"`
-	Preview     string                 `json:"preview,omitempty"`
-	Truncated   bool                   `json:"truncated"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"` // Contains all tool-specific metadata
-	Chart       map[string]interface{} `json:"chart,omitempty"`
-	Table       map[string]interface{} `json:"table,omitempty"`
+    DisplayType string                 `json:"display_type"`
+    Summary     string                 `json:"summary"`
+    Preview     string                 `json:"preview,omitempty"`
+    Truncated   bool                   `json:"truncated"`
+    Metadata    map[string]interface{} `json:"metadata,omitempty"` // Contains all tool-specific metadata
+    Chart       map[string]interface{} `json:"chart,omitempty"`
+    Table       map[string]interface{} `json:"table,omitempty"`
+    Value       map[string]interface{} `json:"value,omitempty"` // Raw value payload (e.g., diff_lines)
 }
 
 // parseRichMetadata converts metadata map to typed struct
 func parseRichMetadata(metadata map[string]interface{}) *RichMetadata {
-	if metadata == nil {
-		return nil
-	}
+    if metadata == nil {
+        return nil
+    }
 
-	rich := &RichMetadata{}
+    rich := &RichMetadata{}
 
 	if v, ok := metadata["display_type"].(string); ok {
 		rich.DisplayType = v
@@ -81,11 +82,16 @@ func parseRichMetadata(metadata map[string]interface{}) *RichMetadata {
 	if v, ok := metadata["chart"].(map[string]interface{}); ok {
 		rich.Chart = v
 	}
-	if v, ok := metadata["table"].(map[string]interface{}); ok {
-		rich.Table = v
-	}
+    if v, ok := metadata["table"].(map[string]interface{}); ok {
+        rich.Table = v
+    }
 
-	return rich
+    // Include raw value payload used by some renderers (e.g., diff)
+    if v, ok := metadata["value"].(map[string]interface{}); ok {
+        rich.Value = v
+    }
+
+    return rich
 }
 
 // formatRichPreview formats preview content based on display type
@@ -499,19 +505,61 @@ func renderMessageWithWidth(msg Message, debugMode bool, pulseFrame int, approva
 
 // renderUserMessage renders a user message
 func renderUserMessage(msg Message) string {
-	// Use accent color for the prompt indicator
-	prefix := Styles.MessagePrompt.Render("> ")
-	content := msg.Content
+    // Use accent color for the prompt indicator
+    prefix := Styles.MessagePrompt.Render("> ")
+    content := msg.Content
 
-	// Wrap long lines
-	lines := wrapText(content, 80)
-	result := prefix + userStyle.Render(lines[0]) + "\n"
-	for i := 1; i < len(lines); i++ {
-		result += "  " + userStyle.Render(lines[i]) + "\n"
-	}
+    // Preserve explicit newlines by splitting first, then wrapping each line
+    rawLines := strings.Split(content, "\n")
+    var result strings.Builder
+    firstOutLine := true
 
-	// Add spacing after user message
-	return result + "\n"
+    for _, raw := range rawLines {
+        // Preserve blank lines
+        if raw == "" {
+            if firstOutLine {
+                result.WriteString(prefix)
+                firstOutLine = false
+            } else {
+                result.WriteString("  ")
+            }
+            result.WriteString(userStyle.Render(""))
+            result.WriteString("\n")
+            continue
+        }
+
+        // Wrap each logical line independently to keep paragraph breaks
+        wrapped := wrapText(raw, 80)
+        if len(wrapped) == 0 {
+            // Shouldn't happen, but keep a blank line
+            if firstOutLine {
+                result.WriteString(prefix)
+                firstOutLine = false
+            } else {
+                result.WriteString("  ")
+            }
+            result.WriteString(userStyle.Render(""))
+            result.WriteString("\n")
+            continue
+        }
+
+        for i, line := range wrapped {
+            if firstOutLine {
+                result.WriteString(prefix)
+                firstOutLine = false
+            } else {
+                result.WriteString("  ")
+            }
+            result.WriteString(userStyle.Render(line))
+            result.WriteString("\n")
+            // Subsequent wrapped parts of the same raw line will also be indented by two spaces
+            _ = i // explicit no-op; retained for clarity
+        }
+    }
+
+    // Add spacing after user message
+    result.WriteString("\n")
+    return result.String()
 }
 
 // renderAssistantMessage renders an assistant message with markdown support
@@ -1972,27 +2020,30 @@ func renderFileWriteApprovalWithWidth(msg Message, approvalList list.Model, cont
 
 // Width-aware rich preview formatter
 func formatRichPreviewWithWidth(rich *RichMetadata, termWidth int) string {
-	var result strings.Builder
-	previewLines := strings.Split(rich.Preview, "\n")
-	maxPreviewLines := 10
+    var result strings.Builder
+    previewLines := strings.Split(rich.Preview, "\n")
+    maxPreviewLines := 10
 
-	// Choose preview style based on display type
-	var previewStyle lipgloss.Style
-	switch rich.DisplayType {
-	case "error":
-		// Error output in red
-		previewStyle = lipgloss.NewStyle().
-			Foreground(Styles.Error.GetForeground())
-	case "search_results":
-		// Search results need special handling
-		return formatSearchResults(rich)
-	case "directory_listing":
-		// Directory listing with file type indicators
-		return formatDirectoryListing(rich)
-	default:
-		// All other types use the default style
-		previewStyle = toolResultStyle
-	}
+    // Choose preview style based on display type
+    var previewStyle lipgloss.Style
+    switch rich.DisplayType {
+    case "error":
+        // Error output in red
+        previewStyle = lipgloss.NewStyle().
+            Foreground(Styles.Error.GetForeground())
+    case "diff":
+        // Special diff rendering uses value.diff_lines if available
+        return renderDiffToolPreviewWithWidth(rich, termWidth)
+    case "search_results":
+        // Search results need special handling
+        return formatSearchResults(rich)
+    case "directory_listing":
+        // Directory listing with file type indicators
+        return formatDirectoryListing(rich)
+    default:
+        // All other types use the default style
+        previewStyle = toolResultStyle
+    }
 
 	// Calculate available content width from terminal width (indent is 5 spaces)
 	available := termWidth
@@ -2029,7 +2080,7 @@ func formatRichPreviewWithWidth(rich *RichMetadata, termWidth int) string {
 
 // Width-aware rich tool result renderer
 func renderRichToolResultWithWidth(rich *RichMetadata, plainOutput string, termWidth int) string {
-	var result strings.Builder
+    var result strings.Builder
 
 	icon, summaryStyle := getDisplayTypeStyle(rich.DisplayType)
 
@@ -2048,14 +2099,20 @@ func renderRichToolResultWithWidth(rich *RichMetadata, plainOutput string, termW
 			}
 		}
 	}
-	result.WriteString(summaryStyle.Render(summary))
-	result.WriteString("\n")
+    result.WriteString(summaryStyle.Render(summary))
+    result.WriteString("\n")
 
-	if rich.Preview != "" {
-		result.WriteString(formatRichPreviewWithWidth(rich, termWidth))
-	} else if plainOutput != "" {
-		lines := strings.Split(plainOutput, "\n")
-		for i, line := range lines {
+    // Special-case rich diff rendering for tool results
+    if rich.DisplayType == "diff" {
+        result.WriteString(renderDiffToolPreviewWithWidth(rich, termWidth))
+        return result.String()
+    }
+
+    if rich.Preview != "" {
+        result.WriteString(formatRichPreviewWithWidth(rich, termWidth))
+    } else if plainOutput != "" {
+        lines := strings.Split(plainOutput, "\n")
+        for i, line := range lines {
 			if i >= 5 {
 				if len(lines) > 5 {
 					truncStyle := lipgloss.NewStyle().
@@ -2083,6 +2140,141 @@ func renderRichToolResultWithWidth(rich *RichMetadata, plainOutput string, termW
 	}
 
 	return result.String()
+}
+
+// renderDiffToolPreviewWithWidth renders a unified diff contained in rich.Value["diff_lines"]
+// within the tool result area, sized to the available terminal width
+func renderDiffToolPreviewWithWidth(rich *RichMetadata, termWidth int) string {
+    // Styles for diff lines
+    additionStyle := Styles.Info  // additions
+    deletionStyle := Styles.Error // deletions
+    contextStyle := Styles.Help   // context and line numbers
+
+    // Determine available content width for lines (indent is 5 spaces "     ")
+    available := termWidth
+    if available <= 0 {
+        available = 80
+    }
+    contentWidth := available - 5
+    if contentWidth < 10 {
+        contentWidth = 10
+    }
+
+    var b strings.Builder
+
+    // Extract diff lines from value payload
+    var diffLines []string
+    if rich != nil && rich.Value != nil {
+        if raw, ok := rich.Value["diff_lines"].([]interface{}); ok {
+            for _, v := range raw {
+                if s, ok := v.(string); ok {
+                    // Ensure we don't carry trailing newlines since we manage them ourselves
+                    diffLines = append(diffLines, strings.TrimSuffix(s, "\n"))
+                }
+            }
+        } else if rawStrs, ok := rich.Value["diff_lines"].([]string); ok {
+            for _, s := range rawStrs {
+                diffLines = append(diffLines, strings.TrimSuffix(s, "\n"))
+            }
+        }
+    }
+
+    if len(diffLines) == 0 {
+        // Fallback to preview text if value payload isn't available
+        if rich.Preview != "" {
+            return formatRichPreviewWithWidth(rich, termWidth)
+        }
+        return ""
+    }
+
+    // Track line numbers for both old and new files
+    oldLine := 0
+    newLine := 0
+    inHunk := false
+
+    // Iterate and render diff lines
+    for _, lineStr := range diffLines {
+        // Skip file header lines
+        if strings.HasPrefix(lineStr, "+++") || strings.HasPrefix(lineStr, "---") {
+            continue
+        }
+
+        if strings.HasPrefix(lineStr, "@@") {
+            // Parse hunk header to reset line numbers
+            if matches := regexp.MustCompile(`@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@`).FindStringSubmatch(lineStr); len(matches) > 0 {
+                oldLine, _ = strconv.Atoi(matches[1])
+                newLine, _ = strconv.Atoi(matches[2])
+                inHunk = true
+                // Add an empty spacer line between hunks for readability
+                b.WriteString(contextStyle.Render("     " + lineStr))
+                b.WriteString("\n")
+            }
+            continue
+        }
+
+        if !inHunk {
+            // Before first hunk header, just print context lines indented
+            wrapped := wrapLineHard(lineStr, contentWidth)
+            for i, part := range wrapped {
+                if i == 0 {
+                    b.WriteString(contextStyle.Render("     " + part))
+                } else {
+                    b.WriteString(contextStyle.Render("     " + part))
+                }
+                b.WriteString("\n")
+            }
+            continue
+        }
+
+        // Prepare line number gutter width (4 digits + space)
+        // Compose per-line rendering with wrapping
+        renderWrapped := func(prefixStyled string, lineNumStr string, content string, style lipgloss.Style) {
+            // available content per line considering number gutter and +/- indicator
+            gutterWidth := 5 // e.g., "  42 "
+            indicatorWidth := 2
+            maxLine := contentWidth - gutterWidth - indicatorWidth
+            if maxLine < 10 {
+                maxLine = 10
+            }
+            parts := wrapLineHard(content, maxLine)
+            for idx, part := range parts {
+                if idx == 0 {
+                    b.WriteString(contextStyle.Render("     "))
+                    b.WriteString(contextStyle.Render(lineNumStr))
+                    b.WriteString(prefixStyled)
+                    b.WriteString(style.Render(part))
+                } else {
+                    b.WriteString(contextStyle.Render("     "))
+                    b.WriteString(contextStyle.Render(strings.Repeat(" ", len(lineNumStr))))
+                    b.WriteString(style.Render(strings.Repeat(" ", indicatorWidth)))
+                    b.WriteString(style.Render(part))
+                }
+                b.WriteString("\n")
+            }
+        }
+
+        if strings.HasPrefix(lineStr, "+") && !strings.HasPrefix(lineStr, "+++") {
+            // Addition: show new line number
+            ln := fmt.Sprintf("%4d ", newLine)
+            content := strings.TrimPrefix(lineStr, "+")
+            renderWrapped(additionStyle.Render("+ "), ln, content, additionStyle)
+            newLine++
+        } else if strings.HasPrefix(lineStr, "-") && !strings.HasPrefix(lineStr, "---") {
+            // Deletion: show old line number
+            ln := fmt.Sprintf("%4d ", oldLine)
+            content := strings.TrimPrefix(lineStr, "-")
+            renderWrapped(deletionStyle.Render("- "), ln, content, deletionStyle)
+            oldLine++
+        } else {
+            // Context line: advance both counters
+            ln := fmt.Sprintf("%4d ", newLine)
+            renderWrapped(contextStyle.Render("  "), ln, lineStr, contextStyle)
+            oldLine++
+            newLine++
+        }
+    }
+
+    return b.String()
 }
 
 // Width-aware tool result renderer used by callers that know the viewport width
