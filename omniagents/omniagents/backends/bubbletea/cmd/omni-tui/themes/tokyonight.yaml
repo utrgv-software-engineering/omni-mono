@@ -27,6 +27,10 @@ colors:
     header: '#7aa2f7'            # Headers match user color for consistency
     help: '#565f89'              # Muted help text
     
+    # Header gradient for ASCII art
+    header_gradient_start: '#bb9af7'  # Vibrant purple - start of gradient
+    header_gradient_end: '#7aa2f7'    # Vibrant blue - end of gradient
+    
     # Input elements
     input_border: '#3b4261'      # Match border color
     input_text: '#c0caf5'        # Slightly brighter for active input

@@ -49,6 +49,10 @@ type UIColors struct {
 	Header    string `yaml:"header"`
 	Help      string `yaml:"help"`
 	
+	// Gradient colors for ASCII art header
+	HeaderGradientStart string `yaml:"header_gradient_start"`
+	HeaderGradientEnd   string `yaml:"header_gradient_end"`
+	
 	// Additional UI elements
 	InputBorder      string `yaml:"input_border"`
 	InputText        string `yaml:"input_text"`

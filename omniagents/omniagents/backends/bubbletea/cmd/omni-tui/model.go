@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"math"
 	"os"
 	"strings"
 	"time"
@@ -12,7 +11,6 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/paginator"
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -104,7 +102,7 @@ type Model struct {
 	currentRunID string
 
 	// UI components
-	input        textinput.Model
+	input        CustomTextarea
 	viewport     viewport.Model
 	spinner      spinner.Model
 	paginator    paginator.Model
@@ -172,15 +170,42 @@ type ToolCallInfo struct {
 
 // NewModel creates a new application model
 func NewModel(client *RPCClient, agentName string, welcomeText string, safeMode bool, sessionID string, resumeMode bool) Model {
-	// Initialize text input
-	ti := textinput.New()
-	ti.Placeholder = "Type your message..."
-	ti.PlaceholderStyle = Styles.Help
-	ti.Prompt = "> "
-	ti.PromptStyle = Styles.InputPrompt  // Use green accent for input prompt
-	ti.Focus()
-	ti.CharLimit = 2000
-	ti.Width = 80
+	// Initialize custom textarea
+	ta := NewCustomTextarea()
+	ta.Placeholder = "Type your message..."
+	ta.Focus()
+	ta.CharLimit = 0  // No limit on characters
+	ta.SetWidth(80)  // Initial width
+	ta.SetHeight(1)  // Start with 1 line visible
+	// MaxHeight will be set dynamically based on available space
+	ta.ShowLineNumbers = false
+	
+	// Use SetPromptFunc to only show prompt on first line
+	// The textarea viewport will keep line 0 as the first visible line
+	ta.SetPromptFunc(3, func(lineIdx int) string {
+		if lineIdx == 0 {
+			return " > "
+		}
+		return "   "  // Same width as prompt for alignment
+	})
+	
+	// Set styles for focused state
+	ta.FocusedStyle.Base = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(Styles.InputBorder.GetForeground())
+	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()  // No background for cursor line
+	ta.FocusedStyle.Placeholder = Styles.Help.Copy().UnsetBackground()
+	ta.FocusedStyle.Prompt = Styles.InputPrompt.Copy().UnsetBackground()
+	ta.FocusedStyle.Text = Styles.InputText.Copy().UnsetBackground()
+	
+	// Set styles for blurred state (same as focused for now)
+	ta.BlurredStyle = ta.FocusedStyle
+	
+	// Customize key bindings to use Enter for send and Alt+Enter for newline
+	ta.KeyMap.InsertNewline = key.NewBinding(
+		key.WithKeys("alt+enter"),
+		key.WithHelp("alt+enter", "new line"),
+	)
 
 	// Initialize viewport
 	vp := viewport.New(80, 20)
@@ -210,7 +235,7 @@ func NewModel(client *RPCClient, agentName string, welcomeText string, safeMode 
 		agentName:   agentName,
 		welcomeText: welcomeText,
 		useSafeMode: safeMode,
-		input:       ti,
+		input:       ta,
 		viewport:    vp,
 		spinner:     s,
 		paginator:   p,
@@ -228,10 +253,10 @@ func NewModel(client *RPCClient, agentName string, welcomeText string, safeMode 
 func (m Model) Init() tea.Cmd {
 	// Connect to server and set up event handlers
 	return tea.Batch(
-		textinput.Blink,
+		Blink,
 		m.spinner.Tick,
 		m.connect(),
-		m.listenForMessages(),
+		// Don't start listening until after connection is established
 		m.tickPulse(),
 	)
 }
@@ -245,6 +270,8 @@ func (m Model) tickPulse() tea.Cmd {
 
 // PulseTickMsg is sent when the pulse animation should update
 type PulseTickMsg struct{}
+
+// max function is now in textarea.go
 
 // connect establishes connection to the RPC server
 func (m Model) connect() tea.Cmd {
@@ -286,20 +313,43 @@ func (m Model) connect() tea.Cmd {
 	}
 }
 
+// ChannelMsg wraps messages from the RPC channel
+type ChannelMsg struct {
+	Msg tea.Msg
+}
+
 // listenForMessages listens for messages from the RPC client
 func (m Model) listenForMessages() tea.Cmd {
 	return func() tea.Msg {
 		if m.msgChan == nil {
 			return nil
 		}
+		// Simply block on the channel - this is fine in bubbletea v1.x
+		// The tea.Cmd is run in a goroutine by the framework
 		msg := <-m.msgChan
-		return msg
+		if m.debugMode {
+			fmt.Fprintf(os.Stderr, "[DEBUG] listenForMessages: received message: %T\n", msg)
+		}
+		// Wrap the message so we know it came from the channel
+		return ChannelMsg{Msg: msg}
 	}
 }
 
 // Update handles messages and updates the model
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.debugMode {
+		fmt.Fprintf(os.Stderr, "[DEBUG] Update called with message type: %T\n", msg)
+	}
 	var cmds []tea.Cmd
+	var textareaAlreadyUpdated bool
+
+	// Handle wrapped channel messages
+	if channelMsg, ok := msg.(ChannelMsg); ok {
+		// Unwrap the actual message
+		msg = channelMsg.Msg
+		// Re-schedule listening for the next message
+		cmds = append(cmds, m.listenForMessages())
+	}
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -335,8 +385,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						headerLines = 7
 					}
 				}
-				footerLines := 5  // Back to input footer size
-				m.viewport.Height = m.height - headerLines - footerLines
+				footerLines := m.input.Height() + 3  // Textarea height + help + spacing
+				topSpacing := 2  // Always 2 lines of top spacing
+				m.viewport.Height = m.height - headerLines - footerLines - topSpacing
 				m.updateViewport()
 				
 				// Send denial response to server AND clear screen to force full redraw
@@ -389,12 +440,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// In other states, ESC does nothing (no longer quits)
 
 		case tea.KeyEnter:
-			if m.state == StateApprovalRequired {
+			// Check if Alt is pressed for newline insertion
+			if m.state == StateReady {
+				if msg.Alt {
+					// Alt+Enter: let textarea handle it for newline
+					var cmd tea.Cmd
+					m.input, cmd = m.input.Update(msg)
+					cmds = append(cmds, cmd)
+					textareaAlreadyUpdated = true
+					return m, tea.Batch(cmds...)
+				} else {
+					// Regular Enter: send message
+					return m.sendMessage()
+				}
+			} else if m.state == StateApprovalRequired {
 				// Handle approval list selection
 				return m.handleApprovalListChoice()
-			} else if m.state == StateReady {
-				// Send message
-				return m.sendMessage()
 			} else if m.state == StateSessionList {
 				// Select session
 				return m.selectSession()
@@ -487,19 +548,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				headerLines = 7  // Add lines for session display
 			}
 		}
-		footerLines := 5  // Input area + help (3 lines input + 2 lines help)
+		// Calculate footer lines based on textarea height
+		footerLines := m.input.Height() + 3  // Textarea height + help (2 lines) + spacing (1 line)
 		if m.state == StateApprovalRequired {
 			footerLines = 3  // Just help text when approval is in the message list
 		}
-		m.viewport.Height = msg.Height - headerLines - footerLines
+		topSpacing := 2  // Always 2 lines of top spacing
+		m.viewport.Height = msg.Height - headerLines - footerLines - topSpacing
 
-		// Update text input width
-		m.input.Width = msg.Width - 4
+		// Update textarea width
+		// Footer no longer has padding, so full width minus border (2 chars)
+		m.input.SetWidth(msg.Width - 2)
 
 		// Update help width
 		m.help.Width = msg.Width - 4
 
 	case ConnectedMsg:
+		if m.debugMode {
+			fmt.Fprintf(os.Stderr, "[DEBUG] Received ConnectedMsg, changing state from %v to StateReady\n", m.state)
+		}
+		// Start listening for messages now that we're connected
+		cmds = append(cmds, m.listenForMessages())
+		
 		// Check if we need to resume a session or list sessions
 		if m.sessionID != "" {
 			m.state = StateReady
@@ -507,7 +577,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateViewport()
 		} else if m.resumeMode {
 			// Only list sessions if --resume flag was passed
-			return m.listSessions()
+			newModel, cmd := m.listSessions()
+			return newModel, tea.Batch(append(cmds, cmd)...)
 		} else {
 			// Start with a new session
 			m.state = StateReady
@@ -664,20 +735,91 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.tickPulse())
 	}
 
-	// Update text input (unless in approval mode)
-	if m.state != StateApprovalRequired {
+	// Update text input (unless in approval mode or already updated)
+	if m.state != StateApprovalRequired && !textareaAlreadyUpdated {
 		var cmd tea.Cmd
+		oldInputHeight := m.input.Height()
 		m.input, cmd = m.input.Update(msg)
+		
+		// Smart auto-grow: always expand to fit content, with viewport constraints
+		lineCount := m.input.LineCount()
+		
+		// Calculate max allowed height for textarea
+		// Allow it to take up to 50% of screen height or 20 lines, whichever is smaller
+		maxAllowedLines := m.height / 2
+		if maxAllowedLines > 20 {
+			maxAllowedLines = 20
+		}
+		// But ensure we leave at least 5 lines for the viewport
+		minViewportLines := 5
+		headerLines := 0
+		if len(m.messages) == 0 {
+			headerLines = 5
+			if m.sessionID != "" {
+				headerLines = 7
+			}
+		}
+		// Maximum textarea height = total height - header - min viewport - help (3 lines) - top spacing (2)
+		maxFromViewport := m.height - headerLines - minViewportLines - 3 - 2
+		
+		// Use the smaller of the two limits
+		if maxFromViewport < maxAllowedLines {
+			maxAllowedLines = maxFromViewport
+		}
+		
+		// Ensure maxAllowedLines is at least 1
+		if maxAllowedLines < 1 {
+			maxAllowedLines = 1
+		}
+		
+		// Set MaxHeight on the textarea so it knows to enable scrolling
+		m.input.MaxHeight = maxAllowedLines
+		
+		// Set the height to either the line count or the maximum allowed
+		if lineCount > maxAllowedLines {
+			m.input.SetHeight(maxAllowedLines)
+		} else {
+			m.input.SetHeight(lineCount)
+		}
+		
+		// If textarea height changed, recalculate viewport height
+		if m.input.Height() != oldInputHeight {
+			// Check if we're at the bottom before resizing
+			wasAtBottom := m.viewport.AtBottom()
+			
+			headerLines := 0
+			if len(m.messages) == 0 {
+				headerLines = 5
+				if m.sessionID != "" {
+					headerLines = 7
+				}
+			}
+			footerLines := m.input.Height() + 3  // Textarea height + help + spacing
+			topSpacing := 2  // Always 2 lines of top spacing
+			newViewportHeight := m.height - headerLines - footerLines - topSpacing
+			
+			// Ensure minimum viewport height of 5 lines
+			minViewportHeight := 5
+			if newViewportHeight < minViewportHeight {
+				newViewportHeight = minViewportHeight
+			}
+			
+			m.viewport.Height = newViewportHeight
+			
+			// If we were at the bottom, stay at the bottom
+			// This will naturally push content up when needed
+			if wasAtBottom {
+				m.viewport.GotoBottom()
+			}
+		}
+		
 		cmds = append(cmds, cmd)
-	} else {
+	} else if m.state == StateApprovalRequired {
 		// Update approval list when in approval mode
 		var cmd tea.Cmd
 		m.approvalList, cmd = m.approvalList.Update(msg)
 		cmds = append(cmds, cmd)
 	}
-
-	// Continue listening for messages
-	cmds = append(cmds, m.listenForMessages())
 
 	return m, tea.Batch(cmds...)
 }
@@ -712,7 +854,8 @@ func (m Model) View() string {
 	}
 	
 	// Calculate available height for the middle section
-	availableHeight := m.height - 1  // -1 for top spacing
+	topSpacing := 2  // Always 2 lines of top spacing
+	availableHeight := m.height - topSpacing
 	headerHeight := 0
 	if header != "" {
 		headerHeight = lipgloss.Height(header) + 1 // +1 for the newline after header
@@ -734,8 +877,8 @@ func (m Model) View() string {
 	// Build the final layout
 	var content strings.Builder
 	
-	// Add top spacing (1 line)
-	content.WriteString("\n")
+	// Add top spacing - always 2 lines for consistent spacing
+	content.WriteString("\n\n")
 	
 	if header != "" {
 		content.WriteString(paddingStyle.Render(header))
@@ -743,7 +886,7 @@ func (m Model) View() string {
 	}
 	content.WriteString(paddingStyle.Render(middle))
 	content.WriteString("\n")
-	content.WriteString(paddingStyle.Render(footer))
+	content.WriteString(footer)  // No padding for footer - border aligns with messages
 	
 	return content.String()
 }
@@ -790,22 +933,30 @@ func (m Model) applyHorizontalGradient(text string) string {
 	lines := strings.Split(text, "\n")
 	var result strings.Builder
 	
-	// Create gradient colors using theme colors
-	endHex := "#bb9af7" // default fallback (header color)
+	// Get gradient colors from theme
+	startHex := "#bb9af7" // default fallback start color (purple)
+	endHex := "#f7768e"   // default fallback end color (pink/red)
 	
-	if CurrentTheme != nil && CurrentTheme.Colors.UI.Header != "" {
-		endHex = CurrentTheme.Colors.UI.Header
+	if CurrentTheme != nil {
+		// Use theme-defined gradient colors if available
+		if CurrentTheme.Colors.UI.HeaderGradientStart != "" {
+			startHex = CurrentTheme.Colors.UI.HeaderGradientStart
+		} else if CurrentTheme.Colors.UI.Header != "" {
+			// No gradient - use same color for both start and end
+			startHex = CurrentTheme.Colors.UI.Header
+		}
+		
+		if CurrentTheme.Colors.UI.HeaderGradientEnd != "" {
+			endHex = CurrentTheme.Colors.UI.HeaderGradientEnd
+		} else if CurrentTheme.Colors.UI.Header != "" {
+			// No gradient - use same color for both start and end
+			endHex = CurrentTheme.Colors.UI.Header
+		}
 	}
 	
-	// Parse the end color and create a brighter/shifted version for start
+	// Parse the colors
+	startColor, _ := colorful.Hex(startHex)
 	endColor, _ := colorful.Hex(endHex)
-	h, s, l := endColor.Hsl()
-	
-	// Shift hue by 30 degrees and increase lightness for gradient start
-	startColor := colorful.Hsl(h+30, s, math.Min(l+0.2, 0.9))
-	
-	// Swap them so we go from bright to theme color
-	startColor, endColor = endColor, startColor
 	
 	for lineIdx, line := range lines {
 		runes := []rune(line)
@@ -862,14 +1013,54 @@ func (m Model) createSimpleASCII(text string) []string {
 			line1 += "   "
 			line2 += "   "
 			line3 += "   "
+		case '0':
+			line1 += "█▀█ "
+			line2 += "█ █ "
+			line3 += "▀▀▀ "
+		case '1':
+			line1 += "▄█ "
+			line2 += " █ "
+			line3 += " ▀ "
+		case '2':
+			line1 += "▀▀█ "
+			line2 += "█▀▀ "
+			line3 += "▀▀▀ "
+		case '3':
+			line1 += "▀▀█ "
+			line2 += "▀▀█ "
+			line3 += "▀▀▀ "
+		case '4':
+			line1 += "█ █ "
+			line2 += "▀▀█ "
+			line3 += "  ▀ "
+		case '5':
+			line1 += "█▀▀ "
+			line2 += "▀▀█ "
+			line3 += "▀▀▀ "
+		case '6':
+			line1 += "█   "
+			line2 += "█▀█ "
+			line3 += "▀▀▀ "
+		case '7':
+			line1 += "▀▀█ "
+			line2 += " █▀ "
+			line3 += " ▀  "
+		case '8':
+			line1 += "█▀█ "
+			line2 += "█▀█ "
+			line3 += "▀▀▀ "
+		case '9':
+			line1 += "█▀█ "
+			line2 += "▀▀█ "
+			line3 += "▀▀▀ "
 		case 'A':
-			line1 += "▄▀█ "
+			line1 += "█▀█ "
 			line2 += "█▀█ "
 			line3 += "▀ ▀ "
 		case 'B':
-			line1 += "█▄▄ "
-			line2 += "█▄█ "
-			line3 += "▀▀▀ "
+			line1 += "█▀▄ "
+			line2 += "█▀▄ "
+			line3 += "▀▀  "
 		case 'C':
 			line1 += "█▀▀ "
 			line2 += "█   "
@@ -877,10 +1068,10 @@ func (m Model) createSimpleASCII(text string) []string {
 		case 'D':
 			line1 += "█▀▄ "
 			line2 += "█ █ "
-			line3 += "▀▀▀ "
+			line3 += "▀▀  "
 		case 'E':
 			line1 += "█▀▀ "
-			line2 += "█▀▄ "
+			line2 += "█▀▀ "
 			line3 += "▀▀▀ "
 		case 'F':
 			line1 += "█▀▀ "
@@ -901,10 +1092,10 @@ func (m Model) createSimpleASCII(text string) []string {
 		case 'J':
 			line1 += "  █ "
 			line2 += "▄ █ "
-			line3 += "▀▀  "
+			line3 += "▀▀▀ "
 		case 'K':
-			line1 += "█▄▀ "
-			line2 += "█ █ "
+			line1 += "█ █ "
+			line2 += "█▀▄ "
 			line3 += "▀ ▀ "
 		case 'L':
 			line1 += "█   "
@@ -928,8 +1119,8 @@ func (m Model) createSimpleASCII(text string) []string {
 			line3 += "▀   "
 		case 'Q':
 			line1 += "█▀█ "
-			line2 += "█▄█ "
-			line3 += " ▀▀ "
+			line2 += "█ █ "
+			line3 += "▀▀█ "
 		case 'R':
 			line1 += "█▀█ "
 			line2 += "██▄ "
@@ -948,63 +1139,23 @@ func (m Model) createSimpleASCII(text string) []string {
 			line3 += "▀▀▀ "
 		case 'V':
 			line1 += "█ █ "
-			line2 += "▀▄▀ "
+			line2 += "█ █ "
 			line3 += " ▀  "
 		case 'W':
 			line1 += "█ █ █ "
-			line2 += "█▄▀▄█ "
-			line3 += "▀   ▀ "
+			line2 += "█ █ █ "
+			line3 += "▀▀▀▀▀ "
 		case 'X':
-			line1 += "▀▄▀ "
-			line2 += "█ █ "
+			line1 += "█ █ "
+			line2 += "▄▀▄ "
 			line3 += "▀ ▀ "
 		case 'Y':
-			line1 += "█▄█ "
-			line2 += " █  "
+			line1 += "█ █ "
+			line2 += "▀█▀ "
 			line3 += " ▀  "
 		case 'Z':
 			line1 += "▀▀█ "
 			line2 += "▄▀  "
-			line3 += "▀▀▀ "
-		case '0':
-			line1 += "█▀█ "
-			line2 += "█▄█ "
-			line3 += "▀▀▀ "
-		case '1':
-			line1 += "▄█ "
-			line2 += " █ "
-			line3 += " ▀ "
-		case '2':
-			line1 += "▀▀█ "
-			line2 += "▄▀  "
-			line3 += "▀▀▀ "
-		case '3':
-			line1 += "▀▀█ "
-			line2 += "▄▄█ "
-			line3 += "▀▀▀ "
-		case '4':
-			line1 += "█ █ "
-			line2 += "▀▀█ "
-			line3 += "  ▀ "
-		case '5':
-			line1 += "█▀▀ "
-			line2 += "▀▀█ "
-			line3 += "▀▀▀ "
-		case '6':
-			line1 += "█▄▄ "
-			line2 += "█▄█ "
-			line3 += "▀▀▀ "
-		case '7':
-			line1 += "▀▀█ "
-			line2 += " ▄▀ "
-			line3 += " ▀  "
-		case '8':
-			line1 += "█▀█ "
-			line2 += "█▄█ "
-			line3 += "▀▀▀ "
-		case '9':
-			line1 += "█▀█ "
-			line2 += "▀▀█ "
 			line3 += "▀▀▀ "
 		default:
 			// For any other character, use the character itself
@@ -1097,15 +1248,16 @@ func (m Model) renderMessages() string {
 func (m Model) renderInput() string {
 	var s strings.Builder
 	
-	// Input field
+	// Input field (no padding - border aligns with message indicators)
 	s.WriteString(m.input.View())
 	s.WriteString("\n")
 	
-	// Help text
+	// Help text (with padding to align with message content)
 	helpView := m.getContextualHelp()
 	if helpView != "" {
 		s.WriteString("\n")
-		s.WriteString(helpView)
+		// Add 2 spaces to align help text with message content
+		s.WriteString("  " + helpView)
 	}
 	
 	return s.String()
@@ -1122,6 +1274,10 @@ func (m Model) getContextualHelp() string {
 			key.NewBinding(
 				key.WithKeys("enter"),
 				key.WithHelp("enter", "send"),
+			),
+			key.NewBinding(
+				key.WithKeys("alt+enter"),
+				key.WithHelp("alt+enter", "new line"),
 			),
 			key.NewBinding(
 				key.WithKeys("ctrl+c"),
@@ -1292,8 +1448,9 @@ func (m Model) sendMessage() (Model, tea.Cmd) {
 
 	// If this is the first message, recalculate viewport height since header will disappear
 	if len(m.messages) == 1 {
-		footerLines := 5  // Input area + help
-		m.viewport.Height = m.height - footerLines
+		footerLines := m.input.Height() + 3  // Textarea height + help + spacing
+		// No header anymore, but still 2 lines of top spacing
+		m.viewport.Height = m.height - 2 - footerLines
 	}
 
 	// Update state
@@ -1373,8 +1530,9 @@ func (m Model) handleApprovalListChoice() (Model, tea.Cmd) {
 			headerLines = 7
 		}
 	}
-	footerLines := 5  // Back to input footer size
-	m.viewport.Height = m.height - headerLines - footerLines
+	footerLines := m.input.Height() + 3  // Textarea height + help + spacing
+	topSpacing := 2  // Always 2 lines of top spacing
+	m.viewport.Height = m.height - headerLines - footerLines - topSpacing
 	m.updateViewport()
 
 	// Send approval response AND clear screen to force full redraw
