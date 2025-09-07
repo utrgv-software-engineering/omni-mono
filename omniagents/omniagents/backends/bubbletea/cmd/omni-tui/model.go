@@ -145,12 +145,15 @@ type Model struct {
 	// Double Ctrl+C tracking
 	firstCtrlCTime *time.Time // Track when first Ctrl+C was pressed
 
-	// Usage tracking (updated via token events and run_end)
-	usageTotals *UsageDetails
-	// Current model info and last-turn delta input tokens
-	modelName         string
-	contextWindow     int
-	lastDeltaInputTok int
+    // Usage tracking (updated via token events and run_end)
+    usageTotals *UsageDetails
+    // Current model info and last-turn delta input tokens
+    modelName         string
+    contextWindow     int
+    lastDeltaInputTok int
+    // Totals from last turn/run for stable context remaining calc
+    lastTotalsInputTok int
+    maxOutputTokens    int
 }
 
 // Message represents a chat message
@@ -1417,24 +1420,23 @@ func (m Model) renderInput() string {
 
 // getUsageFooterText formats the usage summary for the footer
 func (m Model) getUsageFooterText() (string, int, bool) {
-	// Prefer showing model + context remaining percentage if available
-	if m.modelName != "" && m.contextWindow > 0 && m.lastDeltaInputTok >= 0 {
-		remaining := m.contextWindow - m.lastDeltaInputTok
-		if remaining < 0 {
-			remaining = 0
-		}
-		pct := 0
-		if m.contextWindow > 0 {
-			pct = (remaining * 100) / m.contextWindow
-			if pct < 0 {
-				pct = 0
-			} else if pct > 100 {
-				pct = 100
-			}
-		}
-		return fmt.Sprintf("context remaining: %d%% • %s", pct, m.modelName), pct, true
-	}
-	return "", 0, false
+    // Use totals.total_tokens from the last completed turn. That entire
+    // amount becomes the next run's input size (prior input + prior output).
+    if m.modelName != "" && m.contextWindow > 0 && m.usageTotals != nil {
+        used := m.usageTotals.TotalTokens
+        remaining := m.contextWindow - used
+        if remaining < 0 {
+            remaining = 0
+        }
+        pct := (remaining * 100) / m.contextWindow
+        if pct < 0 {
+            pct = 0
+        } else if pct > 100 {
+            pct = 100
+        }
+        return fmt.Sprintf("context remaining: %d%% • %s", pct, m.modelName), pct, true
+    }
+    return "", 0, false
 }
 
 // formatWithCommas formats an integer with thousands separators (e.g., 12345 -> "12,345")

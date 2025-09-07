@@ -1,14 +1,14 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"math"
-	"path/filepath"
-	"regexp"
-	"strconv"
-	"strings"
+    "bytes"
+    "encoding/json"
+    "fmt"
+    "math"
+    "path/filepath"
+    "regexp"
+    "strconv"
+    "strings"
 
 	"github.com/alecthomas/chroma/quick"
 	"github.com/charmbracelet/bubbles/list"
@@ -20,6 +20,56 @@ import (
 
 // Glamour renderer for markdown (lazy initialized)
 var glamourRenderer *glamour.TermRenderer
+
+// Precompiled regex for ANSI escape sequences (CSI and OSC)
+var (
+    // CSI: ESC [ ... command
+    reANSI = regexp.MustCompile(`\x1B\[[0-?]*[ -/]*[@-~]`)
+    // OSC: ESC ] ... BEL or ST (ESC \\)
+    reOSC  = regexp.MustCompile(`\x1B\][^\x1B\x07]*(\x07|\x1B\\)`)
+)
+
+// stripANSI removes common ANSI escape sequences from a string
+func stripANSI(s string) string {
+    if s == "" {
+        return s
+    }
+    s = reOSC.ReplaceAllString(s, "")
+    s = reANSI.ReplaceAllString(s, "")
+    return s
+}
+
+// sanitizeForTerminal replaces control characters (except newline and tab)
+// with visible hexadecimal escapes like \x00 to prevent terminal glitches
+func sanitizeForTerminal(s string) string {
+    if s == "" {
+        return s
+    }
+    var b strings.Builder
+    // Heuristic grow to reduce allocations
+    b.Grow(len(s) + 16)
+    for _, r := range s {
+        switch r {
+        case '\n', '\t':
+            b.WriteRune(r)
+        default:
+            if r < 0x20 || r == 0x7f { // control chars
+                fmt.Fprintf(&b, "\\x%02X", r)
+            } else {
+                b.WriteRune(r)
+            }
+        }
+    }
+    return b.String()
+}
+
+// safeText applies ANSI stripping then control-char sanitization
+func safeText(s string) string {
+    if s == "" {
+        return s
+    }
+    return sanitizeForTerminal(stripANSI(s))
+}
 
 // Legacy style definitions - these will be replaced by theme styles
 // but kept for backward compatibility during transition
@@ -96,9 +146,11 @@ func parseRichMetadata(metadata map[string]interface{}) *RichMetadata {
 
 // formatRichPreview formats preview content based on display type
 func formatRichPreview(rich *RichMetadata) string {
-	var result strings.Builder
-	previewLines := strings.Split(rich.Preview, "\n")
-	maxPreviewLines := 10
+    var result strings.Builder
+    // Remove ANSI and sanitize preview before splitting
+    prev := safeText(rich.Preview)
+    previewLines := strings.Split(prev, "\n")
+    maxPreviewLines := 10
 
 	// Choose preview style based on display type
 	var previewStyle lipgloss.Style
@@ -195,8 +247,10 @@ func formatTruncationIndicator(rich *RichMetadata, shownLines, maxShown int) str
 
 // formatSearchResults formats search results with match highlighting
 func formatSearchResults(rich *RichMetadata) string {
-	var result strings.Builder
-	lines := strings.Split(rich.Preview, "\n")
+    var result strings.Builder
+    // Sanitize preview before splitting
+    prev := safeText(rich.Preview)
+    lines := strings.Split(prev, "\n")
 
 	fileStyle := lipgloss.NewStyle().Bold(true)
 	matchStyle := lipgloss.NewStyle() // No special formatting
@@ -208,25 +262,25 @@ func formatSearchResults(rich *RichMetadata) string {
 		}
 
 		// Check if this looks like a filename line (e.g., "path/to/file: 3 matches")
-		if strings.Contains(line, ": ") && strings.Contains(line, "match") {
-			result.WriteString("     ")
-			result.WriteString(fileStyle.Render(line))
-			result.WriteString("\n")
-		} else if strings.Contains(line, "Line ") {
-			// Match line (e.g., "Line 42: # TODO: implement")
-			parts := strings.SplitN(line, ":", 2)
-			if len(parts) == 2 {
-				result.WriteString("       ")
-				result.WriteString(lineNumStyle.Render(parts[0] + ":"))
-				result.WriteString(matchStyle.Render(parts[1]))
-				result.WriteString("\n")
-			} else {
-				result.WriteString("       " + line + "\n")
-			}
-		} else {
-			result.WriteString("     " + line + "\n")
-		}
-	}
+        if strings.Contains(line, ": ") && strings.Contains(line, "match") {
+            result.WriteString("     ")
+            result.WriteString(fileStyle.Render(line))
+            result.WriteString("\n")
+        } else if strings.Contains(line, "Line ") {
+            // Match line (e.g., "Line 42: # TODO: implement")
+            parts := strings.SplitN(line, ":", 2)
+            if len(parts) == 2 {
+                result.WriteString("       ")
+                result.WriteString(lineNumStyle.Render(parts[0] + ":"))
+                result.WriteString(matchStyle.Render(parts[1]))
+                result.WriteString("\n")
+            } else {
+                result.WriteString("       " + line + "\n")
+            }
+        } else {
+            result.WriteString("     " + line + "\n")
+        }
+    }
 
 	if rich.Truncated {
 		result.WriteString(formatTruncationIndicator(rich, len(lines), 10))
@@ -237,8 +291,10 @@ func formatSearchResults(rich *RichMetadata) string {
 
 // formatDirectoryListing formats directory listings with file type indicators
 func formatDirectoryListing(rich *RichMetadata) string {
-	var result strings.Builder
-	lines := strings.Split(rich.Preview, "\n")
+    var result strings.Builder
+    // Sanitize preview before splitting
+    prev := safeText(rich.Preview)
+    lines := strings.Split(prev, "\n")
 
 	dirStyle := lipgloss.NewStyle().Bold(true) // Bold for directories
 	fileStyle := lipgloss.NewStyle()           // Normal for files
@@ -251,13 +307,13 @@ func formatDirectoryListing(rich *RichMetadata) string {
 
 		// Simple heuristic: directories often end with /
 		// Executables might have specific extensions or indicators
-		if strings.HasSuffix(line, "/") {
-			result.WriteString("     ")
-			result.WriteString(dirStyle.Render(line))
-			result.WriteString("\n")
-		} else if strings.Contains(line, ".exe") || strings.Contains(line, ".sh") ||
-			strings.Contains(line, ".bat") || strings.HasPrefix(line, "*") {
-			result.WriteString("     ")
+        if strings.HasSuffix(line, "/") {
+            result.WriteString("     ")
+            result.WriteString(dirStyle.Render(line))
+            result.WriteString("\n")
+        } else if strings.Contains(line, ".exe") || strings.Contains(line, ".sh") ||
+            strings.Contains(line, ".bat") || strings.HasPrefix(line, "*") {
+            result.WriteString("     ")
 			result.WriteString(execStyle.Render(line))
 			result.WriteString("\n")
 		} else {
@@ -666,7 +722,9 @@ func renderToolCallWithWidth(msg Message, debugMode bool, pulseFrame int, termWi
 	availableWidth = availableWidth - 2 - len(toolName) - 2
 
 	// Parse and format arguments with smart truncation
-	formattedArgs := formatToolArgumentsSmart(msg.ToolCall.Arguments, availableWidth)
+    formattedArgs := formatToolArgumentsSmart(msg.ToolCall.Arguments, availableWidth)
+    // Sanitize to avoid control characters or ANSI sequences in the arguments display
+    formattedArgs = safeText(formattedArgs)
 
 	// Apply styling to tool name after calculation
 	toolNameStyled := toolNameStyle.Render(toolName)
@@ -675,9 +733,9 @@ func renderToolCallWithWidth(msg Message, debugMode bool, pulseFrame int, termWi
 	result := fmt.Sprintf("%s %s(%s)\n", indicator, toolNameStyled, formattedArgs)
 
 	// Always add result if available (not just in debug mode)
-	if msg.ToolCall.Result != "" {
-		result += renderToolResultWithWidth(msg, termWidth)
-	}
+    if msg.ToolCall.Result != "" {
+        result += renderToolResultWithWidth(msg, termWidth)
+    }
 
 	// Add spacing after tool call
 	return result + "\n"
@@ -685,9 +743,9 @@ func renderToolCallWithWidth(msg Message, debugMode bool, pulseFrame int, termWi
 
 // renderToolResult renders tool output
 func renderToolResult(msg Message) string {
-	if msg.ToolCall == nil || msg.ToolCall.Result == "" {
-		return ""
-	}
+    if msg.ToolCall == nil || msg.ToolCall.Result == "" {
+        return ""
+    }
 
 	// Special handling for cancelled tools
 	if msg.ToolCall.Result == "[Cancelled]" {
@@ -697,16 +755,18 @@ func renderToolResult(msg Message) string {
 		return cancelledStyle.Render("  └─ Cancelled by user") + "\n"
 	}
 
-	// Check if we have rich metadata
-	richMetadata := parseRichMetadata(msg.ToolCall.Metadata)
+    // Check if we have rich metadata
+    richMetadata := parseRichMetadata(msg.ToolCall.Metadata)
 
-	// Use rich formatting if metadata is available
-	if richMetadata != nil && richMetadata.DisplayType != "" {
-		return renderRichToolResult(richMetadata, msg.ToolCall.Result)
-	}
+    // Use rich formatting if metadata is available
+    if richMetadata != nil && richMetadata.DisplayType != "" {
+        return renderRichToolResult(richMetadata, msg.ToolCall.Result)
+    }
 
-	// Fallback to plain text rendering
-	result := msg.ToolCall.Result
+    // Fallback to plain text rendering
+    result := msg.ToolCall.Result
+    // Strip ANSI and sanitize to avoid non-printable characters breaking the TUI
+    result = safeText(result)
 
 	// Truncate long results
 	if len(result) > 500 {
@@ -750,7 +810,7 @@ func renderToolResult(msg Message) string {
 
 // renderRichToolResult renders tool output in rich format
 func renderRichToolResult(rich *RichMetadata, plainOutput string) string {
-	var result strings.Builder
+    var result strings.Builder
 
 	// Get type-specific formatting
 	icon, summaryStyle := getDisplayTypeStyle(rich.DisplayType)
@@ -762,41 +822,44 @@ func renderRichToolResult(rich *RichMetadata, plainOutput string) string {
 	}
 
 	// Use summary if available, otherwise use first line of output
-	summary := rich.Summary
-	if summary == "" {
-		lines := strings.Split(plainOutput, "\n")
-		if len(lines) > 0 {
-			summary = lines[0]
-			if len(summary) > 80 {
-				summary = summary[:77] + "..."
-			}
-		}
-	}
-	result.WriteString(summaryStyle.Render(summary))
-	result.WriteString("\n")
+    summary := rich.Summary
+    if summary == "" {
+        // Sanitize plain output before extracting a summary line
+        plainOutput = safeText(plainOutput)
+        lines := strings.Split(plainOutput, "\n")
+        if len(lines) > 0 {
+            summary = lines[0]
+            if len(summary) > 80 {
+                summary = summary[:77] + "..."
+            }
+        }
+    }
+    result.WriteString(summaryStyle.Render(safeText(summary)))
+    result.WriteString("\n")
 
 	// Add preview if available with type-specific formatting
-	if rich.Preview != "" {
-		// Apply type-specific preview formatting
-		result.WriteString(formatRichPreview(rich))
-	} else if plainOutput != "" {
-		// If no preview, show a snippet of the plain output
-		lines := strings.Split(plainOutput, "\n")
-		for i, line := range lines {
-			if i >= 5 { // Limit to 5 lines if no explicit preview
-				if len(lines) > 5 {
-					truncStyle := lipgloss.NewStyle().
-						Foreground(Styles.Help.GetForeground()).
-						Italic(true)
-					result.WriteString(truncStyle.Render(fmt.Sprintf("     ... +%d more lines", len(lines)-5)))
-					result.WriteString("\n")
-				}
-				break
-			}
-			result.WriteString(toolResultStyle.Render("     " + line))
-			result.WriteString("\n")
-		}
-	}
+    if rich.Preview != "" {
+        // Apply type-specific preview formatting
+        result.WriteString(formatRichPreview(rich))
+    } else if plainOutput != "" {
+        // If no preview, show a snippet of the plain output
+        po := safeText(plainOutput)
+        lines := strings.Split(po, "\n")
+        for i, line := range lines {
+            if i >= 5 { // Limit to 5 lines if no explicit preview
+                if len(lines) > 5 {
+                    truncStyle := lipgloss.NewStyle().
+                        Foreground(Styles.Help.GetForeground()).
+                        Italic(true)
+                    result.WriteString(truncStyle.Render(fmt.Sprintf("     ... +%d more lines", len(lines)-5)))
+                    result.WriteString("\n")
+                }
+                break
+            }
+            result.WriteString(toolResultStyle.Render("     " + line))
+            result.WriteString("\n")
+        }
+    }
 
 	return result.String()
 }
@@ -1166,28 +1229,30 @@ func renderTextApprovalWithWidth(msg Message, approvalList list.Model, contentWi
 	content.WriteString(titleStyle.Render(fmt.Sprintf("Tool Approval: %s", msg.Approval.Tool)))
 	content.WriteString("\n\n")
 
-	// Arguments - handle word wrapping properly
-	// Compute inner content width (box width minus borders and padding)
-	innerWidth := boxWidth - 6
-	if innerWidth < 10 {
-		innerWidth = 10
-	}
-	maxArgWidth := innerWidth
-	argsLabel := "Arguments: "
+    // Arguments - handle word wrapping properly
+    // Compute inner content width (box width minus borders and padding)
+    innerWidth := boxWidth - 6
+    if innerWidth < 10 {
+        innerWidth = 10
+    }
+    maxArgWidth := innerWidth
+    argsLabel := "Arguments: "
+    // Sanitize arguments to prevent control characters
+    argsStr := safeText(msg.Approval.Arguments)
 
 	// First line with label
-	if len(argsLabel)+len(msg.Approval.Arguments) <= maxArgWidth {
-		// Fits on one line
-		content.WriteString(argsStyle.Render(argsLabel + msg.Approval.Arguments))
-	} else {
-		// Need to wrap
-		remaining := msg.Approval.Arguments
-		firstLineLen := maxArgWidth - len(argsLabel)
+    if len(argsLabel)+len(argsStr) <= maxArgWidth {
+        // Fits on one line
+        content.WriteString(argsStyle.Render(argsLabel + argsStr))
+    } else {
+        // Need to wrap
+        remaining := argsStr
+        firstLineLen := maxArgWidth - len(argsLabel)
 
 		if len(remaining) > firstLineLen {
 			// First line with label
-			content.WriteString(argsStyle.Render(argsLabel + remaining[:firstLineLen]))
-			remaining = remaining[firstLineLen:]
+            content.WriteString(argsStyle.Render(argsLabel + remaining[:firstLineLen]))
+            remaining = remaining[firstLineLen:]
 
 			// Continue on next lines with indent
 			indent := "           " // Same width as "Arguments: "
@@ -1318,11 +1383,13 @@ func renderDiffApproval(msg Message, approvalList list.Model) string {
 			hunkCount := 0
 
 			// Show all diff lines - hunking already limits to relevant changes
-			for _, line := range diffLines {
+            for _, line := range diffLines {
 
-				lineStr, _ := line.(string)
-				// Strip trailing newlines - we'll manage line breaks ourselves
-				lineStr = strings.TrimSuffix(lineStr, "\n")
+                lineStr, _ := line.(string)
+                // Strip trailing newlines - we'll manage line breaks ourselves
+                lineStr = strings.TrimSuffix(lineStr, "\n")
+                // Sanitize to avoid control characters or ANSI sequences
+                lineStr = safeText(lineStr)
 
 				// Skip file headers (---/+++) as they're redundant with the title
 				if strings.HasPrefix(lineStr, "+++") || strings.HasPrefix(lineStr, "---") {
@@ -1352,10 +1419,10 @@ func renderDiffApproval(msg Message, approvalList list.Model) string {
 					if strings.HasPrefix(lineStr, "+") && !strings.HasPrefix(lineStr, "+++") {
 						// Addition lines - show new line number
 						lineNumStr := fmt.Sprintf("%4d ", newLine)
-						lineContent := strings.TrimPrefix(lineStr, "+")
+                        lineContent := strings.TrimPrefix(lineStr, "+")
 
-						// Wrap long lines
-						if len(lineContent) > maxLineWidth {
+                        // Wrap long lines
+                        if len(lineContent) > maxLineWidth {
 							content.WriteString(contextStyle.Render(lineNumStr))
 							content.WriteString(additionStyle.Render("+ "))
 
@@ -1382,7 +1449,7 @@ func renderDiffApproval(msg Message, approvalList list.Model) string {
 					} else if strings.HasPrefix(lineStr, "-") && !strings.HasPrefix(lineStr, "---") {
 						// Deletion lines - show old line number
 						lineNumStr := fmt.Sprintf("%4d ", oldLine)
-						lineContent := strings.TrimPrefix(lineStr, "-")
+                        lineContent := strings.TrimPrefix(lineStr, "-")
 
 						// Wrap long lines
 						if len(lineContent) > maxLineWidth {
@@ -1446,11 +1513,11 @@ func renderDiffApproval(msg Message, approvalList list.Model) string {
 			}
 		} else {
 			// No diff lines available, fall back to showing arguments
-			content.WriteString(contextStyle.Render("Arguments: " + msg.Approval.Arguments))
+            content.WriteString(contextStyle.Render("Arguments: " + safeText(msg.Approval.Arguments)))
 		}
 	} else {
 		// No value metadata, show arguments
-		content.WriteString(contextStyle.Render("Arguments: " + msg.Approval.Arguments))
+        content.WriteString(contextStyle.Render("Arguments: " + safeText(msg.Approval.Arguments)))
 	}
 
 	content.WriteString("\n")
@@ -1522,9 +1589,9 @@ func renderFileWriteApproval(msg Message, approvalList list.Model) string {
 		content.WriteString("\n")
 	}
 
-	if codeContent != "" {
-		// Detect language from file extension
-		var language string
+    if codeContent != "" {
+        // Detect language from file extension
+        var language string
 		if metadata, ok := msg.Approval.Metadata["metadata"].(map[string]interface{}); ok {
 			if filePath, ok := metadata["file_path"].(string); ok {
 				ext := filepath.Ext(filePath)
@@ -1579,10 +1646,16 @@ func renderFileWriteApproval(msg Message, approvalList list.Model) string {
 			}
 		}
 
-		// Use Chroma directly for syntax highlighting
-		if language != "" {
-			// Use a buffer to capture the highlighted output
-			var buf bytes.Buffer
+        // Sanitize content to prevent control characters from breaking TUI/highlighter
+        codeContent = safeText(codeContent)
+
+        // Sanitize content to prevent control characters from breaking TUI/highlighter
+        codeContent = safeText(codeContent)
+
+        // Use Chroma directly for syntax highlighting
+        if language != "" {
+            // Use a buffer to capture the highlighted output
+            var buf bytes.Buffer
 
 			// Use the same style as Glamour (charm) for consistency
 			err := quick.Highlight(&buf, codeContent, language, "terminal256", "monokai")
@@ -1596,19 +1669,19 @@ func renderFileWriteApproval(msg Message, approvalList list.Model) string {
 				}
 			} else {
 				// Fallback to plain text if highlighting fails
-				content.WriteString(contentStyle.Render(codeContent))
-				if !strings.HasSuffix(codeContent, "\n") {
-					content.WriteString("\n")
-				}
-			}
-		} else {
-			// No language detected or plain text file, use plain rendering
-			content.WriteString(contentStyle.Render(codeContent))
-			if !strings.HasSuffix(codeContent, "\n") {
-				content.WriteString("\n")
-			}
-		}
-	}
+                content.WriteString(contentStyle.Render(codeContent))
+                if !strings.HasSuffix(codeContent, "\n") {
+                    content.WriteString("\n")
+                }
+            }
+        } else {
+            // No language detected or plain text file, use plain rendering
+            content.WriteString(contentStyle.Render(codeContent))
+            if !strings.HasSuffix(codeContent, "\n") {
+                content.WriteString("\n")
+            }
+        }
+    }
 
 	content.WriteString("\n")
 
@@ -1818,11 +1891,11 @@ func renderDiffApprovalWithWidth(msg Message, approvalList list.Model, contentWi
 			}
 		} else {
 			// No diff lines available, fall back to showing arguments
-			content.WriteString(contextStyle.Render("Arguments: " + msg.Approval.Arguments))
+            content.WriteString(contextStyle.Render("Arguments: " + safeText(msg.Approval.Arguments)))
 		}
 	} else {
 		// No value metadata, show arguments
-		content.WriteString(contextStyle.Render("Arguments: " + msg.Approval.Arguments))
+        content.WriteString(contextStyle.Render("Arguments: " + safeText(msg.Approval.Arguments)))
 	}
 
 	content.WriteString("\n")
@@ -1957,6 +2030,10 @@ func renderFileWriteApprovalWithWidth(msg Message, approvalList list.Model, cont
 			}
 		}
 
+
+		// Sanitize content to prevent control characters from breaking TUI/highlighter
+		codeContent = safeText(codeContent)
+
 		// Use Chroma directly for syntax highlighting
 		if language != "" {
 			// Use a buffer to capture the highlighted output
@@ -2021,7 +2098,9 @@ func renderFileWriteApprovalWithWidth(msg Message, approvalList list.Model, cont
 // Width-aware rich preview formatter
 func formatRichPreviewWithWidth(rich *RichMetadata, termWidth int) string {
     var result strings.Builder
-    previewLines := strings.Split(rich.Preview, "\n")
+    // Remove ANSI and sanitize preview before splitting
+    prev := safeText(rich.Preview)
+    previewLines := strings.Split(prev, "\n")
     maxPreviewLines := 10
 
     // Choose preview style based on display type
@@ -2060,16 +2139,16 @@ func formatRichPreviewWithWidth(rich *RichMetadata, termWidth int) string {
 		if linesShown >= maxPreviewLines {
 			break
 		}
-		wrappedParts := wrapLineHard(line, maxLineWidth)
-		for _, part := range wrappedParts {
-			if linesShown >= maxPreviewLines {
-				break
-			}
-			result.WriteString(previewStyle.Render("     " + part))
-			result.WriteString("\n")
-			linesShown++
-		}
-	}
+        wrappedParts := wrapLineHard(line, maxLineWidth)
+        for _, part := range wrappedParts {
+            if linesShown >= maxPreviewLines {
+                break
+            }
+            result.WriteString(previewStyle.Render("     " + part))
+            result.WriteString("\n")
+            linesShown++
+        }
+    }
 
 	if rich.Truncated {
 		result.WriteString(formatTruncationIndicator(rich, len(previewLines), maxPreviewLines))
@@ -2082,24 +2161,27 @@ func formatRichPreviewWithWidth(rich *RichMetadata, termWidth int) string {
 func renderRichToolResultWithWidth(rich *RichMetadata, plainOutput string, termWidth int) string {
     var result strings.Builder
 
-	icon, summaryStyle := getDisplayTypeStyle(rich.DisplayType)
+    icon, summaryStyle := getDisplayTypeStyle(rich.DisplayType)
 
 	result.WriteString("  └─ ")
 	if icon != "" {
 		result.WriteString(icon + " ")
 	}
 
-	summary := rich.Summary
-	if summary == "" {
-		lines := strings.Split(plainOutput, "\n")
-		if len(lines) > 0 {
-			summary = lines[0]
-			if len(summary) > 80 {
-				summary = summary[:77] + "..."
-			}
-		}
-	}
-    result.WriteString(summaryStyle.Render(summary))
+    summary := rich.Summary
+    if summary == "" {
+        // Sanitize plain output before extracting a summary line
+        plainOutput = safeText(plainOutput)
+        lines := strings.Split(plainOutput, "\n")
+        if len(lines) > 0 {
+            summary = lines[0]
+            if len(summary) > 80 {
+                summary = summary[:77] + "..."
+            }
+        }
+    }
+    // Sanitize summary to prevent control characters from breaking the UI
+    result.WriteString(summaryStyle.Render(safeText(summary)))
     result.WriteString("\n")
 
     // Special-case rich diff rendering for tool results
@@ -2111,33 +2193,35 @@ func renderRichToolResultWithWidth(rich *RichMetadata, plainOutput string, termW
     if rich.Preview != "" {
         result.WriteString(formatRichPreviewWithWidth(rich, termWidth))
     } else if plainOutput != "" {
-        lines := strings.Split(plainOutput, "\n")
+        // Ensure plain output is safe if used as a fallback
+        po := safeText(plainOutput)
+        lines := strings.Split(po, "\n")
         for i, line := range lines {
-			if i >= 5 {
-				if len(lines) > 5 {
-					truncStyle := lipgloss.NewStyle().
-						Foreground(Styles.Help.GetForeground()).
-						Italic(true)
-					result.WriteString(truncStyle.Render(fmt.Sprintf("     ... +%d more lines", len(lines)-5)))
-					result.WriteString("\n")
-				}
-				break
-			}
-			available := termWidth
-			if available <= 0 {
-				available = 80
-			}
-			contentWidth := available - 5
-			if contentWidth < 10 {
-				contentWidth = 10
-			}
-			wrapped := wrapLineHard(line, contentWidth)
-			for _, part := range wrapped {
-				result.WriteString(toolResultStyle.Render("     " + part))
-				result.WriteString("\n")
-			}
-		}
-	}
+            if i >= 5 {
+                if len(lines) > 5 {
+                    truncStyle := lipgloss.NewStyle().
+                        Foreground(Styles.Help.GetForeground()).
+                        Italic(true)
+                    result.WriteString(truncStyle.Render(fmt.Sprintf("     ... +%d more lines", len(lines)-5)))
+                    result.WriteString("\n")
+                }
+                break
+            }
+            available := termWidth
+            if available <= 0 {
+                available = 80
+            }
+            contentWidth := available - 5
+            if contentWidth < 10 {
+                contentWidth = 10
+            }
+            wrapped := wrapLineHard(line, contentWidth)
+            for _, part := range wrapped {
+                result.WriteString(toolResultStyle.Render("     " + part))
+                result.WriteString("\n")
+            }
+        }
+    }
 
 	return result.String()
 }
@@ -2194,6 +2278,8 @@ func renderDiffToolPreviewWithWidth(rich *RichMetadata, termWidth int) string {
 
     // Iterate and render diff lines
     for _, lineStr := range diffLines {
+        // Sanitize entire diff line before processing prefixes
+        lineStr = safeText(lineStr)
         // Skip file header lines
         if strings.HasPrefix(lineStr, "+++") || strings.HasPrefix(lineStr, "---") {
             continue
@@ -2229,6 +2315,8 @@ func renderDiffToolPreviewWithWidth(rich *RichMetadata, termWidth int) string {
         // Prepare line number gutter width (4 digits + space)
         // Compose per-line rendering with wrapping
         renderWrapped := func(prefixStyled string, lineNumStr string, content string, style lipgloss.Style) {
+            // Sanitize the content to avoid control characters
+            content = safeText(content)
             // available content per line considering number gutter and +/- indicator
             gutterWidth := 5 // e.g., "  42 "
             indicatorWidth := 2
@@ -2279,9 +2367,9 @@ func renderDiffToolPreviewWithWidth(rich *RichMetadata, termWidth int) string {
 
 // Width-aware tool result renderer used by callers that know the viewport width
 func renderToolResultWithWidth(msg Message, termWidth int) string {
-	if msg.ToolCall == nil || msg.ToolCall.Result == "" {
-		return ""
-	}
+    if msg.ToolCall == nil || msg.ToolCall.Result == "" {
+        return ""
+    }
 
 	// Special handling for cancelled tools
 	if msg.ToolCall.Result == "[Cancelled]" {
@@ -2291,19 +2379,21 @@ func renderToolResultWithWidth(msg Message, termWidth int) string {
 		return cancelledStyle.Render("  └─ Cancelled by user") + "\n"
 	}
 
-	// Check if we have rich metadata
-	richMetadata := parseRichMetadata(msg.ToolCall.Metadata)
-	if richMetadata != nil && richMetadata.DisplayType != "" {
-		return renderRichToolResultWithWidth(richMetadata, msg.ToolCall.Result, termWidth)
-	}
+    // Check if we have rich metadata
+    richMetadata := parseRichMetadata(msg.ToolCall.Metadata)
+    if richMetadata != nil && richMetadata.DisplayType != "" {
+        return renderRichToolResultWithWidth(richMetadata, msg.ToolCall.Result, termWidth)
+    }
 
-	// Fallback to plain text rendering
-	result := msg.ToolCall.Result
+    // Fallback to plain text rendering
+    result := msg.ToolCall.Result
+    // Strip ANSI and sanitize to avoid non-printable characters breaking the TUI
+    result = safeText(result)
 	if len(result) > 500 {
 		result = result[:500] + "..."
 	}
 
-	lines := strings.Split(result, "\n")
+    lines := strings.Split(result, "\n")
 	available := termWidth
 	if available <= 0 {
 		available = 80
