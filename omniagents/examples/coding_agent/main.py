@@ -2,10 +2,12 @@ import os
 from datetime import datetime
 
 from dotenv import load_dotenv
-from agents import Agent
+from agents import Agent, ModelSettings
 from omniagents import Runner
 import agentio
 from tools import *
+
+from openai.types.shared import Reasoning
 
 # Load environment variables
 load_dotenv()
@@ -91,6 +93,9 @@ if __name__ == "__main__":
             convert_to_markdown,
         ],
         model="gpt-5",
+        model_settings=ModelSettings(
+            reasoning=Reasoning(effort="high"),
+        ),
     )
     
     # Wrap in an OmniAgents Runner
