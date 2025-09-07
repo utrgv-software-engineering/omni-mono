@@ -113,7 +113,7 @@ true
 ```
 
 ### list_sessions()
-Get list of all conversation sessions.
+Get list of all conversation sessions with message previews.
 
 **Returns:**
 ```json
@@ -121,9 +121,21 @@ Get list of all conversation sessions.
   "id": "session-id",
   "created_at": "2024-01-01T00:00:00Z",
   "archived": false,
-  "message_count": 10
+  "message_count": 10,
+  "first_message": {
+    "role": "user",
+    "content": "Help me refactor this Python script that processes CSV files",
+    "timestamp": "2024-01-01T00:00:00Z"
+  },
+  "last_message": {
+    "role": "assistant",
+    "content": "I've completed the refactoring. The script now uses pandas for CSV processing, has proper error handling, follows PEP 8 conventions, and includes comprehensive logging. All tests are passing.",
+    "timestamp": "2024-01-01T00:30:00Z"
+  }
 }]
 ```
+
+**Note:** The `first_message` and `last_message` fields include the complete message content, allowing clients to implement their own truncation strategies based on UI requirements.
 
 ### archive_session(session_id: string)
 Archive a conversation session.

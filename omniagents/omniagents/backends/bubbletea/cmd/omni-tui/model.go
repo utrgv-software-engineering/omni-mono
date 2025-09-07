@@ -44,7 +44,7 @@ type keyMap struct {
 // ShortHelp returns keybindings to be shown in the mini help view
 func (k keyMap) ShortHelp() []key.Binding {
 	bindings := []key.Binding{}
-	
+
 	// Show context-specific help based on state
 	// This will be populated in the View method based on current state
 	return bindings
@@ -115,8 +115,8 @@ type Model struct {
 	state             AppState
 	pendingTool       *ToolApprovalRequestEvent
 	availableSessions []Session
-	selectedSession   int  // Index within current page (0 to perPage-1)
-	selectedIndex     int  // Absolute index across all sessions
+	selectedSession   int // Index within current page (0 to perPage-1)
+	selectedIndex     int // Absolute index across all sessions
 
 	// Settings (from AgentSpec)
 	agentName   string
@@ -133,13 +133,16 @@ type Model struct {
 
 	// Debug mode
 	debugMode bool
-	
+
 	// Resume mode - whether to show session list on startup
 	resumeMode bool
-	
+
 	// Pulse animation state
 	pulseFrame int
 	pulseTimer int
+
+	// Double Ctrl+C tracking
+	firstCtrlCTime *time.Time // Track when first Ctrl+C was pressed
 }
 
 // Message represents a chat message
@@ -147,7 +150,7 @@ type Message struct {
 	Role     string // "user", "assistant", "tool_call", "tool_result", "approval_request"
 	Content  string
 	ToolCall *ToolCallInfo
-	Approval *ToolApprovalInfo  // For approval_request messages
+	Approval *ToolApprovalInfo // For approval_request messages
 }
 
 // ToolApprovalInfo contains approval request details
@@ -174,33 +177,33 @@ func NewModel(client *RPCClient, agentName string, welcomeText string, safeMode 
 	ta := NewCustomTextarea()
 	ta.Placeholder = "Type your message..."
 	ta.Focus()
-	ta.CharLimit = 0  // No limit on characters
+	ta.CharLimit = 0 // No limit on characters
 	ta.SetWidth(80)  // Initial width
 	ta.SetHeight(1)  // Start with 1 line visible
 	// MaxHeight will be set dynamically based on available space
 	ta.ShowLineNumbers = false
-	
+
 	// Use SetPromptFunc to only show prompt on first line
 	// The textarea viewport will keep line 0 as the first visible line
 	ta.SetPromptFunc(3, func(lineIdx int) string {
 		if lineIdx == 0 {
 			return " > "
 		}
-		return "   "  // Same width as prompt for alignment
+		return "   " // Same width as prompt for alignment
 	})
-	
+
 	// Set styles for focused state
 	ta.FocusedStyle.Base = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(Styles.InputBorder.GetForeground())
-	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()  // No background for cursor line
+	ta.FocusedStyle.CursorLine = lipgloss.NewStyle() // No background for cursor line
 	ta.FocusedStyle.Placeholder = Styles.Help.Copy().UnsetBackground()
 	ta.FocusedStyle.Prompt = Styles.InputPrompt.Copy().UnsetBackground()
 	ta.FocusedStyle.Text = Styles.InputText.Copy().UnsetBackground()
-	
+
 	// Set styles for blurred state (same as focused for now)
 	ta.BlurredStyle = ta.FocusedStyle
-	
+
 	// Customize key bindings to use Enter for send and Alt+Enter for newline
 	ta.KeyMap.InsertNewline = key.NewBinding(
 		key.WithKeys("alt+enter"),
@@ -271,6 +274,9 @@ func (m Model) tickPulse() tea.Cmd {
 // PulseTickMsg is sent when the pulse animation should update
 type PulseTickMsg struct{}
 
+// ClearCtrlCMsg is sent to clear the first Ctrl+C state after timeout
+type ClearCtrlCMsg struct{}
+
 // max function is now in textarea.go
 
 // connect establishes connection to the RPC server
@@ -279,7 +285,7 @@ func (m Model) connect() tea.Cmd {
 		if m.debugMode {
 			fmt.Fprintf(os.Stderr, "[DEBUG] Setting up event handlers...\n")
 		}
-		
+
 		// Set up event handlers
 		send := func(msg interface{}) {
 			if m.msgChan != nil {
@@ -291,7 +297,16 @@ func (m Model) connect() tea.Cmd {
 		for method, handler := range handlers {
 			m.rpcClient.RegisterHandler(method, handler)
 		}
-		
+
+		// Set up callback for when RPC receiveLoop is ready
+		m.rpcClient.SetOnReady(func() {
+			if m.debugMode {
+				fmt.Fprintf(os.Stderr, "[DEBUG] RPC receiveLoop is ready\n")
+			}
+			// Send a message indicating RPC is ready
+			send(RPCReadyMsg{})
+		})
+
 		if m.debugMode {
 			fmt.Fprintf(os.Stderr, "[DEBUG] Registered %d event handlers\n", len(handlers))
 			fmt.Fprintf(os.Stderr, "[DEBUG] Initiating connection...\n")
@@ -304,7 +319,7 @@ func (m Model) connect() tea.Cmd {
 			}
 			return ErrorMsg{Error: err}
 		}
-		
+
 		if m.debugMode {
 			fmt.Fprintf(os.Stderr, "[DEBUG] Connection successful, sending ConnectedMsg\n")
 		}
@@ -355,15 +370,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC:
-			// Ctrl+C always quits the application
-			return m, tea.Quit
-		
+			// Double Ctrl+C to quit
+			now := time.Now()
+			if m.firstCtrlCTime != nil {
+				// Check if second Ctrl+C is within 2 seconds
+				if now.Sub(*m.firstCtrlCTime) < 2*time.Second {
+					// Second Ctrl+C within timeout - quit
+					return m, tea.Quit
+				}
+			}
+			// First Ctrl+C or timeout expired - record time
+			m.firstCtrlCTime = &now
+
+			// Clear the first Ctrl+C after 2 seconds
+			return m, tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+				return ClearCtrlCMsg{}
+			})
+
 		case tea.KeyEsc:
 			if m.state == StateApprovalRequired {
 				// Deny the approval when Escape is pressed
 				// Save approval ID before clearing
 				approvalID := m.pendingTool.ApprovalID
-				
+
 				// Remove approval message from messages
 				for i := len(m.messages) - 1; i >= 0; i-- {
 					if m.messages[i].Role == "approval_request" {
@@ -371,12 +400,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						break
 					}
 				}
-				
+
 				// Change state to waiting for response (agent continues)
 				m.state = StateWaitingForResponse
 				m.pendingTool = nil
-				m.approvalList = list.Model{}  // Clear the list
-				
+				m.approvalList = list.Model{} // Clear the list
+
 				// Recalculate viewport height for new footer size
 				headerLines := 0
 				if len(m.messages) == 0 {
@@ -385,11 +414,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						headerLines = 7
 					}
 				}
-				footerLines := m.input.Height() + 3  // Textarea height + help + spacing
-				topSpacing := 2  // Always 2 lines of top spacing
+				footerLines := m.input.Height() + 3 // Textarea height + help + spacing
+				topSpacing := 2                     // Always 2 lines of top spacing
 				m.viewport.Height = m.height - headerLines - footerLines - topSpacing
 				m.updateViewport()
-				
+
 				// Send denial response to server AND clear screen to force full redraw
 				return m, tea.Batch(
 					tea.ClearScreen,
@@ -405,8 +434,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.state == StateWaitingForResponse && m.currentRunID != "" {
 				// Cancel the current run when Escape is pressed during execution
 				runID := m.currentRunID
-				m.currentRunID = ""  // Clear immediately to prevent double cancellation
-				
+				m.currentRunID = "" // Clear immediately to prevent double cancellation
+
 				// Mark any running tool calls as cancelled
 				for i := len(m.messages) - 1; i >= 0; i-- {
 					if m.messages[i].Role == "tool_call" && m.messages[i].ToolCall != nil {
@@ -417,17 +446,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 				}
-				
+
 				// Change state back to ready
 				m.state = StateReady
-				
+
 				// Add a message indicating cancellation
 				m.messages = append(m.messages, Message{
 					Role:    "assistant",
 					Content: "[Run cancelled by user]",
 				})
 				m.updateViewport()
-				
+
 				// Send stop_run command to server
 				return m, func() tea.Msg {
 					err := m.rpcClient.StopRun(runID)
@@ -482,7 +511,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Move selection down within current page or go to next page
 				start, end := m.paginator.GetSliceBounds(len(m.availableSessions))
 				pageSize := end - start
-				
+
 				if m.selectedSession < pageSize-1 {
 					m.selectedSession++
 					m.selectedIndex++
@@ -538,22 +567,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 
 		// Update viewport and input width
-		m.viewport.Width = msg.Width - 4  // Account for padding
-		
+		m.viewport.Width = msg.Width - 4 // Account for padding
+
 		// Calculate viewport height based on current state
 		headerLines := 0
 		if len(m.messages) == 0 {
-			headerLines = 5  // Header with ASCII art + newlines
+			headerLines = 5 // Header with ASCII art + newlines
 			if m.sessionID != "" {
-				headerLines = 7  // Add lines for session display
+				headerLines = 7 // Add lines for session display
 			}
 		}
 		// Calculate footer lines based on textarea height
-		footerLines := m.input.Height() + 3  // Textarea height + help (2 lines) + spacing (1 line)
+		footerLines := m.input.Height() + 3 // Textarea height + help (2 lines) + spacing (1 line)
 		if m.state == StateApprovalRequired {
-			footerLines = 3  // Just help text when approval is in the message list
+			footerLines = 3 // Just help text when approval is in the message list
 		}
-		topSpacing := 2  // Always 2 lines of top spacing
+		topSpacing := 2 // Always 2 lines of top spacing
 		m.viewport.Height = msg.Height - headerLines - footerLines - topSpacing
 
 		// Update textarea width
@@ -569,16 +598,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Start listening for messages now that we're connected
 		cmds = append(cmds, m.listenForMessages())
-		
+
 		// Check if we need to resume a session or list sessions
 		if m.sessionID != "" {
 			m.state = StateReady
 			// TODO: Load session history
 			m.updateViewport()
 		} else if m.resumeMode {
-			// Only list sessions if --resume flag was passed
-			newModel, cmd := m.listSessions()
-			return newModel, tea.Batch(append(cmds, cmd)...)
+			// Wait for RPC to be ready before listing sessions
+			// Keep showing "Connecting..." until RPC is ready
+			m.state = StateConnecting
+			if m.debugMode {
+				fmt.Fprintf(os.Stderr, "[DEBUG] Resume mode: waiting for RPC to be ready\n")
+			}
 		} else {
 			// Start with a new session
 			m.state = StateReady
@@ -663,7 +695,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.sessionID == "" && msg.SessionID != "" {
 			m.sessionID = msg.SessionID
 		}
-		
+
 	case RunEndMsg:
 		// Only change state to Ready if not waiting for approval
 		if m.state != StateApprovalRequired {
@@ -672,14 +704,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentRunID = ""
 		// Don't clear pendingTool or approvalList - let user handle approval
 		m.updateViewport()
-		
+
+	case RPCReadyMsg:
+		if m.debugMode {
+			fmt.Fprintf(os.Stderr, "[DEBUG] Received RPCReadyMsg\n")
+		}
+		// If we're in resume mode and still connecting, now we can list sessions
+		if m.resumeMode && m.state == StateConnecting {
+			if m.debugMode {
+				fmt.Fprintf(os.Stderr, "[DEBUG] RPC ready, listing sessions\n")
+				fmt.Fprintf(os.Stderr, "[DEBUG] rpcClient is nil: %v\n", m.rpcClient == nil)
+			}
+			_, cmd := m.listSessions()
+			if m.debugMode {
+				fmt.Fprintf(os.Stderr, "[DEBUG] listSessions returned cmd is nil: %v\n", cmd == nil)
+			}
+			// Add to cmds to be batched at the end with listenForMessages
+			cmds = append(cmds, cmd)
+		}
+
 	case SessionsListedMsg:
+		if m.debugMode {
+			fmt.Fprintf(os.Stderr, "[DEBUG] Received SessionsListedMsg: error=%v, sessions=%d\n",
+				msg.Error, len(msg.Sessions))
+		}
 		if msg.Error != nil || msg.Sessions == nil || len(msg.Sessions) == 0 {
 			// No sessions or error, start with new session
+			if m.debugMode {
+				fmt.Fprintf(os.Stderr, "[DEBUG] No sessions or error, starting with new session\n")
+			}
 			m.state = StateReady
 			m.updateViewport()
 		} else {
 			// Show session list
+			if m.debugMode {
+				fmt.Fprintf(os.Stderr, "[DEBUG] Showing session list with %d sessions\n", len(msg.Sessions))
+			}
 			m.availableSessions = msg.Sessions
 			m.selectedSession = 0
 			m.selectedIndex = 0
@@ -688,6 +748,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.paginator.Page = 0
 			m.state = StateSessionList
 		}
+
+	case ClearCtrlCMsg:
+		// Clear the first Ctrl+C state after timeout
+		m.firstCtrlCTime = nil
 	}
 
 	// Update viewport only with mouse events (not keyboard)
@@ -706,14 +770,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var spinnerCmd tea.Cmd
 	m.spinner, spinnerCmd = m.spinner.Update(msg)
 	cmds = append(cmds, spinnerCmd)
-	
+
 	// If spinner ticked and we're showing a status, update the viewport content only
 	if _, isSpinnerTick := msg.(spinner.TickMsg); isSpinnerTick {
 		if m.state == StateWaitingForResponse || m.state == StateConnecting {
-			m.updateViewportContent()  // Use content-only update to preserve scroll
+			m.updateViewportContent() // Use content-only update to preserve scroll
 		}
 	}
-	
+
 	// Handle pulse animation tick
 	if _, isPulseTick := msg.(PulseTickMsg); isPulseTick {
 		// Check if any tool calls are running (no result yet)
@@ -724,13 +788,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
-		
+
 		if hasRunningTools {
 			// Advance pulse frame
-			m.pulseFrame = (m.pulseFrame + 1) % 8  // 8 frames for smooth pulse
-			m.updateViewportContent()  // Use content-only update to preserve scroll
+			m.pulseFrame = (m.pulseFrame + 1) % 8 // 8 frames for smooth pulse
+			m.updateViewportContent()             // Use content-only update to preserve scroll
 		}
-		
+
 		// Continue the pulse animation
 		cmds = append(cmds, m.tickPulse())
 	}
@@ -740,10 +804,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		oldInputHeight := m.input.Height()
 		m.input, cmd = m.input.Update(msg)
-		
+
 		// Smart auto-grow: always expand to fit content, with viewport constraints
 		lineCount := m.input.LineCount()
-		
+
 		// Calculate max allowed height for textarea
 		// Allow it to take up to 50% of screen height or 20 lines, whichever is smaller
 		maxAllowedLines := m.height / 2
@@ -761,32 +825,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Maximum textarea height = total height - header - min viewport - help (3 lines) - top spacing (2)
 		maxFromViewport := m.height - headerLines - minViewportLines - 3 - 2
-		
+
 		// Use the smaller of the two limits
 		if maxFromViewport < maxAllowedLines {
 			maxAllowedLines = maxFromViewport
 		}
-		
+
 		// Ensure maxAllowedLines is at least 1
 		if maxAllowedLines < 1 {
 			maxAllowedLines = 1
 		}
-		
+
 		// Set MaxHeight on the textarea so it knows to enable scrolling
 		m.input.MaxHeight = maxAllowedLines
-		
+
 		// Set the height to either the line count or the maximum allowed
 		if lineCount > maxAllowedLines {
 			m.input.SetHeight(maxAllowedLines)
 		} else {
 			m.input.SetHeight(lineCount)
 		}
-		
+
 		// If textarea height changed, recalculate viewport height
 		if m.input.Height() != oldInputHeight {
 			// Check if we're at the bottom before resizing
 			wasAtBottom := m.viewport.AtBottom()
-			
+
 			headerLines := 0
 			if len(m.messages) == 0 {
 				headerLines = 5
@@ -794,25 +858,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					headerLines = 7
 				}
 			}
-			footerLines := m.input.Height() + 3  // Textarea height + help + spacing
-			topSpacing := 2  // Always 2 lines of top spacing
+			footerLines := m.input.Height() + 3 // Textarea height + help + spacing
+			topSpacing := 2                     // Always 2 lines of top spacing
 			newViewportHeight := m.height - headerLines - footerLines - topSpacing
-			
+
 			// Ensure minimum viewport height of 5 lines
 			minViewportHeight := 5
 			if newViewportHeight < minViewportHeight {
 				newViewportHeight = minViewportHeight
 			}
-			
+
 			m.viewport.Height = newViewportHeight
-			
+
 			// If we were at the bottom, stay at the bottom
 			// This will naturally push content up when needed
 			if wasAtBottom {
 				m.viewport.GotoBottom()
 			}
 		}
-		
+
 		cmds = append(cmds, cmd)
 	} else if m.state == StateApprovalRequired {
 		// Update approval list when in approval mode
@@ -836,15 +900,15 @@ func (m Model) View() string {
 
 	// Main chat view with proper layout
 	var header, middle, footer string
-	
+
 	// Header (only show if no messages sent yet)
 	if len(m.messages) == 0 {
 		header = m.renderHeader()
 	}
-	
+
 	// Messages viewport
 	middle = m.viewport.View()
-	
+
 	// Footer (input or help text)
 	if m.state == StateApprovalRequired {
 		// Show help text for approval navigation
@@ -852,9 +916,9 @@ func (m Model) View() string {
 	} else {
 		footer = m.renderInput()
 	}
-	
+
 	// Calculate available height for the middle section
-	topSpacing := 2  // Always 2 lines of top spacing
+	topSpacing := 2 // Always 2 lines of top spacing
 	availableHeight := m.height - topSpacing
 	headerHeight := 0
 	if header != "" {
@@ -862,7 +926,7 @@ func (m Model) View() string {
 	}
 	footerHeight := lipgloss.Height(footer) + 1 // +1 for the newline before footer
 	middleHeight := availableHeight - headerHeight - footerHeight
-	
+
 	// Ensure middle section fills available space
 	if middleHeight > 0 {
 		middleStyle := lipgloss.NewStyle().
@@ -870,24 +934,24 @@ func (m Model) View() string {
 			Width(m.width)
 		middle = middleStyle.Render(middle)
 	}
-	
+
 	// Apply horizontal padding to all sections
 	paddingStyle := lipgloss.NewStyle().PaddingLeft(2).PaddingRight(2)
-	
+
 	// Build the final layout
 	var content strings.Builder
-	
+
 	// Add top spacing - always 2 lines for consistent spacing
 	content.WriteString("\n\n")
-	
+
 	if header != "" {
 		content.WriteString(paddingStyle.Render(header))
 		content.WriteString("\n")
 	}
 	content.WriteString(paddingStyle.Render(middle))
 	content.WriteString("\n")
-	content.WriteString(footer)  // No padding for footer - border aligns with messages
-	
+	content.WriteString(footer) // No padding for footer - border aligns with messages
+
 	return content.String()
 }
 
@@ -896,10 +960,10 @@ func (m Model) View() string {
 func (m Model) renderHeader() string {
 	// Create ASCII art for the agent name
 	asciiArt := m.generateASCIIArt(m.agentName)
-	
+
 	var result strings.Builder
 	result.WriteString(asciiArt)
-	
+
 	// Add session ID underneath if present
 	if m.sessionID != "" {
 		sessionStyle := lipgloss.NewStyle().
@@ -909,7 +973,7 @@ func (m Model) renderHeader() string {
 		result.WriteString("\n")
 		result.WriteString(sessionStyle.Render(sessionInfo))
 	}
-	
+
 	result.WriteString("\n")
 	return result.String()
 }
@@ -919,10 +983,10 @@ func (m Model) generateASCIIArt(text string) string {
 	// Simple ASCII art generator using block characters
 	// For a more compact display, we'll use a simple large text style
 	lines := m.createSimpleASCII(text)
-	
+
 	// Join all lines into a single string for the gradient
 	fullText := strings.Join(lines, "\n")
-	
+
 	// Apply a horizontal gradient across the entire ASCII art
 	// This creates a smooth left-to-right gradient effect
 	return m.applyHorizontalGradient(fullText)
@@ -932,11 +996,11 @@ func (m Model) generateASCIIArt(text string) string {
 func (m Model) applyHorizontalGradient(text string) string {
 	lines := strings.Split(text, "\n")
 	var result strings.Builder
-	
+
 	// Get gradient colors from theme
 	startHex := "#bb9af7" // default fallback start color (purple)
 	endHex := "#f7768e"   // default fallback end color (pink/red)
-	
+
 	if CurrentTheme != nil {
 		// Use theme-defined gradient colors if available
 		if CurrentTheme.Colors.UI.HeaderGradientStart != "" {
@@ -945,7 +1009,7 @@ func (m Model) applyHorizontalGradient(text string) string {
 			// No gradient - use same color for both start and end
 			startHex = CurrentTheme.Colors.UI.Header
 		}
-		
+
 		if CurrentTheme.Colors.UI.HeaderGradientEnd != "" {
 			endHex = CurrentTheme.Colors.UI.HeaderGradientEnd
 		} else if CurrentTheme.Colors.UI.Header != "" {
@@ -953,47 +1017,47 @@ func (m Model) applyHorizontalGradient(text string) string {
 			endHex = CurrentTheme.Colors.UI.Header
 		}
 	}
-	
+
 	// Parse the colors
 	startColor, _ := colorful.Hex(startHex)
 	endColor, _ := colorful.Hex(endHex)
-	
+
 	for lineIdx, line := range lines {
 		runes := []rune(line)
 		lineResult := ""
-		
+
 		for i, r := range runes {
 			// Skip spaces - don't color them
 			if r == ' ' {
 				lineResult += " "
 				continue
 			}
-			
+
 			// Calculate position in gradient (0.0 to 1.0)
 			position := float64(i) / float64(len(runes)-1)
 			if len(runes) == 1 {
 				position = 0.5
 			}
-			
+
 			// Blend colors using Lab color space for perceptually uniform gradient
 			blendedColor := startColor.BlendLab(endColor, position)
-			
+
 			// Convert to hex for lipgloss
 			hexColor := blendedColor.Hex()
-			
+
 			style := lipgloss.NewStyle().
 				Foreground(lipgloss.Color(hexColor)).
 				Bold(true)
-			
+
 			lineResult += style.Render(string(r))
 		}
-		
+
 		result.WriteString(lineResult)
 		if lineIdx < len(lines)-1 {
 			result.WriteString("\n")
 		}
 	}
-	
+
 	return result.String()
 }
 
@@ -1001,12 +1065,12 @@ func (m Model) applyHorizontalGradient(text string) string {
 func (m Model) createSimpleASCII(text string) []string {
 	// Use solid block characters for a bold, modern look with 3 lines
 	upper := strings.ToUpper(text)
-	
+
 	// Create 3-line ASCII art using block characters
 	line1 := ""
 	line2 := ""
 	line3 := ""
-	
+
 	for _, char := range upper {
 		switch char {
 		case ' ':
@@ -1164,7 +1228,7 @@ func (m Model) createSimpleASCII(text string) []string {
 			line3 += "   "
 		}
 	}
-	
+
 	return []string{
 		strings.TrimRight(line1, " "),
 		strings.TrimRight(line2, " "),
@@ -1175,7 +1239,7 @@ func (m Model) createSimpleASCII(text string) []string {
 func (m Model) renderStatusLine() string {
 	var status string
 	var showSpinner bool
-	
+
 	switch m.state {
 	case StateReady:
 		status = "" // Don't show Ready status
@@ -1247,19 +1311,19 @@ func (m Model) renderMessages() string {
 
 func (m Model) renderInput() string {
 	var s strings.Builder
-	
+
 	// Input field (no padding - border aligns with message indicators)
 	s.WriteString(m.input.View())
 	s.WriteString("\n")
-	
+
 	// Help text (with padding to align with message content)
 	helpView := m.getContextualHelp()
 	if helpView != "" {
-		s.WriteString("\n")
 		// Add 2 spaces to align help text with message content
 		s.WriteString("  " + helpView)
+		s.WriteString("\n") // Empty line after help text
 	}
-	
+
 	return s.String()
 }
 
@@ -1267,7 +1331,18 @@ func (m Model) renderInput() string {
 func (m Model) getContextualHelp() string {
 	// Create a custom keymap with context-specific bindings
 	var contextKeys []key.Binding
-	
+
+	// Check if we're waiting for second Ctrl+C
+	if m.firstCtrlCTime != nil && time.Since(*m.firstCtrlCTime) < 2*time.Second {
+		// Show special help text when waiting for second Ctrl+C
+		helpStyle := Styles.Help
+		warnStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#ff9900")).
+			Bold(true)
+		return warnStyle.Render("Press Ctrl+C again to quit") + " • " +
+			helpStyle.Render("or wait to continue")
+	}
+
 	switch m.state {
 	case StateReady:
 		contextKeys = []key.Binding{
@@ -1341,17 +1416,16 @@ func (m Model) getContextualHelp() string {
 			),
 		}
 	}
-	
+
 	// Create a simple help line from the context keys
 	helpStrs := make([]string, len(contextKeys))
 	for i, k := range contextKeys {
 		helpStrs[i] = k.Help().Key + " " + k.Help().Desc
 	}
-	
+
 	helpStyle := Styles.Help
 	return helpStyle.Render(strings.Join(helpStrs, " • "))
 }
-
 
 func (m Model) renderError() string {
 	errorStyle := lipgloss.NewStyle().
@@ -1399,29 +1473,73 @@ func (m Model) renderSessionList() string {
 			cursor = "> "
 		}
 
-		sessionInfo := fmt.Sprintf("%s%s - %d messages",
-			cursor,
-			session.ID[:8],
-			session.MessageCount)
+		// Build session line directly
+		sessionLine := cursor + session.ID[:8]
 
-		if session.Archived {
-			sessionInfo += " (archived)"
+		// Add timestamp if available
+		if session.CreatedAt != "" {
+			timestamp := session.CreatedAt
+			if len(timestamp) > 10 {
+				timestamp = timestamp[:10]
+			}
+			sessionLine += " • " + timestamp
 		}
 
-		s.WriteString(sessionInfo)
+		// Add message count
+		sessionLine += fmt.Sprintf(" • %d messages", session.MessageCount)
+
+		// Add archived tag if needed
+		if session.Archived {
+			sessionLine += " [archived]"
+		}
+
+		// Always add last message preview if available
+		if session.LastMessage != nil {
+			content := session.LastMessage.GetContentText()
+			// Debug: print what we got
+			if m.debugMode {
+				fmt.Fprintf(os.Stderr, "[DEBUG] LastMessage content type: %T, value: %v, extracted: %s\n",
+					session.LastMessage.Content, session.LastMessage.Content, content)
+			}
+			if content != "" {
+				// Use the truncateMessageForList function which handles newlines
+				content = m.truncateMessageForList(content, 50)
+				sessionLine += " • " + content
+			}
+		} else if session.FirstMessage != nil {
+			content := session.FirstMessage.GetContentText()
+			if m.debugMode {
+				fmt.Fprintf(os.Stderr, "[DEBUG] FirstMessage content type: %T, value: %v, extracted: %s\n",
+					session.FirstMessage.Content, session.FirstMessage.Content, content)
+			}
+			if content != "" {
+				// Use the truncateMessageForList function which handles newlines
+				content = m.truncateMessageForList(content, 50)
+				sessionLine += " • " + content
+			}
+		}
+
+		// Style the line
+		lineStyle := lipgloss.NewStyle()
+		if i == m.selectedSession {
+			lineStyle = lineStyle.Bold(true).
+				Foreground(Styles.SessionTitle.GetForeground())
+		} else {
+			lineStyle = lineStyle.
+				Foreground(Styles.Help.GetForeground())
+		}
+
+		s.WriteString(lineStyle.Render(sessionLine))
 		s.WriteString("\n")
 	}
 
-	// Add some spacing
-	s.WriteString("\n")
-	
 	// Show pagination dots if there are multiple pages
 	if m.paginator.TotalPages > 1 {
 		s.WriteString(fmt.Sprintf("  Page %d of %d  ", m.paginator.Page+1, m.paginator.TotalPages))
 		s.WriteString(m.paginator.View())
 		s.WriteString("\n\n")
 	}
-	
+
 	// Instructions
 	infoStyle := Styles.Help
 	s.WriteString(infoStyle.Render("↑↓ navigate items • ←→ change page • Enter select • Tab new session"))
@@ -1448,7 +1566,7 @@ func (m Model) sendMessage() (Model, tea.Cmd) {
 
 	// If this is the first message, recalculate viewport height since header will disappear
 	if len(m.messages) == 1 {
-		footerLines := m.input.Height() + 3  // Textarea height + help + spacing
+		footerLines := m.input.Height() + 3 // Textarea height + help + spacing
 		// No header anymore, but still 2 lines of top spacing
 		m.viewport.Height = m.height - 2 - footerLines
 	}
@@ -1508,7 +1626,7 @@ func (m Model) handleApprovalListChoice() (Model, tea.Cmd) {
 
 	// Save approval ID before clearing
 	approvalID := m.pendingTool.ApprovalID
-	
+
 	// Remove approval message from messages
 	for i := len(m.messages) - 1; i >= 0; i-- {
 		if m.messages[i].Role == "approval_request" {
@@ -1516,12 +1634,12 @@ func (m Model) handleApprovalListChoice() (Model, tea.Cmd) {
 			break
 		}
 	}
-	
+
 	// Change state FIRST before clearing approval data
 	m.state = StateWaitingForResponse
 	m.pendingTool = nil
-	m.approvalList = list.Model{}  // Clear the list
-	
+	m.approvalList = list.Model{} // Clear the list
+
 	// Recalculate viewport height for new footer size
 	headerLines := 0
 	if len(m.messages) == 0 {
@@ -1530,8 +1648,8 @@ func (m Model) handleApprovalListChoice() (Model, tea.Cmd) {
 			headerLines = 7
 		}
 	}
-	footerLines := m.input.Height() + 3  // Textarea height + help + spacing
-	topSpacing := 2  // Always 2 lines of top spacing
+	footerLines := m.input.Height() + 3 // Textarea height + help + spacing
+	topSpacing := 2                     // Always 2 lines of top spacing
 	m.viewport.Height = m.height - headerLines - footerLines - topSpacing
 	m.updateViewport()
 
@@ -1549,22 +1667,41 @@ func (m Model) handleApprovalListChoice() (Model, tea.Cmd) {
 }
 
 func (m Model) listSessions() (Model, tea.Cmd) {
-	return m, func() tea.Msg {
-		sessions, err := m.rpcClient.ListSessions()
-		if err != nil {
-			// No sessions or error, just start with new session
-			return SessionsListedMsg{Sessions: nil, Error: err}
-		}
-
-		return SessionsListedMsg{Sessions: sessions, Error: nil}
+	if m.debugMode {
+		fmt.Fprintln(os.Stderr, "[DEBUG] listSessions: starting async fetch")
 	}
+	client := m.rpcClient
+	debug := m.debugMode
+	msgChan := m.msgChan
+	go func() {
+		if debug {
+			fmt.Fprintln(os.Stderr, "[DEBUG] listSessions goroutine: executing")
+		}
+		sessions, err := client.ListSessions()
+		if err != nil {
+			if debug {
+				fmt.Fprintln(os.Stderr, "[DEBUG] listSessions goroutine: error:", err)
+			}
+			if msgChan != nil {
+				msgChan <- SessionsListedMsg{Sessions: nil, Error: err}
+			}
+			return
+		}
+		if debug {
+			fmt.Fprintln(os.Stderr, "[DEBUG] listSessions goroutine: got", len(sessions), "sessions")
+		}
+		if msgChan != nil {
+			msgChan <- SessionsListedMsg{Sessions: sessions, Error: nil}
+		}
+	}()
+	return m, nil
 }
 
 func (m Model) selectSession() (Model, tea.Cmd) {
 	// Get the actual session index from the current page
 	start, _ := m.paginator.GetSliceBounds(len(m.availableSessions))
 	actualIndex := start + m.selectedSession
-	
+
 	if actualIndex < len(m.availableSessions) {
 		m.sessionID = m.availableSessions[actualIndex].ID
 		m.state = StateReady
@@ -1584,11 +1721,76 @@ func (m *Model) updateViewportContent() {
 	// Save current scroll position
 	oldYOffset := m.viewport.YOffset
 	oldYPosition := m.viewport.YPosition
-	
+
 	// Update content
 	m.viewport.SetContent(m.renderMessages())
-	
+
 	// Restore scroll position
 	m.viewport.YOffset = oldYOffset
 	m.viewport.YPosition = oldYPosition
+}
+
+// truncateMessageForList truncates a message for display in the session list
+func (m Model) truncateMessageForList(content string, maxWidth int) string {
+	// Trim leading/trailing whitespace
+	content = strings.TrimSpace(content)
+
+	// Intelligently handle newlines
+	lines := strings.Split(content, "\n")
+
+	// If multi-line, try to use first non-empty line
+	// This helps with messages that start with empty lines or have structure
+	firstMeaningfulLine := ""
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			firstMeaningfulLine = line
+			break
+		}
+	}
+
+	// If we found a meaningful first line, use it
+	// Otherwise fall back to joining all lines
+	if firstMeaningfulLine != "" {
+		content = firstMeaningfulLine
+		// Add indicator if there were multiple lines
+		if len(lines) > 1 {
+			// Check if other lines have content
+			hasMoreContent := false
+			for i := 1; i < len(lines); i++ {
+				if strings.TrimSpace(lines[i]) != "" {
+					hasMoreContent = true
+					break
+				}
+			}
+			if hasMoreContent {
+				// Add ellipsis to indicate there's more content
+				if len(content) <= maxWidth-4 {
+					content = content + " ..."
+				}
+			}
+		}
+	} else {
+		// No meaningful content found, join all lines
+		content = strings.Join(lines, " ")
+	}
+
+	// Clean up excessive whitespace
+	content = strings.TrimSpace(content)
+
+	// Collapse multiple spaces into single space
+	for strings.Contains(content, "  ") {
+		content = strings.ReplaceAll(content, "  ", " ")
+	}
+
+	// Final truncation if necessary
+	if len(content) > maxWidth {
+		if maxWidth > 3 {
+			content = content[:maxWidth-3] + "..."
+		} else {
+			content = "..."
+		}
+	}
+
+	return content
 }

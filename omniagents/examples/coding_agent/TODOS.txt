@@ -1,0 +1,5 @@
+- [ ] ability to customize theme in a way that works with Omarchy and supports all Omarchy themes
+- [ ] models can call multiple tools at the same time, ensure that approvals are queued and only one approval is shown at a time
+- [ ] be able to use up and down arrow to cycle through previous inputs even if from different sessions
+- [x] text input should wrap and also allow multi line
+'- [x] pasting into text input should not auto-send if there is a \n

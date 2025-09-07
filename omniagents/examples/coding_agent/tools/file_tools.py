@@ -449,7 +449,7 @@ def read_file(file_path: str, start_line: Optional[int], num_lines: Optional[int
     
     Args:
         file_path: Path to the file to read
-        start_line: Line number to start reading from (0-indexed)
+        start_line: 1-based line number to start reading from
         num_lines: Maximum number of lines to read
         
     Returns:
@@ -459,38 +459,37 @@ def read_file(file_path: str, start_line: Optional[int], num_lines: Optional[int
         
     Usage:
         Use this tool to read the contents of files.
-        - If start_line is not provided, it defaults to 0 (first line)
+        - If start_line is not provided, it defaults to 1 (first line)
         - If num_lines is not provided, all remaining lines will be read
         
     Examples:
         # Read an entire file
-        read_file("/path/to/file.txt", start_line=0, num_lines=null)
+        read_file("/path/to/file.txt", start_line=1, num_lines=null)
         
         # Read 10 lines starting from line 5
         read_file("/path/to/file.txt", start_line=5, num_lines=10)
     """
     try:
-        # Default to start at beginning if not specified
+        # Default to start at beginning if not specified (1-based)
         if start_line is None:
-            start_line = 0
+            start_line = 1
             
         with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
             # Read all lines
             all_lines = f.readlines()
             
-            # Apply start_line and num_lines filters
-            if start_line < 0:
-                start_line = 0
+            # Apply start_line and num_lines filters (1-based to 0-based)
+            if start_line < 1:
+                start_line = 1
             
-            if start_line >= len(all_lines):
-                start_line = len(all_lines) - 1 if all_lines else 0
+            start_idx = start_line - 1
             
             if num_lines is None:
                 # Read all remaining lines
-                selected_lines = all_lines[start_line:]
+                selected_lines = all_lines[start_idx:]
             else:
                 # Read specified number of lines
-                selected_lines = all_lines[start_line:start_line + num_lines]
+                selected_lines = all_lines[start_idx:start_idx + max(0, num_lines)]
             
             content = "".join(selected_lines)
             
@@ -555,22 +554,46 @@ def read_file(file_path: str, start_line: Optional[int], num_lines: Optional[int
         return RichToolOutput(llm_output, ui_metadata)
 
 @rich_function_tool
-def edit_file(file_path: str, old_text: str, new_text: str) -> RichToolOutput:
+def edit_file(
+    file_path: str,
+    old_text: str,
+    new_text: str,
+    expected_replacements: Optional[int] = None,
+    max_replacements: Optional[int] = None,
+    start_line: Optional[int] = None,
+    end_line: Optional[int] = None,
+    dry_run: Optional[bool] = False,
+    regex: Optional[bool] = False,
+) -> RichToolOutput:
     """
     Makes targeted edits to a specific file by replacing text.
     
     Args:
         file_path: Path to the file to edit
-        old_text: The text to replace
-        new_text: The replacement text
+        old_text: The text to replace. By default, treated as a literal string.
+        new_text: The replacement text.
+        expected_replacements: If provided, the edit will fail unless exactly this many replacements occur.
+        max_replacements: If provided, limit the number of replacements (applies to the selected range or entire file).
+        start_line: 1-based start line to restrict replacements to a range (inclusive). If None, start at first line.
+        end_line: 1-based end line to restrict replacements to a range (inclusive). If None, end at last line.
+        dry_run: If True, do not write the file — return a diff preview of the proposed changes.
+        regex: If True, interpret old_text as a regular expression (not escaped).
         
     Returns:
         Tuple of (llm_output, ui_metadata) where:
         - llm_output: Description of edit result
-        - ui_metadata: Rich metadata for UI rendering
+        - ui_metadata: Rich metadata for UI rendering, including a unified diff preview
         
     Usage:
         Use this tool to make specific text replacements in files.
+        
+    Caveats:
+        - Escapes vs newlines in code: If you intend to insert a literal backslash-n in a string (e.g. Go/Java/C),
+          pass the two characters backslash and n (written as "\n"). Using a newline escape inserts an actual
+          newline character into the file.
+        - Literal vs regex: old_text is treated literally unless regex=True. For multi-line literals, include actual
+          newline characters in old_text; for inserting the literal two-character sequence backslash-n, use "\n".
+        - Range semantics: start_line/end_line are 1-based and inclusive. Lines outside the range are left unchanged.
         
     Examples:
         # Replace a function name in a Python file
@@ -578,47 +601,130 @@ def edit_file(file_path: str, old_text: str, new_text: str) -> RichToolOutput:
         
         # Replace a configuration value
         edit_file("/path/to/config.json", '"debug": false', '"debug": true')
+        
+        # Regex replacement in a specific range, dry run with expected count
+        edit_file(
+            "/path/to/file.go",
+            old_text=r"fmt\.Fprintf\(.*\)",
+            new_text="fmt.Fprintln(w, msg)",
+            regex=True,
+            start_line=100,
+            end_line=140,
+            expected_replacements=1,
+            dry_run=True,
+        )
     """
     try:
         # Read the file content
         with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
             content = f.read()
         
-        # Replace the text
-        new_content, replacements = re.subn(re.escape(old_text), new_text, content)
+        # Prepare target window (optional line range)
+        lines = content.splitlines(keepends=True)
+        total_lines = len(lines)
+        s_idx = 0 if start_line is None else max(0, min(total_lines, start_line - 1))
+        e_idx = total_lines if end_line is None else max(0, min(total_lines, end_line))
+        if start_line is not None and end_line is not None and s_idx > e_idx:
+            raise ValueError("start_line must be <= end_line")
         
-        if replacements > 0:
-            # Write the modified content back to the file
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(new_content)
-            
-            # Create a simple diff preview
-            old_preview = old_text[:100] + ("..." if len(old_text) > 100 else "")
-            new_preview = new_text[:100] + ("..." if len(new_text) > 100 else "")
-            preview = f"- {old_preview}\n+ {new_preview}"
-            
-            # LLM output
-            llm_output = f"Successfully updated {os.path.basename(file_path)} - made {replacements} replacement(s)"
-            
-            # UI metadata
+        # Build search pattern
+        pattern = old_text if regex else re.escape(old_text)
+        count = 0 if max_replacements is None else max_replacements
+        
+        # Apply replacement to the selected slice or whole content
+        if s_idx == 0 and e_idx == total_lines:
+            new_content, replacements = re.subn(pattern, new_text, content, count=count, flags=re.DOTALL | re.MULTILINE)
+        else:
+            prefix = ''.join(lines[:s_idx])
+            target = ''.join(lines[s_idx:e_idx])
+            suffix = ''.join(lines[e_idx:])
+            replaced, replacements = re.subn(pattern, new_text, target, count=count, flags=re.DOTALL | re.MULTILINE)
+            new_content = prefix + replaced + suffix
+        
+        # Guard: expected replacements
+        if expected_replacements is not None and replacements != expected_replacements:
+            # Diff for visibility even on failure
+            diff_lines = list(difflib.unified_diff(
+                content.splitlines(keepends=True),
+                new_content.splitlines(keepends=True),
+                fromfile=file_path,
+                tofile=file_path,
+                lineterm='',
+                n=3,
+            ))
+            preview = ''.join(diff_lines[:40]) if diff_lines else "No changes"
+            llm_output = (
+                f"Edit aborted: expected {expected_replacements} replacement(s), got {replacements}."
+            )
             ui_metadata = {
-                "value": f"Made {replacements} replacement(s)",  # The actual result
-                "display_type": "file_edit",
-                "summary": f"Updated {os.path.basename(file_path)} ({replacements} replacements)",
+                "display_type": "diff",
+                "summary": f"Edit aborted for {os.path.basename(file_path)}",
+                "value": {
+                    "diff_lines": diff_lines,
+                    "diff_text": ''.join(diff_lines),
+                },
                 "preview": preview,
-                "truncated": len(old_text) > 100 or len(new_text) > 100,
+                "truncated": len(diff_lines) > 40,
                 "metadata": {
                     "file_path": file_path,
                     "operation": "edit",
-                    "changes_made": replacements,
-                    "replacements": replacements
-                }
+                    "expected_replacements": expected_replacements,
+                    "actual_replacements": replacements,
+                    "range": {
+                        "start_line": start_line,
+                        "end_line": end_line,
+                    },
+                    "regex": bool(regex),
+                    "dry_run": bool(dry_run),
+                },
             }
-            
             return RichToolOutput(llm_output, ui_metadata)
-        else:
+        
+        # Build diff preview
+        diff_lines = list(difflib.unified_diff(
+            content.splitlines(keepends=True),
+            new_content.splitlines(keepends=True),
+            fromfile=file_path,
+            tofile=file_path,
+            lineterm='',
+            n=3,
+        ))
+        preview = ''.join(diff_lines[:80]) if diff_lines else "No changes"
+        additions = sum(1 for l in diff_lines if l.startswith('+') and not l.startswith('+++'))
+        deletions = sum(1 for l in diff_lines if l.startswith('-') and not l.startswith('---'))
+        
+        if dry_run:
+            llm_output = (
+                f"Dry run: would update {os.path.basename(file_path)} - {replacements} replacement(s)"
+            )
+            ui_metadata = {
+                "display_type": "diff",
+                "summary": f"Dry run edit for {os.path.basename(file_path)} ({replacements} replacements)",
+                "value": {
+                    "diff_lines": diff_lines,
+                    "diff_text": ''.join(diff_lines),
+                },
+                "preview": preview,
+                "truncated": len(diff_lines) > 80,
+                "metadata": {
+                    "file_path": file_path,
+                    "operation": "edit_dry_run",
+                    "changes_made": replacements,
+                    "replacements": replacements,
+                    "additions": additions,
+                    "deletions": deletions,
+                    "range": {
+                        "start_line": start_line,
+                        "end_line": end_line,
+                    },
+                    "regex": bool(regex),
+                },
+            }
+            return RichToolOutput(llm_output, ui_metadata)
+        
+        # If no actual changes
+        if replacements == 0:
             llm_output = f"No matches found for the specified text in {file_path}"
-            
             ui_metadata = {
                 "value": "No matches found for the specified text",
                 "display_type": "error",
@@ -627,11 +733,44 @@ def edit_file(file_path: str, old_text: str, new_text: str) -> RichToolOutput:
                 "truncated": False,
                 "metadata": {
                     "error_type": "no_match",
-                    "file_path": file_path
-                }
+                    "file_path": file_path,
+                },
             }
-            
             return RichToolOutput(llm_output, ui_metadata)
+        
+        # Write the modified content back to the file
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+        
+        # LLM output
+        llm_output = f"Successfully updated {os.path.basename(file_path)} - made {replacements} replacement(s)"
+        
+        # UI metadata
+        ui_metadata = {
+            "display_type": "diff",
+            "summary": f"Updated {os.path.basename(file_path)} ({replacements} replacements)",
+            "value": {
+                "diff_lines": diff_lines,
+                "diff_text": ''.join(diff_lines),
+            },
+            "preview": preview,
+            "truncated": len(diff_lines) > 80,
+            "metadata": {
+                "file_path": file_path,
+                "operation": "edit",
+                "changes_made": replacements,
+                "replacements": replacements,
+                "additions": additions,
+                "deletions": deletions,
+                "range": {
+                    "start_line": start_line,
+                    "end_line": end_line,
+                },
+                "regex": bool(regex),
+            },
+        }
+        
+        return RichToolOutput(llm_output, ui_metadata)
     except Exception as e:
         llm_output = f"Error editing file: {str(e)}"
         
@@ -740,24 +879,62 @@ def write_file(file_path: str, content: str, append: Optional[bool]) -> RichTool
 # These functions generate rich metadata for tool approvals to enhance the UI
 
 @approval_metadata()
-def edit_file_approval(file_path: str, old_text: str, new_text: str) -> dict:
-    """Generate approval metadata for edit_file tool."""
+def edit_file_approval(
+    file_path: str,
+    old_text: str,
+    new_text: str,
+    expected_replacements: Optional[int] = None,
+    max_replacements: Optional[int] = None,
+    start_line: Optional[int] = None,
+    end_line: Optional[int] = None,
+    dry_run: Optional[bool] = False,
+    regex: Optional[bool] = False,
+    **kwargs,
+) -> dict:
+    """Generate approval metadata for edit_file tool.
     
-    # Generate unified diff
-    diff_lines = list(difflib.unified_diff(
-        old_text.splitlines(keepends=True),
-        new_text.splitlines(keepends=True),
-        fromfile=file_path,
-        tofile=file_path,
-        lineterm='',
-        n=3  # Number of context lines
-    ))
+    Attempts to preview the actual file diff by applying the proposed change in-memory.
+    Falls back to showing an old_text/new_text diff if the file cannot be read.
+    """
     
-    # Create preview (first few lines of diff)
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read()
+        lines = content.splitlines(keepends=True)
+        total = len(lines)
+        s_idx = 0 if start_line is None else max(0, min(total, start_line - 1))
+        e_idx = total if end_line is None else max(0, min(total, end_line))
+        pattern = old_text if regex else re.escape(old_text)
+        count = 0 if max_replacements is None else max_replacements
+        if s_idx == 0 and e_idx == total:
+            new_content, repl = re.subn(pattern, new_text, content, count=count, flags=re.DOTALL | re.MULTILINE)
+        else:
+            prefix = ''.join(lines[:s_idx])
+            target = ''.join(lines[s_idx:e_idx])
+            suffix = ''.join(lines[e_idx:])
+            replaced, repl = re.subn(pattern, new_text, target, count=count, flags=re.DOTALL | re.MULTILINE)
+            new_content = prefix + replaced + suffix
+        diff_lines = list(difflib.unified_diff(
+            content.splitlines(keepends=True),
+            new_content.splitlines(keepends=True),
+            fromfile=file_path,
+            tofile=file_path,
+            lineterm='',
+            n=3,
+        ))
+    except Exception:
+        # Fallback: diff between old_text and new_text parameters
+        diff_lines = list(difflib.unified_diff(
+            old_text.splitlines(keepends=True),
+            new_text.splitlines(keepends=True),
+            fromfile=file_path,
+            tofile=file_path,
+            lineterm='',
+            n=3
+        ))
+    
     preview_lines = diff_lines[:20] if diff_lines else ["No changes"]
     preview = ''.join(preview_lines)
-    
-    # Count additions and deletions
     additions = sum(1 for l in diff_lines if l.startswith('+') and not l.startswith('+++'))
     deletions = sum(1 for l in diff_lines if l.startswith('-') and not l.startswith('---'))
     
@@ -776,7 +953,12 @@ def edit_file_approval(file_path: str, old_text: str, new_text: str) -> dict:
             "operation": "edit",
             "additions": additions,
             "deletions": deletions,
-            "total_lines": len(diff_lines)
+            "total_lines": len(diff_lines),
+            "range": {"start_line": start_line, "end_line": end_line},
+            "regex": bool(regex),
+            "expected_replacements": expected_replacements,
+            "max_replacements": max_replacements,
+            "dry_run": bool(dry_run),
         }
     }
 

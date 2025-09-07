@@ -77,6 +77,8 @@ type RunStartedMsg struct {
 	SessionID string
 }
 
+type RPCReadyMsg struct{}
+
 // ParseEventHandlers creates event handlers that convert RPC events to Tea messages
 func ParseEventHandlers(send func(interface{})) map[string]func(json.RawMessage) {
 	return map[string]func(json.RawMessage){

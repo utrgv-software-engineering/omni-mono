@@ -23,6 +23,7 @@ type RPCClient struct {
 	handlers   map[string]func(json.RawMessage)
 	connected  bool
 	closeChan  chan struct{}
+	onReady    func()  // Callback when receiveLoop is ready
 }
 
 // NewRPCClient creates a new RPC client
@@ -108,6 +109,14 @@ func (c *RPCClient) Close() error {
 
 // receiveLoop handles incoming messages from the server
 func (c *RPCClient) receiveLoop() {
+	// Small delay to ensure goroutine is scheduled and ready
+	time.Sleep(10 * time.Millisecond)
+	
+	// Signal that the receive loop is ready
+	if c.onReady != nil {
+		c.onReady()
+	}
+	
 	for {
 		select {
 		case <-c.closeChan:
@@ -168,6 +177,8 @@ func (c *RPCClient) receiveLoop() {
 
 // call makes an RPC call and waits for the response
 func (c *RPCClient) call(method string, params interface{}) (json.RawMessage, error) {
+	debug := os.Getenv("OMNI_DEBUG") == "1"
+	
 	if !c.connected {
 		return nil, fmt.Errorf("not connected")
 	}
@@ -186,6 +197,10 @@ func (c *RPCClient) call(method string, params interface{}) (json.RawMessage, er
 	if err != nil {
 		return nil, err
 	}
+	
+	if debug {
+		fmt.Fprintf(os.Stderr, "[DEBUG] RPC call: sending request: %s\n", string(data))
+	}
 
 	// Create response channel
 	respChan := make(chan json.RawMessage, 1)
@@ -195,15 +210,36 @@ func (c *RPCClient) call(method string, params interface{}) (json.RawMessage, er
 
 	// Send request
 	if err := c.conn.WriteMessage(websocket.TextMessage, data); err != nil {
+		if debug {
+			fmt.Fprintf(os.Stderr, "[DEBUG] RPC call: WriteMessage failed: %v\n", err)
+		}
 		c.mu.Lock()
 		delete(c.pending, idStr)
 		c.mu.Unlock()
 		return nil, err
 	}
+	
+	if debug {
+		fmt.Fprintf(os.Stderr, "[DEBUG] RPC call: waiting for response on channel for id %s\n", idStr)
+	}
 
-	// Wait for response
-	result := <-respChan
-	return result, nil
+	// Wait for response with timeout to avoid hanging forever if server doesn't respond
+	select {
+	case result := <-respChan:
+		if debug {
+			fmt.Fprintf(os.Stderr, "[DEBUG] RPC call: received response for id %s\n", idStr)
+		}
+		return result, nil
+	case <-time.After(5 * time.Second):
+		if debug {
+			fmt.Fprintf(os.Stderr, "[DEBUG] RPC call: timeout waiting for response for id %s (method=%s)\n", idStr, method)
+		}
+		// Clean up pending map to avoid leaks
+		c.mu.Lock()
+		delete(c.pending, idStr)
+		c.mu.Unlock()
+		return nil, fmt.Errorf("rpc call timeout for method '%s'", method)
+	}
 }
 
 // RegisterHandler registers a handler for server notifications
@@ -211,6 +247,11 @@ func (c *RPCClient) RegisterHandler(method string, handler func(json.RawMessage)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.handlers[method] = handler
+}
+
+// SetOnReady sets the callback to be called when receiveLoop is ready
+func (c *RPCClient) SetOnReady(callback func()) {
+	c.onReady = callback
 }
 
 // RPC method implementations
@@ -252,8 +293,16 @@ func (c *RPCClient) StopRun(runID string) error {
 
 // ListSessions returns all available sessions
 func (c *RPCClient) ListSessions() ([]Session, error) {
+	debug := os.Getenv("OMNI_DEBUG") == "1"
+	if debug {
+		fmt.Fprintf(os.Stderr, "[DEBUG] ListSessions: calling list_sessions RPC\n")
+	}
+	
 	result, err := c.call("list_sessions", nil)
 	if err != nil {
+		if debug {
+			fmt.Fprintf(os.Stderr, "[DEBUG] ListSessions: error from call: %v\n", err)
+		}
 		return nil, err
 	}
 
@@ -294,9 +343,44 @@ type RunResponse struct {
 	SessionID string `json:"session_id"`
 }
 
+type SessionMessage struct {
+	Role      string      `json:"role"`
+	Content   interface{} `json:"content"` // Can be string or array
+	Timestamp string      `json:"timestamp"`
+}
+
+// GetContentText extracts text content from a SessionMessage
+func (m *SessionMessage) GetContentText() string {
+	if m == nil || m.Content == nil {
+		return ""
+	}
+	
+	// Handle string content
+	if str, ok := m.Content.(string); ok {
+		return str
+	}
+	
+	// Handle array content (OpenAI format)
+	if arr, ok := m.Content.([]interface{}); ok {
+		for _, item := range arr {
+			if contentPart, ok := item.(map[string]interface{}); ok {
+				if contentPart["type"] == "output_text" {
+					if text, ok := contentPart["text"].(string); ok {
+						return text
+					}
+				}
+			}
+		}
+	}
+	
+	return ""
+}
+
 type Session struct {
-	ID           string `json:"id"`
-	CreatedAt    string `json:"created_at"`
-	Archived     bool   `json:"archived"`
-	MessageCount int    `json:"message_count"`
+	ID           string          `json:"id"`
+	CreatedAt    string          `json:"created_at"`
+	Archived     bool            `json:"archived"`
+	MessageCount int             `json:"message_count"`
+	FirstMessage *SessionMessage `json:"first_message,omitempty"`
+	LastMessage  *SessionMessage `json:"last_message,omitempty"`
 }
