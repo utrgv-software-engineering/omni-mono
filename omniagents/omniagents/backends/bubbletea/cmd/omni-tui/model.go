@@ -215,11 +215,15 @@ func NewModel(client *RPCClient, agentName string, welcomeText string, safeMode 
 	// Set styles for blurred state (same as focused for now)
 	ta.BlurredStyle = ta.FocusedStyle
 
-	// Customize key bindings to use Enter for send and Alt+Enter for newline
-	ta.KeyMap.InsertNewline = key.NewBinding(
-		key.WithKeys("alt+enter"),
-		key.WithHelp("alt+enter", "new line"),
-	)
+    // Customize key bindings:
+    // - Enter sends
+    // - Alt+Enter (Option+Enter on macOS) inserts a newline
+    // - Ctrl+J inserts a newline (portable fallback across terminals)
+    ta.KeyMap.InsertNewline = key.NewBinding(
+        key.WithKeys("alt+enter", "ctrl+j"),
+        // Show only Alt+Enter in the on-screen help to keep it simple
+        key.WithHelp("alt+enter", "new line"),
+    )
 
 	// Initialize viewport
 	vp := viewport.New(80, 20)
@@ -1496,21 +1500,22 @@ func (m Model) getContextualHelp() string {
 			helpStyle.Render("or wait to continue")
 	}
 
-	switch m.state {
-	case StateReady:
-		contextKeys = []key.Binding{
-			key.NewBinding(
-				key.WithKeys("enter"),
-				key.WithHelp("enter", "send"),
-			),
-			key.NewBinding(
-				key.WithKeys("alt+enter"),
-				key.WithHelp("alt+enter", "new line"),
-			),
-			key.NewBinding(
-				key.WithKeys("ctrl+c"),
-				key.WithHelp("ctrl+c", "quit"),
-			),
+    switch m.state {
+    case StateReady:
+        contextKeys = []key.Binding{
+            key.NewBinding(
+                key.WithKeys("enter"),
+                key.WithHelp("enter", "send"),
+            ),
+            key.NewBinding(
+                // Only advertise Alt+Enter in help; Ctrl+J remains a hidden fallback
+                key.WithKeys("alt+enter"),
+                key.WithHelp("alt+enter", "new line"),
+            ),
+            key.NewBinding(
+                key.WithKeys("ctrl+c"),
+                key.WithHelp("ctrl+c", "quit"),
+            ),
 		}
 	case StateWaitingForResponse:
 		contextKeys = []key.Binding{
