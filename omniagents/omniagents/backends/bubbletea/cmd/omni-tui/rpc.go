@@ -273,10 +273,19 @@ func (c *RPCClient) StartRun(prompt string, sessionID *string, variables map[str
 		return nil, err
 	}
 
-	var response RunResponse
-	if err := json.Unmarshal(result, &response); err != nil {
-		return nil, err
-	}
+    var response RunResponse
+    if err := json.Unmarshal(result, &response); err != nil {
+        // Try to parse JSON-RPC error object (receiveLoop passes the error payload directly)
+        var rpcErr struct {
+            Code    int             `json:"code"`
+            Message string          `json:"message"`
+            Data    json.RawMessage `json:"data,omitempty"`
+        }
+        if perr := json.Unmarshal(result, &rpcErr); perr == nil && rpcErr.Message != "" {
+            return nil, fmt.Errorf("start_run failed: %s", rpcErr.Message)
+        }
+        return nil, err
+    }
 
 	return &response, nil
 }

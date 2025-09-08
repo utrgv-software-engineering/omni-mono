@@ -79,6 +79,7 @@ class LocalAgent(UnifiedAgentBase):
         self._session_id: Optional[str] = None
         self._current_run_id: Optional[str] = None
         self._initialized = False
+        self._last_run_end: Optional[Dict[str, Any]] = None
         
         # Set agent properties from spec
         self.name = spec.name
@@ -307,10 +308,15 @@ class LocalAgent(UnifiedAgentBase):
             # Stream events until run_end
             while True:
                 event_data = await self._event_queue.get()
-                
+
                 if event_data["method"] == "run_end":
                     params = event_data.get("params", {})
                     if not run_id or params.get("run_id") == run_id:
+                        # Cache last run_end payload for UI to inspect (errors, usage, model)
+                        try:
+                            self._last_run_end = dict(params)
+                        except Exception:
+                            self._last_run_end = None
                         # Clear current run_id when run ends
                         self._current_run_id = None
                         break
@@ -331,6 +337,10 @@ class LocalAgent(UnifiedAgentBase):
                 return self._events_gen
         
         return _StreamResult(_events_gen())
+
+    def get_last_run_end(self) -> Optional[Dict[str, Any]]:
+        """Return the payload from the most recent run_end notification."""
+        return self._last_run_end
 
     async def list_sessions(self) -> List[Dict[str, Any]]:
         """List available sessions."""

@@ -6,6 +6,22 @@ from typing import Any, Dict, Optional, Callable, TYPE_CHECKING
 
 from .base import RpcMethodsBase
 
+
+class RpcError(Exception):
+    """Raised when a JSON-RPC call returns an error object.
+
+    Attributes:
+        code: JSON-RPC error code
+        message: Human-readable message
+        data: Optional error data
+    """
+
+    def __init__(self, code: int, message: str, data: Any | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.data = data
+
 if TYPE_CHECKING:
     from .transport import Transport
 
@@ -74,7 +90,17 @@ class JsonRpcClient:
                     call_id = str(data.get("id"))
                     fut = self._pending.pop(call_id, None)
                     if fut and not fut.done():
-                        fut.set_result(data.get("result"))
+                        if "error" in data and data["error"] is not None:
+                            err = data["error"]
+                            fut.set_exception(
+                                RpcError(
+                                    int(err.get("code", -32000)),
+                                    str(err.get("message", "Unknown error")),
+                                    err.get("data"),
+                                )
+                            )
+                        else:
+                            fut.set_result(data.get("result"))
         except Exception:
             # Ignore errors in receive loop
             pass

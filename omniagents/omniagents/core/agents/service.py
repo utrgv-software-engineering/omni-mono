@@ -217,6 +217,7 @@ class AgentService(RpcMethodsBase):
         async def _worker():
             end_reason = "error"  # Default in case of unexpected exception
             final_details: dict | None = None
+            error_info: dict | None = None
             try:
                 # Determine runtime context with clear priority:
                 # 1. If client sent context, use it as-is
@@ -249,12 +250,17 @@ class AgentService(RpcMethodsBase):
                 # Task was cancelled (e.g., via stop_run)
                 end_reason = "cancelled"
                 raise  # Re-raise to properly mark task as cancelled
+            except Exception as e:
+                # Capture error details for clients; do not emit as assistant text
+                error_info = {"message": str(e), "type": e.__class__.__name__}
             finally:
                 # Inform client the run finished
                 payload = {
                     "run_id": asyncio.current_task().get_name(),
                     "end_reason": end_reason,
                 }
+                if error_info is not None:
+                    payload["error"] = error_info
                 if isinstance(final_details, dict):
                     # Extract usage if present
                     if "usage" in final_details:

@@ -31,14 +31,16 @@ type ToolApprovalRequestEvent struct {
 }
 
 type RunEndEvent struct {
-	RunID     string        `json:"run_id"`
-	EndReason string        `json:"end_reason"`
-	Usage     *UsageDetails `json:"usage,omitempty"`
-	// Model metadata (optional)
-	Model           string `json:"model,omitempty"`
-	ContextWindow   int    `json:"context_window,omitempty"`
-	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
-	Truncation      string `json:"truncation,omitempty"`
+    RunID     string        `json:"run_id"`
+    EndReason string        `json:"end_reason"`
+    Usage     *UsageDetails `json:"usage,omitempty"`
+    // Model metadata (optional)
+    Model           string `json:"model,omitempty"`
+    ContextWindow   int    `json:"context_window,omitempty"`
+    MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
+    Truncation      string `json:"truncation,omitempty"`
+    // Optional application error details when EndReason == "error"
+    Error *RunEndError `json:"error,omitempty"`
 }
 
 // Tea Msg types for Bubble Tea updates
@@ -60,7 +62,13 @@ type ToolApprovalRequestMsg struct {
 }
 
 type RunEndMsg struct {
-	RunEndEvent
+    RunEndEvent
+}
+
+// RunEndError carries application-level error details for failed runs
+type RunEndError struct {
+    Message string `json:"message"`
+    Type    string `json:"type"`
 }
 
 // UsageDetails captures token/cost metrics sent by the server

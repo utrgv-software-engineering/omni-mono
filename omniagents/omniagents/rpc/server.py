@@ -63,10 +63,24 @@ class JsonRpcEndpoint:
                     method = data.get("method")
                     params = data.get("params") or data.get("args") or {}
                     if method:
-                        func = getattr(self.methods, method)
-                        result = await func(**params)
-                        if call_id is not None:
-                            await channel.send_result(call_id, result)
+                        try:
+                            func = getattr(self.methods, method)
+                            result = await func(**params)
+                            if call_id is not None:
+                                await channel.send_result(call_id, result)
+                        except Exception as e:
+                            # Return JSON-RPC error response for method failures
+                            if call_id is not None:
+                                error_payload = {
+                                    "jsonrpc": "2.0",
+                                    "id": call_id,
+                                    "error": {
+                                        "code": -32603,  # Internal error
+                                        "message": str(e),
+                                    },
+                                }
+                                await transport.send_json(error_payload)
+                            # On notifications (no id), just swallow the error
             finally:
                 await transport.disconnect()
                 

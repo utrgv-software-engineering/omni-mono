@@ -725,7 +725,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case RunEndMsg:
 		// Only change state to Ready if not waiting for approval
 		if m.state != StateApprovalRequired {
-			m.state = StateReady
+			// If the run ended with an error and error details are present, surface it
+			if strings.ToLower(msg.EndReason) == "error" && msg.Error != nil {
+				m.state = StateError
+				m.err = fmt.Errorf(msg.Error.Message)
+			} else {
+				m.state = StateReady
+			}
 		}
 		m.currentRunID = ""
 		// Capture final usage totals if provided
@@ -1575,21 +1581,23 @@ func (m Model) getContextualHelp() string {
 }
 
 func (m Model) renderError() string {
-	errorStyle := lipgloss.NewStyle().
-		Foreground(Styles.Error.GetForeground()).
-		Bold(true)
+    errorStyle := lipgloss.NewStyle().
+        Foreground(Styles.Error.GetForeground()).
+        Bold(true)
 
-	helpStyle := lipgloss.NewStyle().
-		Foreground(Styles.Debug.GetForeground())
+    helpStyle := lipgloss.NewStyle().
+        Foreground(Styles.Debug.GetForeground())
 
-	var output strings.Builder
-	output.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v", m.err)))
-	output.WriteString("\n\n")
-	output.WriteString(helpStyle.Render("This usually means the server failed to start or is not accessible."))
-	output.WriteString("\n")
-	output.WriteString(helpStyle.Render("Press Ctrl+C to exit."))
+    var output strings.Builder
+    output.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v", m.err)))
+    output.WriteString("\n\n")
+    output.WriteString(helpStyle.Render("The run ended with an error."))
+    output.WriteString("\n")
+    output.WriteString(helpStyle.Render("Common causes: invalid API key, insufficient quota, rate limiting, model not available, or network issues."))
+    output.WriteString("\n")
+    output.WriteString(helpStyle.Render("Press Ctrl+C to exit, or start a new run."))
 
-	return output.String()
+    return output.String()
 }
 
 func (m Model) renderConnecting() string {

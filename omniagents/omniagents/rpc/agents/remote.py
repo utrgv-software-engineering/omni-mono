@@ -51,6 +51,7 @@ class RemoteAgent(UnifiedAgentBase):
         self._current_run_id: str | None = None
         self._variables = variables
         self._context = context
+        self._last_run_end: Dict[str, Any] | None = None
 
     def get_all_tools(self) -> List[Any]:
         """Get all available tools (empty for remote agents)."""
@@ -114,6 +115,11 @@ class RemoteAgent(UnifiedAgentBase):
                 ):
                     if Debug.enabled():
                         print(f"[cli] ◀ run_end  run_id={run_id}")
+                    # Cache last run_end payload for UI to inspect (errors, usage, model)
+                    try:
+                        self._last_run_end = dict(msg.get("params") or {})
+                    except Exception:
+                        self._last_run_end = None
                     # Clear current run_id when run ends
                     self._current_run_id = None
                     break
@@ -132,6 +138,13 @@ class RemoteAgent(UnifiedAgentBase):
                 return self._gen
 
         return _Result(_events_gen())
+
+    def get_last_run_end(self) -> Optional[Dict[str, Any]]:
+        """Return the payload from the most recent run_end notification.
+
+        Contains fields like end_reason, error (if any), usage, and model info.
+        """
+        return self._last_run_end
 
     async def list_sessions(self) -> List[Dict[str, Any]]:
         """Fetch list of session metadata from the server."""
