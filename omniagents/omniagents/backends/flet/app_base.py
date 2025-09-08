@@ -58,6 +58,7 @@ from openai import AsyncOpenAI  # <-- Import for default builder
 
 # Import SafeAgent components directly as they are part of the core package now
 from omniagents.core.agents.safe import SafeAgent, ApprovalResult  # Added SafeAgent and ApprovalResult
+from omniagents.core.debug import Debug
 
 # Use TYPE_CHECKING to avoid circular import issues at runtime
 if TYPE_CHECKING:
@@ -274,7 +275,7 @@ class AgentApp:
         """Configure basic page properties."""
         self.page.horizontal_alignment = ft.CrossAxisAlignment.STRETCH
         self.page.title = self.spec.page_title + (
-            self.spec.page_title_suffix if self.spec.debug_flag else ""
+            self.spec.page_title_suffix if Debug.enabled() else ""
         )
         self.page.theme_mode = ft.ThemeMode.LIGHT
         self.page.window_width = 900
@@ -447,7 +448,7 @@ class AgentApp:
                             height=64,  # Material 3 standard app bar height
                             alignment=ft.alignment.center,  # Center container content vertically
                         ),
-                        # Debug Banner (only if debug_flag is True)
+                        # Debug Banner (only in debug mode)
                         *(
                             [
                                 ft.Container(
@@ -474,7 +475,7 @@ class AgentApp:
                                     ),
                                 )
                             ]
-                            if self.spec.debug_flag
+                            if Debug.enabled()
                             else []
                         ),
                     ]
@@ -769,6 +770,18 @@ class AgentApp:
                         continue
 
                     item = event.item
+                    # Some events (e.g., token usage) come as dict payloads without .type
+                    if not hasattr(item, "type"):
+                        # Optional: handle token usage updates here if desired
+                        # For now, skip non-item payloads to avoid attribute errors
+                        if Debug.enabled():
+                            try:
+                                it_repr = json.dumps(item)[:200]
+                            except Exception:
+                                it_repr = str(item)[:200]
+                            print(f"[DEBUG] Skipping non-item payload event: {getattr(event, 'name', '')} item={it_repr}")
+                        continue
+
                     final_items.append(item)  # Store raw items for conversation history
 
                     # --- Handle Tool Calls ---
@@ -841,7 +854,7 @@ class AgentApp:
                                 and output_data.get("error") == "TOOL_REJECTED"
                             ):
                                 is_rejection = True
-                                if self.spec.debug_flag:
+                                if Debug.enabled():
                                     print(
                                         f"Debug: Tool call {output_data.get('tool')} rejected: {output_data.get('message')}"
                                     )
@@ -1073,7 +1086,7 @@ class AgentApp:
             self.page.update()  # Ensure error banner is shown
 
     async def _request_tool_approval(
-        self, tool_name: str, formatted_args: str
+        self, tool_name: str, formatted_args: str, metadata: dict | None = None
     ) -> ApprovalResult:
         """Displays the tool approval UI and waits for user interaction."""
         if not self.page or not self.chat:

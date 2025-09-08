@@ -412,6 +412,7 @@ def list_directory(
     Usage:
         Use this tool to list directory contents.
         - If recursive is not provided, it defaults to False
+        - If path is empty ("" or whitespace), the current working directory "./" will be used
         
     Examples:
         # List contents of the current directory
@@ -425,6 +426,9 @@ def list_directory(
     """
     try:
         # Defaults
+        # Treat empty or whitespace-only path as current directory
+        if path is None or (isinstance(path, str) and path.strip() == ""):
+            path = "."
         if recursive is None:
             recursive = False
         if ignore_hidden is None:

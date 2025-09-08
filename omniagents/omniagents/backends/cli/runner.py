@@ -19,13 +19,22 @@ from omniagents.core.debug import Debug
 ApprovalResult = Tuple[bool, bool, Optional[str]]
 
 
-async def cli_approval_callback(tool_name: str, formatted_args: str) -> ApprovalResult:
+async def cli_approval_callback(tool_name: str, formatted_args: str, metadata: dict | None = None) -> ApprovalResult:
     """
     CLI implementation for tool approval.
     Returns a tuple: (approved: bool, always_approve: bool, error_message: Optional[str])
     """
     # Display the tool call and approval request
     print(f"\n\033[33m⏺\033[0m \033[1m{tool_name}\033[0m({formatted_args})")
+    # Optionally show extra metadata if provided (short preview)
+    if metadata:
+        try:
+            preview = json.dumps(metadata)
+            if len(preview) > 200:
+                preview = preview[:200] + "..."
+            print(f"  ⎿  Context: {preview}")
+        except Exception:
+            pass
     print("  ⎿  Approval Required")
     print(f"\n⚠ Do you want to allow tool '{tool_name}' with args: {formatted_args}?" )
     print("  1. Yes")
@@ -215,6 +224,17 @@ async def run_cli(
                 if event.type == "run_item_stream_event":
                     item = event.item
                     final_items.append(item)
+                    # Some backends (e.g., token usage/approval events) may deliver
+                    # plain dict payloads via RunItemStreamEvent. Guard against those
+                    # so we only process well-formed run items that expose a 'type'.
+                    if not hasattr(item, "type"):
+                        if Debug.enabled():
+                            try:
+                                it_repr = json.dumps(item)[:200]
+                            except Exception:
+                                it_repr = str(item)[:200]
+                            print(f"[DEBUG] Skipping non-item payload event: {event.type} item={it_repr}")
+                        continue
                     # Tool call: always display in CLI
                     if item.type == "tool_call_item":
                         inp = item.to_input_item() or {}
