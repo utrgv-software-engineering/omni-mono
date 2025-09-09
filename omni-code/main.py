@@ -119,11 +119,11 @@ def cli_main():
         # Context window (input tokens) for the configured model.
         # Clients can use this to warn when approaching the limit.
         # Adjust based on the actual model you use.
-        context_window=128000,
+        context_window=400000,
     )
 
     # Launch
-    runner.main(default_mode="cli")
+    runner.main(default_mode="tui")
 
 
 if __name__ == "__main__":

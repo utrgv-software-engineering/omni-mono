@@ -6,14 +6,12 @@ A standalone coding agent built with OmniAgents. It gives an AI assistant safe a
 - Rich workspace tools: list, search, read, edit, and patch files; run shell commands
 - Web and docs tools: fetch web pages, Google/YouTube/Scholar via SerpAPI, download files, convert many formats to Markdown
 - Optional safe-guarded execution with approvals
-- CLI and YAML-based configuration
+- Simple CLI-based runner
 
 ## Project layout
 ```
 .
-├── agent.yaml          # YAML config (tools, model, safety)
-├── instructions.md     # System prompt for the agent
-├── main.py             # Python entry point
+├── main.py             # Python entry point and system instructions
 ├── tools/              # Tool implementations (rich tools for OmniAgents UI)
 ├── tests/              # Unit tests for tools
 ├── pyproject.toml      # Package metadata (preferred)
@@ -59,7 +57,7 @@ omni-code
 python main.py
 ```
 
-The default runner starts an OmniAgents CLI with safe mode enabled for destructive tools. See `agent.yaml` to adjust behavior.
+The default runner starts an OmniAgents CLI with safe mode enabled for destructive tools. You can adjust behavior in `main.py`.
 
 ## Running tests
 ```
@@ -89,7 +87,7 @@ Note: pip does not expand environment variables inside requirements.txt lines; p
 extra-index-url = https://${FURY_AUTH}:@pypi.fury.io/ericmichael/
 ```
 
-If you prefer using the YAML runner, you can point the OmniAgents runner to `agent.yaml`.
+ 
 
 ## License
 MIT (see LICENSE)
