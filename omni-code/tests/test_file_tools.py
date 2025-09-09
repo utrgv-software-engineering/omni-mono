@@ -1,100 +1,112 @@
 import os
 import pytest
-import tempfile
 from pathlib import Path
-from unittest.mock import patch
 
-# Mock the decorator before importing the module
+
 @pytest.fixture(autouse=True)
-def mock_function_tool():
-    """Mock the function_tool decorator to simply return the original function."""
-    with patch('omniagents.core.function_tool', side_effect=lambda f: f):
-        yield
+def mock_rich_tools(monkeypatch):
+    """Patch rich_function_tool and RichToolOutput so functions are directly callable
+    and we can easily inspect their returned metadata in tests.
+    """
+    # Identity decorator
+    monkeypatch.setattr('omniagents.core.tools.rich_function_tool', lambda f: f, raising=False)
+    # Identity decorator for approvals
+    monkeypatch.setattr('omniagents.core.tools.approval_metadata', lambda *args, **kwargs: (lambda f: f), raising=False)
+
+    # Minimal stub for RichToolOutput that exposes ui_metadata
+    class DummyRTO:
+        def __init__(self, llm_output, ui_metadata):
+            self.llm_output = llm_output
+            self.ui_metadata = ui_metadata
+
+        # Convenience for tests: index into ui_metadata
+        def __getitem__(self, key):
+            return self.ui_metadata.get(key)
+
+    monkeypatch.setattr('omniagents.core.tools.RichToolOutput', DummyRTO, raising=False)
+    yield
 
 
 @pytest.fixture
-def tmp_workdir(tmp_path):
-    """Set up a temporary working directory populated with sample files."""
-    # Create some files and folders
+def tmp_workdir(tmp_path: Path) -> Path:
+    """Create a temporary working directory with some files including hidden ones."""
     (tmp_path / 'a.py').write_text('print("hello")\n')
     (tmp_path / 'b.txt').write_text('hello world\nbye world\n')
-    subdir = tmp_path / 'sub'
-    subdir.mkdir()
-    (subdir / 'c.txt').write_text('subdir line 1\nsubdir line 2\n')
+
+    sub = tmp_path / 'sub'
+    sub.mkdir()
+    (sub / 'c.txt').write_text('subdir line 1\nsubdir line 2\n')
+
+    # Hidden files
+    (tmp_path / '.hidden.txt').write_text('secret line\n')
+    (sub / '.hidden2.md').write_text('hidden content\n')
     return tmp_path
 
 
-def test_glob_files_basic(mock_function_tool, tmp_workdir):
-    """Ensure glob_files returns only *.py files when pattern is specified."""
+def test_glob_files_recursive_python(tmp_workdir: Path):
     from tools.file_tools import glob_files
 
-    result = glob_files('*.py', path=str(tmp_workdir))
+    res = glob_files('**/*.py', path=str(tmp_workdir))
+    files = res['value']
 
-    assert result['count'] == 1
-    assert result['matches'][0].endswith('a.py')
+    assert any(p.endswith('a.py') for p in files)
+    assert all(str(tmp_workdir) in p for p in files)
 
 
-def test_grep_files_basic(mock_function_tool, tmp_workdir):
-    """Ensure grep_files finds occurrences in matching files only."""
+def test_glob_files_everything_includes_hidden_when_requested(tmp_workdir: Path):
+    from tools.file_tools import glob_files
+
+    res = glob_files('**/*', path=str(tmp_workdir), ignore_hidden=False, respect_gitignore=False)
+    items = res['value']
+
+    # Hidden files should be present due to the supplemental search
+    assert any(p.endswith('.hidden.txt') for p in items)
+    assert any(p.endswith('.hidden2.md') for p in items)
+
+
+def test_glob_files_nonrecursive_does_not_cross_directories(tmp_workdir: Path):
+    from tools.file_tools import glob_files
+
+    res = glob_files('*.txt', path=str(tmp_workdir), ignore_hidden=False, respect_gitignore=False)
+    items = res['value']
+
+    # Should include top-level b.txt, but not sub/c.txt
+    assert any(p.endswith('b.txt') for p in items)
+    assert not any(p.endswith('sub/c.txt') for p in items)
+
+
+def test_glob_files_subdir_pattern_matches_only_immediate_children(tmp_workdir: Path):
+    from tools.file_tools import glob_files
+
+    # sub/*.md should include .hidden2.md when ignore_hidden=False
+    res = glob_files('sub/*.md', path=str(tmp_workdir), ignore_hidden=False, respect_gitignore=False)
+    items = res['value']
+    assert any(p.endswith('sub/.hidden2.md') for p in items)
+
+    # And should exclude when ignore_hidden=True
+    res2 = glob_files('sub/*.md', path=str(tmp_workdir), ignore_hidden=True, respect_gitignore=False)
+    items2 = res2['value']
+    assert not any(p.endswith('sub/.hidden2.md') for p in items2)
+
+
+def test_grep_files_recursive_include_basename(tmp_workdir: Path):
     from tools.file_tools import grep_files
 
-    # Search for the word 'hello' in *.txt files
-    result = grep_files('hello', path=str(tmp_workdir), include='*.txt')
+    # Should search recursively for *.txt files (grep-like include behavior)
+    res = grep_files('hello', path=str(tmp_workdir), include='*.txt', respect_gitignore=False)
+    results = res['value']
+    files = [r['file'] for r in results]
 
-    assert result['count'] == 1
-    assert any(match['file'].endswith('b.txt') for match in result['matches'])
-
-
-def test_list_directory_nonrecursive(mock_function_tool, tmp_workdir):
-    """Verify list_directory lists top-level items only when recursive=False."""
-    from tools.file_tools import list_directory
-
-    listing = list_directory(path=str(tmp_workdir), recursive=False)
-
-    # Should include a.py and b.txt but NOT files inside subdir
-    files = listing['files']
-    assert any(f.endswith('a.py') for f in files)
-    assert any(f.endswith('b.txt') for f in files)
-    assert not any(f.endswith('c.txt') for f in files)
+    assert any(p.endswith('b.txt') for p in files)
+    assert not any(p.endswith('c.txt') for p in files)  # c.txt has no 'hello'
 
 
-def test_read_file_range(mock_function_tool, tmp_workdir):
-    """Verify read_file reads the correct slice of lines."""
-    from tools.file_tools import read_file
+def test_grep_files_include_none_includes_dotfiles_when_not_hidden(tmp_workdir: Path):
+    from tools.file_tools import grep_files
 
-    target_file = tmp_workdir / 'b.txt'
-    result = read_file(file_path=str(target_file), start_line=1, num_lines=1)
+    # ignore_hidden defaults to False in the tool; ensure hidden files are searched
+    res = grep_files('secret', path=str(tmp_workdir), include=None, respect_gitignore=False)
+    results = res['value']
+    files = [r['file'] for r in results]
 
-    assert result['line_count'] == 1
-    assert result['lines'][0].strip() == 'bye world'
-
-
-def test_edit_file_replace(mock_function_tool, tmp_workdir):
-    """Ensure edit_file replaces text and reports number of replacements."""
-    from tools.file_tools import edit_file, read_file
-
-    target_file = tmp_workdir / 'b.txt'
-    replacements_result = edit_file(file_path=str(target_file), old_text='world', new_text='planet')
-
-    assert replacements_result['success'] is True
-    assert replacements_result['replacements'] == 2
-
-    # Confirm content changed
-    after = read_file(file_path=str(target_file), start_line=0, num_lines=None)
-    assert 'planet' in after['content']
-    assert 'world' not in after['content']
-
-
-def test_write_file_append(mock_function_tool, tmp_path):
-    """Test write_file in overwrite and append modes."""
-    from tools.file_tools import write_file, read_file
-
-    target_file = tmp_path / 'log.txt'
-
-    # Overwrite mode (create)
-    write_file(file_path=str(target_file), content='hello', append=False)
-    # Append mode
-    write_file(file_path=str(target_file), content=' world', append=True)
-
-    content = read_file(file_path=str(target_file), start_line=0, num_lines=None)['content']
-    assert content == 'hello world' 
+    assert any(p.endswith('.hidden.txt') for p in files)

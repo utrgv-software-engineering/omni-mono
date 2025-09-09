@@ -1,6 +1,7 @@
 import os
 import glob
 import re
+import fnmatch
 import difflib
 from typing import List, Optional, Dict, Tuple, Union
 from omniagents.core.tools import rich_function_tool, RichToolOutput, approval_metadata
@@ -149,15 +150,71 @@ def glob_files(
         if respect_gitignore is None:
             respect_gitignore = True  # preserve current behavior
             
-        # Construct the full glob pattern
-        full_pattern = os.path.join(path, pattern)
-        
-        # Find matching files
-        matches = [
-            p
-            for p in glob.glob(full_pattern, recursive=True)
-            if not _should_skip(p, path, respect_gitignore, ignore_hidden)
-        ]
+        # General implementation that honors '**' semantics and includes hidden items
+        # when ignore_hidden is False, regardless of Python's glob quirks.
+
+        def split_segments(p: str) -> List[str]:
+            parts = []
+            for seg in p.replace('\\', '/').split('/'):
+                if seg and seg != '.':
+                    parts.append(seg)
+            return parts
+
+        pat_segs = split_segments(pattern or "*")
+
+        def match_segments(pat: List[str], segs: List[str]) -> bool:
+            i = j = 0
+            while i < len(pat) and j < len(segs):
+                if pat[i] == '**':
+                    if i == len(pat) - 1:
+                        return True
+                    i_next = i + 1
+                    while j <= len(segs):
+                        if match_segments(pat[i_next:], segs[j:]):
+                            return True
+                        j += 1
+                    return False
+                else:
+                    if not fnmatch.fnmatch(segs[j], pat[i]):
+                        return False
+                    i += 1
+                    j += 1
+            while i < len(pat) and pat[i] == '**':
+                i += 1
+            return i == len(pat) and j == len(segs)
+
+        def rel_segments(base_dir: str, candidate: str) -> List[str]:
+            rel = os.path.relpath(candidate, base_dir)
+            return split_segments(rel)
+
+        matches: List[str] = []
+
+        for root, dirs, filenames in os.walk(path):
+            # Prune directories from traversal according to filters
+            pruned = []
+            for d in list(dirs):
+                d_full = os.path.join(root, d)
+                if _should_skip(d_full, path, respect_gitignore, ignore_hidden):
+                    pruned.append(d)
+            for d in pruned:
+                if d in dirs:
+                    dirs.remove(d)
+
+            # Check directories against the pattern
+            for d in dirs:
+                d_full = os.path.join(root, d)
+                segs = rel_segments(path, d_full)
+                if match_segments(pat_segs, segs):
+                    matches.append(d_full)
+
+            # Check files against the pattern
+            for fname in filenames:
+                f_full = os.path.join(root, fname)
+                if _should_skip(f_full, path, respect_gitignore, ignore_hidden):
+                    continue
+                segs = rel_segments(path, f_full)
+                if match_segments(pat_segs, segs):
+                    matches.append(f_full)
         
         # Sort matches by modification time (newest first)
         matches.sort(key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
@@ -273,23 +330,56 @@ def grep_files(
             
         results = []
         total_matches = 0
-        
+        skipped_gitignored = 0
+        skipped_hidden = 0
+
         # Compile the regex pattern
         regex = re.compile(pattern)
-        
-        # Get files to search based on include pattern
+
+        # Determine base directory
+        base_dir = path or "."
+
+        # Walk the tree and collect candidate files, pruning ignored/hidden dirs early
         files_to_search: List[str] = []
 
-        # Build the glob pattern based on include or default recursive search
-        base_dir = path or "."
-        # NOTE: When include is None we want to search ALL files recursively.
-        # Using "**" alone returns directories in Python's glob; we need "**/*" to include files.
-        search_pattern = os.path.join(base_dir, include if include is not None else "**/*")
+        for root, dirs, filenames in os.walk(base_dir):
+            # Prune directories we should skip to avoid deep recursion into e.g. node_modules
+            pruned_dirs = []
+            for d in list(dirs):
+                d_full = os.path.join(root, d)
+                is_ignored = bool(respect_gitignore and _is_ignored(d_full, base_dir))
+                is_hidden = bool(ignore_hidden and _has_hidden_segment(d_full))
+                if is_ignored or is_hidden:
+                    pruned_dirs.append(d)
+                    if is_ignored:
+                        skipped_gitignored += 1
+                    elif is_hidden:
+                        skipped_hidden += 1
+            # Actually remove pruned dirs from traversal
+            for d in pruned_dirs:
+                if d in dirs:
+                    dirs.remove(d)
 
-        # Perform glob search directly to avoid relying on the decorated glob_files tool
-        for candidate in glob.glob(search_pattern, recursive=True):
-            if os.path.isfile(candidate) and not _should_skip(candidate, base_dir, respect_gitignore, ignore_hidden):
-                files_to_search.append(candidate)
+            # Consider files in this directory
+            for fname in filenames:
+                f_full = os.path.join(root, fname)
+                # Check skip reasons
+                if respect_gitignore and _is_ignored(f_full, base_dir):
+                    skipped_gitignored += 1
+                    continue
+                if ignore_hidden and _has_hidden_segment(f_full):
+                    skipped_hidden += 1
+                    continue
+                files_to_search.append(f_full)
+
+        # Apply include as a recursive filter like grep's --include
+        if include is not None and include != "":
+            filtered: List[str] = []
+            for f in files_to_search:
+                rel = os.path.relpath(f, base_dir)
+                if fnmatch.fnmatch(rel, include) or fnmatch.fnmatch(os.path.basename(f), include):
+                    filtered.append(f)
+            files_to_search = filtered
         
         # Sort files by modification time (newest first)
         files_to_search.sort(key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
@@ -331,7 +421,14 @@ def grep_files(
         
         # Create LLM output
         if total_matches == 0:
-            llm_output = f"No matches found for pattern '{pattern}' in {path or './'}" 
+            llm_output = f"No matches found for pattern '{pattern}' in {path or './'}"
+            hints = []
+            if skipped_gitignored:
+                hints.append(f"skipped {skipped_gitignored} file(s) due to .gitignore")
+            if skipped_hidden and ignore_hidden:
+                hints.append(f"skipped {skipped_hidden} hidden file(s)")
+            if hints:
+                llm_output += " (" + ", ".join(hints) + ")"
         elif len(results) == 1:
             llm_output = f"Found {total_matches} matches for '{pattern}' in 1 file:\n"
             for match in results[0]['matches'][:5]:
@@ -365,6 +462,8 @@ def grep_files(
                 "preview_files": min(len(results), preview_limit),
                 "ignore_hidden": bool(ignore_hidden),
                 "respect_gitignore": bool(respect_gitignore),
+                "skipped_gitignored": skipped_gitignored,
+                "skipped_hidden": skipped_hidden,
             }
         }
         
