@@ -92,6 +92,106 @@ python main.py
 
 The default runner starts an OmniAgents CLI with safe mode enabled for destructive tools. You can adjust behavior in `main.py`.
 
+## Global installation (no venv activation)
+If you prefer a globally available `omni-code` command without activating a virtual environment, install using one of the options below.
+
+Prerequisites: ensure Go is on your PATH (`go version`) and libgit2 is installed (see Prerequisites above). Set your API keys in your shell profile (not just a local `.env`) so the global CLI can read them, for example:
+
+macOS/Linux (`~/.bashrc`, `~/.zshrc`):
+```bash
+export OPENAI_API_KEY=sk-...
+# Optional, for search tools
+export SERPAPI_API_KEY=...
+```
+
+Windows PowerShell profile:
+```powershell
+$env:OPENAI_API_KEY = "sk-..."  # add to your profile for persistence
+# $env:SERPAPI_API_KEY = "..."
+```
+
+### Option A: pipx (recommended)
+pipx installs the package into its own isolated environment and exposes the `omni-code` CLI on your PATH.
+
+- Install pipx and ensure PATH is updated:
+  - macOS/Linux:
+    ```bash
+    python3 -m pip install --user pipx
+    pipx ensurepath
+    exec "$SHELL"  # start a new shell so PATH updates take effect
+    ```
+  - Windows (PowerShell):
+    ```powershell
+    py -m pip install --user pipx
+    pipx ensurepath
+    # Open a new terminal afterward
+    ```
+
+- If `omniagents`/`agentio` are hosted on a private Gemfury index, set your token:
+  - macOS/Linux: `export FURY_AUTH=YOUR_TOKEN`
+  - Windows PowerShell: `$env:FURY_AUTH = "YOUR_TOKEN"`
+
+- Install from the local repo directory:
+  - macOS/Linux:
+    ```bash
+    pipx install . --pip-args="--extra-index-url https://${FURY_AUTH}:@pypi.fury.io/ericmichael/"
+    ```
+  - Windows (PowerShell):
+    ```powershell
+    pipx install . --pip-args="--extra-index-url https://$env:FURY_AUTH:@pypi.fury.io/ericmichael/"
+    ```
+
+- Or install directly from your Git remote (replace <you> and branch/tag as needed):
+  ```bash
+  pipx install "git+https://github.com/<you>/omni-code.git@main" \
+    --pip-args="--extra-index-url https://${FURY_AUTH}:@pypi.fury.io/ericmichael/"
+  ```
+
+- Run it anywhere:
+  ```bash
+  omni-code
+  ```
+
+Upgrade or remove:
+```bash
+pipx upgrade omni-code
+pipx uninstall omni-code
+```
+
+### Option B: uv tool install (fast alternative)
+If you use `uv`, you can install the CLI as a global tool. This also isolates dependencies.
+
+```bash
+# From the repo directory
+export FURY_AUTH=YOUR_TOKEN  # if needed
+uv tool install . --extra-index-url https://${FURY_AUTH}:@pypi.fury.io/ericmichael/
+
+# Or from Git
+uv tool install "git+https://github.com/<you>/omni-code.git@main" \
+  --extra-index-url https://${FURY_AUTH}:@pypi.fury.io/ericmichael/
+
+# Run
+omni-code
+```
+
+### Option C: pip --user (simple, less isolated)
+Installs into your user site-packages and places the script in `~/.local/bin` (macOS/Linux) or your AppData Scripts directory (Windows). Ensure that directory is on your PATH.
+
+- macOS/Linux:
+  ```bash
+  export FURY_AUTH=YOUR_TOKEN
+  python3 -m pip install --user . --extra-index-url "https://${FURY_AUTH}:@pypi.fury.io/ericmichael/"
+  # Ensure ~/.local/bin is on PATH
+  omni-code
+  ```
+
+- Windows (PowerShell):
+  ```powershell
+  $env:FURY_AUTH = "YOUR_TOKEN"
+  py -m pip install --user . --extra-index-url "https://$env:FURY_AUTH:@pypi.fury.io/ericmichael/"
+  omni-code
+  ```
+
 ## Running tests
 ```
 # With Gemfury private index
