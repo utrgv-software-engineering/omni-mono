@@ -29,6 +29,7 @@ dev = [
 
 [project.scripts]
 omni-code = "main:cli_main"
+omni = "main:cli_main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
