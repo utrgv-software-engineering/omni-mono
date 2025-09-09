@@ -20,6 +20,7 @@ A standalone coding agent built with OmniAgents. It gives an AI assistant safe a
 
 ## Prerequisites
 - Python 3.10+
+- Go (Golang) 1.20+ (see Install Go below; quick WSL2/Ubuntu commands provided)
 - OpenAI API key: set `OPENAI_API_KEY`
 - (Optional) SerpAPI key for search tools: set `SERPAPI_API_KEY`
  - libgit2 (for pygit2):
@@ -32,6 +33,38 @@ You can store keys in a `.env` file in the project root:
 OPENAI_API_KEY=sk-...
 SERPAPI_API_KEY=...
 ```
+
+## Install Go (Golang)
+This project requires Go to be available on your system PATH.
+
+- WSL2/Ubuntu (easy install):
+  ```bash
+  sudo add-apt-repository ppa:longsleep/golang-backports
+  sudo apt update
+  sudo apt install -y golang-go
+  # Verify
+  go version
+  ```
+
+  Notes:
+  - Run these inside your WSL2 Ubuntu shell (not PowerShell/CMD).
+  - Optionally add GOPATH bin to your PATH if you plan to install Go tools:
+    ```bash
+    echo 'export GOPATH="$HOME/go"' >> ~/.bashrc
+    echo 'export PATH="$PATH:$GOPATH/bin"' >> ~/.bashrc
+    source ~/.bashrc
+    ```
+
+- macOS:
+  ```bash
+  brew install go
+  go version
+  ```
+
+- Windows (native):
+  - Install via winget: `winget install -e --id GoLang.Go`
+  - Or download the MSI from https://go.dev/dl/ and follow the installer
+  - Open a new terminal and run `go version` to verify
 
 ## Quick start (recommended)
 ```

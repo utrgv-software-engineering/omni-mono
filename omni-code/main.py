@@ -4,6 +4,11 @@ from datetime import datetime
 from dotenv import load_dotenv
 from agents import Agent, ModelSettings
 from omniagents import Runner
+from openai import AsyncAzureOpenAI, AsyncOpenAI
+from agents import (
+    set_default_openai_client,
+    set_default_openai_api,
+)
 import agentio
 from tools import *
 
@@ -12,6 +17,33 @@ from openai.types.shared import Reasoning
 # Load environment variables
 load_dotenv()
 
+# Configure OpenAI provider (Azure vs. OpenAI) based on environment
+provider = (os.getenv("OPENAI_PROVIDER") or "openai").strip().lower()
+if provider == "azure":
+    client = AsyncAzureOpenAI(
+        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+        azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
+        # Optional: pass through organization/project if you use them with Azure
+        organization=os.getenv("OPENAI_ORG"),
+        project=os.getenv("OPENAI_PROJECT"),
+    )
+    # For Azure, we typically do not use the Azure key for tracing export.
+    set_default_openai_client(client, use_for_tracing=False)
+elif provider == "openai":
+    client = AsyncOpenAI(
+        api_key=os.getenv("OPENAI_API_KEY"),
+        base_url=os.getenv("OPENAI_BASE_URL"),
+        organization=os.getenv("OPENAI_ORG"),
+        project=os.getenv("OPENAI_PROJECT"),
+    )
+    # Use OpenAI key for tracing, if available
+    set_default_openai_client(client, use_for_tracing=True)
+else:
+    raise ValueError(
+        f"Unsupported OPENAI_PROVIDER: {provider!r}. Use 'azure' or 'openai'."
+    )
 
 # Agent instructions loader
 def get_instructions(run_context=None, agent=None) -> str:
