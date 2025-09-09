@@ -6,7 +6,7 @@ welcome_text: "Welcome to Omni Code! I'm here to help you with your coding needs
 # Enable AgentIO tracing
 tracing:
   provider: agentio
-  project: coding_agent_demo
+  project: omni_code
   name: omni_code
   settings:
     resume: never  # Always create a new trace
@@ -47,4 +47,3 @@ safe_agent_options:
     - youtube_search
     - scholar_search
     - convert_to_markdown
-

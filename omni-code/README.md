@@ -24,6 +24,10 @@ A standalone coding agent built with OmniAgents. It gives an AI assistant safe a
 - Python 3.10+
 - OpenAI API key: set `OPENAI_API_KEY`
 - (Optional) SerpAPI key for search tools: set `SERPAPI_API_KEY`
+ - libgit2 (for pygit2):
+   - macOS: `brew install libgit2`
+   - Ubuntu/Debian: `sudo apt-get install -y libgit2-dev`
+   - Fedora: `sudo dnf install libgit2-devel`
 
 You can store keys in a `.env` file in the project root:
 ```
@@ -38,7 +42,16 @@ SERPAPI_API_KEY=...
 cd omni-code
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -e .
+
+# If omniagents/agentio are private on Gemfury, set your token in env
+export FURY_AUTH=TOKEN
+
+# Option A: use pip with extra index (recommended to avoid committing tokens)
+pip install -e . --extra-index-url "https://${FURY_AUTH}:@pypi.fury.io/USERNAME/"
+
+# Option B: use env for all pip commands in this shell
+# export PIP_EXTRA_INDEX_URL="https://${FURY_AUTH}:@pypi.fury.io/USERNAME/"
+# pip install -e .
 
 # Run the agent (CLI)
 omni-code
@@ -50,14 +63,31 @@ The default runner starts an OmniAgents CLI with safe mode enabled for destructi
 
 ## Running tests
 ```
-pip install -e .[dev]
+# With Gemfury private index
+export FURY_AUTH=TOKEN
+pip install -e .[dev] --extra-index-url "https://${FURY_AUTH}:@pypi.fury.io/USERNAME/"
 pytest
 ```
 
 ## Packaging notes
 This app depends on the OmniAgents framework:
-- `omniagents` is pulled directly from GitHub
+- `omniagents` and `agentio` can be installed from a private Gemfury index
+- Use `--extra-index-url https://${FURY_AUTH}:@pypi.fury.io/USERNAME/` when installing
 - Tools are decorated with `@rich_function_tool` and return `RichToolOutput` for a pleasant UI
+
+### Installing via requirements.txt
+If you prefer using `requirements.txt`, you can do:
+```
+export FURY_AUTH=TOKEN
+pip install -r requirements.txt --extra-index-url "https://${FURY_AUTH}:@pypi.fury.io/USERNAME/"
+```
+
+Note: pip does not expand environment variables inside requirements.txt lines; pass the index URL via CLI or configure a user-level pip.conf:
+```
+# macOS/Linux: ~/.config/pip/pip.conf (or ~/.pip/pip.conf)
+[global]
+extra-index-url = https://${FURY_AUTH}:@pypi.fury.io/USERNAME/
+```
 
 If you prefer using the YAML runner, you can point the OmniAgents runner to `agent.yaml`.
 

@@ -1,7 +1,11 @@
+# If installing private packages via Gemfury, pass your repo URL via CLI:
+#   pip install -r requirements.txt --extra-index-url https://${FURY_AUTH}:@pypi.fury.io/USERNAME/
+# or export: export PIP_EXTRA_INDEX_URL=https://${FURY_AUTH}:@pypi.fury.io/USERNAME/
+
 openai
 openai-agents
 python-dotenv
-omniagents @ git+https://github.com/utrgv-software-engineering/omniagents.git@main#egg=omniagents
+omniagents
 markitdown[all,docx,pdf]>=0.1.1
 requests>=2.31.0
 beautifulsoup4>=4.12.0
