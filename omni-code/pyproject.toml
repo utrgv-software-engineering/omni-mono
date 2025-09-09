@@ -6,8 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "openai",
-    "openai-agents",
-    "python-dotenv",
+    # openai-agents and python-dotenv are required transitively by omniagents
     "omniagents",
     "markitdown[all,docx,pdf]>=0.1.1",
     "requests>=2.31.0",

@@ -3,8 +3,6 @@
 # or export: export PIP_EXTRA_INDEX_URL=https://${FURY_AUTH}:@pypi.fury.io/ericmichael/
 
 openai
-openai-agents
-python-dotenv
 omniagents
 markitdown[all,docx,pdf]>=0.1.1
 requests>=2.31.0
