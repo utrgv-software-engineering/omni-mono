@@ -1,0 +1,32 @@
+[project]
+name = "omni-code"
+version = "0.1.0"
+description = "Omni Code: a full‑stack coding agent built with OmniAgents"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "openai",
+    "openai-agents",
+    "python-dotenv",
+    "omniagents @ git+https://github.com/utrgv-software-engineering/omniagents.git@main#egg=omniagents",
+    "markitdown[all,docx,pdf]>=0.1.1",
+    "requests>=2.31.0",
+    "beautifulsoup4>=4.12.0",
+    "pygit2>=1.13.0",
+    "agentio>=0.1.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_functions = "test_*"
+pythonpath = ["."]
+addopts = "-q"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.2",
+]
+
+[project.scripts]
+omni-code = "main:cli_main"

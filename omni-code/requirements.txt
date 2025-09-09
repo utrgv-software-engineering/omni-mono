@@ -1,0 +1,9 @@
+openai
+openai-agents
+python-dotenv
+omniagents @ git+https://github.com/utrgv-software-engineering/omniagents.git@main#egg=omniagents
+markitdown[all,docx,pdf]>=0.1.1
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+pygit2>=1.13.0
+agentio>=0.1.0
