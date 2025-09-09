@@ -7,7 +7,7 @@ requires-python = ">=3.10"
 dependencies = [
     "openai",
     # openai-agents and python-dotenv are required transitively by omniagents
-    "omniagents[all]==0.3.4",
+    "omniagents[all]==0.3.5",
     "markitdown[all,docx,pdf]>=0.1.1",
     "requests>=2.31.0",
     "beautifulsoup4>=4.12.0",

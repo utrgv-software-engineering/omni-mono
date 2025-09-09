@@ -3,7 +3,7 @@
 # or export: export PIP_EXTRA_INDEX_URL=https://${FURY_AUTH}:@pypi.fury.io/ericmichael/
 
 openai
-omniagents[all]==0.3.4
+omniagents[all]==0.3.5
 markitdown[all,docx,pdf]>=0.1.1
 requests>=2.31.0
 beautifulsoup4>=4.12.0
