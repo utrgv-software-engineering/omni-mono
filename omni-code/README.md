@@ -47,10 +47,10 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 export FURY_AUTH=TOKEN
 
 # Option A: use pip with extra index (recommended to avoid committing tokens)
-pip install -e . --extra-index-url "https://${FURY_AUTH}:@pypi.fury.io/USERNAME/"
+pip install -e . --extra-index-url "https://${FURY_AUTH}:@pypi.fury.io/ericmichael/"
 
 # Option B: use env for all pip commands in this shell
-# export PIP_EXTRA_INDEX_URL="https://${FURY_AUTH}:@pypi.fury.io/USERNAME/"
+# export PIP_EXTRA_INDEX_URL="https://${FURY_AUTH}:@pypi.fury.io/ericmichael/"
 # pip install -e .
 
 # Run the agent (CLI)
@@ -65,28 +65,28 @@ The default runner starts an OmniAgents CLI with safe mode enabled for destructi
 ```
 # With Gemfury private index
 export FURY_AUTH=TOKEN
-pip install -e .[dev] --extra-index-url "https://${FURY_AUTH}:@pypi.fury.io/USERNAME/"
+pip install -e .[dev] --extra-index-url "https://${FURY_AUTH}:@pypi.fury.io/ericmichael/"
 pytest
 ```
 
 ## Packaging notes
 This app depends on the OmniAgents framework:
 - `omniagents` and `agentio` can be installed from a private Gemfury index
-- Use `--extra-index-url https://${FURY_AUTH}:@pypi.fury.io/USERNAME/` when installing
+- Use `--extra-index-url https://${FURY_AUTH}:@pypi.fury.io/ericmichael/` when installing
 - Tools are decorated with `@rich_function_tool` and return `RichToolOutput` for a pleasant UI
 
 ### Installing via requirements.txt
 If you prefer using `requirements.txt`, you can do:
 ```
 export FURY_AUTH=TOKEN
-pip install -r requirements.txt --extra-index-url "https://${FURY_AUTH}:@pypi.fury.io/USERNAME/"
+pip install -r requirements.txt --extra-index-url "https://${FURY_AUTH}:@pypi.fury.io/ericmichael/"
 ```
 
 Note: pip does not expand environment variables inside requirements.txt lines; pass the index URL via CLI or configure a user-level pip.conf:
 ```
 # macOS/Linux: ~/.config/pip/pip.conf (or ~/.pip/pip.conf)
 [global]
-extra-index-url = https://${FURY_AUTH}:@pypi.fury.io/USERNAME/
+extra-index-url = https://${FURY_AUTH}:@pypi.fury.io/ericmichael/
 ```
 
 If you prefer using the YAML runner, you can point the OmniAgents runner to `agent.yaml`.
