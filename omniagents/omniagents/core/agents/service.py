@@ -218,41 +218,95 @@ class AgentService(RpcMethodsBase):
             end_reason = "error"  # Default in case of unexpected exception
             final_details: dict | None = None
             error_info: dict | None = None
-            try:
-                # Determine runtime context with clear priority:
-                # 1. If client sent context, use it as-is
-                # 2. If client sent variables, transform them with build_context (if available)
-                # 3. Fall back to spec context
-                if hasattr(sess, 'context') and sess.context is not None:
-                    # Client provided pre-built context - use as-is
-                    runtime_context = sess.context
-                elif hasattr(sess, 'variables') and sess.variables is not None:
-                    # Client provided variables - transform if factory available
-                    if self.spec.build_context:
-                        runtime_context = self.spec.build_context(sess.variables)
-                    else:
-                        # No factory, use variables as context (dict mode)
-                        runtime_context = sess.variables
+
+            # Resolve runtime context once
+            if hasattr(sess, 'context') and sess.context is not None:
+                runtime_context = sess.context
+            elif hasattr(sess, 'variables') and sess.variables is not None:
+                if self.spec.build_context:
+                    runtime_context = self.spec.build_context(sess.variables)
                 else:
-                    # No client data - use spec's default context
-                    runtime_context = self.spec.context
-                final_details = await stream_agent(
-                    agent,
-                    prompt,
-                    sess,
-                    self.channel,
-                    max_turns=self.spec.max_turns,
-                    context=runtime_context,
-                    context_window=getattr(self.spec, "context_window", None),
+                    runtime_context = sess.variables
+            else:
+                runtime_context = self.spec.context
+
+            # Retry policy (env configurable)
+            import math
+            max_retries = int(os.getenv("OMNIAGENTS_RETRY_MAX", "3"))
+            base_delay = float(os.getenv("OMNIAGENTS_RETRY_BASE", "1.5"))
+
+            def _is_retryable(ex: Exception) -> bool:
+                msg = str(ex).lower()
+                retry_keywords = (
+                    "timeout",
+                    "timed out",
+                    "time out",
+                    "rate limit",
+                    "429",
+                    "503",
+                    "502",
+                    "service unavailable",
+                    "overloaded",
+                    "temporarily",
+                    "connection reset",
+                    "read error",
+                    "network",
                 )
-                end_reason = "completed"
-            except asyncio.CancelledError:
-                # Task was cancelled (e.g., via stop_run)
-                end_reason = "cancelled"
-                raise  # Re-raise to properly mark task as cancelled
-            except Exception as e:
-                # Capture error details for clients; do not emit as assistant text
-                error_info = {"message": str(e), "type": e.__class__.__name__}
+                return any(k in msg for k in retry_keywords)
+
+            attempt = 0
+            include_user_message = True
+            try:
+                while True:
+                    try:
+                        final_details = await stream_agent(
+                            agent,
+                            prompt,
+                            sess,
+                            self.channel,
+                            max_turns=self.spec.max_turns,
+                            context=runtime_context,
+                            context_window=getattr(self.spec, "context_window", None),
+                            include_user_message=include_user_message,
+                        )
+                        end_reason = "completed"
+                        error_info = None
+                        break
+                    except asyncio.CancelledError:
+                        end_reason = "cancelled"
+                        raise
+                    except Exception as e:
+                        attempt += 1
+                        # Decide to retry
+                        if attempt <= max_retries and _is_retryable(e):
+                            # Exponential backoff with jitter
+                            delay = base_delay * (2 ** (attempt - 1))
+                            # Announce retry status to client
+                            try:
+                                await self.channel.async_call(
+                                    "run_status",
+                                    args={
+                                        "run_id": asyncio.current_task().get_name(),
+                                        "status": "retrying",
+                                        "message": str(e),
+                                        "attempt": attempt,
+                                        "total": max_retries,
+                                        "next_delay": delay,
+                                    },
+                                )
+                            except Exception:
+                                pass
+                            try:
+                                await asyncio.sleep(delay)
+                            except asyncio.CancelledError:
+                                end_reason = "cancelled"
+                                raise
+                            # On retries, don't re-append the user message to history
+                            include_user_message = False
+                            continue
+                        # Exhausted or not retryable
+                        error_info = {"message": str(e), "type": e.__class__.__name__}
+                        break
             finally:
                 # Inform client the run finished
                 payload = {
@@ -262,10 +316,8 @@ class AgentService(RpcMethodsBase):
                 if error_info is not None:
                     payload["error"] = error_info
                 if isinstance(final_details, dict):
-                    # Extract usage if present
                     if "usage" in final_details:
                         payload["usage"] = final_details["usage"]
-                    # Attach last-known model info for clients
                     if final_details.get("model") is not None:
                         payload["model"] = final_details.get("model")
                     if final_details.get("context_window") is not None:

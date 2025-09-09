@@ -65,6 +65,22 @@ type RunEndMsg struct {
     RunEndEvent
 }
 
+// RunStatusEvent is an optional server notification that a transient
+// error occurred and the server will retry the run internally.
+// This lets the UI show a friendly status like
+// "Error: Request timed out. (Retrying 1/3)" while keeping the run alive.
+type RunStatusEvent struct {
+    RunID     string  `json:"run_id"`
+    Status    string  `json:"status"`      // e.g., "retrying"
+    Message   string  `json:"message"`     // human-readable error
+    Attempt   int     `json:"attempt"`     // 1-based attempt number being retried
+    Total     int     `json:"total"`       // total retry attempts
+    NextDelay float64 `json:"next_delay,omitempty"` // backoff seconds
+}
+
+type RunStatusMsg struct {
+    RunStatusEvent
+}
 // RunEndError carries application-level error details for failed runs
 type RunEndError struct {
     Message string `json:"message"`
@@ -123,7 +139,7 @@ type RPCReadyMsg struct{}
 
 // ParseEventHandlers creates event handlers that convert RPC events to Tea messages
 func ParseEventHandlers(send func(interface{})) map[string]func(json.RawMessage) {
-	return map[string]func(json.RawMessage){
+    return map[string]func(json.RawMessage){
 		"tool_called": func(data json.RawMessage) {
 			var event ToolCalledEvent
 			if err := json.Unmarshal(data, &event); err == nil {
@@ -153,13 +169,20 @@ func ParseEventHandlers(send func(interface{})) map[string]func(json.RawMessage)
 			if err := json.Unmarshal(data, &event); err == nil {
 				send(RunEndMsg{event})
 			}
-		},
-		// Optional token usage streaming events
-		"token": func(data json.RawMessage) {
-			var event TokenUsageEvent
-			if err := json.Unmarshal(data, &event); err == nil {
-				send(TokenUsageMsg{event})
-			}
-		},
-	}
+        },
+        // Optional token usage streaming events
+        "token": func(data json.RawMessage) {
+            var event TokenUsageEvent
+            if err := json.Unmarshal(data, &event); err == nil {
+                send(TokenUsageMsg{event})
+            }
+        },
+        // Optional status updates (e.g., retrying) from server
+        "run_status": func(data json.RawMessage) {
+            var event RunStatusEvent
+            if err := json.Unmarshal(data, &event); err == nil {
+                send(RunStatusMsg{event})
+            }
+        },
+    }
 }

@@ -120,6 +120,7 @@ async def stream_agent(
     max_turns: int = 20,
     context: Optional[Any] = None,
     context_window: Optional[int] = None,
+    include_user_message: bool = True,
 ) -> dict | None:  # noqa: D401
     """Drive agent.run_streamed and forward events to *rpc_channel*.
 
@@ -132,13 +133,15 @@ async def stream_agent(
     # Build input preserving session history; persist **user** message so
     # future runs see it as part of the context as well.
     # ------------------------------------------------------------------
-    agent_input = session.history + [{"role": "user", "content": prompt}]
-
-    # Persist the new user message immediately so it is available for
-    # subsequent runs even if the assistant errors out mid-stream.
-    user_msg = {"role": "user", "content": prompt}
-    session.history.append(user_msg)
-    append_message(session.id, user_msg)
+    if include_user_message:
+        # Include prompt at end and persist to session history on first attempt
+        agent_input = session.history + [{"role": "user", "content": prompt}]
+        user_msg = {"role": "user", "content": prompt}
+        session.history.append(user_msg)
+        append_message(session.id, user_msg)
+    else:
+        # For retries, avoid re-adding the user message; keep context identical
+        agent_input = list(session.history)
 
     if Debug.enabled():
         print(f"[srv] ▶ start_run  session={session.id[:8]} prompt={prompt[:80]!r} (hist={len(session.history)})")

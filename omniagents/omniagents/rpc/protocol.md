@@ -266,6 +266,28 @@ The server sends notifications during agent runs:
     }
   }
 }
+
+### run_status (optional)
+Servers may emit transient status updates during a run, for example when automatically retrying after a temporary failure (timeouts, rate limiting, service unavailable). This allows clients to present friendly, non-blocking status lines like "Error: Request timed out. (Retrying 1/3)" while the run remains active.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "run_status",
+  "params": {
+    "run_id": "run-123",
+    "status": "retrying",
+    "message": "Request timed out",
+    "attempt": 1,
+    "total": 3,
+    "next_delay": 2.0
+  }
+}
+```
+Notes:
+- The event is optional and used only for informational UI updates. Clients should continue to wait for the final run_end event.
+- "attempt" is 1-based and indicates the retry that is about to be attempted, out of "total" planned retries.
+- Servers SHOULD avoid re-appending the user's message to history during retries to prevent duplicate messages.
 ```
 
 ### usage (token utilization)

@@ -142,8 +142,8 @@ type Model struct {
 	pulseFrame int
 	pulseTimer int
 
-	// Double Ctrl+C tracking
-	firstCtrlCTime *time.Time // Track when first Ctrl+C was pressed
+    // Double Ctrl+C tracking
+    firstCtrlCTime *time.Time // Track when first Ctrl+C was pressed
 
     // Usage tracking (updated via token events and run_end)
     usageTotals *UsageDetails
@@ -154,6 +154,13 @@ type Model struct {
     // Totals from last turn/run for stable context remaining calc
     lastTotalsInputTok int
     maxOutputTokens    int
+
+    // Status and retry display
+    statusOverride   string // when non-empty, overrides default status line
+    statusShowSpinner bool   // show spinner with override status
+    retryAttempt     int    // current retry attempt (1-based)
+    retryTotal       int    // total retry attempts planned
+    lastErrorMessage string // last transient error message
 }
 
 // Message represents a chat message
@@ -291,6 +298,8 @@ type PulseTickMsg struct{}
 
 // ClearCtrlCMsg is sent to clear the first Ctrl+C state after timeout
 type ClearCtrlCMsg struct{}
+// ClearStatusMsg clears a temporary status override
+type ClearStatusMsg struct{}
 
 // max function is now in textarea.go
 
@@ -641,15 +650,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateViewport()
 		}
 
-	case DisconnectedMsg:
-		m.state = StateError
-		m.err = fmt.Errorf("disconnected from server")
-		m.updateViewport()
+case DisconnectedMsg:
+        // Non-breaking UX: show a non-fatal status and keep UI usable
+        m.state = StateReady
+        m.statusOverride = "Disconnected from server"
+        m.statusShowSpinner = false
+        // Auto-clear after a short delay
+        cmds = append(cmds, tea.Tick(4*time.Second, func(t time.Time) tea.Msg { return ClearStatusMsg{} }))
+        m.updateViewport()
 
-	case ErrorMsg:
-		m.state = StateError
-		m.err = msg.Error
-		m.updateViewport()
+    case ErrorMsg:
+        // Treat RPC errors (e.g., transient timeouts) as non-breaking; show status and stay interactive
+        m.lastErrorMessage = msg.Error.Error()
+        m.statusOverride = fmt.Sprintf("Error: %s", m.lastErrorMessage)
+        m.statusShowSpinner = false
+        // Return to ready so user can retry or continue
+        m.state = StateReady
+        // Auto-clear after a short delay
+        cmds = append(cmds, tea.Tick(5*time.Second, func(t time.Time) tea.Msg { return ClearStatusMsg{} }))
+        m.updateViewport()
 
 	case ToolCalledMsg:
 		// Don't clear approval state - let user handle it
@@ -726,18 +745,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Reset usage totals at the start of a run
 		m.usageTotals = nil
 
-	case RunEndMsg:
-		// Only change state to Ready if not waiting for approval
-		if m.state != StateApprovalRequired {
-			// If the run ended with an error and error details are present, surface it
-			if strings.ToLower(msg.EndReason) == "error" && msg.Error != nil {
-				m.state = StateError
-				m.err = fmt.Errorf(msg.Error.Message)
-			} else {
-				m.state = StateReady
-			}
-		}
-		m.currentRunID = ""
+    case RunEndMsg:
+        // Only change state to Ready if not waiting for approval
+        if m.state != StateApprovalRequired {
+            // If the run ended with an error and error details are present, show it as a non-breaking status
+            if strings.ToLower(msg.EndReason) == "error" && msg.Error != nil {
+                m.lastErrorMessage = msg.Error.Message
+                m.state = StateReady
+                // Show minimal, non-judgmental status; do not block UI
+                m.statusOverride = fmt.Sprintf("Error: %s", m.lastErrorMessage)
+                m.statusShowSpinner = false
+                // Auto-clear after a short delay
+                cmds = append(cmds, tea.Tick(6*time.Second, func(t time.Time) tea.Msg { return ClearStatusMsg{} }))
+            } else {
+                m.state = StateReady
+            }
+        }
+        m.currentRunID = ""
 		// Capture final usage totals if provided
 		if msg.Usage != nil {
 			totals := *msg.Usage
@@ -753,7 +777,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Don't clear pendingTool or approvalList - let user handle approval
 		m.updateViewport()
 
-	case TokenUsageMsg:
+    case TokenUsageMsg:
 		// Update running totals so footer can reflect near-real-time usage
 		totals := msg.Totals
 		m.usageTotals = &totals
@@ -767,7 +791,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Track last turn's input tokens for context usage estimation
 		m.lastDeltaInputTok = msg.Delta.InputTokens
 
-	case RPCReadyMsg:
+    case RunStatusMsg:
+        // Server indicates it is retrying internally after a transient error
+        m.retryAttempt = msg.Attempt
+        m.retryTotal = msg.Total
+        m.lastErrorMessage = msg.Message
+        // Show retry status while we continue waiting for response
+        m.statusOverride = fmt.Sprintf("Error: %s (Retrying %d/%d)", m.lastErrorMessage, m.retryAttempt, m.retryTotal)
+        m.statusShowSpinner = true
+        // Ensure we stay in waiting state so spinner/status are visible
+        if m.state != StateApprovalRequired {
+            m.state = StateWaitingForResponse
+        }
+        m.updateViewportContent()
+
+    case RPCReadyMsg:
 		if m.debugMode {
 			fmt.Fprintf(os.Stderr, "[DEBUG] Received RPCReadyMsg\n")
 		}
@@ -814,6 +852,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ClearCtrlCMsg:
 		// Clear the first Ctrl+C state after timeout
 		m.firstCtrlCTime = nil
+
+    case ClearStatusMsg:
+        // Clear any temporary status override
+        m.statusOverride = ""
+        m.statusShowSpinner = false
+        // Do a lightweight content update
+        m.updateViewportContent()
 	}
 
 	// Update viewport only with mouse events (not keyboard)
@@ -1300,20 +1345,20 @@ func (m Model) createSimpleASCII(text string) []string {
 }
 
 func (m Model) renderStatusLine() string {
-	var status string
-	var showSpinner bool
+    var status string
+    var showSpinner bool
 
-	switch m.state {
-	case StateReady:
-		status = "" // Don't show Ready status
-		showSpinner = false
-	case StateWaitingForResponse:
-		if m.currentRunID != "" {
-			status = "Thinking... (esc to cancel)"
-		} else {
-			status = "Thinking..."
-		}
-		showSpinner = true
+    switch m.state {
+    case StateReady:
+        status = "" // Will be overridden by statusOverride if present
+        showSpinner = false
+    case StateWaitingForResponse:
+        if m.currentRunID != "" {
+            status = "Thinking... (esc to cancel)"
+        } else {
+            status = "Thinking..."
+        }
+        showSpinner = true
 	case StateApprovalRequired:
 		status = "" // Don't show status - approval dialog is in message list
 		showSpinner = false
@@ -1323,11 +1368,17 @@ func (m Model) renderStatusLine() string {
 	default:
 		status = ""
 		showSpinner = false
-	}
+    }
 
-	if status == "" {
-		return ""
-	}
+    // If there's an override (e.g., retrying or non-blocking error), prefer that
+    if m.statusOverride != "" {
+        status = m.statusOverride
+        showSpinner = m.statusShowSpinner
+    }
+
+    if status == "" {
+        return ""
+    }
 
 	statusStyle := lipgloss.NewStyle().
 		Foreground(Styles.Spinner.GetForeground()).
@@ -1590,18 +1641,10 @@ func (m Model) renderError() string {
         Foreground(Styles.Error.GetForeground()).
         Bold(true)
 
-    helpStyle := lipgloss.NewStyle().
-        Foreground(Styles.Debug.GetForeground())
-
     var output strings.Builder
     output.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v", m.err)))
-    output.WriteString("\n\n")
-    output.WriteString(helpStyle.Render("The run ended with an error."))
     output.WriteString("\n")
-    output.WriteString(helpStyle.Render("Common causes: invalid API key, insufficient quota, rate limiting, model not available, or network issues."))
-    output.WriteString("\n")
-    output.WriteString(helpStyle.Render("Press Ctrl+C to exit, or start a new run."))
-
+    // Minimal, no extra speculation
     return output.String()
 }
 

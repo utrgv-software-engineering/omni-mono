@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -223,23 +224,41 @@ func (c *RPCClient) call(method string, params interface{}) (json.RawMessage, er
 		fmt.Fprintf(os.Stderr, "[DEBUG] RPC call: waiting for response on channel for id %s\n", idStr)
 	}
 
-	// Wait for response with timeout to avoid hanging forever if server doesn't respond
-	select {
-	case result := <-respChan:
-		if debug {
-			fmt.Fprintf(os.Stderr, "[DEBUG] RPC call: received response for id %s\n", idStr)
-		}
-		return result, nil
-	case <-time.After(5 * time.Second):
-		if debug {
-			fmt.Fprintf(os.Stderr, "[DEBUG] RPC call: timeout waiting for response for id %s (method=%s)\n", idStr, method)
-		}
-		// Clean up pending map to avoid leaks
-		c.mu.Lock()
-		delete(c.pending, idStr)
-		c.mu.Unlock()
-		return nil, fmt.Errorf("rpc call timeout for method '%s'", method)
-	}
+    // Wait for response with timeout to avoid hanging forever if server doesn't respond
+    // Allow override via OMNI_RPC_TIMEOUT seconds; fall back to sensible defaults.
+    timeout := 15 * time.Second
+    if env := os.Getenv("OMNI_RPC_TIMEOUT"); env != "" {
+        if v, err := time.ParseDuration(env); err == nil {
+            timeout = v
+        } else {
+            // If not a duration, try to parse seconds as int
+            if sec, perr := strconv.Atoi(env); perr == nil {
+                timeout = time.Duration(sec) * time.Second
+            }
+        }
+    }
+    // Some methods are known to be very fast; keep a minimum sensible timeout
+    if method == "stop_run" || method == "tool_approval_response" {
+        if timeout > 10*time.Second {
+            timeout = 10 * time.Second
+        }
+    }
+    select {
+    case result := <-respChan:
+        if debug {
+            fmt.Fprintf(os.Stderr, "[DEBUG] RPC call: received response for id %s\n", idStr)
+        }
+        return result, nil
+    case <-time.After(timeout):
+        if debug {
+            fmt.Fprintf(os.Stderr, "[DEBUG] RPC call: timeout waiting for response for id %s (method=%s)\n", idStr, method)
+        }
+        // Clean up pending map to avoid leaks
+        c.mu.Lock()
+        delete(c.pending, idStr)
+        c.mu.Unlock()
+        return nil, fmt.Errorf("rpc call timeout for method '%s'", method)
+    }
 }
 
 // RegisterHandler registers a handler for server notifications

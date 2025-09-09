@@ -22,6 +22,8 @@ from threading import Thread
 from typing import Optional
 
 from omniagents.core.agents.specs import AgentSpec
+import hashlib
+from glob import glob
 
 
 class BubbleTeaBackend:
@@ -101,6 +103,8 @@ class BubbleTeaBackend:
         
         # Find or build the Go binary
         binary_path = self._find_binary()
+        cache_dir = self._user_cache_dir()
+        source_hash = self._compute_source_hash()
         if not binary_path:
             # Attempt auto-build if allowed
             auto_build = os.environ.get("OMNI_TUI_AUTO_BUILD", "1").lower() not in {"0", "false", "no"}
@@ -112,6 +116,19 @@ class BubbleTeaBackend:
                 except Exception as e:
                     print(f"Error: Failed to build omni-tui binary automatically: {e}")
                     sys.exit(1)
+
+        # If we found a cached binary, ensure it matches current source; otherwise rebuild
+        if binary_path and cache_dir and binary_path.parent.resolve() == cache_dir.resolve():
+            cached_hash = self._read_cached_hash(cache_dir)
+            if source_hash and cached_hash and cached_hash != source_hash:
+                if debug:
+                    print("[DEBUG] TUI source changed; rebuilding cached binary")
+                binary_path = self._build_binary(debug=debug)
+            elif source_hash and not cached_hash:
+                # No stamp present; rebuild to be safe
+                if debug:
+                    print("[DEBUG] No build stamp found; rebuilding cached binary")
+                binary_path = self._build_binary(debug=debug)
 
         if not binary_path or not binary_path.exists():
             print("Error: omni-tui binary not found.")
@@ -315,7 +332,63 @@ class BubbleTeaBackend:
         except Exception:
             pass
 
+        # Write/refresh build stamp for source integrity
+        try:
+            cache_dir = out_dir
+            current_hash = self._compute_source_hash()
+            if current_hash:
+                self._write_cached_hash(cache_dir, current_hash)
+        except Exception:
+            if debug:
+                print("[DEBUG] Failed to write build stamp; continuing")
+
         return out_path
+
+    # -------------------
+    # Hash stamp helpers
+    # -------------------
+    def _compute_source_hash(self) -> str | None:
+        """Compute a SHA256 over the TUI source files we ship.
+
+        Includes: all .go files, go.mod, go.sum, and theme files under cmd/omni-tui.
+        Returns a hex digest string.
+        """
+        try:
+            base = Path(__file__).parent
+            src_dir = base / "cmd" / "omni-tui"
+            if not src_dir.exists():
+                return None
+            files = []
+            files.extend(glob(str(src_dir / "*.go")))
+            files.extend(glob(str(src_dir / "themes" / "**"), recursive=True))
+            files.append(str(src_dir / "go.mod"))
+            files.append(str(src_dir / "go.sum"))
+            # Filter to files only
+            files = [f for f in files if os.path.isfile(f)]
+            files.sort()
+            digest = hashlib.sha256()
+            for f in files:
+                with open(f, "rb") as fh:
+                    digest.update(fh.read())
+            return digest.hexdigest()
+        except Exception:
+            return None
+
+    def _stamp_path(self, cache_dir: Path) -> Path:
+        return cache_dir / "omni-tui.hash"
+
+    def _read_cached_hash(self, cache_dir: Path) -> str | None:
+        try:
+            path = self._stamp_path(cache_dir)
+            if path.exists():
+                return path.read_text(encoding="utf-8").strip()
+        except Exception:
+            return None
+        return None
+
+    def _write_cached_hash(self, cache_dir: Path, value: str) -> None:
+        path = self._stamp_path(cache_dir)
+        path.write_text(value + "\n", encoding="utf-8")
 
 
 __all__ = ['BubbleTeaBackend']
