@@ -1,0 +1,4 @@
+# Include Go TUI sources and auxiliary files in the source distribution
+recursive-include omniagents/backends/bubbletea/cmd/omni-tui *.go go.mod go.sum
+recursive-include omniagents/backends/bubbletea/cmd/omni-tui/themes *
+include omniagents/backends/bubbletea/README.md

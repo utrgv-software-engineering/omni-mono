@@ -5,12 +5,12 @@ clean:
 	rm -rf dist/ build/ *.egg-info
 
 build:
-	python -m build --sdist
+	python -m build
 
 publish: clean build
-	@echo "Uploading sdist to Fury.io..."
+	@echo "Uploading distributions to Fury.io..."
 	@set -e; \
-	for file in dist/*.tar.gz; do \
+	for file in dist/*; do \
 		if [ -f "$$file" ]; then \
 			echo "Uploading $$file to Fury.io..."; \
 			curl -f -sS -F package=@"$$file" https://$(FURY_TOKEN)@push.fury.io/$(FURY_USER)/ || exit 1; \

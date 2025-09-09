@@ -45,5 +45,18 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["omniagents*"]
 
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+# Ensure the Bubble Tea TUI Go sources and auxiliary files are included in wheels/sdists
+"omniagents.backends.bubbletea" = [
+    "README.md",
+    "cmd/omni-tui/*.go",
+    "cmd/omni-tui/go.mod",
+    "cmd/omni-tui/go.sum",
+    "cmd/omni-tui/themes/*",
+]
+
 [tool.setuptools.dynamic]
 version = {attr = "omniagents._version.__version__"}
