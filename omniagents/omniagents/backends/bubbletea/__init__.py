@@ -1,4 +1,13 @@
-"""Bubble Tea TUI backend for OmniAgents."""
+"""Bubble Tea TUI backend for OmniAgents.
+
+This backend can auto-build the omni-tui Go binary on first run when the
+binary is not found and a Go toolchain is available. If Go is not installed,
+it will instruct the user how to install it.
+
+Environment variables:
+- OMNI_TUI_AUTO_BUILD: if set to "0" or "false", disables auto-build.
+- OMNI_DEBUG: if set, enables additional debug logging.
+"""
 
 import os
 import sys
@@ -6,6 +15,9 @@ import subprocess
 import socket
 import time
 from pathlib import Path
+import platform
+import errno
+import shutil
 from threading import Thread
 from typing import Optional
 
@@ -87,15 +99,28 @@ class BubbleTeaBackend:
                 if debug:
                     print(f"[DEBUG] Waiting for server to start... attempt {i+1}/{max_retries}")
         
-        # Find the Go binary
+        # Find or build the Go binary
         binary_path = self._find_binary()
         if not binary_path:
+            # Attempt auto-build if allowed
+            auto_build = os.environ.get("OMNI_TUI_AUTO_BUILD", "1").lower() not in {"0", "false", "no"}
+            if auto_build:
+                try:
+                    binary_path = self._build_binary(debug=debug)
+                except SystemExit:
+                    raise
+                except Exception as e:
+                    print(f"Error: Failed to build omni-tui binary automatically: {e}")
+                    sys.exit(1)
+
+        if not binary_path or not binary_path.exists():
             print("Error: omni-tui binary not found.")
-            print("\nTo build the binary, run:")
+            print("We tried to auto-build it but failed or auto-build is disabled.")
+            print("\nManual build instructions:")
             print("  cd omniagents/backends/bubbletea/cmd/omni-tui")
-            print("  go build -o ../../bin/omni-tui")
-            print("\nOr install Go dependencies first:")
-            print("  go mod download")
+            out_name = self._binary_filename()
+            print(f"  go build -o ../../bin/{out_name}")
+            print("\nIf you don't have Go installed, download it from https://go.dev/dl/")
             sys.exit(1)
         
         # Prepare environment
@@ -135,57 +160,162 @@ class BubbleTeaBackend:
             cmd.append('--debug')
         
         # Launch the Bubble Tea UI
-        try:
-            # Run the Go binary and wait for it to complete
-            result = subprocess.run(cmd, env=env)
-            
-            # Check if the process exited with an error
-            if result.returncode != 0 and result.returncode != -2:  # -2 is Ctrl+C
-                print(f"Error: omni-tui exited with code {result.returncode}")
-                sys.exit(result.returncode)
-                
-        except KeyboardInterrupt:
-            # User pressed Ctrl+C, exit cleanly
-            pass
-        except FileNotFoundError:
-            print(f"Error: Binary not found at {binary_path}")
-            print("Please build the Go binary first (see instructions above)")
-            sys.exit(1)
-        except Exception as e:
-            print(f"Error launching TUI: {e}")
-            sys.exit(1)
+        tried_rebuild = False
+        while True:
+            try:
+                # Run the Go binary and wait for it to complete
+                result = subprocess.run(cmd, env=env)
+                # Check if the process exited with an error
+                if result.returncode != 0 and result.returncode != -2:  # -2 is Ctrl+C
+                    print(f"Error: omni-tui exited with code {result.returncode}")
+                    sys.exit(result.returncode)
+                break
+            except KeyboardInterrupt:
+                # User pressed Ctrl+C, exit cleanly
+                break
+            except FileNotFoundError:
+                print(f"Error: Binary not found at {binary_path}")
+                print("Attempting to build it locally...")
+            except OSError as e:
+                # Handle Exec format error (wrong-arch binary)
+                if e.errno == errno.ENOEXEC and not tried_rebuild:
+                    print("The existing omni-tui binary is not compatible with your platform. Rebuilding...")
+                else:
+                    print(f"Error launching TUI: {e}")
+                    sys.exit(1)
+
+            # Try to rebuild once if we hit a file-not-found or exec format error
+            if not tried_rebuild:
+                binary_path = self._build_binary(debug=debug)
+                cmd[0] = str(binary_path)
+                tried_rebuild = True
+                continue
+            else:
+                print("Error: Failed to launch omni-tui even after rebuild.")
+                sys.exit(1)
     
     def _find_binary(self) -> Optional[Path]:
         """Find the omni-tui binary.
         
         Searches in the following locations:
-        1. Compiled binary in bin/ directory
-        2. Development binary in cmd/omni-tui/ directory
-        3. System PATH
+        1. User cache directory (preferred, auto-build target)
+        2. Compiled binary in package bin/ directory
+        3. Development binary in cmd/omni-tui/ directory
+        4. System PATH
         
         Returns:
             Path to the binary if found, None otherwise
         """
         # Base directory (where this file is located)
         base = Path(__file__).parent
+        name = self._binary_filename()
+
+        # 1) User cache location
+        cache_dir = self._user_cache_dir()
+        if cache_dir:
+            cache_binary = cache_dir / name
+            if cache_binary.exists() and cache_binary.is_file():
+                return cache_binary
         
-        # Check bin directory first (preferred location)
-        bin_binary = base / "bin" / "omni-tui"
+        # 2) Package bin directory
+        bin_binary = base / "bin" / name
         if bin_binary.exists() and bin_binary.is_file():
             return bin_binary
         
-        # Check development location (where go build would put it)
-        dev_binary = base / "cmd" / "omni-tui" / "omni-tui"
+        # 3) Development location
+        dev_binary = base / "cmd" / "omni-tui" / name
         if dev_binary.exists() and dev_binary.is_file():
             return dev_binary
         
-        # Check if it's in system PATH
-        import shutil
+        # 4) System PATH
         system_binary = shutil.which("omni-tui")
         if system_binary:
             return Path(system_binary)
         
         return None
+
+    def _binary_filename(self) -> str:
+        """Return the platform-specific binary filename."""
+        return "omni-tui.exe" if platform.system().lower() == "windows" else "omni-tui"
+
+    def _user_cache_dir(self) -> Optional[Path]:
+        """Return a suitable per-user cache directory for the binary."""
+        home = Path.home()
+        system = platform.system().lower()
+        if system == "windows":
+            base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+            if not base:
+                return None
+            return Path(base) / "OmniAgents"
+        elif system == "darwin":
+            return home / "Library" / "Caches" / "OmniAgents"
+        else:
+            # Linux and others
+            xdg = os.environ.get("XDG_CACHE_HOME")
+            if xdg:
+                return Path(xdg) / "omniagents"
+            return home / ".cache" / "omniagents"
+
+    def _build_binary(self, debug: bool = False) -> Path:
+        """Attempt to build the omni-tui binary using the local Go toolchain.
+
+        Returns:
+            Path to the built binary.
+        Raises:
+            SystemExit if Go is not installed or build fails.
+        """
+        if shutil.which("go") is None:
+            print("Error: Go toolchain not found. Install Go from https://go.dev/dl/ and retry.")
+            raise SystemExit(1)
+
+        base = Path(__file__).parent
+        workdir = base / "cmd" / "omni-tui"
+        if not workdir.exists():
+            print("Error: Source directory for omni-tui not found.")
+            raise SystemExit(1)
+
+        out_dir = self._user_cache_dir() or base / "bin"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / self._binary_filename()
+
+        env = os.environ.copy()
+        if debug:
+            print(f"[DEBUG] Building omni-tui via Go in {workdir}")
+            print(f"[DEBUG] Output: {out_path}")
+
+        # Build command
+        build_cmd = [
+            "go", "build", "-ldflags", "-s -w", "-o", str(out_path)
+        ]
+
+        # Optional: ensure modules are fetched. go build will fetch as needed,
+        # but we can explicitly run 'go mod download' to give clearer errors.
+        try:
+            subprocess.run(["go", "mod", "download"], cwd=str(workdir), check=True, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except Exception:
+            # Ignore; go build will try anyway and show errors if needed
+            pass
+
+        try:
+            result = subprocess.run(build_cmd, cwd=str(workdir), env=env)
+            if result.returncode != 0:
+                print("Error: 'go build' failed. Ensure Go is installed and reachable, and you have internet to fetch modules.")
+                raise SystemExit(result.returncode)
+        except FileNotFoundError:
+            print("Error: Go not found on PATH. Install from https://go.dev/dl/")
+            raise SystemExit(1)
+
+        if not out_path.exists():
+            print("Error: Build succeeded but output binary not found.")
+            raise SystemExit(1)
+
+        # Ensure executable permissions (especially on POSIX)
+        try:
+            os.chmod(out_path, 0o755)
+        except Exception:
+            pass
+
+        return out_path
 
 
 __all__ = ['BubbleTeaBackend']

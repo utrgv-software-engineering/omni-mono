@@ -68,3 +68,10 @@ results/
 # Encryption
 secret.key
 tmp_logs/
+
+# Bubble Tea TUI build artifacts (prevent committing local binaries)
+omniagents/backends/bubbletea/bin/omni-tui
+omniagents/backends/bubbletea/bin/omni-tui.exe
+omniagents/backends/bubbletea/cmd/omni-tui/omni-tui
+omniagents/backends/bubbletea/cmd/omni-tui/omni-tui.exe
+omniagents/backends/bubbletea/cmd/omni-tui/test-binary
