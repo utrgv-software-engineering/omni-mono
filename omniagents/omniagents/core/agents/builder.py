@@ -97,6 +97,39 @@ async def _default_build_agent(
 
     logger.debug(f"Building agent '{spec.name}' using internal default builder...")
     
+    # Merge incoming settings with environment and SettingField defaults.
+    # This ensures server/TUI paths (which often pass `{}`) still honor .env
+    # for all declared SettingField keys. Incoming settings take precedence.
+    try:
+        effective_settings: Dict[str, Any] = dict(settings or {})
+        for field in getattr(spec, "settings_fields", []) or []:
+            key = getattr(field, "key", None)
+            if not key:
+                continue
+            if key not in effective_settings or effective_settings[key] in (None, ""):
+                env_val = os.getenv(key.upper())
+                if env_val not in (None, ""):
+                    effective_settings[key] = env_val
+                else:
+                    # Fall back to declared default (may be empty string)
+                    effective_settings[key] = getattr(field, "default", None)
+        # Use merged view from here on
+        settings = effective_settings
+    except Exception:
+        # Best-effort only; never fail agent construction on merge errors
+        pass
+    
+    # Ensure correct OpenAI base URL variable is set for the SDK.
+    # We intentionally support ONLY the canonical OPENAI_BASE_URL.
+    try:
+        base_url = settings.get("openai_base_url") or os.getenv("OPENAI_BASE_URL")
+        if base_url and not os.getenv("OPENAI_BASE_URL"):
+            os.environ["OPENAI_BASE_URL"] = base_url
+            logger.debug("Configured OPENAI_BASE_URL from settings/environment")
+    except Exception:
+        # Never fail agent construction due to env wiring
+        pass
+    
     # Set global approval callback and safe tools if we have them
     # This will be available to all SafeAgent instances including handoffs
     if approval_callback:
@@ -144,18 +177,22 @@ async def _default_build_agent(
             _loading_stack=_loading_stack,
         )
     
-    # Only set the API key from settings if no custom client has been set
-    # This preserves any client set via set_default_openai_client() (e.g., AsyncAzureOpenAI)
-    if get_default_openai_client() is None:
-        api_key_from_settings = settings.get("openai_api_key")
-        # Fall back to environment variable if settings is empty or None
-        if not api_key_from_settings:
-            api_key_from_settings = os.getenv("OPENAI_API_KEY")
-        if api_key_from_settings:
-            logger.debug("No custom client set, using API key from settings/environment")
-            set_default_openai_key(api_key_from_settings, use_for_tracing=False)
+    # Configure API key for the default client if provided.
+    # Note: We do this unconditionally so that server/TUI paths (where a default
+    # client may already exist) still receive the key from settings/.env.
+    # If callers need a custom client, they should set it explicitly via
+    # agents.set_default_openai_client() before running.
+    api_key_from_settings = settings.get("openai_api_key")
+    if not api_key_from_settings:
+        api_key_from_settings = os.getenv("OPENAI_API_KEY")
+    if api_key_from_settings:
+        logger.debug("Configuring default OpenAI key from settings/environment")
+        set_default_openai_key(api_key_from_settings, use_for_tracing=False)
     else:
-        logger.debug("Custom client already set, skipping API key configuration")
+        if get_default_openai_client() is None:
+            logger.debug("No API key found and no custom client configured")
+        else:
+            logger.debug("Custom client already set; no API key provided")
     
     # Note: We don't create a client here anymore. The SDK will handle client resolution
     # through its provider chain, which respects set_default_openai_client() if called

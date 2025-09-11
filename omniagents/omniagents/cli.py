@@ -19,34 +19,36 @@ def main():
             config_path = sys.argv[i + 1]
             break
     
-    # Load .env file for both CLI and GUI modes
-    # First try the standard behavior (search from cwd upward)
+    # Load .env for CLI runs: when a YAML config is provided, ALWAYS search
+    # upward from the YAML's directory so the correct .env is used regardless
+    # of the shell's current working directory.
     env_loaded = False
-    try:
-        if load_dotenv():
-            print("Loaded .env file")
-            env_loaded = True
-    except Exception as e:
-        print(f"Warning: Could not load .env file: {e}")
-    
-    # If we have a config path and no .env was loaded, also try loading .env from the config's directory tree
-    # This handles the case where the user runs the command from a different directory
-    if config_path and not env_loaded:
+    if config_path:
         from pathlib import Path
         config_dir = Path(config_path).resolve().parent
-        
-        # Walk up from config directory to find .env file
         current = config_dir
-        while current != current.parent:
+        while True:
             env_file = current / '.env'
             if env_file.exists():
                 try:
-                    if load_dotenv(env_file, override=True):
+                    # Do not override explicit env variables that may be set by the user
+                    if load_dotenv(env_file, override=False):
                         print(f"Loaded .env file from {env_file}")
-                        break
-                except Exception:
-                    pass
+                        env_loaded = True
+                except Exception as e:
+                    print(f"Warning: Could not load .env file {env_file}: {e}")
+                break
+            if current == current.parent:
+                break
             current = current.parent
+    else:
+        # Fallback: standard behavior only when no config path is known
+        try:
+            if load_dotenv():
+                print("Loaded .env file")
+                env_loaded = True
+        except Exception as e:
+            print(f"Warning: Could not load .env file: {e}")
 
     # --- Command Line Arguments ---
     parser = argparse.ArgumentParser(description="OmniAgents CLI")

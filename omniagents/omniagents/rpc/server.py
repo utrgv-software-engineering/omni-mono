@@ -1,10 +1,18 @@
-"""Server-side JSON-RPC implementation for FastAPI."""
+"""Server-side JSON-RPC implementation for FastAPI.
+
+Adds debug logging for all calls and notifications when OMNIAGENTS_SERVER_DEBUG
+is set or omniagents.core.debug.Debug is enabled.
+"""
 
 from typing import Any, Dict, Optional
+import os
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from .base import RpcMethodsBase
+from omniagents.core.debug import Debug
+
+DEBUG_SERVER = os.getenv("OMNIAGENTS_SERVER_DEBUG", "0").lower() in ("1", "true")
 
 
 class JsonRpcChannel:
@@ -15,10 +23,20 @@ class JsonRpcChannel:
 
     async def async_call(self, method: str, args: Optional[Dict[str, Any]] = None) -> None:
         payload = {"jsonrpc": "2.0", "method": method, "params": args or {}}
+        if DEBUG_SERVER or Debug.enabled():
+            try:
+                print(f"[srv]   → {method} payload={args or {}}")
+            except Exception:
+                pass
         await self.transport.send_json(payload)
 
     async def send_result(self, call_id: Any, result: Any) -> None:
         payload = {"jsonrpc": "2.0", "id": call_id, "result": result}
+        if DEBUG_SERVER or Debug.enabled():
+            try:
+                print(f"[srv]   ← result id={call_id} result={result}")
+            except Exception:
+                pass
         await self.transport.send_json(payload)
     
     # Backward compatibility property
@@ -62,6 +80,14 @@ class JsonRpcEndpoint:
                     call_id = data.get("id")
                     method = data.get("method")
                     params = data.get("params") or data.get("args") or {}
+                    if DEBUG_SERVER or Debug.enabled():
+                        try:
+                            if method:
+                                print(f"[srv] ⇐ call id={call_id} method={method} params={params}")
+                            else:
+                                print(f"[srv] ⇐ message id={call_id} data={data}")
+                        except Exception:
+                            pass
                     if method:
                         try:
                             func = getattr(self.methods, method)
@@ -77,8 +103,17 @@ class JsonRpcEndpoint:
                                     "error": {
                                         "code": -32603,  # Internal error
                                         "message": str(e),
+                                        "data": {
+                                            "type": e.__class__.__name__,
+                                            "method": method,
+                                        },
                                     },
                                 }
+                                if DEBUG_SERVER or Debug.enabled():
+                                    try:
+                                        print(f"[srv]   ← error id={call_id} error={error_payload['error']}")
+                                    except Exception:
+                                        pass
                                 await transport.send_json(error_payload)
                             # On notifications (no id), just swallow the error
             finally:

@@ -298,8 +298,7 @@ type PulseTickMsg struct{}
 
 // ClearCtrlCMsg is sent to clear the first Ctrl+C state after timeout
 type ClearCtrlCMsg struct{}
-// ClearStatusMsg clears a temporary status override
-type ClearStatusMsg struct{}
+// (Auto-clear of status disabled by design; no ClearStatusMsg.)
 
 // max function is now in textarea.go
 
@@ -317,19 +316,32 @@ func (m Model) connect() tea.Cmd {
 			}
 		}
 
-		handlers := ParseEventHandlers(send)
-		for method, handler := range handlers {
-			m.rpcClient.RegisterHandler(method, handler)
-		}
+        handlers := ParseEventHandlers(send)
+        for method, handler := range handlers {
+            m.rpcClient.RegisterHandler(method, handler)
+        }
 
-		// Set up callback for when RPC receiveLoop is ready
-		m.rpcClient.SetOnReady(func() {
-			if m.debugMode {
-				fmt.Fprintf(os.Stderr, "[DEBUG] RPC receiveLoop is ready\n")
-			}
-			// Send a message indicating RPC is ready
-			send(RPCReadyMsg{})
-		})
+        // Set up callback for when RPC receiveLoop is ready
+        m.rpcClient.SetOnReady(func() {
+            if m.debugMode {
+                fmt.Fprintf(os.Stderr, "[DEBUG] RPC receiveLoop is ready\n")
+            }
+            // Send a message indicating RPC is ready
+            send(RPCReadyMsg{})
+        })
+
+        // Notify UI when the socket disconnects so we don't get stuck in a
+        // waiting state after server-side failures.
+        m.rpcClient.SetOnDisconnect(func(err error) {
+            if m.debugMode {
+                if err != nil {
+                    fmt.Fprintf(os.Stderr, "[DEBUG] WebSocket disconnected: %v\n", err)
+                } else {
+                    fmt.Fprintf(os.Stderr, "[DEBUG] WebSocket disconnected (no error)\n")
+                }
+            }
+            send(DisconnectedMsg{})
+        })
 
 		if m.debugMode {
 			fmt.Fprintf(os.Stderr, "[DEBUG] Registered %d event handlers\n", len(handlers))
@@ -359,19 +371,25 @@ type ChannelMsg struct {
 
 // listenForMessages listens for messages from the RPC client
 func (m Model) listenForMessages() tea.Cmd {
-	return func() tea.Msg {
-		if m.msgChan == nil {
-			return nil
-		}
-		// Simply block on the channel - this is fine in bubbletea v1.x
-		// The tea.Cmd is run in a goroutine by the framework
-		msg := <-m.msgChan
-		if m.debugMode {
-			fmt.Fprintf(os.Stderr, "[DEBUG] listenForMessages: received message: %T\n", msg)
-		}
-		// Wrap the message so we know it came from the channel
-		return ChannelMsg{Msg: msg}
-	}
+    // Never block the UI thread waiting on channel reads. Some Bubble Tea
+    // versions/environments execute commands synchronously which would hang the
+    // interface if we block here. Instead, poll the channel on a short timer
+    // and return immediately. Any message found is wrapped and delivered as a
+    // Tea message; otherwise we return nil.
+    return tea.Tick(50*time.Millisecond, func(t time.Time) tea.Msg {
+        if m.msgChan == nil {
+            return nil
+        }
+        select {
+        case raw := <-m.msgChan:
+            if m.debugMode {
+                fmt.Fprintf(os.Stderr, "[DEBUG] listenForMessages: received message: %T\n", raw)
+            }
+            return ChannelMsg{Msg: raw}
+        default:
+            return nil
+        }
+    })
 }
 
 // Update handles messages and updates the model
@@ -655,8 +673,6 @@ case DisconnectedMsg:
         m.state = StateReady
         m.statusOverride = "Disconnected from server"
         m.statusShowSpinner = false
-        // Auto-clear after a short delay
-        cmds = append(cmds, tea.Tick(4*time.Second, func(t time.Time) tea.Msg { return ClearStatusMsg{} }))
         m.updateViewport()
 
     case ErrorMsg:
@@ -666,8 +682,6 @@ case DisconnectedMsg:
         m.statusShowSpinner = false
         // Return to ready so user can retry or continue
         m.state = StateReady
-        // Auto-clear after a short delay
-        cmds = append(cmds, tea.Tick(5*time.Second, func(t time.Time) tea.Msg { return ClearStatusMsg{} }))
         m.updateViewport()
 
 	case ToolCalledMsg:
@@ -737,31 +751,39 @@ case DisconnectedMsg:
 		m.updateViewport()
 
 	case RunStartedMsg:
-		// Save the run and session IDs
-		m.currentRunID = msg.RunID
+		// Save the run and session IDs (idempotent if duplicate notifications)
+		if msg.RunID != "" {
+			m.currentRunID = msg.RunID
+		}
 		if m.sessionID == "" && msg.SessionID != "" {
 			m.sessionID = msg.SessionID
 		}
+		// Clear any previous transient status at the start of a run
+		m.statusOverride = ""
+		m.statusShowSpinner = false
 		// Reset usage totals at the start of a run
 		m.usageTotals = nil
 
-    case RunEndMsg:
-        // Only change state to Ready if not waiting for approval
-        if m.state != StateApprovalRequired {
-            // If the run ended with an error and error details are present, show it as a non-breaking status
+	case RunEndMsg:
+		// Ignore run_end for unrelated runs to avoid race conditions with
+		// messages from stale runs.
+		if m.currentRunID != "" && msg.RunID != "" && msg.RunID != m.currentRunID {
+			break
+		}
+		// Only change state to Ready if not waiting for approval
+		if m.state != StateApprovalRequired {
+			// If the run ended with an error and error details are present, show it as a non-breaking status
             if strings.ToLower(msg.EndReason) == "error" && msg.Error != nil {
                 m.lastErrorMessage = msg.Error.Message
                 m.state = StateReady
                 // Show minimal, non-judgmental status; do not block UI
                 m.statusOverride = fmt.Sprintf("Error: %s", m.lastErrorMessage)
                 m.statusShowSpinner = false
-                // Auto-clear after a short delay
-                cmds = append(cmds, tea.Tick(6*time.Second, func(t time.Time) tea.Msg { return ClearStatusMsg{} }))
             } else {
                 m.state = StateReady
             }
-        }
-        m.currentRunID = ""
+		}
+		m.currentRunID = ""
 		// Capture final usage totals if provided
 		if msg.Usage != nil {
 			totals := *msg.Usage
@@ -792,6 +814,14 @@ case DisconnectedMsg:
 		m.lastDeltaInputTok = msg.Delta.InputTokens
 
     case RunStatusMsg:
+        // Ignore status updates that don't belong to the active run to avoid
+        // flipping state after the run has already ended.
+        if m.currentRunID == "" || (msg.RunID != "" && msg.RunID != m.currentRunID) {
+            if m.debugMode {
+                fmt.Fprintf(os.Stderr, "[DEBUG] Ignoring run_status for run_id=%s (current=%s)\n", msg.RunID, m.currentRunID)
+            }
+            break
+        }
         // Server indicates it is retrying internally after a transient error
         m.retryAttempt = msg.Attempt
         m.retryTotal = msg.Total
@@ -853,13 +883,7 @@ case DisconnectedMsg:
 		// Clear the first Ctrl+C state after timeout
 		m.firstCtrlCTime = nil
 
-    case ClearStatusMsg:
-        // Clear any temporary status override
-        m.statusOverride = ""
-        m.statusShowSpinner = false
-        // Do a lightweight content update
-        m.updateViewportContent()
-	}
+    }
 
 	// Update viewport only with mouse events (not keyboard)
 	// This prevents viewport keyboard shortcuts from interfering with text input
@@ -885,26 +909,44 @@ case DisconnectedMsg:
 		}
 	}
 
-	// Handle pulse animation tick
-	if _, isPulseTick := msg.(PulseTickMsg); isPulseTick {
-		// Check if any tool calls are running (no result yet)
-		hasRunningTools := false
-		for _, message := range m.messages {
-			if message.Role == "tool_call" && message.ToolCall != nil && message.ToolCall.Result == "" {
-				hasRunningTools = true
-				break
-			}
-		}
+    // Handle pulse animation tick
+    if _, isPulseTick := msg.(PulseTickMsg); isPulseTick {
+        // Check if any tool calls are running (no result yet)
+        hasRunningTools := false
+        for _, message := range m.messages {
+            if message.Role == "tool_call" && message.ToolCall != nil && message.ToolCall.Result == "" {
+                hasRunningTools = true
+                break
+            }
+        }
 
-		if hasRunningTools {
-			// Advance pulse frame
-			m.pulseFrame = (m.pulseFrame + 1) % 8 // 8 frames for smooth pulse
-			m.updateViewportContent()             // Use content-only update to preserve scroll
-		}
+        if hasRunningTools {
+            // Advance pulse frame
+            m.pulseFrame = (m.pulseFrame + 1) % 8 // 8 frames for smooth pulse
+            m.updateViewportContent()             // Use content-only update to preserve scroll
+        }
 
-		// Continue the pulse animation
-		cmds = append(cmds, m.tickPulse())
-	}
+        // Opportunistically drain at most a few queued RPC messages from our
+        // channel without blocking, then schedule delivery of each as a Tea
+        // message. This avoids ever using a blocking read Cmd which could hang
+        // on older Bubble Tea versions.
+        if m.msgChan != nil {
+            drainMax := 5
+            for i := 0; i < drainMax; i++ {
+                select {
+                case raw := <-m.msgChan:
+                    // Capture raw for closure
+                    wrapped := raw
+                    cmds = append(cmds, func() tea.Msg { return ChannelMsg{Msg: wrapped} })
+                default:
+                    i = drainMax // break outer loop
+                }
+            }
+        }
+
+        // Continue the pulse animation
+        cmds = append(cmds, m.tickPulse())
+    }
 
 	// Update text input (unless in approval mode or already updated)
 	if m.state != StateApprovalRequired && !textareaAlreadyUpdated {
@@ -1380,9 +1422,20 @@ func (m Model) renderStatusLine() string {
         return ""
     }
 
-	statusStyle := lipgloss.NewStyle().
-		Foreground(Styles.Spinner.GetForeground()).
-		Italic(true)
+    // Sanitize status text to prevent ANSI/OSC control sequences from corrupting the TUI
+    status = safeText(status)
+
+    // Choose color: semantic error color when the status looks like an error; otherwise spinner color
+    var statusStyle lipgloss.Style
+    if strings.HasPrefix(strings.ToLower(status), "error:") {
+        statusStyle = lipgloss.NewStyle().
+            Foreground(Styles.Error.GetForeground()).
+            Italic(true)
+    } else {
+        statusStyle = lipgloss.NewStyle().
+            Foreground(Styles.Spinner.GetForeground()).
+            Italic(true)
+    }
 
 	// Match the alignment of messages (2-char prefix like "> " or "⏺ ")
 	if showSpinner {
@@ -1776,6 +1829,9 @@ func (m Model) sendMessage() (Model, tea.Cmd) {
 
 	// Update state
 	m.state = StateWaitingForResponse
+	// Clear any previous status so it doesn't override the waiting indicator
+	m.statusOverride = ""
+	m.statusShowSpinner = false
 	// Update viewport to show new message and status
 	m.updateViewport()
 

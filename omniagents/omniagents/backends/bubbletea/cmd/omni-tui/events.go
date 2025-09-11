@@ -81,6 +81,18 @@ type RunStatusEvent struct {
 type RunStatusMsg struct {
     RunStatusEvent
 }
+
+// RunStartedEvent is sent by the server immediately after a run task is
+// scheduled so clients can correlate subsequent status/end events reliably.
+type RunStartedEvent struct {
+    RunID     string `json:"run_id"`
+    SessionID string `json:"session_id"`
+}
+
+type RunStartedMsg struct {
+    RunID     string
+    SessionID string
+}
 // RunEndError carries application-level error details for failed runs
 type RunEndError struct {
     Message string `json:"message"`
@@ -126,13 +138,8 @@ type DisconnectedMsg struct{}
 type AttemptReconnectMsg struct{}
 
 type SessionsListedMsg struct {
-	Sessions []Session
-	Error    error
-}
-
-type RunStartedMsg struct {
-	RunID     string
-	SessionID string
+    Sessions []Session
+    Error    error
 }
 
 type RPCReadyMsg struct{}
@@ -164,11 +171,18 @@ func ParseEventHandlers(send func(interface{})) map[string]func(json.RawMessage)
 				send(ToolApprovalRequestMsg{event})
 			}
 		},
-		"run_end": func(data json.RawMessage) {
-			var event RunEndEvent
-			if err := json.Unmarshal(data, &event); err == nil {
-				send(RunEndMsg{event})
-			}
+        "run_end": func(data json.RawMessage) {
+            var event RunEndEvent
+            if err := json.Unmarshal(data, &event); err == nil {
+                send(RunEndMsg{event})
+            }
+        },
+        // New explicit run start notification
+        "run_started": func(data json.RawMessage) {
+            var event RunStartedEvent
+            if err := json.Unmarshal(data, &event); err == nil {
+                send(RunStartedMsg{RunID: event.RunID, SessionID: event.SessionID})
+            }
         },
         // Optional token usage streaming events
         "token": func(data json.RawMessage) {

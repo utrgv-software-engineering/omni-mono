@@ -88,7 +88,7 @@ class SettingsScreen(ft.View):
         all_groups = [] # Keep track of group order
         
         # Filter out OpenAI-specific fields if custom client is set
-        openai_keys = {'openai_api_key', 'openai_api_base'}
+        openai_keys = {'openai_api_key', 'openai_base_url'}
         for field_spec in self.fields_spec:
             # Skip OpenAI fields if custom client is set
             if has_custom_client and field_spec.key in openai_keys:

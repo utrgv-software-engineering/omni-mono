@@ -20,6 +20,7 @@ import errno
 import shutil
 from threading import Thread
 from typing import Optional
+import logging
 
 from omniagents.core.agents.specs import AgentSpec
 import hashlib
@@ -71,6 +72,19 @@ class BubbleTeaBackend:
         # Start server in background thread
         def run_server():
             """Run the FastAPI server in a background thread."""
+            # Minimal safeguard: silence noisy third-party loggers so their
+            # output cannot corrupt the Bubble Tea TUI. We keep uvicorn quiet
+            # via log_level/access_log below, but some SDKs emit via root loggers.
+            for name in ("agents", "openai", "httpx", "urllib3", "anthropic", "litellm"):
+                try:
+                    lg = logging.getLogger(name)
+                    lg.handlers.clear()
+                    lg.addHandler(logging.NullHandler())
+                    lg.setLevel(logging.CRITICAL)
+                    lg.propagate = False
+                except Exception:
+                    # Best-effort; never crash server startup on logging config
+                    pass
             uvicorn.run(
                 app, 
                 host="127.0.0.1", 

@@ -101,6 +101,7 @@ Start a new agent run with the given prompt and optional initial variables.
 - `tool_result`: Tool execution completed
 - `message_output`: Agent generated text response
 - `tool_approval_request`: Requesting approval for tool execution (if safe mode enabled)
+- `run_started`: Run has been scheduled and is now active (contains run_id and session_id)
 - `run_end`: Agent run completed
 
 ### stop_run(run_id: string)
@@ -352,6 +353,15 @@ Standard JSON-RPC 2.0 error responses:
   }
 }
 ```
+
+Error classes and where they appear:
+
+- Class A (pre-run errors): Errors that occur before a run can start (e.g., bad credentials, invalid spec). These are returned as JSON-RPC errors on the `start_run` call and there will be no `run_end` event for that attempt. Clients should surface the error and keep the UI interactive.
+- Class B (in-run errors): Errors that occur during execution (timeouts, rate limits, network flakiness). The server MAY internally retry and will emit `run_status` notifications while doing so. If the run ultimately fails, the server emits `run_end` with `end_reason: "error"` and an `error` object `{ "message", "type" }`. Clients should filter by `run_id` and show a non-blocking status.
+
+Run lifecycle notifications:
+
+- `run_started`: Emitted immediately after a run is scheduled; includes `{ run_id, session_id }`. This allows clients to correlate subsequent `run_status`, `token`, and `run_end` messages even if they arrive before the JSON-RPC response to `start_run` is processed.
 
 ## Implementation Guidelines
 

@@ -21,13 +21,16 @@ from omniagents.core.agents.builder import _default_build_agent
 from omniagents.core.debug import Debug
 
 
-# Optional verbose logging controlled by env var
-DEBUG_SERVER = os.getenv("OMNIAGENTS_SERVER_DEBUG", "0") in ("1", "true", "True")
+# Optional verbose logging controlled by env var or global Debug
+DEBUG_SERVER = os.getenv("OMNIAGENTS_SERVER_DEBUG", "0").lower() in ("1", "true")
 
 
 def _debug_rpc(method: str, payload: dict | None = None) -> None:
-    """Print *method* and *payload* when ``OMNIAGENTS_SERVER_DEBUG`` is set."""
-    if DEBUG_SERVER:
+    """Print *method* and *payload* when debug is enabled.
+
+    Enabled when either OMNIAGENTS_SERVER_DEBUG=1 or Debug.enabled().
+    """
+    if DEBUG_SERVER or Debug.enabled():
         if payload is not None:
             print(f"[srv] ★ {method} payload={payload!r}")
         else:
@@ -249,8 +252,14 @@ class AgentService(RpcMethodsBase):
                     "overloaded",
                     "temporarily",
                     "connection reset",
+                    "connection refused",
                     "read error",
+                    "broken pipe",
                     "network",
+                    "dns",
+                    "name resolution",
+                    "ssl",
+                    "tls",
                 )
                 return any(k in msg for k in retry_keywords)
 
@@ -326,7 +335,18 @@ class AgentService(RpcMethodsBase):
                         payload["max_output_tokens"] = final_details.get("max_output_tokens")
                     if final_details.get("truncation") is not None:
                         payload["truncation"] = final_details.get("truncation")
-                await self.channel.async_call("run_end", args=payload)
+                # Debug log the payload for visibility when debugging (single source)
+                _debug_rpc("run_end", payload)
+                # Best-effort notify; avoid raising if socket is gone
+                try:
+                    await self.channel.async_call("run_end", args=payload)
+                except Exception:
+                    # If delivery failed, remember it for replay on reconnect
+                    try:
+                        if hasattr(sess, "pending_events"):
+                            sess.pending_events.append(("run_end", payload))
+                    except Exception:
+                        pass
 
         task_name = f"run_{uuid.uuid4().hex}"
         _debug_rpc(
@@ -340,6 +360,18 @@ class AgentService(RpcMethodsBase):
         )
         task = asyncio.create_task(_worker(), name=task_name)
         sm.bind_task(task, sess)
+        # Proactively notify clients that the run has started so UIs can
+        # correlate subsequent status and end events even if they arrive
+        # before the RPC response is processed client-side.
+        try:
+            await self.channel.async_call("run_started", args={
+                "run_id": task_name,
+                "session_id": sess.id,
+            })
+        except Exception:
+            # Best-effort notification; if the socket is gone we still return
+            # the normal start_run result for the caller to handle.
+            pass
         return {"run_id": task_name, "session_id": sess.id}
 
     async def stop_run(self, run_id: str) -> bool:  # noqa: D401

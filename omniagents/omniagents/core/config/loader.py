@@ -14,8 +14,8 @@ from omniagents.core.debug import Debug
 
 DEFAULT_SETTINGS_FIELDS = [
     SettingField(
-        key="openai_api_base",
-        label="OpenAI API Base URL",
+        key="openai_base_url",
+        label="OpenAI Base URL",
         group="OpenAI API",
         default="https://api.openai.com/v1",
         hint="e.g., https://api.openai.com/v1",
@@ -232,6 +232,38 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
         ValueError: If the configuration is invalid or circular references detected.
     """
     config_file = Path(config_path).resolve()
+
+    # --------------------------------------------------------------
+    # Ensure .env is loaded for YAML-based agents
+    # --------------------------------------------------------------
+    # Policy: ALWAYS search upward from the YAML's directory so that
+    # the configuration is self-contained and not dependent on the
+    # caller's current working directory.
+    try:
+        try:
+            from dotenv import load_dotenv  # type: ignore
+        except Exception:
+            load_dotenv = None  # python-dotenv not available
+
+        if load_dotenv is not None:
+            current = config_file.parent
+            # Walk upward until filesystem root; load the first .env found
+            while True:
+                env_path = current / ".env"
+                if env_path.exists():
+                    try:
+                        # Do not override values already in os.environ; YAML-local
+                        # .env simply becomes the default source of env vars.
+                        load_dotenv(env_path, override=False)
+                    except Exception:
+                        pass
+                    break
+                if current == current.parent:
+                    break
+                current = current.parent
+    except Exception:
+        # Never fail YAML loading due to dotenv issues
+        pass
     
     # Initialize loading stack for circular reference detection
     if _loading_stack is None:

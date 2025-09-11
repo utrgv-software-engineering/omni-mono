@@ -15,16 +15,20 @@ import (
 
 // RPCClient handles JSON-RPC communication with the Python server
 type RPCClient struct {
-	conn      *websocket.Conn
-	url       string
-	token     string
-	nextID    int32
-	pending   map[string]chan json.RawMessage
-	mu        sync.RWMutex
-	handlers  map[string]func(json.RawMessage)
-	connected bool
-	closeChan chan struct{}
-	onReady   func() // Callback when receiveLoop is ready
+    conn      *websocket.Conn
+    url       string
+    token     string
+    nextID    int32
+    pending   map[string]chan json.RawMessage
+    mu        sync.RWMutex
+    handlers  map[string]func(json.RawMessage)
+    connected bool
+    closeChan chan struct{}
+    onReady   func() // Callback when receiveLoop is ready
+    // onDisconnect is called exactly once when the receiveLoop exits due to a
+    // connection error or normal close. Use this to notify the UI so it can
+    // update state without freezing the interface.
+    onDisconnect func(error)
 }
 
 // NewRPCClient creates a new RPC client
@@ -110,13 +114,13 @@ func (c *RPCClient) Close() error {
 
 // receiveLoop handles incoming messages from the server
 func (c *RPCClient) receiveLoop() {
-	// Small delay to ensure goroutine is scheduled and ready
-	time.Sleep(10 * time.Millisecond)
+    // Small delay to ensure goroutine is scheduled and ready
+    time.Sleep(10 * time.Millisecond)
 
-	// Signal that the receive loop is ready
-	if c.onReady != nil {
-		c.onReady()
-	}
+    // Signal that the receive loop is ready
+    if c.onReady != nil {
+        c.onReady()
+    }
 
 	for {
 		select {
@@ -127,11 +131,18 @@ func (c *RPCClient) receiveLoop() {
 				return
 			}
 
-			_, message, err := c.conn.ReadMessage()
-			if err != nil {
-				c.connected = false
-				return
-			}
+            _, message, err := c.conn.ReadMessage()
+            if err != nil {
+                // Mark as disconnected and inform listeners so the UI can
+                // remain interactive and show a non-blocking status.
+                c.connected = false
+                if c.onDisconnect != nil {
+                    // Call in a separate goroutine to avoid blocking the
+                    // receiveLoop on UI processing.
+                    go c.onDisconnect(err)
+                }
+                return
+            }
 
 			var msg map[string]json.RawMessage
 			if err := json.Unmarshal(message, &msg); err != nil {
@@ -270,7 +281,15 @@ func (c *RPCClient) RegisterHandler(method string, handler func(json.RawMessage)
 
 // SetOnReady sets the callback to be called when receiveLoop is ready
 func (c *RPCClient) SetOnReady(callback func()) {
-	c.onReady = callback
+    c.onReady = callback
+}
+
+// SetOnDisconnect sets a callback that fires when the WebSocket connection
+// is closed or a read error occurs. The error argument may be nil on normal
+// closes. This allows the UI to remain responsive and update status instead
+// of appearing to hang after a server-side error.
+func (c *RPCClient) SetOnDisconnect(callback func(error)) {
+    c.onDisconnect = callback
 }
 
 // RPC method implementations

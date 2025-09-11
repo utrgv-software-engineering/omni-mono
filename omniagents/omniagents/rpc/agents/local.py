@@ -37,12 +37,18 @@ class _ClientEventMethods(RpcMethodsBase):
     
     async def token(self, **params):
         return await self._push_event("token", **params)
-    
+
     async def run_end(self, **params):
         return await self._push_event("run_end", **params)
-    
+
     async def tool_approval_request(self, **params):
         return await self._push_event("tool_approval_request", **params)
+
+    async def run_status(self, **params):
+        return await self._push_event("run_status", **params)
+
+    async def run_started(self, **params):
+        return await self._push_event("run_started", **params)
 
 
 class LocalAgent(UnifiedAgentBase):
@@ -243,7 +249,11 @@ class LocalAgent(UnifiedAgentBase):
                                 "id": call_id,
                                 "error": {
                                     "code": -32603,
-                                    "message": str(e)
+                                    "message": str(e),
+                                    "data": {
+                                        "type": e.__class__.__name__,
+                                        "method": method,
+                                    },
                                 }
                             }
                             await self._server_transport.send_json(error_response)
