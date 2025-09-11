@@ -1304,42 +1304,7 @@ func renderTextApprovalWithWidth(msg Message, approvalList list.Model, contentWi
 		}
 	}
 
-	return boxStyle.Render(content.String()) + "\n\n"
-}
-
-// renderStatusBar renders a status bar at the bottom
-func renderStatusBar(state AppState, sessionID string, width int) string {
-	statusStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color(CurrentTheme.Colors.UI.Border)).
-		Foreground(lipgloss.Color(CurrentTheme.Colors.Primary.Foreground)).
-		Width(width).
-		Padding(0, 1)
-
-	var status string
-	switch state {
-	case StateConnecting:
-		status = "Connecting..."
-	case StateReady:
-		status = "Ready"
-	case StateWaitingForResponse:
-		status = "Processing..."
-	case StateApprovalRequired:
-		status = "Approval Required"
-	case StateError:
-		status = "Error"
-	case StateSessionList:
-		status = "Select Session"
-	default:
-		status = "Unknown"
-	}
-
-	if sessionID != "" {
-		status += fmt.Sprintf(" | Session: %s", sessionID[:8])
-	}
-
-	status += " | Ctrl+C to exit"
-
-	return statusStyle.Render(status)
+return boxStyle.Render(content.String()) + "\n\n"
 }
 
 // renderDiffApproval renders an approval request with diff visualization

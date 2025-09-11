@@ -619,13 +619,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				headerLines = 7 // Add lines for session display
 			}
 		}
-		// Calculate footer lines based on textarea height
-		footerLines := m.input.Height() + 3 // Textarea height + help (2 lines) + spacing (1 line)
-		if m.state == StateApprovalRequired {
-			footerLines = 3 // Just help text when approval is in the message list
-		}
-		topSpacing := 2 // Always 2 lines of top spacing
-		m.viewport.Height = msg.Height - headerLines - footerLines - topSpacing
+        // Calculate footer lines based on textarea height including border frame
+        inputFrameV := m.input.FocusedStyle.Base.GetVerticalFrameSize()
+        footerLines := m.input.Height() + inputFrameV + 2 // textarea lines + frame + help(1) + gap(1)
+        if m.state == StateApprovalRequired {
+            footerLines = 3 // Just help text when approval is in the message list
+        }
+        topSpacing := 2 // Always 2 lines of top spacing
+        m.viewport.Height = msg.Height - headerLines - footerLines - topSpacing
 
 		// Update textarea width
 		// Pass full width; textarea.SetWidth accounts for border frame size
@@ -1001,16 +1002,17 @@ case DisconnectedMsg:
 			// Check if we're at the bottom before resizing
 			wasAtBottom := m.viewport.AtBottom()
 
-			headerLines := 0
-			if len(m.messages) == 0 {
-				headerLines = 5
-				if m.sessionID != "" {
-					headerLines = 7
-				}
-			}
-			footerLines := m.input.Height() + 3 // Textarea height + help + spacing
-			topSpacing := 2                     // Always 2 lines of top spacing
-			newViewportHeight := m.height - headerLines - footerLines - topSpacing
+            headerLines := 0
+            if len(m.messages) == 0 {
+                headerLines = 5
+                if m.sessionID != "" {
+                    headerLines = 7
+                }
+            }
+            inputFrameV := m.input.FocusedStyle.Base.GetVerticalFrameSize()
+            footerLines := m.input.Height() + inputFrameV + 2 // textarea lines + frame + help + gap
+            topSpacing := 2                     // Always 2 lines of top spacing
+            newViewportHeight := m.height - headerLines - footerLines - topSpacing
 
 			// Ensure minimum viewport height of 5 lines
 			minViewportHeight := 5
@@ -1437,14 +1439,38 @@ func (m Model) renderStatusLine() string {
             Italic(true)
     }
 
-	// Match the alignment of messages (2-char prefix like "> " or "⏺ ")
-	if showSpinner {
-		// The Dot spinner frames already include a space (e.g., "⣾ ")
-		// So we don't need to add another space
-		return fmt.Sprintf("%s%s", m.spinner.View(), statusStyle.Render(status))
-	}
-	// Use two spaces for alignment when no spinner
-	return fmt.Sprintf("  %s", statusStyle.Render(status))
+    // Build a wrapped, multi-line status with proper alignment
+    var prefix string
+    if showSpinner {
+        // Spinner view includes a trailing space
+        prefix = m.spinner.View()
+    } else {
+        // Align with messages when not showing a spinner
+        prefix = "  "
+    }
+
+    // Compute available width for the status text after the prefix
+    available := m.viewport.Width - lipgloss.Width(prefix)
+    if available < 1 {
+        available = 1
+    }
+
+    // Wrap the status text
+    parts := wrapLineHard(status, available)
+    if len(parts) == 0 {
+        return ""
+    }
+
+    // Compose multi-line output, prefix on the first line; indent on continuations
+    var b strings.Builder
+    b.WriteString(prefix)
+    b.WriteString(statusStyle.Render(parts[0]))
+    for i := 1; i < len(parts); i++ {
+        b.WriteString("\n")
+        b.WriteString(strings.Repeat(" ", lipgloss.Width(prefix)))
+        b.WriteString(statusStyle.Render(parts[i]))
+    }
+    return b.String()
 }
 
 func (m Model) renderMessages() string {
@@ -1820,12 +1846,13 @@ func (m Model) sendMessage() (Model, tea.Cmd) {
 	// Clear input
 	m.input.SetValue("")
 
-	// If this is the first message, recalculate viewport height since header will disappear
-	if len(m.messages) == 1 {
-		footerLines := m.input.Height() + 3 // Textarea height + help + spacing
-		// No header anymore, but still 2 lines of top spacing
-		m.viewport.Height = m.height - 2 - footerLines
-	}
+    // If this is the first message, recalculate viewport height since header will disappear
+    if len(m.messages) == 1 {
+        inputFrameV := m.input.FocusedStyle.Base.GetVerticalFrameSize()
+        footerLines := m.input.Height() + inputFrameV + 2 // textarea lines + frame + help + gap
+        // No header anymore, but still 2 lines of top spacing
+        m.viewport.Height = m.height - 2 - footerLines
+    }
 
 	// Update state
 	m.state = StateWaitingForResponse

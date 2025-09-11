@@ -872,32 +872,38 @@ func (m *CustomTextarea) moveToEnd() {
 // It is important that the width of the textarea be exactly the given width
 // and no more.
 func (m *CustomTextarea) SetWidth(w int) {
-	if m.MaxWidth > 0 {
-		m.viewport.Width = clamp(w, minWidth, m.MaxWidth)
-	} else {
-		m.viewport.Width = max(w, minWidth)
-	}
+    // Total horizontal frame applied by the Base style (borders + padding)
+    frame := m.style.Base.GetHorizontalFrameSize()
 
-	// Since the width of the textarea input is dependent on the width of the
-	// prompt and line numbers, we need to calculate it by subtracting.
-	inputWidth := w
-	if m.ShowLineNumbers {
-		inputWidth -= rw.StringWidth(fmt.Sprintf(m.lineNumberFormat, 0))
-	}
+    // The inner viewport should exclude the frame so that when we render the
+    // frame around the viewport the final width matches the requested width.
+    // Clamp to a sane minimum to avoid zero/negative widths during transient
+    // resize events.
+    innerViewportWidth := w - frame
+    if m.MaxWidth > 0 {
+        m.viewport.Width = clamp(innerViewportWidth, minWidth, m.MaxWidth)
+    } else {
+        m.viewport.Width = max(innerViewportWidth, minWidth)
+    }
 
-	// Account for base style borders and padding.
-	inputWidth -= m.style.Base.GetHorizontalFrameSize()
+    // Compute the actual text area content width by subtracting line numbers
+    // and prompt widths from the inner viewport width (i.e., the space inside
+    // the frame/border).
+    inputWidth := innerViewportWidth
+    if m.ShowLineNumbers {
+        inputWidth -= rw.StringWidth(fmt.Sprintf(m.lineNumberFormat, 0))
+    }
 
-	if m.promptFunc == nil {
-		m.promptWidth = rw.StringWidth(m.Prompt)
-	}
+    if m.promptFunc == nil {
+        m.promptWidth = rw.StringWidth(m.Prompt)
+    }
+    inputWidth -= m.promptWidth
 
-	inputWidth -= m.promptWidth
-	if m.MaxWidth > 0 {
-		m.width = clamp(inputWidth, minWidth, m.MaxWidth)
-	} else {
-		m.width = max(inputWidth, minWidth)
-	}
+    if m.MaxWidth > 0 {
+        m.width = clamp(inputWidth, minWidth, m.MaxWidth)
+    } else {
+        m.width = max(inputWidth, minWidth)
+    }
 }
 
 // SetPromptFunc supersedes the Prompt field and sets a dynamic prompt
