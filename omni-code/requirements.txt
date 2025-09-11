@@ -5,7 +5,7 @@
 # Gemfury private index (hardcoded per request)
 --extra-index-url https://REDACTED_FURY_TOKEN:@pypi.fury.io/ericmichael/
 
-openai
+openai==1.99.9
 omniagents[all]==0.3.6
 markitdown[all,docx,pdf]>=0.1.1
 requests>=2.31.0
