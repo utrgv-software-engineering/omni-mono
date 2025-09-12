@@ -66,16 +66,9 @@ class AgentService(RpcMethodsBase):
         # Server functions registry (client→server dynamic functions)
         # Map name -> {"func": callable, "description": str | None, "params_schema": dict | None, "result_schema": dict | None}
         self._server_functions: dict[str, dict] = {}
-
-        # Register a minimal built-in server function as an example
-        try:
-            self.register_server_function(
-                "session.get_history",
-                self._sf_session_get_history,
-                description="Return conversation history for a session (if provided)",
-            )
-        except Exception:
-            pass
+        # Note: we intentionally do NOT register built-in example functions
+        # like "session.get_history" so they won't surface in UIs that
+        # dynamically list server functions (e.g., Bubble Tea /help).
 
     # ------------------------------------------------------------------
     #  Server Functions registry APIs (programmatic registration)

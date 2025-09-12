@@ -1,6 +1,7 @@
 package main
 
 import (
+    "encoding/json"
     "fmt"
     "os"
     "strconv"
@@ -1893,26 +1894,26 @@ func (m Model) sendMessage() (Model, tea.Cmd) {
 
     // Slash commands: handle locally without invoking the model
     if strings.HasPrefix(text, "/") {
-        // Ensure we have a session_id so server_call can scope state per session.
-        if m.sessionID == "" {
-            // Generate a lightweight unique session id locally.
-            // Using timestamp-based ID is sufficient for local scoping.
-            m.sessionID = fmt.Sprintf("sess_%d", time.Now().UnixNano())
-            // Re-render header/footer as session indicator may now appear
-            m.updateViewport()
+        // Only intercept built-in local commands (e.g., /help, /exit).
+        // Unknown slash commands are forwarded to the agent so it can
+        // call the invoke_slash_command tool. This avoids long-running
+        // server_call timeouts for commands like /init.
+        parts := strings.Fields(text)
+        name := strings.ToLower(parts[0])
+        if name == "/help" || name == "/exit" {
+            // Clear input
+            m.input.SetValue("")
+            // Keep state unchanged (non-blocking)
+            return m, m.handleSlashCommand(text)
         }
-        // Clear input
-        m.input.SetValue("")
-        // Keep state unchanged (non-blocking)
-        // Execute command asynchronously and render result
-        return m, m.handleSlashCommand(text)
+        // Fall through: treat unknown slash commands as normal messages
     }
 
-	// Add user message
-	m.messages = append(m.messages, Message{
-		Role:    "user",
-		Content: text,
-	})
+    // Add user message
+    m.messages = append(m.messages, Message{
+        Role:    "user",
+        Content: text,
+    })
 
 	// Clear input
 	m.input.SetValue("")
@@ -1972,17 +1973,14 @@ func (m Model) handleSlashCommand(cmd string) tea.Cmd {
                 return ErrorMsg{Error: err}
             }
             var b strings.Builder
-            b.WriteString("Available commands:\n")
+            b.WriteString("Available commands:\n\n")
             // Include built-in exit
-            b.WriteString("  /exit            – Quit\n")
-            // Map server function names to slash commands
+            b.WriteString("- /exit – Quit\n")
+            // Map server function names to slash commands as a Markdown list (no code fences)
             for _, f := range funcs {
-                // Prefer last segment as the slash alias (e.g., example.set_note -> /set_note)
+                // Show the exact server function name so the user can call it directly
                 alias := "/" + f.Name
-                if idx := strings.LastIndex(f.Name, "."); idx >= 0 && idx+1 < len(f.Name) {
-                    alias = "/" + f.Name[idx+1:]
-                }
-                // Show simple arg hint if schema has a 'text' property
+                // Simple arg hint when a 'text' property exists
                 argHint := ""
                 if f.ParamsSchema != nil {
                     if props, ok := f.ParamsSchema["properties"].(map[string]interface{}); ok {
@@ -1995,44 +1993,53 @@ func (m Model) handleSlashCommand(cmd string) tea.Cmd {
                 if desc == "" {
                     desc = "Invoke server function '" + f.Name + "'"
                 }
-                b.WriteString(fmt.Sprintf("  %-16s – %s\n", alias+argHint, desc))
+                // Markdown bullet item without code fences (Glamour will wrap nicely)
+                b.WriteString(fmt.Sprintf("- %s%s – %s\n", alias, argHint, desc))
             }
-            // Wrap in a markdown code block so Glamour preserves newlines exactly
             helpBody := strings.TrimRight(b.String(), "\n")
-            content := "```\n" + helpBody + "\n```"
-            return CommandResultMsg{Content: content}
-        case "/set_note":
-            if arg == "" {
-                return CommandResultMsg{Content: "Usage: /set_note <text>"}
-            }
-            var sessPtr *string
-            if m.sessionID != "" {
-                sessPtr = &m.sessionID
-            }
-            _, err := m.rpcClient.ServerCall("example.set_note", map[string]interface{}{"text": arg}, sessPtr)
-            if err != nil {
-                return ErrorMsg{Error: err}
-            }
-            return CommandResultMsg{Content: "Note set."}
-        case "/get_note":
-            var sessPtr *string
-            if m.sessionID != "" {
-                sessPtr = &m.sessionID
-            }
-            out, err := m.rpcClient.ServerCall("example.get_note", map[string]interface{}{}, sessPtr)
-            if err != nil {
-                return ErrorMsg{Error: err}
-            }
-            note := ""
-            if v, ok := out["note"].(string); ok {
-                note = v
-            }
-            if note == "" {
-                return CommandResultMsg{Content: "Note is empty."}
-            }
-            return CommandResultMsg{Content: "Note: " + note}
+            return CommandResultMsg{Content: helpBody}
         default:
-            return CommandResultMsg{Content: "Unknown command. Type /help"}
+            // Dynamic server function invocation: treat /name as function "name"
+            fn := strings.TrimPrefix(name, "/")
+            // Parse args: try JSON; otherwise map raw to {"text": arg} if present
+            var args map[string]interface{}
+            if arg != "" {
+                var any interface{}
+                if jerr := json.Unmarshal([]byte(arg), &any); jerr == nil {
+                    switch v := any.(type) {
+                    case map[string]interface{}:
+                        args = v
+                    case []interface{}:
+                        args = map[string]interface{}{"args": v}
+                    case string:
+                        args = map[string]interface{}{"text": v}
+                    default:
+                        args = map[string]interface{}{"value": v}
+                    }
+                } else {
+                    args = map[string]interface{}{"text": arg}
+                }
+            } else {
+                args = map[string]interface{}{}
+            }
+
+            var sessPtr *string
+            if m.sessionID != "" {
+                sessPtr = &m.sessionID
+            }
+            out, err := m.rpcClient.ServerCall(fn, args, sessPtr)
+            if err != nil {
+                return ErrorMsg{Error: err}
+            }
+            if msg, ok := out["message"].(string); ok && msg != "" {
+                return CommandResultMsg{Content: msg}
+            }
+            pretty, _ := json.MarshalIndent(out, "", "  ")
+            content := string(pretty)
+            if strings.TrimSpace(content) == "" || content == "null" {
+                content = "Done."
+            }
+            return CommandResultMsg{Content: content}
         }
     }
 }
