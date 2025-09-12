@@ -6,6 +6,7 @@ from .scholar_search import scholar_search
 from .download_file import download_file
 from .bash_tool import execute_bash
 from .file_tools import glob_files, grep_files, list_directory, read_file, edit_file, write_file, apply_patch
+from .slash_command import invoke_slash_command
 
 __all__ = [
     'web_fetch',
@@ -22,4 +23,5 @@ __all__ = [
     'edit_file',
     'write_file',
     'apply_patch'
+    , 'invoke_slash_command'
 ]
