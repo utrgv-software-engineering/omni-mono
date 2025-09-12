@@ -289,3 +289,6 @@ class _ClientEventMethods(RpcMethodsBase):
 
     async def run_started(self, **params):
         return await self._push("run_started", **params)
+
+    async def client_request(self, **params):
+        return await self._push("client_request", **params)

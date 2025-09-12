@@ -59,6 +59,130 @@ class AgentService(RpcMethodsBase):
         self.spec = spec
         # Tool-approval request / response helper state
         self._pending_approvals: dict[str, asyncio.Future] = {}
+        # Client-function request tracking (server→client RPC-style)
+        self._pending_client_requests: dict[str, asyncio.Future] = {}
+        # Optional capability registry per connected channel
+        self._client_capabilities: dict[Any, dict] = {}
+        # Server functions registry (client→server dynamic functions)
+        # Map name -> {"func": callable, "description": str | None, "params_schema": dict | None, "result_schema": dict | None}
+        self._server_functions: dict[str, dict] = {}
+
+        # Register a minimal built-in server function as an example
+        try:
+            self.register_server_function(
+                "session.get_history",
+                self._sf_session_get_history,
+                description="Return conversation history for a session (if provided)",
+            )
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    #  Server Functions registry APIs (programmatic registration)
+    # ------------------------------------------------------------------
+    def register_server_function(
+        self,
+        name: str,
+        func: Any,
+        *,
+        description: str | None = None,
+        params_schema: dict | None = None,
+        result_schema: dict | None = None,
+    ) -> None:
+        """Register a server function callable under *name*.
+
+        Convention: function signature is one of
+            (service, session, args), (session, args), (args), or ()
+        where args is a dict.
+        """
+        self._server_functions[name] = {
+            "func": func,
+            "description": description,
+            "params_schema": params_schema,
+            "result_schema": result_schema,
+        }
+
+    async def list_server_functions(self) -> list[dict]:  # noqa: D401
+        """Return metadata for all registered server functions."""
+        result = []
+        for name, meta in self._server_functions.items():
+            result.append(
+                {
+                    "name": name,
+                    "description": meta.get("description"),
+                    "params_schema": meta.get("params_schema"),
+                    "result_schema": meta.get("result_schema"),
+                }
+            )
+        _debug_rpc("list_server_functions", {"count": len(result)})
+        return result
+
+    async def server_call(self, function: str, args: dict | None = None, session_id: str | None = None) -> Any:  # noqa: D401
+        """Invoke a registered server function.
+
+        Args:
+            function: Registered function name
+            args: Arguments dict passed to the function
+            session_id: Optional session identifier, provided to the function if it accepts a session
+        """
+        _debug_rpc("server_call", {"function": function, "has_args": bool(args), "session_id": session_id})
+        entry = self._server_functions.get(function)
+        if not entry:
+            raise ValueError(f"Unknown server function: {function}")
+        fn = entry["func"]
+
+        sess: Session | None = None
+        if session_id:
+            try:
+                sess = sm.get_or_create(session_id)
+            except Exception:
+                sess = None
+
+        # Try common calling conventions in order
+        to_call = None
+        is_bound = getattr(fn, "__self__", None) is not None
+        candidates_async = []
+        candidates_sync = []
+        if is_bound:
+            candidates_sync = [
+                (sess, args or {}),
+                (args or {} ,),
+                tuple(),
+            ]
+        else:
+            candidates_sync = [
+                (self, sess, args or {}),
+                (sess, args or {}),
+                (args or {},),
+                tuple(),
+            ]
+        candidates_async = candidates_sync
+
+        if asyncio.iscoroutinefunction(fn):
+            for cand in candidates_async:
+                try:
+                    return await fn(*cand)
+                except TypeError:
+                    continue
+            # Last resort: call with no args
+            return await fn()
+        else:
+            for cand in candidates_sync:
+                try:
+                    return fn(*cand)
+                except TypeError:
+                    continue
+            return fn()
+
+    # --- Built-in server functions -------------------------------------
+    def _sf_session_get_history(self, session: Session | None, args: dict | None = None) -> list[dict]:
+        """Return the current history for the given session.
+        If no session was supplied, return an empty list.
+        """
+        try:
+            return list(session.history) if session else []
+        except Exception:
+            return []
 
     # ------------------------------------------------------------------
     #  Helper: best-effort async_call that tolerates disconnected sockets.
@@ -98,6 +222,116 @@ class AgentService(RpcMethodsBase):
         if fut and not fut.done():
             fut.set_result((approved, always_approve, error_message))
         return True
+
+    # ------------------------------------------------------------------
+    #  Client function registration (capability handshake)
+    # ------------------------------------------------------------------
+    async def client_functions(self, version: int | None = None, functions: list[dict] | None = None) -> bool:  # noqa: D401
+        """Register client-supported functions for the current channel.
+
+        The information is stored best-effort and currently advisory only.
+        """
+        payload = {"version": version, "functions": functions or []}
+        _debug_rpc("client_functions", payload)
+        # Remember per-channel capabilities
+        try:
+            self._client_capabilities[self.channel] = payload
+        except Exception:
+            pass
+        return True
+
+    # ------------------------------------------------------------------
+    #  Client function response: resolves the future awaited by server
+    # ------------------------------------------------------------------
+    async def client_response(self, request_id: str, ok: bool, result: Any | None = None, error: dict | None = None) -> bool:  # noqa: D401
+        _debug_rpc("client_response", {"request_id": request_id, "ok": ok})
+        fut = self._pending_client_requests.pop(request_id, None)
+        if fut and not fut.done():
+            # Store a simple envelope
+            fut.set_result({"ok": ok, "result": result, "error": error})
+        return True
+
+    # ------------------------------------------------------------------
+    #  Helper to send a client_request to one or more channels.
+    #  If expect_result=True, returns the client_response or None on timeout.
+    # ------------------------------------------------------------------
+    async def request_client_function(
+        self,
+        function: str,
+        args: dict | None = None,
+        *,
+        session: Session | None = None,
+        run_id: str | None = None,
+        timeout_ms: int | None = None,
+        idempotency_key: str | None = None,
+        expect_result: bool = False,
+    ) -> Any | None:
+        import uuid
+
+        req_id = uuid.uuid4().hex
+        payload = {
+            "request_id": req_id,
+            "function": function,
+            "args": args or {},
+        }
+        if session is not None:
+            payload["session_id"] = session.id
+        if run_id is not None:
+            payload["run_id"] = run_id
+        if timeout_ms is not None:
+            payload["timeout_ms"] = timeout_ms
+        if idempotency_key is not None:
+            payload["idempotency_key"] = idempotency_key
+
+        _debug_rpc("client_request", payload)
+
+        # Broadcast to all known channels for the session, or current channel if none provided
+        channels = list(session.channels) if session is not None else [self.channel]
+
+        delivered_any = False
+        for ch in channels:
+            try:
+                ok = await self._safe_notify(ch, "client_request", payload)
+                delivered_any = delivered_any or ok
+            except Exception:
+                pass
+
+        if not expect_result:
+            return delivered_any
+
+        # Await response with optional timeout
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._pending_client_requests[req_id] = fut
+        try:
+            if timeout_ms is not None and timeout_ms > 0:
+                res = await asyncio.wait_for(fut, timeout=timeout_ms / 1000.0)
+            else:
+                res = await fut
+            return res
+        except asyncio.TimeoutError:
+            # Clean up and return None on timeout
+            self._pending_client_requests.pop(req_id, None)
+            return None
+
+    # Convenience: set status message on client (best-effort UI hint)
+    async def set_client_status(
+        self,
+        text: str,
+        *,
+        session: Session | None = None,
+        run_id: str | None = None,
+        show_spinner: bool = True,
+    ) -> bool:
+        payload = {"text": text, "show_spinner": bool(show_spinner)}
+        ok = await self.request_client_function(
+            "ui.set_status",
+            payload,
+            session=session,
+            run_id=run_id,
+            expect_result=False,
+        )
+        # request_client_function returns True if delivered to at least one channel
+        return bool(ok)
 
     # ------------------------------------------------------------------
     #  Callback passed to SafeAgent: emits a *request* to the client and

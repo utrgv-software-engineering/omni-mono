@@ -701,6 +701,13 @@ class AgentApp:
                 print("Building agent instance...")
                 await self._create_or_update_agent()
 
+            # --- Advertise client capabilities (best-effort) ---
+            try:
+                await self._send_client_functions_capabilities()
+            except Exception as _cap_err:
+                # Non-fatal; just log
+                print(f"Capability handshake failed (non-fatal): {_cap_err}")
+
             # --- Prepare input and run agent ---
             # Reset SafeAgent state if applicable
             if hasattr(self.agent_instance, "reset_run_state") and callable(
@@ -736,6 +743,51 @@ class AgentApp:
                     continue  # Ignore agent updates
 
                 elif event.type == "run_item_stream_event":
+                    # --------------------------------------------------
+                    # Client request handling (server→client invocation)
+                    # --------------------------------------------------
+                    if getattr(event, "name", None) == "client_request":
+                        payload = event.item if isinstance(event.item, dict) else {}
+                        req_id = payload.get("request_id")
+                        func = payload.get("function")
+                        args = payload.get("args", {})
+
+                        ok = True
+                        result_payload: dict | None = {"ack": True}
+                        error_payload: dict | None = None
+                        try:
+                            if func == "ui.add_artifact":
+                                # Expected args: title, content, mode, artifact_id
+                                self.add_artifact(
+                                    title=args.get("title", "Artifact"),
+                                    content=args.get("content", ""),
+                                    mode=args.get("mode", "markdown"),
+                                    artifact_id=args.get("artifact_id"),
+                                )
+                            else:
+                                # Unknown function – mark as not ok
+                                ok = False
+                                result_payload = None
+                                error_payload = {
+                                    "message": f"Unsupported client function: {func}",
+                                    "type": "UnsupportedFunction",
+                                }
+                        except Exception as _cf_err:
+                            ok = False
+                            result_payload = None
+                            error_payload = {
+                                "message": str(_cf_err),
+                                "type": _cf_err.__class__.__name__,
+                            }
+
+                        # Send response back (best-effort)
+                        try:
+                            await self._send_client_response(req_id, ok=ok, result=result_payload, error=error_payload)
+                        except Exception as _resp_err:
+                            print(f"Error sending client_response: {_resp_err}")
+
+                        continue
+
                     # --------------------------------------------------
                     # Intercept approval requests (from remote SafeAgent)
                     # --------------------------------------------------
@@ -1324,6 +1376,55 @@ class AgentApp:
             self.page.update()
 
     # --- MCP Management ---
+
+    async def _send_client_functions_capabilities(self) -> None:
+        """Advertise supported client functions to the server (best-effort)."""
+        # Build minimal capability set for now
+        capabilities = {
+            "version": 1,
+            "functions": [
+                {
+                    "name": "ui.add_artifact",
+                    "description": "Render or update an artifact in the UI",
+                }
+            ],
+        }
+
+        # Try remote client first
+        try:
+            if hasattr(self.agent_instance, "_client") and self.agent_instance._client:
+                await self.agent_instance._client.other.client_functions(**capabilities)
+                return
+        except Exception:
+            pass
+
+        # Fallback to local RPC client (LocalAgent)
+        try:
+            if hasattr(self.agent_instance, "_rpc_client") and self.agent_instance._rpc_client:
+                await self.agent_instance._rpc_client.other.client_functions(**capabilities)
+        except Exception:
+            pass
+
+    async def _send_client_response(self, request_id: str | None, *, ok: bool, result: dict | None = None, error: dict | None = None) -> None:
+        """Send client_response back to the server (remote or local)."""
+        if not request_id:
+            return
+        payload = {"request_id": request_id, "ok": ok, "result": result, "error": error}
+
+        # Try remote client first
+        try:
+            if hasattr(self.agent_instance, "_client") and self.agent_instance._client:
+                await self.agent_instance._client.other.client_response(**payload)
+                return
+        except Exception:
+            pass
+
+        # Fallback to local RPC client (LocalAgent)
+        try:
+            if hasattr(self.agent_instance, "_rpc_client") and self.agent_instance._rpc_client:
+                await self.agent_instance._rpc_client.other.client_response(**payload)
+        except Exception:
+            pass
 
     def _get_mcp_status_color(self) -> str:
         """Returns the color for the MCP status indicator."""

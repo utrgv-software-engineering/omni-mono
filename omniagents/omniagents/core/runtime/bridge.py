@@ -148,6 +148,8 @@ async def stream_agent(
 
     # Track pending tool calls that need results
     pending_tool_calls = {}
+    # Track tool call statuses we set so we can clear them on completion
+    _status_calls: dict[str, str] = {}
     
     # Track usage across turns
     last_usage_totals = {
@@ -246,10 +248,44 @@ async def stream_agent(
                 call_id = payload["call_id"]
                 tool_name = payload.get("tool", "unknown")
                 pending_tool_calls[call_id] = tool_name
+                # If the tool has a client-status override, emit it as a client_request
+                try:
+                    # Attempt to find a matching tool object on the agent
+                    for t in getattr(agent, "tools", []) or []:
+                        name = getattr(t, "name", None)
+                        if name == tool_name and hasattr(t, "_client_status_text"):
+                            text = str(getattr(t, "_client_status_text"))
+                            if text:
+                                await _broadcast(session, "client_request", {
+                                    "request_id": f"status_{call_id}",
+                                    "function": "ui.set_status",
+                                    "args": {"text": text, "show_spinner": True},
+                                    "run_id": asyncio.current_task().get_name(),
+                                    "session_id": session.id,
+                                })
+                                _status_calls[call_id] = text
+                            break
+                except Exception:
+                    # Best-effort; ignore if lookup fails
+                    pass
             elif method == "tool_result" and payload.get("call_id"):
                 # Tool got a result, remove from pending
                 call_id = payload["call_id"]
                 pending_tool_calls.pop(call_id, None)
+                # Clear any status override we set for this call
+                if call_id in _status_calls:
+                    try:
+                        await _broadcast(session, "client_request", {
+                            "request_id": f"status_clear_{call_id}",
+                            "function": "ui.set_status",
+                            "args": {"text": "", "show_spinner": False},
+                            "run_id": asyncio.current_task().get_name(),
+                            "session_id": session.id,
+                        })
+                    except Exception:
+                        pass
+                    finally:
+                        _status_calls.pop(call_id, None)
             
             if method:
                 # Push event to client; if the WebSocket is already closed we

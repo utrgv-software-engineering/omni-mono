@@ -13,10 +13,10 @@ type ToolCalledEvent struct {
 }
 
 type ToolResultEvent struct {
-	Tool     string                 `json:"tool"`
-	Output   string                 `json:"output"`
-	CallID   string                 `json:"call_id"`
-	Metadata map[string]interface{} `json:"metadata,omitempty"`
+    Tool     string                 `json:"tool"`
+    Output   string                 `json:"output"`
+    CallID   string                 `json:"call_id"`
+    Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
 type MessageOutputEvent struct {
@@ -124,7 +124,22 @@ type TokenUsageEvent struct {
 }
 
 type TokenUsageMsg struct {
-	TokenUsageEvent
+    TokenUsageEvent
+}
+
+// ClientRequestEvent represents a server-initiated client function call
+type ClientRequestEvent struct {
+    RequestID      string                 `json:"request_id"`
+    Function       string                 `json:"function"`
+    Args           map[string]interface{} `json:"args"`
+    SessionID      string                 `json:"session_id,omitempty"`
+    RunID          string                 `json:"run_id,omitempty"`
+    TimeoutMs      int                    `json:"timeout_ms,omitempty"`
+    IdempotencyKey string                 `json:"idempotency_key,omitempty"`
+}
+
+type ClientRequestMsg struct {
+    ClientRequestEvent
 }
 
 type ErrorMsg struct {
@@ -196,6 +211,13 @@ func ParseEventHandlers(send func(interface{})) map[string]func(json.RawMessage)
             var event RunStatusEvent
             if err := json.Unmarshal(data, &event); err == nil {
                 send(RunStatusMsg{event})
+            }
+        },
+        // Client functions (server → client)
+        "client_request": func(data json.RawMessage) {
+            var event ClientRequestEvent
+            if err := json.Unmarshal(data, &event); err == nil {
+                send(ClientRequestMsg{event})
             }
         },
     }

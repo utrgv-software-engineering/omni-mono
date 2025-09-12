@@ -678,9 +678,9 @@ func renderToolCallWithWidth(msg Message, debugMode bool, pulseFrame int, termWi
 		return ""
 	}
 
-	// Create pulsing dot for running tools
-	var indicator string
-	if msg.ToolCall.Result == "" {
+    // Create pulsing dot for running tools
+    var indicator string
+    if msg.ToolCall.Running {
 		// Tool is still running - create pulsing dot
 		// Create a pulsing effect by varying the alpha/brightness
 		// We'll create a gradient of colors from dim to bright
@@ -732,8 +732,8 @@ func renderToolCallWithWidth(msg Message, debugMode bool, pulseFrame int, termWi
 	// Start with spacing and add spacing at the end
 	result := fmt.Sprintf("%s %s(%s)\n", indicator, toolNameStyled, formattedArgs)
 
-	// Always add result if available (not just in debug mode)
-    if msg.ToolCall.Result != "" {
+    // Render result (plain or rich) when the tool is no longer running
+    if !msg.ToolCall.Running {
         result += renderToolResultWithWidth(msg, termWidth)
     }
 
@@ -743,17 +743,17 @@ func renderToolCallWithWidth(msg Message, debugMode bool, pulseFrame int, termWi
 
 // renderToolResult renders tool output
 func renderToolResult(msg Message) string {
-    if msg.ToolCall == nil || msg.ToolCall.Result == "" {
+    if msg.ToolCall == nil {
         return ""
     }
 
-	// Special handling for cancelled tools
-	if msg.ToolCall.Result == "[Cancelled]" {
-		cancelledStyle := lipgloss.NewStyle().
-			Foreground(Styles.Warning.GetForeground()).
-			Italic(true)
-		return cancelledStyle.Render("  └─ Cancelled by user") + "\n"
-	}
+    // Special handling for cancelled tools
+    if msg.ToolCall.Result == "[Cancelled]" {
+        cancelledStyle := lipgloss.NewStyle().
+            Foreground(Styles.Warning.GetForeground()).
+            Italic(true)
+        return cancelledStyle.Render("  └─ Cancelled by user") + "\n"
+    }
 
     // Check if we have rich metadata
     richMetadata := parseRichMetadata(msg.ToolCall.Metadata)
@@ -761,6 +761,11 @@ func renderToolResult(msg Message) string {
     // Use rich formatting if metadata is available
     if richMetadata != nil && richMetadata.DisplayType != "" {
         return renderRichToolResult(richMetadata, msg.ToolCall.Result)
+    }
+
+    // If no metadata and no plain result, nothing to render
+    if msg.ToolCall.Result == "" {
+        return ""
     }
 
     // Fallback to plain text rendering
@@ -2332,22 +2337,27 @@ func renderDiffToolPreviewWithWidth(rich *RichMetadata, termWidth int) string {
 
 // Width-aware tool result renderer used by callers that know the viewport width
 func renderToolResultWithWidth(msg Message, termWidth int) string {
-    if msg.ToolCall == nil || msg.ToolCall.Result == "" {
+    if msg.ToolCall == nil {
         return ""
     }
 
-	// Special handling for cancelled tools
-	if msg.ToolCall.Result == "[Cancelled]" {
-		cancelledStyle := lipgloss.NewStyle().
-			Foreground(Styles.Warning.GetForeground()).
-			Italic(true)
-		return cancelledStyle.Render("  └─ Cancelled by user") + "\n"
-	}
+    // Special handling for cancelled tools
+    if msg.ToolCall.Result == "[Cancelled]" {
+        cancelledStyle := lipgloss.NewStyle().
+            Foreground(Styles.Warning.GetForeground()).
+            Italic(true)
+        return cancelledStyle.Render("  └─ Cancelled by user") + "\n"
+    }
 
     // Check if we have rich metadata
     richMetadata := parseRichMetadata(msg.ToolCall.Metadata)
     if richMetadata != nil && richMetadata.DisplayType != "" {
         return renderRichToolResultWithWidth(richMetadata, msg.ToolCall.Result, termWidth)
+    }
+
+    // If no metadata and no plain result, nothing to render
+    if msg.ToolCall.Result == "" {
+        return ""
     }
 
     // Fallback to plain text rendering

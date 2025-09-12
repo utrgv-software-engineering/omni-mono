@@ -51,10 +51,18 @@ def function_tool(func: Callable = None, **kwargs) -> Callable:
     including strict_mode=False for non-strict schemas.
     """
     def decorator(f):
-        # Apply the original decorator with all passed kwargs
+        # Support optional client status override metadata
+        client_status = kwargs.pop("client_status", None)
+        # Apply the original decorator with remaining kwargs
         decorated_func = original_function_tool(f, **kwargs)
         # Add our marker attribute
         setattr(decorated_func, '_is_omniagents_core_tool', True)
+        # Attach optional client status text for UIs that support it
+        if client_status:
+            try:
+                setattr(decorated_func, '_client_status_text', str(client_status))
+            except Exception:
+                pass
         return decorated_func
     
     # Handle both @function_tool and @function_tool(...) usage

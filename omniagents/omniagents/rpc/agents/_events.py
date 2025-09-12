@@ -121,5 +121,10 @@ def map_notification_to_event(method: str, payload: Dict[str, Any]):
         # Wrap usage (token) update as a stream event
         # Consumers can check event.name == "token_usage" and inspect event.item (payload dict)
         return new_item_event("token_usage", payload)
-    
+
+    elif method == "client_request":
+        # Generic client-side function invocation from server.
+        # Payload is passed-through; UI layer should inspect and act.
+        return new_item_event("client_request", payload)
+
     return None

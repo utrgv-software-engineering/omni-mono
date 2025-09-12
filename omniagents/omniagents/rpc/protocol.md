@@ -332,6 +332,133 @@ Notes:
 - If present, "context_window" indicates the maximum input tokens the model can accept for that turn. Clients should consider reserving space for "max_output_tokens" when estimating whether the next call will fit.
 - The final aggregate usage and last-known model metadata are also included in the run_end event.
 
+## Client Functions (optional)
+
+Client Functions enable server-initiated calls to client-provided capabilities. This allows richer UIs and local integrations (e.g., rendering artifacts, file pickers) while keeping the server stateless.
+
+The pattern mirrors the existing tool_approval flow and is designed to be backward compatible: older clients simply ignore these notifications.
+
+### client_functions (client → server)
+Optional capability handshake sent by the client after connecting. Declares supported functions.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "client_functions",
+  "params": {
+    "version": 1,
+    "functions": [
+      { "name": "ui.add_artifact", "description": "Render or update an artifact" }
+    ]
+  }
+}
+```
+
+Servers may store this information per-connection for diagnostics or routing but should not rely on it strictly; requests are best-effort.
+
+### client_request (server → client)
+Server asks the client to run a function. Clients should execute and respond with client_response.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "client_request",
+  "params": {
+    "request_id": "req_abc123",
+    "function": "ui.add_artifact",
+    "args": { "title": "Report", "content": "# Summary", "mode": "markdown", "artifact_id": "rep_001" },
+    "session_id": "sess_123",
+    "run_id": "run_456",
+    "timeout_ms": 5000,
+    "idempotency_key": "optional-dedupe-key"
+  }
+}
+```
+
+Notes:
+- Servers may broadcast to all active channels for the session. Clients should ignore unknown functions or return an error via client_response.
+- Use idempotency_key if the server may replay requests on reconnect.
+
+### client_response (client → server)
+Client responds to a client_request. If multiple clients are connected, any may reply.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "client_response",
+  "params": {
+    "request_id": "req_abc123",
+    "ok": true,
+    "result": { "ack": true }
+  }
+}
+```
+
+If the client fails to execute the function, it should return:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "client_response",
+  "params": {
+    "request_id": "req_abc123",
+    "ok": false,
+    "error": { "message": "Unsupported client function: ui.open_file", "type": "UnsupportedFunction" }
+  }
+}
+```
+
+Server-side behavior:
+- Servers may optionally await the response with a timeout. If no response arrives, the server should continue the run without blocking.
+- The server may queue client_request events and replay them on reconnect like other events.
+
+## Server Functions (optional)
+
+Server Functions let clients invoke server-provided capabilities via RPC. This is the default direction JSON-RPC already supports, but the protocol defines a capability listing and a generic dispatch method for consistency with Client Functions.
+
+### list_server_functions (client → server)
+Returns metadata for available server functions.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "1",
+  "method": "list_server_functions",
+  "params": {}
+}
+```
+
+Response:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "1",
+  "result": [
+    { "name": "session.get_history", "description": "Get conversation history" }
+  ]
+}
+```
+
+### server_call(function: string, args?: object, session_id?: string)
+Invoke a named server function with arguments. Returns the function result or a JSON-RPC error if the function is unknown/fails.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "2",
+  "method": "server_call",
+  "params": {
+    "function": "session.get_history",
+    "args": {},
+    "session_id": "sess_123"
+  }
+}
+```
+
+Notes:
+- Functions are registered server-side and may accept optional session context.
+- Most use cases should leverage these generic methods rather than inventing many ad-hoc RPC names.
+
 ## Authentication
 
 Optional token-based authentication via URL query parameter:

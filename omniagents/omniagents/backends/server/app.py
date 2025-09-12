@@ -53,6 +53,14 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
     # Create AgentService instance and register RPC endpoint
     # ------------------------------------------------------------------
     service = AgentService(spec)
+    # Allow examples to register custom server functions without changing core
+    try:
+        registrar = getattr(spec, "register_server_functions", None)
+        if callable(registrar):
+            registrar(service)
+    except Exception as e:
+        # Best-effort; don't crash server startup on example registrar failure
+        print(f"Warning: register_server_functions failed: {e}")
     endpoint = JsonRpcEndpoint(service)
 
     if auth_token:

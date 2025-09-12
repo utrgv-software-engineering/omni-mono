@@ -1,11 +1,11 @@
 package main
 
 import (
-	"fmt"
-	"os"
-	"strconv"
-	"strings"
-	"time"
+    "fmt"
+    "os"
+    "strconv"
+    "strings"
+    "time"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
@@ -328,6 +328,20 @@ func (m Model) connect() tea.Cmd {
             }
             // Send a message indicating RPC is ready
             send(RPCReadyMsg{})
+
+            // Best-effort: advertise supported client functions
+            go func() {
+                // For now, advertise only ui.set_status
+                functions := []map[string]interface{}{
+                    {
+                        "name":        "ui.set_status",
+                        "description": "Override the inline status text (non-blocking)",
+                    },
+                }
+                if err := m.rpcClient.ClientFunctions(1, functions); err != nil && m.debugMode {
+                    fmt.Fprintf(os.Stderr, "[DEBUG] client_functions failed: %v\n", err)
+                }
+            }()
         })
 
         // Notify UI when the socket disconnects so we don't get stuck in a
@@ -376,9 +390,10 @@ func (m Model) listenForMessages() tea.Cmd {
     // interface if we block here. Instead, poll the channel on a short timer
     // and return immediately. Any message found is wrapped and delivered as a
     // Tea message; otherwise we return nil.
-    return tea.Tick(50*time.Millisecond, func(t time.Time) tea.Msg {
+    return tea.Tick(30*time.Millisecond, func(t time.Time) tea.Msg {
         if m.msgChan == nil {
-            return nil
+            // Return a noop ChannelMsg so Update will re-schedule the next tick
+            return ChannelMsg{Msg: nil}
         }
         select {
         case raw := <-m.msgChan:
@@ -387,7 +402,8 @@ func (m Model) listenForMessages() tea.Cmd {
             }
             return ChannelMsg{Msg: raw}
         default:
-            return nil
+            // No message ready; return a noop to keep the listener alive
+            return ChannelMsg{Msg: nil}
         }
     })
 }
@@ -693,22 +709,25 @@ case DisconnectedMsg:
 				Name:      msg.Tool,
 				Arguments: msg.Input,
 				CallID:    msg.CallID,
+                Running:   true,
 			},
 		})
 		m.updateViewport()
 
-	case ToolResultMsg:
-		// Find the corresponding tool call and update it
-		for i := len(m.messages) - 1; i >= 0; i-- {
-			if m.messages[i].Role == "tool_call" && m.messages[i].ToolCall != nil {
-				if m.messages[i].ToolCall.CallID == msg.CallID {
-					m.messages[i].ToolCall.Result = msg.Output
-					m.messages[i].ToolCall.Metadata = msg.Metadata
-					break
-				}
-			}
-		}
-		m.updateViewport()
+    case ToolResultMsg:
+        // Find the corresponding tool call and update it
+        for i := len(m.messages) - 1; i >= 0; i-- {
+            if m.messages[i].Role == "tool_call" && m.messages[i].ToolCall != nil {
+                if m.messages[i].ToolCall.CallID == msg.CallID {
+                    m.messages[i].ToolCall.Result = msg.Output
+                    m.messages[i].ToolCall.Metadata = msg.Metadata
+                    // Mark tool as no longer running even if output is empty or metadata-only
+                    m.messages[i].ToolCall.Running = false
+                    break
+                }
+            }
+        }
+        m.updateViewport()
 
 	case MessageOutputMsg:
 		// Don't clear approval state - let user handle it
@@ -812,7 +831,7 @@ case DisconnectedMsg:
 			m.contextWindow = msg.ContextWindow
 		}
 		// Track last turn's input tokens for context usage estimation
-		m.lastDeltaInputTok = msg.Delta.InputTokens
+        m.lastDeltaInputTok = msg.Delta.InputTokens
 
     case RunStatusMsg:
         // Ignore status updates that don't belong to the active run to avoid
@@ -835,6 +854,59 @@ case DisconnectedMsg:
             m.state = StateWaitingForResponse
         }
         m.updateViewportContent()
+
+    case CommandResultMsg:
+        // Show command output as an assistant message
+        if msg.Content != "" {
+            m.messages = append(m.messages, Message{Role: "assistant", Content: msg.Content})
+            m.updateViewport()
+        }
+
+    case ClientRequestMsg:
+        // Handle server-initiated client function calls without changing state
+        // Supported: ui.set_status
+        fn := strings.ToLower(msg.Function)
+        handled := false
+        var handleErr error
+        if fn == "ui.set_status" {
+            // Expect args: text (string), show_spinner (bool, optional)
+            // Do not change m.state; simply override the status line
+            if text, ok := msg.Args["text"].(string); ok {
+                m.statusOverride = text
+            } else {
+                m.statusOverride = ""
+            }
+            show := true
+            if v, ok := msg.Args["show_spinner"]; ok {
+                if b, okb := v.(bool); okb {
+                    show = b
+                }
+            }
+            m.statusShowSpinner = show
+            m.updateViewportContent()
+            handled = true
+        }
+
+        // Reply with client_response (best-effort)
+        go func() {
+            var res map[string]interface{}
+            var errObj map[string]interface{}
+            ok := handled && handleErr == nil
+            if !handled {
+                errObj = map[string]interface{}{
+                    "message": fmt.Sprintf("Unsupported client function: %s", msg.Function),
+                    "type":    "UnsupportedFunction",
+                }
+            } else if handleErr != nil {
+                errObj = map[string]interface{}{
+                    "message": handleErr.Error(),
+                    "type":    "ClientFunctionError",
+                }
+            } else {
+                res = map[string]interface{}{"ack": true}
+            }
+            _ = m.rpcClient.ClientResponse(msg.RequestID, ok, res, errObj)
+        }()
 
     case RPCReadyMsg:
 		if m.debugMode {
@@ -912,10 +984,10 @@ case DisconnectedMsg:
 
     // Handle pulse animation tick
     if _, isPulseTick := msg.(PulseTickMsg); isPulseTick {
-        // Check if any tool calls are running (no result yet)
+        // Check if any tool calls are running
         hasRunningTools := false
         for _, message := range m.messages {
-            if message.Role == "tool_call" && message.ToolCall != nil && message.ToolCall.Result == "" {
+            if message.Role == "tool_call" && message.ToolCall != nil && message.ToolCall.Running {
                 hasRunningTools = true
                 break
             }
@@ -925,24 +997,6 @@ case DisconnectedMsg:
             // Advance pulse frame
             m.pulseFrame = (m.pulseFrame + 1) % 8 // 8 frames for smooth pulse
             m.updateViewportContent()             // Use content-only update to preserve scroll
-        }
-
-        // Opportunistically drain at most a few queued RPC messages from our
-        // channel without blocking, then schedule delivery of each as a Tea
-        // message. This avoids ever using a blocking read Cmd which could hang
-        // on older Bubble Tea versions.
-        if m.msgChan != nil {
-            drainMax := 5
-            for i := 0; i < drainMax; i++ {
-                select {
-                case raw := <-m.msgChan:
-                    // Capture raw for closure
-                    wrapped := raw
-                    cmds = append(cmds, func() tea.Msg { return ChannelMsg{Msg: wrapped} })
-                default:
-                    i = drainMax // break outer loop
-                }
-            }
         }
 
         // Continue the pulse animation
@@ -1832,10 +1886,27 @@ func (m Model) renderSessionList() string {
 // Helper methods for actions
 
 func (m Model) sendMessage() (Model, tea.Cmd) {
-	text := strings.TrimSpace(m.input.Value())
-	if text == "" {
-		return m, nil
-	}
+    text := strings.TrimSpace(m.input.Value())
+    if text == "" {
+        return m, nil
+    }
+
+    // Slash commands: handle locally without invoking the model
+    if strings.HasPrefix(text, "/") {
+        // Ensure we have a session_id so server_call can scope state per session.
+        if m.sessionID == "" {
+            // Generate a lightweight unique session id locally.
+            // Using timestamp-based ID is sufficient for local scoping.
+            m.sessionID = fmt.Sprintf("sess_%d", time.Now().UnixNano())
+            // Re-render header/footer as session indicator may now appear
+            m.updateViewport()
+        }
+        // Clear input
+        m.input.SetValue("")
+        // Keep state unchanged (non-blocking)
+        // Execute command asynchronously and render result
+        return m, m.handleSlashCommand(text)
+    }
 
 	// Add user message
 	m.messages = append(m.messages, Message{
@@ -1864,6 +1935,106 @@ func (m Model) sendMessage() (Model, tea.Cmd) {
 
 	// Start run
 	return m, m.startRun(text)
+}
+
+// CommandResultMsg carries the textual result of a slash command
+type CommandResultMsg struct {
+    Content string
+}
+
+// handleSlashCommand executes built-in slash commands and returns a Tea command
+// that will emit either CommandResultMsg or ErrorMsg when complete.
+func (m Model) handleSlashCommand(cmd string) tea.Cmd {
+    return func() tea.Msg {
+        // Normalize
+        parts := strings.Fields(cmd)
+        if len(parts) == 0 {
+            return CommandResultMsg{Content: ""}
+        }
+
+        name := strings.ToLower(parts[0]) // e.g., "/set_note"
+        arg := ""
+        if len(parts) > 1 {
+            // Preserve original spacing after the command name
+            idx := strings.Index(cmd, " ")
+            if idx >= 0 && idx+1 < len(cmd) {
+                arg = strings.TrimSpace(cmd[idx+1:])
+            }
+        }
+
+        switch name {
+        case "/exit":
+            return tea.Quit()
+        case "/help":
+            // Build dynamic help from server functions only (no static fallback)
+            funcs, err := m.rpcClient.ListServerFunctions()
+            if err != nil {
+                return ErrorMsg{Error: err}
+            }
+            var b strings.Builder
+            b.WriteString("Available commands:\n")
+            // Include built-in exit
+            b.WriteString("  /exit            – Quit\n")
+            // Map server function names to slash commands
+            for _, f := range funcs {
+                // Prefer last segment as the slash alias (e.g., example.set_note -> /set_note)
+                alias := "/" + f.Name
+                if idx := strings.LastIndex(f.Name, "."); idx >= 0 && idx+1 < len(f.Name) {
+                    alias = "/" + f.Name[idx+1:]
+                }
+                // Show simple arg hint if schema has a 'text' property
+                argHint := ""
+                if f.ParamsSchema != nil {
+                    if props, ok := f.ParamsSchema["properties"].(map[string]interface{}); ok {
+                        if _, hasText := props["text"]; hasText {
+                            argHint = " <text>"
+                        }
+                    }
+                }
+                desc := f.Description
+                if desc == "" {
+                    desc = "Invoke server function '" + f.Name + "'"
+                }
+                b.WriteString(fmt.Sprintf("  %-16s – %s\n", alias+argHint, desc))
+            }
+            // Wrap in a markdown code block so Glamour preserves newlines exactly
+            helpBody := strings.TrimRight(b.String(), "\n")
+            content := "```\n" + helpBody + "\n```"
+            return CommandResultMsg{Content: content}
+        case "/set_note":
+            if arg == "" {
+                return CommandResultMsg{Content: "Usage: /set_note <text>"}
+            }
+            var sessPtr *string
+            if m.sessionID != "" {
+                sessPtr = &m.sessionID
+            }
+            _, err := m.rpcClient.ServerCall("example.set_note", map[string]interface{}{"text": arg}, sessPtr)
+            if err != nil {
+                return ErrorMsg{Error: err}
+            }
+            return CommandResultMsg{Content: "Note set."}
+        case "/get_note":
+            var sessPtr *string
+            if m.sessionID != "" {
+                sessPtr = &m.sessionID
+            }
+            out, err := m.rpcClient.ServerCall("example.get_note", map[string]interface{}{}, sessPtr)
+            if err != nil {
+                return ErrorMsg{Error: err}
+            }
+            note := ""
+            if v, ok := out["note"].(string); ok {
+                note = v
+            }
+            if note == "" {
+                return CommandResultMsg{Content: "Note is empty."}
+            }
+            return CommandResultMsg{Content: "Note: " + note}
+        default:
+            return CommandResultMsg{Content: "Unknown command. Type /help"}
+        }
+    }
 }
 
 func (m Model) startRun(prompt string) tea.Cmd {

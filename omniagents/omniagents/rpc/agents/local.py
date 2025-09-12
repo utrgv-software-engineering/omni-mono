@@ -50,6 +50,9 @@ class _ClientEventMethods(RpcMethodsBase):
     async def run_started(self, **params):
         return await self._push_event("run_started", **params)
 
+    async def client_request(self, **params):
+        return await self._push_event("client_request", **params)
+
 
 class LocalAgent(UnifiedAgentBase):
     """

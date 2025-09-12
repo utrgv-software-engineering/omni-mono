@@ -363,24 +363,50 @@ func (c *RPCClient) ListSessions() ([]Session, error) {
 
 // ArchiveSession archives a session
 func (c *RPCClient) ArchiveSession(sessionID string) error {
-	params := map[string]interface{}{
-		"session_id": sessionID,
-	}
+    params := map[string]interface{}{
+        "session_id": sessionID,
+    }
 
-	_, err := c.call("archive_session", params)
-	return err
+    _, err := c.call("archive_session", params)
+    return err
 }
 
 // ToolApprovalResponse responds to a tool approval request
 func (c *RPCClient) ToolApprovalResponse(approvalID string, approved bool, alwaysApprove bool) error {
-	params := map[string]interface{}{
-		"approval_id":    approvalID,
-		"approved":       approved,
-		"always_approve": alwaysApprove,
-	}
+    params := map[string]interface{}{
+        "approval_id":    approvalID,
+        "approved":       approved,
+        "always_approve": alwaysApprove,
+    }
 
-	_, err := c.call("tool_approval_response", params)
-	return err
+    _, err := c.call("tool_approval_response", params)
+    return err
+}
+
+// ClientFunctions advertises client capabilities to the server (optional)
+func (c *RPCClient) ClientFunctions(version int, functions []map[string]interface{}) error {
+    params := map[string]interface{}{
+        "version":   version,
+        "functions": functions,
+    }
+    _, err := c.call("client_functions", params)
+    return err
+}
+
+// ClientResponse replies to a client_request issued by the server
+func (c *RPCClient) ClientResponse(requestID string, ok bool, result map[string]interface{}, errObj map[string]interface{}) error {
+    params := map[string]interface{}{
+        "request_id": requestID,
+        "ok":         ok,
+    }
+    if result != nil {
+        params["result"] = result
+    }
+    if errObj != nil {
+        params["error"] = errObj
+    }
+    _, err := c.call("client_response", params)
+    return err
 }
 
 // Response types
@@ -424,10 +450,53 @@ func (m *SessionMessage) GetContentText() string {
 }
 
 type Session struct {
-	ID           string          `json:"id"`
-	CreatedAt    string          `json:"created_at"`
-	Archived     bool            `json:"archived"`
-	MessageCount int             `json:"message_count"`
-	FirstMessage *SessionMessage `json:"first_message,omitempty"`
-	LastMessage  *SessionMessage `json:"last_message,omitempty"`
+    ID           string          `json:"id"`
+    CreatedAt    string          `json:"created_at"`
+    Archived     bool            `json:"archived"`
+    MessageCount int             `json:"message_count"`
+    FirstMessage *SessionMessage `json:"first_message,omitempty"`
+    LastMessage  *SessionMessage `json:"last_message,omitempty"`
+}
+
+// Server functions RPC -------------------------------------------------
+
+type ServerFunctionMeta struct {
+    Name        string                 `json:"name"`
+    Description string                 `json:"description,omitempty"`
+    // Optional schemas omitted for simplicity
+    ParamsSchema map[string]interface{} `json:"params_schema,omitempty"`
+    ResultSchema map[string]interface{} `json:"result_schema,omitempty"`
+}
+
+func (c *RPCClient) ListServerFunctions() ([]ServerFunctionMeta, error) {
+    result, err := c.call("list_server_functions", map[string]interface{}{})
+    if err != nil {
+        return nil, err
+    }
+    var funcs []ServerFunctionMeta
+    if err := json.Unmarshal(result, &funcs); err != nil {
+        return nil, err
+    }
+    return funcs, nil
+}
+
+func (c *RPCClient) ServerCall(function string, args map[string]interface{}, sessionID *string) (map[string]interface{}, error) {
+    params := map[string]interface{}{
+        "function": function,
+    }
+    if args != nil {
+        params["args"] = args
+    }
+    if sessionID != nil {
+        params["session_id"] = *sessionID
+    }
+    raw, err := c.call("server_call", params)
+    if err != nil {
+        return nil, err
+    }
+    var out map[string]interface{}
+    if err := json.Unmarshal(raw, &out); err != nil {
+        return nil, err
+    }
+    return out, nil
 }

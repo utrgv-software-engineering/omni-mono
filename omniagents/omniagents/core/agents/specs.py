@@ -129,6 +129,12 @@ class AgentSpec:
     remote_ws_url: str | None = None  # If provided, UI/CLI will connect to this URL instead of building local agent
     remote_auth_token_key: str | None = None  # Name of env var holding the bearer token (optional)
 
+    # --- Optional hook to register example/server functions on the AgentService --- #
+    # A callable that will be invoked by the server on startup to register
+    # server functions (via AgentService.register_server_function). This allows
+    # examples to inject custom functions without modifying core server code.
+    register_server_functions: Optional[Callable[[Any], None]] = None
+
     # --- Optional App-Specific Customization ---
     header_controls_builder: Optional[Callable[['AgentApp'], List[ft.Control]]] = None
     cleanup_handler: Optional[Callable[[], Awaitable[None]]] = None 
