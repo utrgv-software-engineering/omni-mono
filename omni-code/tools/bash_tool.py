@@ -1,6 +1,6 @@
 import subprocess
 from typing import Dict, Any, Optional
-from omniagents.core.tools import rich_function_tool, RichToolOutput
+from omniagents.core.tools import rich_function_tool, RichToolOutput, approval_metadata
 
 @rich_function_tool
 def execute_bash(command: str, timeout: Optional[int]) -> RichToolOutput:
@@ -126,3 +126,19 @@ def execute_bash(command: str, timeout: Optional[int]) -> RichToolOutput:
         }
         
         return RichToolOutput(llm_output, ui_metadata)
+
+
+# --- Approval metadata for execute_bash: render the command nicely in approval dialog ---
+@approval_metadata()
+def execute_bash_approval(command: str, timeout: Optional[int] = None) -> dict:
+    return {
+        "display_type": "command",
+        "summary": "Run shell command",
+        "value": command,
+        "preview": f"$ {command}",
+        "truncated": False,
+        "metadata": {
+            "command": command,
+            "timeout": timeout,
+        },
+    }

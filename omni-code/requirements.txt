@@ -6,7 +6,7 @@
 --extra-index-url https://REDACTED_FURY_TOKEN:@pypi.fury.io/ericmichael/
 
 openai==1.99.9
-omniagents[all]==0.3.7
+omniagents[all]==0.3.10
 markitdown[all,docx,pdf]>=0.1.1
 requests>=2.31.0
 beautifulsoup4>=4.12.0
