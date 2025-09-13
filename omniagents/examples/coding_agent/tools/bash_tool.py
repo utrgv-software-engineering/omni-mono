@@ -1,6 +1,6 @@
 import subprocess
 from typing import Dict, Any, Optional
-from omniagents.core.tools import rich_function_tool, RichToolOutput
+from omniagents.core.tools import rich_function_tool, RichToolOutput, approval_metadata
 
 @rich_function_tool
 def execute_bash(command: str, timeout: Optional[int]) -> RichToolOutput:
@@ -109,6 +109,27 @@ def execute_bash(command: str, timeout: Optional[int]) -> RichToolOutput:
         }
         
         return RichToolOutput(llm_output, ui_metadata)
+
+
+# --- Approval metadata for execute_bash (render command nicely in approval dialog) ---
+@approval_metadata()
+def execute_bash_approval(command: str, timeout: Optional[int] = None) -> dict:
+    """Provide rich approval metadata so the UI can render the shell command nicely.
+
+    Returns display_type "command" and includes the command in metadata so
+    Bubble Tea can syntax-highlight it in the approval dialog.
+    """
+    return {
+        "display_type": "command",
+        "summary": "Run shell command",
+        "value": command,
+        "preview": f"$ {command}",
+        "truncated": False,
+        "metadata": {
+            "command": command,
+            "timeout": timeout,
+        },
+    }
     except Exception as e:
         llm_output = f"Error executing command: {str(e)}"
         

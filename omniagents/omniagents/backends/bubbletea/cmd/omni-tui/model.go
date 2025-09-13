@@ -23,12 +23,11 @@ import (
 type AppState int
 
 const (
-	StateConnecting AppState = iota
-	StateReady
-	StateWaitingForResponse
-	StateApprovalRequired
-	StateError
-	StateSessionList
+    StateConnecting AppState = iota
+    StateReady
+    StateWaitingForResponse
+    StateApprovalRequired
+    StateSessionList
 )
 
 // keyMap defines keybindings for the application
@@ -125,13 +124,12 @@ type Model struct {
 	welcomeText string
 	useSafeMode bool
 
-	// Display
-	width  int
-	height int
-	err    error
+    // Display
+    width  int
+    height int
 
-	// Channel for sending messages to the program
-	msgChan chan tea.Msg
+    // Channel for sending messages to the program
+    msgChan chan tea.Msg
 
 	// Debug mode
 	debugMode bool
@@ -506,8 +504,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 
+
 				// Change state back to ready
 				m.state = StateReady
+
+				// Clear any transient status
+				m.statusOverride = ""
+				m.statusShowSpinner = false
 
 				// Add a message indicating cancellation
 				m.messages = append(m.messages, Message{
@@ -703,6 +706,11 @@ case DisconnectedMsg:
         m.updateViewport()
 
 	case ToolCalledMsg:
+		// Clear any transient retry/progress status once we see forward progress
+		if m.state == StateWaitingForResponse && m.statusOverride != "" {
+			m.statusOverride = ""
+			m.statusShowSpinner = false
+		}
 		// Don't clear approval state - let user handle it
 		m.messages = append(m.messages, Message{
 			Role: "tool_call",
@@ -716,6 +724,11 @@ case DisconnectedMsg:
 		m.updateViewport()
 
     case ToolResultMsg:
+        // Clear any transient retry/progress status once we see forward progress
+        if m.state == StateWaitingForResponse && m.statusOverride != "" {
+            m.statusOverride = ""
+            m.statusShowSpinner = false
+        }
         // Find the corresponding tool call and update it
         for i := len(m.messages) - 1; i >= 0; i-- {
             if m.messages[i].Role == "tool_call" && m.messages[i].ToolCall != nil {
@@ -731,6 +744,11 @@ case DisconnectedMsg:
         m.updateViewport()
 
 	case MessageOutputMsg:
+		// Clear any transient retry/progress status once we see forward progress
+		if m.state == StateWaitingForResponse && m.statusOverride != "" {
+			m.statusOverride = ""
+			m.statusShowSpinner = false
+		}
 		// Don't clear approval state - let user handle it
 		// Update or create assistant message
 		if len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == "assistant" {
@@ -802,6 +820,9 @@ case DisconnectedMsg:
                 m.statusShowSpinner = false
             } else {
                 m.state = StateReady
+                // Clear any transient retry/progress status on successful completion
+                m.statusOverride = ""
+                m.statusShowSpinner = false
             }
 		}
 		m.currentRunID = ""
@@ -847,8 +868,12 @@ case DisconnectedMsg:
         m.retryAttempt = msg.Attempt
         m.retryTotal = msg.Total
         m.lastErrorMessage = msg.Message
-        // Show retry status while we continue waiting for response
-        m.statusOverride = fmt.Sprintf("Error: %s (Retrying %d/%d)", m.lastErrorMessage, m.retryAttempt, m.retryTotal)
+        // Show retry status while we continue waiting for response (neutral wording).
+        if m.retryTotal > 0 && m.retryAttempt > 0 {
+            m.statusOverride = fmt.Sprintf("Retrying %d/%d: %s", m.retryAttempt, m.retryTotal, m.lastErrorMessage)
+        } else {
+            m.statusOverride = fmt.Sprintf("Retrying: %s", m.lastErrorMessage)
+        }
         m.statusShowSpinner = true
         // Ensure we stay in waiting state so spinner/status are visible
         if m.state != StateApprovalRequired {
@@ -1097,13 +1122,11 @@ case DisconnectedMsg:
 
 // View renders the UI
 func (m Model) View() string {
-	if m.state == StateError {
-		return m.renderError()
-	} else if m.state == StateConnecting {
-		return m.renderConnecting()
-	} else if m.state == StateSessionList {
-		return m.renderSessionList()
-	}
+    if m.state == StateConnecting {
+        return m.renderConnecting()
+    } else if m.state == StateSessionList {
+        return m.renderSessionList()
+    }
 
 	// Main chat view with proper layout
 	var header, middle, footer string
@@ -1770,23 +1793,11 @@ func (m Model) getContextualHelp() string {
 	return helpStyle.Render(strings.Join(helpStrs, " • "))
 }
 
-func (m Model) renderError() string {
-    errorStyle := lipgloss.NewStyle().
-        Foreground(Styles.Error.GetForeground()).
-        Bold(true)
-
-    var output strings.Builder
-    output.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v", m.err)))
-    output.WriteString("\n")
-    // Minimal, no extra speculation
-    return output.String()
-}
-
 func (m Model) renderConnecting() string {
-	connectStyle := lipgloss.NewStyle().
-		Foreground(Styles.Info.GetForeground())
+    connectStyle := lipgloss.NewStyle().
+        Foreground(Styles.Info.GetForeground())
 
-	return connectStyle.Render("Connecting to server...")
+    return connectStyle.Render("Connecting to server...")
 }
 
 func (m Model) renderSessionList() string {
