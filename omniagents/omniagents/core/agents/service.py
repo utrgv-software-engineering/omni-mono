@@ -395,10 +395,8 @@ class AgentService(RpcMethodsBase):
 
         # Build (or reuse) agent for this session
         if not hasattr(sess, "agent"):
-            # Create approval callback that captures session context
-            approval_callback = None
-            if self.spec.use_safe_agent:
-                approval_callback = lambda name, args, metadata=None: self._request_tool_approval(name, args, metadata, _sess=sess)
+            # Always create approval callback that captures session context so prebuilt SafeAgent can use it
+            approval_callback = lambda name, args, metadata=None: self._request_tool_approval(name, args, metadata, _sess=sess)
             
             # Build agent using spec's build_agent method
             from types import SimpleNamespace
@@ -408,6 +406,12 @@ class AgentService(RpcMethodsBase):
             )
             
             # Use the spec's build_agent method if available, otherwise use default
+            # Ensure global approval callback is available to any SafeAgent created during build
+            try:
+                SafeAgent.set_global_approval_callback(approval_callback)
+            except Exception:
+                pass
+
             if self.spec.build_agent:
                 agent = await self.spec.build_agent({}, None, stub_app)
                 
@@ -431,6 +435,12 @@ class AgentService(RpcMethodsBase):
                         skip_approvals=opts.skip_approvals,
                         halt_on_rejection=opts.halt_on_rejection,
                     )
+                # If a prebuilt SafeAgent was returned, ensure it has the callback even when safe=False
+                elif isinstance(agent, SafeAgent) and approval_callback:
+                    try:
+                        agent.set_approval_callback(approval_callback)
+                    except Exception:
+                        pass
                 
                 sess.agent = agent
             else:

@@ -151,7 +151,7 @@ async def run_cli(
             print(f"MCP parameters: {mcp_params}")
         mcp_ctx = MCPServerSse(name=f"{spec.name} MCP Server", params=mcp_params)
 
-    # Choose approval callback
+    # Choose approval callback (always determine one so we can pass it through)
     if spec.safe_agent_options.skip_approvals:
         approval_callback = SafeAgent.auto_approval_callback
     else:
@@ -161,10 +161,8 @@ async def run_cli(
         # Build unified agent using factory
         mcp_list = [mcp_server] if mcp_server else None
         
-        # Determine approval callback to pass
-        approval_cb = None
-        if spec.use_safe_agent and not spec.safe_agent_options.skip_approvals:
-            approval_cb = approval_callback
+        # Pass approval callback unconditionally so prebuilt SafeAgent works even if safe=False
+        approval_cb = approval_callback
             
         # Create agent through unified factory
         agent = await create_unified_agent(

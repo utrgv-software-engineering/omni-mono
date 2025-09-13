@@ -664,7 +664,8 @@ class AgentApp:
             self.agent_instance = await create_unified_agent(
                 spec=self.spec,
                 settings=self.current_settings,
-                approval_callback=self._request_tool_approval if self.spec.use_safe_agent else None,
+                # Pass approval callback unconditionally so prebuilt SafeAgent works even if safe=False
+                approval_callback=self._request_tool_approval,
                 mcp_servers=mcp_servers
             )
             
