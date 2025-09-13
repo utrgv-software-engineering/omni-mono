@@ -81,6 +81,8 @@ class AgentService(RpcMethodsBase):
         description: str | None = None,
         params_schema: dict | None = None,
         result_schema: dict | None = None,
+        on_invoke: Any | None = None,
+        strict: bool | None = None,
     ) -> None:
         """Register a server function callable under *name*.
 
@@ -88,11 +90,18 @@ class AgentService(RpcMethodsBase):
             (service, session, args), (session, args), (args), or ()
         where args is a dict.
         """
+        if on_invoke is None:
+            on_invoke = getattr(func, "_server_function_on_invoke", None)
+        if strict is None:
+            strict = getattr(func, "_server_function_strict", None)
+
         self._server_functions[name] = {
             "func": func,
             "description": description,
             "params_schema": params_schema,
             "result_schema": result_schema,
+            "on_invoke": on_invoke,
+            "strict": strict,
         }
 
     async def list_server_functions(self) -> list[dict]:  # noqa: D401
@@ -105,6 +114,7 @@ class AgentService(RpcMethodsBase):
                     "description": meta.get("description"),
                     "params_schema": meta.get("params_schema"),
                     "result_schema": meta.get("result_schema"),
+                    "strict": meta.get("strict"),
                 }
             )
         _debug_rpc("list_server_functions", {"count": len(result)})
@@ -123,6 +133,7 @@ class AgentService(RpcMethodsBase):
         if not entry:
             raise ValueError(f"Unknown server function: {function}")
         fn = entry["func"]
+        on_invoke = entry.get("on_invoke")
 
         sess: Session | None = None
         if session_id:
@@ -130,6 +141,11 @@ class AgentService(RpcMethodsBase):
                 sess = sm.get_or_create(session_id)
             except Exception:
                 sess = None
+
+        if on_invoke is not None:
+            if asyncio.iscoroutinefunction(on_invoke):
+                return await on_invoke(self, sess, args or {})
+            return on_invoke(self, sess, args or {})
 
         # Try common calling conventions in order
         to_call = None

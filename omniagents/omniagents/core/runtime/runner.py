@@ -39,6 +39,7 @@ class Runner:
         build_context: Optional[Any] = None,
         max_turns: int = 20,
         context_window: Optional[int] = None,
+        server_functions: Optional[List[Any]] = None,
     ) -> "Runner":
         """
         Create a Runner from an existing agents.Agent instance.
@@ -98,6 +99,14 @@ class Runner:
             build_context=build_context,  # Keep factory for server mode
             max_turns=max_turns  # Pass through max_turns parameter
         )
+        # Optional: attach server functions registrar from callables
+        if server_functions:
+            try:
+                from omniagents.core.server_functions.discovery import build_server_functions_registrar
+                spec.register_server_functions = build_server_functions_registrar(server_functions)
+            except Exception:
+                # Best-effort; do not fail runner construction if discovery wiring fails
+                pass
         
         return cls(spec=spec)
     

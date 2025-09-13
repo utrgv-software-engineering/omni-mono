@@ -11,6 +11,10 @@ from omniagents.core.agents.specs import SettingField
 from omniagents.core.tools.discovery import discover_functions_in_dir
 from omniagents.core.guardrails.discovery import discover_guardrails_in_dir
 from omniagents.core.debug import Debug
+from omniagents.core.server_functions.discovery import (
+    discover_server_functions_in_dir,
+    build_server_functions_registrar,
+)
 
 DEFAULT_SETTINGS_FIELDS = [
     SettingField(
@@ -537,6 +541,61 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
         print(f"Warning: The following tools listed in '{config_path}' were not found in the agent's tools directory '{display_path}' or are not valid marked functions: {', '.join(missing_tools)}")
         # Continue without missing tools
 
+    # --- Server Functions Discovery and Selection ---
+    server_functions_registrar = None
+    if not remote_ws_url:
+        server_functions_dir = (base_dir / "server_functions").resolve()
+        discovered_server_functions = {}
+        if server_functions_dir.is_dir():
+            discovered_server_functions = discover_server_functions_in_dir(str(server_functions_dir))
+            if Debug.enabled():
+                print(f"Discovered server functions from 'server_functions' subdirectory: {server_functions_dir}")
+        additional_sf_dirs = config.get('additional_server_functions_dirs', [])
+        if not isinstance(additional_sf_dirs, list):
+            print(f"Warning: 'additional_server_functions_dirs' in {config_path} should be a list. Ignoring.")
+            additional_sf_dirs = []
+        for sf_dir in additional_sf_dirs:
+            add_dir_path = (base_dir / sf_dir).resolve()
+            if add_dir_path.is_dir():
+                extra = discover_server_functions_in_dir(str(add_dir_path))
+                discovered_server_functions.update(extra)
+                if Debug.enabled():
+                    print(f"Discovered additional server functions from: {add_dir_path}")
+            else:
+                try:
+                    display_path = add_dir_path.relative_to(Path.cwd())
+                except ValueError:
+                    display_path = add_dir_path
+                print(f"Warning: Additional server functions directory '{display_path}' not found. Skipping.")
+
+        sf_cfg = config.get('server_functions', [])
+        register_all = False
+        if isinstance(sf_cfg, str) and sf_cfg.strip().lower() in {"*", "all"}:
+            register_all = True
+        elif isinstance(sf_cfg, bool) and sf_cfg is True:
+            register_all = True
+
+        if register_all:
+            if discovered_server_functions:
+                server_functions_registrar = build_server_functions_registrar(discovered_server_functions)
+        else:
+            sf_names = sf_cfg
+            if sf_names and not isinstance(sf_names, list):
+                print(f"Warning: 'server_functions' in {config_path} should be a list of names. Ignoring.")
+                sf_names = []
+            selected_funcs = []
+            missing_sf = []
+            for n in sf_names or []:
+                meta = discovered_server_functions.get(n)
+                if meta:
+                    selected_funcs.append(meta.get('func'))
+                else:
+                    missing_sf.append(n)
+            if missing_sf:
+                print(f"Warning: The following server functions listed in '{config_path}' were not found: {', '.join(missing_sf)}")
+            if selected_funcs:
+                server_functions_registrar = build_server_functions_registrar(selected_funcs)
+
     # --- Guardrail Discovery and Selection ---
     # Check the 'guardrails' subdirectory for guardrail definitions
     input_guardrails_list = []
@@ -813,5 +872,11 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
             header_controls_builder=None,
             cleanup_handler=None,
     )
+
+    if server_functions_registrar:
+        try:
+            spec.register_server_functions = server_functions_registrar
+        except Exception:
+            pass
 
     return spec 
