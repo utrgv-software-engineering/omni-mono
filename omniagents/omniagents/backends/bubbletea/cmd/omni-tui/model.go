@@ -888,7 +888,7 @@ case DisconnectedMsg:
             m.updateViewport()
         }
 
-    case ClientRequestMsg:
+	case ClientRequestMsg:
         // Handle server-initiated client function calls without changing state
         // Supported: ui.set_status
         fn := strings.ToLower(msg.Function)
@@ -934,7 +934,7 @@ case DisconnectedMsg:
             _ = m.rpcClient.ClientResponse(msg.RequestID, ok, res, errObj)
         }()
 
-    case RPCReadyMsg:
+	case RPCReadyMsg:
 		if m.debugMode {
 			fmt.Fprintf(os.Stderr, "[DEBUG] Received RPCReadyMsg\n")
 		}
@@ -981,6 +981,25 @@ case DisconnectedMsg:
 	case ClearCtrlCMsg:
 		// Clear the first Ctrl+C state after timeout
 		m.firstCtrlCTime = nil
+
+	case FallbackToLLMMsg:
+		// Treat the original slash text as a normal user message and start a run
+		text := strings.TrimSpace(msg.Text)
+		if text == "" {
+			break
+		}
+		m.messages = append(m.messages, Message{Role: "user", Content: text})
+		// If this is the first message, recalc viewport height since header disappears
+		if len(m.messages) == 1 {
+			inputFrameV := m.input.FocusedStyle.Base.GetVerticalFrameSize()
+			footerLines := m.input.Height() + inputFrameV + 2
+			m.viewport.Height = m.height - 2 - footerLines
+		}
+		m.state = StateWaitingForResponse
+		m.statusOverride = ""
+		m.statusShowSpinner = false
+		m.updateViewport()
+		cmds = append(cmds, m.startRun(text))
 
     }
 
@@ -1905,19 +1924,11 @@ func (m Model) sendMessage() (Model, tea.Cmd) {
 
     // Slash commands: handle locally without invoking the model
     if strings.HasPrefix(text, "/") {
-        // Only intercept built-in local commands (e.g., /help, /exit).
-        // Unknown slash commands are forwarded to the agent so it can
-        // call the invoke_slash_command tool. This avoids long-running
-        // server_call timeouts for commands like /init.
-        parts := strings.Fields(text)
-        name := strings.ToLower(parts[0])
-        if name == "/help" || name == "/exit" {
-            // Clear input
-            m.input.SetValue("")
-            // Keep state unchanged (non-blocking)
-            return m, m.handleSlashCommand(text)
-        }
-        // Fall through: treat unknown slash commands as normal messages
+        // Clear input and route ALL slash commands through handler.
+        // The handler will try built-ins, then server functions, and
+        // if not found will emit a fallback message to send to the LLM.
+        m.input.SetValue("")
+        return m, m.handleSlashCommand(text)
     }
 
     // Add user message
@@ -1946,12 +1957,18 @@ func (m Model) sendMessage() (Model, tea.Cmd) {
 	m.updateViewport()
 
 	// Start run
-	return m, m.startRun(text)
+    return m, m.startRun(text)
 }
 
 // CommandResultMsg carries the textual result of a slash command
 type CommandResultMsg struct {
     Content string
+}
+
+// FallbackToLLMMsg indicates a slash command should be treated as a normal message
+// and sent to the LLM after failing to match server functions.
+type FallbackToLLMMsg struct {
+    Text string
 }
 
 // handleSlashCommand executes built-in slash commands and returns a Tea command
@@ -2010,8 +2027,23 @@ func (m Model) handleSlashCommand(cmd string) tea.Cmd {
             helpBody := strings.TrimRight(b.String(), "\n")
             return CommandResultMsg{Content: helpBody}
         default:
-            // Dynamic server function invocation: treat /name as function "name"
+            // Try server function first; if not available, fallback to LLM
             fn := strings.TrimPrefix(name, "/")
+            // Check advertised server functions to decide if we should call or fallback
+            funcs, err := m.rpcClient.ListServerFunctions()
+            if err == nil {
+                found := false
+                for _, f := range funcs {
+                    if strings.EqualFold(f.Name, fn) {
+                        found = true
+                        break
+                    }
+                }
+                if !found {
+                    // Not a server function: let the LLM handle the slash text
+                    return FallbackToLLMMsg{Text: cmd}
+                }
+            }
             // Parse args: try JSON; otherwise map raw to {"text": arg} if present
             var args map[string]interface{}
             if arg != "" {
@@ -2040,6 +2072,7 @@ func (m Model) handleSlashCommand(cmd string) tea.Cmd {
             }
             out, err := m.rpcClient.ServerCall(fn, args, sessPtr)
             if err != nil {
+                // On RPC or server errors, show error rather than silently falling back
                 return ErrorMsg{Error: err}
             }
             if msg, ok := out["message"].(string); ok && msg != "" {
