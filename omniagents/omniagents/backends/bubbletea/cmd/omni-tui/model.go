@@ -1218,7 +1218,11 @@ func (m Model) renderHeader() string {
 		sessionStyle := lipgloss.NewStyle().
 			Foreground(Styles.SessionSubtitle.GetForeground()).
 			Italic(true)
-		sessionInfo := fmt.Sprintf("Session: %s", m.sessionID[:8])
+		sid := m.sessionID
+		if len(sid) > 8 {
+			sid = sid[:8]
+		}
+		sessionInfo := fmt.Sprintf("Session: %s", sid)
 		result.WriteString("\n")
 		result.WriteString(sessionStyle.Render(sessionInfo))
 	}
@@ -1841,7 +1845,11 @@ func (m Model) renderSessionList() string {
 		}
 
 		// Build session line directly
-		sessionLine := cursor + session.ID[:8]
+		sid := session.ID
+		if len(sid) > 8 {
+			sid = sid[:8]
+		}
+		sessionLine := cursor + sid
 
 		// Add timestamp if available
 		if session.CreatedAt != "" {
@@ -2226,16 +2234,16 @@ func (m *Model) updateViewport() {
 
 // updateViewportContent updates the viewport content without changing scroll position
 func (m *Model) updateViewportContent() {
-	// Save current scroll position
-	oldYOffset := m.viewport.YOffset
-	oldYPosition := m.viewport.YPosition
+    // Save current scroll position
+    oldYOffset := m.viewport.YOffset
+    oldYPosition := m.viewport.YPosition
 
-	// Update content
-	m.viewport.SetContent(m.renderMessages())
+    // Update content
+    m.viewport.SetContent(m.renderMessages())
 
-	// Restore scroll position
-	m.viewport.YOffset = oldYOffset
-	m.viewport.YPosition = oldYPosition
+    // Restore scroll position
+    m.viewport.SetYOffset(oldYOffset)
+    m.viewport.YPosition = oldYPosition
 }
 
 // truncateMessageForList truncates a message for display in the session list
