@@ -16,6 +16,7 @@ from omniagents.rpc import RpcMethodsBase
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.agents.safe import SafeAgent
 from omniagents.core.session import sm, Session, append_message
+from omniagents.core.session.history_db import get_user_messages
 from omniagents.core.runtime.bridge import stream_agent
 from omniagents.core.agents.builder import _default_build_agent
 from omniagents.core.debug import Debug
@@ -687,3 +688,25 @@ class AgentService(RpcMethodsBase):
         return sm.archive_session(session_id)
 
     # (Removed) get_model_info: model metadata is now sent inline with usage events
+
+    async def get_user_history(
+        self,
+        limit: int | None = None,
+        include_archived: bool | None = None,
+    ) -> list[dict]:  # noqa: D401
+        """Return recent user messages across all sessions.
+
+        Args:
+            limit: Maximum number of items to return (default 200)
+            include_archived: Whether to include archived sessions (default True)
+        """
+        lim = int(limit) if isinstance(limit, int) and limit > 0 else 200
+        inc = True if include_archived is None else bool(include_archived)
+        _debug_rpc(
+            "get_user_history",
+            {"limit": lim, "include_archived": inc},
+        )
+        try:
+            return get_user_messages(limit=lim, include_archived=inc)
+        except Exception:
+            return []

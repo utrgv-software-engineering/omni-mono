@@ -160,6 +160,10 @@ type Model struct {
     retryAttempt     int    // current retry attempt (1-based)
     retryTotal       int    // total retry attempts planned
     lastErrorMessage string // last transient error message
+
+    globalHistory []string
+    historyIndex  int
+    historyDraft  string
 }
 
 // Message represents a chat message
@@ -568,6 +572,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
+			if m.state == StateReady && m.atTopEdge() {
+				if len(m.globalHistory) == 0 {
+					break
+				}
+				if m.historyIndex > len(m.globalHistory) {
+					m.historyIndex = len(m.globalHistory)
+				}
+				if m.historyIndex == len(m.globalHistory) {
+					m.historyDraft = m.input.Value()
+					if m.historyIndex > 0 {
+						m.historyIndex = m.historyIndex - 1
+					}
+				} else if m.historyIndex > 0 {
+					m.historyIndex = m.historyIndex - 1
+				}
+				if m.historyIndex >= 0 && m.historyIndex < len(m.globalHistory) {
+					m.input.SetValue(m.globalHistory[m.historyIndex])
+					textareaAlreadyUpdated = true
+					return m, nil
+				}
+			}
+
 		case tea.KeyDown:
 			if m.state == StateSessionList && len(m.availableSessions) > 0 {
 				// Move selection down within current page or go to next page
@@ -584,6 +610,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selectedIndex++
 				}
 				return m, nil
+			}
+
+			if m.state == StateReady && m.atBottomEdge() {
+				if len(m.globalHistory) == 0 {
+					break
+				}
+				if m.historyIndex < len(m.globalHistory)-1 {
+					m.historyIndex = m.historyIndex + 1
+					m.input.SetValue(m.globalHistory[m.historyIndex])
+					textareaAlreadyUpdated = true
+					return m, nil
+				}
+				if m.historyIndex == len(m.globalHistory)-1 {
+					m.historyIndex = len(m.globalHistory)
+					m.input.SetValue(m.historyDraft)
+					textareaAlreadyUpdated = true
+					return m, nil
+				}
 			}
 
 		case tea.KeyLeft:
@@ -648,9 +692,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
         topSpacing := 2 // Always 2 lines of top spacing
         m.viewport.Height = msg.Height - headerLines - footerLines - topSpacing
 
-		// Update textarea width
-		// Pass full width; textarea.SetWidth accounts for border frame size
-		m.input.SetWidth(msg.Width)
+		// Update textarea width to align with messages padding
+		m.input.SetWidth(msg.Width - 4)
 
 		// Update help width
 		m.help.Width = msg.Width - 4
@@ -664,7 +707,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.approvalList.SetSize(listWidth, m.approvalList.Height())
 		}
 
-	case ConnectedMsg:
+case ConnectedMsg:
 		if m.debugMode {
 			fmt.Fprintf(os.Stderr, "[DEBUG] Received ConnectedMsg, changing state from %v to StateReady\n", m.state)
 		}
@@ -687,6 +730,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Start with a new session
 			m.state = StateReady
 			m.updateViewport()
+		}
+
+		if len(m.globalHistory) == 0 {
+			_, cmd := m.loadGlobalHistory()
+			cmds = append(cmds, cmd)
 		}
 
 case DisconnectedMsg:
@@ -952,6 +1000,11 @@ case DisconnectedMsg:
 			cmds = append(cmds, cmd)
 		}
 
+		if len(m.globalHistory) == 0 {
+			_, cmd := m.loadGlobalHistory()
+			cmds = append(cmds, cmd)
+		}
+
 	case SessionsListedMsg:
 		if m.debugMode {
 			fmt.Fprintf(os.Stderr, "[DEBUG] Received SessionsListedMsg: error=%v, sessions=%d\n",
@@ -976,6 +1029,12 @@ case DisconnectedMsg:
 			m.paginator.SetTotalPages(len(msg.Sessions))
 			m.paginator.Page = 0
 			m.state = StateSessionList
+		}
+
+	case GlobalHistoryLoadedMsg:
+		if msg.Error == nil && msg.Items != nil {
+			m.globalHistory = msg.Items
+			m.historyIndex = len(m.globalHistory)
 		}
 
 	case ClearCtrlCMsg:
@@ -1199,7 +1258,7 @@ func (m Model) View() string {
 	}
 	content.WriteString(paddingStyle.Render(middle))
 	content.WriteString("\n")
-	content.WriteString(footer) // No padding for footer - border aligns with messages
+	content.WriteString(paddingStyle.Render(footer))
 
 	return content.String()
 }
@@ -1604,59 +1663,51 @@ func (m Model) renderMessages() string {
 }
 
 func (m Model) renderInput() string {
-	var s strings.Builder
+    var s strings.Builder
 
-	// Input field (no padding - border aligns with message indicators)
-	s.WriteString(m.input.View())
-	s.WriteString("\n")
+    // Input field (no padding - border aligns with message indicators)
+    s.WriteString(m.input.View())
+    s.WriteString("\n")
 
-	// Footer line: help on the left, usage (context remaining) on the right
-	usage, pct, hasPct := m.getUsageFooterText()
-	helpView := m.getContextualHelp()
-	if usage != "" || helpView != "" {
-		// We want the help text aligned with the message prompt (which sits
-		// after two leading spaces in the middle section). So add two leading
-		// spaces here. Do not add trailing spaces so the token text ends at
-		// the last column (as desired).
-		s.WriteString("  ") // left outer padding to align with messages
+    // Footer line: help on the left, usage (context remaining) on the right
+    usage, pct, hasPct := m.getUsageFooterText()
+    helpView := m.getContextualHelp()
+    if usage != "" || helpView != "" {
+        // Available content width inside the padded layout area
+        contentWidth := m.width - 4
+        left := helpView // help already styled
+        // Choose style based on remaining context percentage
+        rightStyle := Styles.Help
+        if hasPct {
+            if pct <= 10 {
+                rightStyle = Styles.Error
+            } else if pct <= 25 {
+                rightStyle = Styles.Warning
+            }
+        }
+        right := rightStyle.Render(usage)
+        // Compute visual widths (ignore ANSI sequences)
+        leftW := lipgloss.Width(left)
+        rightW := lipgloss.Width(right)
 
-		// Available content width after the 2-space left padding and a symmetric
-		// 2-column right margin so the token info is indented from the right edge
-		// the same amount the help is indented from the left.
-		contentWidth := m.width - 4
-		left := helpView // help already styled
-		// Choose style based on remaining context percentage
-		rightStyle := Styles.Help
-		if hasPct {
-			if pct <= 10 {
-				rightStyle = Styles.Error
-			} else if pct <= 25 {
-				rightStyle = Styles.Warning
-			}
-		}
-		right := rightStyle.Render(usage)
-		// Compute visual widths (ignore ANSI sequences)
-		leftW := lipgloss.Width(left)
-		rightW := lipgloss.Width(right)
+        // Space between left text and right text
+        gap := contentWidth - leftW - rightW
+        if gap < 1 {
+            gap = 1
+        }
 
-		// Space between left text and right text
-		gap := contentWidth - leftW - rightW
-		if gap < 1 {
-			gap = 1
-		}
+        // Left content
+        s.WriteString(left)
+        // Gap between left and right content
+        s.WriteString(strings.Repeat(" ", gap))
+        // Right content
+        s.WriteString(right)
+        // No trailing padding; the 2-column right margin is implicit by reducing
+        // contentWidth above so the token ends two columns before the edge.
+        s.WriteString("\n")
+    }
 
-		// Left content
-		s.WriteString(left)
-		// Gap between left and right content
-		s.WriteString(strings.Repeat(" ", gap))
-		// Right content
-		s.WriteString(right)
-		// No trailing padding; the 2-column right margin is implicit by reducing
-		// contentWidth above so the token ends two columns before the edge.
-		s.WriteString("\n")
-	}
-
-	return s.String()
+    return s.String()
 }
 
 // getUsageFooterText formats the usage summary for the footer
@@ -1945,6 +1996,11 @@ func (m Model) sendMessage() (Model, tea.Cmd) {
         Content: text,
     })
 
+    if len(m.globalHistory) == 0 || m.globalHistory[len(m.globalHistory)-1] != text {
+        m.globalHistory = append(m.globalHistory, text)
+    }
+    m.historyIndex = len(m.globalHistory)
+
 	// Clear input
 	m.input.SetValue("")
 
@@ -2228,8 +2284,8 @@ func (m Model) selectSession() (Model, tea.Cmd) {
 }
 
 func (m *Model) updateViewport() {
-	m.viewport.SetContent(m.renderMessages())
-	m.viewport.GotoBottom()
+    m.viewport.SetContent(m.renderMessages())
+    m.viewport.GotoBottom()
 }
 
 // updateViewportContent updates the viewport content without changing scroll position
@@ -2309,4 +2365,55 @@ func (m Model) truncateMessageForList(content string, maxWidth int) string {
 	}
 
 	return content
+}
+
+type GlobalHistoryLoadedMsg struct {
+    Items []string
+    Error error
+}
+
+func (m Model) loadGlobalHistory() (Model, tea.Cmd) {
+    client := m.rpcClient
+    msgChan := m.msgChan
+    go func() {
+        items, err := client.GetUserHistory(200, true)
+        if msgChan == nil {
+            return
+        }
+        if err != nil {
+            msgChan <- GlobalHistoryLoadedMsg{Items: nil, Error: err}
+            return
+        }
+        list := make([]string, 0, len(items))
+        seen := make(map[string]struct{}, len(items))
+        for _, it := range items {
+            t := strings.TrimSpace(it.Content)
+            if t == "" {
+                continue
+            }
+            if _, ok := seen[t]; ok {
+                continue
+            }
+            seen[t] = struct{}{}
+            list = append(list, t)
+        }
+        msgChan <- GlobalHistoryLoadedMsg{Items: list, Error: nil}
+    }()
+    return m, nil
+}
+
+func (m Model) atTopEdge() bool {
+    if m.input.Line() != 0 {
+        return false
+    }
+    li := m.input.LineInfo()
+    return li.RowOffset <= 0
+}
+
+func (m Model) atBottomEdge() bool {
+    if m.input.Line() != m.input.LineCount()-1 {
+        return false
+    }
+    li := m.input.LineInfo()
+    return li.RowOffset >= li.Height-1
 }

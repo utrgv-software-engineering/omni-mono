@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/alecthomas/chroma/quick"
+	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
@@ -2229,7 +2230,7 @@ func formatRichPreviewWithWidth(rich *RichMetadata, termWidth int) string {
 
 // Width-aware rich tool result renderer
 func renderRichToolResultWithWidth(rich *RichMetadata, plainOutput string, termWidth int) string {
-	var result strings.Builder
+    var result strings.Builder
 
 	icon, summaryStyle := getDisplayTypeStyle(rich.DisplayType)
 
@@ -2255,10 +2256,15 @@ func renderRichToolResultWithWidth(rich *RichMetadata, plainOutput string, termW
 	result.WriteString("\n")
 
 	// Special-case rich diff rendering for tool results
-	if rich.DisplayType == "diff" {
-		result.WriteString(renderDiffToolPreviewWithWidth(rich, termWidth))
-		return result.String()
-	}
+    if rich.DisplayType == "diff" {
+        result.WriteString(renderDiffToolPreviewWithWidth(rich, termWidth))
+        return result.String()
+    }
+
+    if rich.DisplayType == "table" {
+        result.WriteString(renderTableRichWithWidth(rich, termWidth))
+        return result.String()
+    }
 
 	if rich.Preview != "" {
 		result.WriteString(formatRichPreviewWithWidth(rich, termWidth))
@@ -2294,6 +2300,189 @@ func renderRichToolResultWithWidth(rich *RichMetadata, plainOutput string, termW
 	}
 
 	return result.String()
+}
+
+// renderTableRichWithWidth renders a tabular rich payload using bubbles/table
+func renderTableRichWithWidth(rich *RichMetadata, termWidth int) string {
+    available := termWidth
+    if available <= 0 {
+        available = 80
+    }
+    // Account for left margin (5) and outer border horizontal frame (left+right)
+    outerFrame := lipgloss.NewStyle().BorderStyle(lipgloss.NormalBorder()).GetHorizontalFrameSize()
+    contentWidth := available - 5 - outerFrame
+    if contentWidth < 20 {
+        var b strings.Builder
+        if rich != nil && rich.Table != nil {
+            if rows, ok := rich.Table["rows"].([]interface{}); ok {
+                shown := 0
+                for _, r := range rows {
+                    if arr, ok := r.([]interface{}); ok {
+                        parts := make([]string, 0, len(arr))
+                        for _, c := range arr {
+                            parts = append(parts, safeText(fmt.Sprint(c)))
+                        }
+                        b.WriteString(Styles.AssistantMessage.Render("     " + strings.Join(parts, ", ")))
+                        b.WriteString("\n")
+                        shown++
+                        if shown >= 10 {
+                            break
+                        }
+                    }
+                }
+                if rich.Truncated {
+                    b.WriteString(formatTruncationIndicator(rich, shown, shown))
+                }
+            }
+        }
+        return b.String()
+    }
+
+    var cols []table.Column
+    ncols := 0
+    if rich != nil && rich.Table != nil {
+        if rawCols, ok := rich.Table["columns"].([]interface{}); ok {
+            for _, rc := range rawCols {
+                if m, ok := rc.(map[string]interface{}); ok {
+                    title := safeText(fmt.Sprint(m["title"]))
+                    width := 0
+                    if w, ok := m["width"].(float64); ok {
+                        width = int(w)
+                    }
+                    cols = append(cols, table.Column{Title: title, Width: width})
+                }
+            }
+        }
+    }
+    ncols = len(cols)
+
+    var rows []table.Row
+    if rich != nil && rich.Table != nil {
+        if rawRows, ok := rich.Table["rows"].([]interface{}); ok {
+            for _, rr := range rawRows {
+                if arr, ok := rr.([]interface{}); ok {
+                    r := make(table.Row, 0, len(arr))
+                    for _, c := range arr {
+                        r = append(r, safeText(fmt.Sprint(c)))
+                    }
+                    rows = append(rows, r)
+                }
+            }
+        }
+    }
+
+    height := 10
+    if rich != nil && rich.Table != nil {
+        if h, ok := rich.Table["height"].(float64); ok && int(h) > 0 {
+            height = int(h)
+        }
+    }
+    if height > len(rows) {
+        height = len(rows)
+    }
+    if height < 3 {
+        height = 3
+    }
+
+    padPerCol := 2
+    inner := contentWidth - padPerCol*ncols
+    if inner < ncols*3 {
+        inner = ncols * 3
+    }
+    sum := 0
+    allHave := true
+    for _, c := range cols {
+        if c.Width <= 0 {
+            allHave = false
+        } else {
+            sum += c.Width
+        }
+    }
+    if ncols > 0 {
+        if allHave {
+            if sum > inner {
+                scaled := make([]int, ncols)
+                total := 0
+                for i, c := range cols {
+                    w := int(float64(c.Width) * float64(inner) / float64(sum))
+                    if w < 3 {
+                        w = 3
+                    }
+                    scaled[i] = w
+                    total += w
+                }
+                rem := inner - total
+                for i := 0; i < rem && i < ncols; i++ {
+                    scaled[i]++
+                }
+                for i := range cols {
+                    cols[i].Width = scaled[i]
+                }
+            }
+        } else {
+            base := inner / ncols
+            if base < 3 {
+                base = 3
+            }
+            rem := inner - base*ncols
+            for i := range cols {
+                cols[i].Width = base
+                if rem > 0 {
+                    cols[i].Width++
+                    rem--
+                }
+            }
+        }
+    }
+
+    st := table.DefaultStyles()
+    st.Header = Styles.Header.Copy().
+        Padding(0, 1).
+        BorderStyle(lipgloss.NormalBorder()).
+        BorderForeground(Styles.Header.GetForeground()).
+        BorderBottom(true).
+        Bold(false)
+    st.Cell = Styles.AssistantMessage.Copy().Padding(0, 1)
+    st.Selected = lipgloss.NewStyle()
+
+    m := table.New(
+        table.WithColumns(cols),
+        table.WithRows(rows),
+        table.WithWidth(contentWidth),
+        table.WithHeight(height),
+        table.WithFocused(false),
+        table.WithStyles(st),
+    )
+
+    base := lipgloss.NewStyle().
+        BorderStyle(lipgloss.NormalBorder()).
+        BorderForeground(Styles.Header.GetForeground())
+    block := base.Render(m.View())
+    var b strings.Builder
+    b.WriteString(lipgloss.NewStyle().MarginLeft(5).Render(block))
+    b.WriteString("\n")
+
+    if rich != nil && rich.Truncated {
+        shown := height
+        if shown < 0 {
+            shown = 0
+        }
+        if meta, ok := rich.Metadata["total_rows"].(float64); ok {
+            total := int(meta)
+            if total > shown {
+                msg := fmt.Sprintf("... +%d more rows", total-shown)
+                line := lipgloss.NewStyle().Foreground(Styles.Help.GetForeground()).Italic(true).Render(msg)
+                b.WriteString(lipgloss.NewStyle().MarginLeft(5).Render(line))
+                b.WriteString("\n")
+            }
+        } else {
+            ind := formatTruncationIndicator(rich, shown, shown)
+            b.WriteString(lipgloss.NewStyle().MarginLeft(5).Render(strings.TrimRight(ind, "\n")))
+            b.WriteString("\n")
+        }
+    }
+
+    return b.String()
 }
 
 // renderDiffToolPreviewWithWidth renders a unified diff contained in rich.Value["diff_lines"]

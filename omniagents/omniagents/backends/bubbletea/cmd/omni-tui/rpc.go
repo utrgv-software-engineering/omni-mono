@@ -500,3 +500,42 @@ func (c *RPCClient) ServerCall(function string, args map[string]interface{}, ses
     }
     return out, nil
 }
+
+// History RPCs -------------------------------------------------------
+
+func (c *RPCClient) GetSessionHistory(sessionID string) ([]SessionMessage, error) {
+    params := map[string]interface{}{
+        "session_id": sessionID,
+    }
+    raw, err := c.call("get_session_history", params)
+    if err != nil {
+        return nil, err
+    }
+    var msgs []SessionMessage
+    if err := json.Unmarshal(raw, &msgs); err != nil {
+        return nil, err
+    }
+    return msgs, nil
+}
+
+type UserHistoryItem struct {
+    Content   string `json:"content"`
+    SessionID string `json:"session_id,omitempty"`
+    Timestamp string `json:"timestamp,omitempty"`
+}
+
+func (c *RPCClient) GetUserHistory(limit int, includeArchived bool) ([]UserHistoryItem, error) {
+    params := map[string]interface{}{
+        "limit":             limit,
+        "include_archived":  includeArchived,
+    }
+    raw, err := c.call("get_user_history", params)
+    if err != nil {
+        return nil, err
+    }
+    var items []UserHistoryItem
+    if err := json.Unmarshal(raw, &items); err != nil {
+        return nil, err
+    }
+    return items, nil
+}

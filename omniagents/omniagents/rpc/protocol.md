@@ -142,6 +142,37 @@ Get list of all conversation sessions with message previews.
 
 **Note:** The `first_message` and `last_message` fields include the complete message content, allowing clients to implement their own truncation strategies based on UI requirements.
 
+### get_session_history(session_id: string)
+Return the full message history for a given session.
+
+**Parameters:**
+- `session_id` (string): ID of the session
+
+**Returns:**
+```json
+[
+  { "role": "user", "content": "...", "timestamp": "2024-01-01T00:00:00Z" },
+  { "role": "assistant", "content": "...", "timestamp": "2024-01-01T00:00:02Z" }
+]
+```
+
+### get_user_history(limit?: number, include_archived?: boolean)
+Return recent user messages across all sessions for history traversal.
+
+Defaults: `limit=200`, `include_archived=true`.
+
+**Parameters:**
+- `limit` (number, optional): Max items to return
+- `include_archived` (boolean, optional): Include archived sessions
+
+**Returns:**
+```json
+[
+  { "content": "Deploy to staging", "session_id": "sess_123", "timestamp": "2024-01-01T00:00:00Z" },
+  { "content": "How to fix CORS?", "session_id": "sess_456", "timestamp": "2024-01-02T12:34:56Z" }
+]
+```
+
 ### archive_session(session_id: string)
 Archive a conversation session.
 

@@ -1,0 +1,246 @@
+name: Weather Agent (YAML)
+model: gpt-4o
+instructions_file: instructions.md
+welcome_text: "Ask for weather, e.g., 'Weather in Paris'"
+
+tools:
+  - geocode
+  - get_weather
+
+evaluation:
+  defaults:
+    runs_per_prompt: 1
+    max_turns: 6
+
+  scenarios:
+    - name: berlin_celsius_happy_path
+      prompt: "What is the weather in Berlin, Germany?"
+      measures: [weather_happy_path, tool_hallucination]
+
+    # Tool hallucination checks
+    - name: tool_hallucination_paris
+      prompt: "Weather in Paris"
+      measures: [tool_hallucination]
+
+    - name: tool_hallucination_new_york
+      prompt: "Weather in New York"
+      measures: [tool_hallucination]
+
+    - name: tool_hallucination_chicago
+      prompt: "Weather in Chicago"
+      measures: [tool_hallucination]
+
+    - name: ambiguous_city
+      prompt: "Tell me the weather in Springfield."
+      measures: [ambiguous_city_clarification]
+
+    - name: fahrenheit_temperature
+      prompt: "What is the temperature in Chicago in Fahrenheit?"
+      measures: [fahrenheit_temperature, tool_hallucination]
+
+    - name: friendliness_check
+      prompt: "Hi! Could you tell me the weather in Paris, please?"
+      measures: [friendliness_judge_agent]
+
+    # Friendliness additional examples
+    - name: friendliness_check_seattle
+      prompt: "Please share the weather in Seattle today."
+      measures: [friendliness_judge_agent]
+
+    - name: friendliness_check_miami
+      prompt: "What's the weather like in Miami? Thanks!"
+      measures: [friendliness_judge_agent]
+
+    # Fahrenheit temperature additional cities
+    - name: fahrenheit_temperature_new_york
+      prompt: "What is the temperature in New York in Fahrenheit?"
+      measures: [fahrenheit_temperature]
+
+    - name: fahrenheit_temperature_los_angeles
+      prompt: "What is the temperature in Los Angeles in Fahrenheit?"
+      measures: [fahrenheit_temperature]
+
+    - name: fahrenheit_temperature_miami
+      prompt: "What is the temperature in Miami in Fahrenheit?"
+      measures: [fahrenheit_temperature]
+
+    - name: fahrenheit_temperature_dallas
+      prompt: "What is the temperature in Dallas in Fahrenheit?"
+      measures: [fahrenheit_temperature]
+
+    - name: fahrenheit_temperature_phoenix
+      prompt: "What is the temperature in Phoenix in Fahrenheit?"
+      measures: [fahrenheit_temperature]
+
+    - name: fahrenheit_temperature_seattle
+      prompt: "What is the temperature in Seattle in Fahrenheit?"
+      measures: [fahrenheit_temperature]
+
+    - name: fahrenheit_temperature_austin
+      prompt: "What is the temperature in Austin in Fahrenheit?"
+      measures: [fahrenheit_temperature]
+
+    - name: fahrenheit_temperature_san_francisco
+      prompt: "What's the temperature in San Francisco in °F?"
+      measures: [fahrenheit_temperature]
+
+    - name: fahrenheit_temperature_boston
+      prompt: "What's the temperature in Boston in Fahrenheit?"
+      measures: [fahrenheit_temperature]
+
+    # Ambiguous city clarifications additional examples
+    - name: ambiguous_city_kansas_city
+      prompt: "Tell me the weather in Kansas City."
+      measures: [ambiguous_city_clarification]
+
+    - name: ambiguous_city_portland
+      prompt: "Tell me the weather in Portland."
+      measures: [ambiguous_city_clarification]
+
+    - name: ambiguous_city_columbus
+      prompt: "Tell me the weather in Columbus."
+      measures: [ambiguous_city_clarification]
+
+    - name: ambiguous_city_jacksonville
+      prompt: "Tell me the weather in Jacksonville."
+      measures: [ambiguous_city_clarification]
+
+    - name: ambiguous_city_albany
+      prompt: "Tell me the weather in Albany."
+      measures: [ambiguous_city_clarification]
+
+    - name: ambiguous_city_alexandria
+      prompt: "Tell me the weather in Alexandria."
+      measures: [ambiguous_city_clarification]
+
+    - name: ambiguous_city_greenville
+      prompt: "Tell me the weather in Greenville."
+      measures: [ambiguous_city_clarification]
+
+    - name: ambiguous_city_franklin
+      prompt: "Tell me the weather in Franklin."
+      measures: [ambiguous_city_clarification]
+
+    - name: ambiguous_city_salem
+      prompt: "Tell me the weather in Salem."
+      measures: [ambiguous_city_clarification]
+
+    - name: ambiguous_city_richmond
+      prompt: "Tell me the weather in Richmond."
+      measures: [ambiguous_city_clarification]
+
+    - name: ambiguous_city_rochester
+      prompt: "Tell me the weather in Rochester."
+      measures: [ambiguous_city_clarification]
+
+    - name: ambiguous_city_madison
+      prompt: "Tell me the weather in Madison."
+      measures: [ambiguous_city_clarification]
+
+    - name: ambiguous_city_manchester
+      prompt: "Tell me the weather in Manchester."
+      measures: [ambiguous_city_clarification]
+
+    - name: ambiguous_city_cambridge
+      prompt: "Tell me the weather in Cambridge."
+      measures: [ambiguous_city_clarification]
+
+    - name: ambiguous_city_lancaster
+      prompt: "Tell me the weather in Lancaster."
+      measures: [ambiguous_city_clarification]
+
+    - name: ambiguous_city_bloomington
+      prompt: "Tell me the weather in Bloomington."
+      measures: [ambiguous_city_clarification]
+
+    - name: ambiguous_city_aurora
+      prompt: "Tell me the weather in Aurora."
+      measures: [ambiguous_city_clarification]
+
+    - name: ambiguous_city_georgetown
+      prompt: "Tell me the weather in Georgetown."
+      measures: [ambiguous_city_clarification]
+
+    - name: ambiguous_city_san_jose
+      prompt: "Tell me the weather in San Jose."
+      measures: [ambiguous_city_clarification]
+
+    - name: ambiguous_city_san_juan
+      prompt: "Tell me the weather in San Juan."
+      measures: [ambiguous_city_clarification]
+
+    - name: ambiguous_city_st_paul_with_period
+      prompt: "Tell me the weather in St. Paul."
+      measures: [ambiguous_city_clarification]
+
+    - name: ambiguous_city_st_paul_no_period
+      prompt: "Tell me the weather in St Paul."
+      measures: [ambiguous_city_clarification]
+
+    - name: ambiguous_city_washington
+      prompt: "Tell me the weather in Washington."
+      measures: [ambiguous_city_clarification]
+
+  judges:
+    friendliness_judge:
+      agent:
+        name: FriendlinessJudge
+        model: gpt-4o-mini
+        output_type: dict
+        output_type_strict: false
+        output_schema:
+          type: object
+          properties:
+            is_friendly: { type: boolean }
+            explanation: { type: string }
+          required: [is_friendly, explanation]
+          additionalProperties: false
+        instructions: |
+          You are an evaluation agent that judges the friendliness of assistant messages.
+          Friendliness includes politeness, warmth, respectful tone, and helpful helpfulness.
+          Decide a binary outcome and briefly explain.
+          Return ONLY JSON with keys is_friendly (boolean) and explanation (string).
+      input:
+        source: final_assistant_text
+        template: |
+          Decide if the following assistant message is friendly.
+          Return JSON {is_friendly:boolean, explanation:string}.
+          Assistant message:
+          ---
+          {{ text }}
+          ---
+
+  metrics:
+    - name: happy_path_pass_rate
+      label: Happy Path Pass Rate
+      type: pass_rate
+      source_measure: weather_happy_path
+      target: { op: ">=", value: 0.9 }
+
+    - name: ambiguous_city_pass_rate
+      label: Ambiguity Handling Pass Rate
+      type: pass_rate
+      source_measure: ambiguous_city_clarification
+      target: { op: ">=", value: 0.9 }
+
+    - name: fahrenheit_pass_rate
+      label: Fahrenheit Temperature Pass Rate
+      type: pass_rate
+      source_measure: fahrenheit_temperature
+      target: { op: ">=", value: 0.9 }
+
+    - name: unknown_tool_call_rate
+      label: Unknown Tool Call Rate
+      type: rate
+      from_measure: tool_hallucination
+      numerator: counts.unknown_tool_calls
+      denominator: counts.total_tool_calls
+      target: { op: "<=", value: 0.02 }
+
+    - name: friendliness_pass_rate
+      label: Friendliness Pass Rate
+      type: pass_rate
+      source_measure: friendliness_judge_agent
+      target: { op: ">=", value: 0.95 }
+
+  output: artifacts/eval/weather_agent.json

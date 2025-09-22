@@ -1,9 +1,9 @@
 package main
 
 import (
-	"fmt"
-	"strings"
-	"unicode"
+    "fmt"
+    "strings"
+    "unicode"
 
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/cursor"
@@ -12,7 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	rw "github.com/mattn/go-runewidth"
+    rw "github.com/mattn/go-runewidth"
 )
 
 const (
@@ -302,15 +302,48 @@ func (m *CustomTextarea) InsertString(s string) {
 
 // InsertRune inserts a rune at the cursor position.
 func (m *CustomTextarea) InsertRune(r rune) {
-	m.insertRunesFromUserInput([]rune{r})
+    m.insertRunesFromUserInput([]rune{r})
+}
+
+// sanitizeUserInputRunes filters control and escape sequences from user input.
+// It preserves newlines, converts carriage returns to newlines, and expands
+// tabs to spaces to avoid terminal-dependent tab width rendering.
+func sanitizeUserInputRunes(in []rune) []rune {
+    if len(in) == 0 {
+        return in
+    }
+    out := make([]rune, 0, len(in))
+    for _, r := range in {
+        switch r {
+        case '\r':
+            r = '\n'
+        case '\t':
+            out = append(out, ' ', ' ')
+            continue
+        }
+        if r == '\n' {
+            out = append(out, r)
+            continue
+        }
+        if r < 0x20 || r == 0x7f {
+            // Drop other C0 controls and DEL
+            continue
+        }
+        // Drop common zero-width/non-printing formatting runes that can
+        // confuse terminal width calculations in some emulators.
+        if r == 0x200B || r == 0x200C || r == 0x200D || r == 0xFEFF {
+            continue
+        }
+        out = append(out, r)
+    }
+    return out
 }
 
 // insertRunesFromUserInput inserts runes at the current cursor position.
 func (m *CustomTextarea) insertRunesFromUserInput(runes []rune) {
-	// Clean up any special characters in the input provided by the
-	// clipboard. This avoids bugs due to e.g. tab characters and
-	// whatnot.
-	runes = m.san().Sanitize(runes)
+    // Sanitize runes to avoid control/escape sequences interfering with TUI
+    // rendering. Preserve newlines; expand tabs to spaces.
+    runes = sanitizeUserInputRunes(runes)
 
 	var availSpace int
 	if m.CharLimit > 0 {

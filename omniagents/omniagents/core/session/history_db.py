@@ -162,3 +162,56 @@ def list_sessions() -> list[dict]:
             result.append(session_data)
         
     return result
+
+
+def get_user_messages(limit: int = 200, include_archived: bool = True) -> list[dict]:
+    results: list[dict] = []
+    page_size = 1000
+    offset = 0
+
+    where_archived = "" if include_archived else "WHERE s.archived = 0"
+
+    while len(results) < limit:
+        with _lock:
+            cur = _conn.execute(
+                f"""
+                SELECT h.msg_json, h.created_at, h.session_id
+                FROM history h
+                JOIN sessions s ON s.session_id = h.session_id
+                {where_archived}
+                ORDER BY h.id DESC
+                LIMIT ? OFFSET ?
+                """,
+                (page_size, offset),
+            )
+            rows = cur.fetchall()
+        if not rows:
+            break
+        for msg_json, created_at, session_id in rows:
+            try:
+                msg = json.loads(msg_json)
+            except Exception:
+                continue
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("role") != "user":
+                continue
+            content = msg.get("content")
+            if not isinstance(content, str):
+                continue
+            text = content.strip()
+            if not text:
+                continue
+            results.append(
+                {
+                    "content": text,
+                    "session_id": session_id,
+                    "timestamp": created_at,
+                }
+            )
+            if len(results) >= limit:
+                break
+        offset += page_size
+
+    results.reverse()
+    return results

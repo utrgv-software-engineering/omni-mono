@@ -190,40 +190,83 @@ class BubbleTeaBackend:
         if debug:
             cmd.append('--debug')
         
-        # Launch the Bubble Tea UI
-        tried_rebuild = False
-        while True:
-            try:
-                # Run the Go binary and wait for it to complete
-                result = subprocess.run(cmd, env=env)
-                # Check if the process exited with an error
-                if result.returncode != 0 and result.returncode != -2:  # -2 is Ctrl+C
-                    print(f"Error: omni-tui exited with code {result.returncode}")
-                    sys.exit(result.returncode)
-                break
-            except KeyboardInterrupt:
-                # User pressed Ctrl+C, exit cleanly
-                break
-            except FileNotFoundError:
-                print(f"Error: Binary not found at {binary_path}")
-                print("Attempting to build it locally...")
-            except OSError as e:
-                # Handle Exec format error (wrong-arch binary)
-                if e.errno == errno.ENOEXEC and not tried_rebuild:
-                    print("The existing omni-tui binary is not compatible with your platform. Rebuilding...")
-                else:
-                    print(f"Error launching TUI: {e}")
-                    sys.exit(1)
+        # Launch the Bubble Tea UI with stdout/stderr isolation
+        sink_to_devnull = os.getenv("OMNI_TUI_SILENT", "0").lower() in {"1", "true", "yes"}
+        cache_dir = self._user_cache_dir() or Path.home()
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        sink_path = os.devnull if sink_to_devnull else str(cache_dir / "tui-server.log")
 
-            # Try to rebuild once if we hit a file-not-found or exec format error
-            if not tried_rebuild:
-                binary_path = self._build_binary(debug=debug)
-                cmd[0] = str(binary_path)
-                tried_rebuild = True
-                continue
-            else:
-                print("Error: Failed to launch omni-tui even after rebuild.")
-                sys.exit(1)
+        orig_out = None
+        orig_err = None
+        sink_file = None
+        exit_code = 0
+        tried_rebuild = False
+        try:
+            orig_out_fd = os.dup(1)
+            orig_err_fd = os.dup(2)
+            sink_mode = "ab"
+            sink_file = open(sink_path, sink_mode)
+            os.dup2(sink_file.fileno(), 1)
+            os.dup2(sink_file.fileno(), 2)
+
+            orig_out = os.fdopen(orig_out_fd, "wb", closefd=False)
+            orig_err = os.fdopen(orig_err_fd, "wb", closefd=False)
+
+            while True:
+                try:
+                    proc = subprocess.Popen(cmd, env=env, stdout=orig_out, stderr=orig_err)
+                    exit_code = proc.wait()
+                    break
+                except KeyboardInterrupt:
+                    break
+                except FileNotFoundError:
+                    if not tried_rebuild:
+                        binary_path = self._build_binary(debug=debug)
+                        cmd[0] = str(binary_path)
+                        tried_rebuild = True
+                        continue
+                    exit_code = 127
+                    break
+                except OSError as e:
+                    if e.errno == errno.ENOEXEC and not tried_rebuild:
+                        binary_path = self._build_binary(debug=debug)
+                        cmd[0] = str(binary_path)
+                        tried_rebuild = True
+                        continue
+                    exit_code = 1
+                    break
+        finally:
+            try:
+                if orig_out is not None:
+                    orig_out.flush()
+                if orig_err is not None:
+                    orig_err.flush()
+            except Exception:
+                pass
+            try:
+                if orig_out is not None:
+                    os.dup2(orig_out.fileno(), 1)
+                if orig_err is not None:
+                    os.dup2(orig_err.fileno(), 2)
+            except Exception:
+                pass
+            try:
+                if sink_file is not None:
+                    sink_file.flush()
+                    sink_file.close()
+            except Exception:
+                pass
+            try:
+                if orig_out is not None:
+                    orig_out.close()
+                if orig_err is not None:
+                    orig_err.close()
+            except Exception:
+                pass
+
+        if exit_code != 0 and exit_code != -2:
+            print(f"Error: omni-tui exited with code {exit_code}")
+            sys.exit(exit_code)
     
     def _find_binary(self) -> Optional[Path]:
         """Find the omni-tui binary.

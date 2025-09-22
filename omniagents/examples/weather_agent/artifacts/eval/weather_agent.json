@@ -1,0 +1,963 @@
+{
+  "agent_yaml": "/Users/ericmartinez/code/omniagents/examples/weather_agent/agent.yaml",
+  "runs": [
+    {
+      "scenario": "berlin_celsius_happy_path",
+      "prompt": "What is the weather in Berlin, Germany?",
+      "session_id": "a1e7a6c1-419e-4841-b654-437b6117efdb",
+      "measures": [
+        {
+          "name": "weather_happy_path",
+          "passed": true
+        },
+        {
+          "name": "tool_hallucination",
+          "passed": true,
+          "counts": {
+            "total_tool_calls": 2,
+            "unknown_tool_calls": 0
+          },
+          "unknown_tool_calls": []
+        }
+      ],
+      "history_len": 6,
+      "metadata": {},
+      "scenario_config": {
+        "name": "berlin_celsius_happy_path",
+        "prompt": "What is the weather in Berlin, Germany?",
+        "measures": [
+          "weather_happy_path",
+          "tool_hallucination"
+        ]
+      }
+    },
+    {
+      "scenario": "tool_hallucination_paris",
+      "prompt": "Weather in Paris",
+      "session_id": "e96bd47c-612b-4955-a3d7-3949cb01f25c",
+      "measures": [
+        {
+          "name": "tool_hallucination",
+          "passed": true,
+          "counts": {
+            "total_tool_calls": 1,
+            "unknown_tool_calls": 0
+          },
+          "unknown_tool_calls": []
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "tool_hallucination_paris",
+        "prompt": "Weather in Paris",
+        "measures": [
+          "tool_hallucination"
+        ]
+      }
+    },
+    {
+      "scenario": "tool_hallucination_new_york",
+      "prompt": "Weather in New York",
+      "session_id": "75afacba-5f51-4c8d-8c79-99ee2c4c6887",
+      "measures": [
+        {
+          "name": "tool_hallucination",
+          "passed": true,
+          "counts": {
+            "total_tool_calls": 2,
+            "unknown_tool_calls": 0
+          },
+          "unknown_tool_calls": []
+        }
+      ],
+      "history_len": 6,
+      "metadata": {},
+      "scenario_config": {
+        "name": "tool_hallucination_new_york",
+        "prompt": "Weather in New York",
+        "measures": [
+          "tool_hallucination"
+        ]
+      }
+    },
+    {
+      "scenario": "tool_hallucination_chicago",
+      "prompt": "Weather in Chicago",
+      "session_id": "59d12bce-8a04-4ad7-aa9d-27d55477ccf9",
+      "measures": [
+        {
+          "name": "tool_hallucination",
+          "passed": true,
+          "counts": {
+            "total_tool_calls": 2,
+            "unknown_tool_calls": 0
+          },
+          "unknown_tool_calls": []
+        }
+      ],
+      "history_len": 6,
+      "metadata": {},
+      "scenario_config": {
+        "name": "tool_hallucination_chicago",
+        "prompt": "Weather in Chicago",
+        "measures": [
+          "tool_hallucination"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city",
+      "prompt": "Tell me the weather in Springfield.",
+      "session_id": "189b63d0-aaae-42f9-9ad0-fdc5055b3869",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": true
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city",
+        "prompt": "Tell me the weather in Springfield.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "fahrenheit_temperature",
+      "prompt": "What is the temperature in Chicago in Fahrenheit?",
+      "session_id": "09e6c7ed-16f1-4435-abaa-ecac0a2ae84e",
+      "measures": [
+        {
+          "name": "fahrenheit_temperature",
+          "passed": true
+        },
+        {
+          "name": "tool_hallucination",
+          "passed": true,
+          "counts": {
+            "total_tool_calls": 2,
+            "unknown_tool_calls": 0
+          },
+          "unknown_tool_calls": []
+        }
+      ],
+      "history_len": 6,
+      "metadata": {},
+      "scenario_config": {
+        "name": "fahrenheit_temperature",
+        "prompt": "What is the temperature in Chicago in Fahrenheit?",
+        "measures": [
+          "fahrenheit_temperature",
+          "tool_hallucination"
+        ]
+      }
+    },
+    {
+      "scenario": "friendliness_check",
+      "prompt": "Hi! Could you tell me the weather in Paris, please?",
+      "session_id": "289aa4df-0fa2-439b-8f2b-87a1c0d5eb5d",
+      "measures": [
+        {
+          "name": "friendliness_judge_agent",
+          "passed": false,
+          "judge": {
+            "is_friendly": false,
+            "explanation": "The response is factual and informative but lacks warmth, politeness, or personal engagement, making it feel neutral rather than friendly."
+          }
+        }
+      ],
+      "history_len": 6,
+      "metadata": {
+        "friendliness_judge": {
+          "is_friendly": false,
+          "explanation": "The response is factual and informative but lacks warmth, politeness, or personal engagement, making it feel neutral rather than friendly."
+        }
+      },
+      "scenario_config": {
+        "name": "friendliness_check",
+        "prompt": "Hi! Could you tell me the weather in Paris, please?",
+        "measures": [
+          "friendliness_judge_agent"
+        ]
+      }
+    },
+    {
+      "scenario": "friendliness_check_seattle",
+      "prompt": "Please share the weather in Seattle today.",
+      "session_id": "6d50fe57-6d29-476a-9bd2-9300db800994",
+      "measures": [
+        {
+          "name": "friendliness_judge_agent",
+          "passed": true,
+          "judge": {
+            "is_friendly": true,
+            "explanation": "The message is informative and presents the weather details clearly. The phrase 'It's a clear and calm evening in Seattle!' adds a warm and friendly touch, enhancing the overall tone."
+          }
+        }
+      ],
+      "history_len": 6,
+      "metadata": {
+        "friendliness_judge": {
+          "is_friendly": true,
+          "explanation": "The message is informative and presents the weather details clearly. The phrase 'It's a clear and calm evening in Seattle!' adds a warm and friendly touch, enhancing the overall tone."
+        }
+      },
+      "scenario_config": {
+        "name": "friendliness_check_seattle",
+        "prompt": "Please share the weather in Seattle today.",
+        "measures": [
+          "friendliness_judge_agent"
+        ]
+      }
+    },
+    {
+      "scenario": "friendliness_check_miami",
+      "prompt": "What's the weather like in Miami? Thanks!",
+      "session_id": "84139abb-5a66-4201-a69e-123ca4b0b6cd",
+      "measures": [
+        {
+          "name": "friendliness_judge_agent",
+          "passed": true,
+          "judge": {
+            "is_friendly": true,
+            "explanation": "The assistant message is friendly as it provides helpful information in a clear manner, encourages the user to specify their choice, and maintains a polite tone throughout."
+          }
+        }
+      ],
+      "history_len": 4,
+      "metadata": {
+        "friendliness_judge": {
+          "is_friendly": true,
+          "explanation": "The assistant message is friendly as it provides helpful information in a clear manner, encourages the user to specify their choice, and maintains a polite tone throughout."
+        }
+      },
+      "scenario_config": {
+        "name": "friendliness_check_miami",
+        "prompt": "What's the weather like in Miami? Thanks!",
+        "measures": [
+          "friendliness_judge_agent"
+        ]
+      }
+    },
+    {
+      "scenario": "fahrenheit_temperature_new_york",
+      "prompt": "What is the temperature in New York in Fahrenheit?",
+      "session_id": "46080005-dc66-4807-b595-dc26ae920748",
+      "measures": [
+        {
+          "name": "fahrenheit_temperature",
+          "passed": true
+        }
+      ],
+      "history_len": 6,
+      "metadata": {},
+      "scenario_config": {
+        "name": "fahrenheit_temperature_new_york",
+        "prompt": "What is the temperature in New York in Fahrenheit?",
+        "measures": [
+          "fahrenheit_temperature"
+        ]
+      }
+    },
+    {
+      "scenario": "fahrenheit_temperature_los_angeles",
+      "prompt": "What is the temperature in Los Angeles in Fahrenheit?",
+      "session_id": "9f874efe-02b1-4b8a-bc83-41efd41e5638",
+      "measures": [
+        {
+          "name": "fahrenheit_temperature",
+          "passed": true
+        }
+      ],
+      "history_len": 6,
+      "metadata": {},
+      "scenario_config": {
+        "name": "fahrenheit_temperature_los_angeles",
+        "prompt": "What is the temperature in Los Angeles in Fahrenheit?",
+        "measures": [
+          "fahrenheit_temperature"
+        ]
+      }
+    },
+    {
+      "scenario": "fahrenheit_temperature_miami",
+      "prompt": "What is the temperature in Miami in Fahrenheit?",
+      "session_id": "d5acce68-e745-4129-8e70-af1178d54d53",
+      "measures": [
+        {
+          "name": "fahrenheit_temperature",
+          "passed": true
+        }
+      ],
+      "history_len": 6,
+      "metadata": {},
+      "scenario_config": {
+        "name": "fahrenheit_temperature_miami",
+        "prompt": "What is the temperature in Miami in Fahrenheit?",
+        "measures": [
+          "fahrenheit_temperature"
+        ]
+      }
+    },
+    {
+      "scenario": "fahrenheit_temperature_dallas",
+      "prompt": "What is the temperature in Dallas in Fahrenheit?",
+      "session_id": "eafdc67f-20d1-455f-ac26-58e3dd5dd4d6",
+      "measures": [
+        {
+          "name": "fahrenheit_temperature",
+          "passed": false,
+          "reason": "wrong_tool_sequence"
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "fahrenheit_temperature_dallas",
+        "prompt": "What is the temperature in Dallas in Fahrenheit?",
+        "measures": [
+          "fahrenheit_temperature"
+        ]
+      }
+    },
+    {
+      "scenario": "fahrenheit_temperature_phoenix",
+      "prompt": "What is the temperature in Phoenix in Fahrenheit?",
+      "session_id": "183ac4b7-15d3-483c-b81e-b4146f3da271",
+      "measures": [
+        {
+          "name": "fahrenheit_temperature",
+          "passed": true
+        }
+      ],
+      "history_len": 6,
+      "metadata": {},
+      "scenario_config": {
+        "name": "fahrenheit_temperature_phoenix",
+        "prompt": "What is the temperature in Phoenix in Fahrenheit?",
+        "measures": [
+          "fahrenheit_temperature"
+        ]
+      }
+    },
+    {
+      "scenario": "fahrenheit_temperature_seattle",
+      "prompt": "What is the temperature in Seattle in Fahrenheit?",
+      "session_id": "830cd1b5-d5cc-4256-bcb8-94a1171b623e",
+      "measures": [
+        {
+          "name": "fahrenheit_temperature",
+          "passed": true
+        }
+      ],
+      "history_len": 6,
+      "metadata": {},
+      "scenario_config": {
+        "name": "fahrenheit_temperature_seattle",
+        "prompt": "What is the temperature in Seattle in Fahrenheit?",
+        "measures": [
+          "fahrenheit_temperature"
+        ]
+      }
+    },
+    {
+      "scenario": "fahrenheit_temperature_austin",
+      "prompt": "What is the temperature in Austin in Fahrenheit?",
+      "session_id": "0911dd5c-9406-4dc1-8bdd-fe678df56bc6",
+      "measures": [
+        {
+          "name": "fahrenheit_temperature",
+          "passed": true
+        }
+      ],
+      "history_len": 6,
+      "metadata": {},
+      "scenario_config": {
+        "name": "fahrenheit_temperature_austin",
+        "prompt": "What is the temperature in Austin in Fahrenheit?",
+        "measures": [
+          "fahrenheit_temperature"
+        ]
+      }
+    },
+    {
+      "scenario": "fahrenheit_temperature_san_francisco",
+      "prompt": "What's the temperature in San Francisco in \u00b0F?",
+      "session_id": "30dbb577-3aee-485d-8651-cb987d79b23d",
+      "measures": [
+        {
+          "name": "fahrenheit_temperature",
+          "passed": true
+        }
+      ],
+      "history_len": 6,
+      "metadata": {},
+      "scenario_config": {
+        "name": "fahrenheit_temperature_san_francisco",
+        "prompt": "What's the temperature in San Francisco in \u00b0F?",
+        "measures": [
+          "fahrenheit_temperature"
+        ]
+      }
+    },
+    {
+      "scenario": "fahrenheit_temperature_boston",
+      "prompt": "What's the temperature in Boston in Fahrenheit?",
+      "session_id": "183c85e1-27ac-417f-a34f-70103293f4d7",
+      "measures": [
+        {
+          "name": "fahrenheit_temperature",
+          "passed": true
+        }
+      ],
+      "history_len": 6,
+      "metadata": {},
+      "scenario_config": {
+        "name": "fahrenheit_temperature_boston",
+        "prompt": "What's the temperature in Boston in Fahrenheit?",
+        "measures": [
+          "fahrenheit_temperature"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_kansas_city",
+      "prompt": "Tell me the weather in Kansas City.",
+      "session_id": "15d16001-7316-4ec9-b880-693422016ba4",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": true
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_kansas_city",
+        "prompt": "Tell me the weather in Kansas City.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_portland",
+      "prompt": "Tell me the weather in Portland.",
+      "session_id": "7d560e47-66c8-4651-a615-82a4e83a0f01",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": false,
+          "reason": "no_clarifying_question"
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_portland",
+        "prompt": "Tell me the weather in Portland.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_columbus",
+      "prompt": "Tell me the weather in Columbus.",
+      "session_id": "34d760c6-3cbd-4ac6-b358-5696f535c4b0",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": true
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_columbus",
+        "prompt": "Tell me the weather in Columbus.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_jacksonville",
+      "prompt": "Tell me the weather in Jacksonville.",
+      "session_id": "925e63d7-7205-45e0-8efb-588d5c21bb80",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": true
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_jacksonville",
+        "prompt": "Tell me the weather in Jacksonville.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_albany",
+      "prompt": "Tell me the weather in Albany.",
+      "session_id": "6cad68bc-f17b-4738-84cb-7eb7aedf5c77",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": false,
+          "reason": "no_clarifying_question"
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_albany",
+        "prompt": "Tell me the weather in Albany.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_alexandria",
+      "prompt": "Tell me the weather in Alexandria.",
+      "session_id": "2d496e04-ec2e-4cd7-bb7d-e3e8290fd038",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": false,
+          "reason": "no_clarifying_question"
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_alexandria",
+        "prompt": "Tell me the weather in Alexandria.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_greenville",
+      "prompt": "Tell me the weather in Greenville.",
+      "session_id": "d92d23c8-bbed-4196-9fc6-83220af5690e",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": true
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_greenville",
+        "prompt": "Tell me the weather in Greenville.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_franklin",
+      "prompt": "Tell me the weather in Franklin.",
+      "session_id": "95b63c05-0710-4b89-ada5-8c6308190829",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": true
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_franklin",
+        "prompt": "Tell me the weather in Franklin.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_salem",
+      "prompt": "Tell me the weather in Salem.",
+      "session_id": "96444a15-ac2b-4761-bb2f-58632f5c1bea",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": true
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_salem",
+        "prompt": "Tell me the weather in Salem.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_richmond",
+      "prompt": "Tell me the weather in Richmond.",
+      "session_id": "bcf09194-b113-4014-9653-6b6b68f1af60",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": true
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_richmond",
+        "prompt": "Tell me the weather in Richmond.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_rochester",
+      "prompt": "Tell me the weather in Rochester.",
+      "session_id": "7ba832c1-1891-463f-9558-adfea0939bd2",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": true
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_rochester",
+        "prompt": "Tell me the weather in Rochester.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_madison",
+      "prompt": "Tell me the weather in Madison.",
+      "session_id": "66b0300d-6c34-4291-97b6-3948ea073e9a",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": true
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_madison",
+        "prompt": "Tell me the weather in Madison.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_manchester",
+      "prompt": "Tell me the weather in Manchester.",
+      "session_id": "c45d375e-cf84-4146-a90c-8182af339ca0",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": true
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_manchester",
+        "prompt": "Tell me the weather in Manchester.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_cambridge",
+      "prompt": "Tell me the weather in Cambridge.",
+      "session_id": "8b09027e-b8aa-4f2a-a21b-ee605b54a84f",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": true
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_cambridge",
+        "prompt": "Tell me the weather in Cambridge.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_lancaster",
+      "prompt": "Tell me the weather in Lancaster.",
+      "session_id": "e75e58ed-ab0c-413a-9ec8-0043d045d1fe",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": true
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_lancaster",
+        "prompt": "Tell me the weather in Lancaster.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_bloomington",
+      "prompt": "Tell me the weather in Bloomington.",
+      "session_id": "343be9b9-09f3-4013-b530-95e628f9d0a7",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": true
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_bloomington",
+        "prompt": "Tell me the weather in Bloomington.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_aurora",
+      "prompt": "Tell me the weather in Aurora.",
+      "session_id": "b878fa37-abf9-462e-9770-edf1aa8f615a",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": true
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_aurora",
+        "prompt": "Tell me the weather in Aurora.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_georgetown",
+      "prompt": "Tell me the weather in Georgetown.",
+      "session_id": "2d35f987-50c7-4dce-9be3-f0026157b9fa",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": true
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_georgetown",
+        "prompt": "Tell me the weather in Georgetown.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_san_jose",
+      "prompt": "Tell me the weather in San Jose.",
+      "session_id": "15a83c57-5ede-4588-862f-fceedcb5078b",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": true
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_san_jose",
+        "prompt": "Tell me the weather in San Jose.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_san_juan",
+      "prompt": "Tell me the weather in San Juan.",
+      "session_id": "3001666f-9357-4c20-8d04-4ee449b913bd",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": true
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_san_juan",
+        "prompt": "Tell me the weather in San Juan.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_st_paul_with_period",
+      "prompt": "Tell me the weather in St. Paul.",
+      "session_id": "07d7c428-a3d1-4b94-bcef-823d98d6449b",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": true
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_st_paul_with_period",
+        "prompt": "Tell me the weather in St. Paul.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_st_paul_no_period",
+      "prompt": "Tell me the weather in St Paul.",
+      "session_id": "291ba7f1-97fc-4984-8ed5-9cfa61a9363f",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": true
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_st_paul_no_period",
+        "prompt": "Tell me the weather in St Paul.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    },
+    {
+      "scenario": "ambiguous_city_washington",
+      "prompt": "Tell me the weather in Washington.",
+      "session_id": "a9950735-ddbc-4f21-a4ec-7bd5e9c7dddd",
+      "measures": [
+        {
+          "name": "ambiguous_city_clarification",
+          "passed": true
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "name": "ambiguous_city_washington",
+        "prompt": "Tell me the weather in Washington.",
+        "measures": [
+          "ambiguous_city_clarification"
+        ]
+      }
+    }
+  ],
+  "metrics": [
+    {
+      "name": "happy_path_pass_rate",
+      "label": "Happy Path Pass Rate",
+      "type": "pass_rate",
+      "source_measure": "weather_happy_path",
+      "value": 1.0,
+      "runs": 1,
+      "passed_runs": 1,
+      "target": {
+        "op": ">=",
+        "value": 0.9
+      },
+      "meets_target": true
+    },
+    {
+      "name": "ambiguous_city_pass_rate",
+      "label": "Ambiguity Handling Pass Rate",
+      "type": "pass_rate",
+      "source_measure": "ambiguous_city_clarification",
+      "value": 0.875,
+      "runs": 24,
+      "passed_runs": 21,
+      "target": {
+        "op": ">=",
+        "value": 0.9
+      },
+      "meets_target": false
+    },
+    {
+      "name": "fahrenheit_pass_rate",
+      "label": "Fahrenheit Temperature Pass Rate",
+      "type": "pass_rate",
+      "source_measure": "fahrenheit_temperature",
+      "value": 0.9,
+      "runs": 10,
+      "passed_runs": 9,
+      "target": {
+        "op": ">=",
+        "value": 0.9
+      },
+      "meets_target": true
+    },
+    {
+      "name": "unknown_tool_call_rate",
+      "label": "Unknown Tool Call Rate",
+      "type": "rate",
+      "source_measure": "tool_hallucination",
+      "value": 0.0,
+      "numerator_sum": 0.0,
+      "denominator_sum": 9.0,
+      "target": {
+        "op": "<=",
+        "value": 0.02
+      },
+      "meets_target": true
+    },
+    {
+      "name": "friendliness_pass_rate",
+      "label": "Friendliness Pass Rate",
+      "type": "pass_rate",
+      "source_measure": "friendliness_judge_agent",
+      "value": 0.6666666666666666,
+      "runs": 3,
+      "passed_runs": 2,
+      "target": {
+        "op": ">=",
+        "value": 0.95
+      },
+      "meets_target": false
+    }
+  ]
+}

@@ -347,8 +347,33 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
     
     # --- Output Type ---
     output_type_config = config.get('output_type')  # Optional output type specification
+    output_schema_config = config.get('output_schema')  # Optional explicit JSON schema for output
     output_type = None
-    if output_type_config:
+    if output_schema_config and isinstance(output_schema_config, dict):
+        # Build a simple TypedDict at runtime from JSON schema properties
+        try:
+            from typing_extensions import TypedDict
+            def _map_js_type(t):
+                t = (t or '').lower()
+                return {
+                    'string': str,
+                    'boolean': bool,
+                    'bool': bool,
+                    'number': float,
+                    'float': float,
+                    'integer': int,
+                    'int': int,
+                    'object': dict,
+                    'array': list,
+                }.get(t, str)
+            props = output_schema_config.get('properties', {}) or {}
+            ann = {k: _map_js_type((v or {}).get('type')) for k, v in props.items()}
+            td_name = (agent_name or 'Agent').title().replace(' ', '') + 'Output'
+            output_type = TypedDict(td_name, ann)  # type: ignore
+        except Exception as e:
+            print(f"Warning: Failed to build output_schema TypedDict: {e}. Falling back to output_type")
+            output_schema_config = None
+    if output_type is None and output_type_config:
         # Map string type names to Python types
         type_mapping = {
             'str': str,
