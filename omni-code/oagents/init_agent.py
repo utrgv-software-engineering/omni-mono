@@ -13,9 +13,18 @@ from tools import (
     apply_patch,
     write_file,
 )
+from importlib import resources
 
 
 def load_instructions() -> str:
+    try:
+        with resources.files("oagents").joinpath("instructions/init_agent.md").open(
+            "r", encoding="utf-8"
+        ) as f:
+            return f.read().strip()
+    except Exception:
+        pass
+
     with open("instructions/init_agent.md", "r", encoding="utf-8") as f:
         return f.read().strip()
 
@@ -71,4 +80,3 @@ async def run_init_agent(max_turns: int = 50) -> str:
         return result.final_output_as(str)
     except Exception:
         return "Failed to update AGENTS.md"
-

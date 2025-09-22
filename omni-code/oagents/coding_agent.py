@@ -1,6 +1,7 @@
 import os
 from datetime import datetime
 from typing import List, Tuple
+from importlib import resources
 
 from openai.types.shared import Reasoning
 from omniagents.core.agents.safe import SafeAgent
@@ -25,10 +26,22 @@ from tools import (
 
 def _load_instructions() -> str:
     today = datetime.now().strftime("%Y-%m-%d")
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    path = os.path.join(base_dir, "instructions", "coding_agent.md")
-    with open(path, "r", encoding="utf-8") as f:
-        text = f.read()
+    text: str | None = None
+
+    try:
+        with resources.files("oagents").joinpath("instructions/coding_agent.md").open(
+            "r", encoding="utf-8"
+        ) as f:
+            text = f.read()
+    except Exception:
+        pass
+
+    if text is None:
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        path = os.path.join(base_dir, "instructions", "coding_agent.md")
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
+
     return text.replace("{{today}}", today)
 
 
