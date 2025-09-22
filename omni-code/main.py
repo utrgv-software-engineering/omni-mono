@@ -11,6 +11,7 @@ from agents import (
 import agentio
 from tools import *
 from oagents.coding_agent import create_agent
+from server_functions.agentio_functions import good, bad, note, notes
 
 # Load environment variables
 load_dotenv()
@@ -55,94 +56,8 @@ def cli_main():
         welcome_text="Welcome to Omni Code! I'm here to help you with your coding needs.",
         max_turns=100,
         context_window=400000,
+        server_functions=[good, bad, note, notes],
     )
-
-    def _register_server_functions(service: Any) -> None:
-        async def _set_note(_service, session, args, is_good: bool):
-            text = (args or {}).get("text", "")
-            setattr(session, "_omnicode_note", {"text": text, "is_good": bool(is_good)})
-            label = "good" if is_good else "bad"
-            return {"ok": True, "message": f"Saved {label} note: {text}"}
-
-        async def good(_service, session, args):
-            result = await _set_note(_service, session, args, True)
-            try:
-                group_id = f"session_{session.id}"
-                text = (args or {}).get("text")
-                agentio.set_conversation_analysis(
-                    group_id,
-                    judgment="acceptable",
-                    notes=text,
-                    marked=True,
-                )
-            except Exception:
-                pass
-            return result
-
-        async def bad(_service, session, args):
-            result = await _set_note(_service, session, args, False)
-            try:
-                group_id = f"session_{session.id}"
-                text = (args or {}).get("text")
-                agentio.set_conversation_analysis(
-                    group_id,
-                    judgment="unacceptable",
-                    notes=text,
-                    marked=True,
-                )
-            except Exception:
-                pass
-            return result
-
-        async def get_note(_service, session, _args):
-            try:
-                group_id = f"session_{session.id}"
-                analysis = agentio.get_conversation_analysis(group_id)
-                notes = analysis.get("notes") or ""
-                judgment = analysis.get("judgment")
-                if not notes or judgment not in ("acceptable", "unacceptable"):
-                    return {"note": None, "message": "No note set."}
-                is_good = judgment == "acceptable"
-                label = "Good" if is_good else "Bad"
-                return {"note": {"text": notes, "is_good": is_good}, "message": f"{label}: {notes}"}
-            except Exception:
-                return {"note": None, "message": "No note set."}
-
-        try:
-            service.register_server_function(
-                "good",
-                good,
-                description="Mark conversation acceptable and submit feedback to developers (optional note included)",
-                params_schema={
-                    "type": "object",
-                    "properties": {"text": {"type": "string"}},
-                    "required": ["text"],
-                },
-            )
-            service.register_server_function(
-                "bad",
-                bad,
-                description="Flag conversation as unacceptable and submit feedback to developers (optional note included)",
-                params_schema={
-                    "type": "object",
-                    "properties": {"text": {"type": "string"}},
-                    "required": ["text"],
-                },
-            )
-            service.register_server_function(
-                "note",
-                get_note,
-                description="Get conversation analysis summary (Good/Bad and notes) saved for developer review",
-            )
-            service.register_server_function(
-                "notes",
-                get_note,
-                description="Alias of 'note' (analysis summary for developer review)",
-            )
-        except Exception:
-            pass
-
-    runner.spec.register_server_functions = _register_server_functions
 
     runner.main(default_mode="tui")
 
