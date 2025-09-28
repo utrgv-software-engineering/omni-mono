@@ -6,9 +6,11 @@ import json
 from pathlib import Path
 import importlib.util
 import sys
+import time
 from typing import Any, Dict, List, Optional
 
 import yaml
+import agentio
 
 from omniagents.core.config.loader import load_agent_spec_from_yaml
 from omniagents.core.agents.factory import create_unified_agent
@@ -130,6 +132,30 @@ def _compute_metrics(runs: List[Dict[str, Any]], metrics_cfg: List[Dict[str, Any
     return results
 
 
+def _failure_category_map(eval_cfg: Dict[str, Any]) -> Dict[str, List[str]]:
+    out: Dict[str, List[str]] = {}
+    cats = eval_cfg.get("failure_categories") or []
+    if isinstance(cats, dict):
+        for k, v in cats.items():
+            if isinstance(v, dict):
+                ms = v.get("measures") or []
+            elif isinstance(v, list):
+                ms = v
+            else:
+                ms = []
+            out[str(k)] = [str(m) for m in (ms or [])]
+    elif isinstance(cats, list):
+        for c in cats:
+            if not isinstance(c, dict):
+                continue
+            name = c.get("name") or c.get("key") or c.get("id")
+            if not name:
+                continue
+            ms = c.get("measures") or []
+            out[str(name)] = [str(m) for m in (ms or [])]
+    return out
+
+
 def _load_local_measures(cfg_path: Path) -> None:
     try:
         base_dir = cfg_path.parent
@@ -148,6 +174,9 @@ def _load_local_measures(cfg_path: Path) -> None:
 def _render_template(template_str: str, **kwargs) -> str:
     try:
         env = Environment()
+        def _tojson(value, indent=None, sort_keys=False):
+            return json.dumps(value, ensure_ascii=False, indent=indent, sort_keys=bool(sort_keys))
+        env.filters["tojson"] = _tojson
         tmpl = env.from_string(template_str)
         return str(tmpl.render(**kwargs))
     except Exception:
@@ -162,6 +191,82 @@ def _read_text_file(base: Path, rel_or_abs: str) -> str:
         return p.read_text(encoding="utf-8") if p.is_file() else ""
     except Exception:
         return ""
+
+
+def _derive_label(raw: str) -> str:
+    try:
+        t = str(raw or "").strip().replace("_", " ")
+        if t.lower() == "non existent" or t.lower() == "non_existent":
+            return "Non-existent"
+        return t[:1].upper() + t[1:]
+    except Exception:
+        return str(raw)
+
+
+def _catalog_with_labels(dimensions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for d in dimensions or []:
+        name = d.get("name")
+        label = d.get("label") or _derive_label(name)
+        values = []
+        for v in (d.get("values") or []):
+            v_name = v.get("name")
+            v_label = v.get("label") or _derive_label(v_name)
+            values.append({
+                **v,
+                "name": v_name,
+                "label": v_label,
+            })
+        out.append({
+            **{k: v for k, v in d.items() if k not in ("values",)},
+            "name": name,
+            "label": label,
+            "values": values,
+        })
+    return out
+
+
+def _load_scenarios_file(base_dir: Path, rel_or_abs: str) -> List[Dict[str, Any]]:
+    try:
+        p = Path(rel_or_abs)
+        if not p.is_absolute():
+            p = (base_dir / rel_or_abs).resolve()
+        if not p.is_file():
+            return []
+        data = yaml.safe_load(p.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            sc = data.get("scenarios")
+            if isinstance(sc, list):
+                eval_in = data.get("evaluation") or {}
+                return _expand_scenarios(p.parent, eval_in if isinstance(eval_in, dict) else {}, sc)
+            return []
+        if isinstance(data, list):
+            return _expand_scenarios(p.parent, {}, data)
+        return []
+    except Exception:
+        return []
+
+
+def _expand_scenarios(base_dir: Path, eval_cfg: Dict[str, Any], scenarios: List[Any]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    files = list((eval_cfg.get("scenarios_files") or eval_cfg.get("scenario_files") or []))
+    for f in files:
+        out.extend(_load_scenarios_file(base_dir, str(f)))
+    for item in scenarios or []:
+        if isinstance(item, str):
+            out.extend(_load_scenarios_file(base_dir, item))
+            continue
+        if isinstance(item, dict) and ("include" in item or "file" in item):
+            val = item.get("include") if "include" in item else item.get("file")
+            if isinstance(val, list):
+                for v in val:
+                    out.extend(_load_scenarios_file(base_dir, str(v)))
+            elif isinstance(val, str):
+                out.extend(_load_scenarios_file(base_dir, val))
+            continue
+        if isinstance(item, dict):
+            out.append(item)
+    return out
 
 
 def _derive_judge_keys_from_measures(measures: List[str]) -> List[str]:
@@ -366,7 +471,8 @@ async def _run_judges(cfg_path: Path, eval_cfg: Dict[str, Any], scenario: Dict[s
     return metadata
 
 
-async def _run_scenario(agent_yaml: str, scenario: Dict[str, Any], defaults: Dict[str, Any], eval_cfg: Dict[str, Any]) -> Dict[str, Any]:
+async def _run_scenario(agent_yaml: str, scenario: Dict[str, Any], defaults: Dict[str, Any], eval_cfg: Dict[str, Any], workflow_name: str | None = None) -> Dict[str, Any]:
+    _t0 = time.perf_counter()
     if _DEBUG:
         print(f"[dbg] scenario: {scenario.get('name')} prompt={scenario.get('prompt')}")
     spec = load_agent_spec_from_yaml(agent_yaml)
@@ -383,9 +489,66 @@ async def _run_scenario(agent_yaml: str, scenario: Dict[str, Any], defaults: Dic
     prompt = scenario.get("prompt", "")
 
     msgs = [{"role": "user", "content": prompt}]
-    result = agent.run_streamed(msgs)
-    async for _ in result.stream_events():
-        pass
+    if workflow_name:
+        try:
+            from agentio import trace as agentio_trace
+            try:
+                import omniagents as _oa
+                _oa_version = getattr(_oa, "__version__", None)
+            except Exception:
+                _oa_version = None
+            try:
+                cfg = yaml.safe_load(Path(agent_yaml).read_text(encoding="utf-8")) or {}
+                raw_dims = list((((cfg.get("evaluation") or {}).get("synthetic_data_generation") or {}).get("dimensions")) or [])
+                dims_catalog = _catalog_with_labels(raw_dims)
+            except Exception:
+                dims_catalog = []
+            import hashlib as _hashlib
+            import json as _json
+            try:
+                _cat_blob = _json.dumps(dims_catalog, sort_keys=True, ensure_ascii=False)
+                catalog_id = _hashlib.sha1(_cat_blob.encode("utf-8")).hexdigest()[:16]
+            except Exception:
+                catalog_id = None
+            import uuid as _uuid
+            run_uid = None
+            try:
+                _sid = scenario.get("id") or scenario.get("name") or "scenario"
+                run_uid = f"{_sid}-{_uuid.uuid4().hex[:8]}"
+            except Exception:
+                run_uid = _uuid.uuid4().hex[:8]
+            meta = {
+                "omniagents": {
+                    "run_type": "evaluation",
+                    "scenario": {
+                        "id": scenario.get("id"),
+                        "name": scenario.get("name"),
+                    },
+                    "run": {"id": run_uid},
+                    "synthetic": {
+                        "catalog_id": catalog_id,
+                        "catalog": {"dimensions": dims_catalog},
+                        "selection": {"mapping": scenario.get("dimensions", {})},
+                    },
+                    "config": {
+                        "agent_yaml": str(agent_yaml),
+                    },
+                    **({"omniagents_version": _oa_version} if _oa_version else {}),
+                }
+            }
+            gid = run_uid
+            with agentio_trace(workflow_name, group_id=gid, metadata=meta):
+                result = agent.run_streamed(msgs)
+                async for _ in result.stream_events():
+                    pass
+        except Exception:
+            result = agent.run_streamed(msgs)
+            async for _ in result.stream_events():
+                pass
+    else:
+        result = agent.run_streamed(msgs)
+        async for _ in result.stream_events():
+            pass
 
     session_id = getattr(agent, "_session_id", None)
     history = load_history(session_id) if session_id else []
@@ -424,6 +587,7 @@ async def _run_scenario(agent_yaml: str, scenario: Dict[str, Any], defaults: Dic
         for m in measures_out:
             print(f"[dbg] measure {m.get('name')}: {json.dumps(m)[:500]}")
 
+    _dur = time.perf_counter() - _t0
     return {
         "scenario": scenario.get("name", "scenario"),
         "prompt": prompt,
@@ -431,10 +595,11 @@ async def _run_scenario(agent_yaml: str, scenario: Dict[str, Any], defaults: Dic
         "measures": measures_out,
         "history_len": len(history),
         "metadata": metadata,
+        "duration_sec": _dur,
     }
 
 
-async def _main_async(args) -> Dict[str, Any]:
+async def _main_async(args, workflow_name: str | None = None) -> Dict[str, Any]:
     cfg_path = Path(args.config).resolve()
     raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     eval_cfg = (raw or {}).get("evaluation") or {}
@@ -443,6 +608,35 @@ async def _main_async(args) -> Dict[str, Any]:
     runs_per = int(defaults.get("runs_per_prompt", 1))
     scenarios = eval_cfg.get("scenarios") or []
     metrics_cfg = eval_cfg.get("metrics") or []
+    fc_map = _failure_category_map(eval_cfg)
+
+    if scenarios:
+        for sc in scenarios:
+            try:
+                sc_measures = list(sc.get("measures") or [])
+                sc_fc = sc.get("failure_categories") or []
+                fc_names: List[str] = []
+                for fc in sc_fc:
+                    if isinstance(fc, str):
+                        fc_names.append(fc)
+                    elif isinstance(fc, dict):
+                        nm = fc.get("name") or fc.get("key") or fc.get("id")
+                        if nm:
+                            fc_names.append(str(nm))
+                for nm in fc_names:
+                    for m in fc_map.get(nm, []):
+                        sc_measures.append(m)
+                if sc_measures:
+                    seen = set()
+                    dedup: List[str] = []
+                    for m in sc_measures:
+                        s = str(m)
+                        if s not in seen:
+                            seen.add(s)
+                            dedup.append(s)
+                    sc["measures"] = dedup
+            except Exception:
+                continue
 
     # Ensure local measures are registered (examples often define ./measures.py)
     _load_local_measures(cfg_path)
@@ -453,7 +647,7 @@ async def _main_async(args) -> Dict[str, Any]:
     all_runs: List[Dict[str, Any]] = []
     for sc in scenarios:
         for _ in range(runs_per):
-            r = await _run_scenario(str(cfg_path), sc, defaults, eval_cfg)
+            r = await _run_scenario(str(cfg_path), sc, defaults, eval_cfg, workflow_name)
             r["scenario_config"] = sc
             all_runs.append(r)
 
@@ -471,11 +665,25 @@ async def _main_async(args) -> Dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Evaluate agent using evaluation block in YAML")
-    parser.add_argument("--config", "-c", required=True, help="Path to agent YAML")
+    parser = argparse.ArgumentParser(description="Evaluate agent using dbt-style project layout")
+    parser.add_argument("--project", "-p", required=True, help="Path to project.yml for dbt-style layout")
     parser.add_argument("--output", "-o", default="", help="Write JSON to this path")
     parser.add_argument("--debug", "-d", action="store_true", help="Enable debug prints")
+    parser.add_argument("--select", default="", help="Selector to include scenarios (dbt-style)")
+    parser.add_argument("--exclude", default="", help="Selector to exclude scenarios (dbt-style)")
+    parser.add_argument("--reporter", choices=["auto", "pretty", "tap"], default="auto", help="Output format: pretty for human, tap for TAP; auto uses pretty on TTY")
+    parser.add_argument("--color", choices=["auto", "always", "never"], default="auto", help="Color output: auto enables on TTY")
+    parser.add_argument("-q", "--quiet", action="count", default=0, help="Reduce verbosity; can be repeated")
+    parser.add_argument("-v", "--verbose", action="count", default=0, help="Increase verbosity; can be repeated")
     args = parser.parse_args()
+
+    compiled_cfg_path: Optional[Path] = None
+    try:
+        from tools.project_compile import compile_project
+        compiled_cfg_path, _graph = compile_project(str(args.project), select=str(args.select or ""), exclude=str(args.exclude or ""))
+        setattr(args, "config", str(compiled_cfg_path))
+    except Exception as e:
+        raise SystemExit(f"Failed to compile project: {e}")
 
     # If no --output provided, try to read evaluation.output from YAML
     yaml_output: str = ""
@@ -488,53 +696,253 @@ def main() -> None:
     global _DEBUG
     _DEBUG = bool(args.debug)
 
-    data = asyncio.run(_main_async(args))
+    try:
+        cfg = yaml.safe_load(Path(args.config).read_text(encoding="utf-8")) or {}
+        tracing = (cfg.get("tracing") or {})
+        provider = str(tracing.get("provider") or "agentio").lower()
+        if provider == "agentio":
+            settings = tracing.get("settings") or {}
+            resume = settings.get("resume", "never")
+            project = tracing.get("project") or "agent_eval"
+            name = tracing.get("name") or Path(args.config).stem
+            from datetime import datetime
+            base_name = tracing.get("name") or Path(args.config).stem
+            start_suffix = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+            name = f"{base_name}_scenarios_{start_suffix}"
+            agentio.init(project=str(project), name=name, resume=str(resume), replace_default=True)
+            data = asyncio.run(_main_async(args, workflow_name=name))
+        else:
+            data = asyncio.run(_main_async(args))
+    except Exception:
+        data = asyncio.run(_main_async(args))
     text = json.dumps(data, indent=2)
 
     metrics = data.get("metrics", []) or []
-    total = len(metrics)
-    failed = 0
-    print("\nMetrics:")
+    runs = data.get("runs", []) or []
+
+    metrics_total = len(metrics)
+    metrics_failed = 0
+    measure_total = 0
+    measure_failed = 0
+
+    checks = []
+    for r in runs or []:
+        scen = r.get("scenario")
+        for m in (r.get("measures") or []):
+            measure_total += 1
+            pv = m.get("passed")
+            passed = bool(pv) if pv is not None else None
+            if passed is False:
+                measure_failed += 1
+            desc = f"Scenario {scen}: measure {m.get('name')}"
+            reason = m.get("reason")
+            checks.append({
+                "type": "measure",
+                "desc": desc,
+                "pass": passed is True,
+                "skip": passed is None,
+                "reason": reason if isinstance(reason, str) else "",
+            })
     for mt in metrics:
         name = mt.get("label") or mt.get("name") or "metric"
         value = mt.get("value")
         target = mt.get("target")
         has_target = target is not None
         meets = bool(mt.get("meets_target")) if has_target else None
-        status = "PASS" if meets is True else ("FAIL" if has_target else "INFO")
-        if isinstance(value, (int, float)):
-            vstr = f"{value:.3f}"
-        else:
-            vstr = str(value)
-        tstr = ""
-        if has_target:
-            op = str(target.get("op", ">=") )
-            tstr = f" target {op} {target.get('value')}"
-        print(f"[{status}] {name}: {vstr}{tstr}")
         if has_target and not meets:
-            failed += 1
-    print(f"Summary: {total} metrics, {failed} failing targets")
+            metrics_failed += 1
+        vstr = f"{value:.3f}" if isinstance(value, (int, float)) else str(value)
+        if has_target:
+            op = str(target.get("op", ">="))
+            desc = f"Metric {name}: {vstr} target {op} {target.get('value')}"
+        else:
+            desc = f"Metric {name}: {vstr}"
+        checks.append({
+            "type": "metric",
+            "desc": desc,
+            "pass": (meets is True) if has_target else True,
+            "skip": not has_target,
+            "reason": "no target" if not has_target else "",
+        })
+
+    total = len(checks)
+
+    def _isatty():
+        try:
+            return sys.stdout.isatty()
+        except Exception:
+            return False
+
+    def _use_color():
+        if args.color == "always":
+            return True
+        if args.color == "never":
+            return False
+        return _isatty()
+
+    def _c(s: str, color: str) -> str:
+        if not _use_color():
+            return s
+        codes = {
+            "red": "\x1b[31m",
+            "green": "\x1b[32m",
+            "yellow": "\x1b[33m",
+            "bold": "\x1b[1m",
+            "reset": "\x1b[0m",
+        }
+        return f"{codes.get(color, '')}{s}{codes['reset']}"
+
+    reporter = args.reporter
+    if reporter == "auto":
+        reporter = "pretty" if _isatty() else "tap"
+
+    if reporter == "tap":
+        print("TAP version 13")
+        print(f"1..{total}")
+        for i, c in enumerate(checks, start=1):
+            if c.get("skip"):
+                print(f"ok {i} - {c.get('desc')} # SKIP {c.get('reason')}")
+            elif c.get("pass"):
+                print(f"ok {i} - {c.get('desc')}")
+            else:
+                print(f"not ok {i} - {c.get('desc')}")
+                if c.get("reason"):
+                    print(f"# {c.get('reason')}")
+        print(f"# Summary: {metrics_total} metrics, {metrics_failed} failing targets")
+        print(f"# Measures: {measure_total} total, {measure_failed} failing")
+    else:
+        qlvl = int(args.quiet or 0)
+        vlvl = int(args.verbose or 0)
+        vlevel = vlvl - qlvl
+        quiet = vlevel < 0
+        verbose = vlevel > 0
+
+        passed_count = sum(1 for x in checks if not x.get("skip") and x.get("pass"))
+        failed = [x for x in checks if not x.get("skip") and not x.get("pass")]
+        skipped = [x for x in checks if x.get("skip")]
+
+        scenario_runs = []
+        for idx, r in enumerate(runs, start=1):
+            measures_out = r.get("measures") or []
+            any_fail = any((m.get("passed") is False) for m in measures_out)
+            any_true = any((m.get("passed") is True) for m in measures_out)
+            any_set = any((m.get("passed") is not None) for m in measures_out)
+            if any_fail:
+                status = "failed"
+            elif any_true:
+                status = "passed"
+            elif any_set:
+                status = "skipped"
+            else:
+                status = "skipped"
+            scenario_runs.append({
+                "idx": idx,
+                "name": r.get("scenario"),
+                "status": status,
+                "duration": float(r.get("duration_sec") or 0.0),
+                "measures": measures_out,
+            })
+
+        if not quiet and not verbose:
+            print(f"Running {total} checks...")
+            line = []
+            for x in checks:
+                if x.get("skip"):
+                    line.append(_c("s", "yellow"))
+                elif x.get("pass"):
+                    line.append(_c(".", "green"))
+                else:
+                    line.append(_c("F", "red"))
+                if len(line) >= 80:
+                    print("".join(line))
+                    line = []
+            if line:
+                print("".join(line))
+
+        if verbose:
+            for sr in scenario_runs:
+                st = sr["status"]
+                if st == "passed":
+                    lab = _c("PASSED", "green")
+                elif st == "failed":
+                    lab = _c("FAILED", "red")
+                else:
+                    lab = _c("SKIPPED", "yellow")
+                print(f"{sr['idx']:>3}) {sr['name']} - {lab} in {sr['duration']:.2f}s")
+                for m in sr["measures"]:
+                    pv = m.get("passed")
+                    if pv is True:
+                        mlab = _c("PASS", "green")
+                    elif pv is False:
+                        mlab = _c("FAIL", "red")
+                    else:
+                        mlab = _c("SKIP", "yellow")
+                    line = f"    - measure {m.get('name')}: {mlab}"
+                    rsn = m.get("reason")
+                    if rsn and pv is False:
+                        line += f"  ({rsn})"
+                    print(line)
+
+            if metrics:
+                print("")
+                print(_c("Metrics:", "bold"))
+                for mt in metrics:
+                    name = mt.get("label") or mt.get("name") or "metric"
+                    value = mt.get("value")
+                    vstr = f"{value:.3f}" if isinstance(value, (int, float)) else str(value)
+                    target = mt.get("target")
+                    has_target = target is not None
+                    if has_target:
+                        meets = bool(mt.get("meets_target"))
+                        stat = _c("PASS", "green") if meets else _c("FAIL", "red")
+                        op = str(target.get("op", ">="))
+                        print(f"  - {name}: {vstr} target {op} {target.get('value')} [{stat}]")
+                    else:
+                        print(f"  - {name}: {vstr} [no target]")
+
+            slow = sorted(scenario_runs, key=lambda x: x["duration"], reverse=True)[:5]
+            if slow:
+                print("")
+                print(_c("Slowest scenarios:", "bold"))
+                for s in slow:
+                    print(f"  - {s['name']}: {s['duration']:.2f}s")
+
+        if not quiet and failed:
+            print("")
+            print(_c("Failures:", "bold"))
+            for idx, f in enumerate(failed, start=1):
+                title = f"{idx}) {f.get('desc')}"
+                print(_c("FAIL ", "red") + title)
+                rsn = f.get("reason")
+                if rsn and verbose:
+                    print(f"  Reason: {rsn}")
+
+        if not quiet:
+            print("")
+            print(f"Passed: {passed_count}  Failed: {len(failed)}  Skipped: {len(skipped)}  Total: {total}")
+            print(f"Metrics: {metrics_total}  Failing targets: {metrics_failed}")
+            print(f"Measures: {measure_total}  Failing: {measure_failed}")
 
     cfg_dir = Path(args.config).resolve().parent
     out_arg = str(args.output or "").strip()
-    if out_arg:
-        final_out = Path(out_arg)
-    else:
-        yout = str(yaml_output or "").strip()
-        final_out = Path(yout) if yout else Path("")
-
-    if str(final_out):
+    yout = str(yaml_output or "").strip()
+    final_out_path = out_arg or yout
+    if final_out_path:
+        final_out = Path(final_out_path)
         if not final_out.is_absolute():
-            if not out_arg:
-                final_out = (cfg_dir / final_out).resolve()
-            else:
-                final_out = (Path.cwd() / final_out).resolve()
+            base = Path.cwd() if out_arg else cfg_dir
+            final_out = (base / final_out).resolve()
         final_out.parent.mkdir(parents=True, exist_ok=True)
         final_out.write_text(text, encoding="utf-8")
     else:
-        print(text)
+        msg = "Results JSON not written; use --output to save"
+        if reporter == "tap":
+            print(f"# {msg}")
+        else:
+            print(msg)
 
-    if failed > 0:
+    overall_failed = (metrics_failed > 0) or (measure_failed > 0)
+    if overall_failed:
         sys.exit(1)
 
 
