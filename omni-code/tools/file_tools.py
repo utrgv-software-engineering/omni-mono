@@ -3,10 +3,11 @@ import glob
 import re
 import fnmatch
 import difflib
-from typing import List, Optional, Dict, Tuple, Union
+from typing import List, Optional, Dict, Tuple, Union, Any
 from omniagents.core.tools import rich_function_tool, RichToolOutput, approval_metadata
 from functools import lru_cache
 import pygit2
+from agents.run_context import RunContextWrapper
 
 # ----------------------------
 # Hidden/Git ignore utilities
@@ -99,8 +100,37 @@ def _should_skip(
         return True
     return False
 
+def _workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> Optional[str]:
+    try:
+        if ctx is None:
+            return None
+        c = getattr(ctx, 'context', None)
+        if c is None:
+            return None
+        if isinstance(c, dict):
+            wr = c.get('workspace_root')
+        else:
+            wr = getattr(c, 'workspace_root', None)
+        if isinstance(wr, str) and wr.strip():
+            return os.path.abspath(wr)
+    except Exception:
+        pass
+    return None
+
+def _resolve_path(ctx: RunContextWrapper[Any] | None, path: Optional[str]) -> str:
+    wr = _workspace_root_from_ctx(ctx)
+    if path is None or (isinstance(path, str) and path.strip() == ""):
+        return wr or "."
+    p = path if isinstance(path, str) else str(path)
+    if os.path.isabs(p):
+        return p
+    if wr:
+        return os.path.abspath(os.path.join(wr, p))
+    return p
+
 @rich_function_tool
 def glob_files(
+    ctx: RunContextWrapper[Any],
     pattern: str,
     path: Optional[str],
     ignore_hidden: Optional[bool] = None,
@@ -143,8 +173,7 @@ def glob_files(
     """
     try:
         # Defaults
-        if path is None:
-            path = "."
+        path = _resolve_path(ctx, path)
         if ignore_hidden is None:
             ignore_hidden = False  # preserve current behavior
         if respect_gitignore is None:
@@ -280,6 +309,7 @@ def glob_files(
 
 @rich_function_tool
 def grep_files(
+    ctx: RunContextWrapper[Any],
     pattern: str,
     path: Optional[str],
     include: Optional[str],
@@ -321,8 +351,7 @@ def grep_files(
     """
     try:
         # Defaults
-        if path is None:
-            path = "."
+        base_dir = _resolve_path(ctx, path)
         if ignore_hidden is None:
             ignore_hidden = False
         if respect_gitignore is None:
@@ -335,9 +364,6 @@ def grep_files(
 
         # Compile the regex pattern
         regex = re.compile(pattern)
-
-        # Determine base directory
-        base_dir = path or "."
 
         # Walk the tree and collect candidate files, pruning ignored/hidden dirs early
         files_to_search: List[str] = []
@@ -421,7 +447,7 @@ def grep_files(
         
         # Create LLM output
         if total_matches == 0:
-            llm_output = f"No matches found for pattern '{pattern}' in {path or './'}"
+            llm_output = f"No matches found for pattern '{pattern}' in {base_dir or './'}"
             hints = []
             if skipped_gitignored:
                 hints.append(f"skipped {skipped_gitignored} file(s) due to .gitignore")
@@ -458,7 +484,7 @@ def grep_files(
                 "match_count": total_matches,
                 "file_count": len(results),
                 "search_type": "grep",
-                "scope": f"{include or '*'} in {path or './'}",
+                "scope": f"{include or '*'} in {base_dir or './'}",
                 "preview_files": min(len(results), preview_limit),
                 "ignore_hidden": bool(ignore_hidden),
                 "respect_gitignore": bool(respect_gitignore),
@@ -489,6 +515,7 @@ def grep_files(
 
 @rich_function_tool
 def list_directory(
+    ctx: RunContextWrapper[Any],
     path: str,
     recursive: Optional[bool],
     ignore_hidden: Optional[bool] = None,
@@ -525,9 +552,7 @@ def list_directory(
     """
     try:
         # Defaults
-        # Treat empty or whitespace-only path as current directory
-        if path is None or (isinstance(path, str) and path.strip() == ""):
-            path = "."
+        path = _resolve_path(ctx, path)
         if recursive is None:
             recursive = False
         if ignore_hidden is None:
@@ -643,7 +668,7 @@ def list_directory(
         return RichToolOutput(llm_output, ui_metadata)
 
 @rich_function_tool
-def read_file(file_path: str, start_line: Optional[int], num_lines: Optional[int]) -> RichToolOutput:
+def read_file(ctx: RunContextWrapper[Any], file_path: str, start_line: Optional[int], num_lines: Optional[int]) -> RichToolOutput:
     """
     Reads the contents of a file.
     
@@ -674,6 +699,7 @@ def read_file(file_path: str, start_line: Optional[int], num_lines: Optional[int
         if start_line is None:
             start_line = 1
             
+        file_path = _resolve_path(ctx, file_path)
         with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
             # Read all lines
             all_lines = f.readlines()
@@ -755,6 +781,7 @@ def read_file(file_path: str, start_line: Optional[int], num_lines: Optional[int
 
 @rich_function_tool
 def edit_file(
+    ctx: RunContextWrapper[Any],
     file_path: str,
     old_text: str,
     new_text: str,
@@ -816,6 +843,7 @@ def edit_file(
     """
     try:
         # Read the file content
+        file_path = _resolve_path(ctx, file_path)
         with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
             content = f.read()
         
@@ -989,7 +1017,7 @@ def edit_file(
         return RichToolOutput(llm_output, ui_metadata)
 
 @rich_function_tool
-def write_file(file_path: str, content: str, append: Optional[bool]) -> RichToolOutput:
+def write_file(ctx: RunContextWrapper[Any], file_path: str, content: str, append: Optional[bool]) -> RichToolOutput:
     """
     Creates a new file or overwrites an existing file with the provided content.
     
@@ -1019,7 +1047,8 @@ def write_file(file_path: str, content: str, append: Optional[bool]) -> RichTool
         if append is None:
             append = False
             
-        # Ensure the directory exists
+        # Resolve file path relative to workspace and ensure directory exists
+        file_path = _resolve_path(ctx, file_path)
         os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
         
         # Write mode: 'a' for append, 'w' for overwrite

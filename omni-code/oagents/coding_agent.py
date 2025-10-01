@@ -63,9 +63,10 @@ def get_instructions(run_context=None, agent=None) -> str:
     base = _load_instructions()
     cwd = os.getcwd()
     agents_files = _collect_agents_md_downwards(cwd)
+    # Always include a Jinja placeholder for workspace; SilentUndefined => empty when missing
     if not agents_files:
-        return base
-    parts = [base, "\n\n# Repository AGENTS.md (parent → child)\n"]
+        return base + "\n\n[Workspace]\n{{ workspace_root }}\n"
+    parts = [base, "\n\n[Workspace]\n{{ workspace_root }}\n", "\n\n# Repository AGENTS.md (parent → child)\n"]
     for path, text in agents_files:
         parts.append(f"\n[AGENTS.md at {os.path.dirname(path)}]\n{text}")
     return "".join(parts)

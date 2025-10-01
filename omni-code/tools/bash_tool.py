@@ -1,9 +1,10 @@
 import subprocess
 from typing import Dict, Any, Optional
+from agents.run_context import RunContextWrapper
 from omniagents.core.tools import rich_function_tool, RichToolOutput, approval_metadata
 
 @rich_function_tool
-def execute_bash(command: str, timeout: Optional[int]) -> RichToolOutput:
+def execute_bash(ctx: RunContextWrapper[Any], command: str, timeout: Optional[int] = None, cwd: Optional[str] = None) -> RichToolOutput:
     """
     Executes a shell command in the user's environment and returns the output.
     
@@ -35,6 +36,19 @@ def execute_bash(command: str, timeout: Optional[int]) -> RichToolOutput:
     # Default timeout value if not provided
     if timeout is None:
         timeout = 30
+
+    # Determine working directory from explicit arg or context
+    if cwd is None:
+        try:
+            c = getattr(ctx, 'context', None)
+            if isinstance(c, dict):
+                wr = c.get('workspace_root')
+            else:
+                wr = getattr(c, 'workspace_root', None)
+            if isinstance(wr, str) and wr.strip():
+                cwd = wr
+        except Exception:
+            cwd = None
     
     try:
         process = subprocess.run(
@@ -42,7 +56,8 @@ def execute_bash(command: str, timeout: Optional[int]) -> RichToolOutput:
             shell=True,
             capture_output=True,
             text=True,
-            timeout=timeout
+            timeout=timeout,
+            cwd=cwd
         )
         
         # Combine stdout and stderr for LLM output
@@ -86,7 +101,8 @@ def execute_bash(command: str, timeout: Optional[int]) -> RichToolOutput:
                 "success": process.returncode == 0,
                 "has_stderr": bool(process.stderr),
                 "line_count": len(lines),
-                "preview_lines": min(len(lines), preview_limit)
+                "preview_lines": min(len(lines), preview_limit),
+                "cwd": cwd,
             }
         }
         

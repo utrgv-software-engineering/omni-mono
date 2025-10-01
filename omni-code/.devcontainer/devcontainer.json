@@ -1,0 +1,36 @@
+{
+  "name": "Omni Code (Python + Go)",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/go:1": {
+      "version": "1.22"
+    },
+    "ghcr.io/devcontainers/features/apt-packages:1": {
+      "packages": "libgit2-dev"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-python.black-formatter",
+        "ms-python.isort",
+        "tamasfe.even-better-toml",
+        "eamodio.gitlens",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "python.testing.pytestEnabled": true,
+        "python.testing.pytestArgs": ["tests"],
+        "python.analysis.autoImportCompletions": true,
+        "editor.formatOnSave": true
+      }
+    }
+  },
+  "containerEnv": {
+    "FURY_AUTH": "REDACTED_FURY_TOKEN",
+    "PIP_DISABLE_PIP_VERSION_CHECK": "1"
+  },
+  "postCreateCommand": "bash .devcontainer/postCreate.sh"
+}

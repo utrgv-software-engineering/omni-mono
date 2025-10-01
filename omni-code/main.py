@@ -12,6 +12,13 @@ import agentio
 from tools import *
 from oagents.coding_agent import create_agent
 from server_functions.agentio_functions import good, bad, note, notes
+from server_functions.filesystem import (
+    fs_get_cwd,
+    fs_get_home,
+    fs_list_dir,
+    fs_get_workspace_root,
+    session_ensure,
+)
 
 # Load environment variables
 load_dotenv()
@@ -56,7 +63,17 @@ def cli_main():
         welcome_text="Welcome to Omni Code! I'm here to help you with your coding needs.",
         max_turns=100,
         context_window=400000,
-        server_functions=[good, bad, note, notes],
+        server_functions=[
+            good,
+            bad,
+            note,
+            notes,
+            fs_get_cwd,
+            fs_get_home,
+            fs_list_dir,
+            fs_get_workspace_root,
+            session_ensure,
+        ],
     )
 
     runner.main(default_mode="tui")

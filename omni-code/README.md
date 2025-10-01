@@ -13,6 +13,8 @@ A standalone coding agent built with OmniAgents. It gives an AI assistant safe a
 .
 ├── main.py             # Python entry point and system instructions
 ├── tools/              # Tool implementations (rich tools for OmniAgents UI)
+├── oagents/            # Agent factory, settings, and prompt instructions
+├── server_functions/   # AgentIO server functions (feedback hooks)
 ├── tests/              # Unit tests for tools
 ├── pyproject.toml      # Package metadata (preferred)
 └── requirements.txt    # Alternative installation method
@@ -23,10 +25,10 @@ A standalone coding agent built with OmniAgents. It gives an AI assistant safe a
 - Go (Golang) 1.20+ (see Install Go below; quick WSL2/Ubuntu commands provided)
 - OpenAI API key: set `OPENAI_API_KEY`
 - (Optional) SerpAPI key for search tools: set `SERPAPI_API_KEY`
- - libgit2 (for pygit2):
-   - macOS: `brew install libgit2`
-   - Ubuntu/Debian: `sudo apt-get install -y libgit2-dev`
-   - Fedora: `sudo dnf install libgit2-devel`
+- libgit2 (for pygit2):
+  - macOS: `brew install libgit2`
+  - Ubuntu/Debian: `sudo apt-get install -y libgit2-dev`
+  - Fedora: `sudo dnf install libgit2-devel`
 
 You can store keys in a `.env` file in the project root:
 ```
@@ -86,6 +88,8 @@ pip install -e . --extra-index-url "https://${FURY_AUTH}:@pypi.fury.io/ericmicha
 
 # Run the agent (CLI)
 omni-code
+# or
+omni
 # or
 python main.py
 ```
@@ -150,6 +154,8 @@ pipx installs the package into its own isolated environment and exposes the `omn
 - Run it anywhere:
   ```bash
   omni-code
+  # or
+  omni
   ```
 
 Upgrade or remove:
@@ -172,6 +178,8 @@ uv tool install "git+https://github.com/<you>/omni-code.git@main" \
 
 # Run
 omni-code
+# or
+omni
 ```
 
 ### Option C: pip --user (simple, less isolated)
@@ -183,6 +191,8 @@ Installs into your user site-packages and places the script in `~/.local/bin` (m
   python3 -m pip install --user . --extra-index-url "https://${FURY_AUTH}:@pypi.fury.io/ericmichael/"
   # Ensure ~/.local/bin is on PATH
   omni-code
+  # or
+  omni
   ```
 
 - Windows (PowerShell):
@@ -190,6 +200,8 @@ Installs into your user site-packages and places the script in `~/.local/bin` (m
   $env:FURY_AUTH = "YOUR_TOKEN"
   py -m pip install --user . --extra-index-url "https://$env:FURY_AUTH:@pypi.fury.io/ericmichael/"
   omni-code
+  # or
+  omni
   ```
 
 ## Running tests
