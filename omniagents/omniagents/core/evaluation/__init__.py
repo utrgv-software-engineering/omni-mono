@@ -34,3 +34,9 @@ __all__ = [
     "assert_coords_propagated",
     "assert_assistant_contains",
 ]
+
+# Register built-in measures
+try:
+    from . import measures as _builtins  # noqa: F401
+except Exception:
+    pass

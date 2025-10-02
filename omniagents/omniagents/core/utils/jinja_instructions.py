@@ -1,8 +1,10 @@
-"""Jinja2 template support for dynamic agent instructions."""
+"""Jinja2 template utilities for both instructions and evaluation templates."""
 
 from typing import Any, Dict
 from dataclasses import is_dataclass, asdict
-from jinja2 import Template, Environment
+from pathlib import Path
+import json
+from jinja2 import Environment
 from agents.run_context import RunContextWrapper
 from agents import Agent
 
@@ -41,46 +43,53 @@ def context_to_dict(context: Any) -> Dict[str, Any]:
     return {'context': context}
 
 
+def _create_env(*, silent_undefined: bool = False) -> Environment:
+    if silent_undefined:
+        from jinja2 import Undefined
+        class SilentUndefined(Undefined):
+            def _fail_with_undefined_error(self, *args, **kwargs):
+                return ''
+            __str__ = lambda self: ''
+            __call__ = lambda self, *args, **kwargs: self
+            __getattr__ = lambda self, name: self
+        env = Environment(undefined=SilentUndefined)
+    else:
+        env = Environment()
+    def _tojson(value, indent=None, sort_keys=False):
+        return json.dumps(value, ensure_ascii=False, indent=indent, sort_keys=bool(sort_keys))
+    env.filters["tojson"] = _tojson
+    return env
+
+
+def render_template(template_str: str, /, *, silent_undefined: bool = False, **kwargs) -> str:
+    try:
+        env = _create_env(silent_undefined=silent_undefined)
+        tmpl = env.from_string(template_str)
+        return str(tmpl.render(**kwargs))
+    except Exception:
+        return template_str
+
+
+def read_text_file(base: Path, rel_or_abs: str) -> str:
+    p = Path(rel_or_abs)
+    if not p.is_file():
+        p = (base / rel_or_abs).resolve()
+    try:
+        return p.read_text(encoding="utf-8") if p.is_file() else ""
+    except Exception:
+        return ""
+
+
 def create_jinja2_instructions(template_string: str):
-    """Create a dynamic instruction function that renders Jinja2 templates.
-    
-    Args:
-        template_string: Jinja2 template string (or plain string - will be rendered as-is)
-    
-    Returns:
-        An async function suitable for Agent.instructions parameter
-    """
-    # Use silent undefined to avoid errors for missing variables
-    from jinja2 import Undefined
-    class SilentUndefined(Undefined):
-        def _fail_with_undefined_error(self, *args, **kwargs):
-            return ''
-        __str__ = lambda self: ''
-        __call__ = lambda self, *args, **kwargs: self
-        __getattr__ = lambda self, name: self
-    
-    env = Environment(undefined=SilentUndefined)
+    env = _create_env(silent_undefined=True)
     template = env.from_string(template_string)
-    
-    # Create the async function that the SDK expects
+
     async def render_instructions(context_wrapper: RunContextWrapper, agent: Agent) -> str:
-        """Render the Jinja2 template with the current context."""
-        # Get the context object
         context = context_wrapper.context if context_wrapper else None
-        
-        # Convert context to dict for Jinja2
         context_dict = context_to_dict(context)
-        
-        # Render the template
-        # We provide both the full dict and individual keys for flexibility
-        # This allows both {{ user_name }} and {{ context.user_name }} syntax
-        rendered = template.render(
-            context=context,  # Original context object
-            **context_dict    # Unpacked dict for direct access
-        )
-        
+        rendered = template.render(context=context, **context_dict)
         return rendered
-    
+
     return render_instructions
 
 

@@ -138,3 +138,7 @@ class AgentSpec:
     # --- Optional App-Specific Customization ---
     header_controls_builder: Optional[Callable[['AgentApp'], List[ft.Control]]] = None
     cleanup_handler: Optional[Callable[[], Awaitable[None]]] = None 
+
+    # --- Optional Metadata ---
+    label: Optional[str] = None
+    description: Optional[str] = None

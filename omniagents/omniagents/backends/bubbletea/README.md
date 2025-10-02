@@ -40,13 +40,13 @@ A beautiful terminal user interface (TUI) backend for OmniAgents, built with Go 
 Run an agent with the Bubble Tea TUI:
 
 ```bash
-python -m omniagents.cli run -c path/to/agent.yaml --mode bubbletea
+python -m omniagents.cli run -c path/to/agent.yml --mode bubbletea
 ```
 
 Or use the alias:
 
 ```bash
-python -m omniagents.cli run -c path/to/agent.yaml --mode tui
+python -m omniagents.cli run -c path/to/agent.yml --mode tui
 ```
 
 ### With Session Resume
@@ -54,7 +54,7 @@ python -m omniagents.cli run -c path/to/agent.yaml --mode tui
 Resume a previous conversation:
 
 ```bash
-python -m omniagents.cli run -c path/to/agent.yaml --mode tui --session-id <session-id>
+python -m omniagents.cli run -c path/to/agent.yml --mode tui --session-id <session-id>
 ```
 
 ### Debug Mode
@@ -62,7 +62,7 @@ python -m omniagents.cli run -c path/to/agent.yaml --mode tui --session-id <sess
 Enable debug output to see tool results:
 
 ```bash
-python -m omniagents.cli run -c path/to/agent.yaml --mode tui --debug
+python -m omniagents.cli run -c path/to/agent.yml --mode tui --debug
 ```
 
 ### Safe Mode
@@ -153,13 +153,13 @@ Test with example agents:
 
 ```bash
 # Basic test
-python -m omniagents.cli run -c examples/basic_yaml/hello.yaml --mode tui
+python -m omniagents.cli run -c examples/basic_yaml/hello.yml --mode tui
 
 # Safe mode test
-python -m omniagents.cli run -c examples/safe_agent_yaml/safe_weather.yaml --mode tui
+python -m omniagents.cli run -c examples/safe_agent_yaml/safe_weather.yml --mode tui
 
 # MCP server test (if configured)
-python -m omniagents.cli run -c examples/mcp_yaml/mcp_agent.yaml --mode tui
+python -m omniagents.cli run -c examples/mcp_yaml/mcp_agent.yml --mode tui
 ```
 
 ### Debugging
@@ -167,7 +167,7 @@ python -m omniagents.cli run -c examples/mcp_yaml/mcp_agent.yaml --mode tui
 1. **Enable debug mode** to see tool results:
    ```bash
    export OMNI_DEBUG=1
-   python -m omniagents.cli run -c agent.yaml --mode tui --debug
+   python -m omniagents.cli run -c agent.yml --mode tui --debug
    ```
 
 2. **Check server logs** if connection fails:

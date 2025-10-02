@@ -1,0 +1,228 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import re
+from typing import Any, Dict, List, Optional, Callable
+
+import yaml
+
+from omniagents.core.utils.jinja import render_template
+
+
+async def evaluate_split(compiled_yaml: Path, split_path: Path, judge_key: str, judge_max_turns: int = 1, run_max_turns: int | None = None, show: int = 20, replay_mode: str = "replay", runs_file: str | None = None, progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None) -> Dict[str, Any]:
+
+    cfg = yaml.safe_load(Path(compiled_yaml).read_text(encoding="utf-8")) or {}
+    eval_cfg = (cfg.get("evaluation") or {})
+    judges_cfg = (eval_cfg.get("judges") or {})
+    jcfg = judges_cfg.get(str(judge_key))
+    if not isinstance(jcfg, dict):
+        raise SystemExit(f"Judge not found: {judge_key}")
+
+    data = yaml.safe_load(Path(split_path).read_text(encoding="utf-8")) or {}
+    scenarios = [x for x in (data.get("scenarios") or []) if isinstance(x, dict)]
+    if not scenarios:
+        raise SystemExit("No scenarios in split")
+
+    def _default_runs_path(sp: Path) -> Path:
+        ts_dir = sp.parents[2]
+        return ts_dir / "generated_runs.json"
+
+    def _resolve_runs_file(sp: Path, rf: str | None) -> Path | None:
+        if not rf:
+            return None
+        p = Path(rf)
+        if p.is_absolute():
+            return p
+        try:
+            return (sp.parents[2] / p).resolve()
+        except Exception:
+            return p.resolve()
+
+    def _load_runs(path: Path) -> Dict[str, Any] | None:
+        try:
+            if path.exists():
+                return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        return None
+
+    rf_path = _resolve_runs_file(Path(split_path), runs_file)
+    default_path = _default_runs_path(Path(split_path))
+    expected_ids = [sc.get("id") for sc in scenarios]
+
+    picked = _load_runs(rf_path) if rf_path else None
+    if not picked:
+        picked = _load_runs(default_path)
+
+    if not picked:
+        raise SystemExit(
+            f"Missing generated_runs.json. Expected at: {default_path}. "
+            "Generate scenarios, then run: 'omniagents eval scenarios run'."
+        )
+
+    all_runs = list(picked.get("runs") or [])
+    want = set(expected_ids)
+    runs = [r for r in all_runs if r.get("scenario_id") in want]
+    have_ids = {r.get("scenario_id") for r in runs}
+    missing = list(want - have_ids)
+    if missing:
+        raise SystemExit(
+            f"Runs fixtures do not cover all scenarios in split. Missing {len(missing)} scenarios."
+        )
+
+    by_id = {r.get("scenario_id"): r for r in runs}
+
+    from omniagents.core.agents.specs import AgentSpec
+    from omniagents.core.agents.builder import _default_build_agent
+    async def _build_judge_agent(agent_cfg: Dict[str, Any]):
+        def _map_js_type(t: str):
+            t = (t or "").lower()
+            return {"string": str, "boolean": bool, "bool": bool, "number": float, "float": float, "integer": int, "int": int, "object": dict, "array": list}.get(t, str)
+        instructions = agent_cfg.get("instructions") or ""
+        instr_file = agent_cfg.get("instructions_file")
+        if not instructions and instr_file:
+            try:
+                p = Path(instr_file)
+                if not p.is_absolute():
+                    p = (Path.cwd() / p).resolve()
+                instructions = p.read_text(encoding="utf-8") if p.is_file() else ""
+            except Exception:
+                instructions = ""
+        if not instructions:
+            instructions = "You are an evaluation agent. Return ONLY JSON."
+        model = agent_cfg.get("model", "gpt-4o-mini")
+        output_type = agent_cfg.get("output_type", dict)
+        output_type_strict = bool(agent_cfg.get("output_type_strict", False))
+        out_type = dict
+        if isinstance(output_type, type):
+            out_type = output_type
+        elif isinstance(output_type, str):
+            out_type = dict if output_type.lower() == "dict" else (str if output_type.lower() == "str" else list)
+        if isinstance(agent_cfg.get("output_schema"), dict):
+            try:
+                from typing_extensions import TypedDict
+                props = (agent_cfg.get("output_schema") or {}).get("properties", {}) or {}
+                ann = {k: _map_js_type((v or {}).get("type")) for k, v in props.items()}
+                out_type = TypedDict("JudgeOutput", ann)  # type: ignore
+            except Exception:
+                pass
+        def _get_instr() -> str:
+            return instructions
+        spec = AgentSpec(
+            name=agent_cfg.get("name") or "Judge",
+            header_title=agent_cfg.get("name") or "Judge",
+            page_title=agent_cfg.get("name") or "Judge",
+            welcome_text="",
+            client_storage_prefix="judge.",
+            get_agent_instructions=_get_instr,
+            build_agent=None,
+            available_tools=[],
+            model_name=model,
+            output_type=out_type,
+            output_type_strict=output_type_strict,
+        )
+        agent = await _default_build_agent({}, None, spec, None)
+        return agent
+
+    async def _run_judge(agent, prompt: str, max_turns: int = 1):
+        from agents import Runner as AgentsRunner
+        res = await AgentsRunner.run(agent, prompt, max_turns=max_turns)
+        return getattr(res, "final_output", None)
+
+    def _predict_label_from_judge_output(val: Any, category: str) -> bool | None:
+        try:
+            if isinstance(val, dict):
+                ans = val.get("answer")
+                if isinstance(ans, str):
+                    a = ans.strip().lower()
+                    if a in ("pass", "fail"):
+                        return True if a == "fail" else False
+            if isinstance(val, dict) and "should_decline" in val:
+                return not bool(val.get("should_decline"))
+        except Exception:
+            pass
+        return None
+
+    judge_agent = await _build_judge_agent(jcfg.get("agent") or {})
+    input_cfg = jcfg.get("input") or {}
+    template = input_cfg.get("template") or "{{ text }}"
+    source = str(input_cfg.get("source", "final_assistant_text")).strip()
+    max_turns = int(judge_max_turns or 1)
+
+    # Pre-compute line numbers for each scenario id by scanning the split YAML text
+    scen_line_by_id: Dict[str, int] = {}
+    try:
+        split_lines = Path(split_path).read_text(encoding="utf-8").splitlines()
+        for i, line in enumerate(split_lines, start=1):
+            s = line.strip()
+            if s.startswith("- id: "):
+                try:
+                    sid = s.split(":", 1)[1].strip()
+                except Exception:
+                    sid = None
+                if sid:
+                    scen_line_by_id[sid] = i
+    except Exception:
+        scen_line_by_id = {}
+
+    results: List[Dict[str, Any]] = []
+    total = len(scenarios)
+    if progress_cb:
+        try:
+            progress_cb({"event": "start", "total": total})
+        except Exception:
+            pass
+    idx = 0
+    tp = tn = fp = fn = 0
+    for sc in scenarios:
+        sid = sc.get("id")
+        label = bool(sc.get("label"))
+        run = by_id.get(sid) or {}
+        if source == "history":
+            text = json.dumps(run.get("history") or [])
+        else:
+            text = run.get("final_assistant_text") or ""
+        prompt = render_template(template, text=text, history=(run.get("history") or []), history_json=json.dumps(run.get("history") or []))
+        out = await _run_judge(judge_agent, prompt, max_turns=max_turns)
+        pred = _predict_label_from_judge_output(out, sc.get("target_category") or "")
+        agree = None if pred is None else (pred == label)
+        if pred is True and label is True:
+            tp += 1
+        elif pred is False and label is False:
+            tn += 1
+        elif pred is True and label is False:
+            fp += 1
+        elif pred is False and label is True:
+            fn += 1
+        results.append({
+            "id": sid,
+            "name": sc.get("name"),
+            "label": label,
+            "pred": pred,
+            "agree": agree,
+            "prompt": (run.get("prompt") or ""),
+            "final_assistant_text": (run.get("final_assistant_text") or ""),
+            "judge_output": out,
+            "split_file": str(split_path),
+            "split_line": int(scen_line_by_id.get(sid) or 0),
+        })
+        idx += 1
+        if progress_cb:
+            try:
+                progress_cb({
+                    "event": "progress",
+                    "index": idx,
+                    "total": total,
+                    "scenario_id": sid,
+                    "agree": agree,
+                    "pred": pred,
+                    "label": label,
+                })
+            except Exception:
+                pass
+
+    tpr = (tp / (tp + fn)) if (tp + fn) > 0 else None
+    tnr = (tn / (tn + fp)) if (tn + fp) > 0 else None
+
+    return {"split": str(split_path), "judge": str(judge_key), "counts": {"TP": tp, "TN": tn, "FP": fp, "FN": fn}, "tpr": tpr, "tnr": tnr, "results": results}

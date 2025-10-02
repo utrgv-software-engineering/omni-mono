@@ -220,12 +220,20 @@ def _parse_inline_agent_spec(config: Dict[str, Any], base_dir: Path, parent_load
         layout="classic",
     )
 
-def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Path]] = None) -> AgentSpec:
+def load_agent_spec_from_yaml(
+    config_path: str,
+    _loading_stack: Optional[Set[Path]] = None,
+    *,
+    tool_registry: Optional[Dict[str, Any]] = None,
+    guardrails_registry: Optional[Dict[str, Dict[str, Any]]] = None,
+    server_functions_registry: Optional[Dict[str, Any]] = None,
+    project_defaults: Optional[Dict[str, Any]] = None,
+) -> AgentSpec:
     """
     Loads agent configuration from a YAML file and builds an AgentSpec.
 
     Args:
-        config_path: Path to the agent.yaml configuration file.
+        config_path: Path to the agent.yml configuration file.
         _loading_stack: Internal parameter for circular reference detection.
 
     Returns:
@@ -308,6 +316,8 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
     header_title = config.get('header_title', agent_name)
     page_title = config.get('page_title', agent_name)
     max_turns_cfg = config.get('max_turns', 20)
+    label_from_yaml = config.get('label') if isinstance(config.get('label'), str) else None
+    description_from_yaml = config.get('description') if isinstance(config.get('description'), str) else None
     # Derive default storage prefix if not provided
     default_storage_prefix = agent_name.lower().replace(' ', '_').replace('-','_') + '.'
     storage_prefix = config.get('client_storage_prefix', default_storage_prefix)
@@ -505,43 +515,41 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
         get_instructions_func = _load_instructions(config, base_dir)
 
     # --- Tool Discovery and Selection ---
-    # Always check the 'tools' subdirectory first, then any additional directories
+    # Prefer project-provided registry when available; otherwise discover relative to agent YAML
     all_discovered_functions = {}
-    
-    # First check the default 'tools' subdirectory
     tools_dir_path = (base_dir / "tools").resolve()
-    if tools_dir_path.is_dir():
-        # Discover tools (only verbose in debug mode)
-        tools_found = discover_functions_in_dir(str(tools_dir_path))
-        all_discovered_functions.update(tools_found)
-        if Debug.enabled():
-            print(f"Discovered tools from 'tools' subdirectory: {tools_dir_path}")
-    
-    # Then check any additional directories specified in the config
-    additional_tools_dirs = config.get('additional_tools_dirs', [])
-    if not isinstance(additional_tools_dirs, list):
-        print(f"Warning: 'additional_tools_dirs' in {config_path} should be a list. Ignoring.")
-        additional_tools_dirs = []
-    
-    for tools_dir in additional_tools_dirs:
-        additional_dir_path = (base_dir / tools_dir).resolve()
-        if additional_dir_path.is_dir():
-            # Discover additional tools
-            additional_tools = discover_functions_in_dir(str(additional_dir_path))
-            # Update with any new tools found (existing tools take precedence)
-            all_discovered_functions.update(additional_tools)
+    if tool_registry is not None:
+        try:
+            all_discovered_functions.update(tool_registry)
             if Debug.enabled():
-                print(f"Discovered additional tools from: {additional_dir_path}")
-        else:
-            # Show path relative to CWD for clearer error messages if run from workspace root
-            try:
-                display_path = additional_dir_path.relative_to(Path.cwd())
-            except ValueError:
-                display_path = additional_dir_path # Show absolute if not relative to CWD
-            print(f"Warning: Additional tools directory '{display_path}' not found. Skipping.")
-    
-    if not all_discovered_functions:
-        print(f"Warning: No tools discovered in any of the specified directories.")
+                print(f"Using project tool registry with {len(all_discovered_functions)} tools")
+        except Exception:
+            pass
+    else:
+        if tools_dir_path.is_dir():
+            tools_found = discover_functions_in_dir(str(tools_dir_path))
+            all_discovered_functions.update(tools_found)
+            if Debug.enabled():
+                print(f"Discovered tools from 'tools' subdirectory: {tools_dir_path}")
+        additional_tools_dirs = config.get('additional_tools_dirs', [])
+        if not isinstance(additional_tools_dirs, list):
+            print(f"Warning: 'additional_tools_dirs' in {config_path} should be a list. Ignoring.")
+            additional_tools_dirs = []
+        for tools_dir in additional_tools_dirs:
+            additional_dir_path = (base_dir / tools_dir).resolve()
+            if additional_dir_path.is_dir():
+                additional_tools = discover_functions_in_dir(str(additional_dir_path))
+                all_discovered_functions.update(additional_tools)
+                if Debug.enabled():
+                    print(f"Discovered additional tools from: {additional_dir_path}")
+            else:
+                try:
+                    display_path = additional_dir_path.relative_to(Path.cwd())
+                except ValueError:
+                    display_path = additional_dir_path
+                print(f"Warning: Additional tools directory '{display_path}' not found. Skipping.")
+        if not all_discovered_functions:
+            print(f"Warning: No tools discovered in any of the specified directories.")
 
     activated_tool_names = config.get('tools', [])
     selected_tool_functions = []
@@ -569,29 +577,37 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
     # --- Server Functions Discovery and Selection ---
     server_functions_registrar = None
     if not remote_ws_url:
-        server_functions_dir = (base_dir / "server_functions").resolve()
         discovered_server_functions = {}
-        if server_functions_dir.is_dir():
-            discovered_server_functions = discover_server_functions_in_dir(str(server_functions_dir))
-            if Debug.enabled():
-                print(f"Discovered server functions from 'server_functions' subdirectory: {server_functions_dir}")
-        additional_sf_dirs = config.get('additional_server_functions_dirs', [])
-        if not isinstance(additional_sf_dirs, list):
-            print(f"Warning: 'additional_server_functions_dirs' in {config_path} should be a list. Ignoring.")
-            additional_sf_dirs = []
-        for sf_dir in additional_sf_dirs:
-            add_dir_path = (base_dir / sf_dir).resolve()
-            if add_dir_path.is_dir():
-                extra = discover_server_functions_in_dir(str(add_dir_path))
-                discovered_server_functions.update(extra)
+        if server_functions_registry is not None:
+            try:
+                discovered_server_functions.update(server_functions_registry)
                 if Debug.enabled():
-                    print(f"Discovered additional server functions from: {add_dir_path}")
-            else:
-                try:
-                    display_path = add_dir_path.relative_to(Path.cwd())
-                except ValueError:
-                    display_path = add_dir_path
-                print(f"Warning: Additional server functions directory '{display_path}' not found. Skipping.")
+                    print(f"Using project server functions registry with {len(discovered_server_functions)} functions")
+            except Exception:
+                pass
+        else:
+            server_functions_dir = (base_dir / "server_functions").resolve()
+            if server_functions_dir.is_dir():
+                discovered_server_functions = discover_server_functions_in_dir(str(server_functions_dir))
+                if Debug.enabled():
+                    print(f"Discovered server functions from 'server_functions' subdirectory: {server_functions_dir}")
+            additional_sf_dirs = config.get('additional_server_functions_dirs', [])
+            if not isinstance(additional_sf_dirs, list):
+                print(f"Warning: 'additional_server_functions_dirs' in {config_path} should be a list. Ignoring.")
+                additional_sf_dirs = []
+            for sf_dir in additional_sf_dirs:
+                add_dir_path = (base_dir / sf_dir).resolve()
+                if add_dir_path.is_dir():
+                    extra = discover_server_functions_in_dir(str(add_dir_path))
+                    discovered_server_functions.update(extra)
+                    if Debug.enabled():
+                        print(f"Discovered additional server functions from: {add_dir_path}")
+                else:
+                    try:
+                        display_path = add_dir_path.relative_to(Path.cwd())
+                    except ValueError:
+                        display_path = add_dir_path
+                    print(f"Warning: Additional server functions directory '{display_path}' not found. Skipping.")
 
         sf_cfg = config.get('server_functions', [])
         register_all = False
@@ -627,19 +643,25 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
     output_guardrails_list = []
     
     if not remote_ws_url:  # Only discover guardrails for local agents
-        guardrails_dir_path = (base_dir / "guardrails").resolve()
-        if guardrails_dir_path.is_dir():
-            # Discover guardrails
-            discovered_input, discovered_output = discover_guardrails_in_dir(str(guardrails_dir_path))
+        if guardrails_registry is not None:
+            discovered_input = dict((guardrails_registry.get('input') or {}))
+            discovered_output = dict((guardrails_registry.get('output') or {}))
             if Debug.enabled():
-                print(f"Discovered guardrails from 'guardrails' subdirectory: {guardrails_dir_path}")
-                print(f"  Input guardrails: {list(discovered_input.keys())}")
-                print(f"  Output guardrails: {list(discovered_output.keys())}")
+                print(f"Using project guardrails registry: input={len(discovered_input)} output={len(discovered_output)}")
         else:
-            discovered_input = {}
-            discovered_output = {}
-            if Debug.enabled():
-                print(f"No 'guardrails' subdirectory found at {guardrails_dir_path}")
+            guardrails_dir_path = (base_dir / "guardrails").resolve()
+            if guardrails_dir_path.is_dir():
+                # Discover guardrails
+                discovered_input, discovered_output = discover_guardrails_in_dir(str(guardrails_dir_path))
+                if Debug.enabled():
+                    print(f"Discovered guardrails from 'guardrails' subdirectory: {guardrails_dir_path}")
+                    print(f"  Input guardrails: {list(discovered_input.keys())}")
+                    print(f"  Output guardrails: {list(discovered_output.keys())}")
+            else:
+                discovered_input = {}
+                discovered_output = {}
+                if Debug.enabled():
+                    print(f"No 'guardrails' subdirectory found at {guardrails_dir_path}")
         
         # Process input guardrails from config
         input_guardrail_names = config.get('input_guardrails', [])
@@ -758,6 +780,19 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
     # --- Settings ---
     # Start with default OpenAI settings
     combined_settings_fields_dict = {field.key: field for field in DEFAULT_SETTINGS_FIELDS}
+    # Project-level settings fields (optional)
+    if project_defaults and isinstance(project_defaults.get('settings'), list):
+        for setting_dict in project_defaults.get('settings'):
+            if isinstance(setting_dict, dict) and 'key' in setting_dict and 'label' in setting_dict:
+                field = SettingField(
+                    key=setting_dict['key'],
+                    label=setting_dict['label'],
+                    group=setting_dict.get('group'),
+                    default=setting_dict.get('default', ''),
+                    secret=setting_dict.get('secret', False),
+                    hint=setting_dict.get('hint', ''),
+                )
+                combined_settings_fields_dict[field.key] = field
     # Add default MCP settings if MCP is used
     if uses_mcp:
         for field in DEFAULT_MCP_SETTINGS_FIELDS:
@@ -790,6 +825,8 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
     if tracing_config and not isinstance(tracing_config, dict):
         print(f"Warning: 'tracing' in {config_path} should be a dictionary. Ignoring.")
         tracing_config = None
+    if tracing_config is None and project_defaults and isinstance(project_defaults.get('tracing'), dict):
+        tracing_config = project_defaults.get('tracing')
     
     # --- Variables for dynamic instructions ---
     # Variables support environment variable substitution
@@ -827,7 +864,13 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
                 print(f"Warning: Icon for tool '{tool_name}' should be a string. Skipping.")
         # ---------------------------------------------- #
 
-    theme_color = _parse_theme_color(config.get('theme_color'), "#2196F3")  # Default Material Blue
+    theme_color_default = "#2196F3"
+    if project_defaults and isinstance(project_defaults.get('theme_color'), str):
+        theme_color_default = project_defaults.get('theme_color')
+    theme_color = _parse_theme_color(config.get('theme_color'), theme_color_default)
+    layout_default = 'classic'
+    if project_defaults and isinstance(project_defaults.get('layout'), str):
+        layout_default = project_defaults.get('layout')
 
     # --- Build Agent (Placeholder/Default) ---
     # The actual Agent/SafeAgent creation is deferred to AgentApp using a default builder.
@@ -887,7 +930,10 @@ def load_agent_spec_from_yaml(config_path: str, _loading_stack: Optional[Set[Pat
             settings_fields=final_settings_fields,
             page_title_suffix=page_title_suffix,
             theme_color=theme_color,
-            layout=config.get('layout', 'classic'),
+            layout=config.get('layout', layout_default),
+
+            label=label_from_yaml,
+            description=description_from_yaml,
 
             # Remote agent metadata
             remote_ws_url=remote_ws_url,
