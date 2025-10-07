@@ -155,36 +155,34 @@ def serve(
     except ImportError:
         raise ImportError("uvicorn is required for server mode. Install with: pip install uvicorn")
 
-    if not db_path:
-        traces_dir = get_traces_dir()
+    traces_dir = get_traces_dir()
+    storage = None
+    active_project = None
+    created_db = False
 
+    if db_path:
+        resolved = Path(db_path).expanduser().resolve()
+        existed = resolved.exists()
+        storage = SQLiteStorage(str(resolved))
+        created_db = not existed
+        active_project = project or resolved.stem
+    else:
         if project:
-            db_path = traces_dir / f"{project}.db"
-            if not db_path.exists():
-                print(f"❌ Database not found: {db_path}")
-                print(f"\nAvailable databases in {traces_dir}:")
-                for db in traces_dir.glob("*.db"):
-                    print(f"  - {db.stem}")
-                return
+            resolved = traces_dir / f"{project}.db"
+            existed = resolved.exists()
+            storage = SQLiteStorage(str(resolved))
+            created_db = not existed
+            active_project = project
         else:
-            if not traces_dir.exists():
-                print("❌ No OmniAgents Studio trace directory found. Run a traced application first.")
-                return
-
-            db_files = list(traces_dir.glob("*.db"))
-
-            if len(db_files) == 0:
-                print("❌ No databases found in", traces_dir)
-                print("\nTo create a database, run a traced application:")
-                print("  import omniagents.studio.tracing as studio_tracing")
-                print("  studio_tracing.init(project='my_project')")
-                return
-            elif len(db_files) == 1:
-                db_path = db_files[0]
-                print(f"📂 Found one database, using: {db_path.stem}")
-            else:
+            db_files = sorted(traces_dir.glob("*.db"))
+            if len(db_files) == 1:
+                resolved = db_files[0]
+                storage = SQLiteStorage(str(resolved))
+                active_project = resolved.stem
+                print(f"📂 Found one database, using: {active_project}")
+            elif len(db_files) > 1:
                 print("📂 Found multiple project databases:\n")
-                for db in sorted(db_files):
+                for db in db_files:
                     try:
                         temp_storage = SQLiteStorage(str(db))
                         trace_count = len(temp_storage.get_traces(limit=1))
@@ -196,22 +194,22 @@ def serve(
 
                 print("\n✨ Serving all projects. Use the project selector in the UI to switch between them.")
                 print("📌 To serve only a specific project, use: omniagents studio serve --project <name>")
-                db_path = None
+            else:
+                print(f"📭 No trace databases found in {traces_dir}")
+                print("✨ Studio will create databases as traces are recorded or when --project is provided.")
 
-    storage = None
-    if db_path:
-        storage = SQLiteStorage(str(db_path))
+    from omniagents.studio.server import create_api_app
 
-    from .api import create_api_app
-
-    app, _ = create_api_app(storage)
+    app, _ = create_api_app(storage, default_project=active_project)
 
     if storage:
         print(f"🚀 OmniAgents Studio tracing server running at http://{host}:{port}")
         print(f"💾 Database: {storage.db_path}")
+        if created_db:
+            print("🆕 Initialized new database")
     else:
         print(f"🚀 OmniAgents Studio tracing server running at http://{host}:{port}")
-        print(f"📊 Multi-project mode - all databases in {get_traces_dir()} are accessible")
+        print(f"📊 Multi-project mode - all databases in {traces_dir} are accessible")
     print(f"🎨 UI: http://{host}:{port}")
     if auth_token:
         print("🔐 Authentication: Enabled")

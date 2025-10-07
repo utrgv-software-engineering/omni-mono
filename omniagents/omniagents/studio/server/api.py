@@ -1,20 +1,24 @@
 """FastAPI routes for the React UI"""
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse
-from typing import Optional, List, Dict, Any
-from pathlib import Path
-import json
 import asyncio
-from datetime import datetime
 import csv
 import io
+import json
+import logging
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from omniagents.core.paths import get_traces_dir
 
-from .storage import SQLiteStorage
+from ..tracing.storage import SQLiteStorage
+
+logger = logging.getLogger(__name__)
 
 class StorageManager:
     """Manages multiple storage instances for different projects"""
@@ -26,9 +30,10 @@ class StorageManager:
         """Get or create storage instance for a project"""
         if project not in self.storages:
             db_path = self.storage_dir / f"{project}.db"
-            if not db_path.exists():
-                raise ValueError(f"Project database not found: {project}")
+            created = not db_path.exists()
             self.storages[project] = SQLiteStorage(str(db_path))
+            if created:
+                logger.info("Created Studio database for project '%s'", project)
         return self.storages[project]
     
     def get_all_storages(self) -> Dict[str, SQLiteStorage]:
@@ -63,19 +68,18 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-def create_api_app(storage: Optional[SQLiteStorage] = None):
+def create_api_app(storage: Optional[SQLiteStorage] = None, default_project: Optional[str] = None):
     app = FastAPI()
-    
-    # Create storage manager for handling multiple projects
+
     storage_manager = StorageManager()
-    
-    # If a specific storage was provided, use it as the default
-    default_project = None
+
+    initial_project = default_project
     if storage:
-        # Extract project name from the db path
         db_path = Path(storage.db_path)
-        default_project = db_path.stem
-        storage_manager.storages[default_project] = storage
+        project_name = initial_project or db_path.stem
+        storage_manager.storages[project_name] = storage
+        initial_project = project_name
+    app.state.default_project = initial_project
     
     # Add CORS middleware for development
     app.add_middleware(
@@ -977,11 +981,10 @@ def create_api_app(storage: Optional[SQLiteStorage] = None):
             manager.disconnect(websocket)
     
     # Serve static files in production
-    # Prefer packaged assets under studio/tracing/static; fall back to repo root for dev
+    # Prefer packaged assets under studio/server/static; fall back to local web dist for dev
     candidate_dirs = [
         Path(__file__).parent / "static",
-        Path(__file__).parent.parent / "static",
-        Path(__file__).parent.parent / "web" / "dist",
+        Path(__file__).parent / "web" / "dist",
     ]
     for static_dir in candidate_dirs:
         if static_dir.exists():

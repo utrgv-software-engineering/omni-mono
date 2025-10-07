@@ -11,5 +11,13 @@ def __dir__():
 
 __all__ = getattr(_module, "__all__", [])
 
-for _submodule in ("api", "processor", "storage", "trace", "utils"):
-    sys.modules[f"{__name__}.{_submodule}"] = importlib.import_module(f"omniagents.studio.tracing.{_submodule}")
+_SUBMODULE_MAP = {
+    "api": "omniagents.studio.server.api",
+    "processor": "omniagents.studio.tracing.processor",
+    "storage": "omniagents.studio.tracing.storage",
+    "trace": "omniagents.studio.tracing.trace",
+    "utils": "omniagents.studio.tracing.utils",
+}
+
+for _alias, _target in _SUBMODULE_MAP.items():
+    sys.modules[f"{__name__}.{_alias}"] = importlib.import_module(_target)
