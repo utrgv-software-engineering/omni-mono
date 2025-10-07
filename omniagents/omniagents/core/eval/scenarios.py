@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import hashlib
 import json
 import math
@@ -141,13 +142,38 @@ async def _build_generator_agent(base_dir: Path, agent_cfg: Dict[str, Any], dims
             out_type = str
         elif output_type.lower() == "list":
             out_type = list
-    if isinstance(agent_cfg.get("output_schema"), dict):
+    raw_out_schema = agent_cfg.get("output_schema")
+    if isinstance(raw_out_schema, dict) and raw_out_schema:
         try:
-            from typing_extensions import TypedDict
-            schema = agent_cfg.get("output_schema") or {}
-            props = schema.get("properties", {}) or {}
-            ann = {k: _map_json_type_to_py((v or {}).get("type")) for k, v in props.items()}
-            out_type = TypedDict("GeneratorOutput", ann)  # type: ignore
+            from typing import Optional
+            # Prefer a Pydantic BaseModel so the SDK does not wrap in {"response": ...}
+            try:
+                from pydantic import BaseModel, create_model  # type: ignore
+            except Exception:
+                BaseModel = None  # type: ignore
+                create_model = None  # type: ignore
+
+            schema = raw_out_schema or {}
+            schema_type = str(schema.get("type") or "object").lower()
+            props = (schema.get("properties") or {}) if isinstance(schema.get("properties"), dict) else {}
+            required = set(schema.get("required") or [])
+
+            if BaseModel and create_model and schema_type == "object":
+                fields: Dict[str, tuple] = {}
+                for k, v in props.items():
+                    py_t = _map_json_type_to_py((v or {}).get("type"))
+                    if k in required:
+                        fields[k] = (py_t, ...)
+                    else:
+                        fields[k] = (Optional[py_t], None)
+                # Fallback to a permissive single-field model if no properties
+                if not fields:
+                    fields = {"data": (dict, ...)}
+                out_type = create_model("GeneratorOutput", **fields)  # type: ignore
+            else:
+                # If array or pydantic unavailable, fall back to plain str to parse manually
+                # or dict for object without strict validation
+                out_type = dict if schema_type == "object" else str
         except Exception:
             pass
 
@@ -172,6 +198,14 @@ async def _run_generation(agent, prompt: str, max_turns: int = 1) -> List[Dict[s
     from agents import Runner as AgentsRunner
     res = await AgentsRunner.run(agent, prompt, max_turns=max_turns)
     val = getattr(res, "final_output", None)
+    try:
+        if val is not None and hasattr(val, "model_dump"):
+            val = val.model_dump()  # pydantic v2
+        elif val is not None and hasattr(val, "dict"):
+            # pydantic v1 fallback
+            val = val.dict()
+    except Exception:
+        pass
     if isinstance(val, list):
         return [x for x in val if isinstance(x, dict)]
     if isinstance(val, dict):
@@ -225,7 +259,15 @@ def _persona_from_mapping(dimensions: List[Dict[str, Any]], mapping: Dict[str, s
     return out
 
 
-async def generate_scenarios(compiled_yaml: Path, count: int | None = None, seed: int | None = None) -> Tuple[List[Dict[str, Any]], Path, str]:
+async def generate_scenarios(
+    compiled_yaml: Path,
+    count: int | None = None,
+    seed: int | None = None,
+    set_name: str | None = None,
+    output: Path | None = None,
+    workflow_name: str | None = None,
+    progress_cb: Any | None = None,
+) -> Tuple[List[Dict[str, Any]], Path, str]:
     cfg_path = Path(compiled_yaml).resolve()
     raw = _read_yaml(cfg_path)
     eval_cfg = (raw.get("evaluation") or {})
@@ -253,28 +295,48 @@ async def generate_scenarios(compiled_yaml: Path, count: int | None = None, seed
     used_names: Dict[str, int] = {}
     combos = _enumerate_combos(dims)
     random.shuffle(combos)
+    import hashlib as _hashlib, json as _json
+    try:
+        _cat_blob = _json.dumps(dims_catalog, sort_keys=True, ensure_ascii=False)
+        catalog_id = _hashlib.sha1(_cat_blob.encode("utf-8")).hexdigest()[:16]
+    except Exception:
+        catalog_id = None
+    if progress_cb:
+        try:
+            progress_cb({"event": "start", "target": target_count})
+        except Exception:
+            pass
     if target_count <= 0:
         base = cfg_path.parent.parent if cfg_path.name == "evaluation_compiled.yml" else cfg_path.parent
-        out_dir = (base / "artifacts" / "eval" / ts).resolve()
+        if output is not None:
+            out_dir = Path(output).resolve().parent
+            out_path = Path(output).resolve()
+        else:
+            if not set_name:
+                raise SystemExit("Provide a scenario set name or output path for generation")
+            out_dir = (base / "artifacts" / "eval" / str(set_name)).resolve()
+            out_path = out_dir / "generated_scenarios.yml"
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / "generated_scenarios.yml"
         data = {"scenarios": []}
         class NoAliasDumper(yaml.SafeDumper):
             def ignore_aliases(self, data):
                 return True
         out_path.write_text(yaml.dump(data, sort_keys=False, Dumper=NoAliasDumper, allow_unicode=True), encoding="utf-8")
         try:
-            latest = (out_dir.parent / "latest")
-            if latest.is_symlink() or latest.exists():
-                try:
-                    if latest.is_dir() and not latest.is_symlink():
-                        pass
-                    latest.unlink()
-                except Exception:
-                    pass
-            latest.symlink_to(out_dir)
+            (out_dir / "manifest.json").write_text(json.dumps({
+                "timestamp": ts,
+                "name": (str(set_name) if set_name else out_dir.name),
+                "counts": {"total": 0},
+                "source": str(cfg_path),
+                **({"workflow_generate": str(workflow_name)} if workflow_name else {}),
+            }, indent=2), encoding="utf-8")
         except Exception:
             pass
+        if progress_cb:
+            try:
+                progress_cb({"event": "done", "count": 0})
+            except Exception:
+                pass
         return [], out_path, ts
     per_combo = max(1, math.ceil(target_count / len(combos)))
     seen_ids: set[str] = set()
@@ -291,7 +353,37 @@ async def generate_scenarios(compiled_yaml: Path, count: int | None = None, seed
             "num_samples": per_combo,
         }
         rendered = render_template(prompt_str, **ctx)
-        outs = await _run_generation(agent, rendered, max_turns=int(input_cfg.get("max_turns", 1)))
+        if workflow_name:
+            try:
+                from agentio import trace as agentio_trace
+                try:
+                    import omniagents as _oa
+                    _oa_version = getattr(_oa, "__version__", None)
+                except Exception:
+                    _oa_version = None
+                import uuid as _uuid
+                run_uid = _uuid.uuid4().hex[:8]
+                meta = {
+                    "omniagents": {
+                        "run_type": "scenario_generation",
+                        "run": {"id": run_uid},
+                        "synthetic": {
+                            "catalog_id": catalog_id,
+                            "catalog": {"dimensions": dims_catalog},
+                            "selection": {"mapping": {it["dimension"]: it["value"] for it in persona}},
+                            "num_samples": per_combo,
+                        },
+                        "config": {"compiled_yaml": str(cfg_path)},
+                        **({"omniagents_version": _oa_version} if _oa_version else {}),
+                    }
+                }
+                gid = run_uid
+                with agentio_trace(workflow_name, group_id=gid, metadata=meta):
+                    outs = await _run_generation(agent, rendered, max_turns=int(input_cfg.get("max_turns", 1)))
+            except Exception:
+                outs = await _run_generation(agent, rendered, max_turns=int(input_cfg.get("max_turns", 1)))
+        else:
+            outs = await _run_generation(agent, rendered, max_turns=int(input_cfg.get("max_turns", 1)))
         for out in outs:
             name = str(out.get("name") or _slugify("_".join(selected_value_names)))
             prompt = str(out.get("prompt") or "")
@@ -304,15 +396,38 @@ async def generate_scenarios(compiled_yaml: Path, count: int | None = None, seed
             item = {"id": sid, "name": uniq, "prompt": prompt, "dimensions": dict(mapping), "measures": []}
             scenarios.append(item)
             seen_ids.add(sid)
+            if progress_cb:
+                try:
+                    progress_cb({
+                        "event": "progress",
+                        "current": len(scenarios),
+                        "total": target_count,
+                        "scenario": item,
+                    })
+                except Exception:
+                    pass
+            try:
+                pr = prompt if isinstance(prompt, str) else str(prompt)
+                if len(pr) > 160:
+                    pr = pr[:160] + "..."
+                print(f"[{len(scenarios)}/{target_count}] {uniq}: {pr}", flush=True)
+            except Exception:
+                pass
             if len(scenarios) >= target_count:
                 break
         if len(scenarios) >= target_count:
             break
 
     base = cfg_path.parent.parent if cfg_path.name == "evaluation_compiled.yml" else cfg_path.parent
-    out_dir = (base / "artifacts" / "eval" / ts).resolve()
+    if output is not None:
+        out_dir = Path(output).resolve().parent
+        out_path = Path(output).resolve()
+    else:
+        if not set_name:
+            raise SystemExit("Provide a scenario set name or output path for generation")
+        out_dir = (base / "artifacts" / "eval" / str(set_name)).resolve()
+        out_path = out_dir / "generated_scenarios.yml"
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "generated_scenarios.yml"
     data = {"scenarios": scenarios}
     class NoAliasDumper(yaml.SafeDumper):
         def ignore_aliases(self, data):
@@ -321,24 +436,29 @@ async def generate_scenarios(compiled_yaml: Path, count: int | None = None, seed
     try:
         (out_dir / "manifest.json").write_text(json.dumps({
             "timestamp": ts,
+            "name": (str(set_name) if set_name else out_dir.name),
             "counts": {"total": len(scenarios)},
             "source": str(cfg_path),
+            **({"workflow_generate": str(workflow_name)} if workflow_name else {}),
         }, indent=2), encoding="utf-8")
-        latest = (out_dir.parent / "latest")
-        if latest.is_symlink() or latest.exists():
-            try:
-                if latest.is_dir() and not latest.is_symlink():
-                    pass
-                latest.unlink()
-            except Exception:
-                pass
-        latest.symlink_to(out_dir)
     except Exception:
         pass
+    if progress_cb:
+        try:
+            progress_cb({"event": "done", "count": len(scenarios)})
+        except Exception:
+            pass
     return scenarios, out_path, ts
 
 
-async def run_scenarios_against_agent(agent_yaml: Path, scenarios: List[Dict[str, Any]], max_turns: int | None = None, include_history: bool = False, workflow_name: str | None = None) -> List[Dict[str, Any]]:
+async def run_scenarios_against_agent(
+    agent_yaml: Path,
+    scenarios: List[Dict[str, Any]],
+    max_turns: int | None = None,
+    include_history: bool = False,
+    workflow_name: str | None = None,
+    progress_cb: Any | None = None,
+) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
     cfg = _read_yaml(agent_yaml)
     defaults = ((cfg.get("evaluation") or {}).get("defaults") or {})
@@ -350,7 +470,13 @@ async def run_scenarios_against_agent(agent_yaml: Path, scenarios: List[Dict[str
         catalog_id = _hashlib.sha1(_cat_blob.encode("utf-8")).hexdigest()[:16]
     except Exception:
         catalog_id = None
-    for sc in scenarios:
+    total = len(scenarios)
+    if progress_cb:
+        try:
+            progress_cb({"event": "start", "total": total})
+        except Exception:
+            pass
+    for idx, sc in enumerate(scenarios):
         spec = load_agent_spec_from_yaml(str(agent_yaml))
         spec.use_safe_agent = False
         try:
@@ -411,4 +537,14 @@ async def run_scenarios_against_agent(agent_yaml: Path, scenarios: List[Dict[str
             "history_len": len(history),
             **({"history": history} if include_history else {}),
         })
+        if progress_cb:
+            try:
+                progress_cb({"event": "progress", "current": idx + 1, "total": total, "scenario_id": sc.get("id")})
+            except Exception:
+                pass
+    if progress_cb:
+        try:
+            progress_cb({"event": "done", "count": len(results)})
+        except Exception:
+            pass
     return results

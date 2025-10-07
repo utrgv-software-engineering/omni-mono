@@ -8,11 +8,18 @@ from typing import Any, Dict, List, Optional, Callable
 import yaml
 
 from omniagents.core.utils.jinja import render_template
+from omniagents.core.tools.discovery import discover_functions_in_dir
 
 
 async def evaluate_split(compiled_yaml: Path, split_path: Path, judge_key: str, judge_max_turns: int = 1, run_max_turns: int | None = None, show: int = 20, replay_mode: str = "replay", runs_file: str | None = None, progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None) -> Dict[str, Any]:
 
     cfg = yaml.safe_load(Path(compiled_yaml).read_text(encoding="utf-8")) or {}
+    agent_meta = {
+        "name": cfg.get("name"),
+        "label": cfg.get("label"),
+        "description": cfg.get("description"),
+        "tools": cfg.get("tools") or [],
+    }
     eval_cfg = (cfg.get("evaluation") or {})
     judges_cfg = (eval_cfg.get("judges") or {})
     jcfg = judges_cfg.get(str(judge_key))
@@ -23,6 +30,21 @@ async def evaluate_split(compiled_yaml: Path, split_path: Path, judge_key: str, 
     scenarios = [x for x in (data.get("scenarios") or []) if isinstance(x, dict)]
     if not scenarios:
         raise SystemExit("No scenarios in split")
+
+    category_hint: Optional[str] = None
+    try:
+        category_hint = Path(split_path).parent.name
+    except Exception:
+        category_hint = None
+    if not category_hint:
+        try:
+            for sc in scenarios:
+                c = sc.get("target_category")
+                if c:
+                    category_hint = str(c)
+                    break
+        except Exception:
+            category_hint = None
 
     def _default_runs_path(sp: Path) -> Path:
         ts_dir = sp.parents[2]
@@ -75,7 +97,7 @@ async def evaluate_split(compiled_yaml: Path, split_path: Path, judge_key: str, 
 
     from omniagents.core.agents.specs import AgentSpec
     from omniagents.core.agents.builder import _default_build_agent
-    async def _build_judge_agent(agent_cfg: Dict[str, Any]):
+    async def _build_judge_agent(agent_cfg: Dict[str, Any], base_dir: Path):
         def _map_js_type(t: str):
             t = (t or "").lower()
             return {"string": str, "boolean": bool, "bool": bool, "number": float, "float": float, "integer": int, "int": int, "object": dict, "array": list}.get(t, str)
@@ -85,12 +107,25 @@ async def evaluate_split(compiled_yaml: Path, split_path: Path, judge_key: str, 
             try:
                 p = Path(instr_file)
                 if not p.is_absolute():
-                    p = (Path.cwd() / p).resolve()
+                    p = (base_dir / p).resolve()
                 instructions = p.read_text(encoding="utf-8") if p.is_file() else ""
             except Exception:
                 instructions = ""
         if not instructions:
             instructions = "You are an evaluation agent. Return ONLY JSON."
+        else:
+            try:
+                instructions = render_template(
+                    instructions,
+                    agent=agent_meta,
+                    agent_name=agent_meta.get("name"),
+                    agent_label=agent_meta.get("label"),
+                    agent_description=agent_meta.get("description"),
+                    agent_tools=agent_meta.get("tools"),
+                    category=category_hint,
+                )
+            except Exception:
+                pass
         model = agent_cfg.get("model", "gpt-4o-mini")
         output_type = agent_cfg.get("output_type", dict)
         output_type_strict = bool(agent_cfg.get("output_type_strict", False))
@@ -107,17 +142,42 @@ async def evaluate_split(compiled_yaml: Path, split_path: Path, judge_key: str, 
                 out_type = TypedDict("JudgeOutput", ann)  # type: ignore
             except Exception:
                 pass
+        # Discover tools relative to compiled target dir
+        discovered = {}
+        try:
+            t1 = (base_dir / "tools").resolve()
+            if t1.is_dir():
+                discovered.update(discover_functions_in_dir(str(t1)))
+        except Exception:
+            pass
+        try:
+            t2 = (base_dir / "project_tools").resolve()
+            if t2.is_dir():
+                discovered.update(discover_functions_in_dir(str(t2)))
+        except Exception:
+            pass
+        tools_list = []
+        activated = agent_cfg.get("tools", [])
+        if isinstance(activated, str) and activated.strip().lower() in {"*", "all"}:
+            tools_list = list(discovered.values())
+        elif isinstance(activated, list):
+            for nm in activated:
+                if nm in discovered:
+                    tools_list.append(discovered[nm])
+
         def _get_instr() -> str:
             return instructions
+        nm = agent_cfg.get("name") or "Judge"
+        lbl = agent_cfg.get("label") or nm
         spec = AgentSpec(
-            name=agent_cfg.get("name") or "Judge",
-            header_title=agent_cfg.get("name") or "Judge",
-            page_title=agent_cfg.get("name") or "Judge",
+            name=nm,
+            header_title=lbl,
+            page_title=lbl,
             welcome_text="",
             client_storage_prefix="judge.",
             get_agent_instructions=_get_instr,
             build_agent=None,
-            available_tools=[],
+            available_tools=tools_list,
             model_name=model,
             output_type=out_type,
             output_type_strict=output_type_strict,
@@ -144,9 +204,22 @@ async def evaluate_split(compiled_yaml: Path, split_path: Path, judge_key: str, 
             pass
         return None
 
-    judge_agent = await _build_judge_agent(jcfg.get("agent") or {})
+    base_dir = Path(compiled_yaml).resolve().parent
+    judge_agent = await _build_judge_agent(jcfg.get("agent") or {}, base_dir)
     input_cfg = jcfg.get("input") or {}
-    template = input_cfg.get("template") or "{{ text }}"
+    template = input_cfg.get("template") or ""
+    if not template:
+        tf = input_cfg.get("template_file")
+        if tf:
+            try:
+                p = Path(tf)
+                if not p.is_absolute():
+                    p = (base_dir / p).resolve()
+                template = p.read_text(encoding="utf-8") if p.is_file() else ""
+            except Exception:
+                template = ""
+    if not template:
+        template = "{{ text }}"
     source = str(input_cfg.get("source", "final_assistant_text")).strip()
     max_turns = int(judge_max_turns or 1)
 
@@ -183,7 +256,17 @@ async def evaluate_split(compiled_yaml: Path, split_path: Path, judge_key: str, 
             text = json.dumps(run.get("history") or [])
         else:
             text = run.get("final_assistant_text") or ""
-        prompt = render_template(template, text=text, history=(run.get("history") or []), history_json=json.dumps(run.get("history") or []))
+        prompt = render_template(
+            template,
+            text=text,
+            history=(run.get("history") or []),
+            history_json=json.dumps(run.get("history") or []),
+            agent=agent_meta,
+            agent_name=agent_meta.get("name"),
+            agent_label=agent_meta.get("label"),
+            agent_description=agent_meta.get("description"),
+            agent_tools=agent_meta.get("tools"),
+        )
         out = await _run_judge(judge_agent, prompt, max_turns=max_turns)
         pred = _predict_label_from_judge_output(out, sc.get("target_category") or "")
         agree = None if pred is None else (pred == label)

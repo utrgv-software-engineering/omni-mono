@@ -131,6 +131,40 @@ def _collect_judges(paths: List[Path]) -> Dict[str, Any]:
     return out
 
 
+def _collect_optimizers(paths: List[Path]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for p in paths:
+        if p.is_file():
+            data = _read_yaml(p)
+            if isinstance(data, dict):
+                os = data.get("optimizers")
+                if isinstance(os, dict):
+                    for k, v in os.items():
+                        out[k] = v
+                if isinstance(os, list):
+                    for o in os:
+                        key = (o or {}).get("name") or (o or {}).get("key")
+                        if key:
+                            out[key] = o
+            continue
+        if not p.is_dir():
+            continue
+        for y in sorted(list(p.rglob("*.yml"))):
+            data = _read_yaml(y)
+            if not isinstance(data, dict):
+                continue
+            os = data.get("optimizers")
+            if isinstance(os, dict):
+                for k, v in os.items():
+                    out[k] = v
+            if isinstance(os, list):
+                for o in os:
+                    key = (o or {}).get("name") or (o or {}).get("key")
+                    if key:
+                        out[key] = o
+    return out
+
+
 def _resolve_judge_agent_ref(base: Path, jcfg: Dict[str, Any]) -> Dict[str, Any]:
     jc = dict(jcfg or {})
     ref = jc.get("agent_ref") or jc.get("ref")
@@ -267,9 +301,10 @@ def compile_project(project_path: str, select: str | None = None, exclude: str |
         eval_dir / "scenarios",
     ])
     judges_sources = _uniq([
-        base_dir / "evaluations" / "judges.yml",
-        eval_dir / "judges.yml",
         eval_dir / "judges",
+    ])
+    optimizers_sources = _uniq([
+        eval_dir / "optimizers",
     ])
     metrics_sources = _uniq([
         base_dir / "evaluations" / "metrics.yml",
@@ -289,6 +324,7 @@ def compile_project(project_path: str, select: str | None = None, exclude: str |
     base_eval = _collect_base_eval([s for s in base_eval_sources if s.exists()])
     scenarios = _collect_scenarios([s for s in scenarios_sources if s.exists()])
     judges = _collect_judges([s for s in judges_sources if s.exists()])
+    optimizers = _collect_optimizers([s for s in optimizers_sources if s.exists()])
     metrics = _collect_metrics([s for s in metrics_sources if s.exists()])
 
     if select or exclude:
@@ -298,6 +334,8 @@ def compile_project(project_path: str, select: str | None = None, exclude: str |
     compiled_eval = _merge_dict(compiled_eval, base_eval)
     if judges:
         compiled_eval["judges"] = judges
+    if optimizers:
+        compiled_eval["optimizers"] = optimizers
     if metrics:
         compiled_eval["metrics"] = metrics
     if scenarios:

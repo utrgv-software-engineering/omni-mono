@@ -38,20 +38,22 @@ class FletBackend:
         else:
             app = AgentApp(spec=spec)
         
-        # Apply CLI overrides if args provided (same as CLI backend)
+        # Apply CLI overrides if args provided (strict flags)
         if args is not None:
-            if getattr(args, "no_approval", False):
+            approvals = getattr(args, "approvals", None)
+            if approvals == "skip":
                 app.spec.use_safe_agent = False
-            if getattr(args, "skip_approvals", False):
+            elif approvals == "auto":
+                app.spec.use_safe_agent = True
                 app.spec.safe_agent_options.skip_approvals = True
-            if getattr(args, "no_halt", False):
+            elif approvals == "require":
+                app.spec.use_safe_agent = True
+                app.spec.safe_agent_options.skip_approvals = False
+            on_reject = getattr(args, "on_reject", None)
+            if on_reject == "halt":
+                app.spec.safe_agent_options.halt_on_rejection = True
+            elif on_reject == "continue":
                 app.spec.safe_agent_options.halt_on_rejection = False
-            if getattr(args, "pre_approve", None):
-                pre = args.pre_approve.split(",")
-                app.spec.safe_agent_options.safe_tool_names.extend([t.strip() for t in pre if t.strip()])
-            if getattr(args, "safe_patterns", None):
-                pats = args.safe_patterns.split(",")
-                app.spec.safe_agent_options.safe_tool_patterns.extend([p.strip() for p in pats if p.strip()])
         
         # Initialize debug if not already initialized
         Debug.init(cli_flag=debug)

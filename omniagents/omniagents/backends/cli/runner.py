@@ -110,20 +110,22 @@ async def run_cli(
     if args is not None:
         Debug.init(cli_flag=getattr(args, "debug", False))
     
-    # Apply CLI overrides if args provided
+    # Apply CLI overrides if args provided (strict flags)
     if args is not None:
-        if getattr(args, "no_approval", False):
+        approvals = getattr(args, "approvals", None)
+        if approvals == "skip":
             spec.use_safe_agent = False
-        if getattr(args, "skip_approvals", False):
+        elif approvals == "auto":
+            spec.use_safe_agent = True
             spec.safe_agent_options.skip_approvals = True
-        if getattr(args, "no_halt", False):
+        elif approvals == "require":
+            spec.use_safe_agent = True
+            spec.safe_agent_options.skip_approvals = False
+        on_reject = getattr(args, "on_reject", None)
+        if on_reject == "halt":
+            spec.safe_agent_options.halt_on_rejection = True
+        elif on_reject == "continue":
             spec.safe_agent_options.halt_on_rejection = False
-        if getattr(args, "pre_approve", None):
-            pre = args.pre_approve.split(",")
-            spec.safe_agent_options.safe_tool_names.extend([t.strip() for t in pre if t.strip()])
-        if getattr(args, "safe_patterns", None):
-            pats = args.safe_patterns.split(",")
-            spec.safe_agent_options.safe_tool_patterns.extend([p.strip() for p in pats if p.strip()])
 
     # Note: OpenAI client configuration is now handled by the agent builder
     # which respects set_default_openai_client() if the user has set a custom client

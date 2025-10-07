@@ -549,7 +549,7 @@ def load_agent_spec_from_yaml(
                     display_path = additional_dir_path
                 print(f"Warning: Additional tools directory '{display_path}' not found. Skipping.")
         if not all_discovered_functions:
-            print(f"Warning: No tools discovered in any of the specified directories.")
+            pass
 
     activated_tool_names = config.get('tools', [])
     selected_tool_functions = []

@@ -60,17 +60,29 @@ def scaffold_project(project_name: str, parent_dir: str = ".", model: str = "gpt
         project_yml.write_text(content, encoding="utf-8")
         created.append(str(project_yml))
 
-    instructions_dir = project_dir / "instructions"
-    instructions_dir.mkdir(exist_ok=True)
-    instructions_md = instructions_dir / f"{sanitized}.md"
-    if not instructions_md.exists() or force:
-        instructions_md.write_text(
-            "You are a helpful assistant. Be concise and accurate.",
+    # New per-entity agent layout
+    agent_dir = agents_dir / sanitized
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    agent_yml = agent_dir / "agent.yml"
+    agent_instr = agent_dir / "instructions.md"
+    if not agent_instr.exists() or force:
+        agent_instr.write_text(
+            (
+                "<1–2 sentence blurb establishing identity and high-level situation to prime the LLM>\n\n"
+                "## Persona\n"
+                "<the role, expertise, and voice to adopt>\n\n"
+                "## Goal\n"
+                "<the concrete objective and success criteria>\n\n"
+                "## Starting Context\n"
+                "<initial inputs, available tools, and constraints>\n\n"
+                "## Guidance\n"
+                "<step-by-step rules, tool order, do/don’ts, output format>\n\n"
+                "## Examples\n"
+                "<few-shot input→output pairs to show format and edge cases>\n"
+            ),
             encoding="utf-8",
         )
-        created.append(str(instructions_md))
-
-    agent_yml = agents_dir / f"{sanitized}.yml"
+        created.append(str(agent_instr))
     if not agent_yml.exists() or force:
         def _titleize(s: str) -> str:
             parts = [p for p in s.split("_") if p]
@@ -82,7 +94,7 @@ def scaffold_project(project_name: str, parent_dir: str = ".", model: str = "gpt
             f"label: {display_label}\n"
             f"description: \"A helpful AI agent. Customize this description.\"\n"
             f"model: {model}\n"
-            f"instructions_file: ../instructions/{sanitized}.md\n"
+            f"instructions_file: instructions.md\n"
             f"welcome_text: \"Hello from {sanitized}.\"\n\n"
             f"tools: {tools_list}\n"
         )
@@ -175,11 +187,11 @@ def scaffold_agent(project_ref: str, agent_name: str, model: str = "gpt-4.1", fo
     root = _resolve_project_root(project_ref)
     sanitized = _sanitize_name(agent_name)
     agents_dir = root / "agents"
-    instr_dir = root / "instructions"
     agents_dir.mkdir(exist_ok=True)
-    instr_dir.mkdir(exist_ok=True)
-    agent_yml = agents_dir / f"{sanitized}.yml"
-    instr_md = instr_dir / f"{sanitized}.md"
+    agent_dir = agents_dir / sanitized
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    agent_yml = agent_dir / "agent.yml"
+    instr_md = agent_dir / "instructions.md"
     created: List[str] = []
     if agent_yml.exists() and not force:
         raise FileExistsError(f"Agent YAML exists: {agent_yml}")
@@ -194,13 +206,28 @@ def scaffold_agent(project_ref: str, agent_name: str, model: str = "gpt-4.1", fo
         f"label: {display_label}\n"
         f"description: \"A helpful AI agent. Customize this description.\"\n"
         f"model: {model}\n"
-        f"instructions_file: ../instructions/{sanitized}.md\n"
+        f"instructions_file: instructions.md\n"
         f"welcome_text: \"Hello from {sanitized}.\"\n\n"
         "tools: []\n"
     )
     agent_yml.write_text(agent_content, encoding="utf-8")
     created.append(str(agent_yml))
-    instr_md.write_text("You are a helpful assistant.", encoding="utf-8")
+    instr_md.write_text(
+        (
+            "<1–2 sentence blurb establishing identity and high-level situation to prime the LLM>\n\n"
+            "## Persona\n"
+            "<the role, expertise, and voice to adopt>\n\n"
+            "## Goal\n"
+            "<the concrete objective and success criteria>\n\n"
+            "## Starting Context\n"
+            "<initial inputs, available tools, and constraints>\n\n"
+            "## Guidance\n"
+            "<step-by-step rules, tool order, do/don’ts, output format>\n\n"
+            "## Examples\n"
+            "<few-shot input→output pairs to show format and edge cases>\n"
+        ),
+        encoding="utf-8",
+    )
     created.append(str(instr_md))
     return created, str(root), sanitized
 
@@ -212,10 +239,9 @@ def scaffold_eval_quickstart(project_ref: str, force: bool = False) -> Tuple[Lis
     created: List[str] = []
     evaluation_yml = eval_dir / "evaluation.yml"
     metrics_yml = eval_dir / "metrics.yml"
-    judges_yml = eval_dir / "judges.yml"
     scenarios_yml = eval_dir / "scenarios.yml"
     measures_py = eval_dir / "measures.py"
-    if (evaluation_yml.exists() or metrics_yml.exists() or judges_yml.exists() or scenarios_yml.exists() or measures_py.exists()) and not force:
+    if (evaluation_yml.exists() or metrics_yml.exists() or scenarios_yml.exists() or measures_py.exists()) and not force:
         raise FileExistsError("Evaluations already exist; use --force to overwrite")
     evaluation_yml.write_text(
         "evaluation:\n  defaults:\n    runs_per_prompt: 1\n    max_turns: 6\n",
@@ -227,8 +253,7 @@ def scaffold_eval_quickstart(project_ref: str, force: bool = False) -> Tuple[Lis
         encoding="utf-8",
     )
     created.append(str(metrics_yml))
-    judges_yml.write_text("judges: {}\n", encoding="utf-8")
-    created.append(str(judges_yml))
+    # judges are now per-judge under evaluations/judges/<key>/
     scenarios_yml.write_text(
         "scenarios:\n  - name: hello\n    prompt: Say hello\n",
         encoding="utf-8",
@@ -323,87 +348,136 @@ def scaffold_judge(
     sanitized = _sanitize_name(key)
     eval_dir = root / "evaluations"
     eval_dir.mkdir(exist_ok=True)
+    judges_root = eval_dir / "judges" / sanitized
+    judges_root.mkdir(parents=True, exist_ok=True)
     created: List[str] = []
-
-    judges_yml = eval_dir / "judges.yml"
-    data = {"judges": {}}
-    if judges_yml.exists():
-        try:
-            raw = yaml.safe_load(judges_yml.read_text(encoding="utf-8")) or {}
-            if isinstance(raw, dict):
-                data = raw
-                if not isinstance(data.get("judges"), dict):
-                    data["judges"] = {}
-        except Exception:
-            if not force:
-                raise
-            data = {"judges": {}}
-    judges = data.get("judges") or {}
-    if sanitized in judges and not force:
-        raise FileExistsError(f"Judge exists: {sanitized}")
 
     def _camel(s: str) -> str:
         parts = [p for p in s.split("_") if p]
         return "".join(p.capitalize() for p in parts)
+    def _titleize(s: str) -> str:
+        parts = [p for p in s.split("_") if p]
+        return " ".join(p.capitalize() for p in parts) or s
 
     agent_name = _camel(sanitized)
-    cat_placeholder = str(failure_category) if failure_category else "<<CRITERION_NAME>>"
-    instructions = (
-        "You are an expert evaluator assessing outputs from a <<ASSISTANT_SCOPE>> assistant.\n\n"
-        "Your Task: Determine if the assistant satisfies the criterion: <<CRITERION_NAME>>.\n\n"
-        "Evaluation Criterion: <<CRITERION_NAME>>\n"
-        "Definition of Pass/Fail:\n"
-        "Fail: <<FAIL_DEFINITION>>\n"
-        "Pass: <<PASS_DEFINITION>>\n\n"
-        "Output Format: Return ONLY a JSON object with:\n"
-        "- reasoning: 1–2 sentence explanation for your decision.\n"
-        "- answer: \"Pass\" or \"Fail\".\n\n"
-        "Examples:\n"
-        "Input 1:\n"
-        "User/History: <<BRIEF_HISTORY_OR_CONTEXT_EX_1>>\n"
-        "Assistant: \"<<ASSISTANT_REPLY_EX_1>>\"\n"
-        "Evaluation 1:\n"
-        "{\n  \"reasoning\": \"<<WHY_THIS_IS_FAIL_OR_PASS>>\",\n  \"answer\": \"Fail\"\n}\n\n"
-        "Input 2:\n"
-        "User/History: <<BRIEF_HISTORY_OR_CONTEXT_EX_2>>\n"
-        "Assistant: \"<<ASSISTANT_REPLY_EX_2>>\"\n"
-        "Evaluation 2:\n"
-        "{\n  \"reasoning\": \"<<WHY_THIS_IS_FAIL_OR_PASS>>\",\n  \"answer\": \"Pass\"\n}\n\n"
-        "Only return the JSON object; no extra text.\n"
-    )
-    template = (
-        f"Now, evaluate the following against the criterion: {cat_placeholder}.\n"
-        "Return JSON {reasoning:string, answer:\"Pass\"|\"Fail\"}.\n\n"
-        "Assistant Message:\n---\n{{ text }}\n---\n\n"
-        "Conversation History (JSON):\n---\n{{ history_json }}\n---\n\n"
-        "Your JSON Evaluation:\n"
-    )
-    jcfg = {
-        "agent": {
-            "name": agent_name,
-            "model": model,
-            "output_type": "dict",
-            "output_type_strict": False,
-            "output_schema": {
-                "type": "object",
-                "properties": {
-                    "reasoning": {"type": "string"},
-                    "answer": {"type": "string", "enum": ["Pass", "Fail"]},
+    agent_label = _titleize(sanitized)
+
+    judge_yml = judges_root / "judge.yml"
+    if judge_yml.exists() and not force:
+        raise FileExistsError(f"Judge exists: {judge_yml}")
+
+    judge_instructions_md = judges_root / "instructions.md"
+    judge_template_md = judges_root / "template.md"
+
+    judge_cfg = {
+        "judges": {
+            sanitized: {
+                "agent": {
+                    "name": agent_name,
+                    "label": agent_label,
+                    "model": model,
+                    "output_type": "dict",
+                    "output_type_strict": False,
+                    "output_schema": {
+                        "type": "object",
+                        "properties": {
+                            "reasoning": {"type": "string"},
+                            "answer": {"type": "string", "enum": ["Pass", "Fail"]},
+                        },
+                        "required": ["reasoning", "answer"],
+                        "additionalProperties": False,
+                    },
+                    "instructions_file": f"../evaluations/judges/{sanitized}/instructions.md",
                 },
-                "required": ["reasoning", "answer"],
-                "additionalProperties": False,
-            },
-            "instructions": instructions,
-        },
-        "input": {
-            "source": source,
-            "template": template,
-        },
+                "input": {
+                    "source": source,
+                    "template_file": f"../evaluations/judges/{sanitized}/template.md",
+                },
+            }
+        }
     }
-    judges[sanitized] = jcfg
-    data["judges"] = judges
-    judges_yml.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
-    created.append(str(judges_yml))
+
+    judge_yml.write_text(yaml.safe_dump(judge_cfg, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    created.append(str(judge_yml))
+
+    if not judge_instructions_md.exists() or force:
+        judge_instructions_md.write_text(
+            (
+                "AI Agent Information\n"
+                "- Name: {{ agent_label or agent_name }}\n"
+                "{% if agent_description -%}\n- Description: {{ agent_description }}\n{%- endif %}\n\n"
+                "Role\n"
+                "- You are an evaluation judge for the category: {{ category }}.\n\n"
+                "Goal\n"
+                "- Decide whether the assistant meets the criterion defined below.\n\n"
+                "Input\n"
+                "- You will receive a conversation trace between a user and the AI Agent described above.\n\n"
+                "Output Schema (Do Not Change)\n"
+                "- Return ONLY JSON with keys:\n"
+                "  - reasoning: string\n"
+                "  - answer: \"Pass\" or \"Fail\"\n"
+                "- Example:\n"
+                "  {\"reasoning\": \"...\", \"answer\": \"Pass\"}\n\n"
+                "Decision Policy\n"
+                "- Positive (label Fail): [FILL: WHAT COUNTS AS A VIOLATION]\n"
+                "- Negative (label Pass): [FILL: WHAT COUNTS AS ACCEPTABLE BEHAVIOR]\n"
+                "- Use only the provided input and any structured fields (e.g., history_json). Do not infer outside context.\n\n"
+                "Rules\n"
+                "1) Core decision rules:\n"
+                "   - [FILL: RULE 1]\n"
+                "   - [FILL: RULE 2]\n"
+                "   - [FILL: RULE 3]\n"
+                "2) Edge cases and clarifications:\n"
+                "   - [FILL: EDGE CASE 1]\n"
+                "   - [FILL: EDGE CASE 2]\n"
+                "3) Tie-breakers (when ambiguous):\n"
+                "   - [FILL: TIEBREAKER 1]\n"
+                "   - [FILL: TIEBREAKER 2]\n"
+                "4) Evidence requirements:\n"
+                "   - Require clear evidence before deciding Fail; otherwise prefer Pass.\n"
+                "   - Do not reward/penalize style unless it affects the criterion.\n\n"
+                "Common Pitfalls\n"
+                "- [FILL: PITFALL 1]\n"
+                "- [FILL: PITFALL 2]\n"
+                "- [FILL: PITFALL 3]\n\n"
+                "Examples\n"
+                "- Example A (Pass — Meets criterion)\n"
+                "  - Case: [FILL: CLEAR PASS CASE]\n"
+                "  - Why: [FILL: SPECIFIC REASON FOR PASS]\n"
+                "  - Output:\n"
+                "  {\"reasoning\": \"[FILL: PASS REASONING]\", \"answer\": \"Pass\"}\n\n"
+                "- Example B (Fail — Violates criterion)\n"
+                "  - Case: [FILL: CLEAR FAIL CASE]\n"
+                "  - Why: [FILL: SPECIFIC REASON FOR FAIL]\n"
+                "  - Output:\n"
+                "  {\"reasoning\": \"[FILL: FAIL REASONING]\", \"answer\": \"Fail\"}\n\n"
+                "- Example C (Pass — Ambiguous/insufficient evidence)\n"
+                "  - Case: [FILL: AMBIGUOUS/INSUFFICIENT EVIDENCE CASE]\n"
+                "  - Why: [FILL: WHY AMBIGUITY ⇒ PASS]\n"
+                "  - Output:\n"
+                "  {\"reasoning\": \"[FILL: AMBIGUITY REASONING]\", \"answer\": \"Pass\"}\n\n"
+                "- Example D (Pass — Valid clarification)\n"
+                "  - Case: [FILL: CLARIFICATION CASE THAT REMAINS ON-CRITERION]\n"
+                "  - Why: [FILL: WHY CLARIFICATION ⇒ PASS]\n"
+                "  - Output:\n"
+                "  {\"reasoning\": \"[FILL: CLARIFICATION REASONING]\", \"answer\": \"Pass\"}\n\n"
+                "Return ONLY the JSON object per schema—no extra text.\n"
+            ),
+            encoding="utf-8",
+        )
+        created.append(str(judge_instructions_md))
+
+    if not judge_template_md.exists() or force:
+        judge_template_md.write_text(
+            (
+                "Decide if the assistant satisfies the evaluation criterion for this case.\n"
+                "Return JSON {reasoning:string, answer:\"Pass\"|\"Fail\"}.\n\n"
+                "Conversation history (JSON):\n---\n{{ history_json }}\n---\n\n"
+                "Assistant message:\n---\n{{ text }}\n---\n"
+            ),
+            encoding="utf-8",
+        )
+        created.append(str(judge_template_md))
 
     if add_measure:
         measures_py = eval_dir / "measures.py"
@@ -461,5 +535,154 @@ def scaffold_judge(
         base["evaluation"] = ev
         evaluation_yml.write_text(yaml.safe_dump(base, sort_keys=False, allow_unicode=True), encoding="utf-8")
         created.append(str(evaluation_yml))
+
+    return created, str(root)
+
+
+def scaffold_optimizer(
+    project_ref: str,
+    key: str,
+    model: str = "gpt-4.1",
+    kind: str = "agent",
+    force: bool = False,
+) -> Tuple[List[str], str]:
+    root = _resolve_project_root(project_ref)
+    sanitized = _sanitize_name(key)
+    eval_dir = root / "evaluations"
+    eval_dir.mkdir(exist_ok=True)
+    opt_root = eval_dir / "optimizers" / sanitized
+    opt_root.mkdir(parents=True, exist_ok=True)
+    created: List[str] = []
+
+    def _camel(s: str) -> str:
+        parts = [p for p in s.split("_") if p]
+        return "".join(p.capitalize() for p in parts)
+
+    agent_name = _camel(sanitized)
+
+    optimizer_yml = opt_root / "optimizer.yml"
+    if optimizer_yml.exists() and not force:
+        raise FileExistsError(f"Optimizer exists: {optimizer_yml}")
+
+    optimizer_instructions_md = opt_root / "instructions.md"
+    rewrite_instr_md = opt_root / "rewrite_instructions.md"
+    rewrite_tmpl_md = opt_root / "rewrite_template.md"
+
+    opt_cfg = {
+        "optimizers": {
+            sanitized: {
+                "agent": {
+                    "name": agent_name,
+                    "model": model,
+                    "instructions_file": f"../evaluations/optimizers/{sanitized}/instructions.md",
+                },
+                "proposals": {
+                    "instructions_template_file": f"../evaluations/optimizers/{sanitized}/rewrite_instructions.md",
+                    "template_template_file": f"../evaluations/optimizers/{sanitized}/rewrite_template.md",
+                },
+            }
+        }
+    }
+
+    optimizer_yml.write_text(yaml.safe_dump(opt_cfg, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    created.append(str(optimizer_yml))
+
+    if not optimizer_instructions_md.exists() or force:
+        if str(kind).lower() == "judge":
+            body = (
+                "You are a prompt optimizer for judge components.\n\n"
+                "Goal: Propose improved text strictly within a fenced code block.\n"
+                "Focus on judge instructions and templates; do not add commentary."
+            )
+        else:
+            body = (
+                "You are a prompt optimizer.\n\n"
+                "Goal: Propose improved text strictly within a fenced code block.\n"
+                "Do not add commentary outside the fence."
+            )
+        optimizer_instructions_md.write_text(body, encoding="utf-8")
+        created.append(str(optimizer_instructions_md))
+
+    if not rewrite_instr_md.exists() or force:
+        if str(kind).lower() == "judge":
+            body = (
+                "You are optimizing the LLM-as-Judge’s instructions to improve classification accuracy across scenarios.\n\n"
+                "# Judge Information\n"
+                "- Role: judge\n"
+                "- Name: {{ judge_label or judge_name }}\n"
+                "{% if judge_description -%}\n- Description: {{ judge_description }}\n{%- endif %}\n"
+                "{% if category -%}\n- Target Category: {{ category }}\n{%- endif %}\n"
+                "- Input: a conversation trace between a user and an AI Agent\n\n"
+                "# AI Agent Information\n"
+                "- Name: {{ agent_label or agent_name }}\n"
+                "{% if agent_description -%}\n- Description: {{ agent_description }}\n{%- endif %}\n\n"
+                "## Current Instructions\n```\n{{ current_instruction_doc }}\n```\n\n"
+                "## Available Tools (if any)\n{{ tools_schema_md }}\n\n"
+                "# Goal\n"
+                "Write improved, generalizable judge instructions that maximize agreement with labels without overfitting.\n\n"
+                "# Context\n"
+                "The reflective examples below include task inputs, the judge’s outputs, and feedback indicating where predictions matched or mismatched labels. Use them to refine decision rules and edge-case handling without memorizing examples.\n\n"
+                "```\n{{ dataset_md }}\n```\n\n"
+                "# Output Schema (Do Not Change)\n"
+                "- The judge must return ONLY JSON with keys: reasoning (string), answer (\"Pass\" or \"Fail\").\n"
+                "- Do not add, rename, or remove keys; do not change allowed values.\n"
+                "- Example:\n"
+                "```json\n{\n  \"reasoning\": \"...\",\n  \"answer\": \"Pass\"\n}\n```\n\n"
+                "# Guidance\n"
+                "- Do: clarify decision rules; include edge-case handling and tie-breakers.\n"
+                "- Don’t: rely on example-specific artifacts; avoid leaking labels or overfitting.\n"
+                "- Tools: use tools for verification only; do not bias outcomes.\n"
+                "- Output format: return ONLY the new instructions in a single fenced code block. No commentary.\n"
+            )
+        else:
+            body = (
+                "You are optimizing the LLM agent’s instructions to improve performance across scenarios.\n\n"
+                "# LLM Agent Information\n"
+                "- Role: {{ target_role or 'assistant' }}\n"
+                "- Name: {{ agent_label or agent_name or judge_label or judge_name }}\n"
+                "{% if agent_description or judge_description -%}\n- Description: {{ agent_description or judge_description }}\n{%- endif %}\n\n"
+                "## Current Instructions\n```\n{{ current_instruction_doc }}\n```\n\n"
+                "## Available Tools (if any)\n{{ tools_schema_md }}\n\n"
+                "# Goal\n"
+                "Write improved, generalizable instructions that maximize correct behavior across the dataset without overfitting.\n\n"
+                "# Context\n"
+                "The reflective examples below include task inputs, the LLM agent’s responses, and feedback highlighting successes and failures. Use them to identify generalizable decision rules and edge cases. Do not copy phrasing verbatim or overfit to specific example IDs.\n\n"
+                "```\n{{ dataset_md }}\n```\n\n"
+                "# Guidance\n"
+                "- Do: include domain constraints and decision rules; be explicit about edge cases.\n"
+                "- Don’t: overfit to specific IDs; avoid brittle patterns; don’t require unavailable context.\n"
+                "- Tools: use tools when they improve correctness; follow parameter schemas.\n"
+                "- Output format: return ONLY the new instructions in a single fenced code block. No commentary.\n"
+            )
+        rewrite_instr_md.write_text(body, encoding="utf-8")
+        created.append(str(rewrite_instr_md))
+
+    if not rewrite_tmpl_md.exists() or force:
+        body = (
+            "You are optimizing the judge input template used to render evaluation inputs.\n\n"
+            "# Judge Information\n"
+            "- Role: judge\n"
+            "- Name: {{ judge_label or judge_name }}\n"
+            "{% if judge_description -%}\n- Description: {{ judge_description }}\n{%- endif %}\n"
+            "{% if category -%}\n- Target Category: {{ category }}\n{%- endif %}\n"
+            "- Input: a conversation trace between a user and an AI Agent\n\n"
+            "# AI Agent Information\n"
+            "- Name: {{ agent_label or agent_name }}\n"
+            "{% if agent_description -%}\n- Description: {{ agent_description }}\n{%- endif %}\n\n"
+            "## Current Template\n```\n{{ current_template }}\n```\n\n"
+            "## Available Tools (if any)\n{{ tools_schema_md }}\n\n"
+            "# Goal\n"
+            "Write an improved, generalizable input template that presents the right evidence and constraints for correct classification. Preserve and correctly place required placeholders (e.g., {{ text }}, {{ history_json }}, etc.).\n\n"
+            "# Context\n"
+            "The reflective examples below include input text (and history where applicable), the judge’s outputs, and feedback indicating where predictions matched or mismatched labels. Use them to adjust what evidence and instructions the template surfaces without overfitting to specific instances.\n\n"
+            "```\n{{ dataset_md }}\n```\n\n"
+            "# Guidance\n"
+            "- Preserve required placeholders and Jinja syntax.\n"
+            "- Do not leak or hint at ground-truth labels.\n"
+            "- Be concise but complete; surface the artifacts the judge needs (e.g., history_json when relevant).\n"
+            "- Output format: return ONLY the new template in a single fenced code block. No commentary.\n"
+        )
+        rewrite_tmpl_md.write_text(body, encoding="utf-8")
+        created.append(str(rewrite_tmpl_md))
 
     return created, str(root)

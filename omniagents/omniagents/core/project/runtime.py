@@ -47,11 +47,11 @@ class ProjectContext:
     server_functions_registry: Dict[str, Any]
 
 
-def _validate_agent_name(file_stem: str, yaml_name: Any, path: Path) -> str:
+def _validate_agent_name(expected_key: str, yaml_name: Any, path: Path) -> str:
     if not isinstance(yaml_name, str) or not yaml_name.strip():
-        raise ValueError(f"Agent YAML missing a valid 'name' (file: {path}) — set name: {file_stem}")
-    if yaml_name != file_stem:
-        raise ValueError(f"Agent name must equal filename stem (dbt-style). Got name='{yaml_name}' file='{path.name}'. Expected name='{file_stem}'.")
+        raise ValueError(f"Agent YAML missing a valid 'name' (file: {path}) — set name: {expected_key}")
+    if yaml_name != expected_key:
+        raise ValueError(f"Agent name must equal its directory key. Got name='{yaml_name}' file='{path.name}'. Expected name='{expected_key}'.")
     if len(yaml_name) > 64:
         raise ValueError(f"Agent name '{yaml_name}' too long (>64). File: {path}")
     if yaml_name.lower() != yaml_name:
@@ -104,14 +104,19 @@ def load_project(project_path: str) -> ProjectContext:
     exclude = agents_section.get("exclude")
     include_globs = [str(x) for x in (include or [])] if isinstance(include, list) else ([] if include in (None, "") else [str(include)])
     exclude_globs = [str(x) for x in (exclude or [])] if isinstance(exclude, list) else ([] if exclude in (None, "") else [str(exclude)])
-    # Discover agent YAMLs under paths.agents
+    # Strict v2: discover per-entity agent.yml under agents/<key>/agent.yml
     candidates: List[Path] = []
     for adir in agents_dir:
         if adir.is_file():
-            if adir.suffix.lower() == ".yml":
-                candidates.append(adir)
-        elif adir.is_dir():
-            candidates.extend(sorted(list(adir.rglob("*.yml"))))
+            raise FileNotFoundError(f"Strict layout requires 'agents/<key>/agent.yml'. Got file instead of directory: {adir}")
+        if adir.is_dir():
+            for y in sorted(list(adir.rglob("agent.yml"))):
+                # only accept files with a directory parent key
+                if y.parent and y.parent != adir:
+                    candidates.append(y)
+                else:
+                    # allow agent.yml directly under agents/ as a single agent named by folder; discouraged but enforce strict by requiring subdir
+                    continue
     agents_map: Dict[str, Path] = {}
     seen: set[str] = set()
     for y in candidates:
@@ -121,19 +126,19 @@ def load_project(project_path: str) -> ProjectContext:
             continue
         if not isinstance(data, dict):
             continue
-        file_key = y.stem
+        dir_key = y.parent.name
         declared = data.get("name")
-        key = _validate_agent_name(file_key, declared, y)
+        key = _validate_agent_name(dir_key, declared, y)
         if include_globs and not any(fnmatch.fnmatch(key, g) for g in include_globs):
             continue
         if exclude_globs and any(fnmatch.fnmatch(key, g) for g in exclude_globs):
             continue
         if key in seen:
-            raise ValueError(f"Duplicate agent name/key '{key}'. Another file already defines this agent. Current: {y}")
+            raise ValueError(f"Duplicate agent name/key '{key}'. Another folder already defines this agent. Current: {y}")
         seen.add(key)
         agents_map[key] = y.resolve()
     if not agents_map:
-        raise FileNotFoundError("No agents discovered under paths.agents; set agents.include or adjust paths")
+        raise FileNotFoundError("No agents discovered. Strict layout requires 'agents/<key>/agent.yml'.")
     if isinstance(entry, str) and entry:
         if entry not in agents_map:
             raise FileNotFoundError(f"Entrypoint '{entry}' not found among agents: {sorted(agents_map.keys())}")

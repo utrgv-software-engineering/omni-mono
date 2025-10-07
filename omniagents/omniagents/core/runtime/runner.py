@@ -221,32 +221,18 @@ class Runner:
             help="Enable debug mode"
         )
         
-        # SafeAgent control arguments (CLI and GUI modes)
+        # SafeAgent control arguments (strict)
         safe_group = parser.add_argument_group('SafeAgent controls', 'Control tool approval behavior (CLI/GUI modes)')
         safe_group.add_argument(
-            "--no-approval",
-            action="store_true",
-            help="Disable SafeAgent tool approval"
+            "--approvals",
+            choices=["require", "auto", "skip"],
+            help="Approval policy: require (manual), auto (auto-approve), skip (disable SafeAgent)"
         )
         safe_group.add_argument(
-            "--skip-approvals",
-            action="store_true",
-            help="Auto-approve all tool calls"
-        )
-        safe_group.add_argument(
-            "--no-halt",
-            action="store_true",
-            help="Don't halt on rejection"
-        )
-        safe_group.add_argument(
-            "--pre-approve",
-            type=str,
-            help="Comma-separated list of tool names to pre-approve"
-        )
-        safe_group.add_argument(
-            "--safe-patterns",
-            type=str,
-            help="Comma-separated list of safe tool patterns"
+            "--on-reject",
+            dest="on_reject",
+            choices=["halt", "continue"],
+            help="Behavior when a tool call is rejected: halt or continue"
         )
         
         # CLI-specific arguments

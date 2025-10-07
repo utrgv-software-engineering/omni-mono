@@ -232,7 +232,6 @@ def discover_functions_in_dir(base_dir: str = "tools", debug: bool = None) -> Di
     base_path = Path(base_dir).resolve()
 
     if not base_path.is_dir():
-        print(f"Warning: Tool discovery directory '{base_dir}' not found or is not a directory.")
         return {}
 
     if Debug.enabled():

@@ -25,7 +25,28 @@ def _compute_workflow_name(agent_yaml: Path, scenarios_path: Path, override_name
     cfg = _read_yaml(agent_yaml)
     tracing = cfg.get("tracing") or {}
     base_name = tracing.get("name") or agent_yaml.stem
-    ts = _extract_ts_from_filename(scenarios_path) or ""
+    manifest_path = scenarios_path.parent / "manifest.json"
+    ts = None
+    sc_name = None
+    if manifest_path.exists():
+        try:
+            md = json.loads(manifest_path.read_text(encoding="utf-8"))
+            ts = md.get("timestamp") or ts
+            sc_name = md.get("name") or sc_name
+            wf_run = md.get("workflow_run") or None
+            if wf_run:
+                return str(wf_run)
+        except Exception:
+            pass
+    if not ts:
+        ts = _extract_ts_from_filename(scenarios_path) or ""
+    if not sc_name:
+        try:
+            sc_name = scenarios_path.parent.name
+        except Exception:
+            sc_name = None
+    if ts and sc_name:
+        return f"{base_name}_scenarios_{sc_name}_{ts}"
     if ts:
         return f"{base_name}_scenarios_{ts}"
     return base_name
@@ -136,15 +157,7 @@ def annotate_scenarios(agent_yaml: Path, scenarios_path: Path, agentio_project: 
 
 
 def write_annotation_output(project_root: Path, input_path: Path, annotated: List[Dict[str, Any]]) -> Path:
-    def _is_ts_folder(name: str) -> bool:
-        return re.fullmatch(r"\d{4}_\d{2}_\d{2}_\d{2}_\d{2}_\d{2}", name) is not None
-    parent = input_path.parent
-    if _is_ts_folder(parent.name):
-        out_dir = parent
-        ts = parent.name
-    else:
-        ts = _extract_ts_from_filename(input_path) or datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-        out_dir = (project_root / "artifacts" / "eval" / ts).resolve()
+    out_dir = input_path.parent
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "annotated_scenarios.yml"
     data = {"scenarios": annotated}
@@ -152,16 +165,5 @@ def write_annotation_output(project_root: Path, input_path: Path, annotated: Lis
         def ignore_aliases(self, data):
             return True
     out_path.write_text(yaml.dump(data, sort_keys=False, Dumper=NoAliasDumper, allow_unicode=True), encoding="utf-8")
-    try:
-        latest = (out_dir.parent / "latest")
-        if latest.is_symlink() or latest.exists():
-            try:
-                if latest.is_dir() and not latest.is_symlink():
-                    pass
-                latest.unlink()
-            except Exception:
-                pass
-        latest.symlink_to(out_dir)
-    except Exception:
-        pass
+    
     return out_path

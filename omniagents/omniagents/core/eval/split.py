@@ -99,17 +99,11 @@ def create_splits(input_path: Path, category: str, output_dir: Path | None = Non
     rng.shuffle(dev)
     rng.shuffle(test)
 
-    def _is_ts_folder(name: str) -> bool:
-        return bool(__import__("re").fullmatch(r"\d{4}_\d{2}_\d{2}_\d{2}_\d{2}_\d{2}", name))
     if output_dir:
         out_dir = Path(output_dir).resolve()
     else:
         parent = in_path.parent
-        if _is_ts_folder(parent.name):
-            out_dir = (parent / "splits" / category).resolve()
-        else:
-            ts = time.strftime("%Y_%m_%d_%H_%M_%S")
-            out_dir = (parent / ts / "splits" / category).resolve()
+        out_dir = (parent / "splits" / category).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     out_train = out_dir / "train.yml"
     out_dev = out_dir / "dev.yml"
