@@ -1,0 +1,188 @@
+import type { Trace, Span, TraceWithSpans, StatsOverview, Conversation, FailureCategory, AnalysisData } from '../types'
+
+const API_BASE = import.meta.env.VITE_API_URL || `${window.location.origin}/api`
+
+class ApiClient {
+  private baseUrl: string
+
+  constructor(baseUrl: string = API_BASE) {
+    this.baseUrl = baseUrl
+  }
+
+  private async fetch<T>(path: string, options?: RequestInit): Promise<T> {
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers,
+      },
+    })
+
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.statusText}`)
+    }
+
+    return response.json()
+  }
+
+  async getProjects(): Promise<{ projects: string[] }> {
+    return this.fetch('/projects')
+  }
+
+  async getConversations(params: {
+    project: string
+    limit?: number
+    offset?: number
+    search?: string
+    has_errors?: boolean
+    workflow_name?: string
+    dims?: string[]
+  }): Promise<{ conversations: Conversation[]; total: number }> {
+    const searchParams = new URLSearchParams()
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined) {
+        if (key === 'dims' && Array.isArray(value)) {
+          value.forEach(v => searchParams.append('dim', String(v)))
+        } else {
+          searchParams.append(key, String(value))
+        }
+      }
+    })
+    return this.fetch(`/conversations?${searchParams}`)
+  }
+
+  async getConversationTraces(project: string, groupId: string): Promise<{ 
+    traces: Trace[]; 
+    group_id: string; 
+    total: number 
+  }> {
+    return this.fetch(`/conversations/${project}/${groupId}/traces`)
+  }
+
+  async getTraces(params: {
+    project: string
+    limit?: number
+    offset?: number
+    search?: string
+    has_errors?: boolean
+    span_type?: string
+  }): Promise<{ traces: Trace[]; total: number }> {
+    const searchParams = new URLSearchParams()
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined) {
+        searchParams.append(key, String(value))
+      }
+    })
+    return this.fetch(`/traces?${searchParams}`)
+  }
+
+  async getTrace(project: string, traceId: string): Promise<TraceWithSpans> {
+    return this.fetch(`/traces/${project}/${traceId}`)
+  }
+
+  async search(project: string, query: string, type: 'traces' | 'spans' = 'traces'): Promise<{
+    results: Array<Trace | Span>
+    total: number
+  }> {
+    const searchParams = new URLSearchParams({ project, q: query, type })
+    return this.fetch(`/search?${searchParams}`)
+  }
+
+  async getStats(project: string): Promise<StatsOverview> {
+    const searchParams = new URLSearchParams({ project })
+    return this.fetch(`/stats/overview?${searchParams}`)
+  }
+
+  async getWorkflows(project: string): Promise<{ workflows: string[] }> {
+    const searchParams = new URLSearchParams({ project })
+    return this.fetch(`/workflows?${searchParams}`)
+  }
+
+  async getSyntheticDimensions(project: string, workflow_name?: string): Promise<{ dimensions: { name: string; label: string; values: { name: string; label: string }[] }[] }> {
+    const sp = new URLSearchParams({ project })
+    if (workflow_name) sp.append('workflow_name', workflow_name)
+    return this.fetch(`/synthetic_dimensions?${sp.toString()}`)
+  }
+
+  async exportTrace(project: string, traceId: string, format: 'json' | 'csv' = 'json'): Promise<Blob> {
+    const response = await fetch(`${this.baseUrl}/export/${project}/${traceId}?format=${format}`)
+    if (!response.ok) {
+      throw new Error(`Export failed: ${response.statusText}`)
+    }
+    return response.blob()
+  }
+
+  async getAllAnalysis(project: string, workflow_name?: string): Promise<Record<string, AnalysisData>> {
+    const searchParams = new URLSearchParams()
+    if (workflow_name) searchParams.append('workflow_name', workflow_name)
+    const qs = searchParams.toString()
+    return this.fetch(`/analysis/${project}${qs ? `?${qs}` : ''}`)
+  }
+
+  async getAnalysis(project: string, groupId: string): Promise<AnalysisData> {
+    return this.fetch(`/analysis/${project}/${groupId}`)
+  }
+
+  async updateAnalysis(
+    project: string,
+    groupId: string,
+    analysis: AnalysisData
+  ): Promise<AnalysisData> {
+    return this.fetch(`/analysis/${project}/${groupId}`, {
+      method: 'PUT',
+      body: JSON.stringify(analysis),
+    })
+  }
+
+  async deleteAnalysis(project: string, groupId: string): Promise<{ message: string }> {
+    return this.fetch(`/analysis/${project}/${groupId}`, {
+      method: 'DELETE',
+    })
+  }
+
+  async getFailureCategories(project: string): Promise<FailureCategory[]> {
+    return this.fetch(`/categories/${project}`)
+  }
+
+  async createFailureCategory(
+    project: string,
+    category: { name: string; description?: string }
+  ): Promise<FailureCategory> {
+    return this.fetch(`/categories/${project}`, {
+      method: 'POST',
+      body: JSON.stringify(category),
+    })
+  }
+
+  async deleteFailureCategory(
+    project: string,
+    categoryId: number
+  ): Promise<{ message: string; previousUsageCount: number }> {
+    return this.fetch(`/categories/${project}/${categoryId}`, {
+      method: 'DELETE',
+    })
+  }
+
+  async getAnalysisCategories(project: string, groupId: string): Promise<{ categoryIds: number[] }> {
+    return this.fetch(`/analysis/${project}/${groupId}/categories`)
+  }
+
+  async updateAnalysisCategories(
+    project: string,
+    groupId: string,
+    categoryIds: number[]
+  ): Promise<{ categoryIds: number[] }> {
+    return this.fetch(`/analysis/${project}/${groupId}/categories`, {
+      method: 'PUT',
+      body: JSON.stringify({ categoryIds }),
+    })
+  }
+
+  createWebSocket(): WebSocket {
+    const wsUrl = this.baseUrl.replace('http', 'ws').replace('/api', '/api/ws/traces')
+    return new WebSocket(wsUrl)
+  }
+}
+
+export const api = new ApiClient()
+export default api

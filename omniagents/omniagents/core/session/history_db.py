@@ -1,11 +1,13 @@
-import sqlite3
-import os
 import json
+import sqlite3
 from datetime import datetime
 from threading import Lock
 
-_DB_PATH = os.getenv("OMNIAGENTS_HISTORY_DB", "sessions.db")
-_conn = sqlite3.connect(_DB_PATH, check_same_thread=False)
+from omniagents.core.paths import get_sessions_db_path
+
+_DB_PATH = get_sessions_db_path()
+_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+_conn = sqlite3.connect(str(_DB_PATH), check_same_thread=False)
 
 # Enable foreign keys
 _conn.execute("PRAGMA foreign_keys = ON")

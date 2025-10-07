@@ -22,11 +22,18 @@ flet = [
     "flet[all]==0.27.6",
 ]
 gui = ["omniagents[flet]"]  # Alias for flet
+studio = [
+    "httpx>=0.27.0",
+]
 server = [
     "fastapi[all]>=0.115.12",
     "uvicorn>=0.34.1",
 ]
-all = ["omniagents[cli,flet,server]"]
+studio-server = [
+    "fastapi[all]>=0.115.12",
+    "uvicorn>=0.34.1",
+]
+all = ["omniagents[cli,flet,server,studio,studio-server]"]
 dev = [
     "pytest",
     "bump2version",
@@ -56,6 +63,10 @@ include-package-data = true
     "cmd/omni-tui/go.mod",
     "cmd/omni-tui/go.sum",
     "cmd/omni-tui/themes/*",
+]
+"omniagents.studio.tracing" = [
+    "static/*",
+    "static/assets/*",
 ]
 
 [tool.setuptools.dynamic]

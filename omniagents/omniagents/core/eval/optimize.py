@@ -125,12 +125,12 @@ def optimize_agent_from_project(
     try:
         cfg_tr = yaml.safe_load(_P(compiled_cfg_path).read_text(encoding='utf-8')) or {}
         tracing = (cfg_tr.get('tracing') or {})
-        if str(tracing.get('provider','')).lower() == 'agentio':
+        if str(tracing.get('provider','')).lower() in {'studio', 'agentio'}:
             base_name = tracing.get('name') or _P(compiled_cfg_path).stem
             ts = dv_path.parents[2].name if dv_path is not None else datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
             if not re.fullmatch(r"\d{4}_\d{2}_\d{2}_\d{2}_\d{2}_\d{2}", ts):
                 ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-            workflow_name = f"{base_name}_agent_optimize_{cat}_{ts}"
+            workflow_name = f"{base_name}_studio_optimize_{cat}_{ts}"
     except Exception:
         workflow_name = None
     adapter = OmniAgentsAgentAdapter(
@@ -156,11 +156,18 @@ def optimize_agent_from_project(
     try:
         cfg_tr = yaml.safe_load(_P(compiled_cfg_path).read_text(encoding='utf-8')) or {}
         tracing = (cfg_tr.get('tracing') or {})
-        if str(tracing.get('provider','')).lower() == 'agentio' and workflow_name:
-            import agentio  # type: ignore
+        if str(tracing.get('provider','')).lower() in {'studio', 'agentio'} and workflow_name:
+            try:
+                from omniagents.studio import tracing as studio_tracing
+
+                tracing_module = studio_tracing
+            except ImportError:
+                import agentio as legacy_tracing  # type: ignore
+
+                tracing_module = legacy_tracing
             project = tracing.get('project') or 'default'
             resume_tr = (tracing.get('settings') or {}).get('resume', 'never')
-            agentio.init(project=str(project), name=workflow_name, resume=str(resume_tr), replace_default=True)
+            tracing_module.init(project=str(project), name=workflow_name, resume=str(resume_tr), replace_default=True)
     except Exception:
         pass
     result = gepa.optimize(
@@ -606,4 +613,3 @@ def optimize_judge_from_project(
         "instructions": best.get('instructions') if isinstance(best.get('instructions'), str) else None,
         "template": best.get('template') if isinstance(best.get('template'), str) else None,
     }
-

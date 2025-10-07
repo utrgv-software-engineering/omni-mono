@@ -5,7 +5,7 @@ from pathlib import Path
 import yaml
 import re
 from dotenv import load_dotenv
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 # --- Core Framework Imports --- #
 # Note: All OpenAI client configuration (API key, base URL, tracing) should be done by the user script or environment.
@@ -14,6 +14,51 @@ from omniagents.core.runtime.runner import Runner
 from omniagents.core.debug import Debug
 from omniagents.core.project.export import save_agent_as_py
 from omniagents.core.eval.optimize import optimize_agent_from_project, optimize_judge_from_project
+
+
+def _resolve_studio_project_value(value: Optional[str]) -> Tuple[Optional[str], Optional[Path], bool]:
+    manifest_path: Optional[Path] = None
+    project_value = value
+    derived = False
+
+    def load_from_manifest(manifest: Path) -> Optional[str]:
+        try:
+            data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
+        except Exception:
+            return None
+        tracing_cfg = data.get("tracing") or {}
+        tracing_project = tracing_cfg.get("project")
+        if isinstance(tracing_project, str) and tracing_project.strip():
+            return tracing_project.strip()
+        fallback_name = data.get("name")
+        if isinstance(fallback_name, str) and fallback_name.strip():
+            return fallback_name.strip()
+        return None
+
+    if value:
+        lower_val = value.lower()
+        looks_like_path = any(sep in value for sep in ("/", "\\")) or lower_val.endswith((".yml", ".yaml"))
+        if looks_like_path:
+            candidate = Path(value).expanduser()
+            if candidate.is_dir():
+                candidate = candidate / "project.yml"
+            if candidate.is_file():
+                guess = load_from_manifest(candidate)
+                if guess:
+                    manifest_path = candidate
+                    project_value = guess
+                    derived = True
+                    return project_value, manifest_path, derived
+        return project_value, manifest_path, derived
+
+    candidate = Path.cwd() / "project.yml"
+    if candidate.is_file():
+        guess = load_from_manifest(candidate)
+        if guess:
+            manifest_path = candidate
+            project_value = guess
+            derived = True
+    return project_value, manifest_path, derived
 
 def main():
     """Entry point for the omniagents CLI."""
@@ -222,13 +267,13 @@ def main():
     scen_run.add_argument("-q", "--quiet", action="count", default=0)
     scen_run.add_argument("-v", "--verbose", action="count", default=0)
     scen_run.add_argument("--color", choices=["auto", "always", "never"], default="auto")
-    scen_ann = scen_sub.add_parser("annotate", help="Annotate scenarios with AgentIO categories")
+    scen_ann = scen_sub.add_parser("annotate", help="Annotate scenarios with Studio categories")
     scen_ann.add_argument("--project", "-P", required=False, help="Path to project.yml (defaults to project.yml in CWD)")
     scen_ann.add_argument("--agent", "-a", default="", help="Agent key (defaults to entrypoint)")
     scen_ann.add_argument("--name", default=None, help="Scenario set name under artifacts/eval/<name>/ (alternative to --input)")
     scen_ann.add_argument("--input", "-i", default="")
     scen_ann.add_argument("--output", "-o", default="artifacts/eval/annotated_scenarios.yml")
-    scen_ann.add_argument("--agentio-project", default=None)
+    scen_ann.add_argument("--studio-project", "--agentio-project", dest="studio_project", default=None)
     scen_ann.add_argument("--workflow-name", default=None)
     scen_ann.add_argument("--select", default="")
     scen_ann.add_argument("--exclude", default="")
@@ -306,6 +351,24 @@ def main():
     gen_optimizer.add_argument("--model", default="gpt-4.1")
     gen_optimizer.add_argument("--type", dest="opt_type", choices=["agent", "judge"], default="agent")
     gen_optimizer.add_argument("--force", action="store_true")
+
+    studio_parser = subparsers.add_parser("studio", help="OmniAgents Studio utilities")
+    studio_sub = studio_parser.add_subparsers(dest="studio_cmd")
+
+    studio_serve = studio_sub.add_parser("serve", help="Run the OmniAgents Studio web UI")
+    studio_serve.add_argument("--host", default="0.0.0.0", help="Host interface to bind (default: 0.0.0.0)")
+    studio_serve.add_argument("--port", type=int, default=7860, help="Port to bind (default: 7860)")
+    studio_serve.add_argument("--db-path", dest="db_path", default=None, help="Path to a specific SQLite database (optional)")
+    studio_serve.add_argument("--project", default=None, help="Project name under ~/.omniagents/traces (or OMNIAGENTS_HOME) to serve (optional)")
+    studio_serve.add_argument("--token", dest="auth_token", default=None, help="Bearer token for API access")
+
+    studio_export = studio_sub.add_parser("export", help="Export traces from OmniAgents Studio")
+    studio_export.add_argument("output", help="Output file path")
+    studio_export.add_argument("--format", choices=["json", "csv", "parquet"], default="json", help="Export format (default: json)")
+    studio_export.add_argument("--project", default=None, help="Project name to export (defaults to active project)")
+
+    studio_show = studio_sub.add_parser("show", help="Display Studio project information")
+    studio_show.add_argument("--project", default=None, help="Project name to show (defaults to active project)")
 
     agent_parser = subparsers.add_parser("agent", help="Agent-level operations")
     agent_sub = agent_parser.add_subparsers(dest="agent_cmd")
@@ -524,6 +587,68 @@ def main():
         except Exception as e:
             print(f"Error saving agent spec: {e}")
             import traceback; traceback.print_exc()
+            sys.exit(1)
+    elif args.command == "studio":
+        if not getattr(args, "studio_cmd", None):
+            studio_parser.print_help()
+            sys.exit(1)
+        try:
+            from omniagents.studio import tracing as studio_mod
+        except ImportError:
+            try:
+                from omniagents import agentio as studio_mod
+            except ImportError as e:
+                print(f"Error importing Studio module: {e}")
+                print("Install optional dependencies with: pip install omniagents[studio]")
+                sys.exit(1)
+
+        project_hint, _manifest_path, derived_from_manifest = _resolve_studio_project_value(getattr(args, "project", None))
+        inferred_project = getattr(args, "project", None)
+        if derived_from_manifest:
+            inferred_project = project_hint
+        elif inferred_project is None and project_hint:
+            inferred_project = project_hint
+
+        if args.studio_cmd == "serve":
+            try:
+                studio_mod.serve(
+                    host=args.host,
+                    port=args.port,
+                    db_path=getattr(args, "db_path", None),
+                    project=inferred_project,
+                    auth_token=getattr(args, "auth_token", None),
+                )
+            except ImportError as e:
+                print(f"Error starting Studio server: {e}")
+                print("Install server dependencies with: pip install omniagents[studio-server]")
+                sys.exit(1)
+            except Exception as e:
+                print(f"Error starting Studio server: {e}")
+                import traceback; traceback.print_exc()
+                sys.exit(1)
+        elif args.studio_cmd == "export":
+            try:
+                if not inferred_project:
+                    print("Error: Provide --project <name> or run from a directory containing project.yml with tracing.project.")
+                    sys.exit(2)
+                studio_mod.export(
+                    args.output,
+                    format=getattr(args, "format", "json"),
+                    project=inferred_project,
+                )
+            except Exception as e:
+                print(f"Error exporting traces: {e}")
+                import traceback; traceback.print_exc()
+                sys.exit(1)
+        elif args.studio_cmd == "show":
+            try:
+                studio_mod.show(project=inferred_project)
+            except Exception as e:
+                print(f"Error displaying Studio information: {e}")
+                import traceback; traceback.print_exc()
+                sys.exit(1)
+        else:
+            studio_parser.print_help()
             sys.exit(1)
     elif args.command == "agent":
         if args.agent_cmd == "run":
@@ -1016,9 +1141,21 @@ def main():
                     output_path = outp
                 wf_name = None
                 try:
-                    if str(tracing.get('provider','')).lower() == 'agentio':
-                        import agentio
+                    provider = str(tracing.get('provider', '')).lower()
+                    if provider in {'studio', 'agentio'}:
                         from datetime import datetime
+                        try:
+                            from omniagents.studio import tracing as studio_tracing
+
+                            tracing_module = studio_tracing
+                        except ImportError:
+                            tracing_module = None
+
+                        if tracing_module is None:
+                            import agentio as legacy_tracing
+
+                            tracing_module = legacy_tracing
+
                         base_name = tracing.get('name') or _P(compiled_cfg_path).stem
                         if name_arg:
                             sc_name = name_arg
@@ -1032,7 +1169,7 @@ def main():
                         ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
                         wf_name = f"{base_name}_scenarios_{sc_name}_{ts}_generate"
                         resume = (tracing.get('settings') or {}).get('resume', 'never')
-                        agentio.init(project=str(tracing.get('project') or 'scenario_generation'), name=wf_name, resume=str(resume), replace_default=True)
+                        tracing_module.init(project=str(tracing.get('project') or 'scenario_generation'), name=wf_name, resume=str(resume), replace_default=True)
                 except Exception:
                     wf_name = None
                 qlvl_pre = int(getattr(args, 'quiet', 0) or 0)
@@ -1141,16 +1278,28 @@ def main():
                 cfg = yaml.safe_load(_P(compiled_cfg_path).read_text(encoding='utf-8')) or {}
                 tracing = (cfg.get('tracing') or {})
                 try:
-                    if str(tracing.get('provider','')).lower() == 'agentio':
-                        import agentio
+                    provider = str(tracing.get('provider', '')).lower()
+                    if provider in {'studio', 'agentio'}:
                         from datetime import datetime
+                        try:
+                            from omniagents.studio import tracing as studio_tracing
+
+                            tracing_module = studio_tracing
+                        except ImportError:
+                            tracing_module = None
+
+                        if tracing_module is None:
+                            import agentio as legacy_tracing
+
+                            tracing_module = legacy_tracing
+
                         project = tracing.get('project') or 'scenario_runs'
                         base_name = tracing.get('name') or Path(compiled_cfg_path).stem
                         ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
                         sc_name = name_arg or sc_dir.name
                         wf_name = f"{base_name}_scenarios_{sc_name}_{ts}"
                         resume = (tracing.get('settings') or {}).get('resume', 'never')
-                        agentio.init(project=str(project), name=wf_name, resume=str(resume), replace_default=True)
+                        tracing_module.init(project=str(project), name=wf_name, resume=str(resume), replace_default=True)
                         import asyncio as _asyncio
                         qlvl_pre = int(getattr(args, 'quiet', 0) or 0)
                         vlvl_pre = int(getattr(args, 'verbose', 0) or 0)

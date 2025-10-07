@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Tuple
 
 import yaml
 
+from omniagents.core.paths import get_traces_dir
+
 
 def _read_yaml(p: Path) -> Dict[str, Any]:
     return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
@@ -53,7 +55,7 @@ def _compute_workflow_name(agent_yaml: Path, scenarios_path: Path, override_name
 
 
 def _open_db(project: str) -> sqlite3.Connection:
-    db_path = Path.home() / ".agentio" / f"{project}.db"
+    db_path = get_traces_dir() / f"{project}.db"
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     return conn
@@ -122,13 +124,13 @@ def _slugify(s: str) -> str:
     return t or "category"
 
 
-def annotate_scenarios(agent_yaml: Path, scenarios_path: Path, agentio_project: str, workflow_name: str | None) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Path]:
+def annotate_scenarios(agent_yaml: Path, scenarios_path: Path, studio_project: str, workflow_name: str | None) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Path]:
     cfg = _read_yaml(scenarios_path)
     scenarios = list(cfg.get("scenarios") or [])
     if not scenarios:
         return [], [], scenarios_path
     wf = _compute_workflow_name(agent_yaml, scenarios_path, workflow_name)
-    conn = _open_db(agentio_project)
+    conn = _open_db(studio_project)
     traces = _load_traces_for_workflow(conn, wf)
     id_to_group: Dict[str, str] = {}
     for t in traces:
@@ -137,9 +139,9 @@ def annotate_scenarios(agent_yaml: Path, scenarios_path: Path, agentio_project: 
         if sid and gid and sid not in id_to_group:
             id_to_group[sid] = gid
     id_to_cats: Dict[str, List[str]] = {}
-    id_name = _category_id_to_name(conn, agentio_project)
+    id_name = _category_id_to_name(conn, studio_project)
     for sid, gid in id_to_group.items():
-        cat_ids = _group_categories(conn, agentio_project, gid)
+        cat_ids = _group_categories(conn, studio_project, gid)
         if cat_ids:
             names = [id_name.get(c) for c in cat_ids if c in id_name]
             names = [n for n in names if n]
