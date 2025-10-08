@@ -1327,9 +1327,6 @@ def create_api_app(
     
     def _write_yaml_file(path: Path, content: Dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        if path.exists():
-            backup_path = path.with_suffix(path.suffix + f".bak.{datetime.now().strftime('%Y%m%d%H%M%S')}")
-            shutil.copy2(path, backup_path)
         path.write_text(yaml.safe_dump(content, sort_keys=False, allow_unicode=True), encoding="utf-8")
     
     def _persist_dimensions(manifest_path: Path, dimensions: List[EvaluationDimensionModel]) -> List[Dict[str, Any]]:
@@ -2381,9 +2378,6 @@ def create_api_app(
                 if not instructions_path.is_absolute():
                     instructions_path = (agent_path.parent / instructions_path).resolve()
                 instructions_path.parent.mkdir(parents=True, exist_ok=True)
-                if instructions_path.exists():
-                    backup_path = instructions_path.with_suffix(instructions_path.suffix + f".bak.{datetime.now().strftime('%Y%m%d%H%M%S')}")
-                    shutil.copy2(instructions_path, backup_path)
                 instructions_path.write_text(instructions_text, encoding="utf-8")
             else:
                 if instructions_text:

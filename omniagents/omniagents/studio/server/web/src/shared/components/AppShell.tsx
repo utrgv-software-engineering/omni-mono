@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
+import { ToastContainer } from './ToastContainer'
 
 interface AppShellProps {
   header?: ReactNode
@@ -12,6 +13,7 @@ export function AppShell({ header, sidebar, children, hasBottomBar = false }: Ap
   if (!sidebar) {
     return (
       <div className="h-screen w-full flex flex-col bg-background">
+        <ToastContainer />
         {header}
         <main className={`flex-1 h-full flex flex-col overflow-hidden ${hasBottomBar ? 'pb-10' : ''}`}>
           {children}
@@ -22,6 +24,7 @@ export function AppShell({ header, sidebar, children, hasBottomBar = false }: Ap
 
   return (
     <div className="h-screen w-full flex flex-col bg-background">
+      <ToastContainer />
       {header}
       <PanelGroup direction="horizontal" className="flex-1">
         <Panel defaultSize={20} minSize={15} maxSize={30}>

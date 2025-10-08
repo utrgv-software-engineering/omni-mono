@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from datetime import datetime
 import yaml
 
 from omniagents.core.project.runtime import load_project, resolve_agent
@@ -25,16 +24,9 @@ def apply_agent_instructions(proj_path: str, agent_key: str | None, new_instruct
         fp = Path(instr_file)
         if not fp.is_absolute():
             fp = (ay.parent / fp).resolve()
-        ts = datetime.now().strftime("%Y%m%d%H%M%S")
-        if fp.exists():
-            bak = fp.with_suffix(fp.suffix + f".bak.{ts}")
-            bak.write_text(fp.read_text(encoding="utf-8"), encoding="utf-8")
         fp.write_text(new_instructions, encoding="utf-8")
         print(f"Applied agent instructions: {fp}")
     else:
-        ts = datetime.now().strftime("%Y%m%d%H%M%S")
-        bak = ay.with_suffix(ay.suffix + f".bak.{ts}")
-        bak.write_text(ay.read_text(encoding="utf-8"), encoding="utf-8")
         class _LS(str):
             pass
         class _D(yaml.SafeDumper):
@@ -56,13 +48,7 @@ def apply_judge_updates(proj_path: str, judge_key: str, new_instructions: str | 
     from pathlib import Path as _P
 
     def _backup(fp: _P):
-        try:
-            ts = datetime.now().strftime("%Y%m%d%H%M%S")
-            bak = fp.with_suffix(fp.suffix + f".bak.{ts}")
-            bak.write_text(fp.read_text(encoding="utf-8"), encoding="utf-8")
-            return bak
-        except Exception:
-            return None
+        return None
 
     def _find_judge_source(proj_path: _P, key: str) -> tuple[_P, dict, str | None]:
         pj = load_project(str(proj_path))
@@ -281,4 +267,3 @@ def apply_judge_updates(proj_path: str, judge_key: str, new_instructions: str | 
             _backup(src_file)
             _write_yaml(src_file, judge_key, doc)
             print(f"Applied judge changes: {src_file}")
-

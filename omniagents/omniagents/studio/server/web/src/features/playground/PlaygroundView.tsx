@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronUp, Plus, ShieldCheck, Trash2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { useToastStore } from '../../stores/toastStore'
 import { api, type PlaygroundSessionPayload } from '../../lib/api'
 import type {
   ModelSettingDefinition,
@@ -354,6 +355,7 @@ export function AgentWorkbench({
     staleTime: 5 * 60 * 1000,
   })
 
+  const pushToast = useToastStore((state) => state.pushToast)
   const queryClient = useQueryClient()
   const [initialComparison, setInitialComparison] = useState<string | null>(null)
 
@@ -1010,7 +1012,6 @@ export function AgentWorkbench({
           }
         }
       }
-      applyStatus('Saving defaults…', { spinner: true, severity: 'info' })
       await agentUpdateMutation.mutateAsync(payload)
       setInitialComparison(currentComparisonString)
       setInstructionsDirty(false)
@@ -1021,13 +1022,14 @@ export function AgentWorkbench({
       setGuardrailsDirty(false)
       setOutputConfigDirty(false)
       setConfigDirty(false)
-      applyStatus('Defaults saved', { spinner: false, severity: 'info' })
+      pushToast({ message: 'Agent updated', tone: 'success' })
       queryClient.invalidateQueries(metadataQueryKey as any)
       queryClient.invalidateQueries(['agents', 'list'])
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to save defaults'
+      const message = error instanceof Error ? error.message : 'Failed to save changes'
       setFormError(message)
       applyStatus(message, { spinner: false, severity: 'error' })
+      pushToast({ message, tone: 'error' })
     }
   }, [
     agentKey,
@@ -1045,6 +1047,7 @@ export function AgentWorkbench({
     selectedOutputGuardrails,
     selectedTools,
     setFormError,
+    pushToast,
     useSafeAgent,
     validateStructuredOutput,
     instructions,
@@ -1283,7 +1286,7 @@ export function AgentWorkbench({
                     disabled={!hasUnsavedDefaults || agentUpdateMutation.isPending || isLoading}
                     className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {agentUpdateMutation.isPending ? 'Saving…' : 'Save defaults'}
+                    {agentUpdateMutation.isPending ? 'Saving…' : 'Save changes'}
                   </button>
                 ) : null}
                 <button
