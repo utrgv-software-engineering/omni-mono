@@ -16,6 +16,10 @@ import type {
   EvaluationScenarioGenerationStatus,
   EvaluationDataset,
   EvaluationDatasetSourceKind,
+  EvaluationScenarioAnnotatePayload,
+  EvaluationScenarioAnnotateResponse,
+  EvaluationScenarioSetDeletePayload,
+  EvaluationScenarioSetDeleteResponse,
 } from '../../types'
 
 type EvaluationTab = 'dimensions' | 'scenarios' | 'datasets'
@@ -364,6 +368,8 @@ interface ScenarioSetDetailProps {
   goldenNames: Set<string>
   runTrigger?: ScenarioRunTrigger | null
   onRunTriggerConsumed?: () => void
+  onDeleteSet?: (set: EvaluationScenarioSet) => void
+  isDeletingSet?: boolean
 }
 
 interface ScenarioRunTrigger {
@@ -383,6 +389,8 @@ function ScenarioSetDetail({
   goldenNames,
   runTrigger,
   onRunTriggerConsumed,
+  onDeleteSet,
+  isDeletingSet,
 }: ScenarioSetDetailProps) {
   const queryClient = useQueryClient()
   const [isFormOpen, setIsFormOpen] = useState(false)
@@ -399,10 +407,15 @@ function ScenarioSetDetail({
   const runSocketRef = useRef<WebSocket | null>(null)
   const activeRunRef = useRef<typeof activeRun>(null)
   const runCompletionRef = useRef(false)
+  const [annotateBanner, setAnnotateBanner] = useState<{ variant: 'success' | 'error'; message: string } | null>(null)
 
   useEffect(() => {
     activeRunRef.current = activeRun
   }, [activeRun])
+
+  useEffect(() => {
+    setAnnotateBanner(null)
+  }, [set.path])
 
   const createScenario = useMutation<EvaluationScenarioMutationResponse, Error, EvaluationScenarioCreatePayload>({
     mutationFn: (payload) => api.createEvaluationScenario(payload),
@@ -445,6 +458,20 @@ function ScenarioSetDetail({
     },
     onSettled: () => {
       setDeletingKey(null)
+    },
+  })
+
+  const annotateScenario = useMutation<EvaluationScenarioAnnotateResponse, Error, EvaluationScenarioAnnotatePayload>({
+    mutationFn: (payload) => api.annotateEvaluationScenario(payload),
+    onSuccess: (response) => {
+      queryClient.invalidateQueries({ queryKey: ['evaluation', 'scenarios'] })
+      queryClient.invalidateQueries({ queryKey: ['evaluation', 'datasets'] })
+      const formattedPath = formatScenarioPath(response.annotated_path)
+      setAnnotateBanner({ variant: 'success', message: `Annotated scenarios saved to ${formattedPath}` })
+    },
+    onError: (error: unknown) => {
+      const message = error instanceof Error ? error.message : 'Failed to annotate scenarios'
+      setAnnotateBanner({ variant: 'error', message })
     },
   })
 
@@ -519,6 +546,22 @@ function ScenarioSetDetail({
     } finally {
       setIsStartingRun(false)
     }
+  }
+
+  const handleAnnotateSet = () => {
+    if (annotateScenario.isPending) {
+      return
+    }
+    const targetKind: EvaluationScenarioAnnotatePayload['kind'] = set.kind === 'annotated' ? 'annotated' : 'generated'
+    setAnnotateBanner(null)
+    annotateScenario.mutate({ kind: targetKind, set_path: set.path })
+  }
+
+  const handleDeleteSet = () => {
+    if (!onDeleteSet || set.kind === 'golden' || isDeletingSet) {
+      return
+    }
+    onDeleteSet(set)
   }
 
   useEffect(() => {
@@ -765,6 +808,28 @@ function ScenarioSetDetail({
           <div className="text-xs text-muted-foreground">
             {set.scenarios.length} scenario{set.scenarios.length === 1 ? '' : 's'}
           </div>
+          {set.kind !== 'golden' ? (
+            <button
+              type="button"
+              onClick={handleAnnotateSet}
+              disabled={annotateScenario.isPending}
+              className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              {annotateScenario.isPending ? 'Annotating…' : 'Annotate Failures'}
+            </button>
+          ) : null}
+          {set.kind !== 'golden' ? (
+            <button
+              type="button"
+              onClick={handleDeleteSet}
+              disabled={Boolean(isDeletingSet)}
+              className="inline-flex items-center gap-1 rounded-md border border-destructive px-3 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              {isDeletingSet ? 'Deleting…' : 'Delete Set'}
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={openRunDialog}
@@ -786,6 +851,17 @@ function ScenarioSetDetail({
         </div>
       </div>
       <div className="flex-1 overflow-auto px-6 py-4">
+        {annotateBanner ? (
+          <div
+            className={`mb-4 rounded-md border px-4 py-3 text-xs ${
+              annotateBanner.variant === 'success'
+                ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-600'
+                : 'border-destructive/60 bg-destructive/10 text-destructive'
+            }`}
+          >
+            {annotateBanner.message}
+          </div>
+        ) : null}
         {activeRun ? (
           <div className="mb-4 rounded-md border border-border bg-background px-4 py-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1531,6 +1607,21 @@ function ScenariosPanel({ projectName, isAvailable }: { projectName?: string | n
     },
   })
 
+  const deleteSet = useMutation<EvaluationScenarioSetDeleteResponse, Error, EvaluationScenarioSetDeletePayload>({
+    mutationFn: (payload) => api.deleteEvaluationScenarioSet(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['evaluation', 'scenarios'] })
+      queryClient.invalidateQueries({ queryKey: ['evaluation', 'datasets'] })
+      setSelectedSetPath(null)
+      setRunTrigger(null)
+      setPendingKey(null)
+    },
+    onError: (error: unknown) => {
+      const message = error instanceof Error ? error.message : 'Failed to delete scenario set'
+      window.alert(message)
+    },
+  })
+
   const openGenerateDialog = () => {
     setGenerateName('')
     setGenerateCount('')
@@ -1811,6 +1902,24 @@ function ScenariosPanel({ projectName, isAvailable }: { projectName?: string | n
     setSelectedSetPath(set.path)
   }
 
+  const handleDeleteSet = (set: EvaluationScenarioSet) => {
+    if (set.kind === 'golden') {
+      return
+    }
+    if (deleteSet.isPending) {
+      return
+    }
+    const label = set.label || formatScenarioPath(set.path)
+    const prompt =
+      set.kind === 'generated'
+        ? `Delete scenario set "${label}"? This removes the generated folder, including any annotated scenarios and run artifacts within it.`
+        : `Delete scenario set "${label}"? This will remove the annotated scenarios from disk.`
+    if (!window.confirm(prompt)) {
+      return
+    }
+    deleteSet.mutate({ kind: set.kind, set_path: set.path })
+  }
+
   if (selectedSet) {
     const canPromote = selectedSet.kind === 'generated' || selectedSet.kind === 'annotated'
     return (
@@ -1830,6 +1939,8 @@ function ScenariosPanel({ projectName, isAvailable }: { projectName?: string | n
         goldenNames={goldenNames}
         runTrigger={runTrigger}
         onRunTriggerConsumed={() => setRunTrigger(null)}
+        onDeleteSet={handleDeleteSet}
+        isDeletingSet={deleteSet.isPending}
       />
     )
   }
@@ -1975,6 +2086,17 @@ function ScenariosPanel({ projectName, isAvailable }: { projectName?: string | n
                           <Play className="h-3.5 w-3.5" />
                           Run Set
                         </button>
+                        {set.kind !== 'golden' ? (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSet(set)}
+                            disabled={deleteSet.isPending}
+                            className="inline-flex items-center gap-1 rounded-md border border-destructive px-3 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            {deleteSet.isPending ? 'Deleting…' : 'Delete Set'}
+                          </button>
+                        ) : null}
                       </div>
                     </div>
                   ))

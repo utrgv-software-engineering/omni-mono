@@ -30,9 +30,10 @@ from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions
 from omniagents.rpc.server import JsonRpcChannel
 from omniagents.rpc.transport.websocket import ServerWebSocketTransport
 from omniagents.rpc.transport import TransportClosedError
-from omniagents.core.project.runtime import load_project, build_spec_from_project
+from omniagents.core.project.runtime import load_project, build_spec_from_project, resolve_agent
 from omniagents.core.project.compiler import compile_project
 from omniagents.core.eval.scenarios import run_scenarios_against_agent, generate_scenarios
+from omniagents.core.eval.annotate import annotate_scenarios, write_annotation_output
 
 from ..tracing.storage import SQLiteStorage
 
@@ -607,6 +608,30 @@ class ScenarioDeletePayload(BaseModel):
     scenario_id: Optional[str] = None
     scenario_name: Optional[str] = None
     index: Optional[int] = None
+
+
+class ScenarioAnnotatePayload(BaseModel):
+    kind: Literal['golden', 'generated', 'annotated']
+    set_path: str
+    agent: Optional[str] = None
+
+
+class ScenarioAnnotateResponseModel(BaseModel):
+    project: Optional[str] = None
+    annotated_path: str
+    set: ScenarioSetModel
+
+
+class ScenarioSetDeletePayload(BaseModel):
+    kind: Literal['generated', 'annotated']
+    set_path: str
+
+
+class ScenarioSetDeleteResponseModel(BaseModel):
+    project: Optional[str] = None
+    deleted_path: str
+    generated: List[ScenarioSetModel] = Field(default_factory=list)
+    annotated: List[ScenarioSetModel] = Field(default_factory=list)
 
 
 @dataclass
@@ -2049,7 +2074,91 @@ def create_api_app(
             raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
-    
+
+    @app.post("/api/evaluation/scenarios/annotate")
+    async def annotate_evaluation_scenario(payload: ScenarioAnnotatePayload):
+        try:
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            target_path = Path(payload.set_path).expanduser().resolve(strict=False)
+            if payload.kind == 'golden':
+                raise HTTPException(status_code=422, detail="Annotation is only supported for generated or annotated sets")
+            scenario_set = _get_scenario_set_by_path(ctx, payload.kind, target_path)
+            file_path = Path(scenario_set.path)
+            if not file_path.is_file():
+                raise HTTPException(status_code=404, detail="Scenario file not found")
+            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            project_name = resources.get("project_name") or app.state.default_project
+            if isinstance(project_name, str):
+                project_name = project_name.strip() or None
+            else:
+                project_name = None
+            if not project_name:
+                defaults = ctx.tracing_defaults or {}
+                if isinstance(defaults, dict):
+                    candidate = defaults.get("project")
+                    if isinstance(candidate, str) and candidate.strip():
+                        project_name = candidate.strip()
+            if not project_name:
+                raise HTTPException(status_code=422, detail="Tracing project not configured; set tracing.project in project.yml")
+            try:
+                _, agent_yaml_path = resolve_agent(ctx, payload.agent)
+            except Exception as exc:
+                raise HTTPException(status_code=404, detail=str(exc))
+            annotated, _original, source_path = annotate_scenarios(Path(agent_yaml_path), file_path, str(project_name), None)
+            output_path = write_annotation_output(ctx.root, source_path, annotated)
+            annotated_set = _get_scenario_set_by_path(ctx, 'annotated', output_path)
+            response = ScenarioAnnotateResponseModel(
+                project=str(project_name),
+                annotated_path=str(output_path),
+                set=annotated_set,
+            )
+            return response.model_dump()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.post("/api/evaluation/scenarios/delete")
+    async def delete_evaluation_scenario_set(payload: ScenarioSetDeletePayload):
+        try:
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            target_path = Path(payload.set_path).expanduser().resolve(strict=False)
+            scenario_set = _get_scenario_set_by_path(ctx, payload.kind, target_path)
+            file_path = Path(scenario_set.path)
+            parent_dir = file_path.parent
+            if payload.kind == 'generated':
+                if parent_dir.is_dir():
+                    shutil.rmtree(parent_dir)
+            else:
+                if file_path.exists():
+                    if file_path.is_file():
+                        file_path.unlink()
+                    else:
+                        shutil.rmtree(file_path)
+                if parent_dir.is_dir():
+                    try:
+                        remaining = [child for child in parent_dir.iterdir() if child.exists()]
+                        if not remaining:
+                            parent_dir.rmdir()
+                    except Exception:
+                        pass
+            ctx_updated = load_project(str(manifest_path))
+            resources = getattr(app.state, "playground_resources", {})
+            project_name = resources.get("project_name") or app.state.default_project
+            response = ScenarioSetDeleteResponseModel(
+                project=str(project_name) if project_name else None,
+                deleted_path=str(file_path),
+                generated=[s.model_dump() for s in _load_artifact_sets(ctx_updated, "generated")],
+                annotated=[s.model_dump() for s in _load_artifact_sets(ctx_updated, "annotated")],
+            )
+            return response.model_dump()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
     async def _run_scenario_job(job_id: str, payload: ScenarioRunRequest, manifest_path: Path, scenario_set: ScenarioSetModel, scenarios: List[Dict[str, Any]], output_path: Path) -> None:
         manager: ScenarioRunManager = app.state.scenario_run_manager
         await manager.update_job(job_id, state="running", started_at=_utc_now(), total=len(scenarios), completed=0)

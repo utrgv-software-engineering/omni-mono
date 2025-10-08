@@ -14,6 +14,7 @@ from omniagents.core.runtime.runner import Runner
 from omniagents.core.debug import Debug
 from omniagents.core.project.export import save_agent_as_py
 from omniagents.core.eval.optimize import optimize_agent_from_project, optimize_judge_from_project
+from omniagents.core.eval.annotate import annotate_scenarios, write_annotation_output
 
 
 def _resolve_studio_project_value(value: Optional[str]) -> Tuple[Optional[str], Optional[Path], bool]:
@@ -272,9 +273,8 @@ def main():
     scen_ann.add_argument("--agent", "-a", default="", help="Agent key (defaults to entrypoint)")
     scen_ann.add_argument("--name", default=None, help="Scenario set name under artifacts/eval/<name>/ (alternative to --input)")
     scen_ann.add_argument("--input", "-i", default="")
-    scen_ann.add_argument("--output", "-o", default="artifacts/eval/annotated_scenarios.yml")
+    scen_ann.add_argument("--output", "-o", default=None)
     scen_ann.add_argument("--studio-project", "--agentio-project", dest="studio_project", default=None)
-    scen_ann.add_argument("--workflow-name", default=None)
     scen_ann.add_argument("--select", default="")
     scen_ann.add_argument("--exclude", default="")
     scen_ann.add_argument("-q", "--quiet", action="count", default=0)
@@ -1242,6 +1242,94 @@ def main():
                 print(f"Wrote {len(scenarios)} scenarios to {out_path}")
             except Exception as e:
                 print(f"Error generating scenarios: {e}")
+                import traceback; traceback.print_exc()
+                sys.exit(1)
+        elif args.eval_cmd == "scenarios" and getattr(args, 'scen_cmd', None) == "annotate":
+            try:
+                from omniagents.core.project.compiler import compile_project
+                from omniagents.core.project.runtime import load_project, resolve_agent
+                proj_path = getattr(args, 'project', None)
+                if not proj_path:
+                    p = Path.cwd() / "project.yml"
+                    if p.is_file():
+                        proj_path = str(p)
+                    else:
+                        print("Error: Provide --project <project.yml> (or run from a directory containing a project.yml).")
+                        sys.exit(2)
+                ctx = load_project(str(proj_path))
+                agent_key_arg = str(getattr(args, 'agent', '') or '').strip() or None
+                _, agent_yaml_path = resolve_agent(ctx, agent_key_arg)
+                base = Path(proj_path).resolve()
+                if base.is_file():
+                    base = base.parent
+                name_arg = str(getattr(args, 'name', '') or '').strip()
+                input_arg = str(getattr(args, 'input', '') or '').strip()
+                scenario_path: Optional[Path] = None
+                if input_arg:
+                    candidate = Path(input_arg)
+                    scenario_path = candidate if candidate.is_absolute() else (base / candidate).resolve()
+                elif name_arg:
+                    candidate_dir = (base / "artifacts" / "eval" / name_arg).resolve()
+                    for option in [
+                        candidate_dir / "generated_scenarios.yml",
+                        candidate_dir / "annotated_scenarios.yml",
+                        candidate_dir / "scenarios.yml",
+                    ]:
+                        if option.is_file():
+                            scenario_path = option
+                            break
+                    if scenario_path is None:
+                        scenario_path = candidate_dir / "generated_scenarios.yml"
+                else:
+                    print("Error: Provide --name <scenario_set> or --input <path> for scenarios.")
+                    sys.exit(2)
+                if not scenario_path.exists():
+                    print(f"Error: Scenarios file not found: {scenario_path}")
+                    sys.exit(2)
+                compiled_cfg_path, _graph = compile_project(
+                    str(proj_path),
+                    select=str(getattr(args, 'select', '') or ''),
+                    exclude=str(getattr(args, 'exclude', '') or ''),
+                    agent_key=agent_key_arg,
+                )
+                cfg = yaml.safe_load(Path(compiled_cfg_path).read_text(encoding='utf-8')) or {}
+                tracing_cfg = cfg.get('tracing') or {}
+                studio_project = str(getattr(args, 'studio_project') or '').strip()
+                if not studio_project:
+                    candidate = tracing_cfg.get('project')
+                    if isinstance(candidate, str) and candidate.strip():
+                        studio_project = candidate.strip()
+                if not studio_project:
+                    defaults = ctx.tracing_defaults or {}
+                    if isinstance(defaults, dict):
+                        candidate = defaults.get('project')
+                        if isinstance(candidate, str) and candidate.strip():
+                            studio_project = candidate.strip()
+                if not studio_project:
+                    print("Error: Unable to determine Studio project; set tracing.project in project.yml or provide --studio-project.")
+                    sys.exit(2)
+                annotated, _original, source_path = annotate_scenarios(Path(agent_yaml_path), scenario_path, studio_project, None)
+                output_arg = str(getattr(args, 'output', '') or '').strip()
+                if output_arg:
+                    out_path = Path(output_arg)
+                    if not out_path.is_absolute():
+                        out_path = (base / out_path).resolve()
+                    out_path.parent.mkdir(parents=True, exist_ok=True)
+                    class NoAliasDumper(yaml.SafeDumper):
+                        def ignore_aliases(self, data):
+                            return True
+                    out_path.write_text(
+                        yaml.dump({"scenarios": annotated}, sort_keys=False, Dumper=NoAliasDumper, allow_unicode=True),
+                        encoding='utf-8',
+                    )
+                else:
+                    out_path = write_annotation_output(ctx.root, source_path, annotated)
+                print(f"Wrote annotated scenarios ({len(annotated)} entries) to {out_path}")
+                sys.exit(0)
+            except SystemExit:
+                raise
+            except Exception as e:
+                print(f"Error annotating scenarios: {e}")
                 import traceback; traceback.print_exc()
                 sys.exit(1)
         elif args.eval_cmd == "scenarios" and getattr(args, 'scen_cmd', None) == "run":

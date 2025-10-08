@@ -27,6 +27,10 @@ import type {
   EvaluationScenarioGenerationRequest,
   EvaluationScenarioGenerationResponse,
   EvaluationDatasetsResponse,
+  EvaluationScenarioAnnotatePayload,
+  EvaluationScenarioAnnotateResponse,
+  EvaluationScenarioSetDeletePayload,
+  EvaluationScenarioSetDeleteResponse,
 } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_URL || `${window.location.origin}/api`
@@ -268,6 +272,20 @@ class ApiClient {
 
   async promoteEvaluationScenario(payload: EvaluationScenarioPromotionPayload): Promise<EvaluationScenarioPromotionResponse> {
     return this.fetch('/evaluation/scenarios/promote', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async annotateEvaluationScenario(payload: EvaluationScenarioAnnotatePayload): Promise<EvaluationScenarioAnnotateResponse> {
+    return this.fetch('/evaluation/scenarios/annotate', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async deleteEvaluationScenarioSet(payload: EvaluationScenarioSetDeletePayload): Promise<EvaluationScenarioSetDeleteResponse> {
+    return this.fetch('/evaluation/scenarios/delete', {
       method: 'POST',
       body: JSON.stringify(payload),
     })

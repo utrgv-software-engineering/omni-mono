@@ -285,6 +285,30 @@ export interface EvaluationScenarioMutationResponse {
   set: EvaluationScenarioSet
 }
 
+export interface EvaluationScenarioAnnotatePayload {
+  kind: 'generated' | 'annotated'
+  set_path: string
+  agent?: string | null
+}
+
+export interface EvaluationScenarioAnnotateResponse {
+  project?: string | null
+  annotated_path: string
+  set: EvaluationScenarioSet
+}
+
+export interface EvaluationScenarioSetDeletePayload {
+  kind: 'generated' | 'annotated'
+  set_path: string
+}
+
+export interface EvaluationScenarioSetDeleteResponse {
+  project?: string | null
+  deleted_path: string
+  generated: EvaluationScenarioSet[]
+  annotated: EvaluationScenarioSet[]
+}
+
 export type EvaluationScenarioRunState = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
 
 export interface EvaluationScenarioRunRequest {
