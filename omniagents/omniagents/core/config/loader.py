@@ -526,6 +526,14 @@ def load_agent_spec_from_yaml(
         except Exception:
             pass
     else:
+        core_root = Path(__file__).resolve().parents[2]
+        builtin_tools_dir = (core_root / "builtin" / "tools").resolve()
+        if builtin_tools_dir.is_dir():
+            try:
+                builtin_tools = discover_functions_in_dir(str(builtin_tools_dir))
+                all_discovered_functions.update(builtin_tools)
+            except Exception:
+                pass
         if tools_dir_path.is_dir():
             tools_found = discover_functions_in_dir(str(tools_dir_path))
             all_discovered_functions.update(tools_found)

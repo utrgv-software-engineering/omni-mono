@@ -1,12 +1,21 @@
 import atexit
 import logging
+import os
+import subprocess
+import time
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
+from urllib.error import URLError, HTTPError
+
+from dataclasses import asdict
 
 from agents.tracing import add_trace_processor, set_trace_processors
+from omniagents.studio.server import create_api_app
 
 from omniagents.core.paths import get_traces_dir
+from omniagents.core.project.runtime import load_project, build_spec_from_project
 
 from .processor import StudioTraceProcessor, RemoteStudioTraceProcessor, AgentIOProcessor, RemoteAgentIOProcessor
 from .storage import SQLiteStorage
@@ -148,6 +157,10 @@ def serve(
     db_path: Optional[str] = None,
     project: Optional[str] = None,
     auth_token: Optional[str] = None,
+    dev: bool = False,
+    dev_host: str = "127.0.0.1",
+    dev_port: int = 5173,
+    manifest_path: Optional[str] = None,
 ):
     """Run the OmniAgents Studio tracing server."""
     try:
@@ -159,6 +172,8 @@ def serve(
     storage = None
     active_project = None
     created_db = False
+    dev_server_url: Optional[str] = None
+    vite_process: Optional[subprocess.Popen] = None
 
     if db_path:
         resolved = Path(db_path).expanduser().resolve()
@@ -198,9 +213,141 @@ def serve(
                 print(f"📭 No trace databases found in {traces_dir}")
                 print("✨ Studio will create databases as traces are recorded or when --project is provided.")
 
-    from omniagents.studio.server import create_api_app
+    playground_resources = None
+    if manifest_path:
+        try:
+            project_context = load_project(manifest_path)
+            base_spec = build_spec_from_project(project_context)
+            tool_registry = project_context.tool_registry or {}
+            default_tool_names: list[str] = []
+            try:
+                default_tool_names = [
+                    getattr(t, "name") for t in base_spec.available_tools if getattr(t, "name", None)
+                ]
+            except Exception:
+                default_tool_names = []
+            guardrails_registry = project_context.guardrails_registry or {"input": {}, "output": {}}
 
-    app, _ = create_api_app(storage, default_project=active_project)
+            def _guardrail_keys(active_guardrails, registry):
+                keys: list[str] = []
+                for guardrail in active_guardrails or []:
+                    matched = None
+                    for key, candidate in registry.items():
+                        if candidate is guardrail:
+                            matched = key
+                            break
+                        candidate_name = None
+                        if hasattr(candidate, "get_name"):
+                            try:
+                                candidate_name = candidate.get_name()
+                            except Exception:
+                                candidate_name = None
+                        guardrail_name = None
+                        if hasattr(guardrail, "get_name"):
+                            try:
+                                guardrail_name = guardrail.get_name()
+                            except Exception:
+                                guardrail_name = None
+                        if candidate_name and guardrail_name and candidate_name == guardrail_name:
+                            matched = key
+                            break
+                    if matched:
+                        keys.append(str(matched))
+                    else:
+                        if hasattr(guardrail, "get_name"):
+                            try:
+                                fallback = guardrail.get_name()
+                                if fallback:
+                                    keys.append(str(fallback))
+                            except Exception:
+                                pass
+                return keys
+
+            agent_specs: Dict[str, Any] = {}
+            for agent_key in sorted(project_context.agents_map.keys()):
+                if agent_key == project_context.entrypoint:
+                    agent_specs[agent_key] = base_spec
+                else:
+                    try:
+                        agent_specs[agent_key] = build_spec_from_project(project_context, agent_key)
+                    except Exception as agent_exc:
+                        logger.warning("Unable to load agent '%s' for Playground: %s", agent_key, agent_exc)
+
+            playground_resources = {
+                "project_name": project or project_context.raw.get("name") or None,
+                "tool_registry": tool_registry,
+                "guardrails_registry": guardrails_registry,
+                "base_spec": base_spec,
+                "default_tools": default_tool_names,
+                "manifest_path": manifest_path,
+                "default_model_settings": base_spec.model_settings or {},
+                "default_safe_agent": bool(base_spec.use_safe_agent),
+                "default_safe_agent_options": asdict(base_spec.safe_agent_options) if base_spec.safe_agent_options else {},
+                "default_guardrails": {
+                    "input": _guardrail_keys(getattr(base_spec, "input_guardrails", None), guardrails_registry.get("input", {})),
+                    "output": _guardrail_keys(getattr(base_spec, "output_guardrails", None), guardrails_registry.get("output", {})),
+                },
+                "agent_specs": agent_specs,
+                "entry_agent_key": project_context.entrypoint,
+            }
+        except Exception as exc:
+            logger.warning("Unable to load project manifest for Playground: %s", exc)
+            playground_resources = None
+
+    if dev:
+        dev_server_url = f"http://{dev_host}:{dev_port}"
+        web_dir = Path(__file__).resolve().parents[1] / "server" / "web"
+        package_manifest = web_dir / "package.json"
+        if not package_manifest.exists():
+            raise RuntimeError(f"Studio web project not found at {web_dir}")
+
+        env = os.environ.copy()
+        env.setdefault("BROWSER", "none")
+        vite_cmd = [
+            "npm",
+            "run",
+            "dev",
+            "--",
+            "--host",
+            dev_host,
+            "--port",
+            str(dev_port),
+        ]
+        try:
+            print(f"🛠️  Starting Studio web dev server at {dev_server_url} ...")
+            vite_process = subprocess.Popen(vite_cmd, cwd=str(web_dir), env=env)
+        except FileNotFoundError as exc:
+            raise RuntimeError("npm is required to run the Studio dev server. Ensure Node.js is installed.") from exc
+
+        try:
+            start_time = time.time()
+            while True:
+                if vite_process.poll() is not None:
+                    raise RuntimeError("Studio web dev server exited before becoming ready")
+                try:
+                    with urllib.request.urlopen(dev_server_url, timeout=1):
+                        break
+                except (URLError, HTTPError):
+                    if time.time() - start_time > 30:
+                        raise RuntimeError(f"Timed out waiting for Studio web dev server at {dev_server_url}")
+                    time.sleep(0.5)
+        except Exception:
+            if vite_process.poll() is None:
+                vite_process.terminate()
+                try:
+                    vite_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    vite_process.kill()
+            raise
+
+        print(f"🛠️  Studio web dev server running at {dev_server_url}")
+
+    app, _ = create_api_app(
+        storage,
+        default_project=active_project,
+        dev_server_url=dev_server_url,
+        playground_resources=playground_resources,
+    )
 
     if storage:
         print(f"🚀 OmniAgents Studio tracing server running at http://{host}:{port}")
@@ -210,11 +357,22 @@ def serve(
     else:
         print(f"🚀 OmniAgents Studio tracing server running at http://{host}:{port}")
         print(f"📊 Multi-project mode - all databases in {traces_dir} are accessible")
-    print(f"🎨 UI: http://{host}:{port}")
+    if dev and dev_server_url:
+        print(f"🎨 UI (dev): {dev_server_url} (redirected from http://{host}:{port})")
+    else:
+        print(f"🎨 UI: http://{host}:{port}")
     if auth_token:
         print("🔐 Authentication: Enabled")
 
-    uvicorn.run(app, host=host, port=port)
+    try:
+        uvicorn.run(app, host=host, port=port)
+    finally:
+        if vite_process:
+            vite_process.terminate()
+            try:
+                vite_process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                vite_process.kill()
 
 
 def export(output_path: str, format: str = "json", project: Optional[str] = None):

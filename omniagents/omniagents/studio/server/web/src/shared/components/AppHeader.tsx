@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { MoreVertical, Trash2, Download, AlertTriangle, Copy, Settings } from 'lucide-react'
+import { MoreVertical, Trash2, Download, AlertTriangle, Copy, Settings, ArrowLeft } from 'lucide-react'
 import { useTraceStore } from '../../features/traces/store/traceStore'
 import { useProjects, useWorkflows } from '../../features/traces/hooks/useTraces'
 import { useQueryClient } from '@tanstack/react-query'
@@ -10,9 +10,11 @@ interface AppHeaderProps {
   viewMode?: 'debug' | 'review'
   onViewModeChange?: (mode: 'debug' | 'review') => void
   showViewToggle?: boolean
+  showBackButton?: boolean
+  onBack?: () => void
 }
 
-export function AppHeader({ viewMode, onViewModeChange, showViewToggle = false }: AppHeaderProps) {
+export function AppHeader({ viewMode, onViewModeChange, showViewToggle = false, showBackButton = false, onBack }: AppHeaderProps) {
   const { selectedProject, setSelectedProject, selectedWorkflow, setSelectedWorkflow, setSelectedConversation, setSelectedTrace, conversationAnalysis, failureCategories } = useTraceStore()
   const { data: projectsData, refetch: refetchProjects } = useProjects()
   const { data: workflowsData } = useWorkflows()
@@ -138,35 +140,43 @@ export function AppHeader({ viewMode, onViewModeChange, showViewToggle = false }
       <div className="border-b border-border bg-background">
         <div className="flex items-center justify-between px-4 h-14">
           <div className="flex items-center gap-3">
+            {showBackButton && onBack && (
+              <button
+                onClick={onBack}
+                className="mr-1 flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </button>
+            )}
             <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center">
-            <svg 
-              viewBox="0 0 24 24" 
-              className="w-6 h-6 text-white"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path 
-                d="M12 2L2 7L12 12L22 7L12 2Z" 
-                stroke="currentColor" 
-                strokeWidth="2" 
-                strokeLinecap="round" 
-                strokeLinejoin="round"
-              />
-              <path 
-                d="M2 17L12 22L22 17" 
-                stroke="currentColor" 
-                strokeWidth="2" 
-                strokeLinecap="round" 
-                strokeLinejoin="round"
-              />
-              <path 
-                d="M2 12L12 17L22 12" 
-                stroke="currentColor" 
-                strokeWidth="2" 
-                strokeLinecap="round" 
-                strokeLinejoin="round"
-              />
-            </svg>
+              <svg
+                viewBox="0 0 24 24"
+                className="w-6 h-6 text-white"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="M12 2L2 7L12 12L22 7L12 2Z"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M2 17L12 22L22 17"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M2 12L12 17L22 12"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
             </div>
             <h1 className="text-lg font-semibold">
               OmniAgents Studio

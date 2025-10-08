@@ -250,6 +250,9 @@ def discover_functions_in_dir(base_dir: str = "tools", debug: bool = None) -> Di
         sys.path.insert(0, base_path_str)
         paths_added.append(base_path_str)
 
+    preexisting_modules = set(sys.modules.keys())
+    loaded_modules: set[str] = set()
+    loaded_packages: set[str] = set()
     try:
         for filepath in base_path.rglob("*.py"):
             if filepath.name == "__init__.py":
@@ -267,6 +270,10 @@ def discover_functions_in_dir(base_dir: str = "tools", debug: bool = None) -> Di
 
             try:
                 module = importlib.import_module(module_path)
+                loaded_modules.add(module.__name__)
+                package_root = module.__name__.split(".", 1)[0]
+                if package_root not in preexisting_modules:
+                    loaded_packages.add(package_root)
                 for name, obj in inspect.getmembers(module):
                     # --- Check for the marker attribute set by our wrapper decorator --- #
                     if hasattr(obj, '_is_omniagents_core_tool'):
@@ -291,6 +298,18 @@ def discover_functions_in_dir(base_dir: str = "tools", debug: bool = None) -> Di
 
     finally:
         sys.path = original_sys_path
+        for module_name in loaded_modules:
+            try:
+                if module_name in sys.modules and module_name not in preexisting_modules:
+                    del sys.modules[module_name]
+            except Exception:
+                pass
+        for package_name in loaded_packages:
+            try:
+                if package_name in sys.modules and package_name not in preexisting_modules:
+                    del sys.modules[package_name]
+            except Exception:
+                pass
 
     if Debug.enabled():
         print(f"Completed tool discovery: Found {len(discovered_functions)} marked tools in '{base_dir}'.")

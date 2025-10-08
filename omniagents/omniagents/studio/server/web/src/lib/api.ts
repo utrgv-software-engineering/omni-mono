@@ -1,6 +1,45 @@
-import type { Trace, Span, TraceWithSpans, StatsOverview, Conversation, FailureCategory, AnalysisData } from '../types'
+import type {
+  Trace,
+  Span,
+  TraceWithSpans,
+  StatsOverview,
+  Conversation,
+  FailureCategory,
+  AnalysisData,
+  PlaygroundMetadata,
+  PlaygroundSessionResponse,
+  PlaygroundSafeAgentOptions,
+  AgentSummary,
+  EvaluationDimension,
+  EvaluationDimensionsResponse,
+  StudioProjectMetadata,
+  EvaluationScenariosResponse,
+  EvaluationScenarioPromotionPayload,
+  EvaluationScenarioPromotionResponse,
+  EvaluationScenarioCreatePayload,
+  EvaluationScenarioUpdatePayload,
+  EvaluationScenarioDeletePayload,
+  EvaluationScenarioMutationResponse,
+} from '../types'
 
 const API_BASE = import.meta.env.VITE_API_URL || `${window.location.origin}/api`
+
+export interface PlaygroundSessionPayload {
+  model: string
+  instructions?: string
+  tools?: string[]
+  model_settings?: Record<string, number | string | boolean>
+  use_safe_agent?: boolean
+  safe_agent_options?: PlaygroundSafeAgentOptions
+  guardrails?: {
+    input?: string[]
+    output?: string[]
+  }
+  output_type?: string
+  output_type_strict?: boolean
+  output_schema?: Record<string, any>
+  session_id?: string
+}
 
 class ApiClient {
   private baseUrl: string
@@ -178,9 +217,126 @@ class ApiClient {
     })
   }
 
+  async getPlaygroundMetadata(): Promise<PlaygroundMetadata> {
+    return this.fetch('/playground/metadata')
+  }
+
+  async getAgents(): Promise<{ agents: AgentSummary[] }> {
+    return this.fetch('/agents')
+  }
+
+  async getAgentMetadata(agentKey: string): Promise<PlaygroundMetadata> {
+    return this.fetch(`/agents/${agentKey}/metadata`)
+  }
+
+  async getEvaluationDimensions(): Promise<EvaluationDimensionsResponse> {
+    return this.fetch('/evaluation/dimensions')
+  }
+
+  async updateEvaluationDimensions(dimensions: EvaluationDimension[]): Promise<EvaluationDimensionsResponse> {
+    return this.fetch('/evaluation/dimensions', {
+      method: 'PUT',
+      body: JSON.stringify({ dimensions }),
+    })
+  }
+
+  async getStudioProject(): Promise<StudioProjectMetadata> {
+    return this.fetch('/studio/project')
+  }
+
+  async getEvaluationScenarios(): Promise<EvaluationScenariosResponse> {
+    return this.fetch('/evaluation/scenarios')
+  }
+
+  async promoteEvaluationScenario(payload: EvaluationScenarioPromotionPayload): Promise<EvaluationScenarioPromotionResponse> {
+    return this.fetch('/evaluation/scenarios/promote', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async createEvaluationScenario(payload: EvaluationScenarioCreatePayload): Promise<EvaluationScenarioMutationResponse> {
+    return this.fetch('/evaluation/scenarios/item', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async updateEvaluationScenario(payload: EvaluationScenarioUpdatePayload): Promise<EvaluationScenarioMutationResponse> {
+    return this.fetch('/evaluation/scenarios/item', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async deleteEvaluationScenario(payload: EvaluationScenarioDeletePayload): Promise<EvaluationScenarioMutationResponse> {
+    return this.fetch('/evaluation/scenarios/item', {
+      method: 'DELETE',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async createPlaygroundSession(payload: PlaygroundSessionPayload): Promise<PlaygroundSessionResponse> {
+    return this.fetch('/playground/session', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async createAgentSession(agentKey: string, payload: PlaygroundSessionPayload): Promise<PlaygroundSessionResponse> {
+    return this.fetch(`/agents/${agentKey}/session`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  }
+
   createWebSocket(): WebSocket {
     const wsUrl = this.baseUrl.replace('http', 'ws').replace('/api', '/api/ws/traces')
     return new WebSocket(wsUrl)
+  }
+
+  createPlaygroundWebSocket(sessionId: string, explicitBase?: string, agentKey?: string): WebSocket {
+    if (explicitBase) {
+      const resolved = new URL(explicitBase)
+      resolved.searchParams.set('session_id', sessionId)
+      if (agentKey) {
+        resolved.searchParams.set('agent', agentKey)
+      }
+      const urlStr = resolved.toString()
+      if (typeof window !== 'undefined' && window.console) {
+        console.debug('[playground] websocket url', urlStr)
+      }
+      return new WebSocket(urlStr)
+    }
+
+    const base = this.baseUrl || '/api'
+    let resolved: URL
+    if (/^https?:/i.test(base) || /^ws(s)?:/i.test(base)) {
+      resolved = new URL(base)
+    } else {
+      resolved = new URL(base, window.location.origin)
+    }
+
+    const wsUrl = new URL(resolved.toString())
+    wsUrl.protocol = resolved.protocol === 'https:' ? 'wss:' : resolved.protocol === 'http:' ? 'ws:' : resolved.protocol
+
+    const basePath = resolved.pathname.replace(/\/$/, '') || '/api'
+    wsUrl.pathname = `${basePath}/playground/ws`
+
+    const token = resolved.searchParams.get('token')
+    wsUrl.search = ''
+    if (token) {
+      wsUrl.searchParams.set('token', token)
+    }
+    wsUrl.searchParams.set('session_id', sessionId)
+    if (agentKey) {
+      wsUrl.searchParams.set('agent', agentKey)
+    }
+    const urlString = wsUrl.toString()
+    if (typeof window !== 'undefined' && window.console) {
+      console.debug('[playground] websocket url', urlString)
+    }
+    return new WebSocket(urlString)
   }
 }
 

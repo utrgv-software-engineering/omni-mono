@@ -361,6 +361,9 @@ def main():
     studio_serve.add_argument("--db-path", dest="db_path", default=None, help="Path to a specific SQLite database (optional)")
     studio_serve.add_argument("--project", default=None, help="Project name under ~/.omniagents/traces (or OMNIAGENTS_HOME) to serve (optional)")
     studio_serve.add_argument("--token", dest="auth_token", default=None, help="Bearer token for API access")
+    studio_serve.add_argument("--dev", action="store_true", help="Run with the Studio web dev server (auto rebuild UI)")
+    studio_serve.add_argument("--dev-host", default="127.0.0.1", help="Host for the Studio web dev server (default: 127.0.0.1)")
+    studio_serve.add_argument("--dev-port", type=int, default=5173, help="Port for the Studio web dev server (default: 5173)")
 
     studio_export = studio_sub.add_parser("export", help="Export traces from OmniAgents Studio")
     studio_export.add_argument("output", help="Output file path")
@@ -617,6 +620,10 @@ def main():
                     db_path=getattr(args, "db_path", None),
                     project=inferred_project,
                     auth_token=getattr(args, "auth_token", None),
+                    dev=getattr(args, "dev", False),
+                    dev_host=getattr(args, "dev_host", "127.0.0.1"),
+                    dev_port=getattr(args, "dev_port", 5173),
+                    manifest_path=str(_manifest_path) if _manifest_path else None,
                 )
             except ImportError as e:
                 print(f"Error starting Studio server: {e}")

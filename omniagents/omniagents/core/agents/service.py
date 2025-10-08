@@ -520,6 +520,9 @@ class AgentService(RpcMethodsBase):
             attempt = 0
             include_user_message = True
             try:
+                workflow_name_override = None
+                if isinstance(self.spec.tracing_config, dict):
+                    workflow_name_override = self.spec.tracing_config.get("workflow_name")
                 while True:
                     try:
                         final_details = await stream_agent(
@@ -531,6 +534,7 @@ class AgentService(RpcMethodsBase):
                             context=runtime_context,
                             context_window=getattr(self.spec, "context_window", None),
                             include_user_message=include_user_message,
+                            workflow_name=workflow_name_override,
                         )
                         end_reason = "completed"
                         error_info = None

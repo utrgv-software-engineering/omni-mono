@@ -156,6 +156,16 @@ def load_project(project_path: str) -> ProjectContext:
             ui_defaults[k] = proj.get(k)
 
     tool_registry: Dict[str, Any] = {}
+
+    core_root = Path(__file__).resolve().parents[2]
+    builtin_tools_dir = (core_root / "builtin" / "tools").resolve()
+    if builtin_tools_dir.is_dir():
+        try:
+            builtins_found = discover_functions_in_dir(str(builtin_tools_dir))
+            tool_registry.update(builtins_found)
+        except Exception:
+            pass
+
     for d in tools_dirs:
         if d.is_dir():
             try:
