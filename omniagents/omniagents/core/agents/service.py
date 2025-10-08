@@ -58,6 +58,13 @@ class AgentService(RpcMethodsBase):
         """
         super().__init__()
         self.spec = spec
+        try:
+            if getattr(self.spec, "tracing_config", None):
+                from omniagents.core.tracing import setup_tracing
+
+                setup_tracing(self.spec.tracing_config)
+        except Exception:
+            pass
         # Tool-approval request / response helper state
         self._pending_approvals: dict[str, asyncio.Future] = {}
         # Client-function request tracking (server→client RPC-style)

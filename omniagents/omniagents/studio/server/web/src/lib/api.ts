@@ -9,6 +9,7 @@ import type {
   PlaygroundMetadata,
   PlaygroundSessionResponse,
   PlaygroundSafeAgentOptions,
+  AgentUpdatePayload,
   AgentSummary,
   EvaluationDimension,
   EvaluationDimensionsResponse,
@@ -20,6 +21,12 @@ import type {
   EvaluationScenarioUpdatePayload,
   EvaluationScenarioDeletePayload,
   EvaluationScenarioMutationResponse,
+  EvaluationScenarioRunRequest,
+  EvaluationScenarioRunResponse,
+  EvaluationScenarioRunStatus,
+  EvaluationScenarioGenerationRequest,
+  EvaluationScenarioGenerationResponse,
+  EvaluationDatasetsResponse,
 } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_URL || `${window.location.origin}/api`
@@ -229,6 +236,13 @@ class ApiClient {
     return this.fetch(`/agents/${agentKey}/metadata`)
   }
 
+  async updateAgent(agentKey: string, payload: AgentUpdatePayload): Promise<PlaygroundMetadata> {
+    return this.fetch(`/agents/${agentKey}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })
+  }
+
   async getEvaluationDimensions(): Promise<EvaluationDimensionsResponse> {
     return this.fetch('/evaluation/dimensions')
   }
@@ -246,6 +260,10 @@ class ApiClient {
 
   async getEvaluationScenarios(): Promise<EvaluationScenariosResponse> {
     return this.fetch('/evaluation/scenarios')
+  }
+
+  async getEvaluationDatasets(): Promise<EvaluationDatasetsResponse> {
+    return this.fetch('/evaluation/datasets')
   }
 
   async promoteEvaluationScenario(payload: EvaluationScenarioPromotionPayload): Promise<EvaluationScenarioPromotionResponse> {
@@ -276,6 +294,28 @@ class ApiClient {
     })
   }
 
+  async startEvaluationScenarioRun(payload: EvaluationScenarioRunRequest): Promise<EvaluationScenarioRunResponse> {
+    return this.fetch('/evaluation/scenarios/run', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async getEvaluationScenarioRunStatus(jobId: string): Promise<EvaluationScenarioRunResponse> {
+    return this.fetch(`/evaluation/scenarios/run/${jobId}`)
+  }
+
+  async startEvaluationScenarioGeneration(payload: EvaluationScenarioGenerationRequest): Promise<EvaluationScenarioGenerationResponse> {
+    return this.fetch('/evaluation/scenarios/generate', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async getEvaluationScenarioGenerationStatus(jobId: string): Promise<EvaluationScenarioGenerationResponse> {
+    return this.fetch(`/evaluation/scenarios/generate/${jobId}`)
+  }
+
   async createPlaygroundSession(payload: PlaygroundSessionPayload): Promise<PlaygroundSessionResponse> {
     return this.fetch('/playground/session', {
       method: 'POST',
@@ -293,6 +333,46 @@ class ApiClient {
   createWebSocket(): WebSocket {
     const wsUrl = this.baseUrl.replace('http', 'ws').replace('/api', '/api/ws/traces')
     return new WebSocket(wsUrl)
+  }
+
+  createScenarioRunWebSocket(jobId: string): WebSocket {
+    const base = this.baseUrl || '/api'
+    let resolved: URL
+    if (/^https?:/i.test(base) || /^ws(s)?:/i.test(base)) {
+      resolved = new URL(base)
+    } else {
+      resolved = new URL(base, window.location.origin)
+    }
+    const wsUrl = new URL(resolved.toString())
+    wsUrl.protocol = resolved.protocol === 'https:' ? 'wss:' : resolved.protocol === 'http:' ? 'ws:' : resolved.protocol
+    const basePath = resolved.pathname.replace(/\/$/, '') || '/api'
+    wsUrl.pathname = `${basePath}/evaluation/scenarios/run/${jobId}/ws`
+    const token = resolved.searchParams.get('token')
+    wsUrl.search = ''
+    if (token) {
+      wsUrl.searchParams.set('token', token)
+    }
+    return new WebSocket(wsUrl.toString())
+  }
+
+  createScenarioGenerationWebSocket(jobId: string): WebSocket {
+    const base = this.baseUrl || '/api'
+    let resolved: URL
+    if (/^https?:/i.test(base) || /^ws(s)?:/i.test(base)) {
+      resolved = new URL(base)
+    } else {
+      resolved = new URL(base, window.location.origin)
+    }
+    const wsUrl = new URL(resolved.toString())
+    wsUrl.protocol = resolved.protocol === 'https:' ? 'wss:' : resolved.protocol === 'http:' ? 'ws:' : resolved.protocol
+    const basePath = resolved.pathname.replace(/\/$/, '') || '/api'
+    wsUrl.pathname = `${basePath}/evaluation/scenarios/generate/${jobId}/ws`
+    const token = resolved.searchParams.get('token')
+    wsUrl.search = ''
+    if (token) {
+      wsUrl.searchParams.set('token', token)
+    }
+    return new WebSocket(wsUrl.toString())
   }
 
   createPlaygroundWebSocket(sessionId: string, explicitBase?: string, agentKey?: string): WebSocket {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, JSX } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronUp, Plus, ShieldCheck, Trash2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -11,6 +11,7 @@ import type {
   PlaygroundToolDefinition,
   PlaygroundSessionResponse,
   PlaygroundSafeAgentOptions,
+  AgentUpdatePayload,
 } from '../../types'
 import {
   usePlaygroundSession,
@@ -226,6 +227,118 @@ const sanitizeSafeOptions = (options: PlaygroundSafeAgentOptions | undefined, to
   }
 }
 
+type OutputFieldSummary = {
+  name: string
+  type: OutputFieldType
+  required: boolean
+}
+
+type SerializedAgentConfig = {
+  model: string
+  instructions: string
+  tools: string[]
+  modelSettings: ModelSettingsState
+  useSafeAgent: boolean
+  safeOptions: SafeOptionsState
+  guardrails: {
+    input: string[]
+    output: string[]
+  }
+  output: {
+    selection: string
+    strict: boolean
+    fields: OutputFieldSummary[]
+  }
+}
+
+const serializeAgentConfig = (
+  model: string,
+  instructions: string,
+  tools: string[],
+  modelSettings: ModelSettingsState,
+  useSafeAgent: boolean,
+  safeOptions: SafeOptionsState,
+  inputGuardrails: string[],
+  outputGuardrails: string[],
+  outputTypeSelection: string,
+  outputTypeStrict: boolean,
+  outputFields: OutputField[],
+): SerializedAgentConfig => ({
+  model: model,
+  instructions,
+  tools: [...tools],
+  modelSettings: { ...modelSettings },
+  useSafeAgent,
+  safeOptions: {
+    skip_approvals: safeOptions.skip_approvals,
+    halt_on_rejection: safeOptions.halt_on_rejection,
+    safe_tool_names: [...safeOptions.safe_tool_names],
+    safe_tool_patterns: [...safeOptions.safe_tool_patterns],
+  },
+  guardrails: {
+    input: [...inputGuardrails],
+    output: [...outputGuardrails],
+  },
+  output: {
+    selection: outputTypeSelection,
+    strict: outputTypeStrict,
+    fields: outputFields.map((field) => ({
+      name: field.name,
+      type: field.type,
+      required: field.required,
+    })),
+  },
+})
+
+const prepareComparison = (snapshot: SerializedAgentConfig) => {
+  const normalizedSettings = Object.entries(snapshot.modelSettings)
+    .map(([key, value]) => [key, value] as [string, number | string | boolean])
+    .sort((a, b) => a[0].localeCompare(b[0]))
+  const normalizeList = (list: string[]) => list.map((item) => item.trim()).filter((item) => item.length > 0).sort()
+  const normalizedFields = snapshot.output.fields
+    .map((field) => ({
+      name: field.name.trim(),
+      type: field.type,
+      required: field.required,
+    }))
+    .sort((a, b) => {
+      const nameCompare = a.name.localeCompare(b.name)
+      if (nameCompare !== 0) {
+        return nameCompare
+      }
+      const typeCompare = a.type.localeCompare(b.type)
+      if (typeCompare !== 0) {
+        return typeCompare
+      }
+      if (a.required === b.required) {
+        return 0
+      }
+      return a.required ? -1 : 1
+    })
+  return {
+    model: snapshot.model.trim(),
+    instructions: snapshot.instructions,
+    tools: normalizeList(snapshot.tools),
+    modelSettings: normalizedSettings,
+    useSafeAgent: snapshot.useSafeAgent,
+    safeOptions: {
+      skip_approvals: snapshot.safeOptions.skip_approvals,
+      halt_on_rejection: snapshot.safeOptions.halt_on_rejection,
+      safe_tool_names: normalizeList(snapshot.safeOptions.safe_tool_names),
+      safe_tool_patterns: normalizeList(snapshot.safeOptions.safe_tool_patterns),
+    },
+    guardrails: {
+      input: normalizeList(snapshot.guardrails.input),
+      output: normalizeList(snapshot.guardrails.output),
+    },
+    output: {
+      selection: snapshot.output.selection,
+      strict: snapshot.output.strict,
+      fields: normalizedFields,
+    },
+  }
+}
+
 export function AgentWorkbench({
   metadataQueryKey,
   metadataFetcher,
@@ -240,6 +353,9 @@ export function AgentWorkbench({
     queryFn: metadataFetcher,
     staleTime: 5 * 60 * 1000,
   })
+
+  const queryClient = useQueryClient()
+  const [initialComparison, setInitialComparison] = useState<string | null>(null)
 
   const [modelInput, setModelInput] = useState('')
   const [instructions, setInstructions] = useState('')
@@ -313,6 +429,7 @@ export function AgentWorkbench({
     stopRun,
     isRunning,
     respondToApproval,
+    resetConversation,
   } = usePlaygroundSession(sessionId || null, data?.playground_ws_url, agentKey ?? undefined)
 
   const connectionStateRef = useRef<PlaygroundConnectionState>(connectionState)
@@ -338,32 +455,37 @@ export function AgentWorkbench({
       return
     }
     const shouldPrefill = Boolean(agentKey)
-    const defaultModel = data.default_model ?? ''
+    const defaultModel = data?.default_model ?? ''
+    const resolvedInstructions = shouldPrefill ? data?.default_instructions ?? '' : ''
+    const resolvedTools = shouldPrefill ? Array.from(new Set(data?.default_tools ?? [])) : []
+    const resolvedModelSettings = shouldPrefill ? data?.default_model_settings ?? {} : {}
+    const resolvedUseSafe = shouldPrefill ? Boolean(data?.safe_defaults?.use_safe_agent) : false
+    const resolvedSafeOptions = shouldPrefill ? sanitizeSafeOptions(data?.safe_defaults?.options, resolvedTools) : createDefaultSafeOptions()
+    const resolvedInputGuardrails = shouldPrefill ? data?.guardrails?.default_input ?? [] : []
+    const resolvedOutputGuardrails = shouldPrefill ? data?.guardrails?.default_output ?? [] : []
+    const resolvedOutputFields = shouldPrefill ? schemaToFields(structuredOutputConfig?.default_schema) : []
+    const resolvedOutputStrict = structuredOutputConfig ? structuredOutputConfig.default_strict ?? true : true
+    const baselineSafeOptions = shouldPrefill ? resolvedSafeOptions : createDefaultSafeOptions()
+    const baselineInputGuardrails = shouldPrefill ? resolvedInputGuardrails : []
+    const baselineOutputGuardrails = shouldPrefill ? resolvedOutputGuardrails : []
+    const baselineOutputFields = shouldPrefill ? resolvedOutputFields : []
     setModelInput(defaultModel)
     if (shouldPrefill) {
-      const defaultInstructions = data.default_instructions ?? ''
-      setInstructions(defaultInstructions)
+      setInstructions(resolvedInstructions)
       setInstructionsDirty(false)
-      const defaultTools = Array.from(new Set(data.default_tools ?? []))
-      updateSelection(defaultTools, false)
+      updateSelection(resolvedTools, false)
       setToolsDirty(false)
-      const defaultModelSettings = data.default_model_settings ?? {}
-      setModelSettings(defaultModelSettings)
+      setModelSettings(resolvedModelSettings)
       setModelSettingsDirty(false)
-      const useSafeByDefault = Boolean(data.safe_defaults?.use_safe_agent)
-      setUseSafeAgent(useSafeByDefault)
+      setUseSafeAgent(resolvedUseSafe)
       setSafeAgentDirty(false)
-      const safeDefaults = sanitizeSafeOptions(data.safe_defaults?.options, defaultTools)
-      setSafeOptions(safeDefaults)
+      setSafeOptions(baselineSafeOptions)
       setSafeOptionsDirty(false)
-      setSafePatternInput(safeDefaults.safe_tool_patterns.join('\n'))
-      const defaultInputGuardrails = data.guardrails?.default_input ?? []
-      const defaultOutputGuardrails = data.guardrails?.default_output ?? []
-      setSelectedInputGuardrails(defaultInputGuardrails)
-      setSelectedOutputGuardrails(defaultOutputGuardrails)
+      setSafePatternInput(baselineSafeOptions.safe_tool_patterns.join('\n'))
+      setSelectedInputGuardrails(baselineInputGuardrails)
+      setSelectedOutputGuardrails(baselineOutputGuardrails)
       setGuardrailsDirty(false)
-      const defaultFields = schemaToFields(structuredOutputConfig?.default_schema)
-      setOutputFields(defaultFields)
+      setOutputFields(baselineOutputFields)
     } else {
       setInstructions('')
       setInstructionsDirty(false)
@@ -373,7 +495,7 @@ export function AgentWorkbench({
       setModelSettingsDirty(false)
       setUseSafeAgent(false)
       setSafeAgentDirty(false)
-      setSafeOptions(createDefaultSafeOptions())
+      setSafeOptions(baselineSafeOptions)
       setSafeOptionsDirty(false)
       setSafePatternInput('')
       setSelectedInputGuardrails([])
@@ -382,7 +504,7 @@ export function AgentWorkbench({
       setOutputFields([])
     }
     setOutputTypeSelection('default')
-    setOutputTypeStrict(structuredOutputConfig ? structuredOutputConfig.default_strict ?? true : true)
+    setOutputTypeStrict(resolvedOutputStrict)
     setOutputFieldsError(null)
     setOutputConfigDirty(false)
     setShowAdvanced(false)
@@ -391,8 +513,22 @@ export function AgentWorkbench({
     setStatusSpinner(false)
     setStatusSeverity('info')
     setConfigDirty(false)
+    const snapshot = serializeAgentConfig(
+      defaultModel,
+      resolvedInstructions,
+      resolvedTools,
+      resolvedModelSettings,
+      resolvedUseSafe,
+      baselineSafeOptions,
+      baselineInputGuardrails,
+      baselineOutputGuardrails,
+      'default',
+      resolvedOutputStrict,
+      baselineOutputFields,
+    )
+    setInitialComparison(JSON.stringify(prepareComparison(snapshot)))
     setDefaultsApplied(true)
-  }, [data, defaultsApplied, structuredOutputConfig])
+  }, [agentKey, data, defaultsApplied, structuredOutputConfig, updateSelection])
 
   useEffect(() => {
     const projectName = data?.project_name || ''
@@ -440,6 +576,15 @@ export function AgentWorkbench({
 
   const sessionMutation = useMutation({
     mutationFn: (payload: PlaygroundSessionPayload) => configureSession(payload),
+  })
+
+  const agentUpdateMutation = useMutation({
+    mutationFn: (payload: AgentUpdatePayload) => {
+      if (!agentKey) {
+        throw new Error('Agent key is required')
+      }
+      return api.updateAgent(agentKey, payload)
+    },
   })
 
   const handleOutputTypeChange = useCallback(
@@ -509,6 +654,46 @@ export function AgentWorkbench({
     setOutputConfigDirty(true)
     setConfigDirty(true)
   }, [])
+
+  const validateStructuredOutput = useCallback(() => {
+    if (outputTypeSelection !== 'dict') {
+      setOutputFieldsError(null)
+      return null
+    }
+    if (outputFields.length === 0) {
+      const message = 'Add at least one field for the JSON object output'
+      setOutputFieldsError(message)
+      throw new Error(message)
+    }
+    const usedNames = new Set<string>()
+    for (const field of outputFields) {
+      const name = field.name.trim()
+      if (!name) {
+        const message = 'Field names cannot be empty'
+        setOutputFieldsError(message)
+        throw new Error(message)
+      }
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+        const message = 'Field names must start with a letter or underscore and contain only letters, numbers, or underscores'
+        setOutputFieldsError(message)
+        throw new Error(message)
+      }
+      if (usedNames.has(name)) {
+        const message = 'Field names must be unique'
+        setOutputFieldsError(message)
+        throw new Error(message)
+      }
+      usedNames.add(name)
+    }
+    const builtSchema = fieldsToSchema(outputFields)
+    if (!builtSchema) {
+      const message = 'Define at least one valid field'
+      setOutputFieldsError(message)
+      throw new Error(message)
+    }
+    setOutputFieldsError(null)
+    return builtSchema
+  }, [outputFields, outputTypeSelection])
 
   const handleModelSettingChange = (field: ModelSettingDefinition, rawValue: string | boolean) => {
     setModelSettings((prev) => {
@@ -642,7 +827,7 @@ export function AgentWorkbench({
     setConfigDirty(true)
   }
 
-  const updateSelection = (names: string[], markDirty = true) => {
+  function updateSelection(names: string[], markDirty = true) {
     const deduped = Array.from(new Set(names))
     setSelectedTools(deduped)
     setToolSelection(
@@ -678,6 +863,43 @@ export function AgentWorkbench({
         : [...selectedTools, name]
     )
   }
+
+  const defaultModelHint = data?.default_model ? `e.g., ${data?.default_model}` : 'gpt-4o-mini'
+  const selectedToolObjects = selectedTools
+    .map((name) => tools.find((tool) => tool.name === name))
+    .filter(Boolean) as PlaygroundToolDefinition[]
+
+  const currentSnapshot = useMemo(
+    () =>
+      serializeAgentConfig(
+        modelInput,
+        instructions,
+        selectedTools,
+        modelSettings,
+        useSafeAgent,
+        safeOptions,
+        selectedInputGuardrails,
+        selectedOutputGuardrails,
+        outputTypeSelection,
+        outputTypeStrict,
+        outputFields,
+      ),
+    [
+      modelInput,
+      instructions,
+      selectedTools,
+      modelSettings,
+      useSafeAgent,
+      safeOptions,
+      selectedInputGuardrails,
+      selectedOutputGuardrails,
+      outputTypeSelection,
+      outputTypeStrict,
+      outputFields,
+    ],
+  )
+  const currentComparisonString = useMemo(() => JSON.stringify(prepareComparison(currentSnapshot)), [currentSnapshot])
+  const hasUnsavedDefaults = Boolean(agentKey) && initialComparison !== null && initialComparison !== currentComparisonString
 
   const handleReset = () => {
     const defaultModel = data?.default_model ?? ''
@@ -741,45 +963,106 @@ export function AgentWorkbench({
     }
   }
 
+  const handleSaveDefaults = useCallback(async () => {
+    if (!agentKey || agentUpdateMutation.isPending) {
+      return
+    }
+    try {
+      setFormError('')
+      const trimmedModel = modelInput.trim()
+      if (!trimmedModel) {
+        const message = 'Enter a model name to continue'
+        setFormError(message)
+        applyStatus(message, { spinner: false, severity: 'error' })
+        return
+      }
+      const schemaPayload = outputTypeSelection === 'dict' ? validateStructuredOutput() : null
+      const payload: AgentUpdatePayload = {
+        model: trimmedModel,
+        instructions,
+        tools: [...selectedTools],
+        use_safe_agent: useSafeAgent,
+        safe_agent_options: {
+          skip_approvals: safeOptions.skip_approvals,
+          halt_on_rejection: safeOptions.halt_on_rejection,
+          safe_tool_names: [...safeOptions.safe_tool_names],
+          safe_tool_patterns: [...safeOptions.safe_tool_patterns],
+        },
+        guardrails: {
+          input: [...selectedInputGuardrails],
+          output: [...selectedOutputGuardrails],
+        },
+      }
+      if (Object.keys(modelSettings).length > 0) {
+        payload.model_settings = modelSettings
+      }
+      if (outputTypeSelection !== 'default') {
+        if (outputTypeSelection === 'none') {
+          payload.output_type = 'none'
+          payload.output_schema = null
+        } else {
+          payload.output_type = outputTypeSelection
+          payload.output_type_strict = outputTypeStrict
+          if (outputTypeSelection === 'dict') {
+            payload.output_schema = schemaPayload ?? null
+          } else {
+            payload.output_schema = null
+          }
+        }
+      }
+      applyStatus('Saving defaults…', { spinner: true, severity: 'info' })
+      await agentUpdateMutation.mutateAsync(payload)
+      setInitialComparison(currentComparisonString)
+      setInstructionsDirty(false)
+      setToolsDirty(false)
+      setModelSettingsDirty(false)
+      setSafeAgentDirty(false)
+      setSafeOptionsDirty(false)
+      setGuardrailsDirty(false)
+      setOutputConfigDirty(false)
+      setConfigDirty(false)
+      applyStatus('Defaults saved', { spinner: false, severity: 'info' })
+      queryClient.invalidateQueries(metadataQueryKey as any)
+      queryClient.invalidateQueries(['agents', 'list'])
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save defaults'
+      setFormError(message)
+      applyStatus(message, { spinner: false, severity: 'error' })
+    }
+  }, [
+    agentKey,
+    agentUpdateMutation,
+    applyStatus,
+    currentComparisonString,
+    metadataQueryKey,
+    modelInput,
+    modelSettings,
+    outputTypeSelection,
+    outputTypeStrict,
+    queryClient,
+    safeOptions,
+    selectedInputGuardrails,
+    selectedOutputGuardrails,
+    selectedTools,
+    setFormError,
+    useSafeAgent,
+    validateStructuredOutput,
+    instructions,
+  ])
+
+  const handleResetConversation = useCallback(() => {
+    resetConversation()
+    setSessionId('')
+    clearStatus()
+  }, [resetConversation, clearStatus])
+
   const ensureSession = async (trimmedModel: string) => {
     if (!sessionId || configDirty) {
       setFormError('')
       try {
-        let schemaPayload: Record<string, unknown> | undefined
+        let schemaPayload: Record<string, unknown> | null = null
         if (outputConfigDirty && outputTypeSelection === 'dict') {
-          if (outputFields.length === 0) {
-            const message = 'Add at least one field for the JSON object output'
-            setOutputFieldsError(message)
-            throw new Error(message)
-          }
-          const usedNames = new Set<string>()
-          for (const field of outputFields) {
-            const name = field.name.trim()
-            if (!name) {
-              const message = 'Field names cannot be empty'
-              setOutputFieldsError(message)
-              throw new Error(message)
-            }
-            if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
-              const message = 'Field names must start with a letter or underscore and contain only letters, numbers, or underscores'
-              setOutputFieldsError(message)
-              throw new Error(message)
-            }
-            if (usedNames.has(name)) {
-              const message = 'Field names must be unique'
-              setOutputFieldsError(message)
-              throw new Error(message)
-            }
-            usedNames.add(name)
-          }
-          const builtSchema = fieldsToSchema(outputFields)
-          if (!builtSchema) {
-            const message = 'Define at least one valid field'
-            setOutputFieldsError(message)
-            throw new Error(message)
-          }
-          schemaPayload = builtSchema
-          setOutputFieldsError(null)
+          schemaPayload = validateStructuredOutput()
         } else {
           setOutputFieldsError(null)
         }
@@ -985,11 +1268,6 @@ export function AgentWorkbench({
     )
   }
 
-  const defaultModelHint = data.default_model ? `e.g., ${data.default_model}` : 'gpt-4o-mini'
-  const selectedToolObjects = selectedTools
-    .map((name) => tools.find((tool) => tool.name === name))
-    .filter(Boolean) as PlaygroundToolDefinition[]
-
   return (
     <div className="h-full w-full overflow-y-auto p-6 lg:overflow-hidden">
       <div className="mx-auto flex h-full max-w-6xl flex-col gap-6 lg:grid lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
@@ -997,13 +1275,25 @@ export function AgentWorkbench({
           <div className="flex-1 space-y-6 overflow-y-auto p-5">
             <header className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-xl font-semibold">{heading}</h2>
-              <button
-                type="button"
-                onClick={handleReset}
-                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted"
-              >
-                Reset
-              </button>
+              <div className="flex items-center gap-2">
+                {agentKey ? (
+                  <button
+                    type="button"
+                    onClick={handleSaveDefaults}
+                    disabled={!hasUnsavedDefaults || agentUpdateMutation.isPending || isLoading}
+                    className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {agentUpdateMutation.isPending ? 'Saving…' : 'Save defaults'}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={handleReset}
+                  className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted"
+                >
+                  Reset
+                </button>
+              </div>
             </header>
 
             <div className="space-y-2">
@@ -1383,6 +1673,7 @@ export function AgentWorkbench({
               statusText={sessionStatus}
               statusSpinner={statusSpinner}
               statusSeverity={statusSeverity}
+              onResetConversation={handleResetConversation}
             />
           </div>
         </section>
@@ -1606,6 +1897,7 @@ interface PlaygroundChatPanelProps {
   statusText: string
   statusSpinner: boolean
   statusSeverity: 'info' | 'error'
+  onResetConversation: () => void
 }
 
 function PlaygroundChatPanel({
@@ -1622,6 +1914,7 @@ function PlaygroundChatPanel({
   statusText,
   statusSpinner,
   statusSeverity,
+  onResetConversation,
 }: PlaygroundChatPanelProps) {
   const [input, setInput] = useState('')
   const [composerError, setComposerError] = useState('')
@@ -1695,6 +1988,14 @@ function PlaygroundChatPanel({
   }
 
   const canSend = !isPreparing && !isRunning
+
+  const handleResetClick = () => {
+    setInput('')
+    setComposerError('')
+    setApprovalPending({})
+    setApprovalErrors({})
+    onResetConversation()
+  }
 
   const connectionStatus = (() => {
     if (isPreparing) {
@@ -1879,6 +2180,14 @@ function PlaygroundChatPanel({
         />
         {composerError && <p className="text-xs text-destructive">{composerError}</p>}
         <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={handleResetClick}
+            disabled={isRunning || isPreparing}
+            className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Reset chat
+          </button>
           <button
             type="button"
             onClick={onStop}

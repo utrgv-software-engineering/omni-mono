@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Home, LayoutPanelLeft, Sparkles, Bot, BarChart3 } from 'lucide-react'
+import { Home, ScrollText, Sparkles, Bot, BarChart3 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 
 type StudioSection = 'home' | 'logs' | 'playground' | 'agents' | 'evaluation'
@@ -35,16 +35,16 @@ export function StudioSidebar({ activeSection, onSelect, children, showNavigatio
             onClick={() => onSelect('agents')}
           />
           <SidebarButton
-            icon={LayoutPanelLeft}
-            label="Logs"
-            isActive={activeSection === 'logs'}
-            onClick={() => onSelect('logs')}
-          />
-          <SidebarButton
             icon={BarChart3}
             label="Evaluation"
             isActive={activeSection === 'evaluation'}
             onClick={() => onSelect('evaluation')}
+          />
+          <SidebarButton
+            icon={ScrollText}
+            label="Logs"
+            isActive={activeSection === 'logs'}
+            onClick={() => onSelect('logs')}
           />
         </div>
       )}

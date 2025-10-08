@@ -164,6 +164,22 @@ export interface PlaygroundSessionResponse {
   session_id: string
 }
 
+export interface AgentUpdatePayload {
+  model: string
+  instructions?: string
+  tools: string[]
+  model_settings?: Record<string, number | string | boolean>
+  use_safe_agent: boolean
+  safe_agent_options?: PlaygroundSafeAgentOptions
+  guardrails?: {
+    input?: string[]
+    output?: string[]
+  }
+  output_type?: string | null
+  output_type_strict?: boolean
+  output_schema?: Record<string, any> | null
+}
+
 export interface AgentSummary {
   key: string
   name: string | null
@@ -267,4 +283,110 @@ export interface EvaluationScenarioDeletePayload {
 export interface EvaluationScenarioMutationResponse {
   project?: string | null
   set: EvaluationScenarioSet
+}
+
+export type EvaluationScenarioRunState = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface EvaluationScenarioRunRequest {
+  kind: 'golden' | 'generated' | 'annotated'
+  set_path: string
+  agent?: string | null
+  select?: string | null
+  exclude?: string | null
+  max_turns?: number | null
+  include_history?: boolean
+  output_path?: string | null
+}
+
+export interface EvaluationScenarioRunStatus {
+  job_id: string
+  project?: string | null
+  kind: 'golden' | 'generated' | 'annotated'
+  set_path: string
+  include_history: boolean
+  max_turns?: number | null
+  output_path?: string | null
+  select?: string | null
+  exclude?: string | null
+  state: EvaluationScenarioRunState
+  total: number
+  completed: number
+  created_at: string
+  updated_at: string
+  started_at?: string | null
+  finished_at?: string | null
+  runs_path?: string | null
+  workflow_name?: string | null
+  error?: string | null
+}
+
+export interface EvaluationScenarioRunResponse {
+  job_id: string
+  status?: EvaluationScenarioRunStatus | null
+}
+
+export type EvaluationScenarioGenerationState = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface EvaluationScenarioGenerationRequest {
+  name?: string | null
+  output_path?: string | null
+  select?: string | null
+  exclude?: string | null
+  count?: number | null
+  seed?: number | null
+  agent?: string | null
+  dimensions?: Record<string, string[]> | null
+}
+
+export interface EvaluationScenarioGenerationStatus {
+  job_id: string
+  project?: string | null
+  name?: string | null
+  output_path?: string | null
+  select?: string | null
+  exclude?: string | null
+  count?: number | null
+  seed?: number | null
+  dimensions?: Record<string, string[]> | null
+  state: EvaluationScenarioGenerationState
+  total: number
+  completed: number
+  created_at: string
+  updated_at: string
+  started_at?: string | null
+  finished_at?: string | null
+  scenarios_path?: string | null
+  workflow_name?: string | null
+  error?: string | null
+}
+
+export interface EvaluationScenarioGenerationResponse {
+  job_id: string
+  status?: EvaluationScenarioGenerationStatus | null
+}
+
+export type EvaluationDatasetSourceKind = 'golden' | 'generated' | 'annotated' | 'unknown'
+
+export interface EvaluationDataset {
+  label: string
+  path: string
+  source_kind: EvaluationDatasetSourceKind
+  source_label?: string | null
+  source_path?: string | null
+  run_count: number
+  scenario_count?: number | null
+  expected_count?: number | null
+  includes_history: boolean
+  updated_at?: string | null
+  created_at?: string | null
+  workflow_generate?: string | null
+  workflow_run?: string | null
+  workflow_run_at?: string | null
+  manifest_path?: string | null
+  size_bytes?: number | null
+}
+
+export interface EvaluationDatasetsResponse {
+  project?: string | null
+  datasets: EvaluationDataset[]
 }

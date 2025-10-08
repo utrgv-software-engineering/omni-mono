@@ -1,5 +1,8 @@
 """OmniAgents - A wrapper around OpenAI's agents library."""
 
+import importlib
+import sys
+
 try:
     from ._version import __version__, __version_info__
 except Exception:
@@ -27,6 +30,23 @@ except Exception:
     input_guardrail = None  # type: ignore
     output_guardrail = None  # type: ignore
     GuardrailFunctionOutput = None  # type: ignore
+
+
+def _register_agentio_alias() -> None:
+    try:
+        agentio_module = importlib.import_module("omniagents.agentio")
+    except Exception:
+        return
+    sys.modules["agentio"] = agentio_module
+    submodules = getattr(agentio_module, "_SUBMODULE_MAP", {})
+    for alias, target in submodules.items():
+        try:
+            sys.modules[f"agentio.{alias}"] = importlib.import_module(target)
+        except Exception:
+            continue
+
+
+_register_agentio_alias()
 
 __all__ = [
     "__version__",

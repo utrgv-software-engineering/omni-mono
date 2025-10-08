@@ -2,16 +2,18 @@
 
 import asyncio
 import csv
+import hashlib
 import io
 import json
 import logging
 import shutil
 import uuid
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Literal
+from typing import Any, Dict, List, Optional, Tuple, Literal, Set
 
-from dataclasses import replace, asdict
+from dataclasses import replace, asdict, dataclass
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,7 +30,9 @@ from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions
 from omniagents.rpc.server import JsonRpcChannel
 from omniagents.rpc.transport.websocket import ServerWebSocketTransport
 from omniagents.rpc.transport import TransportClosedError
-from omniagents.core.project.runtime import load_project
+from omniagents.core.project.runtime import load_project, build_spec_from_project
+from omniagents.core.project.compiler import compile_project
+from omniagents.core.eval.scenarios import run_scenarios_against_agent, generate_scenarios
 
 from ..tracing.storage import SQLiteStorage
 
@@ -78,6 +82,10 @@ STRUCTURED_OUTPUT_LABELS: Dict[str, str] = {
     "integer": "Integer",
     "float": "Float",
 }
+
+
+def _utc_now() -> str:
+    return datetime.utcnow().isoformat() + "Z"
 
 
 def _canonical_output_type_key(output_type: Any) -> str:
@@ -493,6 +501,19 @@ class PlaygroundSessionRequest(BaseModel):
     session_id: Optional[str] = None
 
 
+class AgentUpdatePayload(BaseModel):
+    model: str
+    instructions: Optional[str] = None
+    tools: List[str] = Field(default_factory=list)
+    model_settings: Optional[Dict[str, Any]] = None
+    use_safe_agent: bool = False
+    safe_agent_options: Optional[Dict[str, Any]] = None
+    guardrails: Optional[Dict[str, List[str]]] = None
+    output_type: Optional[str] = None
+    output_type_strict: Optional[bool] = None
+    output_schema: Optional[Dict[str, Any]] = None
+
+
 class DimensionValueModel(BaseModel):
     name: str
     label: Optional[str] = None
@@ -529,6 +550,30 @@ class ScenarioSetModel(BaseModel):
     scenarios: List[ScenarioEntryModel] = Field(default_factory=list)
 
 
+class EvaluationDatasetModel(BaseModel):
+    label: str
+    path: str
+    source_kind: Literal['golden', 'generated', 'annotated', 'unknown'] = 'unknown'
+    source_label: Optional[str] = None
+    source_path: Optional[str] = None
+    run_count: int
+    scenario_count: Optional[int] = None
+    expected_count: Optional[int] = None
+    includes_history: bool = False
+    updated_at: Optional[str] = None
+    created_at: Optional[str] = None
+    workflow_generate: Optional[str] = None
+    workflow_run: Optional[str] = None
+    workflow_run_at: Optional[str] = None
+    manifest_path: Optional[str] = None
+    size_bytes: Optional[int] = None
+
+
+class EvaluationDatasetsResponse(BaseModel):
+    project: Optional[str] = None
+    datasets: List[EvaluationDatasetModel] = Field(default_factory=list)
+
+
 class ScenarioPromotionPayload(BaseModel):
     source_kind: Literal['generated', 'annotated']
     set_path: str
@@ -562,6 +607,402 @@ class ScenarioDeletePayload(BaseModel):
     scenario_id: Optional[str] = None
     scenario_name: Optional[str] = None
     index: Optional[int] = None
+
+
+@dataclass
+class ScenarioRunJob:
+    job_id: str
+    project: Optional[str]
+    kind: str
+    set_path: str
+    include_history: bool
+    max_turns: Optional[int]
+    output_path: Optional[str]
+    select: Optional[str]
+    exclude: Optional[str]
+    state: str
+    total: int
+    completed: int
+    created_at: str
+    updated_at: str
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    runs_path: Optional[str] = None
+    workflow_name: Optional[str] = None
+    error: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "job_id": self.job_id,
+            "project": self.project,
+            "kind": self.kind,
+            "set_path": self.set_path,
+            "include_history": self.include_history,
+            "max_turns": self.max_turns,
+            "output_path": self.output_path,
+            "select": self.select,
+            "exclude": self.exclude,
+            "state": self.state,
+            "total": self.total,
+            "completed": self.completed,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "runs_path": self.runs_path,
+            "workflow_name": self.workflow_name,
+            "error": self.error,
+        }
+
+
+class ScenarioRunManager:
+    def __init__(self):
+        self.jobs: Dict[str, ScenarioRunJob] = {}
+        self.tasks: Dict[str, asyncio.Task] = {}
+        self.connections: Dict[str, List[WebSocket]] = defaultdict(list)
+        self.lock = asyncio.Lock()
+
+    async def create_job(self, project: Optional[str], payload: 'ScenarioRunRequest', total: int) -> ScenarioRunJob:
+        async with self.lock:
+            job_id = uuid.uuid4().hex
+            now = _utc_now()
+            job = ScenarioRunJob(
+                job_id=job_id,
+                project=project,
+                kind=payload.kind,
+                set_path=str(payload.set_path),
+                include_history=payload.include_history,
+                max_turns=payload.max_turns,
+                output_path=payload.output_path,
+                select=payload.select,
+                exclude=payload.exclude,
+                state="pending",
+                total=total,
+                completed=0,
+                created_at=now,
+                updated_at=now,
+            )
+            self.jobs[job_id] = job
+        await self.broadcast(job_id)
+        return job
+
+    async def register_task(self, job_id: str, task: asyncio.Task) -> None:
+        async with self.lock:
+            self.tasks[job_id] = task
+
+        def _on_done(_task: asyncio.Task) -> None:
+            asyncio.create_task(self.clear_task(job_id))
+
+        task.add_done_callback(_on_done)
+
+    async def clear_task(self, job_id: str) -> None:
+        async with self.lock:
+            self.tasks.pop(job_id, None)
+
+    async def update_job(self, job_id: str, **fields: Any) -> Optional[ScenarioRunJob]:
+        async with self.lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                return None
+            for key, value in fields.items():
+                if hasattr(job, key):
+                    setattr(job, key, value)
+            job.updated_at = _utc_now()
+            snapshot = job.to_dict()
+        await self.broadcast(job_id, snapshot)
+        return job
+
+    async def get_status(self, job_id: str) -> Optional[Dict[str, Any]]:
+        async with self.lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                return None
+            return job.to_dict()
+
+    async def add_connection(self, job_id: str, websocket: WebSocket) -> bool:
+        async with self.lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                return False
+            await websocket.accept()
+            self.connections[job_id].append(websocket)
+            snapshot = job.to_dict()
+        try:
+            await websocket.send_json({"job_id": job_id, "status": snapshot})
+        except Exception:
+            await self.remove_connection(job_id, websocket)
+            return False
+        return True
+
+    async def remove_connection(self, job_id: str, websocket: WebSocket) -> None:
+        async with self.lock:
+            connections = self.connections.get(job_id)
+            if connections and websocket in connections:
+                connections.remove(websocket)
+            if not connections and job_id in self.connections:
+                self.connections.pop(job_id, None)
+
+    async def broadcast(self, job_id: str, snapshot: Optional[Dict[str, Any]] = None) -> None:
+        async with self.lock:
+            job = self.jobs.get(job_id)
+            if not job and snapshot is None:
+                return
+            payload = snapshot or job.to_dict() if job else snapshot
+            sockets = list(self.connections.get(job_id, []))
+        if not payload:
+            return
+        message = {"job_id": job_id, "status": payload}
+        stale: List[WebSocket] = []
+        for ws in sockets:
+            try:
+                await ws.send_json(message)
+            except Exception:
+                stale.append(ws)
+        if stale:
+            async with self.lock:
+                connections = self.connections.get(job_id)
+                if connections:
+                    for ws in stale:
+                        if ws in connections:
+                            connections.remove(ws)
+                if connections == [] and job_id in self.connections:
+                    self.connections.pop(job_id, None)
+
+
+@dataclass
+class ScenarioGenerationJob:
+    job_id: str
+    project: Optional[str]
+    name: Optional[str]
+    output_path: Optional[str]
+    select: Optional[str]
+    exclude: Optional[str]
+    count: Optional[int]
+    seed: Optional[int]
+    dimensions: Optional[Dict[str, List[str]]]
+    state: str
+    total: int
+    completed: int
+    created_at: str
+    updated_at: str
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    scenarios_path: Optional[str] = None
+    workflow_name: Optional[str] = None
+    error: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "job_id": self.job_id,
+            "project": self.project,
+            "name": self.name,
+            "output_path": self.output_path,
+            "select": self.select,
+            "exclude": self.exclude,
+            "count": self.count,
+            "seed": self.seed,
+            "dimensions": self.dimensions,
+            "state": self.state,
+            "total": self.total,
+            "completed": self.completed,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "scenarios_path": self.scenarios_path,
+            "workflow_name": self.workflow_name,
+            "error": self.error,
+        }
+
+
+class ScenarioGenerationManager:
+    def __init__(self):
+        self.jobs: Dict[str, ScenarioGenerationJob] = {}
+        self.tasks: Dict[str, asyncio.Task] = {}
+        self.connections: Dict[str, List[WebSocket]] = defaultdict(list)
+        self.lock = asyncio.Lock()
+
+    async def create_job(self, project: Optional[str], payload: 'ScenarioGenerationRequest') -> ScenarioGenerationJob:
+        async with self.lock:
+            job_id = uuid.uuid4().hex
+            now = _utc_now()
+            job = ScenarioGenerationJob(
+                job_id=job_id,
+                project=project,
+                name=payload.name,
+                output_path=payload.output_path,
+                select=payload.select,
+                exclude=payload.exclude,
+                count=payload.count,
+                seed=payload.seed,
+                dimensions=payload.dimensions,
+                state="pending",
+                total=int(payload.count or 0),
+                completed=0,
+                created_at=now,
+                updated_at=now,
+            )
+            self.jobs[job_id] = job
+        await self.broadcast(job_id)
+        return job
+
+    async def register_task(self, job_id: str, task: asyncio.Task) -> None:
+        async with self.lock:
+            self.tasks[job_id] = task
+
+        def _on_done(_task: asyncio.Task) -> None:
+            asyncio.create_task(self.clear_task(job_id))
+
+        task.add_done_callback(_on_done)
+
+    async def clear_task(self, job_id: str) -> None:
+        async with self.lock:
+            self.tasks.pop(job_id, None)
+
+    async def update_job(self, job_id: str, **fields: Any) -> Optional[ScenarioGenerationJob]:
+        async with self.lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                return None
+            for key, value in fields.items():
+                if hasattr(job, key):
+                    setattr(job, key, value)
+            job.updated_at = _utc_now()
+            snapshot = job.to_dict()
+        await self.broadcast(job_id, snapshot)
+        return job
+
+    async def get_status(self, job_id: str) -> Optional[Dict[str, Any]]:
+        async with self.lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                return None
+            return job.to_dict()
+
+    async def add_connection(self, job_id: str, websocket: WebSocket) -> bool:
+        async with self.lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                return False
+            await websocket.accept()
+            self.connections[job_id].append(websocket)
+            snapshot = job.to_dict()
+        try:
+            await websocket.send_json({"job_id": job_id, "status": snapshot})
+        except Exception:
+            await self.remove_connection(job_id, websocket)
+            return False
+        return True
+
+    async def remove_connection(self, job_id: str, websocket: WebSocket) -> None:
+        async with self.lock:
+            connections = self.connections.get(job_id)
+            if connections and websocket in connections:
+                connections.remove(websocket)
+            if not connections and job_id in self.connections:
+                self.connections.pop(job_id, None)
+
+    async def broadcast(self, job_id: str, snapshot: Optional[Dict[str, Any]] = None) -> None:
+        async with self.lock:
+            job = self.jobs.get(job_id)
+            if not job and snapshot is None:
+                return
+            payload = snapshot or job.to_dict() if job else snapshot
+            sockets = list(self.connections.get(job_id, []))
+        if not payload:
+            return
+        message = {"job_id": job_id, "status": payload}
+        stale: List[WebSocket] = []
+        for ws in sockets:
+            try:
+                await ws.send_json(message)
+            except Exception:
+                stale.append(ws)
+        if stale:
+            async with self.lock:
+                connections = self.connections.get(job_id)
+                if connections:
+                    for ws in stale:
+                        if ws in connections:
+                            connections.remove(ws)
+                if connections == [] and job_id in self.connections:
+                    self.connections.pop(job_id, None)
+
+
+class ScenarioRunRequest(BaseModel):
+    kind: Literal['golden', 'generated', 'annotated']
+    set_path: str
+    agent: Optional[str] = None
+    select: Optional[str] = None
+    exclude: Optional[str] = None
+    max_turns: Optional[int] = Field(default=None, ge=1)
+    include_history: bool = False
+    output_path: Optional[str] = None
+
+
+class ScenarioRunStatusModel(BaseModel):
+    job_id: str
+    project: Optional[str] = None
+    kind: Literal['golden', 'generated', 'annotated']
+    set_path: str
+    include_history: bool
+    max_turns: Optional[int] = None
+    output_path: Optional[str] = None
+    select: Optional[str] = None
+    exclude: Optional[str] = None
+    state: Literal['pending', 'running', 'completed', 'failed', 'cancelled']
+    total: int
+    completed: int
+    created_at: str
+    updated_at: str
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    runs_path: Optional[str] = None
+    workflow_name: Optional[str] = None
+    error: Optional[str] = None
+
+
+class ScenarioRunResponseModel(BaseModel):
+    job_id: str
+    status: ScenarioRunStatusModel
+
+
+class ScenarioGenerationRequest(BaseModel):
+    name: Optional[str] = None
+    output_path: Optional[str] = None
+    select: Optional[str] = None
+    exclude: Optional[str] = None
+    count: Optional[int] = Field(default=None, ge=1)
+    seed: Optional[int] = None
+    agent: Optional[str] = None
+    dimensions: Optional[Dict[str, List[str]]] = None
+
+
+class ScenarioGenerationStatusModel(BaseModel):
+    job_id: str
+    project: Optional[str] = None
+    name: Optional[str] = None
+    output_path: Optional[str] = None
+    select: Optional[str] = None
+    exclude: Optional[str] = None
+    count: Optional[int] = None
+    seed: Optional[int] = None
+    dimensions: Optional[Dict[str, List[str]]] = None
+    state: Literal['pending', 'running', 'completed', 'failed', 'cancelled']
+    total: int
+    completed: int
+    created_at: str
+    updated_at: str
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    scenarios_path: Optional[str] = None
+    workflow_name: Optional[str] = None
+    error: Optional[str] = None
+
+
+class ScenarioGenerationResponseModel(BaseModel):
+    job_id: str
+    status: Optional[ScenarioGenerationStatusModel]
 
 
 def build_playground_spec(
@@ -721,6 +1162,8 @@ def create_api_app(
         resources["entry_agent_key"] = None
     app.state.playground_resources = resources
     app.state.playground_session_store = PlaygroundSessionStore()
+    app.state.scenario_run_manager = ScenarioRunManager()
+    app.state.scenario_generation_manager = ScenarioGenerationManager()
 
     # Add CORS middleware for development
     app.add_middleware(
@@ -881,19 +1324,18 @@ def create_api_app(
         synthetic_cfg = evaluation_cfg.get("synthetic_data_generation") if isinstance(evaluation_cfg.get("synthetic_data_generation"), dict) else {}
         raw_dims = synthetic_cfg.get("dimensions") if isinstance(synthetic_cfg, dict) else []
         return _normalize_dimensions(raw_dims if isinstance(raw_dims, list) else [])
-
+    
+    def _write_yaml_file(path: Path, content: Dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            backup_path = path.with_suffix(path.suffix + f".bak.{datetime.now().strftime('%Y%m%d%H%M%S')}")
+            shutil.copy2(path, backup_path)
+        path.write_text(yaml.safe_dump(content, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    
     def _persist_dimensions(manifest_path: Path, dimensions: List[EvaluationDimensionModel]) -> List[Dict[str, Any]]:
         ctx = load_project(str(manifest_path))
         serialized_dims = _serialize_dimensions_payload(dimensions)
         target_file, exists = _resolve_eval_file(ctx, manifest_path)
-
-        def _write_yaml(path: Path, content: Dict[str, Any]):
-            path.parent.mkdir(parents=True, exist_ok=True)
-            if path.exists():
-                backup_path = path.with_suffix(path.suffix + f".bak.{datetime.now().strftime('%Y%m%d%H%M%S')}")
-                shutil.copy2(path, backup_path)
-            path.write_text(yaml.safe_dump(content, sort_keys=False, allow_unicode=True), encoding="utf-8")
-
         if exists:
             try:
                 data = yaml.safe_load(target_file.read_text(encoding="utf-8")) or {}
@@ -901,24 +1343,24 @@ def create_api_app(
                 data = {}
         else:
             data = {}
-
+    
         if not isinstance(data, dict):
             data = {}
-
+    
         has_eval_section = isinstance(data.get("evaluation"), dict)
         evaluation_cfg = dict(data.get("evaluation") or {}) if has_eval_section else dict(data)
         synthetic_cfg = evaluation_cfg.get("synthetic_data_generation") if isinstance(evaluation_cfg.get("synthetic_data_generation"), dict) else {}
         synthetic_cfg = dict(synthetic_cfg)
         synthetic_cfg["dimensions"] = serialized_dims
         evaluation_cfg["synthetic_data_generation"] = synthetic_cfg
-
+    
         if has_eval_section or data:
             updated = dict(data)
             updated["evaluation"] = evaluation_cfg
         else:
             updated = {"evaluation": evaluation_cfg}
-
-        _write_yaml(target_file, updated)
+    
+        _write_yaml_file(target_file, updated)
         return serialized_dims
 
     def _unique_paths(items: List[Path]) -> List[Path]:
@@ -999,7 +1441,6 @@ def create_api_app(
         for file in files:
             raw = _read_scenarios_file(file)
             scenarios = _build_scenario_entries(raw, file)
-            updated_at = None
             try:
                 updated_at = datetime.fromtimestamp(file.stat().st_mtime).isoformat()
             except Exception:
@@ -1024,7 +1465,6 @@ def create_api_app(
     def _build_artifact_set(kind: str, file_path: Path, base_dir: Path) -> ScenarioSetModel:
         raw = _read_scenarios_file(file_path)
         scenarios = _build_scenario_entries(raw, file_path)
-        updated_at = None
         try:
             updated_at = datetime.fromtimestamp(file_path.stat().st_mtime).isoformat()
         except Exception:
@@ -1091,6 +1531,20 @@ def create_api_app(
             shutil.copy2(path, backup_path)
         path.write_text(yaml.safe_dump(updated, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
+    def _ensure_scenario_ids(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        normalized: List[Dict[str, Any]] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            scenario = dict(entry)
+            scenario_id = scenario.get("id")
+            if not scenario_id:
+                dimensions = scenario.get("dimensions") if isinstance(scenario.get("dimensions"), dict) else {}
+                blob = json.dumps({"prompt": str(scenario.get("prompt") or ""), "dimensions": dimensions}, sort_keys=True)
+                scenario["id"] = hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
+            normalized.append(scenario)
+        return normalized
+
     def _get_scenario_set_by_path(ctx, kind: str, target_path: Path) -> ScenarioSetModel:
         normalized = target_path.expanduser().resolve(strict=False)
         if kind == "golden":
@@ -1130,6 +1584,185 @@ def create_api_app(
         default_dir.mkdir(parents=True, exist_ok=True)
         return default_dir / "scenarios.yml"
 
+    def _parse_manifest_timestamp(value: Any) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        try:
+            return datetime.strptime(value, "%Y_%m_%d_%H_%M_%S").isoformat()
+        except Exception:
+            return value
+
+    def _manifest_metadata(directory: Path) -> Tuple[Optional[Dict[str, Any]], Optional[Path], Optional[str], Optional[int], Optional[str], Optional[str], Optional[str]]:
+        manifest_path = directory / "manifest.json"
+        manifest_data: Optional[Dict[str, Any]] = None
+        if manifest_path.is_file():
+            try:
+                raw = json.loads(manifest_path.read_text(encoding="utf-8")) or {}
+                if isinstance(raw, dict):
+                    manifest_data = raw
+            except Exception:
+                manifest_data = {}
+        created_at: Optional[str] = None
+        expected_count: Optional[int] = None
+        workflow_generate: Optional[str] = None
+        workflow_run: Optional[str] = None
+        workflow_run_at: Optional[str] = None
+        if manifest_data:
+            timestamp_value = manifest_data.get("timestamp")
+            if timestamp_value:
+                created_at = _parse_manifest_timestamp(timestamp_value)
+            counts = manifest_data.get("counts")
+            if isinstance(counts, dict):
+                raw_total = counts.get("total")
+                if isinstance(raw_total, int):
+                    expected_count = raw_total
+                elif isinstance(raw_total, str):
+                    try:
+                        expected_count = int(raw_total)
+                    except Exception:
+                        expected_count = None
+            workflow_generate = manifest_data.get("workflow_generate") if isinstance(manifest_data.get("workflow_generate"), str) else None
+            workflow_run = manifest_data.get("workflow_run") if isinstance(manifest_data.get("workflow_run"), str) else None
+            workflow_run_at_value = manifest_data.get("workflow_run_at")
+            if isinstance(workflow_run_at_value, str) and workflow_run_at_value:
+                workflow_run_at = workflow_run_at_value
+        manifest_path_obj = manifest_path if manifest_path.is_file() else None
+        return manifest_data if manifest_data else None, manifest_path_obj, created_at, expected_count, workflow_generate, workflow_run, workflow_run_at
+
+    def _build_dataset_record(dataset_path: Path, *, source_kind: str, source_label: Optional[str], source_path: Optional[str], scenario_count: Optional[int]) -> Optional[Tuple[EvaluationDatasetModel, float]]:
+        if not dataset_path.is_file():
+            return None
+        try:
+            data = json.loads(dataset_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            return None
+        runs = data.get("runs")
+        if not isinstance(runs, list):
+            return None
+        valid_runs = [run for run in runs if isinstance(run, dict)]
+        run_count = len(valid_runs) if valid_runs else len(runs)
+        includes_history = any(isinstance(run.get("history"), list) and run.get("history") for run in valid_runs)
+        try:
+            stat = dataset_path.stat()
+            updated_at = datetime.fromtimestamp(stat.st_mtime).isoformat()
+            updated_ts = float(stat.st_mtime)
+            created_default = datetime.fromtimestamp(stat.st_ctime).isoformat()
+            size_bytes = int(stat.st_size)
+        except Exception:
+            updated_at = None
+            updated_ts = 0.0
+            created_default = None
+            size_bytes = None
+        manifest_data, manifest_path_obj, created_at_manifest, expected_count, workflow_generate, workflow_run, workflow_run_at = _manifest_metadata(dataset_path.parent)
+        created_at = created_at_manifest or created_default
+        if expected_count is None:
+            expected_count = scenario_count
+        manifest_name = manifest_data.get("name") if manifest_data and isinstance(manifest_data.get("name"), str) else None
+        base_label = manifest_name or source_label or dataset_path.parent.name or dataset_path.stem
+        base_label = str(base_label)
+        if dataset_path.name == "generated_runs.json":
+            label = f"{base_label} Runs"
+        else:
+            label = f"{base_label} Runs ({dataset_path.stem})"
+        source_kind_normalized = source_kind if source_kind in {"golden", "generated", "annotated"} else "unknown"
+        dataset = EvaluationDatasetModel(
+            label=label,
+            path=str(dataset_path),
+            source_kind=source_kind_normalized,
+            source_label=source_label,
+            source_path=str(source_path) if source_path else None,
+            run_count=run_count,
+            scenario_count=scenario_count,
+            expected_count=expected_count,
+            includes_history=includes_history,
+            updated_at=updated_at,
+            created_at=created_at,
+            workflow_generate=workflow_generate,
+            workflow_run=workflow_run,
+            workflow_run_at=workflow_run_at,
+            manifest_path=str(manifest_path_obj) if manifest_path_obj else None,
+            size_bytes=size_bytes,
+        )
+        return dataset, updated_ts
+
+    def _discover_dataset_entries(ctx) -> List[EvaluationDatasetModel]:
+        dataset_records: List[Tuple[EvaluationDatasetModel, float]] = []
+        seen_paths: Set[str] = set()
+
+        def _register(path: Path, *, source_kind: str, source_label: Optional[str], source_path: Optional[str], scenario_count: Optional[int]) -> None:
+            record = _build_dataset_record(path, source_kind=source_kind, source_label=source_label, source_path=source_path, scenario_count=scenario_count)
+            if not record:
+                return
+            model, updated_ts = record
+            key_path = Path(model.path).expanduser()
+            try:
+                key = str(key_path.resolve(strict=False))
+            except Exception:
+                key = str(key_path)
+            if key in seen_paths:
+                return
+            seen_paths.add(key)
+            dataset_records.append((model, updated_ts))
+
+        all_sets: List[ScenarioSetModel] = []
+        all_sets.extend(_load_golden_sets(ctx))
+        all_sets.extend(_load_artifact_sets(ctx, "generated"))
+        all_sets.extend(_load_artifact_sets(ctx, "annotated"))
+
+        directory_map: Dict[str, Tuple[str, ScenarioSetModel]] = {}
+        for set_model in all_sets:
+            base_path = Path(set_model.path).expanduser()
+            directory = base_path.parent
+            try:
+                directory_key = str(directory.resolve(strict=False))
+            except Exception:
+                directory_key = str(directory)
+            directory_map[directory_key] = (set_model.kind, set_model)
+
+        for directory_key, (kind, set_model) in directory_map.items():
+            directory = Path(directory_key)
+            if not directory.exists():
+                directory = Path(set_model.path).expanduser().parent
+            try:
+                entries = list(directory.iterdir())
+            except Exception:
+                entries = []
+            for entry in entries:
+                if not entry.is_file():
+                    continue
+                if entry.suffix.lower() != ".json":
+                    continue
+                if entry.name == "manifest.json":
+                    continue
+                _register(entry, source_kind=kind, source_label=set_model.label, source_path=set_model.path, scenario_count=set_model.scenario_count)
+
+        artifact_root = _artifact_root(ctx)
+        search_roots: List[Path] = []
+        for directory in _evaluation_dirs(ctx):
+            if directory not in search_roots:
+                search_roots.append(directory)
+        if artifact_root not in search_roots:
+            search_roots.append(artifact_root)
+
+        patterns = ["generated_runs.json", "*_runs.json", "runs_*.json"]
+        for root in search_roots:
+            if not root.is_dir():
+                continue
+            for pattern in patterns:
+                for entry in root.rglob(pattern):
+                    if not entry.is_file():
+                        continue
+                    try:
+                        key = str(entry.resolve(strict=False))
+                    except Exception:
+                        key = str(entry)
+                    if key in seen_paths:
+                        continue
+                    _register(entry, source_kind="unknown", source_label=None, source_path=None, scenario_count=None)
+
+        dataset_records.sort(key=lambda item: (item[1], item[0].label.lower()), reverse=True)
+        return [item[0] for item in dataset_records]
+    
     @app.get("/api/evaluation/dimensions")
     async def get_evaluation_dimensions():
         try:
@@ -1142,7 +1775,151 @@ def create_api_app(
             raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
-
+    
+    async def _run_scenario_generation_job(job_id: str, payload: ScenarioGenerationRequest, manifest_path: Path) -> None:
+        manager: ScenarioGenerationManager = app.state.scenario_generation_manager
+        await manager.update_job(job_id, state="running", started_at=_utc_now())
+        try:
+            compiled_cfg_path, _ = compile_project(str(manifest_path), select=str(payload.select or ""), exclude=str(payload.exclude or ""), agent_key=(payload.agent or None))
+            compiled_path = Path(compiled_cfg_path).resolve()
+            cfg = yaml.safe_load(compiled_path.read_text(encoding="utf-8")) or {}
+            tracing = cfg.get("tracing") or {}
+            workflow_name: Optional[str] = None
+            tracing_module = None
+            provider = str(tracing.get("provider") or "").lower()
+            name_label = None
+            if payload.name:
+                name_label = payload.name
+            elif payload.output_path:
+                try:
+                    name_label = Path(payload.output_path).resolve().parent.name
+                except Exception:
+                    name_label = None
+            if provider in {"studio", "agentio"}:
+                try:
+                    from omniagents.studio import tracing as studio_tracing
+    
+                    tracing_module = studio_tracing
+                except ImportError:
+                    tracing_module = None
+                if tracing_module is None:
+                    try:
+                        import agentio as legacy_tracing
+    
+                        tracing_module = legacy_tracing
+                    except Exception:
+                        tracing_module = None
+                if tracing_module is not None:
+                    base_name = tracing.get("name") or compiled_path.stem
+                    label = name_label or "scenarios"
+                    ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+                    workflow_name = f"{base_name}_scenarios_{label}_{ts}_generate"
+                    resume_mode = (tracing.get("settings") or {}).get("resume", "never")
+                    tracing_module.init(project=str(tracing.get("project") or "scenario_generation"), name=workflow_name, resume=str(resume_mode), replace_default=True)
+    
+            base_dir = manifest_path.parent.resolve()
+            output_path_obj: Optional[Path]
+            if payload.output_path:
+                candidate = Path(payload.output_path)
+                if not candidate.is_absolute():
+                    candidate = (base_dir / candidate).resolve()
+                output_path_obj = candidate
+            elif payload.name:
+                output_path_obj = (base_dir / "artifacts" / "eval" / payload.name / "generated_scenarios.yml").resolve()
+            else:
+                output_path_obj = None
+    
+            progress = {"target": int(payload.count or 0), "completed": 0}
+    
+            def _progress_cb(event: Dict[str, Any]) -> None:
+                evt = event.get("event")
+                if evt == "start":
+                    target = event.get("target")
+                    if isinstance(target, int) and target >= 0:
+                        progress["target"] = target
+                        asyncio.create_task(manager.update_job(job_id, total=target))
+                elif evt == "progress":
+                    progress["completed"] += 1
+                    asyncio.create_task(manager.update_job(job_id, completed=progress["completed"]))
+                elif evt == "done":
+                    count = event.get("count")
+                    if isinstance(count, int) and count >= 0:
+                        progress["completed"] = count
+                        if progress["target"] == 0:
+                            progress["target"] = count
+                    asyncio.create_task(manager.update_job(job_id, completed=progress["completed"], total=progress["target"]))
+    
+            scenarios, out_path, _ = await generate_scenarios(
+                Path(compiled_cfg_path),
+                count=payload.count,
+                seed=payload.seed,
+                set_name=payload.name,
+                output=output_path_obj,
+                workflow_name=workflow_name,
+                progress_cb=_progress_cb,
+                dimension_filters=payload.dimensions,
+            )
+    
+            final_total = progress["target"] or len(scenarios)
+            await manager.update_job(
+                job_id,
+                state="completed",
+                completed=len(scenarios),
+                total=final_total,
+                finished_at=_utc_now(),
+                scenarios_path=str(out_path),
+                workflow_name=workflow_name,
+            )
+        except Exception as exc:
+            logger.exception("Scenario generation %s failed", job_id)
+            await manager.update_job(job_id, state="failed", error=str(exc), finished_at=_utc_now())
+    
+    @app.post("/api/evaluation/scenarios/generate")
+    async def generate_evaluation_scenarios(payload: ScenarioGenerationRequest):
+        try:
+            name_value = (payload.name or "").strip()
+            payload.name = name_value or None
+            output_value = (payload.output_path or "").strip()
+            payload.output_path = output_value or None
+            select_value = (payload.select or "").strip()
+            payload.select = select_value or None
+            exclude_value = (payload.exclude or "").strip()
+            payload.exclude = exclude_value or None
+            if payload.dimensions:
+                normalized_dims: Dict[str, List[str]] = {}
+                for key, values in payload.dimensions.items():
+                    if not values:
+                        continue
+                    filtered_values = [str(v).strip() for v in values if str(v).strip()]
+                    if filtered_values:
+                        normalized_dims[str(key)] = filtered_values
+                payload.dimensions = normalized_dims or None
+            if not payload.name and not payload.output_path:
+                raise HTTPException(status_code=422, detail="Provide a scenario set name or output_path")
+            manifest_path = _get_manifest_path()
+            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            project_name = resources.get("project_name") or app.state.default_project
+            manager: ScenarioGenerationManager = app.state.scenario_generation_manager
+            job = await manager.create_job(project_name, payload)
+            task = asyncio.create_task(_run_scenario_generation_job(job.job_id, payload, manifest_path))
+            await manager.register_task(job.job_id, task)
+            status = await manager.get_status(job.job_id)
+            status_model = ScenarioGenerationStatusModel(**status) if status else None
+            return {"job_id": job.job_id, "status": status_model.model_dump() if status_model else None}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+    
+    @app.get("/api/evaluation/scenarios/generate/{job_id}")
+    async def get_evaluation_scenario_generation(job_id: str):
+        manager: ScenarioGenerationManager = app.state.scenario_generation_manager
+        status = await manager.get_status(job_id)
+        if not status:
+            raise HTTPException(status_code=404, detail="Scenario generation not found")
+        status_model = ScenarioGenerationStatusModel(**status)
+        return {"job_id": job_id, "status": status_model.model_dump()}
+    
     @app.put("/api/evaluation/dimensions")
     async def update_evaluation_dimensions(payload: EvaluationDimensionsPayload):
         try:
@@ -1155,7 +1932,7 @@ def create_api_app(
             raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
-
+    
     @app.get("/api/evaluation/scenarios")
     async def get_evaluation_scenarios():
         try:
@@ -1176,7 +1953,22 @@ def create_api_app(
             raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
-
+    
+    @app.get("/api/evaluation/datasets")
+    async def get_evaluation_datasets():
+        try:
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            project_name = resources.get("project_name") or app.state.default_project
+            datasets = _discover_dataset_entries(ctx)
+            payload = EvaluationDatasetsResponse(project=project_name, datasets=datasets)
+            return payload.model_dump()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+    
     @app.post("/api/evaluation/scenarios/promote")
     async def promote_evaluation_scenario(payload: ScenarioPromotionPayload):
         try:
@@ -1185,7 +1977,7 @@ def create_api_app(
             source_path = Path(payload.set_path).expanduser().resolve()
             if not source_path.is_file():
                 raise HTTPException(status_code=404, detail="Scenario set path not found")
-
+    
             raw_scenarios = _read_scenarios_file(source_path)
             target_entry: Optional[Dict[str, Any]] = None
             for idx, entry in enumerate(raw_scenarios):
@@ -1201,7 +1993,7 @@ def create_api_app(
                     break
             if target_entry is None:
                 raise HTTPException(status_code=404, detail="Scenario not found in source set")
-
+    
             golden_file = _resolve_golden_target(ctx)
             if golden_file.is_file():
                 try:
@@ -1210,34 +2002,34 @@ def create_api_app(
                     golden_data = {}
             else:
                 golden_data = {}
-
+    
             if not isinstance(golden_data, dict):
                 golden_data = {}
-
+    
             existing = golden_data.get("scenarios") if isinstance(golden_data.get("scenarios"), list) else []
             existing_list: List[Dict[str, Any]] = [e for e in existing if isinstance(e, dict)]
-
+    
             new_entry = dict(target_entry)
-
+    
             scenario_id = new_entry.get("id")
             scenario_name = new_entry.get("name")
-
+    
             for entry in existing_list:
                 if scenario_id is not None and str(entry.get("id")) == str(scenario_id):
                     raise HTTPException(status_code=409, detail="Scenario already present in golden set")
                 if scenario_id is None and scenario_name and entry.get("name") == scenario_name:
                     raise HTTPException(status_code=409, detail="Scenario already present in golden set")
-
+    
             existing_list.append(new_entry)
             golden_data = dict(golden_data)
             golden_data["scenarios"] = existing_list
-
+    
             golden_file.parent.mkdir(parents=True, exist_ok=True)
             if golden_file.exists():
                 backup_path = golden_file.with_suffix(golden_file.suffix + f".bak.{datetime.now().strftime('%Y%m%d%H%M%S')}")
                 shutil.copy2(golden_file, backup_path)
             golden_file.write_text(yaml.safe_dump(golden_data, sort_keys=False, allow_unicode=True), encoding="utf-8")
-
+    
             resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             golden_sets = _load_golden_sets(ctx)
@@ -1260,7 +2052,133 @@ def create_api_app(
             raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
-
+    
+    async def _run_scenario_job(job_id: str, payload: ScenarioRunRequest, manifest_path: Path, scenario_set: ScenarioSetModel, scenarios: List[Dict[str, Any]], output_path: Path) -> None:
+        manager: ScenarioRunManager = app.state.scenario_run_manager
+        await manager.update_job(job_id, state="running", started_at=_utc_now(), total=len(scenarios), completed=0)
+        try:
+            compiled_cfg_path, _ = compile_project(str(manifest_path), select=str(payload.select or ""), exclude=str(payload.exclude or ""), agent_key=(payload.agent or None))
+            compiled_path = Path(compiled_cfg_path).resolve()
+            cfg = yaml.safe_load(compiled_path.read_text(encoding="utf-8")) or {}
+            tracing = cfg.get("tracing") or {}
+            workflow_name: Optional[str] = None
+            tracing_module = None
+            provider = str(tracing.get("provider") or "").lower()
+            if provider in {"studio", "agentio"}:
+                try:
+                    from omniagents.studio import tracing as studio_tracing
+    
+                    tracing_module = studio_tracing
+                except ImportError:
+                    tracing_module = None
+                if tracing_module is None:
+                    try:
+                        import agentio as legacy_tracing
+    
+                        tracing_module = legacy_tracing
+                    except Exception:
+                        tracing_module = None
+                if tracing_module is not None:
+                    base_name = tracing.get("name") or compiled_path.stem
+                    scenario_dir = Path(scenario_set.path).resolve().parent
+                    label = scenario_dir.name or "scenarios"
+                    ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+                    workflow_name = f"{base_name}_scenarios_{label}_{ts}"
+                    resume_mode = (tracing.get("settings") or {}).get("resume", "never")
+                    tracing_module.init(project=str(tracing.get("project") or "scenario_runs"), name=workflow_name, resume=str(resume_mode), replace_default=True)
+    
+            progress = {"total": len(scenarios), "completed": 0}
+    
+            def _progress_cb(event: Dict[str, Any]) -> None:
+                evt = event.get("event")
+                if evt == "start":
+                    total = int(event.get("total") or progress["total"])
+                    progress["total"] = total
+                    asyncio.create_task(manager.update_job(job_id, total=total))
+                elif evt == "progress":
+                    current = event.get("current")
+                    if isinstance(current, int) and current >= 0:
+                        progress["completed"] = max(progress["completed"], current)
+                    else:
+                        progress["completed"] += 1
+                    asyncio.create_task(manager.update_job(job_id, completed=progress["completed"]))
+                elif evt == "done":
+                    count = event.get("count")
+                    if isinstance(count, int) and count >= 0:
+                        progress["completed"] = count
+                    asyncio.create_task(manager.update_job(job_id, completed=progress["completed"]))
+    
+            runs = await run_scenarios_against_agent(compiled_path, scenarios, max_turns=payload.max_turns, include_history=payload.include_history, workflow_name=workflow_name, progress_cb=_progress_cb)
+    
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps({"runs": runs}, indent=2), encoding="utf-8")
+    
+            manifest_file = Path(scenario_set.path).resolve().parent / "manifest.json"
+            if workflow_name:
+                try:
+                    if manifest_file.exists():
+                        data = json.loads(manifest_file.read_text(encoding="utf-8")) or {}
+                    else:
+                        data = {}
+                    data["workflow_run"] = workflow_name
+                    data["workflow_run_at"] = _utc_now()
+                    manifest_file.parent.mkdir(parents=True, exist_ok=True)
+                    manifest_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
+    
+            await manager.update_job(job_id, state="completed", completed=len(runs), total=progress["total"], finished_at=_utc_now(), runs_path=str(output_path), workflow_name=workflow_name)
+        except Exception as exc:
+            logger.exception("Scenario run %s failed", job_id)
+            await manager.update_job(job_id, state="failed", error=str(exc), finished_at=_utc_now())
+    
+    def _resolve_runs_output_path(manifest_path: Path, scenario_path: Path, override: Optional[str]) -> Path:
+        base_dir = manifest_path.parent.resolve()
+        if override:
+            candidate = Path(override)
+            if not candidate.is_absolute():
+                candidate = (base_dir / candidate).resolve()
+            return candidate
+        return (scenario_path.parent / "generated_runs.json").resolve()
+    
+    @app.post("/api/evaluation/scenarios/run")
+    async def run_evaluation_scenarios(payload: ScenarioRunRequest):
+        try:
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            target_path = Path(payload.set_path).expanduser().resolve(strict=False)
+            scenario_set = _get_scenario_set_by_path(ctx, payload.kind, target_path)
+            file_path = Path(scenario_set.path)
+            if not file_path.is_file():
+                raise HTTPException(status_code=404, detail="Scenario file not found")
+            entries = _read_scenarios_file(file_path)
+            if not entries:
+                raise HTTPException(status_code=422, detail="Scenario set is empty")
+            scenarios = _ensure_scenario_ids(entries)
+            output_path = _resolve_runs_output_path(manifest_path, file_path, payload.output_path)
+            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            project_name = resources.get("project_name") or app.state.default_project
+            manager: ScenarioRunManager = app.state.scenario_run_manager
+            job = await manager.create_job(project_name, payload, len(scenarios))
+            task = asyncio.create_task(_run_scenario_job(job.job_id, payload, manifest_path, scenario_set, scenarios, output_path))
+            await manager.register_task(job.job_id, task)
+            status = await manager.get_status(job.job_id)
+            status_model = ScenarioRunStatusModel(**status) if status else None
+            return {"job_id": job.job_id, "status": status_model.model_dump() if status_model else None}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+    
+    @app.get("/api/evaluation/scenarios/run/{job_id}")
+    async def get_evaluation_scenario_run(job_id: str):
+        manager: ScenarioRunManager = app.state.scenario_run_manager
+        status = await manager.get_status(job_id)
+        if not status:
+            raise HTTPException(status_code=404, detail="Scenario run not found")
+        status_model = ScenarioRunStatusModel(**status)
+        return {"job_id": job_id, "status": status_model.model_dump()}
+    
     @app.post("/api/evaluation/scenarios/item")
     async def create_evaluation_scenario(payload: ScenarioCreatePayload):
         try:
@@ -1313,7 +2231,7 @@ def create_api_app(
             raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
-
+    
     @app.put("/api/evaluation/scenarios/item")
     async def update_evaluation_scenario(payload: ScenarioUpdatePayload):
         try:
@@ -1372,7 +2290,7 @@ def create_api_app(
             raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
-
+    
     @app.delete("/api/evaluation/scenarios/item")
     async def delete_evaluation_scenario(payload: ScenarioDeletePayload):
         try:
@@ -1398,7 +2316,7 @@ def create_api_app(
             raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
-
+    
     @app.get("/api/playground/metadata")
     async def get_playground_metadata(request: Request):
         resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
@@ -1407,7 +2325,7 @@ def create_api_app(
             return {"available": False}
         entry_key = resources.get("entry_agent_key")
         return _build_metadata_response(base_spec, resources, request, agent_key=entry_key)
-
+    
     @app.get("/api/agents")
     async def list_agents():
         resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
@@ -1429,7 +2347,7 @@ def create_api_app(
             )
         agents_payload.sort(key=lambda item: (item.get("label") or item.get("key") or "").lower())
         return {"agents": agents_payload}
-
+    
     @app.get("/api/agents/{agent_key}/metadata")
     async def get_agent_metadata(agent_key: str, request: Request):
         resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
@@ -1437,7 +2355,188 @@ def create_api_app(
         if not spec:
             raise HTTPException(status_code=404, detail=f"Agent '{agent_key}' not found")
         return _build_metadata_response(spec, resources, request, agent_key=agent_key)
-
+    
+    @app.put("/api/agents/{agent_key}")
+    async def update_agent(agent_key: str, payload: AgentUpdatePayload, request: Request):
+        try:
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            agent_path = ctx.agents_map.get(agent_key)
+            if not agent_path:
+                raise HTTPException(status_code=404, detail=f"Agent '{agent_key}' not found")
+            try:
+                raw_config = yaml.safe_load(agent_path.read_text(encoding="utf-8")) or {}
+            except Exception:
+                raw_config = {}
+            if not isinstance(raw_config, dict):
+                raw_config = {}
+            model_value = str(payload.model or "").strip()
+            if not model_value:
+                raise HTTPException(status_code=422, detail="Model name is required")
+            raw_config["model"] = model_value
+            instructions_text = payload.instructions or ""
+            instructions_file = raw_config.get("instructions_file")
+            if isinstance(instructions_file, str) and instructions_file.strip():
+                instructions_path = Path(instructions_file)
+                if not instructions_path.is_absolute():
+                    instructions_path = (agent_path.parent / instructions_path).resolve()
+                instructions_path.parent.mkdir(parents=True, exist_ok=True)
+                if instructions_path.exists():
+                    backup_path = instructions_path.with_suffix(instructions_path.suffix + f".bak.{datetime.now().strftime('%Y%m%d%H%M%S')}")
+                    shutil.copy2(instructions_path, backup_path)
+                instructions_path.write_text(instructions_text, encoding="utf-8")
+            else:
+                if instructions_text:
+                    raw_config["instructions"] = instructions_text
+                else:
+                    raw_config.pop("instructions", None)
+            seen_tools: Set[str] = set()
+            tools_list: List[str] = []
+            for tool_name in payload.tools or []:
+                if not isinstance(tool_name, str):
+                    continue
+                name = tool_name.strip()
+                if not name or name in seen_tools:
+                    continue
+                seen_tools.add(name)
+                tools_list.append(name)
+            raw_config["tools"] = tools_list
+            if payload.model_settings:
+                filtered_settings: Dict[str, Any] = {}
+                for key, value in payload.model_settings.items():
+                    if value is None:
+                        continue
+                    key_str = str(key).strip()
+                    if not key_str:
+                        continue
+                    filtered_settings[key_str] = value
+                if filtered_settings:
+                    raw_config["model_settings"] = filtered_settings
+                else:
+                    raw_config.pop("model_settings", None)
+            else:
+                raw_config.pop("model_settings", None)
+            raw_config["use_safe_agent"] = bool(payload.use_safe_agent)
+            safe_options_input = payload.safe_agent_options or {}
+            sanitized_safe_options: Dict[str, Any] = {}
+            sanitized_safe_options["skip_approvals"] = bool(safe_options_input.get("skip_approvals", False))
+            sanitized_safe_options["halt_on_rejection"] = bool(safe_options_input.get("halt_on_rejection", True))
+            tool_set = set(tools_list)
+            names_raw = safe_options_input.get("safe_tool_names") if isinstance(safe_options_input.get("safe_tool_names"), list) else []
+            safe_tool_names: List[str] = []
+            seen_safe_names: Set[str] = set()
+            for name in names_raw:
+                if not isinstance(name, str):
+                    continue
+                trimmed = name.strip()
+                if not trimmed or trimmed not in tool_set or trimmed in seen_safe_names:
+                    continue
+                seen_safe_names.add(trimmed)
+                safe_tool_names.append(trimmed)
+            sanitized_safe_options["safe_tool_names"] = safe_tool_names
+            patterns_raw = safe_options_input.get("safe_tool_patterns") if isinstance(safe_options_input.get("safe_tool_patterns"), list) else []
+            patterns_clean: List[str] = []
+            for pattern in patterns_raw:
+                if not isinstance(pattern, str):
+                    continue
+                trimmed = pattern.strip()
+                if trimmed and trimmed not in patterns_clean:
+                    patterns_clean.append(trimmed)
+            sanitized_safe_options["safe_tool_patterns"] = patterns_clean
+            if payload.use_safe_agent or sanitized_safe_options["safe_tool_names"] or sanitized_safe_options["safe_tool_patterns"] or sanitized_safe_options["skip_approvals"] or not sanitized_safe_options["halt_on_rejection"]:
+                raw_config["safe_agent_options"] = sanitized_safe_options
+            else:
+                raw_config.pop("safe_agent_options", None)
+            guardrails_input = payload.guardrails or {}
+            input_guardrails = guardrails_input.get("input") if isinstance(guardrails_input.get("input"), list) else []
+            output_guardrails = guardrails_input.get("output") if isinstance(guardrails_input.get("output"), list) else []
+            input_values: List[str] = []
+            seen_input: Set[str] = set()
+            for item in input_guardrails:
+                if not isinstance(item, str):
+                    continue
+                trimmed = item.strip()
+                if not trimmed or trimmed in seen_input:
+                    continue
+                seen_input.add(trimmed)
+                input_values.append(trimmed)
+            output_values: List[str] = []
+            seen_output: Set[str] = set()
+            for item in output_guardrails:
+                if not isinstance(item, str):
+                    continue
+                trimmed = item.strip()
+                if not trimmed or trimmed in seen_output:
+                    continue
+                seen_output.add(trimmed)
+                output_values.append(trimmed)
+            raw_config["input_guardrails"] = input_values
+            raw_config["output_guardrails"] = output_values
+            output_type_value = payload.output_type
+            if output_type_value is None or output_type_value == "default":
+                raw_config.pop("output_type", None)
+                raw_config.pop("output_type_strict", None)
+                raw_config.pop("output_schema", None)
+            elif output_type_value == "none":
+                raw_config["output_type"] = None
+                raw_config.pop("output_schema", None)
+                raw_config.pop("output_type_strict", None)
+            else:
+                raw_config["output_type"] = output_type_value
+                if payload.output_type_strict is not None:
+                    raw_config["output_type_strict"] = bool(payload.output_type_strict)
+                else:
+                    raw_config.pop("output_type_strict", None)
+                if output_type_value in {"dict", "dictionary"} and payload.output_schema:
+                    raw_config["output_schema"] = payload.output_schema
+                else:
+                    raw_config.pop("output_schema", None)
+            _write_yaml_file(agent_path, raw_config)
+            refreshed_ctx = load_project(str(manifest_path))
+            base_spec = build_spec_from_project(refreshed_ctx)
+            agent_specs: Dict[str, AgentSpec] = {}
+            for key in sorted(refreshed_ctx.agents_map.keys()):
+                if key == refreshed_ctx.entrypoint:
+                    agent_specs[key] = base_spec
+                else:
+                    try:
+                        agent_specs[key] = build_spec_from_project(refreshed_ctx, key)
+                    except Exception:
+                        continue
+            resources = getattr(app.state, "playground_resources", {})
+            updated_resources = dict(resources or {})
+            project_name = refreshed_ctx.raw.get("name") or resources.get("project_name") or app.state.default_project
+            updated_resources["project_name"] = project_name
+            updated_resources["tool_registry"] = refreshed_ctx.tool_registry
+            updated_resources["guardrails_registry"] = refreshed_ctx.guardrails_registry
+            updated_resources["agent_specs"] = agent_specs
+            updated_resources["entry_agent_key"] = refreshed_ctx.entrypoint
+            updated_resources["manifest_path"] = str(manifest_path)
+            base_reference = agent_specs.get(refreshed_ctx.entrypoint)
+            if not base_reference and agent_specs:
+                base_reference = next(iter(agent_specs.values()))
+            if base_reference:
+                updated_resources["base_spec"] = base_reference
+                updated_resources["default_model_settings"] = base_reference.model_settings or {}
+                updated_resources["default_safe_agent"] = bool(getattr(base_reference, "use_safe_agent", False))
+                if base_reference.safe_agent_options:
+                    updated_resources["default_safe_agent_options"] = asdict(base_reference.safe_agent_options)
+                else:
+                    updated_resources["default_safe_agent_options"] = {}
+                updated_resources["default_guardrails"] = {
+                    "input": _guardrail_keys(getattr(base_reference, "input_guardrails", None), refreshed_ctx.guardrails_registry.get("input", {})),
+                    "output": _guardrail_keys(getattr(base_reference, "output_guardrails", None), refreshed_ctx.guardrails_registry.get("output", {})),
+                }
+            app.state.playground_resources = updated_resources
+            spec = agent_specs.get(agent_key)
+            if not spec:
+                raise HTTPException(status_code=500, detail="Agent metadata unavailable after update")
+            return _build_metadata_response(spec, updated_resources, request, agent_key=agent_key)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+    
     async def _configure_session(agent_key: Optional[str], payload: PlaygroundSessionRequest) -> Dict[str, str]:
         resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
         spec = _resolve_agent_spec(resources, agent_key)
@@ -1445,37 +2544,37 @@ def create_api_app(
             if agent_key:
                 raise HTTPException(status_code=404, detail=f"Agent '{agent_key}' not found")
             raise HTTPException(status_code=400, detail="Playground is not available")
-
+    
         payload_data = payload.model_dump(exclude_unset=True)
-
+    
         model_name = (payload.model or "").strip()
         if not model_name:
             raise HTTPException(status_code=422, detail="Model name is required")
-
+    
         tool_registry: Dict[str, Any] = resources.get("tool_registry", {})
         guardrails_registry: Dict[str, Any] = resources.get("guardrails_registry", {"input": {}, "output": {}})
         tools_value = payload_data.get("tools")
         unknown_tools = [name for name in (tools_value or []) if name not in tool_registry]
         if unknown_tools:
             raise HTTPException(status_code=400, detail=f"Unknown tools: {', '.join(sorted(unknown_tools))}")
-
+    
         store: PlaygroundSessionStore = app.state.playground_session_store
         config: Dict[str, Any] = {"model": model_name}
-
+    
         if "instructions" in payload_data:
             config["instructions"] = str(payload_data.get("instructions") or "")
-
+    
         if tools_value is not None:
             config["tools"] = tools_value or []
-
+    
         if isinstance(payload.model_settings, dict):
             sanitized_settings = {k: v for k, v in payload.model_settings.items() if v not in (None, "")}
             if sanitized_settings:
                 config["model_settings"] = sanitized_settings
-
+    
         if payload.use_safe_agent is not None:
             config["use_safe_agent"] = bool(payload.use_safe_agent)
-
+    
         if isinstance(payload.safe_agent_options, dict) and "safe_agent_options" in payload_data:
             safe_options: Dict[str, Any] = {}
             for key in ("skip_approvals", "halt_on_rejection"):
@@ -1494,7 +2593,7 @@ def create_api_app(
                     if isinstance(pattern, str) and pattern
                 ]
             config["safe_agent_options"] = safe_options
-
+    
         if isinstance(payload.guardrails, dict) and "guardrails" in payload_data:
             guardrails_config: Dict[str, List[str]] = {}
             input_registry = guardrails_registry.get("input", {})
@@ -1507,7 +2606,7 @@ def create_api_app(
                 guardrails_config["output"] = [name for name in output_names if isinstance(name, str) and name in output_registry]
             if guardrails_config:
                 config["guardrails"] = guardrails_config
-
+    
         normalized_for_schema: Optional[str] = None
         if "output_type" in payload_data:
             raw_output_type = payload_data.get("output_type")
@@ -1524,7 +2623,7 @@ def create_api_app(
             raw_strict = payload_data.get("output_type_strict")
             if raw_strict is not None:
                 config["output_type_strict"] = bool(raw_strict)
-
+    
         if "output_schema" in payload_data:
             raw_schema = payload_data.get("output_schema")
             if raw_schema is not None:
@@ -1533,18 +2632,18 @@ def create_api_app(
                 if normalized_for_schema not in (None, "dict", "dictionary", "object"):
                     raise HTTPException(status_code=400, detail="output_schema requires output_type 'dict'")
                 config["output_schema"] = raw_schema
-
+    
         session_label = "playground" if not agent_key else f"agent:{agent_key}"
         config["__agent_key"] = agent_key
         config["__session_label"] = session_label
-
+    
         session_id = await store.upsert(payload.session_id, config)
         return {"session_id": session_id}
-
+    
     @app.post("/api/playground/session")
     async def configure_playground_session(payload: PlaygroundSessionRequest):
         return await _configure_session(None, payload)
-
+    
     @app.post("/api/agents/{agent_key}/session")
     async def configure_agent_session(agent_key: str, payload: PlaygroundSessionRequest):
         return await _configure_session(agent_key, payload)
@@ -1629,11 +2728,11 @@ def create_api_app(
             
             if has_errors is not None:
                 conv_list = [c for c in conv_list if c['has_errors'] == has_errors]
-
+    
             if workflow_name:
                 wn = workflow_name.lower()
                 conv_list = [c for c in conv_list if (c.get('workflow_name') or '').lower() == wn]
-
+    
             # Apply synthetic dimension filters
             if dim:
                 dim_map: Dict[str, set] = {}
@@ -1681,7 +2780,7 @@ def create_api_app(
             }
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-
+    
     @app.get("/api/synthetic_dimensions")
     async def get_synthetic_dimensions(
         project: str = Query(..., description="Project name"),
@@ -1733,7 +2832,7 @@ def create_api_app(
             return { 'dimensions': dimensions }
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-
+    
     @app.get("/api/workflows")
     async def get_workflows(project: str = Query(..., description="Project name")):
         """Get distinct workflow names for a project"""
@@ -2391,6 +3490,44 @@ def create_api_app(
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
     
+    @app.websocket("/api/evaluation/scenarios/run/{job_id}/ws")
+    async def scenario_run_ws(job_id: str, websocket: WebSocket):
+        manager: ScenarioRunManager = app.state.scenario_run_manager
+        accepted = await manager.add_connection(job_id, websocket)
+        if not accepted:
+            await websocket.close(code=4404)
+            return
+        try:
+            while True:
+                await asyncio.sleep(1)
+        except WebSocketDisconnect:
+            await manager.remove_connection(job_id, websocket)
+        except Exception:
+            await manager.remove_connection(job_id, websocket)
+            try:
+                await websocket.close()
+            except Exception:
+                pass
+    
+    @app.websocket("/api/evaluation/scenarios/generate/{job_id}/ws")
+    async def scenario_generation_ws(job_id: str, websocket: WebSocket):
+        manager: ScenarioGenerationManager = app.state.scenario_generation_manager
+        accepted = await manager.add_connection(job_id, websocket)
+        if not accepted:
+            await websocket.close(code=4404)
+            return
+        try:
+            while True:
+                await asyncio.sleep(1)
+        except WebSocketDisconnect:
+            await manager.remove_connection(job_id, websocket)
+        except Exception:
+            await manager.remove_connection(job_id, websocket)
+            try:
+                await websocket.close()
+            except Exception:
+                pass
+    
     @app.websocket("/api/ws/traces")
     async def websocket_endpoint(websocket: WebSocket):
         """WebSocket for real-time trace updates"""
@@ -2401,7 +3538,7 @@ def create_api_app(
                 await asyncio.sleep(1)
         except WebSocketDisconnect:
             manager.disconnect(websocket)
-
+    
     @app.websocket("/api/playground/ws")
     async def playground_ws(websocket: WebSocket):
         logger.debug("[playground] incoming websocket request %s", websocket.query_params)
@@ -2411,14 +3548,14 @@ def create_api_app(
             logger.debug("[playground] closing websocket: session_id missing")
             await websocket.close(code=4400)
             return
-
+    
         store: PlaygroundSessionStore = app.state.playground_session_store
         config = await store.get(session_id)
         if not config:
             logger.debug("[playground] closing websocket: session config missing for %s", session_id)
             await websocket.close(code=4404)
             return
-
+    
         agent_key = config.get("__agent_key")
         spec = _resolve_agent_spec(resources, agent_key)
         if not spec:
@@ -2426,7 +3563,7 @@ def create_api_app(
             await websocket.close(code=4404)
             return
         session_label = config.get("__session_label") or ("playground" if not agent_key else f"agent:{agent_key}")
-
+    
         try:
             spec = build_playground_spec(
                 spec,
@@ -2439,10 +3576,10 @@ def create_api_app(
             logger.exception("[playground] failed to build spec")
             await websocket.close(code=1011, reason=str(exc))
             return
-
+    
         service = AgentService(spec)
         transport = ServerWebSocketTransport(websocket)
-
+    
         try:
             logger.debug("[playground] accepting websocket for session %s", session_id)
             await transport.connect()
@@ -2455,11 +3592,11 @@ def create_api_app(
                     break
                 except WebSocketDisconnect:
                     break
-
+    
                 call_id = data.get("id")
                 method = data.get("method")
                 params = data.get("params") or data.get("args") or {}
-
+    
                 if method:
                     try:
                         func = getattr(service, method)
@@ -2488,11 +3625,11 @@ def create_api_app(
     
     if dev_server_url:
         dev_base = dev_server_url.rstrip("/")
-
+    
         @app.get("/", include_in_schema=False)
         async def dev_root():
             return RedirectResponse(dev_base, status_code=307)
-
+    
         @app.get("/{path:path}", include_in_schema=False)
         async def dev_proxy(path: str, request: Request):
             target = f"{dev_base}/{path}" if path else dev_base
@@ -2511,5 +3648,5 @@ def create_api_app(
             if static_dir.exists():
                 app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
                 break
-
+    
     return app, manager

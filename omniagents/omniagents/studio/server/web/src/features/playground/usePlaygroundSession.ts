@@ -222,6 +222,7 @@ export interface PlaygroundSessionHook {
   stopRun: () => void
   isRunning: boolean
   respondToApproval: (approvalId: string, decision: PlaygroundApprovalDecision) => Promise<void>
+  resetConversation: () => void
 }
 
 export function usePlaygroundSession(sessionId: string | null | undefined, wsBase?: string, agentKey?: string): PlaygroundSessionHook {
@@ -236,6 +237,24 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
   const pendingRequestRef = useRef<Map<number, { resolve: () => void; reject: (error: Error) => void; method: string }>>(new Map())
   const latestSessionIdRef = useRef<string | null>(null)
   const latestAgentKeyRef = useRef<string | undefined>(undefined)
+
+  const resetConversation = useCallback(() => {
+    dispatch({ type: 'reset' })
+    const ws = wsRef.current
+    if (ws) {
+      ws.close()
+      wsRef.current = null
+    }
+    setConnectionState('idle')
+    setConnectionError(null)
+    pendingRunRef.current = false
+    serverSessionRef.current = null
+    pendingMethodRef.current.clear()
+    pendingRequestRef.current.forEach(({ reject }) => {
+      reject(new Error('Session reset'))
+    })
+    pendingRequestRef.current.clear()
+  }, [])
 
   useEffect(() => {
     latestSessionIdRef.current = sessionId ?? null
@@ -705,5 +724,6 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
     stopRun,
     isRunning,
     respondToApproval,
+    resetConversation,
   }
 }

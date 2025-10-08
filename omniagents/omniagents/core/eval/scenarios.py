@@ -228,7 +228,7 @@ async def _run_generation(agent, prompt: str, max_turns: int = 1) -> List[Dict[s
         return []
 
 
-def _enumerate_combos(dimensions: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+def _enumerate_combos(dimensions: List[Dict[str, Any]], filters: Dict[str, List[str]] | None = None) -> List[Dict[str, str]]:
     import itertools
     names = [str(d.get("name") or "dimension") for d in dimensions]
     value_lists: List[List[str]] = []
@@ -236,6 +236,13 @@ def _enumerate_combos(dimensions: List[Dict[str, Any]]) -> List[Dict[str, str]]:
         vs = [str(v.get("name") or "value") for v in (d.get("values") or [])]
         if not vs:
             vs = ["value"]
+        if filters:
+            allowed = filters.get(str(d.get("name") or ""))
+            if allowed:
+                allowed_set = {str(v) for v in allowed}
+                vs = [v for v in vs if v in allowed_set]
+        if not vs:
+            return []
         value_lists.append(vs)
     combos: List[Dict[str, str]] = []
     for prod in itertools.product(*value_lists):
@@ -267,6 +274,7 @@ async def generate_scenarios(
     output: Path | None = None,
     workflow_name: str | None = None,
     progress_cb: Any | None = None,
+    dimension_filters: Dict[str, List[str]] | None = None,
 ) -> Tuple[List[Dict[str, Any]], Path, str]:
     cfg_path = Path(compiled_yaml).resolve()
     raw = _read_yaml(cfg_path)
@@ -293,7 +301,18 @@ async def generate_scenarios(
 
     scenarios: List[Dict[str, Any]] = []
     used_names: Dict[str, int] = {}
-    combos = _enumerate_combos(dims)
+    filters_for_combos: Dict[str, List[str]] | None = None
+    if dimension_filters:
+        normalized_filters: Dict[str, List[str]] = {}
+        for key, values in dimension_filters.items():
+            if not values:
+                continue
+            allowed_values = [str(v).strip() for v in values if str(v).strip()]
+            if allowed_values:
+                normalized_filters[str(key)] = allowed_values
+        if normalized_filters:
+            filters_for_combos = normalized_filters
+    combos = _enumerate_combos(dims, filters_for_combos)
     random.shuffle(combos)
     import hashlib as _hashlib, json as _json
     try:
@@ -476,8 +495,17 @@ async def run_scenarios_against_agent(
             progress_cb({"event": "start", "total": total})
         except Exception:
             pass
+    tracing_initialized = False
     for idx, sc in enumerate(scenarios):
         spec = load_agent_spec_from_yaml(str(agent_yaml))
+        trace_cfg = dict(spec.tracing_config or {})
+        if workflow_name:
+            trace_cfg["workflow_name"] = workflow_name
+        spec.tracing_config = trace_cfg
+        if not tracing_initialized:
+            from omniagents.core.tracing import setup_tracing
+            setup_tracing(spec.tracing_config)
+            tracing_initialized = True
         spec.use_safe_agent = False
         try:
             if max_turns is not None:

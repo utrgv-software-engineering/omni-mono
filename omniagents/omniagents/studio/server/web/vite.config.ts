@@ -6,6 +6,11 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
+      '/api/evaluation': {
+        target: 'http://localhost:7860',
+        changeOrigin: true,
+        ws: true,
+      },
       '/api': {
         target: 'http://localhost:7860',
         changeOrigin: true,
