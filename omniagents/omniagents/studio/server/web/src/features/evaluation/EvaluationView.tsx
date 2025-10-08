@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Edit3, Trash2, Loader2, X, Upload, FileText, Clock, ArrowLeft, Play, Sparkles, Database, History, RefreshCw, HardDrive } from 'lucide-react'
+import { Plus, Edit3, Trash2, Loader2, X, Upload, FileText, Clock, ArrowLeft, Play, Sparkles, Database, History, RefreshCw, HardDrive, ExternalLink } from 'lucide-react'
 import { api } from '../../lib/api'
 import type {
   EvaluationDimension,
@@ -30,9 +30,10 @@ interface EvaluationViewProps {
   projectName?: string | null
   isAvailable: boolean
   isLoadingMetadata: boolean
+  onNavigateToLogs?: (projectName: string | null, workflowName: string | null) => void
 }
 
-function DatasetsPanel({ projectName, onTabChange }: { projectName?: string | null; onTabChange: (tab: EvaluationTab) => void }) {
+function DatasetsPanel({ projectName, onTabChange, onNavigateToLogs }: { projectName?: string | null; onTabChange: (tab: EvaluationTab) => void; onNavigateToLogs?: (projectName: string | null, workflowName: string | null) => void }) {
   const { data, isLoading, isError, refetch, isFetching } = useEvaluationDatasets(true)
   const datasets = useMemo(() => data?.datasets ?? [], [data])
   const resolvedProjectName = projectName ?? data?.project ?? null
@@ -154,92 +155,105 @@ function DatasetsPanel({ projectName, onTabChange }: { projectName?: string | nu
                     {groupRunCount} run{groupRunCount === 1 ? '' : 's'}
                   </span>
                 </div>
-                {group.items.map((dataset) => (
-                  <div key={dataset.path} className="space-y-3 rounded-lg border border-border bg-background p-4">
-                    <div className="flex flex-wrap items-start justify-between gap-4">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <Database className="h-4 w-4 text-muted-foreground" />
-                        <span className="text-sm font-semibold">{dataset.label}</span>
+                {group.items.map((dataset) => {
+                  const workflowRun = typeof dataset.workflow_run === 'string' ? dataset.workflow_run.trim() : ''
+                  return (
+                    <div key={dataset.path} className="space-y-3 rounded-lg border border-border bg-background p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-4">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <Database className="h-4 w-4 text-muted-foreground" />
+                            <span className="text-sm font-semibold">{dataset.label}</span>
+                          </div>
+                          <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                            <FileText className="h-3.5 w-3.5" />
+                            <span className="font-mono">{formatScenarioPath(dataset.path)}</span>
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            Source: {sourceLabels[dataset.source_kind]}
+                            {dataset.source_label ? ` • ${dataset.source_label}` : ''}
+                          </div>
+                        </div>
+                        <div className="text-right text-xs text-muted-foreground">
+                          {dataset.updated_at ? <div>Updated {formatTimestamp(dataset.updated_at)}</div> : null}
+                          {dataset.created_at && dataset.created_at !== dataset.updated_at ? <div>Created {formatTimestamp(dataset.created_at)}</div> : null}
+                        </div>
                       </div>
-                      <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                        <FileText className="h-3.5 w-3.5" />
-                        <span className="font-mono">{formatScenarioPath(dataset.path)}</span>
+                      <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                        <div className="flex items-center gap-1">
+                          <Database className="h-3.5 w-3.5" />
+                          <span>
+                            {dataset.run_count} run{dataset.run_count === 1 ? '' : 's'}
+                          </span>
+                        </div>
+                        {typeof dataset.expected_count === 'number' ? (
+                          <div className="flex items-center gap-1">
+                            <Sparkles className="h-3.5 w-3.5" />
+                            <span>Expected {dataset.expected_count}</span>
+                          </div>
+                        ) : null}
+                        {typeof dataset.scenario_count === 'number' ? (
+                          <div className="flex items-center gap-1">
+                            <FileText className="h-3.5 w-3.5" />
+                            <span>
+                              {dataset.scenario_count} scenario{dataset.scenario_count === 1 ? '' : 's'}
+                            </span>
+                          </div>
+                        ) : null}
+                        <div className="flex items-center gap-1">
+                          <History className="h-3.5 w-3.5" />
+                          <span>{dataset.includes_history ? 'History included' : 'History skipped'}</span>
+                        </div>
+                        {typeof dataset.size_bytes === 'number' ? (
+                          <div className="flex items-center gap-1">
+                            <HardDrive className="h-3.5 w-3.5" />
+                            <span>{formatFileSize(dataset.size_bytes)}</span>
+                          </div>
+                        ) : null}
                       </div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        Source: {sourceLabels[dataset.source_kind]}
-                        {dataset.source_label ? ` • ${dataset.source_label}` : ''}
+                      {dataset.workflow_run ? (
+                        <div className="text-xs text-muted-foreground">
+                          Workflow run <span className="font-mono">{dataset.workflow_run}</span>
+                          {dataset.workflow_run_at ? ` • ${formatTimestamp(dataset.workflow_run_at)}` : ''}
+                        </div>
+                      ) : null}
+                      {dataset.workflow_generate ? (
+                        <div className="text-xs text-muted-foreground">
+                          Generated via <span className="font-mono">{dataset.workflow_generate}</span>
+                        </div>
+                      ) : null}
+                      {dataset.source_path ? (
+                        <div className="text-xs text-muted-foreground">
+                          Scenario file <span className="font-mono">{formatScenarioPath(dataset.source_path)}</span>
+                        </div>
+                      ) : null}
+                      {dataset.manifest_path ? (
+                        <div className="text-xs text-muted-foreground">
+                          Manifest <span className="font-mono">{formatScenarioPath(dataset.manifest_path)}</span>
+                        </div>
+                      ) : null}
+                      <div className="flex items-center gap-2">
+                        {workflowRun && onNavigateToLogs ? (
+                          <button
+                            type="button"
+                            onClick={() => onNavigateToLogs(resolvedProjectName ?? null, workflowRun)}
+                            className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                            View Run
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => onTabChange('scenarios')}
+                          className="rounded-md border border-border px-3 py-1 text-xs font-medium hover:bg-muted"
+                        >
+                          View Scenario Sets
+                        </button>
                       </div>
                     </div>
-                    <div className="text-right text-xs text-muted-foreground">
-                      {dataset.updated_at ? <div>Updated {formatTimestamp(dataset.updated_at)}</div> : null}
-                      {dataset.created_at && dataset.created_at !== dataset.updated_at ? <div>Created {formatTimestamp(dataset.created_at)}</div> : null}
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
-                    <div className="flex items-center gap-1">
-                      <Database className="h-3.5 w-3.5" />
-                      <span>
-                        {dataset.run_count} run{dataset.run_count === 1 ? '' : 's'}
-                      </span>
-                    </div>
-                    {typeof dataset.expected_count === 'number' ? (
-                      <div className="flex items-center gap-1">
-                        <Sparkles className="h-3.5 w-3.5" />
-                        <span>Expected {dataset.expected_count}</span>
-                      </div>
-                    ) : null}
-                    {typeof dataset.scenario_count === 'number' ? (
-                      <div className="flex items-center gap-1">
-                        <FileText className="h-3.5 w-3.5" />
-                        <span>
-                          {dataset.scenario_count} scenario{dataset.scenario_count === 1 ? '' : 's'}
-                        </span>
-                      </div>
-                    ) : null}
-                    <div className="flex items-center gap-1">
-                      <History className="h-3.5 w-3.5" />
-                      <span>{dataset.includes_history ? 'History included' : 'History skipped'}</span>
-                    </div>
-                    {typeof dataset.size_bytes === 'number' ? (
-                      <div className="flex items-center gap-1">
-                        <HardDrive className="h-3.5 w-3.5" />
-                        <span>{formatFileSize(dataset.size_bytes)}</span>
-                      </div>
-                    ) : null}
-                  </div>
-                  {dataset.workflow_run ? (
-                    <div className="text-xs text-muted-foreground">
-                      Workflow run <span className="font-mono">{dataset.workflow_run}</span>
-                      {dataset.workflow_run_at ? ` • ${formatTimestamp(dataset.workflow_run_at)}` : ''}
-                    </div>
-                  ) : null}
-                  {dataset.workflow_generate ? (
-                    <div className="text-xs text-muted-foreground">
-                      Generated via <span className="font-mono">{dataset.workflow_generate}</span>
-                    </div>
-                  ) : null}
-                  {dataset.source_path ? (
-                    <div className="text-xs text-muted-foreground">
-                      Scenario file <span className="font-mono">{formatScenarioPath(dataset.source_path)}</span>
-                    </div>
-                  ) : null}
-                  {dataset.manifest_path ? (
-                    <div className="text-xs text-muted-foreground">
-                      Manifest <span className="font-mono">{formatScenarioPath(dataset.manifest_path)}</span>
-                    </div>
-                  ) : null}
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => onTabChange('scenarios')}
-                      className="rounded-md border border-border px-3 py-1 text-xs font-medium hover:bg-muted"
-                    >
-                      View Scenario Sets
-                    </button>
-                  </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )
           })}
@@ -356,6 +370,24 @@ function formatTimestamp(value?: string | null): string {
   return date.toLocaleString()
 }
 
+function extractWorkflowFromMetadata(metadata?: Record<string, any> | null): string | null {
+  if (!metadata || typeof metadata !== 'object') {
+    return null
+  }
+  const direct = metadata.workflow_run
+  if (typeof direct === 'string' && direct.trim()) {
+    return direct.trim()
+  }
+  const manifest = metadata.manifest
+  if (manifest && typeof manifest === 'object') {
+    const manifestRun = manifest.workflow_run || manifest.workflow || manifest.workflow_name || manifest.workflowName
+    if (typeof manifestRun === 'string' && manifestRun.trim()) {
+      return manifestRun.trim()
+    }
+  }
+  return null
+}
+
 interface ScenarioSetDetailProps {
   set: EvaluationScenarioSet
   onBack: () => void
@@ -368,6 +400,7 @@ interface ScenarioSetDetailProps {
   goldenNames: Set<string>
   runTrigger?: ScenarioRunTrigger | null
   onRunTriggerConsumed?: () => void
+  onViewRun?: (workflowName: string) => void
   onDeleteSet?: (set: EvaluationScenarioSet) => void
   isDeletingSet?: boolean
 }
@@ -389,6 +422,7 @@ function ScenarioSetDetail({
   goldenNames,
   runTrigger,
   onRunTriggerConsumed,
+  onViewRun,
   onDeleteSet,
   isDeletingSet,
 }: ScenarioSetDetailProps) {
@@ -416,6 +450,11 @@ function ScenarioSetDetail({
   useEffect(() => {
     setAnnotateBanner(null)
   }, [set.path])
+
+  const workflowFromMetadata = extractWorkflowFromMetadata(set.metadata)
+  const runWorkflowNameRaw = activeRun?.status?.workflow_name
+  const runWorkflowName = typeof runWorkflowNameRaw === 'string' && runWorkflowNameRaw.trim().length > 0 ? runWorkflowNameRaw.trim() : null
+  const effectiveWorkflowName = runWorkflowName || workflowFromMetadata
 
   const createScenario = useMutation<EvaluationScenarioMutationResponse, Error, EvaluationScenarioCreatePayload>({
     mutationFn: (payload) => api.createEvaluationScenario(payload),
@@ -808,6 +847,16 @@ function ScenarioSetDetail({
           <div className="text-xs text-muted-foreground">
             {set.scenarios.length} scenario{set.scenarios.length === 1 ? '' : 's'}
           </div>
+          {effectiveWorkflowName && onViewRun ? (
+            <button
+              type="button"
+              onClick={() => onViewRun(effectiveWorkflowName)}
+              className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              View Run
+            </button>
+          ) : null}
           {set.kind !== 'golden' ? (
             <button
               type="button"
@@ -1555,7 +1604,7 @@ function DimensionsPanel({ projectName }: { projectName?: string | null }) {
   )
 }
 
-function ScenariosPanel({ projectName, isAvailable }: { projectName?: string | null; isAvailable: boolean }) {
+function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs }: { projectName?: string | null; isAvailable: boolean; onNavigateToLogs?: (projectName: string | null, workflowName: string | null) => void }) {
   const queryClient = useQueryClient()
   const { data, isLoading, isError, refetch, isFetching } = useEvaluationScenarios(isAvailable)
   const { data: dimensionsData } = useDimensions(isAvailable)
@@ -1920,6 +1969,17 @@ function ScenariosPanel({ projectName, isAvailable }: { projectName?: string | n
     deleteSet.mutate({ kind: set.kind, set_path: set.path })
   }
 
+  const handleViewRun = (workflow: string) => {
+    if (!workflow) {
+      return
+    }
+    const normalized = workflow.trim()
+    if (!normalized) {
+      return
+    }
+    onNavigateToLogs?.(projectName ?? null, normalized)
+  }
+
   if (selectedSet) {
     const canPromote = selectedSet.kind === 'generated' || selectedSet.kind === 'annotated'
     return (
@@ -1939,6 +1999,7 @@ function ScenariosPanel({ projectName, isAvailable }: { projectName?: string | n
         goldenNames={goldenNames}
         runTrigger={runTrigger}
         onRunTriggerConsumed={() => setRunTrigger(null)}
+        onViewRun={handleViewRun}
         onDeleteSet={handleDeleteSet}
         isDeletingSet={deleteSet.isPending}
       />
@@ -2052,54 +2113,67 @@ function ScenariosPanel({ projectName, isAvailable }: { projectName?: string | n
                     No {section.title.toLowerCase()} yet.
                   </div>
                 ) : (
-                  section.sets.map((set) => (
-                    <div key={set.path} className="space-y-3 rounded-lg border border-border bg-background p-4">
-                      <div className="flex flex-wrap items-start justify-between gap-4">
-                        <div>
-                          <div className="text-sm font-semibold">{set.label}</div>
-                          <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                            <FileText className="h-3.5 w-3.5" />
-                            <span className="font-mono">{formatScenarioPath(set.path)}</span>
+                  section.sets.map((set) => {
+                    const workflowName = extractWorkflowFromMetadata(set.metadata)
+                    return (
+                      <div key={set.path} className="space-y-3 rounded-lg border border-border bg-background p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-4">
+                          <div>
+                            <div className="text-sm font-semibold">{set.label}</div>
+                            <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                              <FileText className="h-3.5 w-3.5" />
+                              <span className="font-mono">{formatScenarioPath(set.path)}</span>
+                            </div>
+                            <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                              <Clock className="h-3.5 w-3.5" />
+                              <span>{set.updated_at ? new Date(set.updated_at).toLocaleString() : 'Unknown updated time'}</span>
+                            </div>
                           </div>
-                          <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                            <Clock className="h-3.5 w-3.5" />
-                            <span>{set.updated_at ? new Date(set.updated_at).toLocaleString() : 'Unknown updated time'}</span>
+                          <div className="text-xs text-muted-foreground">
+                            {set.scenario_count} scenario{set.scenario_count === 1 ? '' : 's'}
                           </div>
                         </div>
-                        <div className="text-xs text-muted-foreground">
-                          {set.scenario_count} scenario{set.scenario_count === 1 ? '' : 's'}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleViewSet(set)}
-                          className="rounded-md border border-border px-3 py-1 text-xs font-medium hover:bg-muted"
-                        >
-                          View Set
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleRunSet(set)}
-                          className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
-                        >
-                          <Play className="h-3.5 w-3.5" />
-                          Run Set
-                        </button>
-                        {set.kind !== 'golden' ? (
+                        <div className="flex items-center gap-2">
                           <button
                             type="button"
-                            onClick={() => handleDeleteSet(set)}
-                            disabled={deleteSet.isPending}
-                            className="inline-flex items-center gap-1 rounded-md border border-destructive px-3 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
+                            onClick={() => handleViewSet(set)}
+                            className="rounded-md border border-border px-3 py-1 text-xs font-medium hover:bg-muted"
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            {deleteSet.isPending ? 'Deleting…' : 'Delete Set'}
+                            View Set
                           </button>
-                        ) : null}
+                          {workflowName && onNavigateToLogs ? (
+                            <button
+                              type="button"
+                              onClick={() => onNavigateToLogs(projectName ?? null, workflowName)}
+                              className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" />
+                              View Run
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            onClick={() => handleRunSet(set)}
+                            className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+                          >
+                            <Play className="h-3.5 w-3.5" />
+                            Run Set
+                          </button>
+                          {set.kind !== 'golden' ? (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSet(set)}
+                              disabled={deleteSet.isPending}
+                              className="inline-flex items-center gap-1 rounded-md border border-destructive px-3 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              {deleteSet.isPending ? 'Deleting…' : 'Delete Set'}
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
-                    </div>
-                  ))
+                    )
+                  })
                 )}
               </div>
             ))}
@@ -2289,7 +2363,7 @@ function ScenariosPanel({ projectName, isAvailable }: { projectName?: string | n
   )
 }
 
-export function EvaluationView({ activeTab, onTabChange, projectName, isAvailable, isLoadingMetadata }: EvaluationViewProps) {
+export function EvaluationView({ activeTab, onTabChange, projectName, isAvailable, isLoadingMetadata, onNavigateToLogs }: EvaluationViewProps) {
   if (isLoadingMetadata) {
     return (
       <div className="flex h-full w-full items-center justify-center text-muted-foreground">
@@ -2313,11 +2387,11 @@ export function EvaluationView({ activeTab, onTabChange, projectName, isAvailabl
   }
 
   if (activeTab === 'scenarios') {
-    return <ScenariosPanel projectName={projectName} isAvailable={isAvailable} />
+    return <ScenariosPanel projectName={projectName} isAvailable={isAvailable} onNavigateToLogs={onNavigateToLogs} />
   }
 
   if (activeTab === 'datasets') {
-    return <DatasetsPanel projectName={projectName} onTabChange={onTabChange} />
+    return <DatasetsPanel projectName={projectName} onTabChange={onTabChange} onNavigateToLogs={onNavigateToLogs} />
   }
 
   return (

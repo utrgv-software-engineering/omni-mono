@@ -2150,8 +2150,8 @@ def create_api_app(
             response = ScenarioSetDeleteResponseModel(
                 project=str(project_name) if project_name else None,
                 deleted_path=str(file_path),
-                generated=[s.model_dump() for s in _load_artifact_sets(ctx_updated, "generated")],
-                annotated=[s.model_dump() for s in _load_artifact_sets(ctx_updated, "annotated")],
+                generated=_load_artifact_sets(ctx_updated, "generated"),
+                annotated=_load_artifact_sets(ctx_updated, "annotated"),
             )
             return response.model_dump()
         except HTTPException:

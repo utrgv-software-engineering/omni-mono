@@ -33,7 +33,9 @@ export function Dashboard() {
     setSpans,
     selectedProject,
     selectedWorkflow,
-    loadProjectAnalysis
+    loadProjectAnalysis,
+    setSelectedProject: selectTraceProject,
+    setSelectedWorkflow: selectTraceWorkflow
   } = useTraceStore()
 
   const [viewMode, setViewMode] = useState<'debug' | 'review'>('review')
@@ -155,6 +157,26 @@ export function Dashboard() {
 
   const handleTraceSelect = (trace: Trace) => {
     setSelectedTrace(trace)
+  }
+
+  const handleNavigateToLogs = (project: string | null, workflow: string | null) => {
+    if (!project) {
+      return
+    }
+    const normalizedProject = project.trim()
+    if (!normalizedProject) {
+      return
+    }
+    selectTraceProject(normalizedProject)
+    const normalizedWorkflow = workflow && workflow.trim()
+    if (normalizedWorkflow) {
+      selectTraceWorkflow(normalizedWorkflow)
+    }
+    setSelectedConversation(null)
+    setSelectedTrace(null)
+    setSpans([])
+    setViewMode('review')
+    setActiveSection('logs')
   }
 
   const renderLogsContent = () => {
@@ -295,6 +317,7 @@ export function Dashboard() {
           projectName={evaluationProjectName}
           isAvailable={evaluationAvailable && !studioProjectError}
           isLoadingMetadata={studioProjectLoading}
+          onNavigateToLogs={handleNavigateToLogs}
         />
       )}
       {activeSection === 'home' && (
