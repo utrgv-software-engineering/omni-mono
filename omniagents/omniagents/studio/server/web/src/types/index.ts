@@ -219,6 +219,8 @@ export interface EvaluationScenarioEntry {
   name: string
   prompt: string
   dimensions?: Record<string, any> | null
+  measures?: any[] | null
+  failure_categories?: string[] | null
   metadata?: Record<string, any> | null
 }
 

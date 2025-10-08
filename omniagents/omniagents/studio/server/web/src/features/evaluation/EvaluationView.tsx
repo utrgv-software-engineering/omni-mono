@@ -455,6 +455,7 @@ function ScenarioSetDetail({
   const runWorkflowNameRaw = activeRun?.status?.workflow_name
   const runWorkflowName = typeof runWorkflowNameRaw === 'string' && runWorkflowNameRaw.trim().length > 0 ? runWorkflowNameRaw.trim() : null
   const effectiveWorkflowName = runWorkflowName || workflowFromMetadata
+  const showFailureCategoriesForSet = set.kind === 'annotated'
 
   const createScenario = useMutation<EvaluationScenarioMutationResponse, Error, EvaluationScenarioCreatePayload>({
     mutationFn: (payload) => api.createEvaluationScenario(payload),
@@ -587,13 +588,14 @@ function ScenarioSetDetail({
     }
   }
 
+  const canAnnotate = set.kind === 'generated'
+
   const handleAnnotateSet = () => {
-    if (annotateScenario.isPending) {
+    if (!canAnnotate || annotateScenario.isPending) {
       return
     }
-    const targetKind: EvaluationScenarioAnnotatePayload['kind'] = set.kind === 'annotated' ? 'annotated' : 'generated'
     setAnnotateBanner(null)
-    annotateScenario.mutate({ kind: targetKind, set_path: set.path })
+    annotateScenario.mutate({ kind: 'generated', set_path: set.path })
   }
 
   const handleDeleteSet = () => {
@@ -857,7 +859,7 @@ function ScenarioSetDetail({
               View Run
             </button>
           ) : null}
-          {set.kind !== 'golden' ? (
+          {canAnnotate ? (
             <button
               type="button"
               onClick={handleAnnotateSet}
@@ -988,6 +990,45 @@ function ScenarioSetDetail({
               const isDuplicate = (scenario.id && goldenIds.has(scenario.id)) || (!scenario.id && goldenNames.has(scenario.name))
               const isPromotePending = isPromoting && pendingKey === key
               const isDeletingCurrent = deleteScenario.isPending && deletingKey === key
+              const metadata = (scenario.metadata ?? null) as Record<string, any> | null
+              const failureCategories = (() => {
+                if (Array.isArray(scenario.failure_categories)) {
+                  return scenario.failure_categories.filter((item) => typeof item === 'string' && item.trim().length > 0)
+                }
+                const metadataFailureCategories = metadata?.failure_categories
+                if (Array.isArray(metadataFailureCategories)) {
+                  return metadataFailureCategories.filter((item) => typeof item === 'string' && item.trim().length > 0)
+                }
+                return []
+              })()
+              const measures = (() => {
+                let source: any[] = []
+                if (Array.isArray(scenario.measures)) {
+                  source = scenario.measures
+                } else if (Array.isArray(metadata?.measures)) {
+                  source = metadata.measures
+                }
+                return source
+                  .map((entry) => {
+                    if (typeof entry === 'string') {
+                      const trimmed = entry.trim()
+                      return trimmed.length > 0 ? trimmed : null
+                    }
+                    if (typeof entry === 'number' || typeof entry === 'boolean') {
+                      return String(entry)
+                    }
+                    if (entry === null || typeof entry === 'undefined') {
+                      return null
+                    }
+                    try {
+                      return JSON.stringify(entry)
+                    } catch {
+                      return String(entry)
+                    }
+                  })
+                  .filter((value): value is string => Boolean(value && value.length > 0))
+              })()
+              const showFailureCategories = showFailureCategoriesForSet || failureCategories.length > 0
               return (
                 <div key={key} className="rounded-md border border-border bg-background px-4 py-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1036,6 +1077,28 @@ function ScenarioSetDetail({
                           {key}: {String(value)}
                         </span>
                       ))}
+                    </div>
+                  ) : null}
+                  {measures.length > 0 ? (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {measures.map((measure, index) => (
+                        <span key={`${key}-measure-${index}`} className="rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground">
+                          {measure}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  {showFailureCategories ? (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {failureCategories.length > 0 ? (
+                        failureCategories.map((category) => (
+                          <span key={category} className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-0.5 text-xs text-destructive">
+                            {category}
+                          </span>
+                        ))
+                      ) : showFailureCategoriesForSet ? (
+                        <span className="rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground">No failure categories</span>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>

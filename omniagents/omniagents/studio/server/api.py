@@ -538,6 +538,8 @@ class ScenarioEntryModel(BaseModel):
     name: str
     prompt: str
     dimensions: Optional[Dict[str, Any]] = None
+    measures: Optional[List[Any]] = None
+    failure_categories: Optional[List[str]] = None
     metadata: Optional[Dict[str, Any]] = None
 
 
@@ -1442,6 +1444,13 @@ def create_api_app(
             prompt = str(item.get("prompt") or "")
             scenario_id = item.get("id")
             dimensions = item.get("dimensions") if isinstance(item.get("dimensions"), dict) else None
+            measures = item.get("measures") if isinstance(item.get("measures"), list) else None
+            raw_failure_categories = item.get("failure_categories") if isinstance(item.get("failure_categories"), list) else None
+            failure_categories: Optional[List[str]] = None
+            if raw_failure_categories:
+                filtered = [str(value).strip() for value in raw_failure_categories if isinstance(value, str) and str(value).strip()]
+                if filtered:
+                    failure_categories = filtered
             metadata = {
                 "index": idx,
                 "source_path": str(source_path),
@@ -1452,6 +1461,8 @@ def create_api_app(
                     name=name,
                     prompt=prompt,
                     dimensions=dimensions,
+                    measures=measures,
+                    failure_categories=failure_categories,
                     metadata=metadata,
                 )
             )
