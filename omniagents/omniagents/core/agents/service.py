@@ -214,6 +214,32 @@ class AgentService(RpcMethodsBase):
         except Exception:
             return False
 
+    async def _broadcast_session(self, session: Session, method: str, payload: dict, *, queue_if_unseen: bool = False) -> bool:
+        if not session.channels:
+            if queue_if_unseen and hasattr(session, "pending_events"):
+                session.pending_events.append((method, payload))
+            return False
+
+        delivered_any = False
+        dead_channels = []
+        for ch in list(session.channels):
+            ok = await self._safe_notify(ch, method, payload)
+            if ok:
+                delivered_any = True
+            else:
+                dead_channels.append(ch)
+
+        for ch in dead_channels:
+            try:
+                session.channels.remove(ch)
+            except ValueError:
+                pass
+
+        if queue_if_unseen and not delivered_any and hasattr(session, "pending_events"):
+            session.pending_events.append((method, payload))
+
+        return delivered_any
+
     # ------------------------------------------------------------------
     #  RPC method invoked by the *client* when the user answers the
     #  approval prompt.  Resolves the Future we saved when we asked.
@@ -371,11 +397,20 @@ class AgentService(RpcMethodsBase):
 
         if Debug.enabled():
             print(f"[srv]   → tool_approval_request approval_id={approval_id} details={payload}")
-            
-        delivered = await self._safe_notify(self.channel, "tool_approval_request", payload)
-        if not delivered and _sess is not None:
-            # Socket gone – remember so we can replay later
-            _sess.pending_events.append(("tool_approval_request", payload))
+
+        primary_channel = getattr(self, "channel", None)
+        if _sess is not None and primary_channel and primary_channel not in _sess.channels:
+            _sess.channels.append(primary_channel)
+
+        if _sess is not None:
+            delivered = await self._broadcast_session(_sess, "tool_approval_request", payload, queue_if_unseen=True)
+        else:
+            delivered = False
+            if primary_channel is not None:
+                delivered = await self._safe_notify(primary_channel, "tool_approval_request", payload)
+            if not delivered:
+                # No session context to queue; best-effort only
+                pass
 
         # Wait for user decision
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
@@ -384,6 +419,7 @@ class AgentService(RpcMethodsBase):
 
     async def start_run(self, prompt: str, session_id: str | None = None, variables: dict | None = None, context: Any | None = None) -> dict:  # noqa: D401
         sess: Session = sm.get_or_create(session_id)
+        channel = getattr(self, "channel", None)
         
         # Store variables and/or context in session
         if variables is not None:
@@ -392,8 +428,8 @@ class AgentService(RpcMethodsBase):
             sess.context = context
 
         # Track current channel for real-time notifications.
-        if self.channel not in sess.channels:
-            sess.channels.append(self.channel)
+        if channel is not None and channel not in sess.channels:
+            sess.channels.append(channel)
 
         if sess.current_task and not sess.current_task.done():
             raise RuntimeError("Run already active in this session")
@@ -557,9 +593,10 @@ class AgentService(RpcMethodsBase):
                             delay = base_delay * (2 ** (attempt - 1))
                             # Announce retry status to client
                             try:
-                                await self.channel.async_call(
+                                await self._broadcast_session(
+                                    sess,
                                     "run_status",
-                                    args={
+                                    {
                                         "run_id": asyncio.current_task().get_name(),
                                         "status": "retrying",
                                         "message": str(e),
@@ -603,15 +640,7 @@ class AgentService(RpcMethodsBase):
                 # Debug log the payload for visibility when debugging (single source)
                 _debug_rpc("run_end", payload)
                 # Best-effort notify; avoid raising if socket is gone
-                try:
-                    await self.channel.async_call("run_end", args=payload)
-                except Exception:
-                    # If delivery failed, remember it for replay on reconnect
-                    try:
-                        if hasattr(sess, "pending_events"):
-                            sess.pending_events.append(("run_end", payload))
-                    except Exception:
-                        pass
+                await self._broadcast_session(sess, "run_end", payload, queue_if_unseen=True)
 
         task_name = f"run_{uuid.uuid4().hex}"
         _debug_rpc(
@@ -628,15 +657,14 @@ class AgentService(RpcMethodsBase):
         # Proactively notify clients that the run has started so UIs can
         # correlate subsequent status and end events even if they arrive
         # before the RPC response is processed client-side.
-        try:
-            await self.channel.async_call("run_started", args={
+        await self._broadcast_session(
+            sess,
+            "run_started",
+            {
                 "run_id": task_name,
                 "session_id": sess.id,
-            })
-        except Exception:
-            # Best-effort notification; if the socket is gone we still return
-            # the normal start_run result for the caller to handle.
-            pass
+            },
+        )
         return {"run_id": task_name, "session_id": sess.id}
 
     async def stop_run(self, run_id: str) -> bool:  # noqa: D401

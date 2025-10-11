@@ -89,6 +89,11 @@ class JsonRpcEndpoint:
                         except Exception:
                             pass
                     if method:
+                        # Ensure the RPC methods see the channel for this connection
+                        try:
+                            self.methods.channel = channel
+                        except AttributeError:
+                            pass
                         try:
                             func = getattr(self.methods, method)
                             result = await func(**params)
