@@ -8,9 +8,26 @@ import 'package:flutter/foundation.dart';
 
 import 'models.dart';
 
+class RemoteRpcError implements Exception {
+  RemoteRpcError(this.code, this.message, [this.data]);
+
+  final int? code;
+  final String message;
+  final dynamic data;
+
+  @override
+  String toString() {
+    if (code != null) {
+      return 'RemoteRpcError($code, $message)';
+    }
+    return 'RemoteRpcError($message)';
+  }
+}
+
 /// Lightweight client that speaks JSON-RPC 2.0 over WebSockets.
 class RemoteAgentClient {
-  RemoteAgentClient(this.endpoint, {this.token, this.debug = false});
+  RemoteAgentClient(this.endpoint,
+      {this.token, this.debug = false, this.label});
 
   /// WebSocket URL of the OmniAgents server (for example ws://localhost:8000/ws).
   final String endpoint;
@@ -19,9 +36,13 @@ class RemoteAgentClient {
   final String? token;
 
   final bool debug;
+  final String? label;
 
   WebSocketChannel? _channel;
   final _uuid = const Uuid();
+  Map<String, dynamic>? _initialVariables;
+  String? get sessionId => _sessionId;
+  bool get hasSession => _sessionId != null && _sessionId!.isNotEmpty;
 
   // ---------------------------------------------------------------------------
   //  Public event stream -------------------------------------------------------
@@ -38,6 +59,10 @@ class RemoteAgentClient {
   /// If you already know the session id (e.g. after app restart), call this
   /// before startRun() so that further prompts continue the same session.
   void resumeSession(String sessionId) {
+    if (debug) {
+      debugPrint('${_tag()} resumeSession -> $sessionId'
+          ' (was ${_sessionId ?? 'none'})');
+    }
     _sessionId = sessionId;
   }
 
@@ -52,7 +77,7 @@ class RemoteAgentClient {
       url += 'token=${Uri.encodeComponent(token!)}';
     }
 
-    if (debug) debugPrint('[ws] Connecting to $url');
+    if (debug) debugPrint('${_tag()} [ws] Connecting to $url');
     try {
       _channel = WebSocketChannel.connect(Uri.parse(url));
 
@@ -82,6 +107,17 @@ class RemoteAgentClient {
 
       // If we get here the connection is established.
       _eventsController.add(ConnectedEvent());
+      try {
+        _sendRequest('client_functions', {
+          'version': 1,
+          'functions': [
+            {
+              'name': 'ui.set_status',
+              'description': 'Override the inline status text (non-blocking)'
+            }
+          ]
+        }, callId: _uuid.v4());
+      } catch (_) {}
     } catch (e) {
       if (!_eventsController.isClosed) {
         final msg = e.toString().contains('Connection refused')
@@ -101,7 +137,7 @@ class RemoteAgentClient {
         _eventsController.add(DisconnectedEvent());
       }
       _channel = null;
-      if (debug) debugPrint('[ws] Connection closed');
+      if (debug) debugPrint('${_tag()} [ws] Connection closed');
     }, onError: (error) {
       if (!_eventsController.isClosed) {
         _eventsController.add(ErrorEvent(error.toString()));
@@ -112,6 +148,10 @@ class RemoteAgentClient {
   }
 
   Future<RunIds> startRun(String prompt) async {
+    if (debug) {
+      debugPrint('${_tag()} startRun prompt="$prompt"'
+          ' session=${_sessionId ?? 'none'}');
+    }
     await connect();
     final callId = _uuid.v4();
     final completer = Completer<RunIds>();
@@ -136,6 +176,9 @@ class RemoteAgentClient {
       if (value != null) {
         final runId = value['run_id'] as String?;
         final sessionId = value['session_id'] as String?;
+        if (debug) {
+          debugPrint('${_tag()} startRun result run=$runId session=$sessionId');
+        }
         if (sessionId != null) _sessionId = sessionId;
         completer.complete(RunIds(runId: runId, sessionId: sessionId));
       } else {
@@ -143,15 +186,21 @@ class RemoteAgentClient {
       }
     });
 
-    _sendRequest(
-        'start_run',
-        {
-          'prompt': prompt,
-          'session_id': _sessionId,
-        },
-        callId: callId);
+    final params = <String, dynamic>{
+      'prompt': prompt,
+    };
+    if (_sessionId != null) params['session_id'] = _sessionId;
+    if (_initialVariables != null && _initialVariables!.isNotEmpty) {
+      params['variables'] = _initialVariables;
+    }
+
+    _sendRequest('start_run', params, callId: callId);
 
     return completer.future;
+  }
+
+  void setInitialVariables(Map<String, dynamic> vars) {
+    _initialVariables = Map<String, dynamic>.from(vars);
   }
 
   Future<void> sendUserMessage(String runId, String content) {
@@ -177,6 +226,26 @@ class RemoteAgentClient {
       'always_approve': alwaysApprove,
       'error_message': errorMessage,
     });
+  }
+
+  Future<void> clientFunctions(int version, List<Map<String, dynamic>> functions) {
+    return _simpleCall('client_functions', {
+      'version': version,
+      'functions': functions,
+    });
+  }
+
+  Future<void> clientResponse(String requestId,
+      {required bool ok,
+      Map<String, dynamic>? result,
+      Map<String, dynamic>? error}) {
+    final params = {
+      'request_id': requestId,
+      'ok': ok,
+    };
+    if (result != null) params['result'] = result;
+    if (error != null) params['error'] = error;
+    return _simpleCall('client_response', params);
   }
 
   /// Fetch complete history for a given session id.
@@ -244,6 +313,111 @@ class RemoteAgentClient {
     return _simpleCall('archive_session', {'session_id': sessionId});
   }
 
+  /// List server-exposed functions for dynamic slash commands.
+  Future<List<Map<String, dynamic>>> listServerFunctions() async {
+    try {
+      await connect();
+    } catch (_) {
+      return <Map<String, dynamic>>[];
+    }
+
+    final callId = _uuid.v4();
+    final completer = Completer<dynamic>();
+    _pending[callId] = completer;
+    _sendRequest('list_server_functions', const {}, callId: callId);
+
+    final result = await completer.future;
+    List<Map<String, dynamic>> list = [];
+    if (result is List) {
+      for (final e in result) {
+        if (e is Map) list.add(e.cast<String, dynamic>());
+      }
+    } else if (result is String) {
+      try {
+        final decoded = jsonDecode(result);
+        if (decoded is List) {
+          for (final e in decoded) {
+            if (e is Map) list.add(e.cast<String, dynamic>());
+          }
+        }
+      } catch (_) {}
+    }
+    return list;
+  }
+
+  /// Call an arbitrary server function.
+  Future<Map<String, dynamic>> serverCall(String function,
+      {Map<String, dynamic>? args}) async {
+    await connect();
+    final callId = _uuid.v4();
+    final completer = Completer<dynamic>();
+    _pending[callId] = completer;
+    final params = <String, dynamic>{'function': function};
+    if (args != null) params['args'] = args;
+    if (_sessionId != null) params['session_id'] = _sessionId;
+    _sendRequest('server_call', params, callId: callId);
+
+    final result = await completer.future;
+    if (result is Map<String, dynamic>) return result;
+    if (result is String) {
+      try {
+        final decoded = jsonDecode(result);
+        if (decoded is Map<String, dynamic>) return decoded;
+      } catch (_) {}
+    }
+    return <String, dynamic>{};
+  }
+
+  /// Fetch deduplicated user input history across sessions.
+  Future<List<String>> getUserHistory({int limit = 200, bool includeArchived = true}) async {
+    try {
+      await connect();
+    } catch (_) {
+      return <String>[];
+    }
+    final callId = _uuid.v4();
+    final completer = Completer<dynamic>();
+    _pending[callId] = completer;
+    _sendRequest('get_user_history', {
+      'limit': limit,
+      'include_archived': includeArchived,
+    }, callId: callId);
+    final result = await completer.future;
+    final out = <String>[];
+    List list;
+    if (result is List) {
+      list = result;
+    } else if (result is String) {
+      try {
+        final decoded = jsonDecode(result);
+        if (decoded is List) {
+          list = decoded;
+        } else {
+          return out;
+        }
+      } catch (_) {
+        return out;
+      }
+    } else {
+      return out;
+    }
+    for (final e in list) {
+      if (e is Map) {
+        final c = e['content']?.toString();
+        if (c != null && c.trim().isNotEmpty) out.add(c.trim());
+      } else if (e is String) {
+        if (e.trim().isNotEmpty) out.add(e.trim());
+      }
+    }
+    // Deduplicate preserving order
+    final seen = <String>{};
+    final dedup = <String>[];
+    for (final s in out) {
+      if (seen.add(s)) dedup.add(s);
+    }
+    return dedup;
+  }
+
   // ---------------------------------------------------------------------------
   // Internals -----------------------------------------------------------------
   // ---------------------------------------------------------------------------
@@ -264,7 +438,7 @@ class RemoteAgentClient {
       'id': callId,
     };
     final payload = jsonEncode(frame);
-    if (debug) debugPrint('→ $payload');
+    if (debug) debugPrint('${_tag()} → $payload');
     try {
       _channel?.sink.add(payload);
     } catch (e) {
@@ -288,7 +462,7 @@ class RemoteAgentClient {
       return; // Not JSON → ignore
     }
 
-    if (debug) debugPrint('← $msg');
+    if (debug) debugPrint('${_tag()} ← $msg');
 
     // Handle notifications/requests first so UI updates even when a response is also present.
     if (msg.containsKey('method')) {
@@ -307,11 +481,26 @@ class RemoteAgentClient {
     }
 
     // Now handle response part (may be absent or null)
-    if (msg.containsKey('id') && msg.containsKey('result')) {
+    if (msg.containsKey('id')) {
       final callId = msg['id'] as String?;
       if (callId != null) {
         final completer = _pending.remove(callId);
-        completer?.complete(msg['result']);
+        if (completer != null) {
+          if (msg.containsKey('error') && msg['error'] != null) {
+            final err = msg['error'];
+            if (err is Map) {
+              final code = err['code'] is num ? (err['code'] as num).toInt() : null;
+              final message = err['message']?.toString() ?? 'RPC error';
+              completer.completeError(RemoteRpcError(code, message, err['data']));
+            } else {
+              completer.completeError(RemoteRpcError(null, err.toString()));
+            }
+          } else if (msg.containsKey('result')) {
+            completer.complete(msg['result']);
+          } else {
+            completer.complete(null);
+          }
+        }
       }
     }
   }
@@ -320,18 +509,23 @@ class RemoteAgentClient {
     switch (method) {
       case 'tool_called':
         _eventsController.add(ToolCalledEvent(
+            payload['run_id']?.toString(),
             payload['call_id'] as String?,
             payload['tool'] as String? ?? '',
             payload['input'] as String? ?? ''));
         break;
       case 'tool_result':
         _eventsController.add(ToolResultEvent(
+            payload['run_id']?.toString(),
             payload['call_id'] as String?,
             payload['tool'] as String? ?? '',
-            payload['output'] as String? ?? ''));
+            payload['output'] as String? ?? '',
+            (payload['metadata'] as Map?)?.cast<String, dynamic>()));
         break;
       case 'message_output':
-        _eventsController.add(MessageOutputEvent(payload['content'] as String,
+        _eventsController.add(MessageOutputEvent(
+            payload['run_id']?.toString(),
+            payload['content'] as String,
             payload['is_final'] as bool? ?? false));
         break;
       case 'tool_approval_request':
@@ -339,11 +533,101 @@ class RemoteAgentClient {
           payload['approval_id'] as String,
           payload['tool'] as String,
           payload['arguments'] as String,
+          (payload['metadata'] as Map?)?.cast<String, dynamic>(),
         ));
         break;
+      case 'run_started':
+        final rid = payload['run_id']?.toString() ?? '';
+        final sid = payload['session_id']?.toString() ?? '';
+        if (debug) {
+          debugPrint('${_tag()} run_started run=$rid session=$sid');
+        }
+        _eventsController.add(RunStartedEvent(rid, sid));
+        break;
       case 'run_end':
+        UsageDetails? usage;
+        final u = payload['usage'];
+        if (u is Map) {
+          usage = UsageDetails(
+            requests: (u['requests'] as num?)?.toInt(),
+            inputTokens: (u['input_tokens'] as num?)?.toInt(),
+            outputTokens: (u['output_tokens'] as num?)?.toInt(),
+            totalTokens: (u['total_tokens'] as num?)?.toInt(),
+            inputTokensDetails: (u['input_tokens_details'] as Map?)
+                ?.map((k, v) => MapEntry(k.toString(), (v as num).toInt())),
+            outputTokensDetails: (u['output_tokens_details'] as Map?)
+                ?.map((k, v) => MapEntry(k.toString(), (v as num).toInt())),
+          );
+        }
+        RunEndError? err;
+        final e = payload['error'];
+        if (e is Map) {
+          final msg = e['message']?.toString();
+          final tp = e['type']?.toString();
+          if (msg != null && tp != null) {
+            err = RunEndError(message: msg, type: tp);
+          }
+        }
         _eventsController.add(RunEndEvent(
-            payload['run_id'] as String, payload['end_reason'] as String));
+          payload['run_id']?.toString() ?? '',
+          payload['end_reason']?.toString() ?? '',
+          usage: usage,
+          model: payload['model']?.toString(),
+          contextWindow: (payload['context_window'] as num?)?.toInt(),
+          maxOutputTokens: (payload['max_output_tokens'] as num?)?.toInt(),
+          truncation: payload['truncation']?.toString(),
+          error: err,
+        ));
+        break;
+      case 'token':
+        UsageDetails parseUsage(Map m) => UsageDetails(
+              requests: (m['requests'] as num?)?.toInt(),
+              inputTokens: (m['input_tokens'] as num?)?.toInt(),
+              outputTokens: (m['output_tokens'] as num?)?.toInt(),
+              totalTokens: (m['total_tokens'] as num?)?.toInt(),
+              inputTokensDetails: (m['input_tokens_details'] as Map?)
+                  ?.map((k, v) => MapEntry(k.toString(), (v as num).toInt())),
+              outputTokensDetails: (m['output_tokens_details'] as Map?)
+                  ?.map((k, v) => MapEntry(k.toString(), (v as num).toInt())),
+            );
+        UsageDetails delta = UsageDetails();
+        UsageDetails totals = UsageDetails();
+        final d = payload['delta'];
+        final t = payload['totals'];
+        if (d is Map) delta = parseUsage(d);
+        if (t is Map) totals = parseUsage(t);
+        _eventsController.add(TokenUsageEvent(
+          runId: payload['run_id']?.toString() ?? '',
+          turn: (payload['turn'] as num?)?.toInt() ?? 0,
+          responseId: payload['response_id']?.toString() ?? '',
+          model: payload['model']?.toString(),
+          contextWindow: (payload['context_window'] as num?)?.toInt(),
+          maxOutputTokens: (payload['max_output_tokens'] as num?)?.toInt(),
+          truncation: payload['truncation']?.toString(),
+          delta: delta,
+          totals: totals,
+        ));
+        break;
+      case 'run_status':
+        _eventsController.add(RunStatusEvent(
+          runId: payload['run_id']?.toString() ?? '',
+          status: payload['status']?.toString() ?? '',
+          message: payload['message']?.toString() ?? '',
+          attempt: (payload['attempt'] as num?)?.toInt() ?? 0,
+          total: (payload['total'] as num?)?.toInt() ?? 0,
+          nextDelay: (payload['next_delay'] as num?)?.toDouble(),
+        ));
+        break;
+      case 'client_request':
+        _eventsController.add(ClientRequestEvent(
+          requestId: payload['request_id']?.toString() ?? '',
+          function: payload['function']?.toString() ?? '',
+          args: (payload['args'] as Map?)?.cast<String, dynamic>() ?? const {},
+          sessionId: payload['session_id']?.toString(),
+          runId: payload['run_id']?.toString(),
+          timeoutMs: (payload['timeout_ms'] as num?)?.toInt(),
+          idempotencyKey: payload['idempotency_key']?.toString(),
+        ));
         break;
       default:
         break;
@@ -357,7 +641,7 @@ class RemoteAgentClient {
       'result': result,
     };
     final payload = jsonEncode(frame);
-    if (debug) debugPrint('→ $payload');
+    if (debug) debugPrint('${_tag()} → $payload');
     try {
       _channel?.sink.add(payload);
     } catch (e) {
@@ -366,6 +650,13 @@ class RemoteAgentClient {
         _eventsController.add(DisconnectedEvent());
       }
     }
+  }
+
+  String _tag() {
+    if (label != null && label!.isNotEmpty) {
+      return '[remote ${label!}]';
+    }
+    return '[remote]';
   }
 
   void dispose() {
@@ -395,3 +686,5 @@ class RunIds {
   final String? runId;
   final String? sessionId;
 }
+
+// extension removed; methods are now part of RemoteAgentClient

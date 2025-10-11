@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'chat_screen.dart';
 import 'remote_agent_client.dart';
+import 'conversation_controller.dart';
 import 'agents_repository.dart';
 import 'theme/app_colors.dart';
 
@@ -17,54 +18,60 @@ class MultiColumnScreen extends StatefulWidget {
 }
 
 class _Conversation {
-  _Conversation({required this.id, required this.agent, this.sessionId})
-      : client = RemoteAgentClient(
-          agent.endpoint,
-          token: agent.token,
-          debug: true,
-        );
-
-  final String id;
-
-  // Hold mutable reference so we can swap in updated config
-  AgentConfig agent;
-  String? sessionId;
-
-  // Client needs to be recreated if agent config changes.
-  late RemoteAgentClient client;
-
-  // Persist ChatModel so that UI rebuilds (e.g., during layout changes)
-  // don't lose state.
-  ChatModel? model;
-
-  /// Re-initialises the connection when the [agent] configuration changes.
-  void resetAgent(AgentConfig newAgent) {
-    // Drop the existing model reference; the Provider tree will dispose it
-    // automatically when the widget subtree is rebuilt.
-    model = null;
-
-    // Dispose the current client connection.
-    client.dispose();
-
-    // Update agent reference and create a new client.
-    agent = newAgent;
-    client = RemoteAgentClient(
-      newAgent.endpoint,
-      token: newAgent.token,
-      debug: true,
-    );
-
-    // If we already have a session id, let the new client know so that
-    // history continues seamlessly.
-    if (sessionId != null) {
-      client.resumeSession(sessionId!);
-    }
+  _Conversation({required this.id, required this.agent, this.sessionId}) {
+    controller = _buildController(agent, sessionId: sessionId);
+    _controllerListener = () {
+      final resolved = controller.sessionId;
+      if (resolved != null && resolved != sessionId) {
+        sessionId = resolved;
+      }
+    };
+    controller.addListener(_controllerListener!);
   }
 
-  // Close the underlying client connection.
+  final String id;
+  AgentConfig agent;
+  String? sessionId;
+  late ConversationController controller;
+  ChatModel? model;
+  VoidCallback? _controllerListener;
+
+  RemoteAgentClient get client => controller.client;
+
+  void resetAgent(AgentConfig newAgent) {
+    model = null;
+    if (_controllerListener != null) {
+      controller.removeListener(_controllerListener!);
+    }
+    controller.dispose();
+    agent = newAgent;
+    controller = _buildController(newAgent, sessionId: sessionId);
+    _controllerListener = () {
+      final resolved = controller.sessionId;
+      if (resolved != null && resolved != sessionId) {
+        sessionId = resolved;
+      }
+    };
+    controller.addListener(_controllerListener!);
+  }
+
+  ConversationController _buildController(AgentConfig cfg,
+      {String? sessionId}) {
+    final remote = RemoteAgentClient(
+      cfg.endpoint,
+      token: cfg.token,
+      debug: true,
+      label: id,
+    );
+    return ConversationController(remote, sessionId: sessionId);
+  }
+
   void dispose() {
     model?.dispose();
-    client.dispose();
+    if (_controllerListener != null) {
+      controller.removeListener(_controllerListener!);
+    }
+    controller.dispose();
   }
 }
 
@@ -170,18 +177,20 @@ class _MultiColumnScreenState extends State<MultiColumnScreen>
   Widget _chatWidget(_Conversation conv, {int? dragIndex}) {
     final agent = conv.agent;
 
-    // Lazily create the ChatModel once per conversation.
-    conv.model ??= ChatModel(conv.client, sessionId: conv.sessionId,
+    conv.model ??= ChatModel(conv.controller, sessionId: conv.sessionId,
         onRunStarted: (runId, sessionId) {
-      if (sessionId != null) {
-        conv.sessionId = sessionId;
-        _saveOrder();
+      final controllerSession = conv.controller.sessionId;
+      if (controllerSession != null && controllerSession.isNotEmpty) {
+        if (conv.sessionId != controllerSession) {
+          conv.sessionId = controllerSession;
+          _saveOrder();
+        }
       }
     });
 
     final chat = ChatScreen(
       key: ValueKey(conv.id),
-      client: conv.client,
+      controller: conv.controller,
       model: conv.model,
       title: agent.name,
       onClose: () => _closeConversation(conv.id),
@@ -271,6 +280,9 @@ class _MultiColumnScreenState extends State<MultiColumnScreen>
     // We need the AgentsRepository to be available via context after build.
     // Delay reordering until first frame to ensure repository is loaded.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || _conversations.isNotEmpty) {
+        return;
+      }
       final repo = context.read<AgentsRepository>();
       final sessionsMap = await _fetchActiveSessions(repo);
       final List<_Conversation> convs = [];
@@ -351,7 +363,9 @@ class _MultiColumnScreenState extends State<MultiColumnScreen>
           if (sess is Map && sess['id'] is String) {
             final archived = sess['archived'] as bool? ?? false;
             if (!archived) {
-              result.putIfAbsent(agent.endpoint, () => []).add(sess['id'] as String);
+              result
+                  .putIfAbsent(agent.endpoint, () => [])
+                  .add(sess['id'] as String);
             }
           }
         }
