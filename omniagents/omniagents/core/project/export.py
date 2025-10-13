@@ -92,6 +92,10 @@ def save_agent_as_py(config_path: str, output_path: str, project_tool_dirs: list
     lines.append(f"    mcp_url_setting_key={spec.mcp_url_setting_key!r},")
     lines.append(f"    mcp_token_setting_key={spec.mcp_token_setting_key!r},")
     lines.append(f"    show_mcp_status_indicator={spec.show_mcp_status_indicator},")
+    _proj_slug = getattr(spec, "project_slug", None)
+    _agent_slug = getattr(spec, "agent_slug", None) or spec.client_storage_prefix.rstrip('.')
+    lines.append(f"    project_slug={_proj_slug!r},")
+    lines.append(f"    agent_slug={_agent_slug!r},")
     lines.append("    icon_map={")
     for k, v in raw_cfg.get('icon_map', {}).items():
         lines.append(f"        {k!r}: {v},")
@@ -110,4 +114,3 @@ def save_agent_as_py(config_path: str, output_path: str, project_tool_dirs: list
     lines.append("    runner = Runner(spec=spec)")
     lines.append("    runner.run(mode='gui')\n")
     Path(output_path).write_text("\n".join(lines), encoding='utf-8')
-

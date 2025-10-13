@@ -177,6 +177,8 @@ def _parse_inline_agent_spec(config: Dict[str, Any], base_dir: Path, parent_load
         safe_tool_patterns=safe_options_config.get('safe_tool_patterns', []),
     )
     
+    storage_prefix = agent_name.lower().replace(' ', '_') + '.'
+
     # Create minimal AgentSpec for inline agent
     return AgentSpec(
         # Basic Info
@@ -184,7 +186,7 @@ def _parse_inline_agent_spec(config: Dict[str, Any], base_dir: Path, parent_load
         header_title=agent_name,
         page_title=agent_name,
         welcome_text=config.get('welcome_text', f"Hello from {agent_name}"),
-        client_storage_prefix=agent_name.lower().replace(' ', '_') + '.',
+        client_storage_prefix=storage_prefix,
         
         # Agent Config
         get_agent_instructions=instructions_func,
@@ -218,6 +220,7 @@ def _parse_inline_agent_spec(config: Dict[str, Any], base_dir: Path, parent_load
         settings_fields=[],
         theme_color="#2196F3",
         layout="classic",
+        agent_slug=storage_prefix.rstrip('.'),
     )
 
 def load_agent_spec_from_yaml(
@@ -950,6 +953,8 @@ def load_agent_spec_from_yaml(
             # Optional Customizations (Not typically set via simple YAML)
             header_controls_builder=None,
             cleanup_handler=None,
+            project_slug=None,
+            agent_slug=storage_prefix.rstrip('.'),
     )
 
     if server_functions_registrar:

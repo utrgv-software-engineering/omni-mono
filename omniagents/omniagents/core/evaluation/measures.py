@@ -1,22 +1,28 @@
 from __future__ import annotations
 
-from typing import Dict, Any, List
+from typing import Dict, Any
 
-from . import evaluation_measure
-from .assertions import parse_tool_calls
+from . import evaluation_measure, fail_reason, pass_reason
 
 
 @evaluation_measure
 def tool_hallucination(ctx) -> Dict[str, Any]:
-    history: List[Dict[str, Any]] = getattr(ctx, "history", []) or []
-    calls = parse_tool_calls(history)
+    calls = ctx.tool_calls()
     allowed = set(getattr(ctx, "available_tools", set()) or set())
     unknown = []
-    for c in calls:
-        n = c.get("name")
-        if n and n not in allowed:
-            unknown.append({"index": c.get("index"), "name": n, "arguments": c.get("args"), "call_id": c.get("call_id")})
+    for call in calls:
+        if call.name and call.name not in allowed:
+            unknown.append({"index": call.index, "name": call.name, "arguments": call.args, "call_id": call.call_id})
     total = len(calls)
     bad = len(unknown)
-    return {"name": "tool_hallucination", "passed": bad == 0, "counts": {"total_tool_calls": total, "unknown_tool_calls": bad}, "unknown_tool_calls": unknown}
-
+    result = {
+        "name": "tool_hallucination",
+        "counts": {"total_tool_calls": total, "unknown_tool_calls": bad},
+        "unknown_tool_calls": unknown,
+    }
+    if bad == 0:
+        outcome = pass_reason("all_tools_recognized")
+    else:
+        outcome = fail_reason("unknown_tool_calls")
+    outcome.update(result)
+    return outcome

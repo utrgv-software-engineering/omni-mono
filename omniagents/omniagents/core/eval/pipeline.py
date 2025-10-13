@@ -273,6 +273,8 @@ async def _run_judges(cfg_path: Path, eval_cfg: Dict[str, Any], scenario: Dict[s
                 model_name=model,
                 output_type=base_out_type,
                 output_type_strict=output_type_strict,
+                project_slug=None,
+                agent_slug=f"judge_{key}",
             )
             judge_agent = await _default_build_agent({}, None, spec, None)
             judge_res = await AgentsRunner.run(judge_agent, judge_prompt, max_turns=int(agent_cfg.get("max_turns", 1)))
@@ -363,7 +365,11 @@ async def _run_scenario(agent_yaml: str, scenario: Dict[str, Any], defaults: Dic
             pass
 
     session_id = getattr(agent, "_session_id", None)
-    history = load_history(session_id) if session_id else []
+    history = load_history(
+        session_id,
+        project_slug=spec.project_slug,
+        agent_slug=spec.agent_slug,
+    ) if session_id else []
 
     measures = scenario.get("measures") or []
     metadata = await _run_judges(Path(agent_yaml), eval_cfg, scenario, history)

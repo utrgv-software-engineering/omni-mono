@@ -44,6 +44,19 @@ The protocol uses JSON-RPC 2.0 over WebSocket for bidirectional communication:
 - **Client → Server**: RPC calls for agent operations
 - **Server → Client**: Notifications for streaming events
 
+### Terminal WebSocket
+
+Agents that enable interactive terminals expose an additional WebSocket endpoint at `/ws/terminal`. Clients obtain a `terminal_id` and `terminal_token` by invoking the `terminal.create` server function, then connect using the query parameters `session_id`, `terminal_id`, and `terminal_token` (plus `token` when server authentication is enabled).
+
+Terminal frames are JSON objects:
+- `{"type": "output", "terminal_id": "...", "data": "<base64>"}` — PTY output encoded as base64.
+- `{"type": "exit", "terminal_id": "...", "code": 0}` — PTY process terminated with exit status.
+
+Clients send frames to control the PTY:
+- `{"type": "input", "data": "<base64>"}` — write bytes to stdin.
+- `{"type": "resize", "cols": 120, "rows": 40}` — adjust terminal size.
+- `{"type": "close"}` — request shutdown.
+
 ## Reference Implementations
 
 OmniAgents provides two reference implementations:

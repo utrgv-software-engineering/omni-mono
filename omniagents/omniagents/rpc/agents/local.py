@@ -275,7 +275,7 @@ class LocalAgent(UnifiedAgentBase):
         # Cancel server task
         if hasattr(self, '_server_task'):
             self._server_task.cancel()
-            with suppress(Exception):
+            with suppress(asyncio.CancelledError, Exception):
                 await self._server_task
         
         # Clean up RPC client

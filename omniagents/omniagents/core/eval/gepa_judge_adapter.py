@@ -173,6 +173,8 @@ class OmniAgentsJudgeAdapter:
             model_name=model,
             output_type=out_type,
             output_type_strict=output_type_strict,
+            project_slug=None,
+            agent_slug=f"judge_{self.judge_key}",
         )
         return _default_build_agent({}, None, spec, None)
 
@@ -600,6 +602,8 @@ class OmniAgentsJudgeAdapter:
             model_name=model,
             output_type=str,
             output_type_strict=False,
+            project_slug=None,
+            agent_slug=f"optimizer_{self.optimizer_key}",
         )
         agent = await _default_build_agent({}, None, spec, None)
         self._optimizer_agent = agent

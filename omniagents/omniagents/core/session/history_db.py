@@ -2,92 +2,104 @@ import json
 import sqlite3
 from datetime import datetime
 from threading import Lock
+from typing import Tuple
 
 from omniagents.core.paths import get_sessions_db_path
 
-_DB_PATH = get_sessions_db_path()
-_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-_conn = sqlite3.connect(str(_DB_PATH), check_same_thread=False)
+_STORES: dict[str, Tuple[sqlite3.Connection, Lock]] = {}
 
-# Enable foreign keys
-_conn.execute("PRAGMA foreign_keys = ON")
 
-# Create tables with timestamps
-_conn.execute(
-    "CREATE TABLE IF NOT EXISTS history ("
-    "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-    "session_id TEXT,"
-    "msg_json TEXT,"
-    "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
-)
-_conn.execute(
-    "CREATE TABLE IF NOT EXISTS sessions ("
-    "session_id TEXT PRIMARY KEY,"
-    "archived INTEGER DEFAULT 0,"
-    "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
-)
+def _ensure_schema(conn: sqlite3.Connection) -> None:
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS history ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"  # noqa: E501
+        "session_id TEXT,"  # noqa: E501
+        "msg_json TEXT,"  # noqa: E501
+        "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS sessions ("
+        "session_id TEXT PRIMARY KEY,"  # noqa: E501
+        "archived INTEGER DEFAULT 0,"  # noqa: E501
+        "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+    )
 
-# Add timestamps to existing tables if they don't have them
-cursor = _conn.execute("PRAGMA table_info(history)")
-columns = [col[1] for col in cursor.fetchall()]
-if 'created_at' not in columns:
-    _conn.execute("ALTER TABLE history ADD COLUMN created_at TIMESTAMP")
-    # Update existing rows with current timestamp
-    _conn.execute("UPDATE history SET created_at = datetime('now') WHERE created_at IS NULL")
+    cursor = conn.execute("PRAGMA table_info(history)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if "created_at" not in columns:
+        conn.execute("ALTER TABLE history ADD COLUMN created_at TIMESTAMP")
+        conn.execute("UPDATE history SET created_at = datetime('now') WHERE created_at IS NULL")
 
-cursor = _conn.execute("PRAGMA table_info(sessions)")
-columns = [col[1] for col in cursor.fetchall()]
-if 'created_at' not in columns:
-    _conn.execute("ALTER TABLE sessions ADD COLUMN created_at TIMESTAMP")
-    # Update existing rows with current timestamp
-    _conn.execute("UPDATE sessions SET created_at = datetime('now') WHERE created_at IS NULL")
+    cursor = conn.execute("PRAGMA table_info(sessions)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if "created_at" not in columns:
+        conn.execute("ALTER TABLE sessions ADD COLUMN created_at TIMESTAMP")
+        conn.execute("UPDATE sessions SET created_at = datetime('now') WHERE created_at IS NULL")
 
-_conn.commit()
-_lock = Lock()
+    conn.commit()
 
-def load_history(session_id: str) -> list[dict]:
-    with _lock:
-        cur = _conn.execute(
+
+def _get_store(project_slug: str | None, agent_slug: str | None) -> Tuple[sqlite3.Connection, Lock]:
+    db_path = get_sessions_db_path(project_slug, agent_slug)
+    key = str(db_path)
+    store = _STORES.get(key)
+    if store is None:
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        _ensure_schema(conn)
+        lock = Lock()
+        store = (conn, lock)
+        _STORES[key] = store
+    return store
+
+
+def load_history(session_id: str, *, project_slug: str | None = None, agent_slug: str | None = None) -> list[dict]:
+    conn, lock = _get_store(project_slug, agent_slug)
+    with lock:
+        cur = conn.execute(
             "SELECT msg_json FROM history WHERE session_id=? ORDER BY id ASC",
             (session_id,),
         )
         rows = cur.fetchall()
     return [json.loads(r[0]) for r in rows]
 
-def append_message(session_id: str, message: dict) -> None:
+
+def append_message(session_id: str, message: dict, *, project_slug: str | None = None, agent_slug: str | None = None) -> None:
+    conn, lock = _get_store(project_slug, agent_slug)
     msg_json = json.dumps(message)
-    with _lock:
-        _conn.execute(
+    with lock:
+        conn.execute(
             "INSERT INTO history(session_id, msg_json, created_at) VALUES (?, ?, datetime('now'))",
             (session_id, msg_json),
         )
-        _conn.commit()
+        conn.commit()
 
 
-def register_session(session_id: str) -> None:
-    """Ensure *session_id* exists in the sessions table."""
-    with _lock:
-        _conn.execute(
+def register_session(session_id: str, *, project_slug: str | None = None, agent_slug: str | None = None) -> None:
+    conn, lock = _get_store(project_slug, agent_slug)
+    with lock:
+        conn.execute(
             "INSERT OR IGNORE INTO sessions(session_id, created_at) VALUES (?, datetime('now'))",
             (session_id,),
         )
-        _conn.commit()
+        conn.commit()
 
 
-def set_archived(session_id: str, archived: bool) -> None:
-    """Update archived state for *session_id*."""
-    with _lock:
-        _conn.execute(
+def set_archived(session_id: str, archived: bool, *, project_slug: str | None = None, agent_slug: str | None = None) -> None:
+    conn, lock = _get_store(project_slug, agent_slug)
+    with lock:
+        conn.execute(
             "UPDATE sessions SET archived=? WHERE session_id=?",
             (1 if archived else 0, session_id),
         )
-        _conn.commit()
+        conn.commit()
 
 
-def get_archived(session_id: str) -> bool:
-    """Return archived state for *session_id*."""
-    with _lock:
-        cur = _conn.execute(
+def get_archived(session_id: str, *, project_slug: str | None = None, agent_slug: str | None = None) -> bool:
+    conn, lock = _get_store(project_slug, agent_slug)
+    with lock:
+        cur = conn.execute(
             "SELECT archived FROM sessions WHERE session_id=?",
             (session_id,),
         )
@@ -95,11 +107,10 @@ def get_archived(session_id: str) -> bool:
     return bool(row[0]) if row else False
 
 
-def list_sessions() -> list[dict]:
-    """Return all sessions with their archived state, timestamps, and message previews."""
-    with _lock:
-        # Get all sessions with their metadata
-        cur = _conn.execute(
+def list_sessions(*, project_slug: str | None = None, agent_slug: str | None = None) -> list[dict]:
+    conn, lock = _get_store(project_slug, agent_slug)
+    with lock:
+        cur = conn.execute(
             """
             SELECT 
                 s.session_id,
@@ -113,20 +124,19 @@ def list_sessions() -> list[dict]:
             """
         )
         sessions = cur.fetchall()
-        
-        result = []
-        for session_id, archived, session_created, message_count in sessions:
-            session_data = {
-                "id": session_id,
-                "archived": bool(archived),
-                "created_at": session_created or datetime.now().isoformat(),
-                "message_count": message_count
-            }
-            
-            # Get first and last messages for this session
-            if message_count > 0:
-                # Get first message
-                first_cur = _conn.execute(
+
+    result = []
+    for session_id, archived, session_created, message_count in sessions:
+        session_data = {
+            "id": session_id,
+            "archived": bool(archived),
+            "created_at": session_created or datetime.now().isoformat(),
+            "message_count": message_count,
+        }
+
+        if message_count > 0:
+            with lock:
+                first_cur = conn.execute(
                     """
                     SELECT msg_json, created_at 
                     FROM history 
@@ -134,17 +144,10 @@ def list_sessions() -> list[dict]:
                     ORDER BY id ASC 
                     LIMIT 1
                     """,
-                    (session_id,)
+                    (session_id,),
                 )
                 first_row = first_cur.fetchone()
-                if first_row:
-                    first_msg = json.loads(first_row[0])
-                    if first_row[1]:
-                        first_msg["timestamp"] = first_row[1]
-                    session_data["first_message"] = first_msg
-                
-                # Get last message
-                last_cur = _conn.execute(
+                last_cur = conn.execute(
                     """
                     SELECT msg_json, created_at 
                     FROM history 
@@ -152,21 +155,35 @@ def list_sessions() -> list[dict]:
                     ORDER BY id DESC 
                     LIMIT 1
                     """,
-                    (session_id,)
+                    (session_id,),
                 )
                 last_row = last_cur.fetchone()
-                if last_row:
-                    last_msg = json.loads(last_row[0])
-                    if last_row[1]:
-                        last_msg["timestamp"] = last_row[1]
-                    session_data["last_message"] = last_msg
-            
-            result.append(session_data)
-        
+
+            if first_row:
+                first_msg = json.loads(first_row[0])
+                if first_row[1]:
+                    first_msg["timestamp"] = first_row[1]
+                session_data["first_message"] = first_msg
+
+            if last_row:
+                last_msg = json.loads(last_row[0])
+                if last_row[1]:
+                    last_msg["timestamp"] = last_row[1]
+                session_data["last_message"] = last_msg
+
+        result.append(session_data)
+
     return result
 
 
-def get_user_messages(limit: int = 200, include_archived: bool = True) -> list[dict]:
+def get_user_messages(
+    *,
+    limit: int = 200,
+    include_archived: bool = True,
+    project_slug: str | None = None,
+    agent_slug: str | None = None,
+) -> list[dict]:
+    conn, lock = _get_store(project_slug, agent_slug)
     results: list[dict] = []
     page_size = 1000
     offset = 0
@@ -174,8 +191,8 @@ def get_user_messages(limit: int = 200, include_archived: bool = True) -> list[d
     where_archived = "" if include_archived else "WHERE s.archived = 0"
 
     while len(results) < limit:
-        with _lock:
-            cur = _conn.execute(
+        with lock:
+            cur = conn.execute(
                 f"""
                 SELECT h.msg_json, h.created_at, h.session_id
                 FROM history h

@@ -181,6 +181,8 @@ async def evaluate_split(compiled_yaml: Path, split_path: Path, judge_key: str, 
             model_name=model,
             output_type=out_type,
             output_type_strict=output_type_strict,
+            project_slug=None,
+            agent_slug="judge",
         )
         agent = await _default_build_agent({}, None, spec, None)
         return agent

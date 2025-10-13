@@ -30,9 +30,26 @@ def get_sessions_dir() -> Path:
     return _ensure_dir(home / "sessions")
 
 
-def get_sessions_db_path() -> Path:
+def _normalise_slug(value: str | None, fallback: str) -> str:
+    if value is None or not value.strip():
+        value = fallback
+    value = value.strip().lower()
+    out = []
+    for ch in value:
+        if ch.isalnum() or ch in {"-", "_"}:
+            out.append(ch)
+        else:
+            out.append("_")
+    slug = "".join(out).strip("_")
+    return slug or fallback
+
+
+def get_sessions_db_path(project_slug: str | None = None, agent_slug: str | None = None) -> Path:
     override = os.getenv("OMNIAGENTS_HISTORY_DB")
     if override:
         return _expand_path(override)
     sessions_dir = get_sessions_dir()
-    return sessions_dir / "sessions.db"
+    project_key = _normalise_slug(project_slug, "default")
+    agent_key = _normalise_slug(agent_slug, "default")
+    target_dir = sessions_dir / project_key / agent_key
+    return target_dir / "sessions.db"

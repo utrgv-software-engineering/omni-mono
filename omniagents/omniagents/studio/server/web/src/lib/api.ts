@@ -23,14 +23,24 @@ import type {
   EvaluationScenarioMutationResponse,
   EvaluationScenarioRunRequest,
   EvaluationScenarioRunResponse,
-  EvaluationScenarioRunStatus,
   EvaluationScenarioGenerationRequest,
   EvaluationScenarioGenerationResponse,
   EvaluationDatasetsResponse,
-  EvaluationScenarioAnnotatePayload,
-  EvaluationScenarioAnnotateResponse,
+  EvaluationDatasetSplitDetails,
+  EvaluationScenarioSplitPayload,
+  EvaluationScenarioSplitResponse,
+  EvaluationDatasetDeletePayload,
+  EvaluationDatasetDeleteResponse,
   EvaluationScenarioSetDeletePayload,
   EvaluationScenarioSetDeleteResponse,
+  EvaluationJudgeCreatePayload,
+  EvaluationJudgeUpdatePayload,
+  EvaluationJudgesResponse,
+  EvaluationJudgeDeleteResponse,
+  EvaluationJudgeOptimizationRequest,
+  EvaluationJudgeOptimizationResponse,
+  EvaluationAgentOptimizationRequest,
+  EvaluationAgentOptimizationResponse,
 } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_URL || `${window.location.origin}/api`
@@ -270,15 +280,74 @@ class ApiClient {
     return this.fetch('/evaluation/datasets')
   }
 
-  async promoteEvaluationScenario(payload: EvaluationScenarioPromotionPayload): Promise<EvaluationScenarioPromotionResponse> {
-    return this.fetch('/evaluation/scenarios/promote', {
+  async getEvaluationDatasetSplit(path: string): Promise<EvaluationDatasetSplitDetails> {
+    const searchParams = new URLSearchParams({ path })
+    return this.fetch(`/evaluation/datasets/split?${searchParams.toString()}`)
+  }
+
+  async getEvaluationJudges(): Promise<EvaluationJudgesResponse> {
+    return this.fetch('/evaluation/judges')
+  }
+
+  async createEvaluationJudge(payload: EvaluationJudgeCreatePayload): Promise<EvaluationJudgesResponse> {
+    return this.fetch('/evaluation/judges', {
       method: 'POST',
       body: JSON.stringify(payload),
     })
   }
 
-  async annotateEvaluationScenario(payload: EvaluationScenarioAnnotatePayload): Promise<EvaluationScenarioAnnotateResponse> {
-    return this.fetch('/evaluation/scenarios/annotate', {
+  async updateEvaluationJudge(payload: EvaluationJudgeUpdatePayload): Promise<EvaluationJudgesResponse> {
+    return this.fetch('/evaluation/judges', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async deleteEvaluationJudge(key: string): Promise<EvaluationJudgeDeleteResponse> {
+    const encoded = encodeURIComponent(key)
+    return this.fetch(`/evaluation/judges/${encoded}`, {
+      method: 'DELETE',
+    })
+  }
+
+  async startJudgeOptimization(payload: EvaluationJudgeOptimizationRequest): Promise<EvaluationJudgeOptimizationResponse> {
+    return this.fetch('/evaluation/judges/optimize', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async getJudgeOptimizationStatus(jobId: string): Promise<EvaluationJudgeOptimizationResponse> {
+    return this.fetch(`/evaluation/judges/optimize/${jobId}`)
+  }
+
+  async startAgentOptimization(payload: EvaluationAgentOptimizationRequest): Promise<EvaluationAgentOptimizationResponse> {
+    return this.fetch('/evaluation/agents/optimize', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async getAgentOptimizationStatus(jobId: string): Promise<EvaluationAgentOptimizationResponse> {
+    return this.fetch(`/evaluation/agents/optimize/${jobId}`)
+  }
+
+  async splitEvaluationScenario(payload: EvaluationScenarioSplitPayload): Promise<EvaluationScenarioSplitResponse> {
+    return this.fetch('/evaluation/scenarios/split', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async deleteEvaluationDataset(payload: EvaluationDatasetDeletePayload): Promise<EvaluationDatasetDeleteResponse> {
+    return this.fetch('/evaluation/datasets', {
+      method: 'DELETE',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async promoteEvaluationScenario(payload: EvaluationScenarioPromotionPayload): Promise<EvaluationScenarioPromotionResponse> {
+    return this.fetch('/evaluation/scenarios/promote', {
       method: 'POST',
       body: JSON.stringify(payload),
     })
@@ -385,6 +454,46 @@ class ApiClient {
     wsUrl.protocol = resolved.protocol === 'https:' ? 'wss:' : resolved.protocol === 'http:' ? 'ws:' : resolved.protocol
     const basePath = resolved.pathname.replace(/\/$/, '') || '/api'
     wsUrl.pathname = `${basePath}/evaluation/scenarios/generate/${jobId}/ws`
+    const token = resolved.searchParams.get('token')
+    wsUrl.search = ''
+    if (token) {
+      wsUrl.searchParams.set('token', token)
+    }
+    return new WebSocket(wsUrl.toString())
+  }
+
+  createJudgeOptimizationWebSocket(jobId: string): WebSocket {
+    const base = this.baseUrl || '/api'
+    let resolved: URL
+    if (/^https?:/i.test(base) || /^ws(s)?:/i.test(base)) {
+      resolved = new URL(base)
+    } else {
+      resolved = new URL(base, window.location.origin)
+    }
+    const wsUrl = new URL(resolved.toString())
+    wsUrl.protocol = resolved.protocol === 'https:' ? 'wss:' : resolved.protocol === 'http:' ? 'ws:' : resolved.protocol
+    const basePath = resolved.pathname.replace(/\/$/, '') || '/api'
+    wsUrl.pathname = `${basePath}/evaluation/judges/optimize/${jobId}/ws`
+    const token = resolved.searchParams.get('token')
+    wsUrl.search = ''
+    if (token) {
+      wsUrl.searchParams.set('token', token)
+    }
+    return new WebSocket(wsUrl.toString())
+  }
+
+  createAgentOptimizationWebSocket(jobId: string): WebSocket {
+    const base = this.baseUrl || '/api'
+    let resolved: URL
+    if (/^https?:/i.test(base) || /^ws(s)?:/i.test(base)) {
+      resolved = new URL(base)
+    } else {
+      resolved = new URL(base, window.location.origin)
+    }
+    const wsUrl = new URL(resolved.toString())
+    wsUrl.protocol = resolved.protocol === 'https:' ? 'wss:' : resolved.protocol === 'http:' ? 'ws:' : resolved.protocol
+    const basePath = resolved.pathname.replace(/\/$/, '') || '/api'
+    wsUrl.pathname = `${basePath}/evaluation/agents/optimize/${jobId}/ws`
     const token = resolved.searchParams.get('token')
     wsUrl.search = ''
     if (token) {

@@ -183,10 +183,6 @@ const fieldsToSchema = (fields: OutputField[]): Record<string, unknown> | null =
   return schema
 }
 
-interface PlaygroundViewProps {
-  onUpdateContext: (context: { projectName: string; sessionId: string; statusMessage: string }) => void
-}
-
 type ToolSelection = Record<string, boolean>
 
 type ModelSettingsState = Record<string, number | string | boolean>
@@ -1023,8 +1019,8 @@ export function AgentWorkbench({
       setOutputConfigDirty(false)
       setConfigDirty(false)
       pushToast({ message: 'Agent updated', tone: 'success' })
-      queryClient.invalidateQueries(metadataQueryKey as any)
-      queryClient.invalidateQueries(['agents', 'list'])
+      queryClient.invalidateQueries({ queryKey: metadataQueryKey as readonly unknown[] })
+      queryClient.invalidateQueries({ queryKey: ['agents', 'list'] as const })
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to save changes'
       setFormError(message)

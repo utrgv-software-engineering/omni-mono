@@ -9,7 +9,7 @@ from .history_db import (
     get_archived,
     list_sessions,
 )
-from .manager import Session, SessionManager, sm
+from .manager import Session, SessionManager
 
 __all__ = [
     # Base classes
@@ -26,5 +26,4 @@ __all__ = [
     # Session management
     "Session",
     "SessionManager",
-    "sm",
 ]

@@ -6,7 +6,6 @@ from typing import AsyncGenerator, Optional, Any
 
 from agents import RunConfig, ItemHelpers
 from openai.types.responses import ResponseCompletedEvent
-from omniagents.core.session import append_message
 from omniagents.core.debug import Debug
 
 # ---------------------------------------------------------------------
@@ -138,8 +137,7 @@ async def stream_agent(
         # Include prompt at end and persist to session history on first attempt
         agent_input = session.history + [{"role": "user", "content": prompt}]
         user_msg = {"role": "user", "content": prompt}
-        session.history.append(user_msg)
-        append_message(session.id, user_msg)
+        session.append_message(user_msg)
     else:
         # For retries, avoid re-adding the user message; keep context identical
         agent_input = list(session.history)
@@ -301,8 +299,7 @@ async def stream_agent(
                 try:
                     inp = item.to_input_item()
                     if inp:
-                        session.history.append(inp)
-                        append_message(session.id, inp)
+                        session.append_message(inp)
                 except Exception:
                     # Ignore malformed items but keep streaming.
                     pass
@@ -336,8 +333,7 @@ async def stream_agent(
                     "call_id": call_id,
                     "output": "[Cancelled by user]"
                 }
-                session.history.append(cancelled_result)
-                append_message(session.id, cancelled_result)
+                session.append_message(cancelled_result)
                 
                 # Also send the result as an event to the client  
                 cancelled_payload = {

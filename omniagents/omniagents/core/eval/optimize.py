@@ -6,6 +6,7 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List
 import yaml
+from omniagents.core.eval.stratified_sampler import StratifiedBatchSampler
 
 
 def optimize_agent_from_project(
@@ -57,6 +58,26 @@ def optimize_agent_from_project(
     tr_path = _resolve_split("train", train_file) if (cat or not train_file) else (_P(train_file) if _P(train_file).is_absolute() else (base / train_file).resolve())
     dv_path = _resolve_split("dev", dev_file) if (cat or not dev_file) else (_P(dev_file) if _P(dev_file).is_absolute() else (base / dev_file).resolve())
     ts_path = _resolve_split("test", test_file) if (cat or not test_file) else (_P(test_file) if _P(test_file).is_absolute() else (base / test_file).resolve())
+
+    if not any([tr_path, dv_path, ts_path]):
+        if not any([train_file, dev_file, test_file]) and not ((name or "").strip()):
+            raise SystemExit(
+                "Could not locate scenario splits for category '{cat}'. Provide --name <scenario_set> or explicit split files.".format(
+                    cat=cat or "<unknown>"
+                )
+            )
+        expected_dir = None
+        if (name or "").strip() and (cat or "").strip():
+            expected_dir = (base / "artifacts" / "eval" / (name or "").strip() / "splits" / (cat or "").strip()).resolve()
+        if expected_dir is not None:
+            raise SystemExit(
+                "Could not locate scenario splits for category '{cat}' under {path}. Verify --name or provide explicit split files.".format(
+                    cat=cat or "<unknown>", path=expected_dir
+                )
+            )
+        raise SystemExit("Could not locate scenario splits. Provide --name <scenario_set> or explicit split files.")
+
+    reference_split_path = dv_path or tr_path or ts_path
 
     def _read_scenarios(p: _P) -> List[Dict[str, Any]]:
         y = yaml.safe_load(p.read_text(encoding='utf-8')) or {}
@@ -127,7 +148,10 @@ def optimize_agent_from_project(
         tracing = (cfg_tr.get('tracing') or {})
         if str(tracing.get('provider','')).lower() in {'studio', 'agentio'}:
             base_name = tracing.get('name') or _P(compiled_cfg_path).stem
-            ts = dv_path.parents[2].name if dv_path is not None else datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+            if reference_split_path is not None:
+                ts = reference_split_path.parents[2].name
+            else:
+                ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
             if not re.fullmatch(r"\d{4}_\d{2}_\d{2}_\d{2}_\d{2}_\d{2}", ts):
                 ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
             workflow_name = f"{base_name}_studio_optimize_{cat}_{ts}"
@@ -146,7 +170,9 @@ def optimize_agent_from_project(
         outp = _P(out_dir)
         base_run = outp if outp.is_absolute() else (base / outp).resolve()
     else:
-        base_run = dv_path.parents[2] / "agent_optimize" / (cat or "category")
+        if reference_split_path is None:
+            raise SystemExit("No scenario splits available; provide --name <scenario_set> or explicit split files.")
+        base_run = reference_split_path.parents[2] / "agent_optimize" / (cat or "category")
     if resume:
         run_dir = base_run
     else:
@@ -170,17 +196,98 @@ def optimize_agent_from_project(
             tracing_module.init(project=str(project), name=workflow_name, resume=str(resume_tr), replace_default=True)
     except Exception:
         pass
-    result = gepa.optimize(
-        seed_candidate=seed_candidate,
+    try:
+        from gepa.core.engine import GEPAEngine  # type: ignore
+        from gepa.core.result import GEPAResult  # type: ignore
+        from gepa.logging.experiment_tracker import create_experiment_tracker  # type: ignore
+        from gepa.logging.logger import StdOutLogger  # type: ignore
+        from gepa.strategies.candidate_selector import ParetoCandidateSelector  # type: ignore
+        from gepa.strategies.component_selector import RoundRobinReflectionComponentSelector  # type: ignore
+        from gepa.utils import FileStopper, CompositeStopper, MaxMetricCallsStopper  # type: ignore
+        from gepa.proposer.reflective_mutation.reflective_mutation import ReflectiveMutationProposer  # type: ignore
+    except Exception as e:
+        raise SystemExit(f"Could not import GEPA components: {e}")
+
+    import random as _random
+
+    _seed = int(seed or 0)
+    _rng = _random.Random(_seed)
+    candidate_selector = ParetoCandidateSelector(rng=_rng)
+    module_selector = RoundRobinReflectionComponentSelector()
+    minibatch_size = 3
+    batch_sampler = StratifiedBatchSampler(
         trainset=trainset,
-        valset=devset,
-        adapter=adapter,
-        max_metric_calls=int(max_metric_calls or 100),
-        reflection_lm=str(reflection_model or 'gpt-4.1'),
-        run_dir=str(run_dir),
-        seed=int(seed or 0),
-        display_progress_bar=True,
+        minibatch_size=minibatch_size,
+        label_getter="label",
+        pos_fraction=0.5,
+        min_pos_per_batch=1,
+        min_neg_per_batch=1,
+        with_replacement=True,
+        seed=_seed,
+        rng=_rng,
     )
+    experiment_tracker = create_experiment_tracker(
+        use_wandb=False,
+        wandb_api_key=None,
+        wandb_init_kwargs=None,
+        use_mlflow=False,
+        mlflow_tracking_uri=None,
+        mlflow_experiment_name=None,
+    )
+    logger = StdOutLogger()
+    stoppers = []
+    try:
+        stoppers.append(FileStopper(str(run_dir / "gepa.stop")))
+    except Exception:
+        pass
+    try:
+        stoppers.append(MaxMetricCallsStopper(int(max_metric_calls or 100)))
+    except Exception:
+        pass
+    stop_callback = stoppers[0] if len(stoppers) == 1 else (CompositeStopper(*stoppers) if stoppers else None)
+    reflective_proposer = ReflectiveMutationProposer(
+        logger=logger,
+        trainset=trainset,
+        adapter=adapter,
+        candidate_selector=candidate_selector,
+        module_selector=module_selector,
+        batch_sampler=batch_sampler,
+        perfect_score=1,
+        skip_perfect_score=True,
+        experiment_tracker=experiment_tracker,
+        reflection_lm=str(reflection_model or 'gpt-4.1'),
+    )
+
+    def _evaluator(inputs, prog):
+        ev = adapter.evaluate(inputs, prog, capture_traces=False)
+        return ev.outputs, ev.scores
+
+    try:
+        adapter.debug_dir = run_dir / "debug"
+    except Exception:
+        pass
+
+    engine = GEPAEngine(
+        run_dir=str(run_dir),
+        evaluator=_evaluator,
+        valset=devset,
+        seed_candidate=seed_candidate,
+        perfect_score=1,
+        seed=_seed,
+        reflective_proposer=reflective_proposer,
+        merge_proposer=None,
+        logger=logger,
+        experiment_tracker=experiment_tracker,
+        track_best_outputs=False,
+        display_progress_bar=True,
+        raise_on_exception=True,
+        stop_callback=stop_callback,
+    )
+
+    with experiment_tracker:
+        state = engine.run()
+
+    result = GEPAResult.from_state(state)
     best = result.best_candidate
     def _acc(ds, cand):
         ev = adapter.evaluate(ds, cand, capture_traces=False)

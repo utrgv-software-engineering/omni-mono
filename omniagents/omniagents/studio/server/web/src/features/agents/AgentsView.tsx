@@ -1,8 +1,14 @@
-import { useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Bot, ChevronRight } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Bot, ChevronRight, Loader2, Sparkles, X } from 'lucide-react'
 import { api } from '../../lib/api'
-import type { AgentSummary } from '../../types'
+import type {
+  AgentSummary,
+  EvaluationDatasetsResponse,
+  EvaluationAgentOptimizationRequest,
+  EvaluationAgentOptimizationResponse,
+  EvaluationAgentOptimizationStatus,
+} from '../../types'
 import { AgentWorkbench, type PlaygroundContext } from '../playground/PlaygroundView'
 
 interface AgentsViewProps {
@@ -12,12 +18,283 @@ interface AgentsViewProps {
   onUpdateContext: (context: PlaygroundContext) => void
 }
 
+const defaultOptimizeFormState = () => ({
+  datasetKey: '',
+  maxMetricCalls: '100',
+  seed: '',
+})
+
+type AgentOptimizeFormState = ReturnType<typeof defaultOptimizeFormState>
+
 export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdateContext }: AgentsViewProps) {
+  const queryClient = useQueryClient()
   const { data, isLoading, isError, refetch } = useQuery<{ agents: AgentSummary[] }>({
     queryKey: ['agents', 'list'],
     queryFn: () => api.getAgents(),
     staleTime: 5 * 60 * 1000,
   })
+  const { data: datasetsData, isLoading: isDatasetsLoading } = useQuery<EvaluationDatasetsResponse>({
+    queryKey: ['evaluation', 'datasets'],
+    queryFn: () => api.getEvaluationDatasets(),
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const datasets = datasetsData?.datasets ?? []
+  const datasetOptions = useMemo(
+    () =>
+      datasets
+        .filter((dataset) => {
+          const names = new Set(dataset.splits.map((split) => split.split))
+          return names.has('train') && names.has('dev') && names.has('test')
+        })
+        .map((dataset) => ({
+          key: `${dataset.set_name}::${dataset.category}`,
+          label: `${dataset.set_name} • ${dataset.category}`,
+          dataset,
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [datasets]
+  )
+  const datasetOptionMap = useMemo(() => {
+    const map = new Map<string, (typeof datasets)[number]>()
+    datasetOptions.forEach((option) => {
+      map.set(option.key, option.dataset)
+    })
+    return map
+  }, [datasetOptions])
+
+  const [isOptimizeDialogOpen, setIsOptimizeDialogOpen] = useState(false)
+  const [optimizeForm, setOptimizeForm] = useState<AgentOptimizeFormState>(() => defaultOptimizeFormState())
+  const [optimizeError, setOptimizeError] = useState<string | null>(null)
+  const [activeOptimization, setActiveOptimization] = useState<{ jobId: string; status: EvaluationAgentOptimizationStatus | null } | null>(null)
+  const optimizationSocketRef = useRef<WebSocket | null>(null)
+  const optimizationCompletionRef = useRef(false)
+
+  const startAgentOptimization = useMutation<EvaluationAgentOptimizationResponse, Error, EvaluationAgentOptimizationRequest>({
+    mutationFn: (payload) => api.startAgentOptimization(payload),
+    onSuccess: (response) => {
+      setActiveOptimization({ jobId: response.job_id, status: response.status ?? null })
+      optimizationCompletionRef.current = false
+      setIsOptimizeDialogOpen(false)
+      setOptimizeForm(defaultOptimizeFormState())
+      setOptimizeError(null)
+      queryClient.invalidateQueries({ queryKey: ['agents', 'list'] })
+      queryClient.invalidateQueries({ queryKey: ['evaluation', 'datasets'] })
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : 'Failed to start agent optimization'
+      setOptimizeError(message)
+    },
+  })
+
+  useEffect(() => {
+    setIsOptimizeDialogOpen(false)
+    setOptimizeForm(defaultOptimizeFormState())
+    setOptimizeError(null)
+    if (optimizationSocketRef.current) {
+      try {
+        optimizationSocketRef.current.close()
+      } catch {}
+      optimizationSocketRef.current = null
+    }
+    setActiveOptimization(null)
+    optimizationCompletionRef.current = false
+  }, [selectedAgent])
+
+  useEffect(() => {
+    const jobId = activeOptimization?.jobId
+    if (!jobId) {
+      return
+    }
+    let socket: WebSocket | null = null
+    try {
+      socket = api.createAgentOptimizationWebSocket(jobId)
+      optimizationSocketRef.current = socket
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data)
+          if (!payload || !payload.status) {
+            return
+          }
+          const status = payload.status as EvaluationAgentOptimizationStatus
+          setActiveOptimization({ jobId, status })
+          if (status.state === 'completed') {
+            queryClient.invalidateQueries({ queryKey: ['agents', 'list'] })
+            queryClient.invalidateQueries({ queryKey: ['evaluation', 'datasets'] })
+          }
+          if (status.state === 'completed' || status.state === 'failed' || status.state === 'cancelled') {
+            optimizationCompletionRef.current = true
+            try {
+              socket?.close()
+            } catch {}
+          }
+        } catch {
+          try {
+            socket?.close()
+          } catch {}
+        }
+      }
+      socket.onerror = () => {
+        try {
+          socket?.close()
+        } catch {}
+      }
+      socket.onclose = () => {
+        if (optimizationSocketRef.current === socket) {
+          optimizationSocketRef.current = null
+        }
+        if (!optimizationCompletionRef.current) {
+          api
+            .getAgentOptimizationStatus(jobId)
+            .then((response) => {
+              if (!response || !response.status) {
+                return
+              }
+              const status = response.status as EvaluationAgentOptimizationStatus
+              setActiveOptimization({ jobId: response.job_id, status })
+              if (status.state === 'completed') {
+                queryClient.invalidateQueries({ queryKey: ['agents', 'list'] })
+                queryClient.invalidateQueries({ queryKey: ['evaluation', 'datasets'] })
+              }
+              if (status.state === 'completed' || status.state === 'failed' || status.state === 'cancelled') {
+                optimizationCompletionRef.current = true
+              }
+            })
+            .catch(() => {})
+        }
+      }
+    } catch {
+      api
+        .getAgentOptimizationStatus(jobId)
+        .then((response) => {
+          if (!response || !response.status) {
+            return
+          }
+          const status = response.status as EvaluationAgentOptimizationStatus
+          setActiveOptimization({ jobId: response.job_id, status })
+          if (status.state === 'completed') {
+            queryClient.invalidateQueries({ queryKey: ['agents', 'list'] })
+            queryClient.invalidateQueries({ queryKey: ['evaluation', 'datasets'] })
+          }
+          if (status.state === 'completed' || status.state === 'failed' || status.state === 'cancelled') {
+            optimizationCompletionRef.current = true
+          }
+        })
+        .catch(() => {})
+    }
+    return () => {
+      if (optimizationSocketRef.current === socket) {
+        optimizationSocketRef.current = null
+      }
+      if (socket) {
+        try {
+          socket.close()
+        } catch {}
+      }
+    }
+  }, [activeOptimization?.jobId, queryClient])
+
+  const isStartingOptimization = startAgentOptimization.isPending
+  const optimizationStatus = activeOptimization?.status
+  const optimizationState = optimizationStatus?.state
+  const optimizationCompleted = optimizationStatus?.completed ?? 0
+  const optimizationTotal = optimizationStatus?.total ?? 1
+  const optimizationPercent = optimizationState === 'completed' ? 100 : Math.min(100, Math.round((optimizationCompleted / Math.max(1, optimizationTotal)) * 100))
+  const optimizationDatasetLabel = optimizationStatus ? `${optimizationStatus.dataset.set_name} • ${optimizationStatus.dataset.category}` : ''
+
+  const openOptimize = () => {
+    const fallbackKey = datasetOptions[0]?.key ?? ''
+    setOptimizeForm({
+      datasetKey: fallbackKey,
+      maxMetricCalls: '100',
+      seed: '',
+    })
+    setOptimizeError(datasetOptions.length === 0 ? 'No datasets available. Create a split before optimizing.' : null)
+    setIsOptimizeDialogOpen(true)
+  }
+
+  const closeOptimizeDialog = () => {
+    if (isStartingOptimization) {
+      return
+    }
+    setIsOptimizeDialogOpen(false)
+    setOptimizeForm(defaultOptimizeFormState())
+    setOptimizeError(null)
+  }
+
+  const handleOptimizeSubmit = (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!selectedAgent) {
+      return
+    }
+    const datasetKey = optimizeForm.datasetKey.trim()
+    if (!datasetKey) {
+      setOptimizeError('Select a dataset to optimize against')
+      return
+    }
+    const dataset = datasetOptionMap.get(datasetKey)
+    if (!dataset) {
+      setOptimizeError('Selected dataset is no longer available')
+      return
+    }
+    const trainSplit = dataset.splits.find((split) => split.split === 'train')
+    const devSplit = dataset.splits.find((split) => split.split === 'dev')
+    const testSplit = dataset.splits.find((split) => split.split === 'test')
+    if (!trainSplit || !devSplit || !testSplit) {
+      setOptimizeError('Dataset is missing required train/dev/test splits')
+      return
+    }
+    const budgetText = optimizeForm.maxMetricCalls.trim()
+    const parsedBudget = Number(budgetText || '0')
+    if (!Number.isFinite(parsedBudget) || parsedBudget <= 0 || !Number.isInteger(parsedBudget)) {
+      setOptimizeError('Budget must be a positive integer')
+      return
+    }
+    const seedText = optimizeForm.seed.trim()
+    let parsedSeed: number | undefined
+    if (seedText.length > 0) {
+      const seedValue = Number(seedText)
+      if (!Number.isFinite(seedValue) || !Number.isInteger(seedValue)) {
+        setOptimizeError('Seed must be an integer')
+        return
+      }
+      parsedSeed = seedValue
+    }
+    setOptimizeError(null)
+    const payload: EvaluationAgentOptimizationRequest = {
+      agent_key: selectedAgent,
+      dataset: {
+        set_name: dataset.set_name,
+        category: dataset.category,
+        artifact_dir: dataset.artifact_dir,
+        train_path: trainSplit.path,
+        dev_path: devSplit.path,
+        test_path: testSplit.path,
+      },
+      max_metric_calls: parsedBudget,
+    }
+    if (parsedSeed !== undefined) {
+      payload.seed = parsedSeed
+    }
+    startAgentOptimization.mutate(payload)
+  }
+
+  const handleDismissOptimization = () => {
+    if (optimizationSocketRef.current) {
+      try {
+        optimizationSocketRef.current.close()
+      } catch {}
+      optimizationSocketRef.current = null
+    }
+    setActiveOptimization(null)
+    optimizationCompletionRef.current = false
+  }
+
+  const canStartOptimization =
+    !isStartingOptimization &&
+    optimizeForm.datasetKey.trim().length > 0 &&
+    datasetOptionMap.has(optimizeForm.datasetKey.trim()) &&
+    optimizeForm.maxMetricCalls.trim().length > 0
 
   const agents = data?.agents ?? []
   const activeAgent = useMemo(() => {
@@ -49,6 +326,68 @@ export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdat
     return (
       <div className="h-full w-full overflow-y-auto p-6">
         <div className="mx-auto flex h-full max-w-6xl flex-col gap-4">
+          {activeOptimization ? (
+            <div className="rounded-md border border-border bg-background px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold">Agent Optimization</div>
+                  <div className="text-xs text-muted-foreground">{optimizationDatasetLabel || activeOptimization.jobId}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium capitalize">{optimizationState ? optimizationState.replace(/_/g, ' ') : 'pending'}</span>
+                  {optimizationState === 'running' ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
+                  <button
+                    type="button"
+                    onClick={handleDismissOptimization}
+                    className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+              <div className="mt-3 space-y-2">
+                <div>
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>
+                      {optimizationCompleted} / {optimizationTotal} complete
+                    </span>
+                    <span>{optimizationStatus?.updated_at ? new Date(optimizationStatus.updated_at).toLocaleString() : ''}</span>
+                  </div>
+                  <div className="mt-1 h-2 w-full rounded bg-muted">
+                    <div className="h-2 rounded bg-muted-foreground transition-all" style={{ width: `${optimizationPercent}%` }} />
+                  </div>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Started {optimizationStatus?.started_at ? new Date(optimizationStatus.started_at).toLocaleString() : 'pending'}
+                  {optimizationStatus?.finished_at ? ` • Finished ${new Date(optimizationStatus.finished_at).toLocaleString()}` : ''}
+                </div>
+                {optimizationStatus?.error ? (
+                  <div className="text-xs text-destructive">Error: {optimizationStatus.error}</div>
+                ) : null}
+                {optimizationStatus?.run_dir ? (
+                  <div className="text-xs text-muted-foreground">Run directory: {optimizationStatus.run_dir}</div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-muted/20 px-4 py-3">
+            <div>
+              <div className="text-sm font-semibold">Optimize instructions</div>
+              <div className="text-xs text-muted-foreground">Use evaluation datasets to refine this agent&apos;s behavior.</div>
+            </div>
+            <div className="flex items-center gap-2">
+              {isDatasetsLoading ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
+              <button
+                type="button"
+                onClick={openOptimize}
+                disabled={datasetOptions.length === 0 || isStartingOptimization}
+                className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                Optimize
+              </button>
+            </div>
+          </div>
           {agentDescription ? (
             <div className="rounded-md border border-border bg-muted/40 p-4 text-sm text-muted-foreground">
               {agentDescription}
@@ -64,6 +403,94 @@ export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdat
             agentKey={selectedAgent}
             agentLabel={agentLabel}
           />
+          {isOptimizeDialogOpen ? (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+              <form onSubmit={handleOptimizeSubmit} className="w-full max-w-lg rounded-lg border border-border bg-background p-6 shadow-lg">
+                <div className="mb-4 flex items-center justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold">Optimize {agentLabel}</h3>
+                    <p className="text-sm text-muted-foreground">Select a dataset and budget to optimize this agent&apos;s instructions.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeOptimizeDialog}
+                    className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted"
+                    disabled={isStartingOptimization}
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium uppercase text-muted-foreground">Dataset</label>
+                    <select
+                      value={optimizeForm.datasetKey}
+                      onChange={(event) => setOptimizeForm((prev) => ({ ...prev, datasetKey: event.target.value }))}
+                      disabled={datasetOptions.length === 0 || isStartingOptimization}
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50"
+                    >
+                      <option value="">Select dataset</option>
+                      {datasetOptions.map((option) => (
+                        <option key={option.key} value={option.key}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    {datasetOptions.length === 0 ? (
+                      <div className="mt-1 text-xs text-muted-foreground">No datasets available. Create a split before optimizing.</div>
+                    ) : null}
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-xs font-medium uppercase text-muted-foreground">Budget</label>
+                      <input
+                        value={optimizeForm.maxMetricCalls}
+                        onChange={(event) => setOptimizeForm((prev) => ({ ...prev, maxMetricCalls: event.target.value }))}
+                        type="number"
+                        min={1}
+                        step={1}
+                        placeholder="100"
+                        className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                      />
+                      <div className="mt-1 text-xs text-muted-foreground">Maximum evaluation calls during optimization.</div>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium uppercase text-muted-foreground">Seed</label>
+                      <input
+                        value={optimizeForm.seed}
+                        onChange={(event) => setOptimizeForm((prev) => ({ ...prev, seed: event.target.value }))}
+                        type="number"
+                        step={1}
+                        placeholder="0"
+                        className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                      />
+                      <div className="mt-1 text-xs text-muted-foreground">Optional. Controls reproducibility.</div>
+                    </div>
+                  </div>
+                </div>
+                {optimizeError ? (
+                  <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{optimizeError}</div>
+                ) : null}
+                <div className="mt-6 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={closeOptimizeDialog}
+                    className="rounded-md border border-border px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted"
+                    disabled={isStartingOptimization}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                    disabled={!canStartOptimization}
+                  >
+                    {isStartingOptimization ? 'Starting…' : 'Start Optimization'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          ) : null}
         </div>
       </div>
     )

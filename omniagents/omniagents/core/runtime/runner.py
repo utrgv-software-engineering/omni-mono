@@ -97,7 +97,9 @@ class Runner:
             context=final_context,  # Pass the constructed context
             variables=final_variables,  # Store variables separately if they exist
             build_context=build_context,  # Keep factory for server mode
-            max_turns=max_turns  # Pass through max_turns parameter
+            max_turns=max_turns,  # Pass through max_turns parameter
+            project_slug=None,
+            agent_slug=storage_prefix.rstrip('.'),
         )
         # Optional: attach server functions registrar from callables
         if server_functions:
@@ -165,7 +167,9 @@ class Runner:
             remote_auth_token_key=token_env_var,
             context=context,
             variables=variables,
-            settings_fields=list(DEFAULT_SETTINGS_FIELDS)
+            settings_fields=list(DEFAULT_SETTINGS_FIELDS),
+            project_slug=None,
+            agent_slug=storage_prefix.rstrip('.'),
         )
         
         return cls(spec=spec)

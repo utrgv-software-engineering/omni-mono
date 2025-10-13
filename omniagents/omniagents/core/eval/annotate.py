@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -159,13 +160,26 @@ def annotate_scenarios(agent_yaml: Path, scenarios_path: Path, studio_project: s
 
 
 def write_annotation_output(project_root: Path, input_path: Path, annotated: List[Dict[str, Any]]) -> Path:
-    out_dir = input_path.parent
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "annotated_scenarios.yml"
-    data = {"scenarios": annotated}
+    existing: Dict[str, Any]
+    if input_path.exists():
+        try:
+            existing_loaded = yaml.safe_load(input_path.read_text(encoding="utf-8")) or {}
+            existing = existing_loaded if isinstance(existing_loaded, dict) else {}
+        except Exception:
+            existing = {}
+    else:
+        existing = {}
+    data = dict(existing)
+    data["scenarios"] = annotated
+    input_path.parent.mkdir(parents=True, exist_ok=True)
+    if input_path.exists():
+        backup = input_path.with_suffix(input_path.suffix + f".bak.{datetime.now().strftime('%Y%m%d%H%M%S')}")
+        try:
+            shutil.copy2(input_path, backup)
+        except Exception:
+            pass
     class NoAliasDumper(yaml.SafeDumper):
         def ignore_aliases(self, data):
             return True
-    out_path.write_text(yaml.dump(data, sort_keys=False, Dumper=NoAliasDumper, allow_unicode=True), encoding="utf-8")
-    
-    return out_path
+    input_path.write_text(yaml.dump(data, sort_keys=False, Dumper=NoAliasDumper, allow_unicode=True), encoding="utf-8")
+    return input_path

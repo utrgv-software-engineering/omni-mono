@@ -142,3 +142,7 @@ class AgentSpec:
     # --- Optional Metadata ---
     label: Optional[str] = None
     description: Optional[str] = None
+
+    # --- Storage Metadata ---
+    project_slug: Optional[str] = None
+    agent_slug: Optional[str] = None

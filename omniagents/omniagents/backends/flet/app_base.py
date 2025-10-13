@@ -158,6 +158,8 @@ class AgentApp:
             ),  # include OpenAI settings by default
             max_turns=max_turns if max_turns is not None else 20,
             layout=layout,
+            project_slug=None,
+            agent_slug=storage_prefix.rstrip('.'),
         )
         return cls(spec=spec)
 
@@ -244,7 +246,7 @@ class AgentApp:
         await self._load_initial_settings()
 
         # Start a fresh local session each time the app launches
-        self.local_session = Session()
+        self.local_session = Session(self.spec.project_slug, self.spec.agent_slug)
         self.conversation = list(self.local_session.history)
 
         # Attempt initial MCP connection if configured

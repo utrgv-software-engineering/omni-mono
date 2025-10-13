@@ -9,7 +9,7 @@ import random
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional
 
 import yaml
 
@@ -189,6 +189,8 @@ async def _build_generator_agent(base_dir: Path, agent_cfg: Dict[str, Any], dims
         model_name=model,
         output_type=out_type,
         output_type_strict=output_type_strict,
+        project_slug=None,
+        agent_slug="generator",
     )
     agent = await _default_build_agent({}, None, spec, None)
     return agent
@@ -477,6 +479,7 @@ async def run_scenarios_against_agent(
     include_history: bool = False,
     workflow_name: str | None = None,
     progress_cb: Any | None = None,
+    scenario_source_path: Optional[Path] = None,
 ) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
     cfg = _read_yaml(agent_yaml)
@@ -497,6 +500,15 @@ async def run_scenarios_against_agent(
             pass
     tracing_initialized = False
     for idx, sc in enumerate(scenarios):
+        scenario_path_value: Optional[str] = None
+        try:
+            raw_path = sc.get("_source_path")
+            if raw_path:
+                scenario_path_value = str(raw_path)
+        except Exception:
+            scenario_path_value = None
+        if scenario_path_value is None and scenario_source_path is not None:
+            scenario_path_value = str(scenario_source_path)
         spec = load_agent_spec_from_yaml(str(agent_yaml))
         trace_cfg = dict(spec.tracing_config or {})
         if workflow_name:
@@ -531,10 +543,13 @@ async def run_scenarios_against_agent(
                     run_uid = f"{_sid}-{_uuid.uuid4().hex[:8]}"
                 except Exception:
                     run_uid = _uuid.uuid4().hex[:8]
+                scenario_meta = {"id": sc.get("id"), "name": sc.get("name")}
+                if scenario_path_value:
+                    scenario_meta["path"] = scenario_path_value
                 meta = {
                     "omniagents": {
                         "run_type": "synthetic_generation",
-                        "scenario": {"id": sc.get("id"), "name": sc.get("name")},
+                        "scenario": scenario_meta,
                         "run": {"id": run_uid},
                         "synthetic": {"catalog_id": catalog_id, "catalog": {"dimensions": dims_catalog}, "selection": {"mapping": sc.get("dimensions", {})}},
                         "config": {"agent_yaml": str(agent_yaml)},
@@ -555,8 +570,12 @@ async def run_scenarios_against_agent(
             async for _ in run.stream_events():
                 pass
         session_id = getattr(agent, "_session_id", None)
-        history = load_history(session_id) if session_id else []
-        results.append({
+        history = load_history(
+            session_id,
+            project_slug=spec.project_slug,
+            agent_slug=spec.agent_slug,
+        ) if session_id else []
+        payload = {
             "scenario_id": sc.get("id"),
             "scenario_name": sc.get("name"),
             "prompt": prompt,
@@ -564,7 +583,10 @@ async def run_scenarios_against_agent(
             "final_assistant_text": final_assistant_text(history),
             "history_len": len(history),
             **({"history": history} if include_history else {}),
-        })
+        }
+        if scenario_path_value:
+            payload["scenario_path"] = scenario_path_value
+        results.append(payload)
         if progress_cb:
             try:
                 progress_cb({"event": "progress", "current": idx + 1, "total": total, "scenario_id": sc.get("id")})

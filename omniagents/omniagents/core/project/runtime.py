@@ -32,6 +32,15 @@ def _to_list(v: Any) -> List[str]:
     return []
 
 
+def _slugify(value: str | None, default: str) -> str:
+    token = (value or "").strip().lower()
+    if not token:
+        token = default
+    token = re.sub(r"[^a-z0-9\-_]+", "_", token)
+    token = re.sub(r"_+", "_", token).strip("_")
+    return token or default
+
+
 @dataclass
 class ProjectContext:
     root: Path
@@ -233,4 +242,7 @@ def build_spec_from_project(project: ProjectContext, agent_key: Optional[str] = 
         server_functions_registry=project.server_functions_registry,
         project_defaults=pdefs,
     )
+    project_name = project.raw.get("name") if isinstance(project.raw, dict) else None
+    spec.project_slug = _slugify(project_name, project.root.name)
+    spec.agent_slug = _slugify(key, key)
     return spec

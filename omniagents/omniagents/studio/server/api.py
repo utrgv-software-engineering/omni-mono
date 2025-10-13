@@ -33,7 +33,11 @@ from omniagents.rpc.transport import TransportClosedError
 from omniagents.core.project.runtime import load_project, build_spec_from_project, resolve_agent
 from omniagents.core.project.compiler import compile_project
 from omniagents.core.eval.scenarios import run_scenarios_against_agent, generate_scenarios
-from omniagents.core.eval.annotate import annotate_scenarios, write_annotation_output
+from omniagents.core.eval.split import create_splits
+from omniagents.core.eval.annotate import annotate_scenarios, write_annotation_output, _slugify
+from omniagents.core.eval.optimize import optimize_judge_from_project, optimize_agent_from_project
+from omniagents.core.project.apply import apply_agent_instructions
+from omniagents.core.project.scaffold import scaffold_judge
 
 from ..tracing.storage import SQLiteStorage
 
@@ -540,7 +544,9 @@ class ScenarioEntryModel(BaseModel):
     dimensions: Optional[Dict[str, Any]] = None
     measures: Optional[List[Any]] = None
     failure_categories: Optional[List[str]] = None
+    label: Optional[bool] = None
     metadata: Optional[Dict[str, Any]] = None
+    analysis: Optional[Dict[str, Any]] = None
 
 
 class ScenarioSetModel(BaseModel):
@@ -553,26 +559,60 @@ class ScenarioSetModel(BaseModel):
     scenarios: List[ScenarioEntryModel] = Field(default_factory=list)
 
 
-class EvaluationDatasetModel(BaseModel):
-    label: str
+class EvaluationDatasetSplitModel(BaseModel):
+    split: Literal['train', 'dev', 'test']
     path: str
-    source_kind: Literal['golden', 'generated', 'annotated', 'unknown'] = 'unknown'
-    source_label: Optional[str] = None
-    source_path: Optional[str] = None
-    run_count: int
-    scenario_count: Optional[int] = None
-    expected_count: Optional[int] = None
-    includes_history: bool = False
+    scenario_count: int
+    positives: int
+    negatives: int
     updated_at: Optional[str] = None
-    created_at: Optional[str] = None
-    workflow_generate: Optional[str] = None
-    workflow_run: Optional[str] = None
-    workflow_run_at: Optional[str] = None
+
+
+class EvaluationDatasetModel(BaseModel):
+    set_name: str
+    category: str
+    artifact_dir: str
+    scenario_set_path: Optional[str] = None
     manifest_path: Optional[str] = None
-    size_bytes: Optional[int] = None
+    splits: List[EvaluationDatasetSplitModel] = Field(default_factory=list)
 
 
 class EvaluationDatasetsResponse(BaseModel):
+    project: Optional[str] = None
+    datasets: List[EvaluationDatasetModel] = Field(default_factory=list)
+
+
+class EvaluationDatasetSplitBrowseResponse(BaseModel):
+    project: Optional[str] = None
+    set_name: str
+    category: str
+    split: EvaluationDatasetSplitModel
+    scenarios: List[ScenarioEntryModel] = Field(default_factory=list)
+
+
+class ScenarioSplitPayload(BaseModel):
+    set_path: str
+    kind: Literal['golden', 'generated', 'annotated']
+    category: str
+    train: float = Field(default=0.15, ge=0.0)
+    dev: float = Field(default=0.425, ge=0.0)
+    test: float = Field(default=0.425, ge=0.0)
+    seed: int = 42
+    negatives_ratio: Optional[float] = Field(default=None, ge=0.0)
+    output_dir: Optional[str] = None
+
+
+class ScenarioSplitResponse(BaseModel):
+    project: Optional[str] = None
+    dataset: EvaluationDatasetModel
+
+
+class EvaluationDatasetDeletePayload(BaseModel):
+    set_name: str
+    category: str
+
+
+class EvaluationDatasetDeleteResponse(BaseModel):
     project: Optional[str] = None
     datasets: List[EvaluationDatasetModel] = Field(default_factory=list)
 
@@ -634,6 +674,144 @@ class ScenarioSetDeleteResponseModel(BaseModel):
     deleted_path: str
     generated: List[ScenarioSetModel] = Field(default_factory=list)
     annotated: List[ScenarioSetModel] = Field(default_factory=list)
+
+
+class EvaluationJudgeModel(BaseModel):
+    key: str
+    agent_name: Optional[str] = None
+    agent_label: Optional[str] = None
+    model: Optional[str] = None
+    source: str
+    failure_category: Optional[str] = None
+    instructions: Optional[str] = None
+    template: Optional[str] = None
+    instructions_file: Optional[str] = None
+    template_file: Optional[str] = None
+    instructions_path: Optional[str] = None
+    template_path: Optional[str] = None
+    judge_path: str
+    updated_at: Optional[str] = None
+
+
+class EvaluationJudgesResponse(BaseModel):
+    project: Optional[str] = None
+    judges: List[EvaluationJudgeModel] = Field(default_factory=list)
+
+
+class EvaluationJudgeCreatePayload(BaseModel):
+    name: Optional[str] = None
+    key: Optional[str] = None
+    model: Optional[str] = None
+    agent_label: Optional[str] = None
+    agent_name: Optional[str] = None
+    source: Optional[str] = None
+    failure_category: Optional[str] = None
+    instructions: Optional[str] = None
+    template: Optional[str] = None
+    add_measure: bool = True
+
+
+class EvaluationJudgeUpdatePayload(BaseModel):
+    key: str
+    model: Optional[str] = None
+    agent_label: Optional[str] = None
+    agent_name: Optional[str] = None
+    source: Optional[str] = None
+    failure_category: Optional[str] = None
+    instructions: Optional[str] = None
+    template: Optional[str] = None
+
+
+class EvaluationJudgeDeleteResponse(BaseModel):
+    project: Optional[str] = None
+    deleted: str
+    judges: List[EvaluationJudgeModel] = Field(default_factory=list)
+
+
+class JudgeOptimizationDatasetPayload(BaseModel):
+    set_name: str
+    category: str
+    artifact_dir: Optional[str] = None
+    train_path: str
+    dev_path: str
+    test_path: str
+    runs_path: Optional[str] = None
+    source: Optional[str] = None
+
+
+class JudgeOptimizationRequest(BaseModel):
+    judge_key: str
+    dataset: JudgeOptimizationDatasetPayload
+    max_metric_calls: int = Field(default=100, ge=1)
+    seed: Optional[int] = 0
+
+
+class JudgeOptimizationStatusModel(BaseModel):
+    job_id: str
+    project: Optional[str] = None
+    judge_key: str
+    dataset: JudgeOptimizationDatasetPayload
+    max_metric_calls: int
+    seed: Optional[int] = None
+    state: Literal['pending', 'running', 'completed', 'failed', 'cancelled']
+    total: int
+    completed: int
+    created_at: str
+    updated_at: str
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    run_dir: Optional[str] = None
+    result_path: Optional[str] = None
+    workflow_name: Optional[str] = None
+    error: Optional[str] = None
+
+
+class JudgeOptimizationResponse(BaseModel):
+    job_id: str
+    status: Optional[JudgeOptimizationStatusModel] = None
+
+
+class AgentOptimizationDatasetPayload(BaseModel):
+    set_name: str
+    category: str
+    artifact_dir: Optional[str] = None
+    train_path: str
+    dev_path: str
+    test_path: str
+
+
+class AgentOptimizationRequest(BaseModel):
+    agent_key: str
+    dataset: AgentOptimizationDatasetPayload
+    positives_only: bool = False
+    max_metric_calls: int = Field(default=100, ge=1)
+    seed: Optional[int] = 0
+
+
+class AgentOptimizationStatusModel(BaseModel):
+    job_id: str
+    project: Optional[str] = None
+    agent_key: str
+    dataset: AgentOptimizationDatasetPayload
+    positives_only: bool
+    max_metric_calls: int
+    seed: Optional[int] = None
+    state: Literal['pending', 'running', 'completed', 'failed', 'cancelled']
+    total: int
+    completed: int
+    created_at: str
+    updated_at: str
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    run_dir: Optional[str] = None
+    result_path: Optional[str] = None
+    workflow_name: Optional[str] = None
+    error: Optional[str] = None
+
+
+class AgentOptimizationResponse(BaseModel):
+    job_id: str
+    status: Optional[AgentOptimizationStatusModel] = None
 
 
 @dataclass
@@ -956,6 +1134,315 @@ class ScenarioGenerationManager:
                     self.connections.pop(job_id, None)
 
 
+@dataclass
+class JudgeOptimizationJob:
+    job_id: str
+    project: Optional[str]
+    judge_key: str
+    dataset: Dict[str, Any]
+    max_metric_calls: int
+    seed: Optional[int]
+    state: str
+    total: int
+    completed: int
+    created_at: str
+    updated_at: str
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    run_dir: Optional[str] = None
+    result_path: Optional[str] = None
+    workflow_name: Optional[str] = None
+    error: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "job_id": self.job_id,
+            "project": self.project,
+            "judge_key": self.judge_key,
+            "dataset": self.dataset,
+            "max_metric_calls": self.max_metric_calls,
+            "seed": self.seed,
+            "state": self.state,
+            "total": self.total,
+            "completed": self.completed,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "run_dir": self.run_dir,
+            "result_path": self.result_path,
+            "workflow_name": self.workflow_name,
+            "error": self.error,
+        }
+
+
+class JudgeOptimizationManager:
+    def __init__(self):
+        self.jobs: Dict[str, JudgeOptimizationJob] = {}
+        self.tasks: Dict[str, asyncio.Task] = {}
+        self.connections: Dict[str, List[WebSocket]] = defaultdict(list)
+        self.lock = asyncio.Lock()
+
+    async def create_job(self, project: Optional[str], payload: JudgeOptimizationRequest) -> JudgeOptimizationJob:
+        async with self.lock:
+            job_id = uuid.uuid4().hex
+            now = _utc_now()
+            job = JudgeOptimizationJob(
+                job_id=job_id,
+                project=project,
+                judge_key=payload.judge_key,
+                dataset=payload.dataset.model_dump(),
+                max_metric_calls=int(payload.max_metric_calls),
+                seed=payload.seed,
+                state="pending",
+                total=1,
+                completed=0,
+                created_at=now,
+                updated_at=now,
+            )
+            self.jobs[job_id] = job
+        await self.broadcast(job_id)
+        return job
+
+    async def register_task(self, job_id: str, task: asyncio.Task) -> None:
+        async with self.lock:
+            self.tasks[job_id] = task
+
+        def _on_done(_task: asyncio.Task) -> None:
+            asyncio.create_task(self.clear_task(job_id))
+
+        task.add_done_callback(_on_done)
+
+    async def clear_task(self, job_id: str) -> None:
+        async with self.lock:
+            self.tasks.pop(job_id, None)
+
+    async def update_job(self, job_id: str, **fields: Any) -> Optional[JudgeOptimizationJob]:
+        async with self.lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                return None
+            for key, value in fields.items():
+                if hasattr(job, key):
+                    setattr(job, key, value)
+            job.updated_at = _utc_now()
+            snapshot = job.to_dict()
+        await self.broadcast(job_id, snapshot)
+        return job
+
+    async def get_status(self, job_id: str) -> Optional[Dict[str, Any]]:
+        async with self.lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                return None
+            return job.to_dict()
+
+    async def add_connection(self, job_id: str, websocket: WebSocket) -> bool:
+        async with self.lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                return False
+            await websocket.accept()
+            self.connections[job_id].append(websocket)
+            snapshot = job.to_dict()
+        try:
+            await websocket.send_json({"job_id": job_id, "status": snapshot})
+        except Exception:
+            await self.remove_connection(job_id, websocket)
+            return False
+        return True
+
+    async def remove_connection(self, job_id: str, websocket: WebSocket) -> None:
+        async with self.lock:
+            connections = self.connections.get(job_id)
+            if connections and websocket in connections:
+                connections.remove(websocket)
+            if not connections and job_id in self.connections:
+                self.connections.pop(job_id, None)
+
+    async def broadcast(self, job_id: str, snapshot: Optional[Dict[str, Any]] = None) -> None:
+        async with self.lock:
+            job = self.jobs.get(job_id)
+            if not job and snapshot is None:
+                return
+            payload = snapshot or job.to_dict() if job else snapshot
+            sockets = list(self.connections.get(job_id, []))
+        if not payload:
+            return
+        message = {"job_id": job_id, "status": payload}
+        stale: List[WebSocket] = []
+        for ws in sockets:
+            try:
+                await ws.send_json(message)
+            except Exception:
+                stale.append(ws)
+        if stale:
+            async with self.lock:
+                connections = self.connections.get(job_id)
+                if connections:
+                    for ws in stale:
+                        if ws in connections:
+                            connections.remove(ws)
+                if connections == [] and job_id in self.connections:
+                    self.connections.pop(job_id, None)
+
+
+@dataclass
+class AgentOptimizationJob:
+    job_id: str
+    project: Optional[str]
+    agent_key: str
+    dataset: Dict[str, Any]
+    positives_only: bool
+    max_metric_calls: int
+    seed: Optional[int]
+    state: str
+    total: int
+    completed: int
+    created_at: str
+    updated_at: str
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    run_dir: Optional[str] = None
+    result_path: Optional[str] = None
+    workflow_name: Optional[str] = None
+    error: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "job_id": self.job_id,
+            "project": self.project,
+            "agent_key": self.agent_key,
+            "dataset": self.dataset,
+            "positives_only": self.positives_only,
+            "max_metric_calls": self.max_metric_calls,
+            "seed": self.seed,
+            "state": self.state,
+            "total": self.total,
+            "completed": self.completed,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "run_dir": self.run_dir,
+            "result_path": self.result_path,
+            "workflow_name": self.workflow_name,
+            "error": self.error,
+        }
+
+
+class AgentOptimizationManager:
+    def __init__(self):
+        self.jobs: Dict[str, AgentOptimizationJob] = {}
+        self.tasks: Dict[str, asyncio.Task] = {}
+        self.connections: Dict[str, List[WebSocket]] = defaultdict(list)
+        self.lock = asyncio.Lock()
+
+    async def create_job(self, project: Optional[str], payload: AgentOptimizationRequest) -> AgentOptimizationJob:
+        async with self.lock:
+            job_id = uuid.uuid4().hex
+            now = _utc_now()
+            job = AgentOptimizationJob(
+                job_id=job_id,
+                project=project,
+                agent_key=payload.agent_key,
+                dataset=payload.dataset.model_dump(),
+                positives_only=bool(payload.positives_only),
+                max_metric_calls=int(payload.max_metric_calls),
+                seed=payload.seed,
+                state="pending",
+                total=1,
+                completed=0,
+                created_at=now,
+                updated_at=now,
+            )
+            self.jobs[job_id] = job
+        await self.broadcast(job_id)
+        return job
+
+    async def register_task(self, job_id: str, task: asyncio.Task) -> None:
+        async with self.lock:
+            self.tasks[job_id] = task
+
+        def _on_done(_task: asyncio.Task) -> None:
+            asyncio.create_task(self.clear_task(job_id))
+
+        task.add_done_callback(_on_done)
+
+    async def clear_task(self, job_id: str) -> None:
+        async with self.lock:
+            self.tasks.pop(job_id, None)
+
+    async def update_job(self, job_id: str, **fields: Any) -> Optional[AgentOptimizationJob]:
+        async with self.lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                return None
+            for key, value in fields.items():
+                if hasattr(job, key):
+                    setattr(job, key, value)
+            job.updated_at = _utc_now()
+            snapshot = job.to_dict()
+        await self.broadcast(job_id, snapshot)
+        return job
+
+    async def get_status(self, job_id: str) -> Optional[Dict[str, Any]]:
+        async with self.lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                return None
+            return job.to_dict()
+
+    async def add_connection(self, job_id: str, websocket: WebSocket) -> bool:
+        async with self.lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                return False
+            await websocket.accept()
+            self.connections[job_id].append(websocket)
+            snapshot = job.to_dict()
+        try:
+            await websocket.send_json({"job_id": job_id, "status": snapshot})
+        except Exception:
+            await self.remove_connection(job_id, websocket)
+            return False
+        return True
+
+    async def remove_connection(self, job_id: str, websocket: WebSocket) -> None:
+        async with self.lock:
+            connections = self.connections.get(job_id)
+            if connections and websocket in connections:
+                connections.remove(websocket)
+            if not connections and job_id in self.connections:
+                self.connections.pop(job_id, None)
+
+    async def broadcast(self, job_id: str, snapshot: Optional[Dict[str, Any]] = None) -> None:
+        async with self.lock:
+            job = self.jobs.get(job_id)
+            if not job and snapshot is None:
+                return
+            payload = snapshot or job.to_dict() if job else snapshot
+            sockets = list(self.connections.get(job_id, []))
+        if not payload:
+            return
+        message = {"job_id": job_id, "status": payload}
+        stale: List[WebSocket] = []
+        for ws in sockets:
+            try:
+                await ws.send_json(message)
+            except Exception:
+                stale.append(ws)
+        if stale:
+            async with self.lock:
+                connections = self.connections.get(job_id)
+                if connections:
+                    for ws in stale:
+                        if ws in connections:
+                            connections.remove(ws)
+                if connections == [] and job_id in self.connections:
+                    self.connections.pop(job_id, None)
+
+
 class ScenarioRunRequest(BaseModel):
     kind: Literal['golden', 'generated', 'annotated']
     set_path: str
@@ -1191,6 +1678,8 @@ def create_api_app(
     app.state.playground_session_store = PlaygroundSessionStore()
     app.state.scenario_run_manager = ScenarioRunManager()
     app.state.scenario_generation_manager = ScenarioGenerationManager()
+    app.state.judge_optimization_manager = JudgeOptimizationManager()
+    app.state.agent_optimization_manager = AgentOptimizationManager()
 
     # Add CORS middleware for development
     app.add_middleware(
@@ -1383,10 +1872,172 @@ def create_api_app(
             updated["evaluation"] = evaluation_cfg
         else:
             updated = {"evaluation": evaluation_cfg}
-    
+
         _write_yaml_file(target_file, updated)
         return serialized_dims
 
+    def _resolve_relative_file(base: Path, value: Optional[str]) -> Optional[Path]:
+        if not value:
+            return None
+        candidate = Path(value)
+        if not candidate.is_absolute():
+            candidate = (base / candidate).resolve()
+        if candidate.exists():
+            return candidate
+        return None
+
+    def _read_text_optional(path: Optional[Path]) -> Optional[str]:
+        if not path:
+            return None
+        try:
+            return path.read_text(encoding="utf-8")
+        except Exception:
+            return None
+
+    def _latest_timestamp(paths: List[Optional[Path]]) -> Optional[str]:
+        stamps: List[float] = []
+        for item in paths:
+            if not item:
+                continue
+            try:
+                stamps.append(item.stat().st_mtime)
+            except Exception:
+                continue
+        if not stamps:
+            return None
+        return datetime.fromtimestamp(max(stamps)).isoformat()
+
+    def _write_text_with_backup(path: Path, content: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            backup = path.with_suffix(path.suffix + f".bak.{datetime.now().strftime('%Y%m%d%H%M%S')}")
+            shutil.copy2(path, backup)
+        path.write_text(content, encoding="utf-8")
+
+    def _write_yaml_with_backup(path: Path, payload: Dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            backup = path.with_suffix(path.suffix + f".bak.{datetime.now().strftime('%Y%m%d%H%M%S')}")
+            shutil.copy2(path, backup)
+        path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+    def _judge_directories(ctx) -> List[Path]:
+        dirs: List[Path] = []
+        for directory in _evaluation_dirs(ctx):
+            candidate = directory / "judges"
+            if candidate.is_dir():
+                dirs.append(candidate)
+        return _unique_paths(dirs)
+
+    def _load_judge_models(ctx) -> List[EvaluationJudgeModel]:
+        result: List[EvaluationJudgeModel] = []
+        for root in _judge_directories(ctx):
+            for entry in sorted(root.iterdir()):
+                if not entry.is_dir():
+                    continue
+                cfg_path = entry / "judge.yml"
+                if not cfg_path.is_file():
+                    continue
+                try:
+                    data = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+                except Exception:
+                    data = {}
+                judges_cfg = data.get("judges") if isinstance(data, dict) else None
+                if not isinstance(judges_cfg, dict):
+                    continue
+                for key, cfg in judges_cfg.items():
+                    if not isinstance(cfg, dict):
+                        continue
+                    agent_cfg = cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
+                    input_cfg = cfg.get("input") if isinstance(cfg.get("input"), dict) else {}
+                    instructions_file = agent_cfg.get("instructions_file") if isinstance(agent_cfg.get("instructions_file"), str) else None
+                    template_file = input_cfg.get("template_file") if isinstance(input_cfg.get("template_file"), str) else None
+                    resolved_instr = _resolve_relative_file(cfg_path.parent, instructions_file) or (entry / "instructions.md")
+                    resolved_template = _resolve_relative_file(cfg_path.parent, template_file) or (entry / "template.md")
+                    instructions_text = _read_text_optional(resolved_instr)
+                    template_text = _read_text_optional(resolved_template)
+                    updated_at = _latest_timestamp([cfg_path, resolved_instr, resolved_template])
+                    source_value = str(input_cfg.get("source", "final_assistant_text") or "final_assistant_text")
+                    failure_value = cfg.get("failure_category") or cfg.get("category")
+                    model_value = agent_cfg.get("model") if isinstance(agent_cfg.get("model"), str) else None
+                    agent_name = agent_cfg.get("name") if isinstance(agent_cfg.get("name"), str) else None
+                    agent_label = agent_cfg.get("label") if isinstance(agent_cfg.get("label"), str) else None
+                    judge_model = EvaluationJudgeModel(
+                        key=str(key),
+                        agent_name=agent_name,
+                        agent_label=agent_label,
+                        model=model_value,
+                        source=source_value,
+                        failure_category=str(failure_value) if failure_value else None,
+                        instructions=instructions_text,
+                        template=template_text,
+                        instructions_file=instructions_file,
+                        template_file=template_file,
+                        instructions_path=str(resolved_instr) if resolved_instr else None,
+                        template_path=str(resolved_template) if resolved_template else None,
+                        judge_path=str(cfg_path),
+                        updated_at=updated_at,
+                    )
+                    result.append(judge_model)
+        return result
+
+    def _find_judge_entry(ctx, key: str) -> Optional[Tuple[Path, Path, Dict[str, Any], Dict[str, Any]]]:
+        for root in _judge_directories(ctx):
+            for entry in root.iterdir():
+                if not entry.is_dir():
+                    continue
+                cfg_path = entry / "judge.yml"
+                if not cfg_path.is_file():
+                    continue
+                try:
+                    data = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+                except Exception:
+                    data = {}
+                judges_cfg = data.get("judges") if isinstance(data, dict) else None
+                if not isinstance(judges_cfg, dict):
+                    continue
+                cfg = judges_cfg.get(key)
+                if isinstance(cfg, dict):
+                    return entry, cfg_path, data, cfg
+        return None
+
+    def _ensure_failure_category_mapping(ctx, judge_key: str, failure_category: Optional[str]) -> None:
+        if not failure_category:
+            return
+        eval_dir = ctx.root / "evaluations"
+        eval_dir.mkdir(parents=True, exist_ok=True)
+        evaluation_yml = eval_dir / "evaluation.yml"
+        base = {}
+        if evaluation_yml.exists():
+            try:
+                base = yaml.safe_load(evaluation_yml.read_text(encoding="utf-8")) or {}
+            except Exception:
+                base = {}
+        if not isinstance(base, dict):
+            base = {}
+        evaluation_cfg = base.get("evaluation") or {}
+        if not isinstance(evaluation_cfg, dict):
+            evaluation_cfg = {}
+        categories = evaluation_cfg.get("failure_categories") or []
+        if not isinstance(categories, list):
+            categories = []
+        found = None
+        for item in categories:
+            if isinstance(item, dict) and str(item.get("name")) == str(failure_category):
+                found = item
+                break
+        measure_name = f"{judge_key}_agent"
+        if found is None:
+            found = {"name": str(failure_category), "measures": [measure_name]}
+            categories.append(found)
+        else:
+            measures = found.get("measures") or []
+            if measure_name not in measures:
+                measures.append(measure_name)
+                found["measures"] = measures
+        evaluation_cfg["failure_categories"] = categories
+        base["evaluation"] = evaluation_cfg
+        _write_yaml_with_backup(evaluation_yml, base)
     def _unique_paths(items: List[Path]) -> List[Path]:
         seen: set[str] = set()
         result: List[Path] = []
@@ -1451,10 +2102,17 @@ def create_api_app(
                 filtered = [str(value).strip() for value in raw_failure_categories if isinstance(value, str) and str(value).strip()]
                 if filtered:
                     failure_categories = filtered
+            analysis_data = item.get("analysis") if isinstance(item.get("analysis"), dict) else None
+            label_value = item.get("label") if isinstance(item.get("label"), bool) else None
             metadata = {
                 "index": idx,
                 "source_path": str(source_path),
             }
+            target_category = item.get("target_category")
+            if target_category is not None:
+                metadata["target_category"] = target_category
+            if analysis_data:
+                metadata["analysis"] = analysis_data
             scenarios.append(
                 ScenarioEntryModel(
                     id=str(scenario_id) if scenario_id is not None else None,
@@ -1463,7 +2121,9 @@ def create_api_app(
                     dimensions=dimensions,
                     measures=measures,
                     failure_categories=failure_categories,
+                    label=label_value,
                     metadata=metadata,
+                    analysis=analysis_data,
                 )
             )
         return scenarios
@@ -1509,6 +2169,12 @@ def create_api_app(
                 metadata["manifest"] = json.loads(manifest_path.read_text(encoding="utf-8"))
             except Exception:
                 metadata["manifest_error"] = "unreadable"
+        labeled_count = sum(1 for item in scenarios if item.failure_categories)
+        if labeled_count:
+            metadata["labeled_count"] = labeled_count
+        analysis_count = sum(1 for item in scenarios if item.analysis)
+        if analysis_count:
+            metadata["analysis_count"] = analysis_count
         label = metadata.get("manifest", {}).get("name") if isinstance(metadata.get("manifest"), dict) else None
         if not label:
             label = f"{base_dir.name} ({kind.title()})"
@@ -1530,10 +2196,9 @@ def create_api_app(
         for entry in sorted(root.iterdir()):
             if not entry.is_dir():
                 continue
-            if kind == "generated":
-                file_path = entry / "generated_scenarios.yml"
-            else:
-                file_path = entry / "annotated_scenarios.yml"
+            if kind != "generated":
+                continue
+            file_path = entry / "generated_scenarios.yml"
             if file_path.is_file():
                 sets.append(_build_artifact_set(kind, file_path, entry))
         return sets
@@ -1617,184 +2282,59 @@ def create_api_app(
         default_dir.mkdir(parents=True, exist_ok=True)
         return default_dir / "scenarios.yml"
 
-    def _parse_manifest_timestamp(value: Any) -> Optional[str]:
-        if not isinstance(value, str):
-            return None
-        try:
-            return datetime.strptime(value, "%Y_%m_%d_%H_%M_%S").isoformat()
-        except Exception:
-            return value
-
-    def _manifest_metadata(directory: Path) -> Tuple[Optional[Dict[str, Any]], Optional[Path], Optional[str], Optional[int], Optional[str], Optional[str], Optional[str]]:
-        manifest_path = directory / "manifest.json"
-        manifest_data: Optional[Dict[str, Any]] = None
-        if manifest_path.is_file():
-            try:
-                raw = json.loads(manifest_path.read_text(encoding="utf-8")) or {}
-                if isinstance(raw, dict):
-                    manifest_data = raw
-            except Exception:
-                manifest_data = {}
-        created_at: Optional[str] = None
-        expected_count: Optional[int] = None
-        workflow_generate: Optional[str] = None
-        workflow_run: Optional[str] = None
-        workflow_run_at: Optional[str] = None
-        if manifest_data:
-            timestamp_value = manifest_data.get("timestamp")
-            if timestamp_value:
-                created_at = _parse_manifest_timestamp(timestamp_value)
-            counts = manifest_data.get("counts")
-            if isinstance(counts, dict):
-                raw_total = counts.get("total")
-                if isinstance(raw_total, int):
-                    expected_count = raw_total
-                elif isinstance(raw_total, str):
-                    try:
-                        expected_count = int(raw_total)
-                    except Exception:
-                        expected_count = None
-            workflow_generate = manifest_data.get("workflow_generate") if isinstance(manifest_data.get("workflow_generate"), str) else None
-            workflow_run = manifest_data.get("workflow_run") if isinstance(manifest_data.get("workflow_run"), str) else None
-            workflow_run_at_value = manifest_data.get("workflow_run_at")
-            if isinstance(workflow_run_at_value, str) and workflow_run_at_value:
-                workflow_run_at = workflow_run_at_value
-        manifest_path_obj = manifest_path if manifest_path.is_file() else None
-        return manifest_data if manifest_data else None, manifest_path_obj, created_at, expected_count, workflow_generate, workflow_run, workflow_run_at
-
-    def _build_dataset_record(dataset_path: Path, *, source_kind: str, source_label: Optional[str], source_path: Optional[str], scenario_count: Optional[int]) -> Optional[Tuple[EvaluationDatasetModel, float]]:
-        if not dataset_path.is_file():
-            return None
-        try:
-            data = json.loads(dataset_path.read_text(encoding="utf-8")) or {}
-        except Exception:
-            return None
-        runs = data.get("runs")
-        if not isinstance(runs, list):
-            return None
-        valid_runs = [run for run in runs if isinstance(run, dict)]
-        run_count = len(valid_runs) if valid_runs else len(runs)
-        includes_history = any(isinstance(run.get("history"), list) and run.get("history") for run in valid_runs)
-        try:
-            stat = dataset_path.stat()
-            updated_at = datetime.fromtimestamp(stat.st_mtime).isoformat()
-            updated_ts = float(stat.st_mtime)
-            created_default = datetime.fromtimestamp(stat.st_ctime).isoformat()
-            size_bytes = int(stat.st_size)
-        except Exception:
-            updated_at = None
-            updated_ts = 0.0
-            created_default = None
-            size_bytes = None
-        manifest_data, manifest_path_obj, created_at_manifest, expected_count, workflow_generate, workflow_run, workflow_run_at = _manifest_metadata(dataset_path.parent)
-        created_at = created_at_manifest or created_default
-        if expected_count is None:
-            expected_count = scenario_count
-        manifest_name = manifest_data.get("name") if manifest_data and isinstance(manifest_data.get("name"), str) else None
-        base_label = manifest_name or source_label or dataset_path.parent.name or dataset_path.stem
-        base_label = str(base_label)
-        if dataset_path.name == "generated_runs.json":
-            label = f"{base_label} Runs"
-        else:
-            label = f"{base_label} Runs ({dataset_path.stem})"
-        source_kind_normalized = source_kind if source_kind in {"golden", "generated", "annotated"} else "unknown"
-        dataset = EvaluationDatasetModel(
-            label=label,
-            path=str(dataset_path),
-            source_kind=source_kind_normalized,
-            source_label=source_label,
-            source_path=str(source_path) if source_path else None,
-            run_count=run_count,
-            scenario_count=scenario_count,
-            expected_count=expected_count,
-            includes_history=includes_history,
-            updated_at=updated_at,
-            created_at=created_at,
-            workflow_generate=workflow_generate,
-            workflow_run=workflow_run,
-            workflow_run_at=workflow_run_at,
-            manifest_path=str(manifest_path_obj) if manifest_path_obj else None,
-            size_bytes=size_bytes,
-        )
-        return dataset, updated_ts
-
     def _discover_dataset_entries(ctx) -> List[EvaluationDatasetModel]:
-        dataset_records: List[Tuple[EvaluationDatasetModel, float]] = []
-        seen_paths: Set[str] = set()
-
-        def _register(path: Path, *, source_kind: str, source_label: Optional[str], source_path: Optional[str], scenario_count: Optional[int]) -> None:
-            record = _build_dataset_record(path, source_kind=source_kind, source_label=source_label, source_path=source_path, scenario_count=scenario_count)
-            if not record:
-                return
-            model, updated_ts = record
-            key_path = Path(model.path).expanduser()
-            try:
-                key = str(key_path.resolve(strict=False))
-            except Exception:
-                key = str(key_path)
-            if key in seen_paths:
-                return
-            seen_paths.add(key)
-            dataset_records.append((model, updated_ts))
-
-        all_sets: List[ScenarioSetModel] = []
-        all_sets.extend(_load_golden_sets(ctx))
-        all_sets.extend(_load_artifact_sets(ctx, "generated"))
-        all_sets.extend(_load_artifact_sets(ctx, "annotated"))
-
-        directory_map: Dict[str, Tuple[str, ScenarioSetModel]] = {}
-        for set_model in all_sets:
-            base_path = Path(set_model.path).expanduser()
-            directory = base_path.parent
-            try:
-                directory_key = str(directory.resolve(strict=False))
-            except Exception:
-                directory_key = str(directory)
-            directory_map[directory_key] = (set_model.kind, set_model)
-
-        for directory_key, (kind, set_model) in directory_map.items():
-            directory = Path(directory_key)
-            if not directory.exists():
-                directory = Path(set_model.path).expanduser().parent
-            try:
-                entries = list(directory.iterdir())
-            except Exception:
-                entries = []
-            for entry in entries:
-                if not entry.is_file():
-                    continue
-                if entry.suffix.lower() != ".json":
-                    continue
-                if entry.name == "manifest.json":
-                    continue
-                _register(entry, source_kind=kind, source_label=set_model.label, source_path=set_model.path, scenario_count=set_model.scenario_count)
-
-        artifact_root = _artifact_root(ctx)
-        search_roots: List[Path] = []
-        for directory in _evaluation_dirs(ctx):
-            if directory not in search_roots:
-                search_roots.append(directory)
-        if artifact_root not in search_roots:
-            search_roots.append(artifact_root)
-
-        patterns = ["generated_runs.json", "*_runs.json", "runs_*.json"]
-        for root in search_roots:
-            if not root.is_dir():
+        root = _artifact_root(ctx)
+        if not root.is_dir():
+            return []
+        datasets: List[EvaluationDatasetModel] = []
+        for set_dir in sorted(root.iterdir()):
+            if not set_dir.is_dir():
                 continue
-            for pattern in patterns:
-                for entry in root.rglob(pattern):
-                    if not entry.is_file():
+            splits_root = set_dir / "splits"
+            if not splits_root.is_dir():
+                continue
+            manifest_path = set_dir / "manifest.json"
+            scenario_set_path = set_dir / "generated_scenarios.yml"
+            for category_dir in sorted(splits_root.iterdir()):
+                if not category_dir.is_dir():
+                    continue
+                splits: List[EvaluationDatasetSplitModel] = []
+                for split_file in sorted(category_dir.glob("*.yml")):
+                    split_name = split_file.stem.lower()
+                    if split_name not in {"train", "dev", "test"}:
                         continue
+                    raw_entries = _read_scenarios_file(split_file)
+                    scenario_count = len(raw_entries)
+                    positives = sum(1 for item in raw_entries if item.get("label") is True)
+                    negatives = sum(1 for item in raw_entries if item.get("label") is False)
                     try:
-                        key = str(entry.resolve(strict=False))
+                        updated_at = datetime.fromtimestamp(split_file.stat().st_mtime).isoformat()
                     except Exception:
-                        key = str(entry)
-                    if key in seen_paths:
-                        continue
-                    _register(entry, source_kind="unknown", source_label=None, source_path=None, scenario_count=None)
-
-        dataset_records.sort(key=lambda item: (item[1], item[0].label.lower()), reverse=True)
-        return [item[0] for item in dataset_records]
+                        updated_at = None
+                    splits.append(
+                        EvaluationDatasetSplitModel(
+                            split=split_name,
+                            path=str(split_file),
+                            scenario_count=scenario_count,
+                            positives=positives,
+                            negatives=negatives,
+                            updated_at=updated_at,
+                        )
+                    )
+                if splits:
+                    order = {"train": 0, "dev": 1, "test": 2}
+                    splits.sort(key=lambda item: (order.get(item.split, 99), item.split))
+                    dataset = EvaluationDatasetModel(
+                        set_name=set_dir.name,
+                        category=category_dir.name,
+                        artifact_dir=str(set_dir),
+                        scenario_set_path=str(scenario_set_path) if scenario_set_path.is_file() else None,
+                        manifest_path=str(manifest_path) if manifest_path.is_file() else None,
+                        splits=splits,
+                    )
+                    datasets.append(dataset)
+        datasets.sort(key=lambda item: (item.set_name.lower(), item.category.lower()))
+        return datasets
     
     @app.get("/api/evaluation/dimensions")
     async def get_evaluation_dimensions():
@@ -1906,7 +2446,140 @@ def create_api_app(
         except Exception as exc:
             logger.exception("Scenario generation %s failed", job_id)
             await manager.update_job(job_id, state="failed", error=str(exc), finished_at=_utc_now())
-    
+
+    async def _run_judge_optimization_job(job_id: str, payload: JudgeOptimizationRequest, manifest_path: Path) -> None:
+        manager: JudgeOptimizationManager = app.state.judge_optimization_manager
+        await manager.update_job(job_id, state="running", started_at=_utc_now(), total=1)
+        loop = asyncio.get_running_loop()
+        dataset = payload.dataset
+        dataset_runs_path = dataset.runs_path
+        if (not dataset_runs_path) and dataset.artifact_dir:
+            candidate = Path(dataset.artifact_dir) / "generated_runs.json"
+            if candidate.is_file():
+                dataset_runs_path = str(candidate)
+        source_value = dataset.source
+        try:
+            ctx = load_project(str(manifest_path))
+            found = _find_judge_entry(ctx, payload.judge_key)
+            if found:
+                _dir, _cfg_path, _data, cfg = found
+                input_cfg = cfg.get("input") if isinstance(cfg.get("input"), dict) else {}
+                inferred = input_cfg.get("source")
+                if isinstance(inferred, str) and inferred.strip():
+                    source_value = inferred.strip()
+        except Exception:
+            pass
+        if not source_value:
+            source_value = "final_assistant_text"
+        dataset.runs_path = dataset_runs_path
+        dataset.source = source_value
+        await manager.update_job(job_id, dataset=dataset.model_dump())
+
+        def _execute() -> Dict[str, Any]:
+            return optimize_judge_from_project(
+                proj_path=str(manifest_path),
+                agent_key=None,
+                category=dataset.category,
+                train_file=dataset.train_path,
+                dev_file=dataset.dev_path,
+                test_file=dataset.test_path,
+                name=dataset.set_name,
+                judge_key=payload.judge_key,
+                runs_file=dataset_runs_path,
+                source=source_value,
+                max_turns=1,
+                max_metric_calls=int(payload.max_metric_calls),
+                reflection_model=None,
+                optimize_components="instructions,template",
+                optimizer_key=None,
+                seed=int(payload.seed or 0),
+                output_dir=None,
+                resume=False,
+                apply=True,
+            )
+
+        try:
+            result = await loop.run_in_executor(None, _execute)
+            try:
+                ctx_refresh = load_project(str(manifest_path))
+                found = _find_judge_entry(ctx_refresh, payload.judge_key)
+                if found:
+                    judge_dir, cfg_path, data, cfg = found
+                    agent_cfg = cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
+                    input_cfg = cfg.get("input") if isinstance(cfg.get("input"), dict) else {}
+                    instructions_value = result.get("instructions") if isinstance(result, dict) else None
+                    template_value = result.get("template") if isinstance(result, dict) else None
+                    if instructions_value:
+                        resolved_instr = _resolve_relative_file(cfg_path.parent, agent_cfg.get("instructions_file")) or (judge_dir / "instructions.md")
+                        if resolved_instr:
+                            _write_text_with_backup(resolved_instr, instructions_value)
+                            logger.info("Applied optimized judge instructions: %s", resolved_instr)
+                    if template_value:
+                        resolved_template = _resolve_relative_file(cfg_path.parent, input_cfg.get("template_file")) or (judge_dir / "template.md")
+                        if resolved_template:
+                            _write_text_with_backup(resolved_template, template_value)
+                            logger.info("Applied optimized judge template: %s", resolved_template)
+            except Exception as apply_exc:
+                logger.exception("Failed to apply judge optimization updates: %s", apply_exc)
+            await manager.update_job(
+                job_id,
+                state="completed",
+                completed=1,
+                finished_at=_utc_now(),
+                run_dir=result.get("run_dir"),
+                result_path=result.get("out_json"),
+            )
+        except (Exception, SystemExit) as exc:
+            logger.exception("Judge optimization %s failed", job_id)
+            await manager.update_job(job_id, state="failed", error=str(exc), finished_at=_utc_now(), completed=1)
+
+    async def _run_agent_optimization_job(job_id: str, payload: AgentOptimizationRequest, manifest_path: Path) -> None:
+        manager: AgentOptimizationManager = app.state.agent_optimization_manager
+        await manager.update_job(job_id, state="running", started_at=_utc_now(), total=1)
+        loop = asyncio.get_running_loop()
+        dataset = payload.dataset
+
+        def _execute() -> Dict[str, Any]:
+            return optimize_agent_from_project(
+                proj_path=str(manifest_path),
+                agent_key=payload.agent_key,
+                category=dataset.category,
+                train_file=dataset.train_path,
+                dev_file=dataset.dev_path,
+                test_file=dataset.test_path,
+                name=dataset.set_name,
+                positives_only=bool(payload.positives_only),
+                max_turns=None,
+                max_metric_calls=int(payload.max_metric_calls),
+                reflection_model='gpt-4.1',
+                score_mode='fraction',
+                optimizer_key=None,
+                seed=int(payload.seed or 0),
+                output_dir=None,
+                resume=False,
+                apply=True,
+            )
+
+        try:
+            result = await loop.run_in_executor(None, _execute)
+            try:
+                instructions_value = result.get("instructions") if isinstance(result, dict) else None
+                if instructions_value:
+                    apply_agent_instructions(str(manifest_path), payload.agent_key, instructions_value)
+            except Exception as apply_exc:
+                logger.exception("Failed to apply agent optimization updates: %s", apply_exc)
+            await manager.update_job(
+                job_id,
+                state="completed",
+                completed=1,
+                finished_at=_utc_now(),
+                run_dir=result.get("run_dir") if isinstance(result, dict) else None,
+                result_path=result.get("out_json") if isinstance(result, dict) else None,
+            )
+        except (Exception, SystemExit) as exc:
+            logger.exception("Agent optimization %s failed", job_id)
+            await manager.update_job(job_id, state="failed", error=str(exc), finished_at=_utc_now(), completed=1)
+
     @app.post("/api/evaluation/scenarios/generate")
     async def generate_evaluation_scenarios(payload: ScenarioGenerationRequest):
         try:
@@ -1997,6 +2670,472 @@ def create_api_app(
             datasets = _discover_dataset_entries(ctx)
             payload = EvaluationDatasetsResponse(project=project_name, datasets=datasets)
             return payload.model_dump()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.get("/api/evaluation/judges")
+    async def get_evaluation_judges():
+        try:
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            project_name = resources.get("project_name") or app.state.default_project
+            judges = _load_judge_models(ctx)
+            payload = EvaluationJudgesResponse(project=project_name, judges=judges)
+            return payload.model_dump()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.post("/api/evaluation/judges")
+    async def create_evaluation_judge(payload: EvaluationJudgeCreatePayload):
+        try:
+            raw_name = (payload.name or payload.agent_label or payload.key or "").strip()
+            if not raw_name:
+                raise HTTPException(status_code=422, detail="Judge name is required")
+            key_value = (payload.key or _slugify(raw_name)).strip()
+            if not key_value:
+                key_value = _slugify(raw_name)
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            default_model = ""
+            try:
+                base_spec = build_spec_from_project(ctx)
+                default_model = str(getattr(base_spec, "model_name", "") or "")
+            except Exception:
+                default_model = ""
+            model_candidate = (payload.model or default_model or "").strip()
+            model_value = model_candidate or "gpt-4.1"
+            agent_label_value = (payload.agent_label or raw_name).strip()
+            agent_name_value = (payload.agent_name or "").strip()
+            source_value = (payload.source or "final_assistant_text").strip() or "final_assistant_text"
+            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            project_name = resources.get("project_name") or app.state.default_project
+            failure_category_value = (payload.failure_category or "").strip() or None
+            try:
+                created_files, _root = scaffold_judge(
+                    str(manifest_path),
+                    key_value,
+                    model=model_value,
+                    source=source_value,
+                    add_measure=bool(payload.add_measure),
+                    failure_category=failure_category_value,
+                    force=False,
+                )
+            except FileExistsError:
+                raise HTTPException(status_code=409, detail="Judge already exists")
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=str(exc))
+            judge_path: Optional[Path] = None
+            for item in created_files:
+                candidate = Path(item)
+                if candidate.name == "judge.yml" and candidate.is_file():
+                    judge_path = candidate
+                    break
+            if judge_path is None:
+                for directory in _judge_directories(ctx):
+                    candidate = directory / key_value / "judge.yml"
+                    if candidate.is_file():
+                        judge_path = candidate
+                        break
+            if judge_path is None or not judge_path.is_file():
+                raise HTTPException(status_code=500, detail="Judge manifest not found after creation")
+            try:
+                data = yaml.safe_load(judge_path.read_text(encoding="utf-8")) or {}
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=str(exc))
+            judges_cfg = data.get("judges") if isinstance(data, dict) else {}
+            if not isinstance(judges_cfg, dict) or not judges_cfg:
+                raise HTTPException(status_code=500, detail="Judge manifest is empty")
+            actual_key = next(iter(judges_cfg.keys()))
+            cfg = judges_cfg.get(actual_key) or {}
+            if not isinstance(cfg, dict):
+                cfg = {}
+            agent_cfg = cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
+            input_cfg = cfg.get("input") if isinstance(cfg.get("input"), dict) else {}
+            agent_cfg["label"] = agent_label_value
+            if payload.agent_name is not None:
+                agent_cfg["name"] = agent_name_value or actual_key
+            agent_cfg["model"] = model_value
+            cfg["agent"] = agent_cfg
+            input_cfg["source"] = source_value
+            cfg["input"] = input_cfg
+            if failure_category_value is not None:
+                cfg["failure_category"] = failure_category_value
+            judges_cfg[actual_key] = cfg
+            data["judges"] = judges_cfg
+            _write_yaml_with_backup(judge_path, data)
+            resolved_instr = _resolve_relative_file(judge_path.parent, agent_cfg.get("instructions_file")) or (judge_path.parent / "instructions.md")
+            resolved_template = _resolve_relative_file(judge_path.parent, input_cfg.get("template_file")) or (judge_path.parent / "template.md")
+            if payload.instructions is not None and resolved_instr is not None:
+                _write_text_with_backup(resolved_instr, payload.instructions)
+            if payload.template is not None and resolved_template is not None:
+                _write_text_with_backup(resolved_template, payload.template)
+            if failure_category_value:
+                _ensure_failure_category_mapping(ctx, actual_key, failure_category_value)
+            ctx = load_project(str(manifest_path))
+            judges = _load_judge_models(ctx)
+            response = EvaluationJudgesResponse(project=project_name, judges=judges)
+            return response.model_dump()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.put("/api/evaluation/judges")
+    async def update_evaluation_judge(payload: EvaluationJudgeUpdatePayload):
+        try:
+            key_value = (payload.key or "").strip()
+            if not key_value:
+                raise HTTPException(status_code=422, detail="Judge key is required")
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            project_name = resources.get("project_name") or app.state.default_project
+            found = _find_judge_entry(ctx, key_value)
+            if not found:
+                raise HTTPException(status_code=404, detail="Judge not found")
+            judge_dir, cfg_path, data, cfg = found
+            if not isinstance(cfg, dict):
+                cfg = {}
+            agent_cfg = cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
+            input_cfg = cfg.get("input") if isinstance(cfg.get("input"), dict) else {}
+            if payload.model is not None:
+                agent_cfg["model"] = str(payload.model)
+            if payload.agent_label is not None:
+                agent_cfg["label"] = payload.agent_label
+            if payload.agent_name is not None:
+                agent_cfg["name"] = payload.agent_name
+            cfg["agent"] = agent_cfg
+            if payload.source is not None:
+                input_cfg["source"] = str(payload.source or "final_assistant_text")
+            cfg["input"] = input_cfg
+            if payload.failure_category is not None:
+                fc_value = str(payload.failure_category).strip()
+                if fc_value:
+                    cfg["failure_category"] = fc_value
+                else:
+                    cfg.pop("failure_category", None)
+            judges_block = data.get("judges") if isinstance(data, dict) else {}
+            if not isinstance(judges_block, dict):
+                judges_block = {}
+            judges_block[key_value] = cfg
+            data["judges"] = judges_block
+            _write_yaml_with_backup(cfg_path, data)
+            resolved_instr = _resolve_relative_file(cfg_path.parent, agent_cfg.get("instructions_file")) or (judge_dir / "instructions.md")
+            resolved_template = _resolve_relative_file(cfg_path.parent, input_cfg.get("template_file")) or (judge_dir / "template.md")
+            if payload.instructions is not None and resolved_instr is not None:
+                _write_text_with_backup(resolved_instr, payload.instructions)
+            if payload.template is not None and resolved_template is not None:
+                _write_text_with_backup(resolved_template, payload.template)
+            failure_value = payload.failure_category.strip() if isinstance(payload.failure_category, str) else None
+            if failure_value:
+                _ensure_failure_category_mapping(ctx, key_value, failure_value)
+            ctx = load_project(str(manifest_path))
+            judges = _load_judge_models(ctx)
+            response = EvaluationJudgesResponse(project=project_name, judges=judges)
+            return response.model_dump()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.delete("/api/evaluation/judges/{key}")
+    async def delete_evaluation_judge(key: str):
+        try:
+            key_value = (key or "").strip()
+            if not key_value:
+                raise HTTPException(status_code=422, detail="Judge key is required")
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            project_name = resources.get("project_name") or app.state.default_project
+            found = _find_judge_entry(ctx, key_value)
+            if not found:
+                raise HTTPException(status_code=404, detail="Judge not found")
+            judge_dir, _cfg_path, _data, _cfg = found
+            try:
+                shutil.rmtree(judge_dir)
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=str(exc))
+            ctx = load_project(str(manifest_path))
+            judges = _load_judge_models(ctx)
+            response = EvaluationJudgeDeleteResponse(project=project_name, deleted=key_value, judges=judges)
+            return response.model_dump()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.post("/api/evaluation/judges/optimize")
+    async def start_judge_optimization(payload: JudgeOptimizationRequest):
+        try:
+            judge_key = (payload.judge_key or "").strip()
+            if not judge_key:
+                raise HTTPException(status_code=422, detail="Judge key is required")
+            dataset = payload.dataset
+            if not dataset:
+                raise HTTPException(status_code=422, detail="Dataset selection is required")
+            set_name_value = (dataset.set_name or "").strip()
+            category_value = (dataset.category or "").strip()
+            if not set_name_value or not category_value:
+                raise HTTPException(status_code=422, detail="Dataset set_name and category are required")
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            project_name = resources.get("project_name") or app.state.default_project
+            found = _find_judge_entry(ctx, judge_key)
+            if not found:
+                raise HTTPException(status_code=404, detail="Judge not found")
+            _judge_dir, _cfg_path, data, cfg = found
+            input_cfg = cfg.get("input") if isinstance(cfg.get("input"), dict) else {}
+            judge_source = input_cfg.get("source") if isinstance(input_cfg.get("source"), str) else None
+            split_paths = {
+                "train": dataset.train_path,
+                "dev": dataset.dev_path,
+                "test": dataset.test_path,
+            }
+            resolved_splits: Dict[str, str] = {}
+            for split_name, raw_path in split_paths.items():
+                candidate = Path(str(raw_path)).expanduser().resolve(strict=False)
+                if not candidate.is_file():
+                    raise HTTPException(status_code=422, detail=f"{split_name.title()} split not found at {candidate}")
+                resolved_splits[split_name] = str(candidate)
+            runs_path = dataset.runs_path
+            if (not runs_path) and dataset.artifact_dir:
+                candidate = Path(dataset.artifact_dir).expanduser().resolve(strict=False) / "generated_runs.json"
+                if candidate.is_file():
+                    runs_path = str(candidate)
+            if not runs_path:
+                raise HTTPException(status_code=422, detail="Runs file not found. Run the scenarios before optimizing.")
+            dataset.set_name = set_name_value
+            dataset.category = category_value
+            dataset.train_path = resolved_splits["train"]
+            dataset.dev_path = resolved_splits["dev"]
+            dataset.test_path = resolved_splits["test"]
+            dataset.runs_path = runs_path
+            if judge_source and isinstance(judge_source, str) and judge_source.strip():
+                dataset.source = judge_source.strip()
+            else:
+                dataset.source = dataset.source or "final_assistant_text"
+            payload.judge_key = judge_key
+            job_payload = JudgeOptimizationRequest(**payload.model_dump())
+            manager: JudgeOptimizationManager = app.state.judge_optimization_manager
+            job = await manager.create_job(project_name, job_payload)
+            await manager.update_job(job.job_id, dataset=job_payload.dataset.model_dump())
+            task = asyncio.create_task(_run_judge_optimization_job(job.job_id, job_payload, manifest_path))
+            await manager.register_task(job.job_id, task)
+            status = await manager.get_status(job.job_id)
+            status_model = JudgeOptimizationStatusModel(**status) if status else None
+            response = JudgeOptimizationResponse(job_id=job.job_id, status=status_model)
+            return response.model_dump()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.get("/api/evaluation/judges/optimize/{job_id}")
+    async def get_judge_optimization(job_id: str):
+        manager: JudgeOptimizationManager = app.state.judge_optimization_manager
+        status = await manager.get_status(job_id)
+        if not status:
+            raise HTTPException(status_code=404, detail="Judge optimization not found")
+        status_model = JudgeOptimizationStatusModel(**status)
+        response = JudgeOptimizationResponse(job_id=job_id, status=status_model)
+        return response.model_dump()
+
+    @app.post("/api/evaluation/agents/optimize")
+    async def start_agent_optimization(payload: AgentOptimizationRequest):
+        try:
+            agent_key = (payload.agent_key or "").strip()
+            if not agent_key:
+                raise HTTPException(status_code=422, detail="Agent key is required")
+            dataset_payload = payload.dataset
+            if not dataset_payload:
+                raise HTTPException(status_code=422, detail="Dataset selection is required")
+            set_name_value = (dataset_payload.set_name or "").strip()
+            category_value = (dataset_payload.category or "").strip()
+            if not set_name_value or not category_value:
+                raise HTTPException(status_code=422, detail="Dataset set_name and category are required")
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            project_name = resources.get("project_name") or app.state.default_project
+            try:
+                resolve_agent(ctx, agent_key)
+            except Exception:
+                raise HTTPException(status_code=404, detail="Agent not found")
+            split_paths = {
+                "train": dataset_payload.train_path,
+                "dev": dataset_payload.dev_path,
+                "test": dataset_payload.test_path,
+            }
+            resolved_splits: Dict[str, str] = {}
+            for split_name, raw_path in split_paths.items():
+                candidate = Path(str(raw_path)).expanduser().resolve(strict=False)
+                if not candidate.is_file():
+                    raise HTTPException(status_code=422, detail=f"{split_name.title()} split not found at {candidate}")
+                resolved_splits[split_name] = str(candidate)
+            normalized_dataset = AgentOptimizationDatasetPayload(
+                set_name=set_name_value,
+                category=category_value,
+                artifact_dir=dataset_payload.artifact_dir,
+                train_path=resolved_splits["train"],
+                dev_path=resolved_splits["dev"],
+                test_path=resolved_splits["test"],
+            )
+            positives_only_value = bool(payload.positives_only)
+            max_metric_calls_value = int(payload.max_metric_calls or 100)
+            if max_metric_calls_value <= 0:
+                raise HTTPException(status_code=422, detail="Budget must be a positive integer")
+            seed_value = int(payload.seed or 0)
+            normalized_request = AgentOptimizationRequest(
+                agent_key=agent_key,
+                dataset=normalized_dataset,
+                positives_only=positives_only_value,
+                max_metric_calls=max_metric_calls_value,
+                seed=seed_value,
+            )
+            manager: AgentOptimizationManager = app.state.agent_optimization_manager
+            job = await manager.create_job(project_name, normalized_request)
+            await manager.update_job(job.job_id, dataset=normalized_dataset.model_dump())
+            task = asyncio.create_task(_run_agent_optimization_job(job.job_id, normalized_request, manifest_path))
+            await manager.register_task(job.job_id, task)
+            status = await manager.get_status(job.job_id)
+            status_model = AgentOptimizationStatusModel(**status) if status else None
+            response = AgentOptimizationResponse(job_id=job.job_id, status=status_model)
+            return response.model_dump()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.get("/api/evaluation/agents/optimize/{job_id}")
+    async def get_agent_optimization(job_id: str):
+        manager: AgentOptimizationManager = app.state.agent_optimization_manager
+        status = await manager.get_status(job_id)
+        if not status:
+            raise HTTPException(status_code=404, detail="Agent optimization not found")
+        status_model = AgentOptimizationStatusModel(**status)
+        response = AgentOptimizationResponse(job_id=job_id, status=status_model)
+        return response.model_dump()
+
+    @app.get("/api/evaluation/datasets/split")
+    async def get_evaluation_dataset_split(path: str = Query(..., description="Absolute path to the split file")):
+        try:
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            project_name = resources.get("project_name") or app.state.default_project
+            target_path = Path(path).expanduser().resolve(strict=False)
+            datasets = _discover_dataset_entries(ctx)
+            matched_dataset: Optional[EvaluationDatasetModel] = None
+            matched_split: Optional[EvaluationDatasetSplitModel] = None
+            for dataset in datasets:
+                for split in dataset.splits:
+                    split_path = Path(split.path).expanduser().resolve(strict=False)
+                    if split_path == target_path:
+                        matched_dataset = dataset
+                        matched_split = split
+                        break
+                if matched_split is not None:
+                    break
+            if matched_dataset is None or matched_split is None:
+                raise HTTPException(status_code=404, detail="Dataset split not found")
+            if not target_path.is_file():
+                raise HTTPException(status_code=404, detail="Split file not found")
+            raw_entries = _read_scenarios_file(target_path)
+            scenarios = _build_scenario_entries(raw_entries, target_path)
+            artifact_dir = Path(matched_dataset.artifact_dir)
+            runs_index: Dict[str, Dict[str, Any]] = {}
+            if artifact_dir.is_dir():
+                run_files = sorted(artifact_dir.glob("*runs*.json"))
+                for run_file in run_files:
+                    try:
+                        runs_payload = json.loads(run_file.read_text(encoding="utf-8"))
+                    except Exception:
+                        continue
+                    runs_list = runs_payload.get("runs") if isinstance(runs_payload, dict) else None
+                    if not isinstance(runs_list, list):
+                        continue
+                    for run in runs_list:
+                        if not isinstance(run, dict):
+                            continue
+                        scenario_id = run.get("scenario_id")
+                        if scenario_id is None and isinstance(run.get("scenario"), dict):
+                            scenario_id = run["scenario"].get("id")
+                        if scenario_id is not None:
+                            runs_index[str(scenario_id)] = run
+                        scenario_name = run.get("scenario_name")
+                        if isinstance(scenario_name, str) and scenario_name:
+                            runs_index[f"name::{scenario_name}"] = run
+
+            def _extract_assistant_message(run_entry: Dict[str, Any]) -> Optional[str]:
+                if not run_entry:
+                    return None
+                message = run_entry.get("final_assistant_text")
+                if isinstance(message, str) and message.strip():
+                    return message
+                history = run_entry.get("history")
+                if isinstance(history, list):
+                    for item in reversed(history):
+                        if not isinstance(item, dict):
+                            continue
+                        if item.get("role") != "assistant":
+                            continue
+                        content = item.get("content")
+                        if isinstance(content, str) and content.strip():
+                            return content
+                        if isinstance(content, list):
+                            texts: List[str] = []
+                            for part in content:
+                                if isinstance(part, dict):
+                                    text_value = part.get("text")
+                                    if isinstance(text_value, str) and text_value:
+                                        texts.append(text_value)
+                                elif isinstance(part, str):
+                                    texts.append(part)
+                            combined = "\n".join(t for t in texts if t.strip())
+                            if combined.strip():
+                                return combined
+                return None
+
+            for scenario in scenarios:
+                run_entry: Optional[Dict[str, Any]] = None
+                if scenario.id is not None:
+                    run_entry = runs_index.get(str(scenario.id))
+                if run_entry is None and scenario.name:
+                    run_entry = runs_index.get(f"name::{scenario.name}")
+                assistant_message = _extract_assistant_message(run_entry or {}) if run_entry else None
+                if assistant_message:
+                    metadata = dict(scenario.metadata or {})
+                    metadata["assistant_last_message"] = assistant_message
+                    scenario.metadata = metadata
+            positives = sum(1 for item in raw_entries if isinstance(item.get("label"), bool) and item.get("label") is True)
+            negatives = sum(1 for item in raw_entries if isinstance(item.get("label"), bool) and item.get("label") is False)
+            try:
+                updated_at = datetime.fromtimestamp(target_path.stat().st_mtime).isoformat()
+            except Exception:
+                updated_at = matched_split.updated_at
+            split_payload = EvaluationDatasetSplitModel(
+                split=matched_split.split,
+                path=str(target_path),
+                scenario_count=len(raw_entries),
+                positives=positives,
+                negatives=negatives,
+                updated_at=updated_at,
+            )
+            response = EvaluationDatasetSplitBrowseResponse(
+                project=project_name,
+                set_name=matched_dataset.set_name,
+                category=matched_dataset.category,
+                split=split_payload,
+                scenarios=scenarios,
+            )
+            return response.model_dump()
         except HTTPException:
             raise
         except Exception as exc:
@@ -2094,7 +3233,7 @@ def create_api_app(
             target_path = Path(payload.set_path).expanduser().resolve(strict=False)
             if payload.kind == 'golden':
                 raise HTTPException(status_code=422, detail="Annotation is only supported for generated or annotated sets")
-            scenario_set = _get_scenario_set_by_path(ctx, payload.kind, target_path)
+            scenario_set = _get_scenario_set_by_path(ctx, 'generated', target_path)
             file_path = Path(scenario_set.path)
             if not file_path.is_file():
                 raise HTTPException(status_code=404, detail="Scenario file not found")
@@ -2118,12 +3257,103 @@ def create_api_app(
                 raise HTTPException(status_code=404, detail=str(exc))
             annotated, _original, source_path = annotate_scenarios(Path(agent_yaml_path), file_path, str(project_name), None)
             output_path = write_annotation_output(ctx.root, source_path, annotated)
-            annotated_set = _get_scenario_set_by_path(ctx, 'annotated', output_path)
+            annotated_set = _get_scenario_set_by_path(ctx, 'generated', output_path)
             response = ScenarioAnnotateResponseModel(
                 project=str(project_name),
                 annotated_path=str(output_path),
                 set=annotated_set,
             )
+            return response.model_dump()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.post("/api/evaluation/scenarios/split")
+    async def split_evaluation_scenarios(payload: ScenarioSplitPayload):
+        try:
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            category = payload.category.strip()
+            if not category:
+                raise HTTPException(status_code=422, detail="Category is required")
+            if payload.kind == 'golden':
+                raise HTTPException(status_code=422, detail="Cannot split golden scenarios")
+            total_fraction = float(payload.train) + float(payload.dev) + float(payload.test)
+            if total_fraction <= 0:
+                raise HTTPException(status_code=422, detail="Train/dev/test fractions must sum to more than zero")
+            target_path = Path(payload.set_path).expanduser().resolve(strict=False)
+            scenario_set = _get_scenario_set_by_path(ctx, payload.kind, target_path)
+            file_path = Path(scenario_set.path)
+            if not file_path.is_file():
+                raise HTTPException(status_code=404, detail="Scenario file not found")
+            base_dir = file_path.parent
+            if payload.output_dir:
+                output_dir = Path(payload.output_dir)
+                if not output_dir.is_absolute():
+                    output_dir = (base_dir / output_dir).resolve()
+            else:
+                output_dir = None
+            try:
+                create_splits(
+                    file_path,
+                    category,
+                    output_dir=output_dir,
+                    f_train=float(payload.train),
+                    f_dev=float(payload.dev),
+                    f_test=float(payload.test),
+                    seed=int(payload.seed),
+                    negatives_ratio=float(payload.negatives_ratio) if payload.negatives_ratio is not None else None,
+                )
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=str(exc))
+            refreshed_ctx = load_project(str(manifest_path))
+            datasets = _discover_dataset_entries(refreshed_ctx)
+            set_name = base_dir.name
+            matched_dataset: Optional[EvaluationDatasetModel] = None
+            for dataset in datasets:
+                if dataset.set_name == set_name and dataset.category == category:
+                    matched_dataset = dataset
+                    break
+            if matched_dataset is None:
+                raise HTTPException(status_code=500, detail="Failed to locate created dataset")
+            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            project_name = resources.get("project_name") or app.state.default_project
+            response = ScenarioSplitResponse(project=str(project_name) if project_name else None, dataset=matched_dataset)
+            return response.model_dump()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.delete("/api/evaluation/datasets")
+    async def delete_evaluation_dataset(payload: EvaluationDatasetDeletePayload):
+        try:
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            base_dir = (_artifact_root(ctx) / payload.set_name).resolve()
+            if not base_dir.is_dir():
+                raise HTTPException(status_code=404, detail="Dataset set directory not found")
+            splits_root = base_dir / "splits" / payload.category
+            if splits_root.is_dir():
+                shutil.rmtree(splits_root)
+            runs_files = list(base_dir.glob("*runs*.json"))
+            for runs_file in runs_files:
+                try:
+                    data = json.loads(runs_file.read_text(encoding="utf-8"))
+                except Exception:
+                    data = {}
+                runs = data.get("runs") if isinstance(data, dict) else None
+                if not isinstance(runs, list) or not runs:
+                    try:
+                        runs_file.unlink()
+                    except Exception:
+                        pass
+            refreshed_ctx = load_project(str(manifest_path))
+            datasets = _discover_dataset_entries(refreshed_ctx)
+            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            project_name = resources.get("project_name") or app.state.default_project
+            response = EvaluationDatasetDeleteResponse(project=str(project_name) if project_name else None, datasets=datasets)
             return response.model_dump()
         except HTTPException:
             raise
@@ -2225,7 +3455,9 @@ def create_api_app(
                         progress["completed"] = count
                     asyncio.create_task(manager.update_job(job_id, completed=progress["completed"]))
     
-            runs = await run_scenarios_against_agent(compiled_path, scenarios, max_turns=payload.max_turns, include_history=payload.include_history, workflow_name=workflow_name, progress_cb=_progress_cb)
+            for sc in scenarios:
+                sc.setdefault('_source_path', str(Path(scenario_set.path)))
+            runs = await run_scenarios_against_agent(compiled_path, scenarios, max_turns=payload.max_turns, include_history=payload.include_history, workflow_name=workflow_name, progress_cb=_progress_cb, scenario_source_path=Path(scenario_set.path))
     
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(json.dumps({"runs": runs}, indent=2), encoding="utf-8")
@@ -2272,6 +3504,8 @@ def create_api_app(
             if not entries:
                 raise HTTPException(status_code=422, detail="Scenario set is empty")
             scenarios = _ensure_scenario_ids(entries)
+            for sc in scenarios:
+                sc['_source_path'] = str(file_path)
             output_path = _resolve_runs_output_path(manifest_path, file_path, payload.output_path)
             resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
@@ -3391,6 +4625,92 @@ def create_api_app(
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
     
+    def _sync_scenario_annotations(project: str, group_id: str, analysis_payload: Optional[Dict[str, Any]] = None) -> None:
+        try:
+            storage = storage_manager.get_storage(project)
+        except ValueError:
+            return
+        traces = storage.get_traces_by_group(group_id)
+        scenario_path: Optional[Path] = None
+        scenario_id: Optional[str] = None
+        scenario_name: Optional[str] = None
+        workflow_name: Optional[str] = None
+        for trace in traces:
+            metadata_raw = trace.get("metadata")
+            try:
+                metadata = json.loads(metadata_raw) if isinstance(metadata_raw, str) else metadata_raw or {}
+            except Exception:
+                metadata = {}
+            scenario_meta = metadata.get("omniagents", {}).get("scenario") or {}
+            raw_path = scenario_meta.get("path") or scenario_meta.get("source_path")
+            if raw_path and not scenario_path:
+                candidate = Path(str(raw_path)).expanduser()
+                scenario_path = candidate
+            if not scenario_id:
+                sid = scenario_meta.get("id")
+                if sid is not None:
+                    scenario_id = str(sid)
+            if not scenario_name:
+                sname = scenario_meta.get("name")
+                if sname is not None:
+                    scenario_name = str(sname)
+            if scenario_meta:
+                workflow_name = trace.get("workflow_name") or workflow_name
+            if scenario_path and (scenario_id or scenario_name):
+                break
+        if not scenario_path or not scenario_path.exists():
+            return
+        entries = _read_scenarios_file(scenario_path)
+        if not entries:
+            return
+        target_index: Optional[int] = None
+        for idx, entry in enumerate(entries):
+            if scenario_id and str(entry.get("id")) == scenario_id:
+                target_index = idx
+                break
+            if not scenario_id and scenario_name and entry.get("name") == scenario_name:
+                target_index = idx
+                break
+        if target_index is None:
+            return
+        scenario_entry = dict(entries[target_index])
+        category_ids = storage.get_analysis_categories(group_id)
+        categories: List[str] = []
+        if category_ids:
+            defs = storage.get_failure_categories(project)
+            id_to_name = {int(item.get("id")): item.get("name") for item in defs if item.get("id") is not None}
+            slugs = {_slugify(id_to_name[cid]) for cid in category_ids if cid in id_to_name}
+            categories = sorted(slugs)
+        if categories:
+            scenario_entry["failure_categories"] = categories
+        else:
+            scenario_entry.pop("failure_categories", None)
+        if analysis_payload is None:
+            record = storage.get_analysis(project, group_id)
+            if record:
+                analysis_payload = {
+                    "markedForAnalysis": bool(record.get("marked_for_analysis")),
+                    "judgment": record.get("judgment"),
+                    "notes": record.get("notes") or "",
+                    "analyzedAt": record.get("analyzed_at"),
+                }
+        if analysis_payload:
+            analysis_block = {
+                "group_id": group_id,
+                "judgment": analysis_payload.get("judgment"),
+                "notes": analysis_payload.get("notes"),
+                "marked": analysis_payload.get("markedForAnalysis"),
+                "analyzed_at": analysis_payload.get("analyzedAt"),
+                "updated_at": _utc_now(),
+            }
+            if workflow_name:
+                analysis_block["workflow"] = workflow_name
+            scenario_entry["analysis"] = analysis_block
+        else:
+            scenario_entry.pop("analysis", None)
+        entries[target_index] = scenario_entry
+        _write_scenarios_file(scenario_path, entries)
+
     @app.put("/api/analysis/{project}/{group_id}")
     async def update_analysis(
         project: str,
@@ -3401,6 +4721,7 @@ def create_api_app(
         try:
             storage = storage_manager.get_storage(project)
             storage.upsert_analysis(project, group_id, analysis_data)
+            _sync_scenario_annotations(project, group_id, analysis_data)
             
             # Return the updated data
             return {
@@ -3535,6 +4856,7 @@ def create_api_app(
                 raise HTTPException(status_code=400, detail="Invalid category IDs")
             
             storage.set_analysis_categories(project, group_id, category_ids)
+            _sync_scenario_annotations(project, group_id)
             return {'categoryIds': category_ids}
         except ValueError:
             raise HTTPException(status_code=404, detail="Project not found")
@@ -3641,7 +4963,45 @@ def create_api_app(
                 await websocket.close()
             except Exception:
                 pass
-    
+
+    @app.websocket("/api/evaluation/judges/optimize/{job_id}/ws")
+    async def judge_optimize_ws(job_id: str, websocket: WebSocket):
+        manager: JudgeOptimizationManager = app.state.judge_optimization_manager
+        accepted = await manager.add_connection(job_id, websocket)
+        if not accepted:
+            await websocket.close(code=4404)
+            return
+        try:
+            while True:
+                await asyncio.sleep(1)
+        except WebSocketDisconnect:
+            await manager.remove_connection(job_id, websocket)
+        except Exception:
+            await manager.remove_connection(job_id, websocket)
+            try:
+                await websocket.close()
+            except Exception:
+                pass
+
+    @app.websocket("/api/evaluation/agents/optimize/{job_id}/ws")
+    async def agent_optimize_ws(job_id: str, websocket: WebSocket):
+        manager: AgentOptimizationManager = app.state.agent_optimization_manager
+        accepted = await manager.add_connection(job_id, websocket)
+        if not accepted:
+            await websocket.close(code=4404)
+            return
+        try:
+            while True:
+                await asyncio.sleep(1)
+        except WebSocketDisconnect:
+            await manager.remove_connection(job_id, websocket)
+        except Exception:
+            await manager.remove_connection(job_id, websocket)
+            try:
+                await websocket.close()
+            except Exception:
+                pass
+
     @app.websocket("/api/ws/traces")
     async def websocket_endpoint(websocket: WebSocket):
         """WebSocket for real-time trace updates"""

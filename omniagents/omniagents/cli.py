@@ -1085,7 +1085,7 @@ def main():
                                 if assistant:
                                     a = assistant if len(assistant) <= 300 else (assistant[:300] + '...')
                                     print(f"  Assistant: {a}")
-                            if rsn and verbose:
+                            if rsn:
                                 print(f"  Reason: {rsn}")
                     if not quiet:
                         print("")
@@ -1324,7 +1324,7 @@ def main():
                     )
                 else:
                     out_path = write_annotation_output(ctx.root, source_path, annotated)
-                print(f"Wrote annotated scenarios ({len(annotated)} entries) to {out_path}")
+                print(f"Updated annotations for {len(annotated)} scenarios in {out_path}")
                 sys.exit(0)
             except SystemExit:
                 raise
@@ -1370,6 +1370,7 @@ def main():
                         import hashlib, json as _json
                         blob = _json.dumps({"prompt": str(sc.get("prompt", "")), "dimensions": mapping or {}}, sort_keys=True)
                         sc['id'] = hashlib.sha1(blob.encode('utf-8')).hexdigest()[:16]
+                    sc['_source_path'] = str(in_path)
                 cfg = yaml.safe_load(_P(compiled_cfg_path).read_text(encoding='utf-8')) or {}
                 tracing = (cfg.get('tracing') or {})
                 try:
@@ -1454,7 +1455,7 @@ def main():
                                     print(f"Completed {cnt} scenarios.")
                                 except Exception:
                                     pass
-                        runs = _asyncio.run(run_scenarios_against_agent(_P(compiled_cfg_path).resolve(), scenarios, max_turns=args.run_max_turns, include_history=bool(getattr(args,'include_history', False)), workflow_name=wf_name, progress_cb=_progress_cb))
+                        runs = _asyncio.run(run_scenarios_against_agent(_P(compiled_cfg_path).resolve(), scenarios, max_turns=args.run_max_turns, include_history=bool(getattr(args,'include_history', False)), workflow_name=wf_name, progress_cb=_progress_cb, scenario_source_path=in_path))
                     else:
                         import asyncio as _asyncio
                         qlvl_pre = int(getattr(args, 'quiet', 0) or 0)
@@ -1515,7 +1516,7 @@ def main():
                                     print(f"Completed {cnt} scenarios.")
                                 except Exception:
                                     pass
-                        runs = _asyncio.run(run_scenarios_against_agent(_P(compiled_cfg_path).resolve(), scenarios, max_turns=args.run_max_turns, include_history=bool(getattr(args,'include_history', False)), progress_cb=_progress_cb))
+                        runs = _asyncio.run(run_scenarios_against_agent(_P(compiled_cfg_path).resolve(), scenarios, max_turns=args.run_max_turns, include_history=bool(getattr(args,'include_history', False)), progress_cb=_progress_cb, scenario_source_path=in_path))
                 except Exception:
                     import asyncio as _asyncio
                     qlvl_pre = int(getattr(args, 'quiet', 0) or 0)
@@ -1576,7 +1577,7 @@ def main():
                                 print(f"Completed {cnt} scenarios.")
                             except Exception:
                                 pass
-                    runs = _asyncio.run(run_scenarios_against_agent(_P(compiled_cfg_path).resolve(), scenarios, max_turns=args.run_max_turns, include_history=bool(getattr(args,'include_history', False)), progress_cb=_progress_cb))
+                    runs = _asyncio.run(run_scenarios_against_agent(_P(compiled_cfg_path).resolve(), scenarios, max_turns=args.run_max_turns, include_history=bool(getattr(args,'include_history', False)), progress_cb=_progress_cb, scenario_source_path=in_path))
                 out_arg = str(getattr(args, 'output', '') or '').strip()
                 if out_arg:
                     run_out = _P(out_arg)

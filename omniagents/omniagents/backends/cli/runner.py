@@ -193,7 +193,7 @@ async def run_cli(
         print(f"{spec.welcome_text}\n(Type 'exit' to quit)\n")
 
         session_id = getattr(args, "session_id", None) if args is not None else None
-        local_session = Session(session_id)
+        local_session = Session(spec.project_slug, spec.agent_slug, session_id)
         conversation = list(local_session.history)
         if session_id is None:
             print(f"Session ID: {local_session.id}")

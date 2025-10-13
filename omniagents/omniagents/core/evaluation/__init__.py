@@ -1,5 +1,17 @@
 from .registry import evaluation_measure, run_measures, get_measure
-from .context import EvalContext, build_eval_context, extract_tool_calls, allowed_tool_names
+from .context import (
+    EvalContext,
+    JudgeResult,
+    Message,
+    ToolCall,
+    ToolLink,
+    ToolOutput,
+    allowed_tool_names,
+    build_eval_context,
+    extract_tool_calls,
+    fail_reason,
+    pass_reason,
+)
 from .assertions import (
     parse_tool_calls,
     parse_tool_outputs,
@@ -19,9 +31,16 @@ __all__ = [
     "run_measures",
     "get_measure",
     "EvalContext",
+    "JudgeResult",
+    "Message",
+    "ToolCall",
+    "ToolOutput",
+    "ToolLink",
     "build_eval_context",
     "extract_tool_calls",
     "allowed_tool_names",
+    "pass_reason",
+    "fail_reason",
     "parse_tool_calls",
     "parse_tool_outputs",
     "link_outputs",

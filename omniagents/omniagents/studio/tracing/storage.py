@@ -208,7 +208,7 @@ class SQLiteStorage:
     
     def get_traces(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Get recent traces from this database
-        
+
         Args:
             limit: Maximum number of traces to return
         """
@@ -219,6 +219,16 @@ class SQLiteStorage:
             ORDER BY created_at DESC 
             LIMIT ?
         ''', (limit,))
+        return [dict(row) for row in cursor]
+
+    def get_traces_by_group(self, group_id: str) -> List[Dict[str, Any]]:
+        cursor = self.conn.execute('''
+            SELECT trace_id, workflow_name, group_id, metadata,
+                   datetime(created_at) || 'Z' as created_at
+            FROM traces
+            WHERE group_id = ?
+            ORDER BY created_at DESC
+        ''', (group_id,))
         return [dict(row) for row in cursor]
 
     def get_workflow_names(self) -> List[str]:

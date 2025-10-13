@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import inspect
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -73,6 +74,9 @@ class OmniAgentsAgentAdapter:
         # Always provide proposal generation; if no optimizer configured,
         # fall back to built-in agent prompts to avoid generic reflection.
         self.propose_new_texts = self._propose_new_texts  # type: ignore
+        self.debug_dir: Optional[Path] = None
+        self.__debug_iter = 0
+        self.__debug_last_batch_ids: List[str] = []
 
     async def _run_once(self, instructions: str, prompt: str) -> Dict[str, Any]:
         spec = load_agent_spec_from_yaml(str(self.compiled_yaml))
@@ -91,13 +95,24 @@ class OmniAgentsAgentAdapter:
         agent = await create_unified_agent(spec)
         msgs = [{"role": "user", "content": prompt}]
 
-        run = agent.run_streamed(msgs)
-        async for _ in run.stream_events():
-            pass
+        try:
+            run = agent.run_streamed(msgs)
+            async for _ in run.stream_events():
+                pass
 
-        session_id = getattr(agent, "_session_id", None)
-        history = load_history(session_id) if session_id else []
-        text = final_assistant_text(history)
+            session_id = getattr(agent, "_session_id", None)
+            history = load_history(
+                session_id,
+                project_slug=spec.project_slug,
+                agent_slug=spec.agent_slug,
+            ) if session_id else []
+            text = final_assistant_text(history)
+        finally:
+            cleanup = getattr(agent, "cleanup", None)
+            if callable(cleanup):
+                maybe_coro = cleanup()
+                if inspect.isawaitable(maybe_coro):
+                    await maybe_coro  # type: ignore[arg-type]
 
         cfg = yaml.safe_load(self.compiled_yaml.read_text(encoding="utf-8")) or {}
         eval_cfg = (cfg.get("evaluation") or {})
@@ -128,15 +143,6 @@ class OmniAgentsAgentAdapter:
             return 1.0 if passed == total else 0.0
         return passed / total
 
-    def _find_classification_measure(self, measures: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        try:
-            cands = [m for m in (measures or []) if isinstance(m.get("name"), str) and str(m.get("name")).endswith("_judge_agent")]
-            if cands:
-                return cands[0]
-        except Exception:
-            pass
-        return None
-
     def evaluate(
         self,
         batch: List[Dict[str, Any]],
@@ -147,15 +153,19 @@ class OmniAgentsAgentAdapter:
 
         async def _run_batch() -> List[Dict[str, Any]]:
             outs: List[Dict[str, Any]] = []
-            # Determine if labels are present for classification feedback/scoring
-            has_labels = any(("label" in it) for it in (batch or []))
-            # Pre-compute counts for potential balanced scoring (not used yet; reserved)
-            pos_count = sum(1 for it in (batch or []) if bool(it.get("label"))) if has_labels else 0
-            neg_count = sum(1 for it in (batch or []) if ("label" in it and not bool(it.get("label")))) if has_labels else 0
             for item in batch:
                 prompt = str(item.get("prompt") or "")
                 if not prompt:
-                    outs.append({"score": 0.0, "error": "missing_prompt"})
+                    fail_entry = {"name": "prompt", "reason": "missing_prompt"}
+                    outs.append({
+                        "id": item.get("id"),
+                        "name": item.get("name"),
+                        "score": 0.0,
+                        "violation": True,
+                        "failures": [fail_entry],
+                        "measures": [],
+                        "prompt": prompt,
+                    })
                     continue
                 try:
                     if self.workflow_name:
@@ -181,79 +191,43 @@ class OmniAgentsAgentAdapter:
                     else:
                         res = await self._run_once(instructions, prompt)
                 except Exception as e:
-                    outs.append({"score": 0.0, "error": f"run_failed:{e}"})
+                    fail_entry = {"name": "execution", "reason": str(e)}
+                    outs.append({
+                        "id": item.get("id"),
+                        "name": item.get("name"),
+                        "score": 0.0,
+                        "violation": True,
+                        "failures": [fail_entry],
+                        "measures": [],
+                        "prompt": prompt,
+                    })
                     continue
                 measures = list(res.get("measures") or [])
-                # Derive classification using judge-backed measure when labels exist
-                class_info = None
-                class_score = None
-                try:
-                    if has_labels:
-                        cm = self._find_classification_measure(measures)
-                        if cm is not None and ("label" in item):
-                            label = bool(item.get("label"))
-                            passed = (cm.get("passed") is True)
-                            # Map judge-backed measure pass=>no violation (pred=False), fail=>violation (pred=True)
-                            pred = (not passed)
-                            agree = (pred == label)
-                            kind = None
-                            if pred is None:
-                                kind = "UNK"
-                            else:
-                                if pred is True and label is True:
-                                    kind = "TP"
-                                elif pred is False and label is False:
-                                    kind = "TN"
-                                elif pred is True and label is False:
-                                    kind = "FP"
-                                elif pred is False and label is True:
-                                    kind = "FN"
-                            class_info = {"pred": pred, "label": label, "agree": agree, "kind": kind, "measure": cm.get("name")}
-                            class_score = 1.0 if (agree is True) else 0.0
-                except Exception:
-                    class_info = None
-                    class_score = None
-
-                # Compute constraint score over remaining measures (exclude classification measure to avoid double counting)
-                constraints = []
-                if measures:
-                    cm_name = class_info.get("measure") if isinstance(class_info, dict) else None
-                    for m in measures:
-                        if cm_name and m.get("name") == cm_name:
-                            continue
-                        constraints.append(m)
-                constraint_score = self._score_from_measures(constraints) if constraints else None
-
-                # Hybrid score: if classification exists and constraints exist, average; else fall back
-                if class_score is not None and constraint_score is not None:
-                    score = 0.5 * class_score + 0.5 * float(constraint_score)
-                elif class_score is not None:
-                    score = class_score
-                elif constraint_score is not None:
-                    score = float(constraint_score)
-                else:
-                    score = self._score_from_measures(measures)
+                failures = []
+                for m in measures:
+                    if m.get("passed") is False:
+                        failures.append({
+                            "name": m.get("name"),
+                            "reason": m.get("reason"),
+                        })
+                violation = bool(failures)
+                score = self._score_from_measures(measures)
                 out: Dict[str, Any] = {
                     "id": item.get("id"),
                     "name": item.get("name"),
                     "score": score,
+                    "violation": violation,
                 }
                 if capture_traces:
-                    fails = []
-                    for m in measures:
-                        pv = m.get("passed")
-                        if pv is False:
-                            fails.append({
-                                "name": m.get("name"),
-                                "reason": m.get("reason"),
-                            })
                     out.update({
                         "prompt": prompt,
                         "final_assistant_text": res.get("final_assistant_text"),
                         "measures": measures,
-                        "failures": fails,
-                        "classification": class_info,
+                        "failures": failures,
+                        "violation": violation,
                     })
+                else:
+                    out["failures"] = failures
                 outs.append(out)
             return outs
 
@@ -278,8 +252,70 @@ class OmniAgentsAgentAdapter:
                     "prompt": o.get("prompt"),
                     "final_assistant_text": o.get("final_assistant_text"),
                     "failures": o.get("failures"),
+                    "violation": o.get("violation"),
                 }
+                if "measures" in o:
+                    tr["measures"] = o.get("measures")
                 trajectories.append(tr)
+
+        try:
+            if self.debug_dir is not None:
+                batch_ids = [str(o.get("id")) for o in outputs if o.get("id") is not None]
+                stage = None
+                if capture_traces:
+                    self.__debug_iter += 1
+                    stage = "before"
+                    self.__debug_last_batch_ids = list(batch_ids)
+                else:
+                    if self.__debug_last_batch_ids and self.__debug_last_batch_ids == batch_ids:
+                        stage = "after"
+                if stage is not None:
+                    try:
+                        from pathlib import Path as _Path
+
+                        pdir = _Path(self.debug_dir)
+                        pdir.mkdir(parents=True, exist_ok=True)
+                        fails = sum(1 for o in outputs if bool(o.get("violation")))
+                        passes = sum(1 for o in outputs if not bool(o.get("violation")))
+                        mismatches = []
+                        for idx, o in enumerate(outputs):
+                            if bool(o.get("violation")) and len(mismatches) < 5:
+                                try:
+                                    mismatches.append({
+                                        "id": batch[idx].get("id"),
+                                        "name": batch[idx].get("name"),
+                                        "failures": o.get("failures"),
+                                    })
+                                except Exception:
+                                    continue
+                        by_id = {}
+                        for idx, o in enumerate(outputs):
+                            try:
+                                by_id[str(batch[idx].get("id"))] = {
+                                    "violation": bool(o.get("violation")),
+                                    "score": float(o.get("score") or 0.0),
+                                }
+                            except Exception:
+                                continue
+                        info = {
+                            "iteration": self.__debug_iter,
+                            "stage": stage,
+                            "subsample_ids": batch_ids,
+                            "violation_counts": {"violations": fails, "passes": passes},
+                            "scores_sum": float(sum(scores)),
+                            "candidate_summary": {
+                                "has_instructions": isinstance(candidate.get("instructions"), str),
+                                "instructions_len": len(candidate.get("instructions") or ""),
+                            },
+                            "by_id": by_id,
+                            "examples": mismatches,
+                        }
+                        fp = pdir / f"iter_{self.__debug_iter:04d}_{stage}.json"
+                        fp.write_text(json.dumps(info, indent=2), encoding="utf-8")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
         class _EvalBatch:
             def __init__(self, outputs, scores, trajectories):
@@ -385,6 +421,8 @@ class OmniAgentsAgentAdapter:
             model_name=model,
             output_type=str,
             output_type_strict=False,
+            project_slug=None,
+            agent_slug=f"optimizer_{self.optimizer_key}",
         )
         agent = await _default_build_agent({}, None, spec, None)
         self._optimizer_agent = agent
@@ -514,84 +552,54 @@ class OmniAgentsAgentAdapter:
     ) -> Dict[str, List[Dict[str, Any]]]:
         reflective: Dict[str, List[Dict[str, Any]]] = {}
         trajs = list(eval_batch.trajectories or [])
-        # If classification info exists, prioritize FP/FN similar to judge adapter
-        has_class = any((isinstance(t.get("classification"), dict) and t.get("classification", {}).get("kind")) for t in trajs)
-        if has_class:
-            kinds = {"TP": [], "TN": [], "FP": [], "FN": [], "UNK": []}
-            for t in trajs:
-                cls = t.get("classification") or {}
-                k = cls.get("kind") or "UNK"
-                if k not in kinds:
-                    k = "UNK"
-                kinds[k].append(t)
-            errs = kinds.get("FP", []) + kinds.get("FN", [])
-            tp = kinds.get("TP", [])
-            tn = kinds.get("TN", [])
-            sample_tp: List[Dict[str, Any]] = []
-            sample_tn: List[Dict[str, Any]] = []
-            target = max(1, int(0.25 * max(1, len(errs))))
-            if tp:
-                sample_tp = tp[:target]
-            if tn:
-                sample_tn = tn[:target]
-            selected = errs + sample_tp + sample_tn
-            for comp in components_to_update:
-                if comp != "instructions":
-                    continue
-                items: List[Dict[str, Any]] = []
-                for t in selected:
-                    fails = list(t.get("failures") or [])
-                    reasons = []
-                    for f in fails:
-                        nm = f.get("name")
-                        rsn = f.get("reason")
-                        reasons.append(f"{nm}: {rsn}" if rsn else str(nm))
-                    cls = t.get("classification") or {}
-                    k = cls.get("kind")
-                    if k == "TP":
-                        fb = "Correct Fail. Reinforce guidance that led to correct classification."
-                    elif k == "TN":
-                        fb = "Correct Pass. Reinforce guidance that prevents false triggers."
-                    elif k == "FP":
-                        fb = "False Positive. Tighten criteria or require stronger evidence to avoid spurious violations."
-                    elif k == "FN":
-                        fb = "False Negative. Add explicit rules and edge cases to catch these violations."
+        if not trajs:
+            raise Exception("No reflective data constructed")
+
+        violations = [t for t in trajs if bool(t.get("violation"))]
+        compliant = [t for t in trajs if not bool(t.get("violation"))]
+        support_count = max(1, int(0.25 * len(violations))) if violations else max(1, len(compliant))
+        support_examples = compliant[:support_count]
+        selected = violations + support_examples if violations else compliant[:support_count]
+
+        for comp in components_to_update:
+            if comp != "instructions":
+                continue
+            items: List[Dict[str, Any]] = []
+            for t in selected:
+                fails = list(t.get("failures") or [])
+                reasons = []
+                for f in fails:
+                    nm = f.get("name")
+                    rsn = f.get("reason")
+                    reasons.append(f"{nm}: {rsn}" if rsn else str(nm))
+                measure_summaries = []
+                for m in (t.get("measures") or []):
+                    nm = m.get("name")
+                    status = "pass" if m.get("passed") else "fail"
+                    reason = m.get("reason")
+                    if reason:
+                        measure_summaries.append(f"{nm} ({status}): {reason}")
                     else:
-                        fb = "No decision. Clarify rules and required outputs."
+                        measure_summaries.append(f"{nm} ({status})")
+                if bool(t.get("violation")):
                     if reasons:
-                        fb = fb + " Measure failures: " + ", ".join(reasons)
-                    d = {
-                        "Inputs": {"text": t.get("prompt")},
-                        "Generated Outputs": {"final_assistant_text": t.get("final_assistant_text")},
-                        "Feedback": fb,
-                    }
-                    items.append(d)
-                if items:
-                    reflective[comp] = items
-        else:
-            for comp in components_to_update:
-                if comp != "instructions":
-                    continue
-                items: List[Dict[str, Any]] = []
-                for t in trajs:
-                    fails = list(t.get("failures") or [])
-                    if not fails:
-                        fb = "All measures passed. Reinforce useful phrasing and constraints."
+                        fb = "Measures failed. Update instructions to resolve: " + ", ".join(reasons) + "."
                     else:
-                        reasons = []
-                        for f in fails:
-                            nm = f.get("name")
-                            rsn = f.get("reason")
-                            reasons.append(f"{nm}: {rsn}" if rsn else str(nm))
-                        fb = "Some measures failed. Improve guidance to address: " + ", ".join(reasons)
-                    d = {
-                        "Inputs": {"text": t.get("prompt")},
-                        "Generated Outputs": {"final_assistant_text": t.get("final_assistant_text")},
-                        "Feedback": fb,
-                    }
-                    items.append(d)
-                if items:
-                    reflective[comp] = items
+                        fb = "Measures failed. Strengthen instructions to address the observed violations."
+                    if measure_summaries:
+                        fb = fb + " Measure details: " + " | ".join(measure_summaries)
+                else:
+                    fb = "All measures passed. Reinforce guidance that preserves compliant behavior."
+                    if measure_summaries:
+                        fb = fb + " Measure details: " + " | ".join(measure_summaries)
+                d = {
+                    "Inputs": {"text": t.get("prompt")},
+                    "Generated Outputs": {"final_assistant_text": t.get("final_assistant_text")},
+                    "Feedback": fb,
+                }
+                items.append(d)
+            if items:
+                reflective[comp] = items
         if not reflective:
             raise Exception("No reflective data constructed")
         return reflective

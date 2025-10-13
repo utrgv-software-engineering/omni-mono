@@ -482,25 +482,61 @@ def scaffold_judge(
     if add_measure:
         measures_py = eval_dir / "measures.py"
         fn_name = f"{sanitized}_agent"
-        lines = []
-        lines.append("from omniagents.core.evaluation import evaluation_measure")
-        lines.append("")
-        lines.append("@evaluation_measure")
-        lines.append(f"def {fn_name}(ctx):")
-        lines.append("    meta = getattr(ctx, 'metadata', {}) or {}")
-        lines.append(f"    judge = meta.get('{sanitized}')")
-        lines.append("    if not isinstance(judge, dict):")
-        lines.append("        return {'passed': False, 'reason': 'no_judge_result'}")
-        lines.append("    ans = str(judge.get('answer', '')).strip().lower()")
-        lines.append("    passed = (ans == 'pass')")
-        lines.append("    return {'passed': passed, 'judge': judge}")
-        block = "\n".join(lines) + "\n"
+        block_lines = [
+            "@evaluation_measure",
+            f"def {fn_name}(ctx):",
+            f"    judge = ctx.judge_result('{sanitized}')",
+            "    if not judge:",
+            "        return fail_reason('no_judge_result')",
+            "    return judge.to_result()",
+        ]
+        block = "\n".join(block_lines)
+        import_line = "from omniagents.core.evaluation import evaluation_measure, fail_reason"
         if measures_py.exists():
-            with measures_py.open("a", encoding="utf-8") as f:
-                f.write("\n" + block)
+            existing = measures_py.read_text(encoding="utf-8")
+            if f"def {fn_name}(" not in existing:
+                import re
+                updated = existing
+                pattern = re.compile(r"from omniagents\.core\.evaluation import (?P<body>\([^\)]*\)|[^\n]*)", re.DOTALL)
+                match = pattern.search(updated)
+                need_import = match is None
+                if match:
+                    body = match.group("body")
+                    cleaned = body.replace("(", "").replace(")", "").replace("\n", " ")
+                    parts = [part.strip() for part in cleaned.split(",")]
+                    names = [part for part in parts if part]
+                    changed = False
+                    for required in ("evaluation_measure", "fail_reason"):
+                        if required not in names:
+                            names.append(required)
+                            changed = True
+                    if changed:
+                        if body.strip().startswith("("):
+                            indent = "    "
+                            inner = ",\n".join(f"{indent}{name}" for name in names) + ","
+                            new_body = f"(\n{inner}\n)"
+                        else:
+                            new_body = ", ".join(names)
+                        new_line = f"from omniagents.core.evaluation import {new_body}"
+                        updated = updated[:match.start()] + new_line + updated[match.end():]
+                    need_import = False
+                if need_import:
+                    doc_pattern = re.compile(r'(\s*("""|\'\'\').*?\2\s*)', re.DOTALL)
+                    doc_match = doc_pattern.match(updated)
+                    if doc_match:
+                        start = doc_match.end()
+                        updated = updated[:start] + "\n" + import_line + "\n\n" + updated[start:]
+                    else:
+                        trimmed = updated.lstrip("\n")
+                        prefix = "\n" if updated.startswith("\n") else ""
+                        updated = prefix + import_line + "\n\n" + trimmed
+                updated = updated.rstrip()
+                updated = (updated + "\n\n" if updated else "") + block + "\n"
+                measures_py.write_text(updated, encoding="utf-8")
+                created.append(str(measures_py))
         else:
-            measures_py.write_text(block, encoding="utf-8")
-        created.append(str(measures_py))
+            measures_py.write_text(f"{import_line}\n\n{block}\n", encoding="utf-8")
+            created.append(str(measures_py))
 
     if failure_category:
         evaluation_yml = eval_dir / "evaluation.yml"

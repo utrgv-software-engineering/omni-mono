@@ -221,7 +221,19 @@ export interface EvaluationScenarioEntry {
   dimensions?: Record<string, any> | null
   measures?: any[] | null
   failure_categories?: string[] | null
+  label?: boolean | null
   metadata?: Record<string, any> | null
+  analysis?: EvaluationScenarioAnalysis | null
+}
+
+export interface EvaluationScenarioAnalysis {
+  group_id?: string | null
+  judgment?: 'acceptable' | 'unacceptable' | null
+  notes?: string | null
+  marked?: boolean | null
+  analyzed_at?: string | null
+  updated_at?: string | null
+  workflow?: string | null
 }
 
 export interface EvaluationScenarioSet {
@@ -284,18 +296,6 @@ export interface EvaluationScenarioDeletePayload {
 
 export interface EvaluationScenarioMutationResponse {
   project?: string | null
-  set: EvaluationScenarioSet
-}
-
-export interface EvaluationScenarioAnnotatePayload {
-  kind: 'generated' | 'annotated'
-  set_path: string
-  agent?: string | null
-}
-
-export interface EvaluationScenarioAnnotateResponse {
-  project?: string | null
-  annotated_path: string
   set: EvaluationScenarioSet
 }
 
@@ -391,28 +391,202 @@ export interface EvaluationScenarioGenerationResponse {
   status?: EvaluationScenarioGenerationStatus | null
 }
 
-export type EvaluationDatasetSourceKind = 'golden' | 'generated' | 'annotated' | 'unknown'
+export interface EvaluationDatasetSplit {
+  split: 'train' | 'dev' | 'test'
+  path: string
+  scenario_count: number
+  positives: number
+  negatives: number
+  updated_at?: string | null
+}
 
 export interface EvaluationDataset {
-  label: string
-  path: string
-  source_kind: EvaluationDatasetSourceKind
-  source_label?: string | null
-  source_path?: string | null
-  run_count: number
-  scenario_count?: number | null
-  expected_count?: number | null
-  includes_history: boolean
-  updated_at?: string | null
-  created_at?: string | null
-  workflow_generate?: string | null
-  workflow_run?: string | null
-  workflow_run_at?: string | null
+  set_name: string
+  category: string
+  artifact_dir: string
+  scenario_set_path?: string | null
   manifest_path?: string | null
-  size_bytes?: number | null
+  splits: EvaluationDatasetSplit[]
 }
 
 export interface EvaluationDatasetsResponse {
   project?: string | null
   datasets: EvaluationDataset[]
+}
+
+export interface EvaluationDatasetSplitDetails {
+  project?: string | null
+  set_name: string
+  category: string
+  split: EvaluationDatasetSplit
+  scenarios: EvaluationScenarioEntry[]
+}
+
+export interface EvaluationScenarioSplitPayload {
+  set_path: string
+  kind: 'golden' | 'generated' | 'annotated'
+  category: string
+  train?: number
+  dev?: number
+  test?: number
+  seed?: number
+  negatives_ratio?: number | null
+  output_dir?: string | null
+}
+
+export interface EvaluationScenarioSplitResponse {
+  project?: string | null
+  dataset: EvaluationDataset
+}
+
+export interface EvaluationDatasetDeletePayload {
+  set_name: string
+  category: string
+}
+
+export interface EvaluationDatasetDeleteResponse {
+  project?: string | null
+  datasets: EvaluationDataset[]
+}
+
+export interface EvaluationJudge {
+  key: string
+  agent_name?: string | null
+  agent_label?: string | null
+  model?: string | null
+  source: string
+  failure_category?: string | null
+  instructions?: string | null
+  template?: string | null
+  instructions_file?: string | null
+  template_file?: string | null
+  instructions_path?: string | null
+  template_path?: string | null
+  judge_path: string
+  updated_at?: string | null
+}
+
+export interface EvaluationJudgesResponse {
+  project?: string | null
+  judges: EvaluationJudge[]
+}
+
+export interface EvaluationJudgeCreatePayload {
+  name?: string | null
+  key?: string | null
+  model?: string | null
+  agent_label?: string | null
+  agent_name?: string | null
+  source?: string | null
+  failure_category?: string | null
+  instructions?: string | null
+  template?: string | null
+  add_measure?: boolean
+}
+
+export interface EvaluationJudgeUpdatePayload {
+  key: string
+  model?: string | null
+  agent_label?: string | null
+  agent_name?: string | null
+  source?: string | null
+  failure_category?: string | null
+  instructions?: string | null
+  template?: string | null
+}
+
+export interface EvaluationJudgeDeleteResponse {
+  project?: string | null
+  deleted: string
+  judges: EvaluationJudge[]
+}
+
+export type EvaluationJudgeOptimizationState = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface EvaluationJudgeOptimizationDataset {
+  set_name: string
+  category: string
+  artifact_dir?: string | null
+  train_path: string
+  dev_path: string
+  test_path: string
+  runs_path?: string | null
+  source?: string | null
+}
+
+export interface EvaluationJudgeOptimizationRequest {
+  judge_key: string
+  dataset: EvaluationJudgeOptimizationDataset
+  max_metric_calls?: number | null
+  seed?: number | null
+}
+
+export interface EvaluationJudgeOptimizationStatus {
+  job_id: string
+  project?: string | null
+  judge_key: string
+  dataset: EvaluationJudgeOptimizationDataset
+  max_metric_calls: number
+  seed?: number | null
+  state: EvaluationJudgeOptimizationState
+  total: number
+  completed: number
+  created_at: string
+  updated_at: string
+  started_at?: string | null
+  finished_at?: string | null
+  run_dir?: string | null
+  result_path?: string | null
+  workflow_name?: string | null
+  error?: string | null
+}
+
+export interface EvaluationJudgeOptimizationResponse {
+  job_id: string
+  status?: EvaluationJudgeOptimizationStatus | null
+}
+
+export type EvaluationAgentOptimizationState = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface EvaluationAgentOptimizationDataset {
+  set_name: string
+  category: string
+  artifact_dir?: string | null
+  train_path: string
+  dev_path: string
+  test_path: string
+}
+
+export interface EvaluationAgentOptimizationRequest {
+  agent_key: string
+  dataset: EvaluationAgentOptimizationDataset
+  positives_only?: boolean | null
+  max_metric_calls?: number | null
+  seed?: number | null
+}
+
+export interface EvaluationAgentOptimizationStatus {
+  job_id: string
+  project?: string | null
+  agent_key: string
+  dataset: EvaluationAgentOptimizationDataset
+  positives_only: boolean
+  max_metric_calls: number
+  seed?: number | null
+  state: EvaluationAgentOptimizationState
+  total: number
+  completed: number
+  created_at: string
+  updated_at: string
+  started_at?: string | null
+  finished_at?: string | null
+  run_dir?: string | null
+  result_path?: string | null
+  workflow_name?: string | null
+  error?: string | null
+}
+
+export interface EvaluationAgentOptimizationResponse {
+  job_id: string
+  status?: EvaluationAgentOptimizationStatus | null
 }

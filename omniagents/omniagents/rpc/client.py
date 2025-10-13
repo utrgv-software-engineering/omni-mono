@@ -63,7 +63,7 @@ class JsonRpcClient:
     async def __aexit__(self, exc_type, exc, tb) -> None:
         if self._recv_task:
             self._recv_task.cancel()
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._recv_task
         await self._transport.disconnect()
 

@@ -57,7 +57,7 @@ export function Dashboard() {
   const isPlayground = activeSection === 'playground'
   const isAgents = activeSection === 'agents'
   const isEvaluation = activeSection === 'evaluation'
-  const [evaluationTab, setEvaluationTab] = useState<'dimensions' | 'scenarios' | 'datasets'>('dimensions')
+  const [evaluationTab, setEvaluationTab] = useState<'scenarios' | 'datasets' | 'dimensions' | 'judges'>('scenarios')
 
   const { data: conversationsData } = useConversations()
   const { data: conversationTracesData } = useConversationTraces(selectedConversation?.group_id || null)
@@ -125,6 +125,7 @@ export function Dashboard() {
 
   const handleOpenEvaluation = () => {
     setActiveSection('evaluation')
+    setEvaluationTab('scenarios')
   }
 
   const handleBackToHome = () => {
@@ -135,7 +136,7 @@ export function Dashboard() {
     setPlaygroundContext({ projectName: '', sessionId: '', statusMessage: '' })
     setSelectedAgent(null)
     setAgentContext({ projectName: '', sessionId: '', statusMessage: '', agentKey: null, agentLabel: '' })
-    setEvaluationTab('dimensions')
+    setEvaluationTab('scenarios')
   }
 
   const handleSelectAgent = (agentKey: string) => {
