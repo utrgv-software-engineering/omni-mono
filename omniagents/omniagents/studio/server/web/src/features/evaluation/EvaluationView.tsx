@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Edit3, Trash2, Loader2, X, Upload, FileText, Clock, ArrowLeft, Play, Sparkles, Database, RefreshCw, ExternalLink, ChevronRight, ChevronDown, SplitSquareVertical, Gavel } from 'lucide-react'
+import { Plus, Edit3, Trash2, Loader2, X, Upload, FileText, Clock, ArrowLeft, Play, Sparkles, Database, RefreshCw, ExternalLink, ChevronRight, ChevronDown, SplitSquareVertical, Gavel, BarChart3 } from 'lucide-react'
 import { api } from '../../lib/api'
 import type {
   EvaluationDimension,
@@ -30,6 +30,8 @@ import type {
   EvaluationJudgeDeleteResponse,
   EvaluationJudgeOptimizationRequest,
   EvaluationJudgeOptimizationStatus,
+  EvaluationSuiteRunStatus,
+  EvaluationSuiteRunRequest,
 } from '../../types'
 import { useTraceStore } from '../traces/store/traceStore'
 
@@ -3390,6 +3392,148 @@ function JudgesPanel({ projectName }: { projectName?: string | null }) {
   )
 }
 
+interface SuiteRunDetailProps {
+  jobId: string
+  status: EvaluationSuiteRunStatus | null
+  onBack: () => void
+  onDismiss: () => void
+  onNavigateToLogs?: (projectName: string | null, workflowName: string | null) => void
+  projectName?: string | null
+}
+
+function SuiteRunDetail({ jobId, status, onBack, onDismiss, onNavigateToLogs, projectName }: SuiteRunDetailProps) {
+  const state = status?.state ?? 'pending'
+  const total = status?.total ?? 0
+  const completed = status?.completed ?? 0
+  const percent = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0
+  const workflowName = status?.workflow_name && status.workflow_name.trim().length > 0 ? status.workflow_name.trim() : null
+  const summary = status?.summary ?? null
+  const resultPath = status?.result_path ? formatScenarioPath(status.result_path) : null
+  const stateLabel = state.replace(/_/g, ' ')
+  const includeLabel = status?.include_unmeasured ? 'Including unmeasured scenarios' : 'Measured scenarios only'
+
+  return (
+    <div className="flex h-full w-full flex-col overflow-hidden">
+      <div className="flex items-center justify-between border-b border-border px-6 py-4">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onBack}
+            className="flex h-9 w-9 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <div>
+            <div className="flex items-center gap-2 text-lg font-semibold">
+              <BarChart3 className="h-4 w-4 text-muted-foreground" />
+              Evaluation Suite Run
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">Job {jobId}</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {workflowName && onNavigateToLogs ? (
+            <button
+              type="button"
+              onClick={() => onNavigateToLogs(projectName ?? null, workflowName)}
+              className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              View Logs
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="flex h-9 w-9 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-auto px-6 py-4">
+        <div className="space-y-4">
+          <div className="rounded-md border border-border bg-background px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold capitalize">{stateLabel}</div>
+                <div className="text-xs text-muted-foreground">Updated {formatTimestamp(status?.updated_at)}</div>
+              </div>
+              {state === 'running' ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
+            </div>
+            <div className="mt-3 space-y-2">
+              <div>
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>
+                    {completed} / {total || completed} complete
+                  </span>
+                  <span>{formatTimestamp(status?.started_at) || 'pending'}</span>
+                </div>
+                <div className="mt-1 h-2 w-full rounded bg-muted">
+                  <div className="h-2 rounded bg-muted-foreground transition-all" style={{ width: `${percent}%` }} />
+                </div>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {includeLabel}
+                {status?.agent ? ` • Agent ${status.agent}` : ''}
+              </div>
+              {status?.select ? (
+                <div className="text-xs text-muted-foreground">Select {status.select}</div>
+              ) : null}
+              {status?.exclude ? (
+                <div className="text-xs text-muted-foreground">Exclude {status.exclude}</div>
+              ) : null}
+              {resultPath ? (
+                <div className="text-xs text-muted-foreground">
+                  Results written to <span className="font-mono">{resultPath}</span>
+                </div>
+              ) : null}
+              {workflowName ? (
+                <div className="text-xs text-muted-foreground">
+                  Workflow <span className="font-mono">{workflowName}</span>
+                </div>
+              ) : null}
+              {status?.finished_at ? (
+                <div className="text-xs text-muted-foreground">Finished {formatTimestamp(status.finished_at)}</div>
+              ) : null}
+              {status?.error ? (
+                <div className="rounded border border-destructive/60 bg-destructive/10 px-3 py-2 text-xs text-destructive">{status.error}</div>
+              ) : null}
+            </div>
+          </div>
+          {summary ? (
+            <div className="rounded-md border border-border bg-background px-4 py-3">
+              <div className="text-sm font-semibold">Summary</div>
+              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <div>
+                  <div className="text-xs text-muted-foreground">Checks</div>
+                  <div className="text-base font-semibold">{summary.passed_checks}/{summary.total_checks} passed</div>
+                  <div className="text-xs text-muted-foreground">Failed {summary.failed_checks} • Skipped {summary.skipped_checks}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Measures</div>
+                  <div className="text-base font-semibold">{summary.measures_total - summary.measures_failed - summary.measures_skipped}/{summary.measures_total} passed</div>
+                  <div className="text-xs text-muted-foreground">Failed {summary.measures_failed} • Skipped {summary.measures_skipped}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Metrics</div>
+                  <div className="text-base font-semibold">{summary.metrics_total - summary.metrics_failed - summary.metrics_skipped}/{summary.metrics_total} met target</div>
+                  <div className="text-xs text-muted-foreground">Failed {summary.metrics_failed} • Skipped {summary.metrics_skipped}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Scenarios</div>
+                  <div className="text-base font-semibold">{summary.scenarios_included}/{summary.scenarios_total} evaluated</div>
+                  <div className="text-xs text-muted-foreground">Skipped {summary.scenarios_skipped}</div>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChange, onDatasetFocus }: { projectName?: string | null; isAvailable: boolean; onNavigateToLogs?: (projectName: string | null, workflowName: string | null) => void; onTabChange: (tab: EvaluationTab) => void; onDatasetFocus?: (focus: DatasetFocusRequest) => void }) {
   const queryClient = useQueryClient()
   const { data, isLoading, isError, refetch, isFetching } = useEvaluationScenarios(isAvailable)
@@ -3407,6 +3551,19 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
   const [activeGeneration, setActiveGeneration] = useState<{ jobId: string; status: EvaluationScenarioGenerationStatus | null } | null>(null)
   const generationSocketRef = useRef<WebSocket | null>(null)
   const generationCompletionRef = useRef(false)
+  const [isSuiteDialogOpen, setIsSuiteDialogOpen] = useState(false)
+  const [suiteName, setSuiteName] = useState('')
+  const [suiteSelect, setSuiteSelect] = useState('')
+  const [suiteExclude, setSuiteExclude] = useState('')
+  const [suiteIncludeUnmeasured, setSuiteIncludeUnmeasured] = useState(false)
+  const [suiteOutputPath, setSuiteOutputPath] = useState('')
+  const [suiteAgent, setSuiteAgent] = useState('')
+  const [suiteError, setSuiteError] = useState<string | null>(null)
+  const [isStartingSuite, setIsStartingSuite] = useState(false)
+  const [activeSuiteRun, setActiveSuiteRun] = useState<{ jobId: string; status: EvaluationSuiteRunStatus | null } | null>(null)
+  const [showSuiteDetail, setShowSuiteDetail] = useState(false)
+  const suiteSocketRef = useRef<WebSocket | null>(null)
+  const suiteCompletionRef = useRef(false)
   const dimensionOptions = useMemo(() => dimensionsData?.dimensions ?? [], [dimensionsData])
   const initialDimensionSelection = useMemo(() => {
     const defaults: Record<string, string[]> = {}
@@ -3477,6 +3634,25 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
     setSelectedDimensionValues(initialDimensionSelection)
   }
 
+  const openSuiteDialog = () => {
+    setSuiteName('')
+    setSuiteSelect('')
+    setSuiteExclude('')
+    setSuiteOutputPath('')
+    setSuiteAgent('')
+    setSuiteIncludeUnmeasured(false)
+    setSuiteError(null)
+    setIsSuiteDialogOpen(true)
+  }
+
+  const closeSuiteDialog = () => {
+    if (isStartingSuite) {
+      return
+    }
+    setIsSuiteDialogOpen(false)
+    setSuiteError(null)
+  }
+
   const handleDismissGeneration = () => {
     if (generationSocketRef.current) {
       generationSocketRef.current.close()
@@ -3484,6 +3660,62 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
     }
     setActiveGeneration(null)
     generationCompletionRef.current = false
+  }
+
+  const handleSuiteSubmit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (isStartingSuite) {
+      return
+    }
+    const trimmedName = suiteName.trim()
+    if (!trimmedName) {
+      setSuiteError('Suite name is required')
+      return
+    }
+    const payload: EvaluationSuiteRunRequest = {
+      name: trimmedName,
+      select: suiteSelect.trim() ? suiteSelect.trim() : undefined,
+      exclude: suiteExclude.trim() ? suiteExclude.trim() : undefined,
+      include_unmeasured: suiteIncludeUnmeasured,
+      output_path: suiteOutputPath.trim() ? suiteOutputPath.trim() : undefined,
+      agent: suiteAgent.trim() ? suiteAgent.trim() : undefined,
+    }
+    setIsStartingSuite(true)
+    setSuiteError(null)
+    try {
+      const response = await api.startEvaluationSuiteRun(payload)
+      setActiveSuiteRun({ jobId: response.job_id, status: response.status ?? null })
+      suiteCompletionRef.current = false
+      setShowSuiteDetail(true)
+      setIsSuiteDialogOpen(false)
+      setSuiteName('')
+      setSuiteSelect('')
+      setSuiteExclude('')
+      setSuiteOutputPath('')
+      setSuiteAgent('')
+      setSuiteIncludeUnmeasured(false)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to start evaluation suite'
+      setSuiteError(message)
+    } finally {
+      setIsStartingSuite(false)
+    }
+  }
+
+  const handleDismissSuiteRun = () => {
+    if (suiteSocketRef.current) {
+      suiteSocketRef.current.close()
+      suiteSocketRef.current = null
+    }
+    setActiveSuiteRun(null)
+    setShowSuiteDetail(false)
+    suiteCompletionRef.current = false
+  }
+
+  const handleShowSuiteDetail = () => {
+    if (activeSuiteRun) {
+      setShowSuiteDetail(true)
+    }
   }
 
   const handleGenerateSubmit = async (event: React.FormEvent) => {
@@ -3569,6 +3801,13 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
   const generationTotalRaw = generationStatus?.total ?? 0
   const generationEffectiveTotal = generationTotalRaw > 0 ? generationTotalRaw : generationCompleted
   const generationPercent = generationState === 'completed' ? 100 : generationEffectiveTotal > 0 ? Math.min(100, Math.round((generationCompleted / generationEffectiveTotal) * 100)) : 0
+
+  const suiteStatus = activeSuiteRun?.status ?? null
+  const suiteState = suiteStatus?.state ?? null
+  const suiteCompleted = suiteStatus?.completed ?? 0
+  const suiteTotalRaw = suiteStatus?.total ?? 0
+  const suiteEffectiveTotal = suiteTotalRaw > 0 ? suiteTotalRaw : suiteCompleted
+  const suitePercent = suiteState === 'completed' ? 100 : suiteEffectiveTotal > 0 ? Math.min(100, Math.round((suiteCompleted / suiteEffectiveTotal) * 100)) : 0
 
   useEffect(() => {
     if (!isLoading && !isFetching && selectedSetPath && !selectedSet) {
@@ -3676,6 +3915,127 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
       }
     }
   }, [activeGeneration?.jobId, queryClient])
+
+  useEffect(() => {
+    const jobId = activeSuiteRun?.jobId
+    if (!jobId) {
+      if (suiteSocketRef.current) {
+        try {
+          suiteSocketRef.current.close()
+        } catch {}
+        suiteSocketRef.current = null
+      }
+      return
+    }
+    let socket: WebSocket | null = null
+    try {
+      socket = api.createSuiteRunWebSocket(jobId)
+      suiteSocketRef.current = socket
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data)
+          if (!payload || payload.job_id !== jobId) {
+            return
+          }
+          const status = payload.status as EvaluationSuiteRunStatus | null | undefined
+          if (status !== undefined) {
+            setActiveSuiteRun({ jobId, status: status ?? null })
+            const state = status?.state
+            if (state === 'completed' || state === 'failed' || state === 'cancelled') {
+              suiteCompletionRef.current = true
+              try {
+                socket?.close()
+              } catch {}
+            }
+          }
+        } catch {
+          try {
+            socket?.close()
+          } catch {}
+        }
+      }
+      socket.onerror = () => {
+        try {
+          socket?.close()
+        } catch {}
+      }
+      socket.onclose = () => {
+        if (suiteSocketRef.current === socket) {
+          suiteSocketRef.current = null
+        }
+        if (!suiteCompletionRef.current) {
+          api
+            .getEvaluationSuiteRunStatus(jobId)
+            .then((response) => {
+              if (!response || !response.status) {
+                return
+              }
+              const status = response.status as EvaluationSuiteRunStatus
+              setActiveSuiteRun({ jobId: response.job_id, status })
+              const state = status.state
+              if (state === 'completed' || state === 'failed' || state === 'cancelled') {
+                suiteCompletionRef.current = true
+              }
+            })
+            .catch(() => {})
+        }
+      }
+    } catch {
+      api
+        .getEvaluationSuiteRunStatus(jobId)
+        .then((response) => {
+          if (!response || !response.status) {
+            return
+          }
+          const status = response.status as EvaluationSuiteRunStatus
+          setActiveSuiteRun({ jobId: response.job_id, status })
+          const state = status.state
+          if (state === 'completed' || state === 'failed' || state === 'cancelled') {
+            suiteCompletionRef.current = true
+          }
+        })
+        .catch(() => {})
+    }
+    return () => {
+      if (suiteSocketRef.current === socket) {
+        suiteSocketRef.current = null
+      }
+      if (socket) {
+        try {
+          socket.close()
+        } catch {}
+      }
+    }
+  }, [activeSuiteRun?.jobId])
+
+  useEffect(() => {
+    const status = activeSuiteRun?.status
+    if (!status) {
+      return
+    }
+    if (status.state === 'completed') {
+      if (!suiteCompletionRef.current) {
+        suiteCompletionRef.current = true
+        queryClient.invalidateQueries({ queryKey: ['evaluation', 'scenarios'] })
+        queryClient.invalidateQueries({ queryKey: ['evaluation', 'datasets'] })
+      }
+    } else if (status.state === 'failed' || status.state === 'cancelled') {
+      suiteCompletionRef.current = true
+    }
+  }, [activeSuiteRun?.status?.state, queryClient])
+
+  if (showSuiteDetail && activeSuiteRun) {
+    return (
+      <SuiteRunDetail
+        jobId={activeSuiteRun.jobId}
+        status={activeSuiteRun.status ?? null}
+        onBack={() => setShowSuiteDetail(false)}
+        onDismiss={handleDismissSuiteRun}
+        onNavigateToLogs={onNavigateToLogs}
+        projectName={projectName ?? null}
+      />
+    )
+  }
 
   if (isLoading) {
     return (
@@ -3844,6 +4204,15 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
           {isFetching ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
           <button
             type="button"
+            onClick={openSuiteDialog}
+            disabled={isStartingSuite}
+            className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
+          >
+            <BarChart3 className="h-3.5 w-3.5" />
+            {isStartingSuite ? 'Starting…' : 'Run Eval Suite'}
+          </button>
+          <button
+            type="button"
             onClick={openGenerateDialog}
             disabled={isStartingGeneration}
             className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
@@ -3854,6 +4223,60 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
         </div>
       </div>
       <div className="flex-1 overflow-auto px-6 py-4">
+        {activeSuiteRun ? (
+          <div className="mb-4 rounded-md border border-border bg-background px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold">Evaluation Suite Run</div>
+                <div className="text-xs text-muted-foreground">{activeSuiteRun.jobId}</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium capitalize">{suiteState ? suiteState.replace(/_/g, ' ') : 'pending'}</span>
+                {suiteState === 'running' ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
+                <button
+                  type="button"
+                  onClick={handleDismissSuiteRun}
+                  className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+            <div className="mt-3 space-y-2">
+              <div>
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>
+                    {suiteCompleted} / {suiteEffectiveTotal || suiteCompleted} complete
+                  </span>
+                  <span>{formatTimestamp(suiteStatus?.updated_at)}</span>
+                </div>
+                <div className="mt-1 h-2 w-full rounded bg-muted">
+                  <div className="h-2 rounded bg-muted-foreground transition-all" style={{ width: `${suitePercent}%` }} />
+                </div>
+              </div>
+              {suiteStatus?.summary ? (
+                <div className="text-xs text-muted-foreground">
+                  {suiteStatus.summary.passed_checks} passed • {suiteStatus.summary.failed_checks} failed • {suiteStatus.summary.skipped_checks} skipped
+                </div>
+              ) : null}
+              {suiteStatus?.result_path ? (
+                <div className="text-xs text-muted-foreground">
+                  Results <span className="font-mono">{formatScenarioPath(suiteStatus.result_path)}</span>
+                </div>
+              ) : null}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleShowSuiteDetail}
+                  className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+                >
+                  <BarChart3 className="h-3.5 w-3.5" />
+                  View Details
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
         {activeGeneration ? (
           <div className="mb-4 rounded-md border border-border bg-background px-4 py-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -4034,6 +4457,106 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
           </div>
         )}
       </div>
+      {isSuiteDialogOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <form onSubmit={handleSuiteSubmit} className="w-full max-w-lg rounded-lg border border-border bg-background p-6 shadow-lg">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold">Run Evaluation Suite</h3>
+                <p className="text-sm text-muted-foreground">Execute configured evaluation scenarios and record metrics.</p>
+              </div>
+              <button
+                type="button"
+                onClick={closeSuiteDialog}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted"
+                disabled={isStartingSuite}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="mb-1 block text-xs font-medium uppercase text-muted-foreground">Run Name</label>
+                <input
+                  value={suiteName}
+                  onChange={(event) => setSuiteName(event.target.value)}
+                  placeholder="compliance_suite"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                />
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium uppercase text-muted-foreground">Agent Override</label>
+                  <input
+                    value={suiteAgent}
+                    onChange={(event) => setSuiteAgent(event.target.value)}
+                    placeholder="Leave blank for entrypoint"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium uppercase text-muted-foreground">Output Path</label>
+                  <input
+                    value={suiteOutputPath}
+                    onChange={(event) => setSuiteOutputPath(event.target.value)}
+                    placeholder="artifacts/eval/compliance/run_results.json"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium uppercase text-muted-foreground">Select Filter</label>
+                  <input
+                    value={suiteSelect}
+                    onChange={(event) => setSuiteSelect(event.target.value)}
+                    placeholder="Tag expression"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium uppercase text-muted-foreground">Exclude Filter</label>
+                  <input
+                    value={suiteExclude}
+                    onChange={(event) => setSuiteExclude(event.target.value)}
+                    placeholder="Exclude expression"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                  />
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={suiteIncludeUnmeasured}
+                  onChange={(event) => setSuiteIncludeUnmeasured(event.target.checked)}
+                  className="h-4 w-4 rounded border-border text-primary focus:ring-primary/50"
+                />
+                Include scenarios without measures
+              </label>
+            </div>
+            {suiteError ? (
+              <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{suiteError}</div>
+            ) : null}
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeSuiteDialog}
+                className="rounded-md border border-border px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted"
+                disabled={isStartingSuite}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                disabled={isStartingSuite}
+              >
+                {isStartingSuite ? 'Starting…' : 'Start Suite'}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
       {isGenerateDialogOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
           <form onSubmit={handleGenerateSubmit} className="w-full max-w-lg rounded-lg border border-border bg-background p-6 shadow-lg">

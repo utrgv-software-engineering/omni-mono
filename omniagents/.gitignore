@@ -64,6 +64,9 @@ tmp/
 output/
 results/
 *.db
+*.db-journal
+*.db-shm
+*.db-wal
 
 # Encryption
 secret.key

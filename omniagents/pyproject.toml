@@ -68,6 +68,10 @@ include-package-data = true
     "static/*",
     "static/assets/*",
 ]
+"omniagents.studio.server" = [
+    "static/*",
+    "static/assets/*",
+]
 
 [tool.setuptools.dynamic]
 version = {attr = "omniagents._version.__version__"}

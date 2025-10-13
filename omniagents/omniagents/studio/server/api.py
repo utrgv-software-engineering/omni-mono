@@ -36,8 +36,9 @@ from omniagents.core.eval.scenarios import run_scenarios_against_agent, generate
 from omniagents.core.eval.split import create_splits
 from omniagents.core.eval.annotate import annotate_scenarios, write_annotation_output, _slugify
 from omniagents.core.eval.optimize import optimize_judge_from_project, optimize_agent_from_project
+from omniagents.core.eval.pipeline import run_evaluation
 from omniagents.core.project.apply import apply_agent_instructions
-from omniagents.core.project.scaffold import scaffold_judge
+from omniagents.core.project.scaffold import scaffold_judge, scaffold_agent, delete_agent
 
 from ..tracing.storage import SQLiteStorage
 
@@ -519,6 +520,11 @@ class AgentUpdatePayload(BaseModel):
     output_schema: Optional[Dict[str, Any]] = None
 
 
+class AgentCreatePayload(BaseModel):
+    name: str
+    model: Optional[str] = None
+
+
 class DimensionValueModel(BaseModel):
     name: str
     label: Optional[str] = None
@@ -905,6 +911,173 @@ class ScenarioRunManager:
             self.tasks.pop(job_id, None)
 
     async def update_job(self, job_id: str, **fields: Any) -> Optional[ScenarioRunJob]:
+        async with self.lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                return None
+            for key, value in fields.items():
+                if hasattr(job, key):
+                    setattr(job, key, value)
+            job.updated_at = _utc_now()
+            snapshot = job.to_dict()
+        await self.broadcast(job_id, snapshot)
+        return job
+
+    async def get_status(self, job_id: str) -> Optional[Dict[str, Any]]:
+        async with self.lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                return None
+            return job.to_dict()
+
+    async def add_connection(self, job_id: str, websocket: WebSocket) -> bool:
+        async with self.lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                return False
+            await websocket.accept()
+            self.connections[job_id].append(websocket)
+            snapshot = job.to_dict()
+        try:
+            await websocket.send_json({"job_id": job_id, "status": snapshot})
+        except Exception:
+            await self.remove_connection(job_id, websocket)
+            return False
+        return True
+
+    async def remove_connection(self, job_id: str, websocket: WebSocket) -> None:
+        async with self.lock:
+            connections = self.connections.get(job_id)
+            if connections and websocket in connections:
+                connections.remove(websocket)
+            if not connections and job_id in self.connections:
+                self.connections.pop(job_id, None)
+
+    async def broadcast(self, job_id: str, snapshot: Optional[Dict[str, Any]] = None) -> None:
+        async with self.lock:
+            job = self.jobs.get(job_id)
+            if not job and snapshot is None:
+                return
+            payload = snapshot or job.to_dict() if job else snapshot
+            sockets = list(self.connections.get(job_id, []))
+        if not payload:
+            return
+        message = {"job_id": job_id, "status": payload}
+        stale: List[WebSocket] = []
+        for ws in sockets:
+            try:
+                await ws.send_json(message)
+            except Exception:
+                stale.append(ws)
+        if stale:
+            async with self.lock:
+                connections = self.connections.get(job_id)
+                if connections:
+                    for ws in stale:
+                        if ws in connections:
+                            connections.remove(ws)
+                if connections == [] and job_id in self.connections:
+                    self.connections.pop(job_id, None)
+
+
+@dataclass
+class SuiteRunJob:
+    job_id: str
+    project: Optional[str]
+    agent: Optional[str]
+    name: Optional[str]
+    select: Optional[str]
+    exclude: Optional[str]
+    include_unmeasured: bool
+    output_path: Optional[str]
+    reporter: Optional[str]
+    color: Optional[str]
+    state: str
+    total: int
+    completed: int
+    created_at: str
+    updated_at: str
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    result_path: Optional[str] = None
+    report_path: Optional[str] = None
+    workflow_name: Optional[str] = None
+    summary: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "job_id": self.job_id,
+            "project": self.project,
+            "agent": self.agent,
+            "name": self.name,
+            "select": self.select,
+            "exclude": self.exclude,
+            "include_unmeasured": self.include_unmeasured,
+            "output_path": self.output_path,
+            "reporter": self.reporter,
+            "color": self.color,
+            "state": self.state,
+            "total": self.total,
+            "completed": self.completed,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "result_path": self.result_path,
+            "report_path": self.report_path,
+            "workflow_name": self.workflow_name,
+            "summary": self.summary,
+            "error": self.error,
+        }
+
+
+class SuiteRunManager:
+    def __init__(self):
+        self.jobs: Dict[str, SuiteRunJob] = {}
+        self.tasks: Dict[str, asyncio.Task] = {}
+        self.connections: Dict[str, List[WebSocket]] = defaultdict(list)
+        self.lock = asyncio.Lock()
+
+    async def create_job(self, project: Optional[str], payload: 'EvaluationSuiteRunRequest') -> SuiteRunJob:
+        async with self.lock:
+            job_id = uuid.uuid4().hex
+            now = _utc_now()
+            job = SuiteRunJob(
+                job_id=job_id,
+                project=project,
+                agent=payload.agent,
+                name=payload.name,
+                select=payload.select,
+                exclude=payload.exclude,
+                include_unmeasured=bool(payload.include_unmeasured or False),
+                output_path=payload.output_path,
+                reporter=payload.reporter,
+                color=payload.color,
+                state="pending",
+                total=0,
+                completed=0,
+                created_at=now,
+                updated_at=now,
+            )
+            self.jobs[job_id] = job
+        await self.broadcast(job_id)
+        return job
+
+    async def register_task(self, job_id: str, task: asyncio.Task) -> None:
+        async with self.lock:
+            self.tasks[job_id] = task
+
+        def _on_done(_task: asyncio.Task) -> None:
+            asyncio.create_task(self.clear_task(job_id))
+
+        task.add_done_callback(_on_done)
+
+    async def clear_task(self, job_id: str) -> None:
+        async with self.lock:
+            self.tasks.pop(job_id, None)
+
+    async def update_job(self, job_id: str, **fields: Any) -> Optional[SuiteRunJob]:
         async with self.lock:
             job = self.jobs.get(job_id)
             if not job:
@@ -1519,6 +1692,66 @@ class ScenarioGenerationResponseModel(BaseModel):
     status: Optional[ScenarioGenerationStatusModel]
 
 
+SuiteRunStateLiteral = Literal['pending', 'running', 'completed', 'failed', 'cancelled']
+
+
+class EvaluationSuiteRunSummaryModel(BaseModel):
+    total_checks: int
+    passed_checks: int
+    failed_checks: int
+    skipped_checks: int
+    measures_total: int
+    measures_failed: int
+    measures_skipped: int
+    metrics_total: int
+    metrics_failed: int
+    metrics_skipped: int
+    scenarios_total: int
+    scenarios_included: int
+    scenarios_skipped: int
+
+
+class EvaluationSuiteRunRequest(BaseModel):
+    name: Optional[str] = None
+    select: Optional[str] = None
+    exclude: Optional[str] = None
+    include_unmeasured: Optional[bool] = False
+    output_path: Optional[str] = None
+    agent: Optional[str] = None
+    reporter: Optional[Literal['auto', 'pretty', 'tap']] = None
+    color: Optional[Literal['auto', 'always', 'never']] = None
+
+
+class EvaluationSuiteRunStatusModel(BaseModel):
+    job_id: str
+    project: Optional[str] = None
+    agent: Optional[str] = None
+    name: Optional[str] = None
+    select: Optional[str] = None
+    exclude: Optional[str] = None
+    include_unmeasured: bool
+    output_path: Optional[str] = None
+    reporter: Optional[str] = None
+    color: Optional[str] = None
+    state: SuiteRunStateLiteral
+    total: int
+    completed: int
+    created_at: str
+    updated_at: str
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    result_path: Optional[str] = None
+    report_path: Optional[str] = None
+    workflow_name: Optional[str] = None
+    summary: Optional[EvaluationSuiteRunSummaryModel] = None
+    error: Optional[str] = None
+
+
+class EvaluationSuiteRunResponse(BaseModel):
+    job_id: str
+    status: Optional[EvaluationSuiteRunStatusModel] = None
+
+
 def build_playground_spec(
     base_spec: AgentSpec,
     tool_registry: Dict[str, Any],
@@ -1677,6 +1910,7 @@ def create_api_app(
     app.state.playground_resources = resources
     app.state.playground_session_store = PlaygroundSessionStore()
     app.state.scenario_run_manager = ScenarioRunManager()
+    app.state.suite_run_manager = SuiteRunManager()
     app.state.scenario_generation_manager = ScenarioGenerationManager()
     app.state.judge_optimization_manager = JudgeOptimizationManager()
     app.state.agent_optimization_manager = AgentOptimizationManager()
@@ -1753,6 +1987,50 @@ def create_api_app(
             if manifest_path.is_file():
                 return manifest_path
         raise HTTPException(status_code=404, detail="Project manifest not available")
+
+    def _reload_playground_resources(ctx, manifest_path: Path) -> Tuple[Dict[str, Any], Dict[str, AgentSpec]]:
+        agent_specs: Dict[str, AgentSpec] = {}
+        base_spec = build_spec_from_project(ctx)
+        for key in sorted(ctx.agents_map.keys()):
+            if key == ctx.entrypoint:
+                agent_specs[key] = base_spec
+            else:
+                try:
+                    agent_specs[key] = build_spec_from_project(ctx, key)
+                except Exception:
+                    continue
+        resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+        updated_resources = dict(resources or {})
+        project_name = ctx.raw.get("name") or resources.get("project_name") or app.state.default_project
+        updated_resources["project_name"] = project_name
+        updated_resources["tool_registry"] = ctx.tool_registry
+        updated_resources["guardrails_registry"] = ctx.guardrails_registry
+        updated_resources["agent_specs"] = agent_specs
+        updated_resources["entry_agent_key"] = ctx.entrypoint
+        updated_resources["manifest_path"] = str(manifest_path)
+        base_reference = agent_specs.get(ctx.entrypoint)
+        if not base_reference and agent_specs:
+            base_reference = next(iter(agent_specs.values()))
+        if base_reference:
+            updated_resources["base_spec"] = base_reference
+            updated_resources["default_model_settings"] = base_reference.model_settings or {}
+            updated_resources["default_safe_agent"] = bool(getattr(base_reference, "use_safe_agent", False))
+            if base_reference.safe_agent_options:
+                updated_resources["default_safe_agent_options"] = asdict(base_reference.safe_agent_options)
+            else:
+                updated_resources["default_safe_agent_options"] = {}
+            updated_resources["default_guardrails"] = {
+                "input": _guardrail_keys(getattr(base_reference, "input_guardrails", None), ctx.guardrails_registry.get("input", {})),
+                "output": _guardrail_keys(getattr(base_reference, "output_guardrails", None), ctx.guardrails_registry.get("output", {})),
+            }
+        else:
+            updated_resources["base_spec"] = None
+            updated_resources["default_model_settings"] = {}
+            updated_resources["default_safe_agent"] = False
+            updated_resources["default_safe_agent_options"] = {}
+            updated_resources["default_guardrails"] = {"input": [], "output": []}
+        app.state.playground_resources = updated_resources
+        return updated_resources, agent_specs
 
     def _serialize_dimensions_payload(dimensions: List[EvaluationDimensionModel]) -> List[Dict[str, Any]]:
         serialized: List[Dict[str, Any]] = []
@@ -3400,6 +3678,159 @@ def create_api_app(
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
 
+    async def _run_suite_job(job_id: str, payload: EvaluationSuiteRunRequest, manifest_path: Path) -> None:
+        manager: SuiteRunManager = app.state.suite_run_manager
+        await manager.update_job(job_id, state="running", started_at=_utc_now(), completed=0)
+        loop = asyncio.get_running_loop()
+        progress_state = {"total": 0, "completed": 0}
+        try:
+            compiled_cfg_path, _ = compile_project(
+                str(manifest_path),
+                select=str(payload.select or ""),
+                exclude=str(payload.exclude or ""),
+                agent_key=(payload.agent or None),
+            )
+            compiled_path = Path(compiled_cfg_path).resolve()
+            cfg = yaml.safe_load(compiled_path.read_text(encoding="utf-8")) or {}
+            tracing = cfg.get("tracing") or {}
+            workflow_name: Optional[str] = None
+            tracing_module = None
+            provider = str(tracing.get("provider") or "").lower()
+            label = None
+            if payload.name:
+                label = payload.name.strip() or None
+            if provider in {"studio", "agentio"}:
+                try:
+                    from omniagents.studio import tracing as studio_tracing
+
+                    tracing_module = studio_tracing
+                except ImportError:
+                    tracing_module = None
+                if tracing_module is None:
+                    try:
+                        import agentio as legacy_tracing
+
+                        tracing_module = legacy_tracing
+                    except Exception:
+                        tracing_module = None
+                if tracing_module is not None:
+                    base_name = tracing.get("name") or compiled_path.stem
+                    label_segment = label or "suite"
+                    ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+                    workflow_name = f"{base_name}_suite_{label_segment}_{ts}"
+                    resume_mode = (tracing.get("settings") or {}).get("resume", "never")
+                    tracing_module.init(project=str(tracing.get("project") or "evaluation_suite"), name=workflow_name, resume=str(resume_mode), replace_default=True)
+
+            base_dir = manifest_path.parent.resolve()
+            output_arg = (payload.output_path or "").strip()
+            if output_arg:
+                final_out = Path(output_arg)
+                if not final_out.is_absolute():
+                    final_out = (base_dir / output_arg).resolve()
+            else:
+                name_value = label or "suite"
+                final_out = (base_dir / "artifacts" / "eval" / name_value / "run_results.json").resolve()
+            final_out.parent.mkdir(parents=True, exist_ok=True)
+
+            def _schedule_update(**updates: Any) -> None:
+                asyncio.run_coroutine_threadsafe(manager.update_job(job_id, **updates), loop)
+
+            def _progress_cb(event: Dict[str, Any]) -> None:
+                evt = event.get("event")
+                if evt == "start":
+                    total = int(event.get("total") or 0)
+                    progress_state["total"] = total
+                    _schedule_update(total=total)
+                elif evt == "progress":
+                    idx = event.get("index")
+                    if isinstance(idx, int) and idx >= 0:
+                        progress_state["completed"] = idx
+                    else:
+                        progress_state["completed"] = max(progress_state["completed"] + 1, 1)
+                    _schedule_update(completed=progress_state["completed"])
+
+            include_unmeasured = bool(payload.include_unmeasured or False)
+
+            def _execute() -> Dict[str, Any]:
+                return run_evaluation(
+                    compiled_path,
+                    tracing_cfg=tracing,
+                    workflow_base_name=label or compiled_path.stem,
+                    include_unmeasured=include_unmeasured,
+                    progress_cb=_progress_cb,
+                )
+
+            result = await loop.run_in_executor(None, _execute)
+            if progress_state["total"] <= 0:
+                runs_count = len(result.get("runs") or [])
+                progress_state["total"] = runs_count
+            if progress_state["completed"] <= 0:
+                progress_state["completed"] = len(result.get("runs") or [])
+            final_out.write_text(json.dumps(result, indent=2), encoding="utf-8")
+
+            runs = result.get("runs") or []
+            metrics = result.get("metrics") or []
+            measure_total = 0
+            measure_failed = 0
+            measure_skipped = 0
+            for run in runs:
+                for measure in run.get("measures") or []:
+                    measure_total += 1
+                    passed_value = measure.get("passed")
+                    if passed_value is False:
+                        measure_failed += 1
+                    elif passed_value is None:
+                        measure_skipped += 1
+            metrics_total = 0
+            metrics_failed = 0
+            metrics_skipped = 0
+            for metric in metrics:
+                metrics_total += 1
+                target_block = metric.get("target")
+                has_target = target_block is not None
+                if has_target:
+                    meets = bool(metric.get("meets_target"))
+                    if not meets:
+                        metrics_failed += 1
+                else:
+                    metrics_skipped += 1
+            stats_block = result.get("stats") or {}
+            total_checks = measure_total + metrics_total
+            failed_checks = measure_failed + metrics_failed
+            skipped_checks = measure_skipped + metrics_skipped
+            passed_checks = max(total_checks - failed_checks - skipped_checks, 0)
+            summary_model = EvaluationSuiteRunSummaryModel(
+                total_checks=total_checks,
+                passed_checks=passed_checks,
+                failed_checks=failed_checks,
+                skipped_checks=skipped_checks,
+                measures_total=measure_total,
+                measures_failed=measure_failed,
+                measures_skipped=measure_skipped,
+                metrics_total=metrics_total,
+                metrics_failed=metrics_failed,
+                metrics_skipped=metrics_skipped,
+                scenarios_total=int(stats_block.get("total_scenarios") or 0),
+                scenarios_included=int(stats_block.get("included_scenarios") or 0),
+                scenarios_skipped=int(stats_block.get("skipped_unmeasured") or 0),
+            )
+
+            final_total = progress_state["total"] or progress_state["completed"]
+            completed_value = progress_state["completed"] or final_total
+            await manager.update_job(
+                job_id,
+                state="completed",
+                completed=completed_value,
+                total=final_total,
+                finished_at=_utc_now(),
+                result_path=str(final_out),
+                workflow_name=workflow_name,
+                summary=summary_model.model_dump(),
+            )
+        except Exception as exc:
+            logger.exception("Evaluation suite run %s failed", job_id)
+            await manager.update_job(job_id, state="failed", error=str(exc), finished_at=_utc_now())
+
     async def _run_scenario_job(job_id: str, payload: ScenarioRunRequest, manifest_path: Path, scenario_set: ScenarioSetModel, scenarios: List[Dict[str, Any]], output_path: Path) -> None:
         manager: ScenarioRunManager = app.state.scenario_run_manager
         await manager.update_job(job_id, state="running", started_at=_utc_now(), total=len(scenarios), completed=0)
@@ -3480,7 +3911,7 @@ def create_api_app(
         except Exception as exc:
             logger.exception("Scenario run %s failed", job_id)
             await manager.update_job(job_id, state="failed", error=str(exc), finished_at=_utc_now())
-    
+
     def _resolve_runs_output_path(manifest_path: Path, scenario_path: Path, override: Optional[str]) -> Path:
         base_dir = manifest_path.parent.resolve()
         if override:
@@ -3489,7 +3920,46 @@ def create_api_app(
                 candidate = (base_dir / candidate).resolve()
             return candidate
         return (scenario_path.parent / "generated_runs.json").resolve()
-    
+
+    @app.post("/api/evaluation/suite/run")
+    async def start_evaluation_suite_run(payload: EvaluationSuiteRunRequest):
+        try:
+            name_value = (payload.name or "").strip()
+            payload.name = name_value or None
+            select_value = (payload.select or "").strip()
+            payload.select = select_value or None
+            exclude_value = (payload.exclude or "").strip()
+            payload.exclude = exclude_value or None
+            output_value = (payload.output_path or "").strip()
+            payload.output_path = output_value or None
+            agent_value = (payload.agent or "").strip()
+            payload.agent = agent_value or None
+            manifest_path = _get_manifest_path()
+            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            project_name = resources.get("project_name") or app.state.default_project
+            manager: SuiteRunManager = app.state.suite_run_manager
+            job = await manager.create_job(project_name, payload)
+            task = asyncio.create_task(_run_suite_job(job.job_id, payload, manifest_path))
+            await manager.register_task(job.job_id, task)
+            status = await manager.get_status(job.job_id)
+            status_model = EvaluationSuiteRunStatusModel(**status) if status else None
+            response = EvaluationSuiteRunResponse(job_id=job.job_id, status=status_model)
+            return response.model_dump()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.get("/api/evaluation/suite/run/{job_id}")
+    async def get_evaluation_suite_run(job_id: str):
+        manager: SuiteRunManager = app.state.suite_run_manager
+        status = await manager.get_status(job_id)
+        if not status:
+            raise HTTPException(status_code=404, detail="Evaluation suite run not found")
+        status_model = EvaluationSuiteRunStatusModel(**status)
+        response = EvaluationSuiteRunResponse(job_id=job_id, status=status_model)
+        return response.model_dump()
+
     @app.post("/api/evaluation/scenarios/run")
     async def run_evaluation_scenarios(payload: ScenarioRunRequest):
         try:
@@ -3677,6 +4147,36 @@ def create_api_app(
         entry_key = resources.get("entry_agent_key")
         return _build_metadata_response(base_spec, resources, request, agent_key=entry_key)
     
+    @app.post("/api/agents")
+    async def create_agent(payload: AgentCreatePayload, request: Request):
+        name_value = payload.name.strip() if isinstance(payload.name, str) else ""
+        if not name_value:
+            raise HTTPException(status_code=422, detail="Agent name is required")
+        model_value = payload.model.strip() if isinstance(payload.model, str) else None
+        manifest_path = _get_manifest_path()
+        try:
+            _, _, sanitized = scaffold_agent(str(manifest_path), name_value, model=model_value or "gpt-4.1")
+        except FileExistsError:
+            raise HTTPException(status_code=409, detail="Agent already exists")
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+        refreshed_ctx = load_project(str(manifest_path))
+        updated_resources, agent_specs = _reload_playground_resources(refreshed_ctx, manifest_path)
+        spec = agent_specs.get(sanitized)
+        if not spec:
+            raise HTTPException(status_code=500, detail="Agent metadata unavailable after creation")
+        entry_key = updated_resources.get("entry_agent_key")
+        summary = {
+            "key": sanitized,
+            "name": spec.name,
+            "label": spec.label or spec.name or sanitized,
+            "description": spec.description or "",
+            "model": spec.model_name or "",
+            "is_entry": sanitized == entry_key,
+        }
+        metadata = _build_metadata_response(spec, updated_resources, request, agent_key=sanitized)
+        return {"agent": summary, "metadata": metadata}
+
     @app.get("/api/agents")
     async def list_agents():
         resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
@@ -3696,7 +4196,12 @@ def create_api_app(
                     "is_entry": key == entry_key,
                 }
             )
-        agents_payload.sort(key=lambda item: (item.get("label") or item.get("key") or "").lower())
+        def _sort_key(item: Dict[str, Any]) -> tuple:
+            is_entry = 0 if item.get("is_entry") else 1
+            label_key = (item.get("label") or item.get("key") or "").lower()
+            return (is_entry, label_key)
+
+        agents_payload.sort(key=_sort_key)
         return {"agents": agents_payload}
     
     @app.get("/api/agents/{agent_key}/metadata")
@@ -3841,41 +4346,7 @@ def create_api_app(
                     raw_config.pop("output_schema", None)
             _write_yaml_file(agent_path, raw_config)
             refreshed_ctx = load_project(str(manifest_path))
-            base_spec = build_spec_from_project(refreshed_ctx)
-            agent_specs: Dict[str, AgentSpec] = {}
-            for key in sorted(refreshed_ctx.agents_map.keys()):
-                if key == refreshed_ctx.entrypoint:
-                    agent_specs[key] = base_spec
-                else:
-                    try:
-                        agent_specs[key] = build_spec_from_project(refreshed_ctx, key)
-                    except Exception:
-                        continue
-            resources = getattr(app.state, "playground_resources", {})
-            updated_resources = dict(resources or {})
-            project_name = refreshed_ctx.raw.get("name") or resources.get("project_name") or app.state.default_project
-            updated_resources["project_name"] = project_name
-            updated_resources["tool_registry"] = refreshed_ctx.tool_registry
-            updated_resources["guardrails_registry"] = refreshed_ctx.guardrails_registry
-            updated_resources["agent_specs"] = agent_specs
-            updated_resources["entry_agent_key"] = refreshed_ctx.entrypoint
-            updated_resources["manifest_path"] = str(manifest_path)
-            base_reference = agent_specs.get(refreshed_ctx.entrypoint)
-            if not base_reference and agent_specs:
-                base_reference = next(iter(agent_specs.values()))
-            if base_reference:
-                updated_resources["base_spec"] = base_reference
-                updated_resources["default_model_settings"] = base_reference.model_settings or {}
-                updated_resources["default_safe_agent"] = bool(getattr(base_reference, "use_safe_agent", False))
-                if base_reference.safe_agent_options:
-                    updated_resources["default_safe_agent_options"] = asdict(base_reference.safe_agent_options)
-                else:
-                    updated_resources["default_safe_agent_options"] = {}
-                updated_resources["default_guardrails"] = {
-                    "input": _guardrail_keys(getattr(base_reference, "input_guardrails", None), refreshed_ctx.guardrails_registry.get("input", {})),
-                    "output": _guardrail_keys(getattr(base_reference, "output_guardrails", None), refreshed_ctx.guardrails_registry.get("output", {})),
-                }
-            app.state.playground_resources = updated_resources
+            updated_resources, agent_specs = _reload_playground_resources(refreshed_ctx, manifest_path)
             spec = agent_specs.get(agent_key)
             if not spec:
                 raise HTTPException(status_code=500, detail="Agent metadata unavailable after update")
@@ -3884,6 +4355,21 @@ def create_api_app(
             raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.delete("/api/agents/{agent_key}")
+    async def remove_agent(agent_key: str):
+        manifest_path = _get_manifest_path()
+        try:
+            delete_agent(str(manifest_path), agent_key)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"Agent '{agent_key}' not found")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+        refreshed_ctx = load_project(str(manifest_path))
+        _reload_playground_resources(refreshed_ctx, manifest_path)
+        return {"deleted": agent_key}
     
     async def _configure_session(agent_key: Optional[str], payload: PlaygroundSessionRequest) -> Dict[str, str]:
         resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
@@ -4926,6 +5412,25 @@ def create_api_app(
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
     
+    @app.websocket("/api/evaluation/suite/run/{job_id}/ws")
+    async def suite_run_ws(job_id: str, websocket: WebSocket):
+        manager: SuiteRunManager = app.state.suite_run_manager
+        accepted = await manager.add_connection(job_id, websocket)
+        if not accepted:
+            await websocket.close(code=4404)
+            return
+        try:
+            while True:
+                await asyncio.sleep(1)
+        except WebSocketDisconnect:
+            await manager.remove_connection(job_id, websocket)
+        except Exception:
+            await manager.remove_connection(job_id, websocket)
+            try:
+                await websocket.close()
+            except Exception:
+                pass
+
     @app.websocket("/api/evaluation/scenarios/run/{job_id}/ws")
     async def scenario_run_ws(job_id: str, websocket: WebSocket):
         manager: ScenarioRunManager = app.state.scenario_run_manager

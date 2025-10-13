@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import List, Tuple, Optional
+import shutil
 import yaml
 
 
@@ -230,6 +231,36 @@ def scaffold_agent(project_ref: str, agent_name: str, model: str = "gpt-4.1", fo
     )
     created.append(str(instr_md))
     return created, str(root), sanitized
+
+
+def delete_agent(project_ref: str, agent_key: str) -> Tuple[List[str], str, str]:
+    root = _resolve_project_root(project_ref)
+    agents_dir = root / "agents"
+    target_dir = agents_dir / agent_key
+    if not target_dir.exists() or not target_dir.is_dir():
+        raise FileNotFoundError(f"Agent directory not found: {target_dir}")
+    existing_keys = sorted(p.name for p in agents_dir.iterdir() if p.is_dir() and (p / "agent.yml").is_file())
+    if agent_key not in existing_keys:
+        raise FileNotFoundError(f"Agent not found: {agent_key}")
+    if len(existing_keys) <= 1:
+        raise ValueError("Cannot delete the only agent in the project")
+    shutil.rmtree(target_dir)
+    removed = [str(target_dir)]
+    project_yml = root / "project.yml"
+    if project_yml.is_file():
+        data = yaml.safe_load(project_yml.read_text(encoding="utf-8")) or {}
+        if not isinstance(data, dict):
+            data = {}
+        agents_cfg = data.get("agents") if isinstance(data.get("agents"), dict) else {}
+        entry = agents_cfg.get("entrypoint")
+        if entry == agent_key:
+            for candidate in existing_keys:
+                if candidate != agent_key:
+                    agents_cfg["entrypoint"] = candidate
+                    break
+        data["agents"] = agents_cfg
+        project_yml.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    return removed, str(root), agent_key
 
 
 def scaffold_eval_quickstart(project_ref: str, force: bool = False) -> Tuple[List[str], str]:

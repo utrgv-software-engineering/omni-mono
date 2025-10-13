@@ -180,6 +180,20 @@ export interface AgentUpdatePayload {
   output_schema?: Record<string, any> | null
 }
 
+export interface AgentCreatePayload {
+  name: string
+  model?: string
+}
+
+export interface AgentCreateResponse {
+  agent: AgentSummary
+  metadata: PlaygroundMetadata
+}
+
+export interface AgentDeleteResponse {
+  deleted: string
+}
+
 export interface AgentSummary {
   key: string
   name: string | null
@@ -389,6 +403,65 @@ export interface EvaluationScenarioGenerationStatus {
 export interface EvaluationScenarioGenerationResponse {
   job_id: string
   status?: EvaluationScenarioGenerationStatus | null
+}
+
+export type EvaluationSuiteRunState = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface EvaluationSuiteRunSummary {
+  total_checks: number
+  passed_checks: number
+  failed_checks: number
+  skipped_checks: number
+  measures_total: number
+  measures_failed: number
+  measures_skipped: number
+  metrics_total: number
+  metrics_failed: number
+  metrics_skipped: number
+  scenarios_total: number
+  scenarios_included: number
+  scenarios_skipped: number
+}
+
+export interface EvaluationSuiteRunRequest {
+  name?: string | null
+  select?: string | null
+  exclude?: string | null
+  include_unmeasured?: boolean | null
+  output_path?: string | null
+  agent?: string | null
+  reporter?: 'auto' | 'pretty' | 'tap' | null
+  color?: 'auto' | 'always' | 'never' | null
+}
+
+export interface EvaluationSuiteRunStatus {
+  job_id: string
+  project?: string | null
+  agent?: string | null
+  name?: string | null
+  select?: string | null
+  exclude?: string | null
+  include_unmeasured: boolean
+  output_path?: string | null
+  reporter?: string | null
+  color?: string | null
+  state: EvaluationSuiteRunState
+  total: number
+  completed: number
+  created_at: string
+  updated_at: string
+  started_at?: string | null
+  finished_at?: string | null
+  result_path?: string | null
+  report_path?: string | null
+  workflow_name?: string | null
+  summary?: EvaluationSuiteRunSummary | null
+  error?: string | null
+}
+
+export interface EvaluationSuiteRunResponse {
+  job_id: string
+  status?: EvaluationSuiteRunStatus | null
 }
 
 export interface EvaluationDatasetSplit {

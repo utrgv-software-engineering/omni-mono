@@ -42,6 +42,7 @@ interface AgentWorkbenchProps {
   agentKey?: string | null
   heading?: string
   agentLabel?: string
+  containerPadding?: boolean
 }
 
 type OutputFieldType = 'string' | 'number' | 'integer' | 'boolean' | 'array' | 'object'
@@ -344,6 +345,7 @@ export function AgentWorkbench({
   agentKey = null,
   heading = 'Configure your playground agent',
   agentLabel,
+  containerPadding = true,
 }: AgentWorkbenchProps) {
   const { data, isLoading, isError, refetch } = useQuery<PlaygroundMetadata>({
     queryKey: metadataQueryKey,
@@ -790,10 +792,10 @@ export function AgentWorkbench({
     setConfigDirty(true)
   }
 
-  const toggleSafeToolName = (name: string) => {
+  const updateSafeToolName = (name: string, enabled: boolean) => {
     setSafeOptions((prev) => {
-      const exists = prev.safe_tool_names.includes(name)
-      const nextNames = exists ? prev.safe_tool_names.filter((item) => item !== name) : [...prev.safe_tool_names, name]
+      const filtered = prev.safe_tool_names.filter((item) => item !== name)
+      const nextNames = enabled ? [...filtered, name] : filtered
       return { ...prev, safe_tool_names: nextNames }
     })
     setSafeOptionsDirty(true)
@@ -898,6 +900,12 @@ export function AgentWorkbench({
   )
   const currentComparisonString = useMemo(() => JSON.stringify(prepareComparison(currentSnapshot)), [currentSnapshot])
   const hasUnsavedDefaults = Boolean(agentKey) && initialComparison !== null && initialComparison !== currentComparisonString
+
+  const handleResetConversation = useCallback(() => {
+    resetConversation()
+    setSessionId('')
+    clearStatus()
+  }, [resetConversation, clearStatus])
 
   const handleReset = () => {
     const defaultModel = data?.default_model ?? ''
@@ -1018,6 +1026,7 @@ export function AgentWorkbench({
       setGuardrailsDirty(false)
       setOutputConfigDirty(false)
       setConfigDirty(false)
+      handleResetConversation()
       pushToast({ message: 'Agent updated', tone: 'success' })
       queryClient.invalidateQueries({ queryKey: metadataQueryKey as readonly unknown[] })
       queryClient.invalidateQueries({ queryKey: ['agents', 'list'] as const })
@@ -1047,13 +1056,8 @@ export function AgentWorkbench({
     useSafeAgent,
     validateStructuredOutput,
     instructions,
+    handleResetConversation,
   ])
-
-  const handleResetConversation = useCallback(() => {
-    resetConversation()
-    setSessionId('')
-    clearStatus()
-  }, [resetConversation, clearStatus])
 
   const ensureSession = async (trimmedModel: string) => {
     if (!sessionId || configDirty) {
@@ -1225,9 +1229,11 @@ export function AgentWorkbench({
 
   const isPreparing = sessionMutation.isPending || isSending || connectionState === 'connecting'
 
+  const outerPaddingClass = containerPadding ? 'p-6' : 'p-0'
+
   if (isLoading) {
     return (
-      <div className="h-full w-full p-6">
+      <div className={`h-full w-full ${outerPaddingClass}`}>
         <div className="mx-auto flex h-full max-w-4xl items-center justify-center text-sm text-muted-foreground">
           Loading playground configuration…
         </div>
@@ -1237,7 +1243,7 @@ export function AgentWorkbench({
 
   if (isError) {
     return (
-      <div className="h-full w-full p-6">
+      <div className={`h-full w-full ${outerPaddingClass}`}>
         <div className="mx-auto flex h-full max-w-4xl flex-col items-center justify-center gap-4 text-center">
           <p className="text-sm text-muted-foreground">Unable to load the playground metadata.</p>
           <button
@@ -1254,7 +1260,7 @@ export function AgentWorkbench({
 
   if (!data?.available) {
     return (
-      <div className="h-full w-full p-6">
+      <div className={`h-full w-full ${outerPaddingClass}`}>
         <div className="mx-auto flex h-full max-w-4xl items-center justify-center text-center">
           <div className="space-y-3">
             <h2 className="text-xl font-semibold">Playground unavailable</h2>
@@ -1268,7 +1274,7 @@ export function AgentWorkbench({
   }
 
   return (
-    <div className="h-full w-full overflow-y-auto p-6 lg:overflow-hidden">
+    <div className={`h-full w-full overflow-y-auto ${outerPaddingClass} lg:overflow-hidden`}>
       <div className="mx-auto flex h-full max-w-6xl flex-col gap-6 lg:grid lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
         <section className="flex min-h-0 flex-col rounded-md border border-border bg-background">
           <div className="flex-1 space-y-6 overflow-y-auto p-5">
@@ -1560,24 +1566,31 @@ export function AgentWorkbench({
                   </div>
                   <div className="space-y-1">
                     <div className="text-xs font-medium text-muted-foreground">Safe tool names</div>
-                    <div className="flex flex-wrap gap-2 rounded-md border border-dashed border-border p-2">
+                    <div className="space-y-2 rounded-md border border-dashed border-border p-2">
                       {selectedTools.length === 0 ? (
                         <span className="text-xs text-muted-foreground">No tools selected.</span>
                       ) : (
                         selectedTools.map((toolName) => {
                           const active = safeOptions.safe_tool_names.includes(toolName)
                           return (
-                            <button
+                            <label
                               key={toolName}
-                              type="button"
-                              onClick={() => toggleSafeToolName(toolName)}
-                              disabled={!useSafeAgent}
-                              className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-                                active ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-muted text-muted-foreground'
-                              } ${useSafeAgent ? 'hover:bg-primary/20 hover:text-primary' : 'cursor-not-allowed opacity-60'}`}
+                              className={`flex items-center justify-between rounded-md border px-3 py-2 text-xs ${
+                                useSafeAgent ? 'hover:border-primary hover:bg-primary/5' : 'opacity-60'
+                              }`}
                             >
-                              {toolName}
-                            </button>
+                              <span className="font-medium text-foreground">{toolName}</span>
+                              <span className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                                <span>{active ? 'Safe' : 'Requires approval'}</span>
+                                <input
+                                  type="checkbox"
+                                  checked={active}
+                                  onChange={(event) => updateSafeToolName(toolName, event.target.checked)}
+                                  disabled={!useSafeAgent}
+                                  className="h-3 w-3 rounded border-input"
+                                />
+                              </span>
+                            </label>
                           )
                         })
                       )}

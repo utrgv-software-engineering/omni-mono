@@ -11,6 +11,9 @@ import type {
   PlaygroundSafeAgentOptions,
   AgentUpdatePayload,
   AgentSummary,
+  AgentCreatePayload,
+  AgentCreateResponse,
+  AgentDeleteResponse,
   EvaluationDimension,
   EvaluationDimensionsResponse,
   StudioProjectMetadata,
@@ -41,6 +44,8 @@ import type {
   EvaluationJudgeOptimizationResponse,
   EvaluationAgentOptimizationRequest,
   EvaluationAgentOptimizationResponse,
+  EvaluationSuiteRunRequest,
+  EvaluationSuiteRunResponse,
 } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_URL || `${window.location.origin}/api`
@@ -257,6 +262,20 @@ class ApiClient {
     })
   }
 
+  async createAgent(payload: AgentCreatePayload): Promise<AgentCreateResponse> {
+    return this.fetch('/agents', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async deleteAgent(agentKey: string): Promise<AgentDeleteResponse> {
+    const encoded = encodeURIComponent(agentKey)
+    return this.fetch(`/agents/${encoded}`, {
+      method: 'DELETE',
+    })
+  }
+
   async getEvaluationDimensions(): Promise<EvaluationDimensionsResponse> {
     return this.fetch('/evaluation/dimensions')
   }
@@ -403,6 +422,17 @@ class ApiClient {
     return this.fetch(`/evaluation/scenarios/generate/${jobId}`)
   }
 
+  async startEvaluationSuiteRun(payload: EvaluationSuiteRunRequest): Promise<EvaluationSuiteRunResponse> {
+    return this.fetch('/evaluation/suite/run', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async getEvaluationSuiteRunStatus(jobId: string): Promise<EvaluationSuiteRunResponse> {
+    return this.fetch(`/evaluation/suite/run/${jobId}`)
+  }
+
   async createPlaygroundSession(payload: PlaygroundSessionPayload): Promise<PlaygroundSessionResponse> {
     return this.fetch('/playground/session', {
       method: 'POST',
@@ -434,6 +464,26 @@ class ApiClient {
     wsUrl.protocol = resolved.protocol === 'https:' ? 'wss:' : resolved.protocol === 'http:' ? 'ws:' : resolved.protocol
     const basePath = resolved.pathname.replace(/\/$/, '') || '/api'
     wsUrl.pathname = `${basePath}/evaluation/scenarios/run/${jobId}/ws`
+    const token = resolved.searchParams.get('token')
+    wsUrl.search = ''
+    if (token) {
+      wsUrl.searchParams.set('token', token)
+    }
+    return new WebSocket(wsUrl.toString())
+  }
+
+  createSuiteRunWebSocket(jobId: string): WebSocket {
+    const base = this.baseUrl || '/api'
+    let resolved: URL
+    if (/^https?:/i.test(base) || /^ws(s)?:/i.test(base)) {
+      resolved = new URL(base)
+    } else {
+      resolved = new URL(base, window.location.origin)
+    }
+    const wsUrl = new URL(resolved.toString())
+    wsUrl.protocol = resolved.protocol === 'https:' ? 'wss:' : resolved.protocol === 'http:' ? 'ws:' : resolved.protocol
+    const basePath = resolved.pathname.replace(/\/$/, '') || '/api'
+    wsUrl.pathname = `${basePath}/evaluation/suite/run/${jobId}/ws`
     const token = resolved.searchParams.get('token')
     wsUrl.search = ''
     if (token) {

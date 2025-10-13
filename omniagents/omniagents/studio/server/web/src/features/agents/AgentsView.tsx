@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Bot, ChevronRight, Loader2, Sparkles, X } from 'lucide-react'
+import { Bot, ChevronRight, Loader2, Plus, Sparkles, Trash2, X } from 'lucide-react'
 import { api } from '../../lib/api'
 import type {
+  AgentCreatePayload,
+  AgentCreateResponse,
+  AgentDeleteResponse,
   AgentSummary,
   EvaluationDatasetsResponse,
   EvaluationAgentOptimizationRequest,
@@ -22,6 +25,11 @@ const defaultOptimizeFormState = () => ({
   datasetKey: '',
   maxMetricCalls: '100',
   seed: '',
+})
+
+const defaultCreateFormState = () => ({
+  name: '',
+  model: '',
 })
 
 type AgentOptimizeFormState = ReturnType<typeof defaultOptimizeFormState>
@@ -69,6 +77,11 @@ export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdat
   const [activeOptimization, setActiveOptimization] = useState<{ jobId: string; status: EvaluationAgentOptimizationStatus | null } | null>(null)
   const optimizationSocketRef = useRef<WebSocket | null>(null)
   const optimizationCompletionRef = useRef(false)
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
+  const [createForm, setCreateForm] = useState(() => defaultCreateFormState())
+  const [createError, setCreateError] = useState<string | null>(null)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const startAgentOptimization = useMutation<EvaluationAgentOptimizationResponse, Error, EvaluationAgentOptimizationRequest>({
     mutationFn: (payload) => api.startAgentOptimization(payload),
@@ -99,6 +112,11 @@ export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdat
     }
     setActiveOptimization(null)
     optimizationCompletionRef.current = false
+  }, [selectedAgent])
+
+  useEffect(() => {
+    setIsDeleteDialogOpen(false)
+    setDeleteError(null)
   }, [selectedAgent])
 
   useEffect(() => {
@@ -304,6 +322,61 @@ export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdat
     return agents.find((agent) => agent.key === selectedAgent) ?? null
   }, [agents, selectedAgent])
 
+  const createAgentMutation = useMutation<AgentCreateResponse, Error, AgentCreatePayload>({
+    mutationFn: (payload) => api.createAgent(payload),
+    onSuccess: (response) => {
+      setIsCreateDialogOpen(false)
+      setCreateForm(defaultCreateFormState())
+      setCreateError(null)
+      queryClient.invalidateQueries({ queryKey: ['agents', 'list'] })
+      queryClient.invalidateQueries({ queryKey: ['agents', response.agent.key, 'metadata'] })
+      onSelectAgent(response.agent.key)
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : 'Failed to create agent'
+      setCreateError(message)
+    },
+  })
+
+  const deleteAgentMutation = useMutation<AgentDeleteResponse, Error, string>({
+    mutationFn: (agentKey) => api.deleteAgent(agentKey),
+    onSuccess: (_, agentKey) => {
+      setIsDeleteDialogOpen(false)
+      setDeleteError(null)
+      queryClient.invalidateQueries({ queryKey: ['agents', 'list'] })
+      queryClient.invalidateQueries({ queryKey: ['agents', agentKey, 'metadata'] })
+      if (selectedAgent === agentKey) {
+        onClearAgent()
+      }
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : 'Failed to delete agent'
+      setDeleteError(message)
+    },
+  })
+
+  const isCreatingAgent = createAgentMutation.isPending
+  const isDeletingAgent = deleteAgentMutation.isPending
+
+  const handleCreateSubmit = (event: React.FormEvent) => {
+    event.preventDefault()
+    const name = createForm.name.trim()
+    if (!name) {
+      setCreateError('Enter a name for the new agent')
+      return
+    }
+    const model = createForm.model.trim()
+    setCreateError(null)
+    createAgentMutation.mutate({ name, model: model || undefined })
+  }
+
+  const handleDeleteAgent = () => {
+    if (!selectedAgent || isDeletingAgent) {
+      return
+    }
+    deleteAgentMutation.mutate(selectedAgent)
+  }
+
   if (selectedAgent) {
     if (!activeAgent && !isLoading && !isError && agents.length > 0) {
       return (
@@ -326,6 +399,52 @@ export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdat
     return (
       <div className="h-full w-full overflow-y-auto p-6">
         <div className="mx-auto flex h-full max-w-6xl flex-col gap-4">
+          <div className="rounded-md border border-border bg-background px-4 py-4">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="space-y-2">
+                <div className="text-xs font-semibold uppercase text-muted-foreground">Agent</div>
+                <div className="flex items-center gap-2">
+                  <div className="text-xl font-semibold">{agentLabel}</div>
+                  {activeAgent?.is_entry ? (
+                    <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+                      Entrypoint
+                    </span>
+                  ) : null}
+                </div>
+                {agentDescription ? (
+                  <p className="max-w-2xl text-sm text-muted-foreground">{agentDescription}</p>
+                ) : null}
+                <div className="text-xs text-muted-foreground">
+                  {activeAgent?.model ? `Default model: ${activeAgent.model}` : 'No default model specified'}
+                </div>
+              </div>
+              <div className="flex flex-col items-stretch gap-3">
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {isDatasetsLoading ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
+                  <button
+                    type="button"
+                    onClick={openOptimize}
+                    disabled={datasetOptions.length === 0 || isStartingOptimization}
+                    className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    Optimize
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeleteError(null)
+                      setIsDeleteDialogOpen(true)
+                    }}
+                    className="inline-flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
           {activeOptimization ? (
             <div className="rounded-md border border-border bg-background px-4 py-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -370,29 +489,6 @@ export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdat
               </div>
             </div>
           ) : null}
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-muted/20 px-4 py-3">
-            <div>
-              <div className="text-sm font-semibold">Optimize instructions</div>
-              <div className="text-xs text-muted-foreground">Use evaluation datasets to refine this agent&apos;s behavior.</div>
-            </div>
-            <div className="flex items-center gap-2">
-              {isDatasetsLoading ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
-              <button
-                type="button"
-                onClick={openOptimize}
-                disabled={datasetOptions.length === 0 || isStartingOptimization}
-                className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
-              >
-                <Sparkles className="h-3.5 w-3.5" />
-                Optimize
-              </button>
-            </div>
-          </div>
-          {agentDescription ? (
-            <div className="rounded-md border border-border bg-muted/40 p-4 text-sm text-muted-foreground">
-              {agentDescription}
-            </div>
-          ) : null}
           <AgentWorkbench
             key={selectedAgent}
             metadataQueryKey={['agents', selectedAgent, 'metadata']}
@@ -402,6 +498,7 @@ export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdat
             heading={`Configure ${agentLabel}`}
             agentKey={selectedAgent}
             agentLabel={agentLabel}
+            containerPadding={false}
           />
           {isOptimizeDialogOpen ? (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
@@ -491,6 +588,55 @@ export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdat
               </form>
             </div>
           ) : null}
+          {isDeleteDialogOpen ? (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+              <div className="w-full max-w-sm rounded-lg border border-border bg-background p-6 shadow-lg">
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="text-lg font-semibold">Delete agent</h3>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isDeletingAgent) {
+                        return
+                      }
+                      setIsDeleteDialogOpen(false)
+                      setDeleteError(null)
+                    }}
+                    className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <p className="text-sm text-muted-foreground">This will remove the agent directory and instructions from the project.</p>
+                {deleteError ? (
+                  <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{deleteError}</div>
+                ) : null}
+                <div className="mt-6 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isDeletingAgent) {
+                        return
+                      }
+                      setIsDeleteDialogOpen(false)
+                      setDeleteError(null)
+                    }}
+                    className="rounded-md border border-border px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDeleteAgent}
+                    className="rounded-md bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground transition-colors hover:bg-destructive/90 disabled:opacity-50"
+                    disabled={isDeletingAgent}
+                  >
+                    {isDeletingAgent ? 'Deleting…' : 'Delete'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
     )
@@ -504,6 +650,18 @@ export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdat
             <h2 className="text-xl font-semibold">Agents</h2>
             <p className="text-sm text-muted-foreground">Select an agent to configure its defaults, tools, and guardrails.</p>
           </div>
+          <button
+            type="button"
+            onClick={() => {
+              setCreateForm(defaultCreateFormState())
+              setCreateError(null)
+              setIsCreateDialogOpen(true)
+            }}
+            className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            New agent
+          </button>
         </div>
         {isLoading ? (
           <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
@@ -533,12 +691,19 @@ export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdat
                 onClick={() => onSelectAgent(agent.key)}
                 className="flex h-full flex-col rounded-md border border-border bg-background p-4 text-left transition-shadow hover:shadow"
               >
-                <div className="mb-3 flex items-center justify-between gap-3">
+                <div className="mb-3 flex items-start justify-between gap-3">
                   <div className="flex items-center gap-2">
                     <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-primary">
                       <Bot className="h-4 w-4" />
                     </div>
-                    <div className="text-sm font-semibold">{agent.label}</div>
+                    <div className="space-y-1">
+                      <div className="text-sm font-semibold">{agent.label}</div>
+                      {agent.is_entry ? (
+                        <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+                          Entrypoint
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
                   <ChevronRight className="h-4 w-4 text-muted-foreground" />
                 </div>
@@ -553,6 +718,83 @@ export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdat
           </div>
         )}
       </div>
+      {isCreateDialogOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <form onSubmit={handleCreateSubmit} className="w-full max-w-sm rounded-lg border border-border bg-background p-6 shadow-lg">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold">Create agent</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  if (isCreatingAgent) {
+                    return
+                  }
+                  setIsCreateDialogOpen(false)
+                  setCreateError(null)
+                }}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="mb-1 block text-xs font-medium uppercase text-muted-foreground" htmlFor="new-agent-name">
+                  Name
+                </label>
+                <input
+                  id="new-agent-name"
+                  value={createForm.name}
+                  onChange={(event) => {
+                    setCreateForm((prev) => ({ ...prev, name: event.target.value }))
+                    setCreateError(null)
+                  }}
+                  placeholder="support"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium uppercase text-muted-foreground" htmlFor="new-agent-model">
+                  Model
+                </label>
+                <input
+                  id="new-agent-model"
+                  value={createForm.model}
+                  onChange={(event) => setCreateForm((prev) => ({ ...prev, model: event.target.value }))}
+                  placeholder="gpt-4.1"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                />
+                <div className="mt-1 text-xs text-muted-foreground">Leave blank to use the default model.</div>
+              </div>
+            </div>
+            {createError ? (
+              <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{createError}</div>
+            ) : null}
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (isCreatingAgent) {
+                    return
+                  }
+                  setIsCreateDialogOpen(false)
+                  setCreateError(null)
+                }}
+                className="rounded-md border border-border px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                disabled={isCreatingAgent}
+              >
+                {isCreatingAgent ? 'Creating…' : 'Create'}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </div>
   )
 }
