@@ -364,6 +364,16 @@ async def _run_scenario(agent_yaml: str, scenario: Dict[str, Any], defaults: Dic
         async for _ in result.stream_events():
             pass
 
+    run_error_payload = None
+    get_last_run_end = getattr(agent, "get_last_run_end", None)
+    if callable(get_last_run_end):
+        try:
+            candidate = get_last_run_end()
+        except Exception:
+            candidate = None
+        if isinstance(candidate, dict) and candidate.get("error"):
+            run_error_payload = candidate
+
     session_id = getattr(agent, "_session_id", None)
     history = load_history(
         session_id,
@@ -373,8 +383,24 @@ async def _run_scenario(agent_yaml: str, scenario: Dict[str, Any], defaults: Dic
 
     measures = scenario.get("measures") or []
     metadata = await _run_judges(Path(agent_yaml), eval_cfg, scenario, history)
+    if run_error_payload is not None:
+        metadata.setdefault("agent_error", run_error_payload)
     ctx = build_eval_context(history=history, tools=spec.available_tools, metadata=metadata)
     measures_out = run_measures(ctx, measures=measures) if measures else []
+    if run_error_payload is not None:
+        err_info = run_error_payload.get("error")
+        if isinstance(err_info, dict):
+            reason = err_info.get("message") or err_info.get("type") or "agent_run_failed"
+            details = err_info
+        else:
+            reason = str(err_info)
+            details = {"message": str(err_info)}
+        measures_out.append({
+            "name": "_agent_error",
+            "passed": False,
+            "reason": reason,
+            "details": details,
+        })
 
     return {
         "scenario": scenario.get("name", "scenario"),
