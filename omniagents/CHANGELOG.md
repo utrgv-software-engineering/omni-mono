@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI `--version` flag support
 - Automated versioning workflow with bump2version
 
+## [0.3.14] - 2025-10-13
+
+### Changed
+- Bundle OmniAgents Studio production assets from `omniagents.studio.server` so they ship in wheels and sdists.
+
+### Fixed
+- Ensure `omniagents studio serve` serves the Studio UI without requiring the `--dev` flag.
+
 ## [## [Unreleased]] - 2025-01-26
 
 ### Added
@@ -56,7 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI interface
 - Flet-based GUI
 
-[Unreleased]: https://github.com/yourusername/omniagents/compare/v## [Unreleased]...HEAD
+[Unreleased]: https://github.com/yourusername/omniagents/compare/v0.3.14...HEAD
+[0.3.14]: https://github.com/yourusername/omniagents/compare/v0.3.13...v0.3.14
 [## [Unreleased]]: https://github.com/yourusername/omniagents/compare/v0.1.2...v## [Unreleased]
 [0.1.2]: https://github.com/yourusername/omniagents/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/yourusername/omniagents/compare/v0.1.0...v0.1.1
