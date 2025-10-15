@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI `--version` flag support
 - Automated versioning workflow with bump2version
 
+## [0.3.16] - 2025-10-15
+
+### Fixed
+- Align OmniAgents Studio websocket URLs, dev defaults, and CORS with GitHub Codespaces port forwarding.
+
 ## [0.3.14] - 2025-10-13
 
 ### Changed
@@ -20,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Ensure `omniagents studio serve` serves the Studio UI without requiring the `--dev` flag.
 
-## [0.3.15] - 2025-10-13
+## [## [Unreleased]] - 2025-10-13
 
 ### Fixed
 - Fail evaluation suites when agent runs terminate with errors by surfacing them as `_agent_error` measures.
@@ -69,8 +74,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI interface
 - Flet-based GUI
 
-[Unreleased]: https://github.com/yourusername/omniagents/compare/v0.3.15...HEAD
-[0.3.15]: https://github.com/yourusername/omniagents/compare/v0.3.14...v0.3.15
+[Unreleased]: https://github.com/yourusername/omniagents/compare/v## [Unreleased]...HEAD
+[## [Unreleased]]: https://github.com/yourusername/omniagents/compare/v0.3.14...v## [Unreleased]
 [0.3.14]: https://github.com/yourusername/omniagents/compare/v0.3.13...v0.3.14
 [## [Unreleased]]: https://github.com/yourusername/omniagents/compare/v0.1.2...v## [Unreleased]
 [0.1.2]: https://github.com/yourusername/omniagents/compare/v0.1.1...v0.1.2
