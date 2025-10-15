@@ -365,7 +365,7 @@ def serve(
         print("🔐 Authentication: Enabled")
 
     try:
-        uvicorn.run(app, host=host, port=port)
+        uvicorn.run(app, host=host, port=port, proxy_headers=True, forwarded_allow_ips="*")
     finally:
         if vite_process:
             vite_process.terminate()

@@ -1,6 +1,7 @@
 import sys
 import argparse
 import json
+import os
 from pathlib import Path
 import yaml
 import re
@@ -15,6 +16,17 @@ from omniagents.core.debug import Debug
 from omniagents.core.project.export import save_agent_as_py
 from omniagents.core.eval.optimize import optimize_agent_from_project, optimize_judge_from_project
 from omniagents.core.eval.annotate import annotate_scenarios, write_annotation_output
+
+
+CODESPACES_ENV = any(
+    os.environ.get(key)
+    for key in (
+        "CODESPACES",
+        "CODESPACE_NAME",
+        "GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN",
+    )
+)
+DEFAULT_STUDIO_DEV_HOST = "0.0.0.0" if CODESPACES_ENV else "127.0.0.1"
 
 
 def _resolve_studio_project_value(value: Optional[str]) -> Tuple[Optional[str], Optional[Path], bool]:
@@ -362,7 +374,7 @@ def main():
     studio_serve.add_argument("--project", default=None, help="Project name under ~/.omniagents/traces (or OMNIAGENTS_HOME) to serve (optional)")
     studio_serve.add_argument("--token", dest="auth_token", default=None, help="Bearer token for API access")
     studio_serve.add_argument("--dev", action="store_true", help="Run with the Studio web dev server (auto rebuild UI)")
-    studio_serve.add_argument("--dev-host", default="127.0.0.1", help="Host for the Studio web dev server (default: 127.0.0.1)")
+    studio_serve.add_argument("--dev-host", default=DEFAULT_STUDIO_DEV_HOST, help=f"Host for the Studio web dev server (default: {DEFAULT_STUDIO_DEV_HOST})")
     studio_serve.add_argument("--dev-port", type=int, default=5173, help="Port for the Studio web dev server (default: 5173)")
 
     studio_export = studio_sub.add_parser("export", help="Export traces from OmniAgents Studio")

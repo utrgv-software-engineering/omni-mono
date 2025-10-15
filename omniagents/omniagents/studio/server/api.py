@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import URL
 
 import yaml
 
@@ -221,15 +222,28 @@ def _resolve_agent_spec(resources: Dict[str, Any], agent_key: Optional[str]) -> 
 
 
 def _compute_playground_ws_url(request: Request) -> str:
-    api_origin = str(request.base_url).rstrip("/")
-    if api_origin.endswith("/api"):
-        api_origin = api_origin[:-4]
-    ws_origin = api_origin
-    if ws_origin.startswith("https://"):
-        ws_origin = "wss://" + ws_origin[8:]
-    elif ws_origin.startswith("http://"):
-        ws_origin = "ws://" + ws_origin[7:]
-    return f"{ws_origin}/api/playground/ws"
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    scheme = forwarded_proto.split(",")[0].strip() if forwarded_proto else request.url.scheme
+
+    forwarded_host = request.headers.get("x-forwarded-host")
+    forwarded_port = request.headers.get("x-forwarded-port")
+
+    base_url = request.base_url
+    if forwarded_host:
+        host = forwarded_host.split(",")[0].strip()
+        if forwarded_port and ":" not in host:
+            host = f"{host}:{forwarded_port.split(',')[0].strip()}"
+        base_url = URL(f"{scheme}://{host}{base_url.path}")
+    else:
+        base_url = base_url.replace(scheme=scheme)
+
+    ws_scheme = "wss" if scheme == "https" else "ws"
+    ws_base = base_url.replace(scheme=ws_scheme)
+
+    base_path = ws_base.path.rstrip("/")
+    ws_path = "/playground/ws" if not base_path else f"{base_path}/playground/ws"
+
+    return str(ws_base.replace(path=ws_path))
 
 
 def _build_metadata_response(
@@ -1918,7 +1932,15 @@ def create_api_app(
     # Add CORS middleware for development
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://localhost:3000"],
+        allow_origins=[
+            "http://localhost:5173",
+            "http://localhost:3000",
+            "http://127.0.0.1:5173",
+            "https://localhost:5173",
+            "https://localhost:3000",
+            "https://127.0.0.1:5173",
+        ],
+        allow_origin_regex=r"https://.*\\.app\.github\.dev",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
