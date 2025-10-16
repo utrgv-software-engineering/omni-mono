@@ -107,7 +107,7 @@ def create_agent() -> SafeAgent:
             download_file,
             convert_to_markdown,
         ],
-        model="gpt-5-codex",
+        model="gpt-5",
         model_settings=ModelSettings(
             reasoning=Reasoning(effort="high"),
         ),

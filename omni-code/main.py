@@ -61,7 +61,7 @@ def cli_main():
     runner = Runner.from_agent(
         agent,
         welcome_text="Welcome to Omni Code! I'm here to help you with your coding needs.",
-        max_turns=100,
+        max_turns=1000,
         context_window=400000,
         server_functions=[
             good,

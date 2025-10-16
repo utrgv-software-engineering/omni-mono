@@ -60,7 +60,7 @@ def create_init_agent() -> SafeAgent:
             apply_patch,
             write_file,
         ],
-        model="gpt-5-codex",
+        model="gpt-5",
         approval_callback=SafeAgent.get_global_approval_callback(),
         safe_tool_names=[
             "list_directory",
