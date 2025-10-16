@@ -42,7 +42,7 @@ elif provider in {"openai", "custom"}:
         organization=os.getenv("OPENAI_ORG"),
         project=os.getenv("OPENAI_PROJECT"),
     )
-    set_default_openai_client(client, use_for_tracing=provider == "openai")
+    set_default_openai_client(client, use_for_tracing=False)
 else:
     raise ValueError(
         f"Unsupported OPENAI_PROVIDER: {provider!r}. Use 'azure', 'openai', or 'custom'."
