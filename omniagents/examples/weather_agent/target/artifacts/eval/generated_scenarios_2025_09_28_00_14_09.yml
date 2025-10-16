@@ -1,0 +1,834 @@
+scenarios:
+- id: 6c8f41f32e57be27
+  name: faketownia-weather-please
+  prompt: Hi there, could you tell me what the weather is right now in Faketownia,
+    please?
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+- id: 2bf93d9403b9a1de
+  name: weatherton-today-update
+  prompt: Hello! I'd really appreciate it if you could share today's weather in Weatherton.
+    Thanks!
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+- id: bda71f372a574879
+  name: imaginetown-condition-check
+  prompt: Hey, can you give me a quick update on the weather in Imaginetown?
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+- id: c213ad4db89e825b
+  name: qwertyland-forecast-request
+  prompt: Good afternoon! Could you let me know what the weather's like in Qwertyland?
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+- id: 593ccb229d8cdcaf
+  name: loremville-status-inquiry
+  prompt: Hi! I'm curious, what's the weather in Loremville today?
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+- id: 1a09f931624214f3
+  name: foobaria-weather-info
+  prompt: Hello, would you mind checking the weather right now in Foobaria for me?
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+- id: f746e640e5d505d2
+  name: paris-celsius-temp
+  prompt: Paris, France temperature in Celsius
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: unit_preference
+    query_style: direct
+  measures: []
+- id: 5f38819b84e1d842
+  name: tokyo-fahrenheit-temp
+  prompt: Tokyo, Japan temperature in Fahrenheit
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: unit_preference
+    query_style: direct
+  measures: []
+- id: 28aedd7779a6c571
+  name: berlin-celsius-weather
+  prompt: weather in Berlin, Germany in Celsius
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: unit_preference
+    query_style: direct
+  measures: []
+- id: 5983fe5ae861477a
+  name: sydney-fahrenheit-temp
+  prompt: Sydney, NSW, Australia temp in Fahrenheit
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: unit_preference
+    query_style: direct
+  measures: []
+- id: 4a3cc6d62eb67bd0
+  name: sanfrancisco-celsius-temp
+  prompt: San Francisco, CA, USA temp in Celsius
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: unit_preference
+    query_style: direct
+  measures: []
+- id: cad5a6b2e819a6b9
+  name: cairo-fahrenheit-temp
+  prompt: Cairo, Egypt temperature in Fahrenheit
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: unit_preference
+    query_style: direct
+  measures: []
+- id: e03fcad5264bd329
+  name: faketownia-celsius-request
+  prompt: Hey there! Could you let me know the temperature in Faketownia in Celsius,
+    please?
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: unit_preference
+    query_style: conversational
+  measures: []
+- id: 7e45d3f2d856b1da
+  name: weatherton-fahrenheit-curiosity
+  prompt: Hi! I'm curious, can you tell me what the weather is like in Weatherton,
+    and could you give the temperature in Fahrenheit? Thank you!
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: unit_preference
+    query_style: conversational
+  measures: []
+- id: c545344c81e7a38b
+  name: imaginetown-celsius-check
+  prompt: Good morning, would you mind telling me what the temperature is in Imaginetown
+    today, preferably in Celsius?
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: unit_preference
+    query_style: conversational
+  measures: []
+- id: 5c8c4f87c1a028f5
+  name: loremville-fahrenheit-today
+  prompt: Could you share with me today's temperature for Loremville, using Fahrenheit,
+    please? Thanks!
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: unit_preference
+    query_style: conversational
+  measures: []
+- id: bb5606068f6899b4
+  name: qwertyland-preference-celsius
+  prompt: Hello! I'd like to know the current weather in Qwertyland. Can you show
+    the temperature in Celsius?
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: unit_preference
+    query_style: conversational
+  measures: []
+- id: 5e0b6310a47cbd14
+  name: foobaria-fahrenheit-info
+  prompt: Hey, could you please let me know the temperature right now in Foobaria,
+    and make sure it's in Fahrenheit? Thanks a bunch!
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: unit_preference
+    query_style: conversational
+  measures: []
+- id: 942f14f5fa7a2973
+  name: capital-query-ambiguous
+  prompt: Manchester capital city
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: out_of_scope
+    query_style: direct
+  measures: []
+- id: 179daf9d104ff726
+  name: joke-request-ambiguous
+  prompt: Tell me a joke about Alexandria
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: out_of_scope
+    query_style: direct
+  measures: []
+- id: aa51a9fb7c86ffc5
+  name: set-timer-ambiguous
+  prompt: Set a timer for Salem
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: out_of_scope
+    query_style: direct
+  measures: []
+- id: 704428c46bf8023a
+  name: food-question-ambiguous
+  prompt: How do I make pizza in Rochester
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: out_of_scope
+    query_style: direct
+  measures: []
+- id: f69b95b40494bd95
+  name: math-query-ambiguous
+  prompt: What is 5 plus 7, Franklin
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: out_of_scope
+    query_style: direct
+  measures: []
+- id: 7b36219104218413
+  name: song-request-ambiguous
+  prompt: Play a song for Columbus
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: out_of_scope
+    query_style: direct
+  measures: []
+- id: eb268606e22c1658
+  name: berlin-direct-weather
+  prompt: Berlin, Germany weather
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: direct
+  measures: []
+- id: 9076e2ce63158471
+  name: tokyo-forecast-direct
+  prompt: Tokyo, Japan forecast
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: direct
+  measures: []
+- id: c921878a9c43ebec
+  name: san-francisco-current
+  prompt: San Francisco, CA, USA weather now
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: direct
+  measures: []
+- id: 6e50bd4fbd74a85d
+  name: sydney-weather-today
+  prompt: Sydney, NSW, Australia weather
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: direct
+  measures: []
+- id: 62246dcec9ca5b47
+  name: zurich-simple-check
+  prompt: Zurich, Switzerland weather
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: direct
+  measures: []
+- id: 782344d1f0c88fa7
+  name: reykjavik-today-condition
+  prompt: Reykjavik, Iceland forecast
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: direct
+  measures: []
+- id: 8dbe196e4c398a96
+  name: celsius-in-imaginetown
+  prompt: temperature in Imaginetown in Celsius
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: unit_preference
+    query_style: direct
+  measures: []
+- id: 3cf6bba1a745e28c
+  name: faketownia-fahrenheit
+  prompt: weather in Faketownia in Fahrenheit
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: unit_preference
+    query_style: direct
+  measures: []
+- id: 512c31a309789ee5
+  name: qwertyland-temp-celsius
+  prompt: temp Qwertyland in Celsius
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: unit_preference
+    query_style: direct
+  measures: []
+- id: 7fa19ae2e0d715cb
+  name: foobaria-temp-fahrenheit
+  prompt: Foobaria temperature in Fahrenheit
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: unit_preference
+    query_style: direct
+  measures: []
+- id: 566118a9c4362b1e
+  name: quuxburg-weather-celsius
+  prompt: Quuxburg weather in Celsius
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: unit_preference
+    query_style: direct
+  measures: []
+- id: 1253e6c300093cde
+  name: xyzzyville-weather-fahrenheit
+  prompt: Xyzzyville weather in Fahrenheit
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: unit_preference
+    query_style: direct
+  measures: []
+- id: 29da682bc48a3245
+  name: springfield-fahrenheit
+  prompt: Springfield weather in Fahrenheit
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: unit_preference
+    query_style: direct
+  measures: []
+- id: 293aaf74077c8c9f
+  name: portland-celsius
+  prompt: Temperature in Portland in Celsius
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: unit_preference
+    query_style: direct
+  measures: []
+- id: ebb8cf3e3f597266
+  name: madison-fahrenheit
+  prompt: Madison temperature in Fahrenheit
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: unit_preference
+    query_style: direct
+  measures: []
+- id: b9c5f3832a52ad24
+  name: cambridge-celsius
+  prompt: Cambridge weather in Celsius
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: unit_preference
+    query_style: direct
+  measures: []
+- id: 9018932122ff19c4
+  name: columbus-fahrenheit
+  prompt: Columbus temp in Fahrenheit
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: unit_preference
+    query_style: direct
+  measures: []
+- id: e816a8dc43bd502f
+  name: alexandria-celsius
+  prompt: Weather in Alexandria in Celsius
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: unit_preference
+    query_style: direct
+  measures: []
+- id: 397d600127442161
+  name: joke-about-richmond
+  prompt: Hi there! Could you tell me a funny joke about Richmond, please? Thanks!
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: out_of_scope
+    query_style: conversational
+  measures: []
+- id: 60bae60d817aed0e
+  name: cambridge-capital-query
+  prompt: Hey! Do you happen to know what the capital of Cambridge is? Appreciate
+    your help!
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: out_of_scope
+    query_style: conversational
+  measures: []
+- id: 0a49a406e1930af1
+  name: springfield-movie-recommendation
+  prompt: Hello! I'd love it if you could suggest a good movie—preferably something
+    set in Springfield. Thanks a bunch!
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: out_of_scope
+    query_style: conversational
+  measures: []
+- id: f5541641d2b70cee
+  name: manchester-bread-recipe
+  prompt: Good afternoon! Could you walk me through how to bake bread, maybe a style
+    popular in Manchester? Thank you!
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: out_of_scope
+    query_style: conversational
+  measures: []
+- id: 1ded6d2fa378b38a
+  name: madison-math-question
+  prompt: Hi! While we're talking about Madison, can you solve 2+2 for me? Thank you
+    so much!
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: out_of_scope
+    query_style: conversational
+  measures: []
+- id: 3f8dfeb81ec9c6f4
+  name: columbus-song-request
+  prompt: Hey there! Could you play me a song—something related to Columbus if possible?
+    Many thanks!
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: out_of_scope
+    query_style: conversational
+  measures: []
+- id: 249fbafe5adf801f
+  name: joke-faketownia
+  prompt: Tell me a joke in Faketownia.
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: out_of_scope
+    query_style: direct
+  measures: []
+- id: 430009daec5aa9f7
+  name: capital-qwertyland
+  prompt: What's the capital of Qwertyland?
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: out_of_scope
+    query_style: direct
+  measures: []
+- id: 9801a42932949459
+  name: timer-imaginetown
+  prompt: Set a timer for Imaginetown.
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: out_of_scope
+    query_style: direct
+  measures: []
+- id: 65ac2433f4589c27
+  name: bread-loremville
+  prompt: How do I bake bread in Loremville?
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: out_of_scope
+    query_style: direct
+  measures: []
+- id: 9ad940c3097fa9f0
+  name: movie-foobaria
+  prompt: Give me a movie recommendation in Foobaria.
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: out_of_scope
+    query_style: direct
+  measures: []
+- id: 78fe61a8a3826e61
+  name: score-quuxburg
+  prompt: Who won the game last night in Quuxburg?
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: out_of_scope
+    query_style: direct
+  measures: []
+- id: eea942d31c74fd96
+  name: portland-celsius-request
+  prompt: Hello! Could you please give me the current temperature in Portland in Celsius?
+    Thanks a lot!
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: unit_preference
+    query_style: conversational
+  measures: []
+- id: dc2192b89fd62a3d
+  name: manchester-fahrenheit-curiosity
+  prompt: Hi there, what's the weather like in Manchester right now? I'm especially
+    interested in knowing the temperature in Fahrenheit, please.
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: unit_preference
+    query_style: conversational
+  measures: []
+- id: 2ed06457fe831279
+  name: springfield-temp-preference
+  prompt: Hey, can you let me know the temperature in Springfield, but please show
+    it in Celsius? Thank you!
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: unit_preference
+    query_style: conversational
+  measures: []
+- id: 48f3f702c4e65b7e
+  name: cambridge-fahrenheit-formal
+  prompt: Good afternoon! I'd like to know the temperature for Cambridge in Fahrenheit,
+    if you don't mind sharing it.
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: unit_preference
+    query_style: conversational
+  measures: []
+- id: 3dd7b560396a9d14
+  name: rochester-celsius-check
+  prompt: Hi—could you check the current weather in Rochester and let me know what
+    the temperature is in Celsius? Much appreciated!
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: unit_preference
+    query_style: conversational
+  measures: []
+- id: 37aa92671d892c4c
+  name: jacksonville-temp-units
+  prompt: Could you let me know what the temperature is in Jacksonville? I'd prefer
+    it in Fahrenheit, please. Thanks!
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: unit_preference
+    query_style: conversational
+  measures: []
+- id: 837290847336ccb0
+  name: berlin-germany-forecast
+  prompt: Good morning! Could you share the weather forecast for Berlin, Germany with
+    me?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+- id: 82d8a1dd0847563b
+  name: paris-france-current
+  prompt: Hi there, can you tell me what the weather is like in Paris, France today?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+- id: 170b82dbc06991e0
+  name: tokyo-japan-weather
+  prompt: Hey! Would you mind letting me know the current weather in Tokyo, Japan?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+- id: 762bd139d6d50215
+  name: san-francisco-convo
+  prompt: Could you please tell me how the weather is in San Francisco, CA, USA right
+    now?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+- id: f203b983ed6d4d76
+  name: sydney-australia-convo
+  prompt: Hello, I'd love to know what the weather is in Sydney, NSW, Australia today.
+    Thanks!
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+- id: 36cbe42a35d7a957
+  name: toronto-canada-convo
+  prompt: Hi! Can you check and let me know the weather in Toronto, ON, Canada for
+    me?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+- id: d74c53bfe46422be
+  name: celsius-in-paris
+  prompt: Hi there! Could you please tell me what the temperature is in Paris, France
+    in Celsius? Thanks!
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: unit_preference
+    query_style: conversational
+  measures: []
+- id: 41ea8f7f16522159
+  name: fahrenheit-san-francisco
+  prompt: Hey! Can you let me know the current weather in San Francisco, CA, USA in
+    Fahrenheit, please?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: unit_preference
+    query_style: conversational
+  measures: []
+- id: 64d3578473f19d0a
+  name: celsius-in-tokyo-today
+  prompt: Good morning! I'd like to know the temperature in Tokyo, Japan today, but
+    could you give it to me in Celsius? Thanks so much.
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: unit_preference
+    query_style: conversational
+  measures: []
+- id: 210bb3f5537068c1
+  name: fahrenheit-sydney-weather
+  prompt: Can you share the weather for Sydney, NSW, Australia, with the temperature
+    in Fahrenheit? I’d really appreciate it!
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: unit_preference
+    query_style: conversational
+  measures: []
+- id: 7d78181d5ad7b4c7
+  name: celsius-berlin-forecast
+  prompt: Hello! Could you provide the forecast for Berlin, Germany, and include the
+    temperatures in Celsius for me?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: unit_preference
+    query_style: conversational
+  measures: []
+- id: e950122daebdf132
+  name: fahrenheit-toronto-update
+  prompt: Hi! Please tell me what the current temperature is in Toronto, ON, Canada
+    in Fahrenheit, if you don’t mind.
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: unit_preference
+    query_style: conversational
+  measures: []
+- id: ecf73947b5b63026
+  name: joke-request-oslo
+  prompt: Hi there! Could you tell me a funny joke? Thanks!
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: out_of_scope
+    query_style: conversational
+  measures: []
+- id: 571cb62b685629a3
+  name: capital-question-tokyo
+  prompt: Hey, do you happen to know what the capital of Japan is?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: out_of_scope
+    query_style: conversational
+  measures: []
+- id: adbd8d3ec1afea19
+  name: baking-in-berlin
+  prompt: Good morning! Would you mind sharing a simple bread recipe with me?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: out_of_scope
+    query_style: conversational
+  measures: []
+- id: 2d865ab4834cd86d
+  name: song-request-sydney
+  prompt: Hello! Can you play a song for me, please?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: out_of_scope
+    query_style: conversational
+  measures: []
+- id: 3420e6638fef1a78
+  name: math-query-toronto
+  prompt: Hi! What’s 2 plus 2? Thank you!
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: out_of_scope
+    query_style: conversational
+  measures: []
+- id: 9203936d72b2fb22
+  name: movie-recommendation-cairo
+  prompt: Could you recommend a good movie to watch tonight? Appreciate it!
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: out_of_scope
+    query_style: conversational
+  measures: []
+- id: d0ca4b15d94d004f
+  name: springfield-weather
+  prompt: Springfield weather
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: direct
+  measures: []
+- id: 5ccf3ff58da2dee8
+  name: portland-forecast
+  prompt: Portland forecast
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: direct
+  measures: []
+- id: 769e1342816dc3df
+  name: madison-current-weather
+  prompt: Madison current weather
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: direct
+  measures: []
+- id: 61d15a341aaac35b
+  name: columbus-weather-today
+  prompt: Columbus weather today
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: direct
+  measures: []
+- id: bceb9809d803ba4d
+  name: rochester-weather
+  prompt: Rochester weather
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: direct
+  measures: []
+- id: ea23e91af07d368b
+  name: richmond-weather-now
+  prompt: Richmond weather now
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: direct
+  measures: []
+- id: 23058c8050b52406
+  name: joke-request-imaginetown
+  prompt: Hey there! Before anything else, could you tell me a joke about Imaginetown?
+    Thanks!
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: out_of_scope
+    query_style: conversational
+  measures: []
+- id: 68870b3ff4aff1dd
+  name: capital-question-faketownia
+  prompt: Hi, out of curiosity, do you happen to know the capital of Faketownia? Thanks
+    in advance!
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: out_of_scope
+    query_style: conversational
+  measures: []
+- id: 49a6fdb2a67372af
+  name: music-request-weatherton
+  prompt: Hello! Could you play me a song inspired by Weatherton, please?
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: out_of_scope
+    query_style: conversational
+  measures: []
+- id: 5d84a62d24c806ad
+  name: recipe-request-loremville
+  prompt: Good afternoon! Would you mind sharing a bread recipe fit for someone living
+    in Loremville? Appreciate it!
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: out_of_scope
+    query_style: conversational
+  measures: []
+- id: be372a1bd67b7e8c
+  name: game-score-xyzzyville
+  prompt: Hi! Could you let me know who won the game last night in Xyzzyville? Thank
+    you so much!
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: out_of_scope
+    query_style: conversational
+  measures: []
+- id: 2dc6a064e4e94e15
+  name: math-question-qwertyland
+  prompt: 'Hey! Quick question: what’s 2+2 in Qwertyland? Thanks for your help!'
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: out_of_scope
+    query_style: conversational
+  measures: []
+- id: e4abf9746fd76fb5
+  name: faketownia-weather
+  prompt: Faketownia weather
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: simple_check
+    query_style: direct
+  measures: []
+- id: 3aea07d8a9ff2a24
+  name: weatherton-forecast
+  prompt: forecast for Weatherton
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: simple_check
+    query_style: direct
+  measures: []
+- id: c72301769fe61f71
+  name: imaginetown-weather-now
+  prompt: Imaginetown weather now
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: simple_check
+    query_style: direct
+  measures: []
+- id: c8329567cc9e6760
+  name: qwertyland-today
+  prompt: Qwertyland weather today
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: simple_check
+    query_style: direct
+  measures: []
+- id: ed11a09fa53c6709
+  name: loremville-current-weather
+  prompt: current weather Loremville
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: simple_check
+    query_style: direct
+  measures: []
+- id: abdb40f5bc52ba13
+  name: foobaria-weather-check
+  prompt: weather in Foobaria
+  dimensions:
+    location_ambiguity: non_existent
+    user_intent: simple_check
+    query_style: direct
+  measures: []
+- id: 40da5bdeba42f353
+  name: joke-request
+  prompt: Tell me a joke.
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: out_of_scope
+    query_style: direct
+  measures: []
+- id: 61c2941cb72560f7
+  name: capital-question
+  prompt: What's the capital of Egypt?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: out_of_scope
+    query_style: direct
+  measures: []
+- id: 23d346b92cfac735
+  name: math-query
+  prompt: What is 5 plus 7?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: out_of_scope
+    query_style: direct
+  measures: []
+- id: c7b76969bee17fe2
+  name: recipe-request
+  prompt: How do I make bread?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: out_of_scope
+    query_style: direct
+  measures: []

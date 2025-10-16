@@ -1,0 +1,4 @@
+evaluation:
+  defaults:
+    runs_per_prompt: 1
+    max_turns: 6

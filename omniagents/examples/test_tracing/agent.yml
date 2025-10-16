@@ -1,0 +1,22 @@
+name: Test Tracing Agent
+instructions: |
+  You are a helpful assistant for testing tracing integration.
+  You can answer questions and help users with various tasks.
+
+model: gpt-4o
+
+# Tracing configuration
+tracing:
+  provider: agentio  # Options: default, agentio, none
+  project: test_project
+  name: test_trace
+  settings:
+    resume: allow
+
+tools:
+  - get_time
+
+settings:
+  - key: openai_api_key
+    label: OpenAI API Key
+    secret: true

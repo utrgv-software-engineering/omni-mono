@@ -1,0 +1,32 @@
+{
+  "runs": [
+    {
+      "scenario_id": "4e51421a571c3147",
+      "scenario_name": "hello",
+      "prompt": "Say hello",
+      "session_id": "8bae698b-a4fb-40fe-85e0-421717fb9b3a",
+      "final_assistant_text": "Hello! How can I assist you today?",
+      "history_len": 2,
+      "history": [
+        {
+          "role": "user",
+          "content": "Say hello"
+        },
+        {
+          "id": "msg_0039d68d78ba12d50068e5f06ebe60819cbe150219d25db8d6",
+          "content": [
+            {
+              "annotations": [],
+              "text": "Hello! How can I assist you today?",
+              "type": "output_text",
+              "logprobs": []
+            }
+          ],
+          "role": "assistant",
+          "status": "completed",
+          "type": "message"
+        }
+      ]
+    }
+  ]
+}

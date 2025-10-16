@@ -44,7 +44,7 @@ python 3_omniagents_function.py
 python 3_omniagents_function.py --mode server --port 8000
 ```
 
-### 4. OmniAgents YAML Approach (`4_omniagents_yaml.yaml`)
+### 4. OmniAgents YAML Approach (`4_omniagents_yaml.yml`)
 
 Pure configuration approach with no Python code:
 - Define instructions with `{variable}` placeholders
@@ -52,7 +52,7 @@ Pure configuration approach with no Python code:
 - Perfect for non-programmers or configuration-driven deployments
 
 ```bash
-python -m omniagents.cli run -c examples/dynamic_instructions/4_omniagents_yaml.yaml --mode cli
+python -m omniagents.cli run -c examples/dynamic_instructions/4_omniagents_yaml.yml --mode cli
 ```
 
 ## Key Differences

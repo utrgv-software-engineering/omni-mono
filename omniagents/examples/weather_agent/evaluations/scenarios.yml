@@ -1,3 +1,23 @@
 scenarios:
-  - include: artifacts/eval/pruned_scenarios_2025_09_27_20_43_21.yaml
-
+- name: hello
+  prompt: Say hello
+- id: c63fb5df02bb7745
+  name: manchester-check-please
+  prompt: Hey, what's the weather like today in Manchester? Thank you!
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  failure_categories:
+  - ambiguous_location_assumption
+- id: 04ce49465d5de71e
+  name: richmond-weather-inquiry
+  prompt: Good morning! Would you mind telling me the weather conditions in Richmond?
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  failure_categories:
+  - ambiguous_location_assumption

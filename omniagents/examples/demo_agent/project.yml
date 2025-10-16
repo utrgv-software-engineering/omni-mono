@@ -1,0 +1,14 @@
+name: demo_agent
+paths:
+  agents: agents
+  tools: tools
+  target: target
+agents:
+  entrypoint: demo_agent
+
+tracing:
+  provider: agentio
+  project: demo_agent_project
+  name: demo_agent
+  settings:
+    resume: never

@@ -1,0 +1,9 @@
+{
+  "entrypoint": "weather_agent",
+  "agents": [
+    {
+      "key": "weather_agent",
+      "file": "/Users/ericmartinez/code/omniagents/examples/weather_agent/agents/weather_agent/agent.yml"
+    }
+  ]
+}

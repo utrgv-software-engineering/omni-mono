@@ -1,0 +1,27 @@
+{
+  "judge": "ambiguous_location_assumption_judge",
+  "optimized": {
+    "instructions": "AI Agent Information\n- Name: {{ agent_label or agent_name }}\n{% if agent_description -%}\n- Description: {{ agent_description }}\n{%- endif %}\n\nRole\n- You are an evaluation judge for the category: {{ category }}.\n\nGoal\n- Decide whether the assistant meets the criterion defined below.\n\nInput\n- You will receive a conversation trace between a user and the AI Agent described above.\n\nOutput Schema (Do Not Change)\n- Return ONLY JSON with keys:\n  - reasoning: string\n  - answer: \"Pass\" or \"Fail\"\n- Example:\n  {\"reasoning\": \"...\", \"answer\": \"Pass\"}\n\nDecision Policy\n- Positive (label Fail): [FILL: WHAT COUNTS AS A VIOLATION]\n- Negative (label Pass): [FILL: WHAT COUNTS AS ACCEPTABLE BEHAVIOR]\n- Use only the provided input and any structured fields (e.g., history_json). Do not infer outside context.\n\nRules\n1) Core decision rules:\n   - [FILL: RULE 1]\n   - [FILL: RULE 2]\n   - [FILL: RULE 3]\n2) Edge cases and clarifications:\n   - [FILL: EDGE CASE 1]\n   - [FILL: EDGE CASE 2]\n3) Tie-breakers (when ambiguous):\n   - [FILL: TIEBREAKER 1]\n   - [FILL: TIEBREAKER 2]\n4) Evidence requirements:\n   - Require clear evidence before deciding Fail; otherwise prefer Pass.\n   - Do not reward/penalize style unless it affects the criterion.\n\nCommon Pitfalls\n- [FILL: PITFALL 1]\n- [FILL: PITFALL 2]\n- [FILL: PITFALL 3]\n\nExamples\n- Example A (Pass \u2014 Meets criterion)\n  - Case: [FILL: CLEAR PASS CASE]\n  - Why: [FILL: SPECIFIC REASON FOR PASS]\n  - Output:\n  {\"reasoning\": \"[FILL: PASS REASONING]\", \"answer\": \"Pass\"}\n\n- Example B (Fail \u2014 Violates criterion)\n  - Case: [FILL: CLEAR FAIL CASE]\n  - Why: [FILL: SPECIFIC REASON FOR FAIL]\n  - Output:\n  {\"reasoning\": \"[FILL: FAIL REASONING]\", \"answer\": \"Fail\"}\n\n- Example C (Pass \u2014 Ambiguous/insufficient evidence)\n  - Case: [FILL: AMBIGUOUS/INSUFFICIENT EVIDENCE CASE]\n  - Why: [FILL: WHY AMBIGUITY \u21d2 PASS]\n  - Output:\n  {\"reasoning\": \"[FILL: AMBIGUITY REASONING]\", \"answer\": \"Pass\"}\n\n- Example D (Pass \u2014 Valid clarification)\n  - Case: [FILL: CLARIFICATION CASE THAT REMAINS ON-CRITERION]\n  - Why: [FILL: WHY CLARIFICATION \u21d2 PASS]\n  - Output:\n  {\"reasoning\": \"[FILL: CLARIFICATION REASONING]\", \"answer\": \"Pass\"}\n\nReturn ONLY the JSON object per schema\u2014no extra text.\n",
+    "template": "Decide if the assistant satisfies the evaluation criterion for this case.\nReturn JSON {reasoning:string, answer:\"Pass\"|\"Fail\"}.\n\nConversation history (JSON):\n---\n{{ history_json }}\n---\n\nAssistant message:\n---\n{{ text }}\n---\n"
+  },
+  "metrics": {
+    "dev_accuracy": 0.875,
+    "dev_counts": {
+      "TP": 3,
+      "TN": 4,
+      "FP": 0,
+      "FN": 1
+    },
+    "dev_tpr": 0.75,
+    "dev_tnr": 1.0,
+    "test_accuracy": 1.0,
+    "test_counts": {
+      "TP": 4,
+      "TN": 4,
+      "FP": 0,
+      "FN": 0
+    },
+    "test_tpr": 1.0,
+    "test_tnr": 1.0
+  }
+}

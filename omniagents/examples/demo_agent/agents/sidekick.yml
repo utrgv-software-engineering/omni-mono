@@ -1,0 +1,6 @@
+name: sidekick
+model: gpt-4.1
+instructions_file: ../instructions/sidekick.md
+welcome_text: "Hello from sidekick."
+
+tools: []

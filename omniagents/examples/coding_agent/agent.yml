@@ -1,0 +1,50 @@
+name: Omni Code (YAML)
+model: gpt-5
+instructions_file: instructions.md
+welcome_text: "Welcome to Omni Code! I'm here to help you with your coding needs."
+
+# Enable AgentIO tracing
+tracing:
+  provider: agentio
+  project: coding_agent_demo
+  name: omni_code
+  settings:
+    resume: never  # Always create a new trace
+
+# Model settings (match Python example's reasoning effort)
+model_settings:
+  reasoning:
+    effort: high
+
+# Tools available to the agent (auto-discovered from ./tools)
+tools:
+  - list_directory
+  - glob_files
+  - grep_files
+  - read_file
+  - apply_patch
+  - write_file
+  - execute_bash
+  - web_fetch
+  - web_search
+  - youtube_search
+  - scholar_search
+  - download_file
+  - convert_to_markdown
+
+# Safety configuration mirroring the Python runner
+use_safe_agent: true
+safe_agent_options:
+  skip_approvals: false
+  halt_on_rejection: true
+  safe_tool_names:
+    - list_directory
+    - glob_files
+    - grep_files
+    - read_file
+    - web_fetch
+    - web_search
+    - youtube_search
+    - scholar_search
+    - convert_to_markdown
+

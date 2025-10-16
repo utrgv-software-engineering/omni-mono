@@ -14,6 +14,8 @@ dependencies:
   provider: ^6.1.2
   flutter_markdown: ^0.6.18
   shared_preferences: ^2.2.2
+  xterm: ^4.0.0
+  google_fonts: ^6.2.1
 
 dev_dependencies:
   flutter_test:

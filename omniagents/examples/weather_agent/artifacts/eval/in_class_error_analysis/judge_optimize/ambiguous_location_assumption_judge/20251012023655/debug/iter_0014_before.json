@@ -1,0 +1,41 @@
+{
+  "iteration": 14,
+  "stage": "before",
+  "source": "final_assistant_text",
+  "subsample_ids": [
+    "a7aa603e7fe5cc58",
+    "a7aa603e7fe5cc58",
+    "5a6284adbbfc0ee4"
+  ],
+  "labels": {
+    "pos": 2,
+    "neg": 1
+  },
+  "kinds": {
+    "TP": 2,
+    "TN": 1,
+    "FP": 0,
+    "FN": 0,
+    "UNK": 0
+  },
+  "scores_sum": 2.0,
+  "by_id": {
+    "a7aa603e7fe5cc58": {
+      "label": true,
+      "pred": true,
+      "kind": "TP"
+    },
+    "5a6284adbbfc0ee4": {
+      "label": false,
+      "pred": false,
+      "kind": "TN"
+    }
+  },
+  "candidate_summary": {
+    "has_instructions": true,
+    "has_template": true,
+    "instructions_len": 2191,
+    "template_len": 224
+  },
+  "mismatches": []
+}

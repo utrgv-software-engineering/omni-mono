@@ -5,7 +5,7 @@ This example runs an agent as a JSON‑RPC server and connects to it from anothe
 ## Files
 
 - `server.py` – launches the remote server.
-- `client.yaml` – configuration for a client that connects to the server.
+- `client.yml` – configuration for a client that connects to the server.
 
 ## Usage
 
@@ -18,5 +18,5 @@ python server.py
 Then in another terminal run the client:
 
 ```bash
-python -m omniagents.cli run -c client.yaml --mode cli
+python -m omniagents.cli run -c client.yml --mode cli
 ```

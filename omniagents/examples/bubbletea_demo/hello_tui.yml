@@ -1,0 +1,30 @@
+name: "Bubble Tea Demo Agent"
+model_name: "gpt-4o-mini"
+
+instructions: |
+  You are a helpful AI assistant running in a beautiful terminal UI.
+  Be friendly and demonstrate the rich terminal interface features.
+  
+welcome_text: |
+  Welcome to the Bubble Tea TUI Demo!
+  This is a rich terminal interface for OmniAgents with colors, Unicode characters, and interactive features.
+  Type your message and press Enter to chat.
+
+settings:
+  - key: openai_api_key
+    label: OpenAI API Key
+    type: password
+    required: true
+    description: Your OpenAI API key
+    default_env: OPENAI_API_KEY
+
+# Enable safe mode to demonstrate tool approval dialogs
+use_safe_agent: true
+safe_agent_options:
+  safe_tool_names: []
+  safe_tool_patterns: []
+  skip_approvals: false
+  halt_on_rejection: false
+
+# Optional: Add tools directory if you have custom tools
+# tools_module: examples.bubbletea_demo.tools

@@ -3,5 +3,12 @@ paths:
   evaluations: evaluations
   agents: agents
   target: target
-agent_file: agent.yaml
+agents:
+  entrypoint: weather_agent
 
+tracing:
+  provider: agentio
+  project: weather_agent_demo
+  name: weather_agent
+  settings:
+    resume: never

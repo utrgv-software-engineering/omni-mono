@@ -1,0 +1,29 @@
+{
+  "iteration": 11,
+  "stage": "before",
+  "subsample_ids": [
+    "dedb3cd1cb2d9298",
+    "dedb3cd1cb2d9298",
+    "654e097701473ee7"
+  ],
+  "violation_counts": {
+    "violations": 0,
+    "passes": 3
+  },
+  "scores_sum": 3.0,
+  "candidate_summary": {
+    "has_instructions": true,
+    "instructions_len": 2321
+  },
+  "by_id": {
+    "dedb3cd1cb2d9298": {
+      "violation": false,
+      "score": 1.0
+    },
+    "654e097701473ee7": {
+      "violation": false,
+      "score": 1.0
+    }
+  },
+  "examples": []
+}

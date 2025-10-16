@@ -11,6 +11,8 @@ import 'conversation_controller.dart';
 import 'remote_agent_client.dart';
 import 'theme/app_colors.dart';
 import 'folder_picker.dart';
+import 'terminal_session.dart';
+import 'terminal_panel.dart';
 
 class _SendMessageIntent extends Intent {
   const _SendMessageIntent();
@@ -30,6 +32,7 @@ class ChatScreen extends StatelessWidget {
     this.embedded = false,
     this.model,
     this.dragIndex,
+    this.dockTerminals = false,
     super.key,
   });
 
@@ -48,6 +51,7 @@ class ChatScreen extends StatelessWidget {
   /// the header bar becomes the drag handle so that the timeline remains
   /// scrollable.
   final int? dragIndex;
+  final bool dockTerminals;
 
   @override
   Widget build(BuildContext context) {
@@ -59,6 +63,7 @@ class ChatScreen extends StatelessWidget {
           onClose: onClose,
           embedded: embedded,
           dragIndex: dragIndex,
+          dockTerminals: dockTerminals,
         ),
       );
     }
@@ -71,6 +76,7 @@ class ChatScreen extends StatelessWidget {
         onClose: onClose,
         embedded: embedded,
         dragIndex: dragIndex,
+        dockTerminals: dockTerminals,
       ),
     );
   }
@@ -81,12 +87,14 @@ class _ChatView extends StatefulWidget {
       {required this.title,
       this.onClose,
       this.embedded = false,
-      this.dragIndex});
+      this.dragIndex,
+      this.dockTerminals = false});
 
   final String title;
   final VoidCallback? onClose;
   final bool embedded;
   final int? dragIndex;
+  final bool dockTerminals;
 
   @override
   State<_ChatView> createState() => _ChatViewState();
@@ -201,6 +209,13 @@ class _ChatViewState extends State<_ChatView> {
           child: Divider(height: 1, thickness: 1, color: bgCardAlt),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.terminal),
+            tooltip: 'Open Terminal',
+            onPressed:
+                model.client.hasSession ? () => _openTerminal(model) : null,
+          ),
+          const SizedBox(width: 8),
           IconButton(
             icon: const Icon(Icons.folder_open),
             tooltip: 'Open Folder',
@@ -708,7 +723,6 @@ class _ChatViewState extends State<_ChatView> {
     final icon = hasResult ? Icons.check : Icons.timelapse;
 
     // Build a richer body with JSON aware formatting.
-    final scheme = Theme.of(context).colorScheme;
     List<Widget> children = [];
 
     void addSection(String label, String content, Color color) {
@@ -1157,6 +1171,15 @@ class _ChatViewState extends State<_ChatView> {
           IconButton(
             padding: EdgeInsets.zero,
             iconSize: 20,
+            icon: const Icon(Icons.terminal),
+            tooltip: 'Open Terminal',
+            onPressed:
+                model.client.hasSession ? () => _openTerminal(model) : null,
+          ),
+          const SizedBox(width: 6),
+          IconButton(
+            padding: EdgeInsets.zero,
+            iconSize: 20,
             icon: const Icon(Icons.folder_open),
             tooltip: 'Open Folder',
             onPressed:
@@ -1185,6 +1208,35 @@ class _ChatViewState extends State<_ChatView> {
       model.setCwdLabelFromPath(selected);
     }
   }
+
+  Future<void> _openTerminal(ChatModel model) async {
+    try {
+      await model.ensureTerminal(preferredCwd: model.cwdPath);
+    } on StateError catch (err) {
+      if (err.message == 'session_required') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Start a session before opening the terminal.')),
+        );
+        return;
+      }
+      rethrow;
+    }
+    if (!mounted) return;
+    if (widget.dockTerminals) {
+      model.setTerminalDocked(true);
+      return;
+    }
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => ChangeNotifierProvider.value(
+        value: model.terminalDeck,
+        child: const TerminalSheet(),
+      ),
+    );
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -1192,7 +1244,10 @@ class _ChatViewState extends State<_ChatView> {
 // -----------------------------------------------------------------------------
 
 class ChatModel extends ChangeNotifier {
-  ChatModel(this._controller, {this.sessionId, this.onRunStarted}) {
+  ChatModel(this._controller, {this.sessionId, this.onRunStarted})
+      : terminalDeck = TerminalDeck(_controller.client) {
+    terminalDeck.sessionHint = _controller.sessionId ?? sessionId;
+    terminalDeck.addListener(_handleTerminalDeckChanged);
     _subscription = _controller.events.listen(_handleEvent);
     _initHistory();
     _loadGlobalHistory();
@@ -1224,13 +1279,21 @@ class ChatModel extends ChangeNotifier {
   int historyIndex = 0;
   String historyDraft = '';
   String? cwdBase;
+  String? cwdPath;
+  late final TerminalDeck terminalDeck;
+
+  void _handleTerminalDeckChanged() {
+    notifyListeners();
+  }
 
   Future<void> refreshCwd() async {
     try {
       final res = await client.serverCall('fs_get_workspace_root');
       final p = res['path']?.toString();
       if (p != null && p.isNotEmpty) {
+        cwdPath = p;
         cwdBase = _basename(p);
+        terminalDeck.defaultCwd = cwdPath;
         notifyListeners();
         return;
       }
@@ -1239,7 +1302,9 @@ class ChatModel extends ChangeNotifier {
       final res = await client.serverCall('fs_get_cwd');
       final p = res['path']?.toString();
       if (p != null && p.isNotEmpty) {
+        cwdPath = p;
         cwdBase = _basename(p);
+        terminalDeck.defaultCwd = cwdPath;
         notifyListeners();
       }
     } catch (_) {}
@@ -1247,8 +1312,48 @@ class ChatModel extends ChangeNotifier {
 
   void setCwdLabelFromPath(String path) {
     if (path.isEmpty) return;
+    cwdPath = path;
     cwdBase = _basename(path);
+    terminalDeck.defaultCwd = cwdPath;
     notifyListeners();
+  }
+
+  Future<void> ensureTerminal({String? preferredCwd}) async {
+    final active = _controller.sessionId ?? sessionId;
+    if (active == null || active.isEmpty) {
+      throw StateError('session_required');
+    }
+    if (preferredCwd != null && preferredCwd.isNotEmpty) {
+      terminalDeck.defaultCwd = preferredCwd;
+    }
+    terminalDeck.updateSessionHint(active);
+    await terminalDeck.ensureActive(preferredCwd: preferredCwd);
+  }
+
+  Future<void> addTerminalTab({String? preferredCwd}) async {
+    final active = _controller.sessionId ?? sessionId;
+    if (active == null || active.isEmpty) {
+      throw StateError('session_required');
+    }
+    if (preferredCwd != null && preferredCwd.isNotEmpty) {
+      terminalDeck.defaultCwd = preferredCwd;
+    }
+    terminalDeck.updateSessionHint(active);
+    await terminalDeck.addSession(preferredCwd: preferredCwd ?? cwdPath);
+  }
+
+  void setTerminalDocked(bool value) {
+    terminalDeck.setDocked(value);
+  }
+
+  bool get terminalDocked => terminalDeck.docked;
+
+  RemoteTerminalSession? get activeTerminalSession =>
+      terminalDeck.activeSession;
+
+  void closeDockedTerminal() {
+    terminalDeck.setDocked(false);
+    terminalDeck.clear();
   }
 
   String _basename(String input) {
@@ -1283,6 +1388,9 @@ class ChatModel extends ChangeNotifier {
               ? ids.sessionId
               : _controller.sessionId;
       onRunStarted?.call(ids.runId, sessionForCallback);
+      if (sessionForCallback != null && sessionForCallback.isNotEmpty) {
+        terminalDeck.updateSessionHint(sessionForCallback);
+      }
       if (sessionForCallback != null && sessionForCallback.isNotEmpty) {
         // ignore: discarded_futures
         refreshCwd();
@@ -1605,6 +1713,7 @@ class ChatModel extends ChangeNotifier {
       _isStreaming = false;
       statusText = 'Disconnected from server';
       statusShowSpinner = false;
+      terminalDeck.markDisconnected();
     } else if (event is RunStatusEvent) {
       if (currentRunId == null || event.runId == currentRunId) {
         final a = event.attempt;
@@ -1616,6 +1725,7 @@ class ChatModel extends ChangeNotifier {
     } else if (event is RunStartedEvent) {
       currentRunId = event.runId;
       if (event.sessionId.isNotEmpty) {
+        terminalDeck.updateSessionHint(event.sessionId);
         refreshCwd();
       }
       statusText = null;
@@ -1767,6 +1877,8 @@ class ChatModel extends ChangeNotifier {
   @override
   void dispose() {
     _subscription.cancel();
+    terminalDeck.removeListener(_handleTerminalDeckChanged);
+    terminalDeck.dispose();
     super.dispose();
   }
 }

@@ -223,7 +223,7 @@ class TestReconnectionIntegration:
         from omniagents.core.session import SessionManager
         
         # Create session manager
-        sm = SessionManager()
+        sm = SessionManager("test", "test_agent")
         
         # Create session with pending events
         session_id = "test_session"

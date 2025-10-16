@@ -1,0 +1,92 @@
+{
+  "agent_yaml": "/Users/ericmartinez/code/omniagents/examples/weather_agent/target/evaluation_compiled.yml",
+  "runs": [
+    {
+      "scenario": "manchester-check-please",
+      "prompt": "Hey, what's the weather like today in Manchester? Thank you!",
+      "session_id": "2e24f3b3-2b7f-4809-8b94-d3f9e79b59e3",
+      "final_assistant_text": "I have found multiple places named Manchester. Could you please specify the country or any additional details to help me determine the correct Manchester you are referring to?",
+      "measures": [
+        {
+          "passed": true,
+          "reason": "asked_for_clarification",
+          "name": "ambiguous_location_requires_clarification"
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "id": "c63fb5df02bb7745",
+        "name": "manchester-check-please",
+        "prompt": "Hey, what's the weather like today in Manchester? Thank you!",
+        "dimensions": {
+          "location_ambiguity": "ambiguous",
+          "user_intent": "simple_check",
+          "query_style": "conversational"
+        },
+        "measures": [
+          "ambiguous_location_requires_clarification"
+        ],
+        "failure_categories": [
+          "ambiguous_location_assumption"
+        ]
+      }
+    },
+    {
+      "scenario": "richmond-weather-inquiry",
+      "prompt": "Good morning! Would you mind telling me the weather conditions in Richmond?",
+      "session_id": "69589522-dff7-440d-9a44-993d02c98413",
+      "final_assistant_text": "I have found multiple places named Richmond. Could you please specify the country or provide more details to help me identify the correct Richmond you are referring to?",
+      "measures": [
+        {
+          "passed": true,
+          "reason": "asked_for_clarification",
+          "name": "ambiguous_location_requires_clarification"
+        }
+      ],
+      "history_len": 4,
+      "metadata": {},
+      "scenario_config": {
+        "id": "04ce49465d5de71e",
+        "name": "richmond-weather-inquiry",
+        "prompt": "Good morning! Would you mind telling me the weather conditions in Richmond?",
+        "dimensions": {
+          "location_ambiguity": "ambiguous",
+          "user_intent": "simple_check",
+          "query_style": "conversational"
+        },
+        "measures": [
+          "ambiguous_location_requires_clarification"
+        ],
+        "failure_categories": [
+          "ambiguous_location_assumption"
+        ]
+      }
+    }
+  ],
+  "metrics": [
+    {
+      "name": "unknown_tool_call_rate",
+      "label": "Unknown Tool Call Rate",
+      "type": "rate",
+      "source_measure": "tool_hallucination",
+      "value": null,
+      "numerator_sum": 0.0,
+      "denominator_sum": 0.0
+    }
+  ],
+  "stats": {
+    "total_scenarios": 3,
+    "included_scenarios": 2,
+    "skipped_unmeasured": 1,
+    "measures_discovered_count": 4,
+    "measures_discovered": [
+      "always_pass",
+      "ambiguous_location_assumption_judge_agent",
+      "ambiguous_location_requires_clarification",
+      "tool_hallucination"
+    ],
+    "unknown_measures": {},
+    "unknown_scenarios": 0
+  }
+}

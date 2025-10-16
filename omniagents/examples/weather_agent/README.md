@@ -17,23 +17,61 @@ python examples/weather_agent/agent.py --mode server -p 8000
 ## Usage (YAML)
 
 ```bash
-python -m omniagents.cli run -c examples/weather_agent/agent.yaml --mode cli
+python -m omniagents.cli run -P examples/weather_agent/project.yml --mode cli
 ```
 
 Ask things like: "Weather in Paris" or "What’s the weather in New York?"
 
-## Evaluation Demo
+## Evaluation (dbt-style)
 
-Run all evaluation scenarios defined in the YAML and compute metrics:
+Organize evaluation assets under `evaluations/` and use the omniagents CLI (dbt-style):
 
 ```bash
-export OPENAI_API_KEY=...  # required for the model to run
-python examples/weather_agent/evaluate_yaml.py --config examples/weather_agent/agent.yaml -d
+# Compile (optional; most eval commands compile automatically)
+python -m omniagents.cli compile -P examples/weather_agent/project.yml
+
+# Run evaluation
+export OPENAI_API_KEY=...  # required for model runs
+python -m omniagents.cli eval run -P examples/weather_agent/project.yml --reporter pretty
 ```
 
-This runs multiple prompts from the YAML, loads each recorded history, and reports metrics like:
+This compiles resources into `target/evaluation_compiled.yml` and evaluates with the runner. Reports metrics like:
 - Happy Path Pass Rate
 - Ambiguity Handling Pass Rate
 - Fahrenheit Temperature Pass Rate
 - Unknown Tool Call Rate
 - Friendliness Pass Rate
+
+To generate synthetic scenarios into a named set (outputs under `artifacts/eval/<name>/`), run:
+
+```bash
+python -m omniagents.cli eval scenarios generate -P examples/weather_agent/project.yml --name demo --count 100
+```
+
+After running scenarios to produce traces in AgentIO, annotate all scenarios with failure categories (keeps all scenarios, does not prune). The output goes to the same `<name>` folder as the input:
+
+```bash
+python -m omniagents.cli eval annotate -P examples/weather_agent/project.yml \
+  --name demo \
+  -o artifacts/eval/annotated_scenarios.yml
+
+To create train/dev/test splits for a failure category (writes under `artifacts/eval/<name>/splits/<category>/`):
+
+```bash
+python -m omniagents.cli eval split \
+  --name demo \
+  -c out_of_scope_engagement
+```
+
+Use `--name` consistently to reference the scenario set.
+
+Evaluate an LLM-as-Judge on a split and report TPR/TNR (requires `OPENAI_API_KEY`):
+
+```bash
+export OPENAI_API_KEY=...
+python -m omniagents.cli eval judge run \
+  -P examples/weather_agent/project.yml \
+  --name demo -c out_of_scope_engagement -s dev \
+  -j out_of_scope_judge --max-turns 1 --run-max-turns 6
+```
+```

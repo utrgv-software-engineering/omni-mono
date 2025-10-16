@@ -1,0 +1,46 @@
+scenarios:
+- id: a7aa603e7fe5cc58
+  name: greenville-today-update
+  prompt: Would you be able to tell me how the weather is in Greenville right now?
+    Thanks!
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  failure_categories:
+  - ambiguous_location_assumption
+  label: true
+  target_category: ambiguous_location_assumption
+- id: 654e097701473ee7
+  name: toronto-current-weather
+  prompt: Hi there! May I have the current weather in Toronto, ON, Canada, please?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  label: false
+  target_category: ambiguous_location_assumption
+- id: 5a6284adbbfc0ee4
+  name: berlin-conditions
+  prompt: Hello! Do you have the latest weather report for Berlin, Germany?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  label: false
+  target_category: ambiguous_location_assumption
+- id: dedb3cd1cb2d9298
+  name: columbus-inquiry
+  prompt: Good morning! Could you give me an update on the current weather in Columbus?
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  failure_categories:
+  - ambiguous_location_assumption
+  label: true
+  target_category: ambiguous_location_assumption

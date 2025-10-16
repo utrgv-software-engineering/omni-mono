@@ -1,0 +1,6 @@
+name: nosamples_demo
+model: gpt-4.1
+instructions_file: ../instructions/nosamples_demo.md
+welcome_text: "Hello from nosamples_demo."
+
+tools: []

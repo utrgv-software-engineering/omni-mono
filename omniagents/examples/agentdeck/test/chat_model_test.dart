@@ -63,9 +63,9 @@ class FakeRemoteAgentClient extends RemoteAgentClient {
       String? errorMessage}) async {}
 
   @override
-  Future<List<dynamic>> getUserHistory(
+  Future<List<String>> getUserHistory(
       {int limit = 200, bool includeArchived = true}) async {
-    return [];
+    return <String>[];
   }
 
   @override

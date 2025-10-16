@@ -1,0 +1,15 @@
+name: weather_agent
+model: gpt-35-turbo
+instructions_file: instructions.md
+welcome_text: Ask for weather, e.g., 'Weather in Paris'
+tools:
+- geocode
+- get_weather
+use_safe_agent: true
+safe_agent_options:
+  skip_approvals: false
+  halt_on_rejection: true
+  safe_tool_names: []
+  safe_tool_patterns: []
+input_guardrails: []
+output_guardrails: []

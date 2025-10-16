@@ -1,0 +1,13 @@
+name: No Tracing Agent
+instructions: |
+  You are a helpful assistant with tracing disabled.
+  This prevents any traces from being sent to OpenAI.
+
+model: gpt-4o
+
+# Disable all tracing
+tracing:
+  provider: none
+
+tools:
+  - get_time

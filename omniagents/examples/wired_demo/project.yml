@@ -1,0 +1,14 @@
+name: wired_demo
+paths:
+  agents: agents
+  tools: tools
+  target: target
+agents:
+  entrypoint: wired_demo
+
+tracing:
+  provider: agentio
+  project: wired_demo_project
+  name: wired_demo
+  settings:
+    resume: never
