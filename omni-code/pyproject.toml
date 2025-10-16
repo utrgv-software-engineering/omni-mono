@@ -5,7 +5,7 @@ description = "Omni Code: a full‑stack coding agent built with OmniAgents"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "openai==1.99.9",
+    "openai",
     # openai-agents and python-dotenv are required transitively by omniagents
     "omniagents[all]==0.3.13",
     "markitdown[all,docx,pdf]>=0.1.1",
