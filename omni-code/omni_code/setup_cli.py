@@ -114,6 +114,7 @@ def write_configuration(values: Dict[str, Optional[str]]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="omni-setup")
     parser.parse_args()
+    print("Secrets you type will not be displayed while you enter them.")
     existing = load_config()
     values = configure_provider(existing)
     write_configuration(values)
