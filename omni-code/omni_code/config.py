@@ -4,8 +4,6 @@ from typing import Dict
 
 from dotenv import dotenv_values
 
-GEMFURY_INDEX_URL = "https://REDACTED_FURY_TOKEN:@pypi.fury.io/ericmichael/"
-
 
 def get_config_dir() -> Path:
     if os.name == "nt":

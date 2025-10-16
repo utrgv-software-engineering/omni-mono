@@ -16,7 +16,7 @@ A standalone coding agent built with OmniAgents. It gives an AI assistant safe a
 ```bash
 python3 -m pip install --user pipx
 pipx ensurepath
-pipx install omni-code --pip-args="--index-url https://REDACTED_FURY_TOKEN:@pypi.fury.io/ericmichael/"
+pipx install omni-code --pip-args="--extra-index-url https://pypi.fury.io/ericmichael/"
 omni-setup
 omni
 ```
@@ -25,7 +25,7 @@ Windows (PowerShell):
 ```powershell
 py -m pip install --user pipx
 pipx ensurepath
-pipx install omni-code --pip-args="--index-url https://REDACTED_FURY_TOKEN:@pypi.fury.io/ericmichael/"
+pipx install omni-code --pip-args="--extra-index-url https://pypi.fury.io/ericmichael/"
 omni-setup
 omni
 ```
@@ -33,7 +33,7 @@ omni
 ### Option B: uv tool install
 ```bash
 python3 -m pip install --user uv
-uv tool install omni-code --index-url https://REDACTED_FURY_TOKEN:@pypi.fury.io/ericmichael/
+uv tool install omni-code --extra-index-url https://pypi.fury.io/ericmichael/
 omni-setup
 omni
 ```
@@ -41,7 +41,7 @@ omni
 Windows (PowerShell):
 ```powershell
 py -m pip install --user uv
-uv tool install omni-code --index-url https://REDACTED_FURY_TOKEN:@pypi.fury.io/ericmichael/
+uv tool install omni-code --extra-index-url https://pypi.fury.io/ericmichael/
 omni-setup
 omni
 ```
@@ -107,7 +107,7 @@ git clone git@github.com:<you>/omni-code.git
 cd omni-code
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -e .[dev] --extra-index-url "https://REDACTED_FURY_TOKEN:@pypi.fury.io/ericmichael/"
+pip install -e .[dev] --extra-index-url https://pypi.fury.io/ericmichael/
 omni-setup
 omni
 ```

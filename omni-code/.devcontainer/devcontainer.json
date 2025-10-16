@@ -26,7 +26,6 @@
     }
   },
   "containerEnv": {
-    "FURY_AUTH": "REDACTED_FURY_TOKEN",
     "PIP_DISABLE_PIP_VERSION_CHECK": "1"
   },
   "postCreateCommand": "bash .devcontainer/postCreate.sh"

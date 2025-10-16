@@ -9,19 +9,12 @@ sudo apt-get update
 sudo apt-get install -y pipx python3-venv
 pipx ensurepath || true
 
-if [ -n "${FURY_AUTH:-}" ]; then
-  echo "[postCreate] Configuring pip extra index from FURY_AUTH..."
-  pip config set global.extra-index-url "https://${FURY_AUTH}:@pypi.fury.io/ericmichael/" || true
-fi
+EXTRA_INDEX="https://pypi.fury.io/ericmichael/"
 
 echo "[postCreate] Installing test tooling (pytest)..."
 pip install pytest
 
 echo "[postCreate] Installing project (editable) with dependencies..."
-if [ -n "${FURY_AUTH:-}" ]; then
-  pip install -e . --extra-index-url "https://${FURY_AUTH}:@pypi.fury.io/ericmichael/"
-else
-  pip install -e .
-fi
+pip install -e . --extra-index-url "$EXTRA_INDEX"
 
 echo "[postCreate] Done. You can run tests with: pytest"
