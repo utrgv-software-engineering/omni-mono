@@ -1,7 +1,5 @@
 import os
 from typing import Any
-
-from dotenv import load_dotenv
 from omniagents import Runner
 from openai import AsyncAzureOpenAI, AsyncOpenAI
 from agents import (
@@ -10,6 +8,7 @@ from agents import (
 )
 import agentio
 from tools import *
+from omni_code.config import load_config
 from oagents.coding_agent import create_agent
 from server_functions.agentio_functions import good, bad, note, notes
 from server_functions.filesystem import (
@@ -20,8 +19,9 @@ from server_functions.filesystem import (
     session_ensure,
 )
 
-# Load environment variables
-load_dotenv()
+for key, value in load_config().items():
+    if key not in os.environ:
+        os.environ[key] = value
 
 # Configure OpenAI provider (Azure vs. OpenAI) based on environment
 provider = (os.getenv("OPENAI_PROVIDER") or "openai").strip().lower()
@@ -35,17 +35,17 @@ if provider == "azure":
         project=os.getenv("OPENAI_PROJECT"),
     )
     set_default_openai_client(client, use_for_tracing=False)
-elif provider == "openai":
+elif provider in {"openai", "custom"}:
     client = AsyncOpenAI(
         api_key=os.getenv("OPENAI_API_KEY"),
         base_url=os.getenv("OPENAI_BASE_URL"),
         organization=os.getenv("OPENAI_ORG"),
         project=os.getenv("OPENAI_PROJECT"),
     )
-    set_default_openai_client(client, use_for_tracing=True)
+    set_default_openai_client(client, use_for_tracing=provider == "openai")
 else:
     raise ValueError(
-        f"Unsupported OPENAI_PROVIDER: {provider!r}. Use 'azure' or 'openai'."
+        f"Unsupported OPENAI_PROVIDER: {provider!r}. Use 'azure', 'openai', or 'custom'."
     )
 
 
