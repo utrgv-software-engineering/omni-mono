@@ -21,6 +21,8 @@ omni-setup
 omni
 ```
 
+> Note: Keep pip's default index pointed at PyPI. If you've previously run `pip config set global.index-url https://pypi.fury.io/...`, reset it with `pip config unset global.index-url` (or set it back to `https://pypi.org/simple`) before installing.
+
 Windows (PowerShell):
 ```powershell
 py -m pip install --user pipx
@@ -37,6 +39,8 @@ uv tool install omni-code --extra-index-url https://pypi.fury.io/ericmichael/
 omni-setup
 omni
 ```
+
+> If your pip configuration overrides the default index, reset it as described above so PyPI remains available.
 
 Windows (PowerShell):
 ```powershell
@@ -111,6 +115,8 @@ pip install -e .[dev] --extra-index-url https://pypi.fury.io/ericmichael/
 omni-setup
 omni
 ```
+
+> Development environments should also retain `https://pypi.org/simple` as the primary index. Use `pip config unset global.index-url` if Gemfury was set globally.
 
 Run `omni-setup` again anytime you need to update credentials. To use the CLI globally without activating the virtual environment, follow either the pipx or uv instructions above.
 
