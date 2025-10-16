@@ -1,17 +1,10 @@
 import argparse
 import os
-import shutil
-import subprocess
 import sys
 from getpass import getpass
 from typing import Dict, Optional
 
-from omni_code.config import (
-    GEMFURY_INDEX_URL,
-    get_config_path,
-    load_config,
-    write_config,
-)
+from omni_code.config import get_config_path, load_config, write_config
 
 
 def prompt_choice(prompt: str, options: Dict[str, str], default: str) -> str:
@@ -50,35 +43,6 @@ def prompt_secret(label: str, existing: Optional[str], required: bool) -> Option
                 continue
             return None
         return raw
-
-
-def ensure_uv_installed(skip: bool) -> None:
-    if skip:
-        return
-    if shutil.which("uv"):
-        return
-    print("uv is required. Installing with pip --user...")
-    cmd = [sys.executable, "-m", "pip", "install", "--user", "uv"]
-    result = subprocess.run(cmd, check=False)
-    if result.returncode != 0:
-        print("Failed to install uv. Please install it manually and re-run this setup.")
-        sys.exit(result.returncode or 1)
-    print("uv installed. You may need to restart your shell if 'uv' is not yet on PATH.")
-
-
-def ensure_tool_installed(skip: bool) -> None:
-    if skip:
-        return
-    if shutil.which("omni"):
-        return
-    if not shutil.which("uv"):
-        print("uv is not on PATH. Skipping omni installation step.")
-        return
-    cmd = ["uv", "tool", "install", "omni-code", "--index-url", GEMFURY_INDEX_URL]
-    result = subprocess.run(cmd, check=False)
-    if result.returncode != 0:
-        print("uv could not install omni-code. Please resolve the error and retry.")
-        sys.exit(result.returncode or 1)
 
 
 def configure_provider(existing: Dict[str, str]) -> Dict[str, Optional[str]]:
@@ -149,11 +113,7 @@ def write_configuration(values: Dict[str, Optional[str]]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="omni-setup")
-    parser.add_argument("--skip-uv", action="store_true")
-    parser.add_argument("--skip-install", action="store_true")
-    args = parser.parse_args()
-    ensure_uv_installed(args.skip_uv)
-    ensure_tool_installed(args.skip_install)
+    parser.parse_args()
     existing = load_config()
     values = configure_provider(existing)
     write_configuration(values)

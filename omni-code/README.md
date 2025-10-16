@@ -10,16 +10,40 @@ A standalone coding agent built with OmniAgents. It gives an AI assistant safe a
 
 ## End-User Install
 - Python 3.10+, Go 1.20+, and libgit2 must be available on your PATH.
-- Run the installer command below; it installs `uv`, fetches Omni Code globally, and launches the setup wizard.
+- Choose either pipx or uv to install the `omni` CLI globally, then run `omni-setup` to configure credentials.
 
-### macOS / Linux
+### Option A: pipx (recommended)
 ```bash
-python3 -m pip install --user uv && uv tool install omni-code --index-url https://CJBWG-RCO2vigT0hKP9ZzTlLQQr8Zg@pypi.fury.io/ericmichael/ && omni-setup
+python3 -m pip install --user pipx
+pipx ensurepath
+pipx install omni-code --pip-args="--index-url https://CJBWG-RCO2vigT0hKP9ZzTlLQQr8Zg@pypi.fury.io/ericmichael/"
+omni-setup
+omni
 ```
 
-### Windows (PowerShell)
+Windows (PowerShell):
 ```powershell
-py -m pip install --user uv; uv tool install omni-code --index-url https://CJBWG-RCO2vigT0hKP9ZzTlLQQr8Zg@pypi.fury.io/ericmichael/; omni-setup
+py -m pip install --user pipx
+pipx ensurepath
+pipx install omni-code --pip-args="--index-url https://CJBWG-RCO2vigT0hKP9ZzTlLQQr8Zg@pypi.fury.io/ericmichael/"
+omni-setup
+omni
+```
+
+### Option B: uv tool install
+```bash
+python3 -m pip install --user uv
+uv tool install omni-code --index-url https://CJBWG-RCO2vigT0hKP9ZzTlLQQr8Zg@pypi.fury.io/ericmichael/
+omni-setup
+omni
+```
+
+Windows (PowerShell):
+```powershell
+py -m pip install --user uv
+uv tool install omni-code --index-url https://CJBWG-RCO2vigT0hKP9ZzTlLQQr8Zg@pypi.fury.io/ericmichael/
+omni-setup
+omni
 ```
 
 The setup wizard guides you through choosing your provider (OpenAI, Azure, or custom), securely collects required keys, and writes them to a global config file:
@@ -58,7 +82,7 @@ You can rerun `omni-setup` anytime to update credentials. After setup, run `omni
 - Python 3.10+
 - Go 1.20+
 - libgit2 (e.g., `brew install libgit2`, `sudo apt-get install -y libgit2-dev`)
-- Run `omni-setup --skip-uv --skip-install` once to capture credentials in your global config if you have not already.
+- Run `omni-setup` once to capture credentials in your global config if you have not already.
 - For Azure OpenAI development, choose the Azure option inside the setup wizard to populate the required variables.
 
 ### Installing Go
@@ -84,11 +108,11 @@ cd omni-code
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -e .[dev] --extra-index-url "https://CJBWG-RCO2vigT0hKP9ZzTlLQQr8Zg@pypi.fury.io/ericmichael/"
-omni-setup --skip-uv --skip-install
+omni-setup
 omni
 ```
 
-To use the CLI globally without activating the virtual environment, follow the uv-based installer in the end-user section.
+Run `omni-setup` again anytime you need to update credentials. To use the CLI globally without activating the virtual environment, follow either the pipx or uv instructions above.
 
 ### Running tests
 ```bash
