@@ -1,7 +1,7 @@
 # Omni Code packages are published on Gemfury:
 --extra-index-url https://pypi.fury.io/ericmichael/
 
-openai
+openai==1.99.9
 omniagents[all]==0.3.13
 markitdown[all,docx,pdf]>=0.1.1
 requests>=2.31.0
