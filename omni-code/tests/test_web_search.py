@@ -3,6 +3,7 @@ import os
 import json
 from unittest.mock import patch, MagicMock
 from requests.exceptions import RequestException
+from tools.web_search import web_search
 
 # Mock classes and responses
 class DummySuccessResponse:
@@ -77,13 +78,6 @@ SAMPLE_SEARCH_RESULTS = {
     }
 }
 
-# Mock the decorator before importing the module
-@pytest.fixture(autouse=True)
-def mock_function_tool():
-    """Mock the function_tool decorator to just return the original function."""
-    with patch('omniagents.core.function_tool', side_effect=lambda f: f):
-        yield
-
 # Setup mock requests that correctly includes RequestException
 def setup_mock_requests():
     """Create a properly configured mock requests module with exception classes."""
@@ -94,7 +88,7 @@ def setup_mock_requests():
     return mock_req
 
 # Tests
-def test_web_search_basic(mock_function_tool):
+def test_web_search_basic(invoke_tool):
     """Test basic web search with minimal parameters."""
     # Setup mocks
     mock_requests = setup_mock_requests()
@@ -103,25 +97,22 @@ def test_web_search_basic(mock_function_tool):
     
     with patch('tools.web_search.requests', mock_requests), \
          patch.dict(os.environ, {"SERPAPI_API_KEY": "test_api_key"}):
-        # Import here after mocking
-        from tools.web_search import web_search
-        
-        # Call the function
-        result = web_search(
+        result = invoke_tool(
+            web_search,
             query="test query",
             num_results=10,
             include_news=False,
             time_period=None
         )
-        
-        # Verify results
-        assert result["status"] == "success"
-        assert result["query"] == "test query"
-        assert len(result["organic_results"]) == 2
-        assert "answer_box" in result
-        assert "knowledge_graph" in result
-        assert "related_questions" in result
-        assert "news" not in result  # News not included
+        data = result.ui_metadata["value"]
+
+        assert data["status"] == "success"
+        assert data["query"] == "test query"
+        assert len(data["organic_results"]) == 2
+        assert "answer_box" in data
+        assert "knowledge_graph" in data
+        assert "related_questions" in data
+        assert "news" not in data
         
         # Verify request parameters
         mock_requests.get.assert_called_once()
@@ -134,7 +125,7 @@ def test_web_search_basic(mock_function_tool):
         assert kwargs["params"]["hl"] == "en"
         assert "tbs" not in kwargs["params"]  # No time period
 
-def test_web_search_with_news(mock_function_tool):
+def test_web_search_with_news(invoke_tool):
     """Test web search including news results."""
     # Setup mocks
     mock_requests = setup_mock_requests()
@@ -143,23 +134,20 @@ def test_web_search_with_news(mock_function_tool):
     
     with patch('tools.web_search.requests', mock_requests), \
          patch.dict(os.environ, {"SERPAPI_API_KEY": "test_api_key"}):
-        # Import here after mocking
-        from tools.web_search import web_search
-        
-        # Call the function
-        result = web_search(
+        result = invoke_tool(
+            web_search,
             query="test query",
             num_results=10,
             include_news=True,
             time_period=None
         )
-        
-        # Verify results
-        assert result["status"] == "success"
-        assert "news" in result
-        assert len(result["news"]) == 1
+        data = result.ui_metadata["value"]
 
-def test_web_search_with_time_period(mock_function_tool):
+        assert data["status"] == "success"
+        assert "news" in data
+        assert len(data["news"]) == 1
+
+def test_web_search_with_time_period(invoke_tool):
     """Test web search with time period filtering."""
     # Setup mocks
     mock_requests = setup_mock_requests()
@@ -168,27 +156,21 @@ def test_web_search_with_time_period(mock_function_tool):
     
     with patch('tools.web_search.requests', mock_requests), \
          patch.dict(os.environ, {"SERPAPI_API_KEY": "test_api_key"}):
-        # Import here after mocking
-        from tools.web_search import web_search
-        
-        # Call the function
-        result = web_search(
+        invoke_tool(
+            web_search,
             query="test query",
             num_results=10,
             include_news=False,
             time_period="past_day"
         )
-        
-        # Verify results
-        assert result["status"] == "success"
-        
+
         # Verify request parameters
         mock_requests.get.assert_called_once()
         args, kwargs = mock_requests.get.call_args
         assert "tbs" in kwargs["params"]
         assert kwargs["params"]["tbs"] == "qdr:d"  # 'd' for past_day
 
-def test_web_search_result_limit(mock_function_tool):
+def test_web_search_result_limit(invoke_tool):
     """Test web search with result limit."""
     # Setup mocks
     mock_requests = setup_mock_requests()
@@ -197,11 +179,8 @@ def test_web_search_result_limit(mock_function_tool):
     
     with patch('tools.web_search.requests', mock_requests), \
          patch.dict(os.environ, {"SERPAPI_API_KEY": "test_api_key"}):
-        # Import here after mocking
-        from tools.web_search import web_search
-        
-        # Call the function with max allowed
-        result = web_search(
+        invoke_tool(
+            web_search,
             query="test query",
             num_results=150,  # Over the max of 100
             include_news=False,
@@ -213,32 +192,26 @@ def test_web_search_result_limit(mock_function_tool):
         args, kwargs = mock_requests.get.call_args
         assert kwargs["params"]["num"] == 100  # Should be capped at 100
 
-def test_web_search_missing_api_key(mock_function_tool):
+def test_web_search_missing_api_key(invoke_tool):
     """Test web search with missing API key."""
     # Setup mocks
     mock_requests = setup_mock_requests()
     
     with patch('tools.web_search.requests', mock_requests), \
          patch.dict(os.environ, {}, clear=True):  # Empty environment
-        # Import here after mocking
-        from tools.web_search import web_search
-        
-        # Call the function
-        result = web_search(
+        result = invoke_tool(
+            web_search,
             query="test query",
             num_results=10,
             include_news=False,
             time_period=None
         )
-        
-        # Verify error response
-        assert result["status"] == "error"
-        assert "SERPAPI_API_KEY not found" in result["error"]
-        
+        assert "SERPAPI_API_KEY not found" in result.ui_metadata["value"]
+
         # Verify no request was made
         mock_requests.get.assert_not_called()
 
-def test_web_search_request_error(mock_function_tool):
+def test_web_search_request_error(invoke_tool):
     """Test web search with HTTP error."""
     # Setup mocks
     mock_requests = setup_mock_requests()
@@ -247,22 +220,16 @@ def test_web_search_request_error(mock_function_tool):
     
     with patch('tools.web_search.requests', mock_requests), \
          patch.dict(os.environ, {"SERPAPI_API_KEY": "test_api_key"}):
-        # Import here after mocking
-        from tools.web_search import web_search
-        
-        # Call the function
-        result = web_search(
+        result = invoke_tool(
+            web_search,
             query="test query",
             num_results=10,
             include_news=False,
             time_period=None
         )
-        
-        # Verify error response
-        assert result["status"] == "error"
-        assert "403" in result["error"]
+        assert "SerpAPI request failed with status code 403" in result.ui_metadata["value"]
 
-def test_web_search_network_error(mock_function_tool):
+def test_web_search_network_error(invoke_tool):
     """Test web search with network error."""
     # Setup mocks
     mock_requests = setup_mock_requests()
@@ -270,23 +237,17 @@ def test_web_search_network_error(mock_function_tool):
     
     with patch('tools.web_search.requests', mock_requests), \
          patch.dict(os.environ, {"SERPAPI_API_KEY": "test_api_key"}):
-        # Import here after mocking
-        from tools.web_search import web_search
-        
-        # Call the function
-        result = web_search(
+        result = invoke_tool(
+            web_search,
             query="test query",
             num_results=10,
             include_news=False,
             time_period=None
         )
-        
-        # Verify error response
-        assert result["status"] == "error"
-        assert "Network error" in result["error"]
-        assert "Connection refused" in result["error"]
+        assert "Network error occurred" in result.ui_metadata["value"]
+        assert "Connection refused" in result.ui_metadata["value"]
 
-def test_web_search_json_decode_error(mock_function_tool):
+def test_web_search_json_decode_error(invoke_tool):
     """Test web search with JSON decode error."""
     # Setup mocks
     mock_requests = setup_mock_requests()
@@ -299,22 +260,16 @@ def test_web_search_json_decode_error(mock_function_tool):
     
     with patch('tools.web_search.requests', mock_requests), \
          patch.dict(os.environ, {"SERPAPI_API_KEY": "test_api_key"}):
-        # Import here after mocking
-        from tools.web_search import web_search
-        
-        # Call the function
-        result = web_search(
+        result = invoke_tool(
+            web_search,
             query="test query",
             num_results=10,
             include_news=False,
             time_period=None
         )
-        
-        # Verify error response
-        assert result["status"] == "error"
-        assert "Failed to parse" in result["error"]
+        assert "Failed to parse" in result.ui_metadata["value"]
 
-def test_web_search_general_exception(mock_function_tool):
+def test_web_search_general_exception(invoke_tool):
     """Test web search with general exception."""
     # Setup mocks
     mock_requests = setup_mock_requests()
@@ -322,23 +277,17 @@ def test_web_search_general_exception(mock_function_tool):
     with patch('tools.web_search.requests', mock_requests), \
          patch.dict(os.environ, {"SERPAPI_API_KEY": "test_api_key"}), \
          patch('tools.web_search.requests.get', side_effect=Exception("Unexpected error")):
-        # Import here after mocking
-        from tools.web_search import web_search
-        
-        # Call the function
-        result = web_search(
+        result = invoke_tool(
+            web_search,
             query="test query",
             num_results=10,
             include_news=False,
             time_period=None
         )
-        
-        # Verify error response
-        assert result["status"] == "error"
-        assert "Error during web search" in result["error"]
-        assert "Unexpected error" in result["error"]
+        assert "Error during web search" in result.ui_metadata["value"]
+        assert "Unexpected error" in result.ui_metadata["value"]
 
-def test_web_search_default_values(mock_function_tool):
+def test_web_search_default_values(invoke_tool):
     """Test web search with default values for optional parameters."""
     # Setup mocks
     mock_requests = setup_mock_requests()
@@ -347,11 +296,8 @@ def test_web_search_default_values(mock_function_tool):
     
     with patch('tools.web_search.requests', mock_requests), \
          patch.dict(os.environ, {"SERPAPI_API_KEY": "test_api_key"}):
-        # Import here after mocking
-        from tools.web_search import web_search
-        
-        # Call the function with None for optional parameters
-        result = web_search(
+        result = invoke_tool(
+            web_search,
             query="test query",
             num_results=None,  # Should default to 10
             include_news=None,  # Should default to False
@@ -362,20 +308,19 @@ def test_web_search_default_values(mock_function_tool):
         mock_requests.get.assert_called_once()
         args, kwargs = mock_requests.get.call_args
         assert kwargs["params"]["num"] == 10
-        assert "news" not in result  # No news with default False 
+        assert result.ui_metadata["metadata"]["has_news"] is False
 
-def _run_web_search_time_period(mock_requests, time_period):
+def _run_web_search_time_period(mock_requests, time_period, invoke_tool):
     """Helper to reduce duplication when testing different time periods."""
     with patch('tools.web_search.requests', mock_requests), \
          patch.dict(os.environ, {"SERPAPI_API_KEY": "test_api_key"}):
-        from tools.web_search import web_search
-        result = web_search(
+        result = invoke_tool(
+            web_search,
             query="test query",
             num_results=10,
             include_news=False,
             time_period=time_period
         )
-        assert result["status"] == "success"
         mock_requests.get.assert_called_once()
         args, kwargs = mock_requests.get.call_args
         assert "tbs" in kwargs["params"]
@@ -387,11 +332,11 @@ def _run_web_search_time_period(mock_requests, time_period):
     ("past_month", "qdr:m"),
     ("past_year", "qdr:y"),
 ])
-def test_web_search_additional_time_periods(mock_function_tool, time_period, expected_code):
+def test_web_search_additional_time_periods(invoke_tool, time_period, expected_code):
     """Test other time period filters not previously covered."""
     mock_requests = setup_mock_requests()
     mock_response = DummySuccessResponse(SAMPLE_SEARCH_RESULTS)
     mock_requests.get.return_value = mock_response
 
-    tbs_value = _run_web_search_time_period(mock_requests, time_period)
-    assert tbs_value == expected_code 
+    tbs_value = _run_web_search_time_period(mock_requests, time_period, invoke_tool)
+    assert tbs_value == expected_code

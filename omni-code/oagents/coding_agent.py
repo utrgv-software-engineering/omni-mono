@@ -29,9 +29,11 @@ def _load_instructions() -> str:
     text: str | None = None
 
     try:
-        with resources.files("oagents").joinpath("instructions/coding_agent.md").open(
-            "r", encoding="utf-8"
-        ) as f:
+        with (
+            resources.files("oagents")
+            .joinpath("instructions/coding_agent.md")
+            .open("r", encoding="utf-8") as f
+        ):
             text = f.read()
     except Exception:
         pass
@@ -55,7 +57,16 @@ def _collect_agents_md_downwards(start_dir: str) -> List[Tuple[str, str]]:
                     found.append((path, f.read()))
             except Exception:
                 pass
-    found.sort(key=lambda x: (len(os.path.relpath(os.path.dirname(x[0]), start_dir).split(os.sep)) if os.path.dirname(x[0]) != start_dir else 0, x[0]))
+    found.sort(
+        key=lambda x: (
+            (
+                len(os.path.relpath(os.path.dirname(x[0]), start_dir).split(os.sep))
+                if os.path.dirname(x[0]) != start_dir
+                else 0
+            ),
+            x[0],
+        )
+    )
     return found
 
 
@@ -66,7 +77,11 @@ def get_instructions(run_context=None, agent=None) -> str:
     # Always include a Jinja placeholder for workspace; SilentUndefined => empty when missing
     if not agents_files:
         return base + "\n\n[Workspace]\n{{ workspace_root }}\n"
-    parts = [base, "\n\n[Workspace]\n{{ workspace_root }}\n", "\n\n# Repository AGENTS.md (parent → child)\n"]
+    parts = [
+        base,
+        "\n\n[Workspace]\n{{ workspace_root }}\n",
+        "\n\n# Repository AGENTS.md (parent → child)\n",
+    ]
     for path, text in agents_files:
         parts.append(f"\n[AGENTS.md at {os.path.dirname(path)}]\n{text}")
     return "".join(parts)
@@ -92,7 +107,7 @@ def create_agent() -> SafeAgent:
             download_file,
             convert_to_markdown,
         ],
-        model="gpt-5",
+        model="gpt-5-codex",
         model_settings=ModelSettings(
             reasoning=Reasoning(effort="high"),
         ),

@@ -1,10 +1,15 @@
 import requests
 from bs4 import BeautifulSoup
-from typing import Dict, Any, Optional
+from typing import Any, Optional
 from omniagents.core.tools import rich_function_tool, RichToolOutput
+from agents.run_context import RunContextWrapper
 
 @rich_function_tool
-def web_fetch(url: str, extract_text: bool) -> RichToolOutput:
+def web_fetch(
+    ctx: RunContextWrapper[Any],
+    url: str,
+    extract_text: Optional[bool] = True,
+) -> RichToolOutput:
     """
     Fetches content from a given URL and optionally extracts text content.
     
@@ -25,6 +30,7 @@ def web_fetch(url: str, extract_text: bool) -> RichToolOutput:
         )
     """
     try:
+        extract_text = True if extract_text is None else extract_text
         # Make the request to the URL
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
@@ -75,13 +81,13 @@ def web_fetch(url: str, extract_text: bool) -> RichToolOutput:
                 script.extract()
             
             # Get text content
-            text = soup.get_text(separator='\n', strip=True)
+            text_content = soup.get_text(separator='\n', strip=True)
             
             # Clean up text: remove excessive newlines
-            lines = [line.strip() for line in text.split('\n')]
-            text = '\n'.join(line for line in lines if line)
+            lines = [line.strip() for line in text_content.split('\n')]
+            text_content = '\n'.join(line for line in lines if line)
             
-            result["text_content"] = text
+            result["text_content"] = text_content
             
             # Extract metadata
             meta_tags = {}
@@ -97,35 +103,36 @@ def web_fetch(url: str, extract_text: bool) -> RichToolOutput:
             links = []
             for link in soup.find_all('a', href=True):
                 href = link['href']
-                text = link.get_text(strip=True)
+                link_text = link.get_text(strip=True)
                 if href and not href.startswith('#') and not href.startswith('javascript:'):
                     links.append({
                         "href": href,
-                        "text": text if text else None
+                        "text": link_text if link_text else None
                     })
             
             result["links"] = links[:100]  # Limit to 100 links
             
             # For LLM output, provide the extracted text
-            llm_output = text if 'text' in locals() else response.text[:5000]
+            llm_output = text_content
             
             # Create preview for UI
-            preview = text[:500] if 'text' in locals() else response.text[:500]
-            truncated = len(text) > 500 if 'text' in locals() else len(response.text) > 500
+            preview = text_content[:500]
+            truncated = len(text_content) > 500
             
             ui_metadata = {
-                "value": text if 'text' in locals() else response.text,
+                "value": text_content,
                 "display_type": "web_content",
-                "summary": f"Fetched {title if 'title' in locals() and title else url}",
+                "summary": f"Fetched {title or url}",
                 "preview": preview,
                 "truncated": truncated,
                 "metadata": {
                     "url": url,
-                    "title": title if 'title' in locals() else None,
+                    "title": title or None,
                     "content_type": content_type,
                     "size": len(response.content),
-                    "meta_tags": meta_tags if 'meta_tags' in locals() else {},
-                    "link_count": len(links) if 'links' in locals() else 0
+                    "meta_tags": meta_tags,
+                    "link_count": len(links),
+                    "extracted_text": True
                 }
             }
         else:

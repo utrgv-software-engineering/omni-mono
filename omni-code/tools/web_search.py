@@ -1,14 +1,18 @@
 import os
 import json
 import requests
-from typing import Dict, Any, Optional
+from typing import Any, Optional
 from omniagents.core.tools import rich_function_tool, RichToolOutput
+from agents.run_context import RunContextWrapper
 
 @rich_function_tool
-def web_search(query: str, 
-               num_results: int, 
-               include_news: bool,
-               time_period: Optional[str]) -> RichToolOutput:
+def web_search(
+    ctx: RunContextWrapper[Any],
+    query: str,
+    num_results: Optional[int] = None,
+    include_news: Optional[bool] = None,
+    time_period: Optional[str] = None,
+) -> RichToolOutput:
     """
     Performs a web search using Google via SerpAPI.
     
@@ -32,16 +36,10 @@ def web_search(query: str,
             time_period=null
         )
     """
-    # Default to 10 if not explicitly set
     if num_results is None:
         num_results = 10
-        
-    # Default values for optional parameters
     if include_news is None:
         include_news = False
-        
-    if time_period is None:
-        time_period = None
     try:
         # Try to get the SerpAPI key from environment variables
         api_key = os.environ.get("SERPAPI_API_KEY")

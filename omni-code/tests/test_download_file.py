@@ -3,6 +3,7 @@ import os
 import tempfile
 from unittest.mock import patch, MagicMock, mock_open, call
 from requests.exceptions import RequestException
+from tools.download_file import download_file
 
 # Mock classes and responses
 class DummySuccessResponse:
@@ -38,13 +39,6 @@ class DummyErrorResponse:
     def raise_for_status(self):
         raise RequestException(f"{self.status_code} Error")
 
-# Mock the decorator before importing the module
-@pytest.fixture(autouse=True)
-def mock_function_tool():
-    """Mock the function_tool decorator to just return the original function."""
-    with patch('omniagents.core.function_tool', side_effect=lambda f: f):
-        yield
-
 # Setup mock requests that correctly includes RequestException
 def setup_mock_requests():
     """Create a properly configured mock requests module with exception classes."""
@@ -55,7 +49,7 @@ def setup_mock_requests():
     return mock_req
 
 # Tests
-def test_download_file_temp_path(mock_function_tool):
+def test_download_file_temp_path(invoke_tool):
     """Test downloading a file to a temporary location."""
     # Setup mocks
     mock_requests = setup_mock_requests()
@@ -74,19 +68,15 @@ def test_download_file_temp_path(mock_function_tool):
          patch('tools.download_file.os.path.getsize', return_value=18), \
          patch('builtins.open', mock_open()) as mock_file:
         
-        # Import here after mocking
-        from tools.download_file import download_file
-        
-        # Call the function
-        result = download_file(url="https://example.com/document.pdf")
-        
-        # Verify results
-        assert result["success"] is True
-        assert result["file_path"] == mock_temp_path
-        assert result["url"] == "https://example.com/document.pdf"
-        assert result["content_type"] == "application/pdf"
-        assert result["file_size"] == 18
-        assert result["is_temporary"] is True
+        result = invoke_tool(download_file, url="https://example.com/document.pdf")
+        meta = result.ui_metadata["metadata"]
+
+        assert meta["success"] is True
+        assert meta["file_path"] == mock_temp_path
+        assert meta["url"] == "https://example.com/document.pdf"
+        assert meta["content_type"] == "application/pdf"
+        assert meta["file_size"] == 18
+        assert meta["is_temporary"] is True
         
         # Verify file was written correctly
         mock_file.assert_called_once_with(mock_temp_path, 'wb')
@@ -101,7 +91,7 @@ def test_download_file_temp_path(mock_function_tool):
         assert "stream" in kwargs
         assert kwargs["stream"] is True
 
-def test_download_file_custom_path(mock_function_tool):
+def test_download_file_custom_path(invoke_tool):
     """Test downloading a file to a custom path."""
     # Setup mocks
     mock_requests = setup_mock_requests()
@@ -117,19 +107,15 @@ def test_download_file_custom_path(mock_function_tool):
          patch('tools.download_file.os.path.getsize', return_value=18), \
          patch('builtins.open', mock_open()) as mock_file:
         
-        # Import here after mocking
-        from tools.download_file import download_file
-        
-        # Call the function
-        result = download_file(url="https://example.com/document.pdf", output_path=custom_path)
-        
-        # Verify results
-        assert result["success"] is True
-        assert result["file_path"] == custom_path
-        assert result["url"] == "https://example.com/document.pdf"
-        assert result["content_type"] == "application/pdf"
-        assert result["file_size"] == 18
-        assert result["is_temporary"] is False
+        result = invoke_tool(download_file, url="https://example.com/document.pdf", output_path=custom_path)
+        meta = result.ui_metadata["metadata"]
+
+        assert meta["success"] is True
+        assert meta["file_path"] == custom_path
+        assert meta["url"] == "https://example.com/document.pdf"
+        assert meta["content_type"] == "application/pdf"
+        assert meta["file_size"] == 18
+        assert meta["is_temporary"] is False
         
         # Verify directory was created
         from tools.download_file import os
@@ -140,7 +126,7 @@ def test_download_file_custom_path(mock_function_tool):
         handle = mock_file()
         handle.write.assert_called_once_with(b"sample PDF content")
 
-def test_download_file_content_types(mock_function_tool):
+def test_download_file_content_types(invoke_tool):
     """Test downloading files with different content types."""
     # Setup mocks
     mock_requests = setup_mock_requests()
@@ -169,21 +155,17 @@ def test_download_file_content_types(mock_function_tool):
              patch('tools.download_file.os.path.getsize', return_value=12), \
              patch('builtins.open', mock_open()) as mock_file:
             
-            # Import here after mocking
-            from tools.download_file import download_file
-            
-            # Call the function
-            result = download_file(url="https://example.com/file")
-            
-            # Verify results
-            assert result["success"] is True
-            assert result["file_path"] == mock_temp_path
-            assert result["content_type"] == content_type
+            result = invoke_tool(download_file, url="https://example.com/file")
+            meta = result.ui_metadata["metadata"]
+
+            assert meta["success"] is True
+            assert meta["file_path"] == mock_temp_path
+            assert meta["content_type"] == content_type
             
             # Reset mock for next iteration
             mock_requests.reset_mock()
 
-def test_download_file_content_disposition(mock_function_tool):
+def test_download_file_content_disposition(invoke_tool):
     """Test downloading a file with Content-Disposition header."""
     # Setup mocks
     mock_requests = setup_mock_requests()
@@ -217,20 +199,16 @@ def test_download_file_content_disposition(mock_function_tool):
          patch('tools.download_file.os.path.getsize', return_value=12), \
          patch('builtins.open', mock_open()) as mock_file:
         
-        # Import here after mocking
-        from tools.download_file import download_file
-        
-        # Call the function
-        result = download_file(url="https://example.com/download?id=123")
-        
-        # Verify results
-        assert result["success"] is True
-        assert result["file_path"] == mock_temp_path
+        result = invoke_tool(download_file, url="https://example.com/download?id=123")
+        meta = result.ui_metadata["metadata"]
+
+        assert meta["success"] is True
+        assert meta["file_path"] == mock_temp_path
         
         # Verify file was written
         mock_file.assert_called_once_with(mock_temp_path, 'wb')
 
-def test_download_file_http_error(mock_function_tool):
+def test_download_file_http_error(invoke_tool):
     """Test download with HTTP error."""
     # Setup mocks
     mock_requests = setup_mock_requests()
@@ -238,39 +216,30 @@ def test_download_file_http_error(mock_function_tool):
     mock_requests.get.return_value = mock_response
     
     with patch('tools.download_file.requests', mock_requests):
-        # Import here after mocking
-        from tools.download_file import download_file
-        
-        # Call the function
-        result = download_file(url="https://example.com/not-found.pdf")
-        
-        # Verify error response
-        assert result["success"] is False
-        assert "error" in result
-        assert "404" in result["error"]
-        assert result["file_path"] is None
+        result = invoke_tool(download_file, url="https://example.com/not-found.pdf")
+        meta = result.ui_metadata["metadata"]
 
-def test_download_file_network_error(mock_function_tool):
+        assert meta["success"] is False
+        assert "Request failed" in result.ui_metadata["value"]
+        assert meta["status_code"] == 404
+        assert meta["file_path"] is None
+
+def test_download_file_network_error(invoke_tool):
     """Test download with network error."""
     # Setup mocks
     mock_requests = setup_mock_requests()
     mock_requests.get.side_effect = RequestException("Connection refused")
     
     with patch('tools.download_file.requests', mock_requests):
-        # Import here after mocking
-        from tools.download_file import download_file
-        
-        # Call the function
-        result = download_file(url="https://example.com/document.pdf")
-        
-        # Verify error response
-        assert result["success"] is False
-        assert "error" in result
-        assert "Network error" in result["error"]
-        assert "Connection refused" in result["error"]
-        assert result["file_path"] is None
+        result = invoke_tool(download_file, url="https://example.com/document.pdf")
+        meta = result.ui_metadata["metadata"]
 
-def test_download_file_file_error(mock_function_tool):
+        assert meta["success"] is False
+        assert "Network error" in result.ui_metadata["value"]
+        assert "Connection refused" in result.ui_metadata["value"]
+        assert meta["file_path"] is None
+
+def test_download_file_file_error(invoke_tool):
     """Test download with file system error."""
     # Setup mocks
     mock_requests = setup_mock_requests()
@@ -286,19 +255,14 @@ def test_download_file_file_error(mock_function_tool):
          patch('tools.download_file.os.close'), \
          patch('builtins.open', side_effect=file_error):
         
-        # Import here after mocking
-        from tools.download_file import download_file
-        
-        # Call the function
-        result = download_file(url="https://example.com/document.pdf")
-        
-        # Verify error response
-        assert result["success"] is False
-        assert "error" in result
-        assert "Error during file download" in result["error"]
-        assert "Permission denied" in result["error"]
+        result = invoke_tool(download_file, url="https://example.com/document.pdf")
+        meta = result.ui_metadata["metadata"]
 
-def test_download_file_large_file(mock_function_tool):
+        assert meta["success"] is False
+        assert "Error during file download" in result.ui_metadata["value"]
+        assert "Permission denied" in result.ui_metadata["value"]
+
+def test_download_file_large_file(invoke_tool):
     """Test downloading a large file in chunks."""
     # Setup mocks
     mock_requests = setup_mock_requests()
@@ -320,16 +284,12 @@ def test_download_file_large_file(mock_function_tool):
          patch('tools.download_file.os.path.getsize', return_value=len(large_content)), \
          patch('builtins.open', mock_open()) as mock_file:
         
-        # Import here after mocking
-        from tools.download_file import download_file
-        
-        # Call the function
-        result = download_file(url="https://example.com/large.pdf")
-        
-        # Verify results
-        assert result["success"] is True
-        assert result["file_path"] == mock_temp_path
-        assert result["file_size"] == len(large_content)
+        result = invoke_tool(download_file, url="https://example.com/large.pdf")
+        meta = result.ui_metadata["metadata"]
+
+        assert meta["success"] is True
+        assert meta["file_path"] == mock_temp_path
+        assert meta["file_size"] == len(large_content)
         
         # Verify the file was opened for writing
         mock_file.assert_called_once_with(mock_temp_path, 'wb')
@@ -338,7 +298,7 @@ def test_download_file_large_file(mock_function_tool):
         handle = mock_file()
         assert handle.write.call_count > 1 
 
-def test_download_file_content_disposition_no_extension(mock_function_tool):
+def test_download_file_content_disposition_no_extension(invoke_tool):
     """Test Content-Disposition filename without extension triggers header path."""
     # Setup mocks
     mock_requests = setup_mock_requests()
@@ -365,18 +325,16 @@ def test_download_file_content_disposition_no_extension(mock_function_tool):
          patch('tools.download_file.os.path.getsize', return_value=12), \
          patch('builtins.open', mock_open()) as mock_file:
 
-        from tools.download_file import download_file
+        result = invoke_tool(download_file, url="https://example.com/download?id=456")
+        meta = result.ui_metadata["metadata"]
 
-        result = download_file(url="https://example.com/download?id=456")
-
-        # Verify success and filename without extension
-        assert result["success"] is True
-        assert result["file_path"] == mock_temp_path
-        assert result["content_type"] == "application/pdf"
+        assert meta["success"] is True
+        assert meta["file_path"] == mock_temp_path
+        assert meta["content_type"] == "application/pdf"
         mock_file.assert_called_once_with(mock_temp_path, 'wb')
 
 
-def test_download_file_infer_extension_from_content_type(mock_function_tool):
+def test_download_file_infer_extension_from_content_type(invoke_tool):
     """Test inferring extension when URL filename lacks extension and no header."""
     mock_requests = setup_mock_requests()
     mock_response = DummySuccessResponse(content=b"pdf bytes", content_type="application/pdf")
@@ -391,13 +349,11 @@ def test_download_file_infer_extension_from_content_type(mock_function_tool):
          patch('tools.download_file.os.path.getsize', return_value=len(b"pdf bytes")), \
          patch('builtins.open', mock_open()) as mock_file:
 
-        from tools.download_file import download_file
+        result = invoke_tool(download_file, url="https://example.com/download/123")
+        meta = result.ui_metadata["metadata"]
 
-        result = download_file(url="https://example.com/download/123")
-
-        # Verify success and that inferred extension is .pdf
-        assert result["success"] is True
-        assert result["file_path"] == mock_temp_path
+        assert meta["success"] is True
+        assert meta["file_path"] == mock_temp_path
         # Ensure mkstemp was called with .pdf suffix
         mock_mkstemp.assert_called_once()
         _, kwargs = mock_mkstemp.call_args

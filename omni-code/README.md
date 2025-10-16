@@ -218,6 +218,8 @@ This app depends on the OmniAgents framework:
 - Use `--extra-index-url https://${FURY_AUTH}:@pypi.fury.io/ericmichael/` when installing
 - Tools are decorated with `@rich_function_tool` and return `RichToolOutput` for a pleasant UI
 
+Release and publishing steps mirror the OmniAgents workflow and are documented in `docs/RELEASE.md`.
+
 ### Installing via requirements.txt
 If you prefer using `requirements.txt`, you can do:
 ```

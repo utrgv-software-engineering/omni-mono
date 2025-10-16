@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional, List, Dict
 
 from omniagents import server_function
-from omniagents.core.session import Session, sm
+from omniagents.core.session import Session
 
 
 def _is_hidden(path: str) -> bool:
@@ -96,5 +96,17 @@ async def fs_list_dir(path: Optional[str] = None, include_files: Optional[bool] 
 
 @server_function(description="Ensure a session exists and return its id", strict=True)
 async def session_ensure() -> dict:
-    s = sm.get_or_create(None)
-    return {"session_id": s.id}
+    return {}
+
+
+async def _session_ensure_on_invoke(service, session, args=None):
+    manager = getattr(service, "_session_manager", None)
+    sess = session
+    if manager is not None and (sess is None or not getattr(sess, "id", None)):
+        sess = manager.get_or_create(None)
+    if sess is None:
+        return {"session_id": None}
+    return {"session_id": getattr(sess, "id", None)}
+
+
+setattr(session_ensure, "_server_function_on_invoke", _session_ensure_on_invoke)

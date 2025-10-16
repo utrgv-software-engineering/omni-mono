@@ -1,15 +1,19 @@
 import os
 import json
 import requests
-from typing import Dict, Any, Optional, List, Literal
+from typing import Any, Optional, Literal
 from omniagents.core.tools import rich_function_tool, RichToolOutput
+from agents.run_context import RunContextWrapper
 
 @rich_function_tool
-def youtube_search(query: str,
-                 num_results: int,
-                 sort_by: Literal["relevance", "upload_date", "view_count", "rating"],
-                 upload_date: Optional[Literal["last_hour", "today", "this_week", "this_month", "this_year"]],
-                 duration: Optional[Literal["short", "medium", "long"]]) -> RichToolOutput:
+def youtube_search(
+    ctx: RunContextWrapper[Any],
+    query: str,
+    num_results: Optional[int] = None,
+    sort_by: Literal["relevance", "upload_date", "view_count", "rating"] = "relevance",
+    upload_date: Optional[Literal["last_hour", "today", "this_week", "this_month", "this_year"]] = None,
+    duration: Optional[Literal["short", "medium", "long"]] = None,
+) -> RichToolOutput:
     """
     Searches YouTube for videos based on query and filters.
     
@@ -24,6 +28,8 @@ def youtube_search(query: str,
         Dictionary with YouTube search results and metadata.
     """
     try:
+        if num_results is None:
+            num_results = 10
         # Try to get the SerpAPI key from environment variables
         api_key = os.environ.get("SERPAPI_API_KEY")
         

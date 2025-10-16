@@ -18,9 +18,11 @@ from importlib import resources
 
 def load_instructions() -> str:
     try:
-        with resources.files("oagents").joinpath("instructions/init_agent.md").open(
-            "r", encoding="utf-8"
-        ) as f:
+        with (
+            resources.files("oagents")
+            .joinpath("instructions/init_agent.md")
+            .open("r", encoding="utf-8") as f
+        ):
             return f.read().strip()
     except Exception:
         pass
@@ -58,7 +60,7 @@ def create_init_agent() -> SafeAgent:
             apply_patch,
             write_file,
         ],
-        model="gpt-5",
+        model="gpt-5-codex",
         approval_callback=SafeAgent.get_global_approval_callback(),
         safe_tool_names=[
             "list_directory",
