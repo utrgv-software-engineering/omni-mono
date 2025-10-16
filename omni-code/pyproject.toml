@@ -37,7 +37,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 py-modules = ["main"]
-packages = ["tools", "oagents", "server_functions", "omni_code"]
+packages = ["tools", "oagents", "oagents.instructions", "server_functions", "omni_code"]
 
 [tool.setuptools.package-data]
 oagents = ["instructions/*.md"]
