@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
+import threading
+import time
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 import yaml
 from omniagents.core.eval.stratified_sampler import StratifiedBatchSampler
 
@@ -27,6 +29,7 @@ def optimize_agent_from_project(
     output_dir: str | None,
     resume: bool,
     apply: bool,
+    log_hook: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     try:
         import gepa  # type: ignore
@@ -200,7 +203,6 @@ def optimize_agent_from_project(
         from gepa.core.engine import GEPAEngine  # type: ignore
         from gepa.core.result import GEPAResult  # type: ignore
         from gepa.logging.experiment_tracker import create_experiment_tracker  # type: ignore
-        from gepa.logging.logger import StdOutLogger  # type: ignore
         from gepa.strategies.candidate_selector import ParetoCandidateSelector  # type: ignore
         from gepa.strategies.component_selector import RoundRobinReflectionComponentSelector  # type: ignore
         from gepa.utils import FileStopper, CompositeStopper, MaxMetricCallsStopper  # type: ignore
@@ -234,7 +236,29 @@ def optimize_agent_from_project(
         mlflow_tracking_uri=None,
         mlflow_experiment_name=None,
     )
-    logger = StdOutLogger()
+    class _RunLogger:
+        def __init__(self, path: Path, hook: Optional[Callable[[str], None]]):
+            self.path = path
+            self.hook = hook
+            self._lock = threading.Lock()
+
+        def log(self, message: str) -> None:
+            text = str(message)
+            with self._lock:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                with self.path.open("a", encoding="utf-8") as handle:
+                    handle.write(text + "\n")
+            print(text)
+            if self.hook:
+                try:
+                    self.hook(text)
+                except Exception:
+                    pass
+
+    log_path = run_dir / "gepa.log"
+    if log_hook:
+        log_hook(f"LOG_PATH:{log_path}")
+    logger = _RunLogger(log_path, log_hook)
     stoppers = []
     try:
         stoppers.append(FileStopper(str(run_dir / "gepa.stop")))
@@ -244,7 +268,36 @@ def optimize_agent_from_project(
         stoppers.append(MaxMetricCallsStopper(int(max_metric_calls or 100)))
     except Exception:
         pass
-    stop_callback = stoppers[0] if len(stoppers) == 1 else (CompositeStopper(*stoppers) if stoppers else None)
+    base_stop_callback = None
+    if len(stoppers) == 1:
+        base_stop_callback = stoppers[0]
+    elif len(stoppers) > 1:
+        base_stop_callback = CompositeStopper(*stoppers)
+
+    start_time = time.perf_counter()
+    max_calls = int(max_metric_calls or 100)
+
+    if log_hook:
+        def _progress_stop(state):  # type: ignore
+            try:
+                progress = state.total_num_evals
+                elapsed = time.perf_counter() - start_time
+                eta_seconds = ""
+                if progress > 0 and elapsed > 0:
+                    rate = progress / elapsed
+                    remaining = max(0, max_calls - progress)
+                    if rate > 0:
+                        eta_seconds = f"{remaining / rate:.2f}"
+                log_hook(f"PROGRESS:{progress}:{eta_seconds}")
+            except Exception:
+                pass
+            if base_stop_callback is not None:
+                return base_stop_callback(state)
+            return False
+
+        stop_callback = _progress_stop
+    else:
+        stop_callback = base_stop_callback
     reflective_proposer = ReflectiveMutationProposer(
         logger=logger,
         trainset=trainset,
@@ -288,6 +341,11 @@ def optimize_agent_from_project(
         state = engine.run()
 
     result = GEPAResult.from_state(state)
+    if log_hook:
+        try:
+            log_hook(f"PROGRESS:{state.total_num_evals}:0")
+        except Exception:
+            pass
     best = result.best_candidate
     def _acc(ds, cand):
         ev = adapter.evaluate(ds, cand, capture_traces=False)
@@ -335,6 +393,7 @@ def optimize_agent_from_project(
         "test_score": test_acc,
         "category": cat,
         "instructions": best.get('instructions') if isinstance(best.get('instructions'), str) else None,
+        "log_file": str(log_path),
     }
 
 

@@ -1,160 +1,299 @@
-# OmniAgents Current Issues
+# OmniAgents Issue Register
+_Last updated: 2025-10-16_
 
-This document tracks verified architectural issues and missing features in the OmniAgents codebase based on code analysis.
+## Summary
+- 10 active bug reports (2 partially mitigated) across optimization, logging, streaming, and client backends.
+- 9 improvement tasks covering logging focus, navigation, variable handling, linting, and project scaffolding.
+- 9 feature requests targeting MCP management, evaluation taxonomy/tooling, persistence, and API discoverability.
+- Documentation remains sparse; MCP server health still unverified; major initiatives include SSO integration and deployment automation.
 
-## 🔴 Critical Issues
+## Bugs
 
-### 1. No Version Management
+### B-01 • Agent optimizer rejects low budgets
+- Status: Needs QA
+- Severity: High
+- Summary: GEPA expects `max_metric_calls` ≥ 6; Studio enforces `MIN_OPTIMIZATION_BUDGET`, but CLI/API still allow smaller budgets, letting GEPA exit before any reflective iteration.
+- Evidence: UI guard in `omniagents/studio/server/web/src/features/agents/AgentsView.tsx`; GEPA stop logic in `omniagents/core/eval/optimize.py`; CLI option `--max-metric-calls` in `omniagents/cli.py` lacks validation.
+- Next Steps: Share validation across CLI/API, surface a descriptive backend error, update docs to call out the minimum.
+- Related: `docs/OPTIMIZATION_ISSUES.md`, `omniagents/studio/server/api.py`
 
-**Problem:**
-- Version only exists in `pyproject.toml` (hardcoded as "0.1.3")
-- No `__version__` attribute in the codebase
-- Cannot programmatically access version information
+### B-02 • Logs default to “All Projects”
+- Status: Open
+- Severity: Medium
+- Summary: The logs view resets `selectedProject` to `null`, forcing users to reselect their project each visit.
+- Evidence: Initial store state in `omniagents/studio/server/web/src/features/traces/store/traceStore.ts`; `Dashboard` always calls `selectTraceProject` after navigation.
+- Next Steps: Studio UI boots from active manifest, should hand the project over to Logs as the selectedProject
+- Related: `omniagents/studio/server/web/src/app/Dashboard.tsx`
 
-**Code Evidence:**
-```toml
-# pyproject.toml
-[project]
-name = "omniagents"
-version = "0.1.3"
-```
+### B-03 • Optimizer trace markdown hard to read
+- Status: Open
+- Severity: Medium
+- Summary: CSS/styling issues make it difficult to read certain conversation traces
+- Related: `omniagents/studio/server/web/src/features/evaluation/EvaluationView.tsx`
 
-**Impact:**
-- Cannot display version in CLI/API responses
-- Cannot track deployments programmatically
-- Difficult to debug version-specific issues
+### B-04 • Optimization progress feedback is thin
+- Status: Open
+- Severity: Medium
+- Summary: Websocket job updates only track raw evaluation counts; UI shows `completed/total` without phase context and ETA can drop to null when GEPA pauses.
+- Evidence: `AgentOptimizationManager.update_job` in `omniagents/studio/server/api.py` only updates `completed`/`eta_seconds`; UI percent in `AgentsView` derives from those counters; GEPA `log_hook` emits opaque `PROGRESS` lines.
+- Next Steps: Include stage metadata, keep ETA sticky, surface log path earlier, and render richer progress in the dialog.
+- Related: `omniagents/core/eval/optimize.py`, `omniagents/studio/server/web/src/features/agents/AgentsView.tsx`
 
-**Solution:**
-Create `omniagents/__version__.py`:
-```python
-__version__ = "0.1.3"
-__version_info__ = (0, 1, 3)
-```
+### B-05 • Trace streaming requires manual refresh
+- Status: Open
+- Severity: High
+- Summary: The web client expects `api.createWebSocket()` for live trace updates, but the API client ships without that method and the backend lacks a websocket endpoint.
+- Evidence: `useWebSocket` in `omniagents/studio/server/web/src/shared/hooks/useWebSocket.ts` calls missing helper; `omniagents/studio/server/web/src/lib/api.ts` exposes no websocket creator; FastAPI app defines no `/ws` route.
+- Next Steps: Implement websocket endpoint in Studio server, add `ApiClient.createWebSocket()`, and wire reconnection telemetry to keep traces live.
+- Related: `omniagents/studio/server/api.py`
 
-### 2. Minimal Error Handling
+### B-06 • AgentDeck approvals land in the wrong column
+- Status: Open
+- Severity: Medium
+- Summary: Tool approval cards render inside each conversation column instead of a dedicated approvals column, so approvals stream in the wrong place.
+- Evidence: `_buildItem` in `examples/agentdeck/lib/chat_screen.dart` injects `ApprovalRequestCard`; `MultiColumnScreen` only renders chat columns with no approvals rail.
+- Next Steps: Add a separate approvals feed column or central queue, and decouple approvals from per-conversation timelines.
+- Related: `examples/agentdeck/lib/multi_column_screen.dart`, `examples/agentdeck/lib/models.dart`
 
-**Problem:**
-- Only transport-specific exceptions exist (`TransportError`, `TransportClosedError`)
-- No comprehensive exception hierarchy
-- No error middleware or structured error responses
-- Errors can crash the application without proper handling
+### B-07 • Flet backend no longer launches
+- Status: Open
+- Severity: High
+- Summary: Flet backend imports legacy `agents.*` modules that are absent, causing `ModuleNotFoundError` before UI boot.
+- Evidence: Import block in `omniagents/backends/flet/app_base.py` references `agents.model_settings`, `agents.mcp`, and `set_default_openai_client`; backend entrypoint only guards `flet` import.
+- Next Steps: Replace legacy imports with OmniAgents equivalents or gate optional extras; add smoke test that exercises `omniagents run --mode gui`.
+- Related: `omniagents/backends/flet/ui.py`
 
-**Code Evidence:**
-```python
-# omniagents/rpc/transport/__init__.py
-class TransportError(Exception):
-    """Base exception for transport-related errors."""
-    pass
+### B-08 • Bubble Tea cancelling tools times out start/end
+- Status: Resolved
+- Severity: High
+- Summary: The Bubble Tea TUI never sent a stop-run RPC when the user cancelled, so the backend held the run open and eventually emitted “Start run”/“End run” timeouts.
+- Evidence: Original `model.go` handled `esc` without triggering cancellation; synchronous tools blocked the event loop so cancellation couldn’t propagate.
+- Fix: Synchronous tool functions are now executed via `asyncio.to_thread`, allowing `stop_run` to cancel promptly without RPC timeouts.
+- Related: `omniagents/core/tools/discovery.py`, `omniagents/backends/bubbletea/cmd/omni-tui/model.go`, `omniagents/backends/bubbletea/cmd/omni-tui/rpc.go`, `omniagents/core/agents/service.py`
 
-class TransportClosedError(TransportError):
-    """Raised when attempting to use a closed transport."""
-    pass
-```
+### B-09 • “Judgment: needs improvement” label origin
+- Status: Open
+- Severity: Low
+- Summary: The string comes from front-end rendering where `judgment === 'unacceptable'` maps to “needs improvement”, not from backend scoring metadata.
+- Evidence: Conditional label at `omniagents/studio/server/web/src/features/evaluation/EvaluationView.tsx`.
+- Next Steps: Decide whether to rename the stored value, adjust the display string, or surface backend taxonomy instead.
+- Related: `omniagents/studio/server/web/src/features/evaluation/EvaluationView.tsx`
 
-**Impact:**
-- Ungraceful failures in production
-- Difficult to debug issues
-- Poor user experience with cryptic error messages
+### B-10 • Optimizer samples unlabeled scenarios as positives
+- Status: Open
+- Severity: Medium
+- Summary: When `positives_only` is false, unlabeled scenarios fall into the negative bucket and skew GEPA sampling even though they lack judgments.
+- Evidence: `_maybe_filter` in `omniagents/core/eval/optimize.py` ignores `label is None`; `StratifiedBatchSampler` treats falsy labels as negatives.
+- Next Steps: Filter out unlabeled scenarios or require failure categories before optimization; add dataset validation.
+- Related: `omniagents/core/eval/stratified_sampler.py`
 
-**Solution:**
-- Create comprehensive exception hierarchy in `omniagents/core/exceptions.py`
-- Add error handling middleware
-- Implement structured error responses
+## Improvements
 
-### 3. No Production Monitoring
+### I-01 • Scope analysis goals to the active workflow
+- Status: Open
+- Priority: Medium
+- Summary: Analysis Goals should be scoped to active workflow
 
-**Problem:**
-- No health check endpoints
-- No metrics or observability
-- No way to monitor application status
-- Basic logging exists but no structured logging
+### I-02 • URL-driven navigation
+- Status: Open
+- Priority: High
+- Summary: Studio uses local React state with no router, so deep links, refresh, and sharing sections are impossible.
+- Dependencies: Introduce routing (e.g., `react-router`) and sync with trace/agent state.
+- Next Steps: Define canonical routes for home/logs/playground/agents/evaluation and persist selection in the URL.
+- Related: `omniagents/studio/server/web/src/app/App.tsx`, `omniagents/studio/server/web/src/app/Dashboard.tsx`
 
-**Code Evidence:**
-```python
-# omniagents/backends/server/app.py - No health endpoints
-def build_app(...) -> FastAPI:
-    app = FastAPI()
-    # Only WebSocket endpoint registered
-    endpoint.register_route(app, "/ws")
-    return app
-```
+### I-03 • Surface variables in Studio UI
+- Status: Open
+- Priority: Medium
+- Summary: Session variables exist server-side but the Playground UI has no editor or inspector for them.
+- Dependencies: Need API shape for listing/updating variables.
+- Next Steps: Add variables panel to Playground, wire to `AgentService` variable helpers, and store edits per session.
+- Related: `omniagents/core/agents/service.py`, `omniagents/studio/server/web/src/features/playground/PlaygroundView.tsx`
 
-**Impact:**
-- Cannot monitor application health in production
-- No visibility into performance issues
-- Difficult to debug production problems
+### I-04 • Add linter configuration
+- Status: Open
+- Priority: Medium
+- Summary: The repo lacks lint tooling (`pyproject.toml` defines no `tool.ruff`/`flake8`), making CI drift easy.
+- Dependencies: Choose linter (ruff/flake8) and align with existing CI.
+- Next Steps: Add lint config and integrate with `tests.yml`.
+- Related: `pyproject.toml`, `.github/workflows/tests.yml`
 
-**Solution:**
-- Add `/health` endpoint
-- Add basic metrics collection
-- Implement structured logging with context
+### I-05 • Scaffold evaluation assets by default
+- Status: Open
+- Priority: Medium
+- Summary: `scaffold_project` omits evaluation files even though `scaffold_eval_quickstart` exists.
+- Dependencies: Confirm desired default footprint.
+- Next Steps: Invoke `scaffold_eval_quickstart` (flag-controlled) when creating new projects.
+- Related: `omniagents/core/project/scaffold.py`
 
-### 4. Limited Security Features
+### I-06 • Scaffold pyproject template
+- Status: Open
+- Priority: Low
+- Summary: Generated projects ship without a `pyproject.toml`, pushing teams to copy it manually.
+- Dependencies: Decide on default metadata and extras.
+- Next Steps: Author template in scaffold flow.
+- Related: `omniagents/core/project/scaffold.py`
 
-**Problem:**
-- Basic token authentication exists (query parameter only)
-- No rate limiting implementation
-- No API key management system
-- Token passed as query parameter (less secure than headers)
+### I-07 • Scaffold pull request template
+- Status: Open
+- Priority: Low
+- Summary: No pull request template is included when scaffolding projects.
+- Dependencies: Provide canonical PR template (see `weather_agent` reference).
+- Next Steps: Copy template into `.github/pull_request_template.md` during scaffold.
+- Related: `omniagents/core/project/scaffold.py`
 
-**Code Evidence:**
-```python
-# omniagents/backends/server/app.py
-async def _verify_token(websocket: WebSocket):
-    if required_token:
-        if websocket.query_params.get("token") != required_token:
-            await websocket.close(code=4403)
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid token")
-```
+### I-08 • Scaffold release GitHub Actions
+- Status: Open
+- Priority: Low
+- Summary: Project scaffolds miss workflows to build artifacts and attach them to GitHub releases.
+- Dependencies: Decide on release toolchain.
+- Next Steps: Add optional workflow similar to org standard (build + upload release assets).
+- Related: `omniagents/core/project/scaffold.py`, `.github/workflows/publish.yml`
 
-**Impact:**
-- Vulnerable to brute force attacks
-- Tokens visible in logs/URLs
-- No way to manage multiple API keys
+### I-09 • Scaffold Gemfury publishing workflow
+- Status: Open
+- Priority: Low
+- Summary: Requesting automated Gemfury publishing for scaffolded projects.
+- Dependencies: Requires Gemfury credentials pipeline.
+- Next Steps: Provide optional workflow that runs on tagged releases and pushes to Gemfury.
+- Related: `omniagents/core/project/scaffold.py`
 
-**Solution:**
-- Add rate limiting middleware
-- Support bearer token authentication
-- Implement proper API key management
+## Features
 
-## ⚠️ Architecture Concerns
+### F-01 • MCP server management UI
+- Status: Planned
+- Scope: Studio configuration
+- Summary: Need UI and storage to register/manage MCP servers per project/agent.
+- Blocked By: Missing backend persistence and API shape.
+- Next Steps: Define MCP schema, extend Studio API, expose controls in Agents/Playground settings.
+- Related: `omniagents/backends/flet/app_base.py`
 
-### 5. Test Organization
+### F-02 • Manage failure categories in Studio
+- Status: In progress
+- Scope: Logs review
+- Summary: Store supports CRUD for failure categories but UI exposure is limited to internal dialogs.
+- Blocked By: UI components for list/create/delete.
+- Next Steps: Build management panel in logs sidebar and sync with API.
+- Related: `omniagents/studio/server/api.py`, `omniagents/studio/server/web/src/features/traces/store/traceStore.ts`
 
-**Problem:**
-- Tests were previously flat in `/tests` directory
-- Now reorganized but some tests still fail due to code changes
-- No clear testing strategy documented
+### F-03 • Generate failure taxonomy draft
+- Status: Planned
+- Scope: Evaluation tooling
+- Summary: No pipeline to auto-suggest failure categories from traces.
+- Blocked By: Requires clustering/tooling pipeline.
+- Next Steps: Prototype taxonomy generator and connect to Studio review workflow.
+- Related: `omniagents/studio/tracing/storage.py`
 
-**Status:**
-- ✅ Test structure reorganized into unit/integration/e2e
-- ❌ 10 tests failing (not due to reorganization)
+### F-04 • Assign failure categories in Studio UI
+- Status: In progress
+- Scope: Logs review
+- Summary: Analysis panel stores category IDs but UI lacks dedicated selectors and feedback.
+- Blocked By: Better UX for multi-select and sync with `analysis_categories`.
+- Next Steps: Add chip-based selector and show category usage counts.
+- Related: `omniagents/studio/server/web/src/features/review/components/AnalysisPanel.tsx`
 
-### 6. Limited Documentation
+### F-05 • Manage measures in Studio
+- Status: Planned
+- Scope: Evaluation
+- Summary: Measures live in YAML/py files; Studio has no management UI.
+- Blocked By: API endpoints for CRUD on `evaluations/measures`.
+- Next Steps: Expose measures metadata through API and build management tab.
+- Related: `omniagents/core/eval/pipeline.py`, `omniagents/studio/server/web/src/features/evaluation/EvaluationView.tsx`
 
-**Problem:**
-- Basic README exists
-- No API documentation
-- No deployment guide
-- No security best practices documented
+### F-06 • User model for server mode
+- Status: Planned
+- Scope: Multi-user deployments
+- Summary: Server backend assumes single user; no auth/roles for shared deployments.
+- Blocked By: Need authentication and session model.
+- Next Steps: Design user schema, integrate with FastAPI dependencies, update clients.
+- Related: `omniagents/core/agents/service.py`, `omniagents/studio/server/api.py`
 
-**Files:**
-- `/README.md` - Basic usage
-- `/CLAUDE.md` - AI assistant instructions
-- `/docs/ISSUES.md` - This file
-- No comprehensive documentation
+### F-07 • Postgres (and other DB) support
+- Status: Planned
+- Scope: Tracing storage
+- Summary: Storage layer only supports SQLite via `SQLiteStorage`.
+- Blocked By: Abstraction over storage manager.
+- Next Steps: Introduce interface plus Postgres implementation, support migrations, update config knobs.
+- Related: `omniagents/studio/tracing/storage.py`
 
-## Priority Ranking
+### F-08 • Version management UX
+- Status: Planned
+- Scope: Studio project lifecycle
+- Summary: No tooling to track project versions or manage generated project releases.
+- Blocked By: Need metadata schema and UI flows.
+- Next Steps: Define version entities, integrate into Studio sidebar, expose CLI helpers.
+- Related: `omniagents/core/project/compiler.py`, `omniagents/studio/server/web/src/app/Dashboard.tsx`
 
-1. **Version Management** - Quick fix, high impact
-2. **Error Handling** - Critical for production
-3. **Health Checks** - Essential for operations
-4. **Rate Limiting** - Important for security
-5. **Documentation** - Needed for adoption
+### F-09 • Generate OpenAPI specification
+- Status: Planned
+- Scope: Studio/server API
+- Summary: FastAPI app does not expose curated OpenAPI spec for clients.
+- Blocked By: Missing schema annotations and docs pipeline.
+- Next Steps: Harden response models, enable FastAPI docs export, commit spec file.
+- Related: `omniagents/studio/server/api.py`
 
-## Notes
+## Documentation
 
-- The codebase has a clean architecture with good separation of concerns
-- Database layer is already unified (no duplication found)
-- Basic abstractions and protocols are well-designed
-- Main gaps are production-readiness features
+### D-01 • Populate documentation set
+- Status: Open
+- Priority: Critical
+- Summary: Documentation folder is largely empty and lacks onboarding, architecture, and usage guides.
+- Next Steps: Draft README hierarchy for Studio, CLI, backends, and contribute guidelines.
+- Related: `docs/`
+
+## Needs Verification
+
+### NV-01 • MCP server support health check
+- Status: Pending verification
+- Summary: Confirm whether MCP server integrations still function after recent refactors.
+- Next Steps: Stand up MCP sample server, connect via Flet/Studio, document findings.
+- Related: `omniagents/backends/flet/app_base.py`, `omniagents/core/agents/service.py`
+
+## Larger Initiatives
+
+### L-01 • SSO via OAuth
+- Status: Planned
+- Summary: Implement OAuth-based SSO for Studio/server deployments, covering token storage and session management.
+
+### L-02 • Backends vs clients boundary
+- Status: Planned
+- Summary: Clarify architecture for bundling backends (Flet, Bubble Tea) versus clients (AgentDeck, future React client), including shared protocol surface.
+
+### L-03 • Deployment automation
+- Status: Planned
+- Summary: Provide Kamal deployment, apt package, Brew formula, and Dockerfile for server distribution.
+
+## Appendix
+- B-01: `docs/OPTIMIZATION_ISSUES.md`, `omniagents/core/eval/optimize.py`, `omniagents/cli.py`, `omniagents/studio/server/api.py`, `omniagents/studio/server/web/src/features/agents/AgentsView.tsx`
+- B-02: `omniagents/studio/server/web/src/features/traces/store/traceStore.ts`, `omniagents/studio/server/web/src/app/Dashboard.tsx`
+- B-03: `omniagents/core/eval/gepa_agent_adapter.py`, `omniagents/studio/server/web/src/features/review/components/ConversationFlow.tsx`
+- B-04: `omniagents/core/eval/optimize.py`, `omniagents/studio/server/api.py`, `omniagents/studio/server/web/src/features/agents/AgentsView.tsx`
+- B-05: `omniagents/studio/server/web/src/shared/hooks/useWebSocket.ts`, `omniagents/studio/server/web/src/lib/api.ts`, `omniagents/studio/server/api.py`
+- B-06: `examples/agentdeck/lib/chat_screen.dart`, `examples/agentdeck/lib/multi_column_screen.dart`, `examples/agentdeck/lib/models.dart`
+- B-07: `omniagents/backends/flet/app_base.py`, `omniagents/backends/flet/ui.py`
+- B-08: `omniagents/backends/bubbletea/cmd/omni-tui/model.go`, `omniagents/backends/bubbletea/cmd/omni-tui/rpc.go`, `omniagents/core/agents/service.py`
+- B-09: `omniagents/studio/server/web/src/features/evaluation/EvaluationView.tsx`
+- B-10: `omniagents/core/eval/optimize.py`, `omniagents/core/eval/stratified_sampler.py`
+- I-01: `omniagents/studio/server/api.py`, `omniagents/studio/tracing/storage.py`, `omniagents/studio/server/web/src/features/traces/store/traceStore.ts`
+- I-02: `omniagents/studio/server/web/src/app/App.tsx`, `omniagents/studio/server/web/src/app/Dashboard.tsx`
+- I-03: `omniagents/core/agents/service.py`, `omniagents/studio/server/web/src/features/playground/PlaygroundView.tsx`
+- I-04: `pyproject.toml`, `.github/workflows/tests.yml`
+- I-05: `omniagents/core/project/scaffold.py`
+- I-06: `omniagents/core/project/scaffold.py`
+- I-07: `omniagents/core/project/scaffold.py`
+- I-08: `omniagents/core/project/scaffold.py`, `.github/workflows/publish.yml`
+- I-09: `omniagents/core/project/scaffold.py`
+- F-01: `omniagents/backends/flet/app_base.py`
+- F-02: `omniagents/studio/server/api.py`, `omniagents/studio/server/web/src/features/traces/store/traceStore.ts`
+- F-03: `omniagents/studio/tracing/storage.py`
+- F-04: `omniagents/studio/server/web/src/features/review/components/AnalysisPanel.tsx`
+- F-05: `omniagents/core/eval/pipeline.py`, `omniagents/studio/server/web/src/features/evaluation/EvaluationView.tsx`
+- F-06: `omniagents/core/agents/service.py`, `omniagents/studio/server/api.py`
+- F-07: `omniagents/studio/tracing/storage.py`
+- F-08: `omniagents/core/project/compiler.py`, `omniagents/studio/server/web/src/app/Dashboard.tsx`
+- F-09: `omniagents/studio/server/api.py`
+- D-01: `docs/`
+- NV-01: `omniagents/backends/flet/app_base.py`, `omniagents/core/agents/service.py`
+- L-01: `omniagents/studio/server/api.py`, `omniagents/core/agents/service.py`
+- L-02: `omniagents/backends/flet/`, `omniagents/backends/bubbletea/`, `examples/agentdeck/`
+- L-03: `.github/workflows/`, `omniagents/backends/server/`

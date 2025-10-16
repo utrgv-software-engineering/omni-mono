@@ -804,7 +804,7 @@ class AgentOptimizationRequest(BaseModel):
     agent_key: str
     dataset: AgentOptimizationDatasetPayload
     positives_only: bool = False
-    max_metric_calls: int = Field(default=100, ge=1)
+    max_metric_calls: int = Field(default=100, ge=6)
     seed: Optional[int] = 0
 
 
@@ -827,6 +827,8 @@ class AgentOptimizationStatusModel(BaseModel):
     result_path: Optional[str] = None
     workflow_name: Optional[str] = None
     error: Optional[str] = None
+    log_path: Optional[str] = None
+    eta_seconds: Optional[float] = None
 
 
 class AgentOptimizationResponse(BaseModel):
@@ -932,6 +934,8 @@ class ScenarioRunManager:
             for key, value in fields.items():
                 if hasattr(job, key):
                     setattr(job, key, value)
+            if job.completed > job.total:
+                job.total = job.completed
             job.updated_at = _utc_now()
             snapshot = job.to_dict()
         await self.broadcast(job_id, snapshot)
@@ -1494,6 +1498,8 @@ class AgentOptimizationJob:
     result_path: Optional[str] = None
     workflow_name: Optional[str] = None
     error: Optional[str] = None
+    log_path: Optional[str] = None
+    eta_seconds: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -1515,6 +1521,8 @@ class AgentOptimizationJob:
             "result_path": self.result_path,
             "workflow_name": self.workflow_name,
             "error": self.error,
+            "log_path": self.log_path,
+            "eta_seconds": self.eta_seconds,
         }
 
 
@@ -1538,7 +1546,7 @@ class AgentOptimizationManager:
                 max_metric_calls=int(payload.max_metric_calls),
                 seed=payload.seed,
                 state="pending",
-                total=1,
+                total=int(payload.max_metric_calls),
                 completed=0,
                 created_at=now,
                 updated_at=now,
@@ -2749,7 +2757,7 @@ def create_api_app(
 
     async def _run_judge_optimization_job(job_id: str, payload: JudgeOptimizationRequest, manifest_path: Path) -> None:
         manager: JudgeOptimizationManager = app.state.judge_optimization_manager
-        await manager.update_job(job_id, state="running", started_at=_utc_now(), total=1)
+        await manager.update_job(job_id, state="running", started_at=_utc_now(), total=int(payload.max_metric_calls))
         loop = asyncio.get_running_loop()
         dataset = payload.dataset
         dataset_runs_path = dataset.runs_path
@@ -2838,6 +2846,32 @@ def create_api_app(
         await manager.update_job(job_id, state="running", started_at=_utc_now(), total=1)
         loop = asyncio.get_running_loop()
         dataset = payload.dataset
+        log_file_holder: Dict[str, Optional[str]] = {"value": None}
+
+        def _log_hook(message: str) -> None:
+            text = str(message)
+            if text.startswith("LOG_PATH:"):
+                path_value = text.split("LOG_PATH:", 1)[1].strip()
+                log_file_holder["value"] = path_value
+                asyncio.run_coroutine_threadsafe(manager.update_job(job_id, log_path=path_value), loop)
+                return
+            if "Exception during reflection/proposal" in text:
+                asyncio.run_coroutine_threadsafe(manager.update_job(job_id, error=text), loop)
+                return
+            if text.startswith("PROGRESS:"):
+                try:
+                    payload_text = text.split("PROGRESS:", 1)[1].strip()
+                    parts = payload_text.split(":")
+                    value = int(parts[0]) if parts and parts[0] else 0
+                    eta_value = None
+                    if len(parts) > 1 and parts[1]:
+                        try:
+                            eta_value = float(parts[1])
+                        except Exception:
+                            eta_value = None
+                except Exception:
+                    return
+                asyncio.run_coroutine_threadsafe(manager.update_job(job_id, completed=value, eta_seconds=eta_value), loop)
 
         def _execute() -> Dict[str, Any]:
             return optimize_agent_from_project(
@@ -2858,6 +2892,7 @@ def create_api_app(
                 output_dir=None,
                 resume=False,
                 apply=True,
+                log_hook=_log_hook,
             )
 
         try:
@@ -2868,17 +2903,26 @@ def create_api_app(
                     apply_agent_instructions(str(manifest_path), payload.agent_key, instructions_value)
             except Exception as apply_exc:
                 logger.exception("Failed to apply agent optimization updates: %s", apply_exc)
+            log_path_value = None
+            if isinstance(result, dict):
+                log_path_value = result.get("log_file") or log_file_holder.get("value")
+            else:
+                log_path_value = log_file_holder.get("value")
             await manager.update_job(
                 job_id,
                 state="completed",
-                completed=1,
+                completed=int(payload.max_metric_calls),
                 finished_at=_utc_now(),
                 run_dir=result.get("run_dir") if isinstance(result, dict) else None,
                 result_path=result.get("out_json") if isinstance(result, dict) else None,
+                log_path=log_path_value,
+                error=None,
+                eta_seconds=0.0,
             )
         except (Exception, SystemExit) as exc:
             logger.exception("Agent optimization %s failed", job_id)
-            await manager.update_job(job_id, state="failed", error=str(exc), finished_at=_utc_now(), completed=1)
+            log_path_value = log_file_holder.get("value")
+            await manager.update_job(job_id, state="failed", error=str(exc), log_path=log_path_value, finished_at=_utc_now(), eta_seconds=None)
 
     @app.post("/api/evaluation/scenarios/generate")
     async def generate_evaluation_scenarios(payload: ScenarioGenerationRequest):
@@ -3289,8 +3333,8 @@ def create_api_app(
             )
             positives_only_value = bool(payload.positives_only)
             max_metric_calls_value = int(payload.max_metric_calls or 100)
-            if max_metric_calls_value <= 0:
-                raise HTTPException(status_code=422, detail="Budget must be a positive integer")
+            if max_metric_calls_value < 6:
+                raise HTTPException(status_code=422, detail="Budget must be at least 6 to run optimization")
             seed_value = int(payload.seed or 0)
             normalized_request = AgentOptimizationRequest(
                 agent_key=agent_key,

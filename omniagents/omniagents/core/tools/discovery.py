@@ -2,6 +2,8 @@ import os
 import importlib
 import inspect
 import sys
+import asyncio
+import functools
 from pathlib import Path
 from typing import Dict, Callable, Optional, Any, Tuple
 import traceback
@@ -39,6 +41,19 @@ class RichToolOutput:
 
 # --- Wrapper Decorators --- #
 
+def _wrap_sync_function(func: Callable) -> tuple[Callable, bool]:
+    if inspect.iscoroutinefunction(func):
+        return func, False
+    sig = inspect.signature(func)
+
+    @functools.wraps(func)
+    async def async_wrapper(*args, **kw):
+        return await asyncio.to_thread(func, *args, **kw)
+
+    async_wrapper.__signature__ = sig
+    return async_wrapper, True
+
+
 def function_tool(func: Callable = None, **kwargs) -> Callable:
     """
     A wrapper around agents.tool.function_tool that adds a marker
@@ -51,10 +66,9 @@ def function_tool(func: Callable = None, **kwargs) -> Callable:
     including strict_mode=False for non-strict schemas.
     """
     def decorator(f):
-        # Support optional client status override metadata
+        wrapped_func, _ = _wrap_sync_function(f)
         client_status = kwargs.pop("client_status", None)
-        # Apply the original decorator with remaining kwargs
-        decorated_func = original_function_tool(f, **kwargs)
+        decorated_func = original_function_tool(wrapped_func, **kwargs)
         # Add our marker attribute
         setattr(decorated_func, '_is_omniagents_core_tool', True)
         # Attach optional client status text for UIs that support it
@@ -88,8 +102,8 @@ def rich_function_tool(func: Callable = None, **kwargs) -> Callable:
     Accepts all keyword arguments that agents.tool.function_tool accepts.
     """
     def decorator(f):
-        # Apply the original decorator with all passed kwargs
-        decorated_func = original_function_tool(f, **kwargs)
+        wrapped_func, _ = _wrap_sync_function(f)
+        decorated_func = original_function_tool(wrapped_func, **kwargs)
         # Add our marker attributes
         setattr(decorated_func, '_is_omniagents_core_tool', True)
         setattr(decorated_func, '_is_rich_tool', True)

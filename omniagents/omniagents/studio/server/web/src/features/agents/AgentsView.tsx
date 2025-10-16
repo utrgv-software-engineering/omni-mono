@@ -27,6 +27,26 @@ const defaultOptimizeFormState = () => ({
   seed: '',
 })
 
+const MIN_OPTIMIZATION_BUDGET = 6
+
+const formatEta = (etaSeconds: number | null | undefined) => {
+  if (etaSeconds === null || etaSeconds === undefined || !Number.isFinite(etaSeconds) || etaSeconds <= 0) {
+    return null
+  }
+  const totalSeconds = Math.ceil(etaSeconds)
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s remaining`
+  }
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60)
+    const remMinutes = minutes % 60
+    return `${hours}h ${remMinutes}m remaining`
+  }
+  return `${minutes}m ${seconds}s remaining`
+}
+
 const defaultCreateFormState = () => ({
   name: '',
   model: '',
@@ -219,6 +239,7 @@ export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdat
   const optimizationTotal = optimizationStatus?.total ?? 1
   const optimizationPercent = optimizationState === 'completed' ? 100 : Math.min(100, Math.round((optimizationCompleted / Math.max(1, optimizationTotal)) * 100))
   const optimizationDatasetLabel = optimizationStatus ? `${optimizationStatus.dataset.set_name} • ${optimizationStatus.dataset.category}` : ''
+  const optimizationEtaText = formatEta(optimizationStatus?.eta_seconds)
 
   const openOptimize = () => {
     const fallbackKey = datasetOptions[0]?.key ?? ''
@@ -266,6 +287,10 @@ export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdat
     const parsedBudget = Number(budgetText || '0')
     if (!Number.isFinite(parsedBudget) || parsedBudget <= 0 || !Number.isInteger(parsedBudget)) {
       setOptimizeError('Budget must be a positive integer')
+      return
+    }
+    if (parsedBudget < MIN_OPTIMIZATION_BUDGET) {
+      setOptimizeError(`Budget must be at least ${MIN_OPTIMIZATION_BUDGET}`)
       return
     }
     const seedText = optimizeForm.seed.trim()
@@ -479,6 +504,7 @@ export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdat
                 <div className="text-xs text-muted-foreground">
                   Started {optimizationStatus?.started_at ? new Date(optimizationStatus.started_at).toLocaleString() : 'pending'}
                   {optimizationStatus?.finished_at ? ` • Finished ${new Date(optimizationStatus.finished_at).toLocaleString()}` : ''}
+                  {optimizationEtaText ? ` • ${optimizationEtaText}` : ''}
                 </div>
                 {optimizationStatus?.error ? (
                   <div className="text-xs text-destructive">Error: {optimizationStatus.error}</div>
@@ -549,7 +575,7 @@ export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdat
                         placeholder="100"
                         className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
                       />
-                      <div className="mt-1 text-xs text-muted-foreground">Maximum evaluation calls during optimization.</div>
+                      <div className="mt-1 text-xs text-muted-foreground">{`Maximum evaluation calls during optimization (minimum ${MIN_OPTIMIZATION_BUDGET}).`}</div>
                     </div>
                     <div>
                       <label className="mb-1 block text-xs font-medium uppercase text-muted-foreground">Seed</label>
