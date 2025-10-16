@@ -56,6 +56,8 @@ The setup wizard guides you through choosing your provider (OpenAI, Azure, or cu
 
 You can rerun `omni-setup` anytime to update credentials. After setup, run `omni` from any directory to start the assistant.
 
+> When the wizard prompts for API keys it uses hidden input, so you will not see characters or `***` while typing.
+
 ### Using Azure OpenAI
 - Run `omni-setup` and choose option 2 (Azure) to provide:
   - `AZURE_OPENAI_API_KEY`
