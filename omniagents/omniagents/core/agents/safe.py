@@ -23,12 +23,6 @@ from omniagents.core.debug import Debug
 ApprovalResult = Tuple[bool, bool, Optional[str]]
 ApprovalCallback = Callable[[str, str, Optional[Dict[str, Any]]], Awaitable[ApprovalResult]]
 
-# Context variable to store the approval callback for the current execution
-_approval_callback_context: contextvars.ContextVar[Optional[ApprovalCallback]] = contextvars.ContextVar(
-    'approval_callback',
-    default=None
-)
-
 # Context variables for global safe tool settings
 _global_safe_tool_names: contextvars.ContextVar[Set[str]] = contextvars.ContextVar(
     'global_safe_tool_names',
@@ -61,19 +55,6 @@ class SafeAgent(Agent):
     async def auto_approval_callback(tool_name: str, formatted_args: str, metadata: Optional[Dict[str, Any]] = None) -> ApprovalResult:
         """Automatic approval callback that always approves tools."""
         return True, False, None # approved=True, always_approve=False, error_msg=None
-    
-    @classmethod
-    def set_global_approval_callback(cls, callback: Optional[ApprovalCallback]) -> None:
-        """Set the global approval callback for all SafeAgent instances in this context.
-        
-        This is typically called by the Runner/backend at the start of execution.
-        """
-        _approval_callback_context.set(callback)
-    
-    @classmethod
-    def get_global_approval_callback(cls) -> Optional[ApprovalCallback]:
-        """Get the global approval callback from the context."""
-        return _approval_callback_context.get()
     
     @classmethod
     def set_global_safe_tools(cls, tool_names: Optional[List[str]] = None, 
@@ -185,7 +166,7 @@ class SafeAgent(Agent):
                     # If the returned agent is not already a SafeAgent, wrap it
                     if not isinstance(agent, SafeAgent):
                         # Get the approval callback from context or instance
-                        approval_cb = self._approval_callback or self.get_global_approval_callback()
+                        approval_cb = self._approval_callback
                         
                         if approval_cb and not self._skip_approvals:
                             # Create a SafeAgent wrapping the returned agent
@@ -390,9 +371,7 @@ class SafeAgent(Agent):
             
             # Get approval callback - prefer instance callback, fall back to global
             approval_callback = self._approval_callback
-            if approval_callback is None:
-                approval_callback = self.get_global_approval_callback()
-            
+
             # Check if we have a callback available
             if approval_callback is None:
                 if self._needs_callback:

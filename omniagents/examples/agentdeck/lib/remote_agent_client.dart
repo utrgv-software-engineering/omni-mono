@@ -108,15 +108,23 @@ class RemoteAgentClient {
       // If we get here the connection is established.
       _eventsController.add(ConnectedEvent());
       try {
-        _sendRequest('client_functions', {
-          'version': 1,
-          'functions': [
+        _sendRequest(
+            'client_functions',
             {
-              'name': 'ui.set_status',
-              'description': 'Override the inline status text (non-blocking)'
-            }
-          ]
-        }, callId: _uuid.v4());
+              'version': 1,
+              'functions': [
+                {
+                  'name': 'ui.set_status',
+                  'description':
+                      'Override the inline status text (non-blocking)'
+                },
+                {
+                  'name': 'ui.request_tool_approval',
+                  'description': 'Prompt the user to approve tool execution'
+                }
+              ]
+            },
+            callId: _uuid.v4());
       } catch (_) {}
     } catch (e) {
       if (!_eventsController.isClosed) {
@@ -214,21 +222,8 @@ class RemoteAgentClient {
     return _simpleCall('stop_run', {'run_id': runId});
   }
 
-  Future<void> toolApprovalResponse({
-    required String approvalId,
-    required bool approved,
-    bool alwaysApprove = false,
-    String? errorMessage,
-  }) {
-    return _simpleCall('tool_approval_response', {
-      'approval_id': approvalId,
-      'approved': approved,
-      'always_approve': alwaysApprove,
-      'error_message': errorMessage,
-    });
-  }
-
-  Future<void> clientFunctions(int version, List<Map<String, dynamic>> functions) {
+  Future<void> clientFunctions(
+      int version, List<Map<String, dynamic>> functions) {
     return _simpleCall('client_functions', {
       'version': version,
       'functions': functions,
@@ -369,7 +364,8 @@ class RemoteAgentClient {
   }
 
   /// Fetch deduplicated user input history across sessions.
-  Future<List<String>> getUserHistory({int limit = 200, bool includeArchived = true}) async {
+  Future<List<String>> getUserHistory(
+      {int limit = 200, bool includeArchived = true}) async {
     try {
       await connect();
     } catch (_) {
@@ -378,10 +374,13 @@ class RemoteAgentClient {
     final callId = _uuid.v4();
     final completer = Completer<dynamic>();
     _pending[callId] = completer;
-    _sendRequest('get_user_history', {
-      'limit': limit,
-      'include_archived': includeArchived,
-    }, callId: callId);
+    _sendRequest(
+        'get_user_history',
+        {
+          'limit': limit,
+          'include_archived': includeArchived,
+        },
+        callId: callId);
     final result = await completer.future;
     final out = <String>[];
     List list;
@@ -489,9 +488,11 @@ class RemoteAgentClient {
           if (msg.containsKey('error') && msg['error'] != null) {
             final err = msg['error'];
             if (err is Map) {
-              final code = err['code'] is num ? (err['code'] as num).toInt() : null;
+              final code =
+                  err['code'] is num ? (err['code'] as num).toInt() : null;
               final message = err['message']?.toString() ?? 'RPC error';
-              completer.completeError(RemoteRpcError(code, message, err['data']));
+              completer
+                  .completeError(RemoteRpcError(code, message, err['data']));
             } else {
               completer.completeError(RemoteRpcError(null, err.toString()));
             }
@@ -528,15 +529,46 @@ class RemoteAgentClient {
             payload['content'] as String,
             payload['is_final'] as bool? ?? false));
         break;
-      case 'tool_approval_request':
-        _eventsController.add(ToolApprovalRequestEvent(
-          payload['approval_id'] as String,
-          payload['tool'] as String,
-          payload['arguments'] as String,
-          metadata: (payload['metadata'] as Map?)?.cast<String, dynamic>(),
-          runId: payload['run_id']?.toString(),
-          sessionId: payload['session_id']?.toString(),
-        ));
+      case 'client_request':
+        final fn = payload['function']?.toString() ?? '';
+        if (fn.toLowerCase() == 'ui.request_tool_approval') {
+          final args =
+              (payload['args'] as Map?)?.cast<String, dynamic>() ?? const {};
+          final requestId = payload['request_id']?.toString() ?? '';
+          if (requestId.isEmpty) {
+            if (debug) {
+              debugPrint('${_tag()} missing request_id for tool approval');
+            }
+            break;
+          }
+          final approvalId =
+              (payload['approval_id'] ?? args['approval_id'] ?? requestId)
+                  .toString();
+          final tool = (args['tool'] ?? '').toString();
+          final arguments = (args['arguments'] ?? '').toString();
+          final metadata = (args['metadata'] as Map?)?.cast<String, dynamic>();
+
+          _eventsController.add(ToolApprovalRequestEvent(
+            requestId: requestId,
+            approvalId: approvalId,
+            tool: tool,
+            arguments: arguments,
+            metadata: metadata,
+            runId: payload['run_id']?.toString(),
+            sessionId: payload['session_id']?.toString(),
+          ));
+        } else {
+          _eventsController.add(ClientRequestEvent(
+            requestId: payload['request_id']?.toString() ?? '',
+            function: payload['function']?.toString() ?? '',
+            args:
+                (payload['args'] as Map?)?.cast<String, dynamic>() ?? const {},
+            sessionId: payload['session_id']?.toString(),
+            runId: payload['run_id']?.toString(),
+            timeoutMs: (payload['timeout_ms'] as num?)?.toInt(),
+            idempotencyKey: payload['idempotency_key']?.toString(),
+          ));
+        }
         break;
       case 'run_started':
         final rid = payload['run_id']?.toString() ?? '';
@@ -618,17 +650,6 @@ class RemoteAgentClient {
           attempt: (payload['attempt'] as num?)?.toInt() ?? 0,
           total: (payload['total'] as num?)?.toInt() ?? 0,
           nextDelay: (payload['next_delay'] as num?)?.toDouble(),
-        ));
-        break;
-      case 'client_request':
-        _eventsController.add(ClientRequestEvent(
-          requestId: payload['request_id']?.toString() ?? '',
-          function: payload['function']?.toString() ?? '',
-          args: (payload['args'] as Map?)?.cast<String, dynamic>() ?? const {},
-          sessionId: payload['session_id']?.toString(),
-          runId: payload['run_id']?.toString(),
-          timeoutMs: (payload['timeout_ms'] as num?)?.toInt(),
-          idempotencyKey: payload['idempotency_key']?.toString(),
         ));
         break;
       default:

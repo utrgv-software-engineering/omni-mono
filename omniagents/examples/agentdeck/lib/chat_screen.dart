@@ -1690,20 +1690,21 @@ class ChatModel extends ChangeNotifier {
         currentRunId = null;
       }
     } else if (event is ToolApprovalRequestEvent) {
-      _items.add(
-          ApprovalRequestCard(event.approvalId, event.tool, event.arguments,
-              (bool approved, bool always) {
-        client.toolApprovalResponse(
-            approvalId: event.approvalId,
-            approved: approved,
-            alwaysApprove: always);
+      final requestId = event.requestId;
+      _items.add(ApprovalRequestCard(
+          event.approvalId, event.tool, event.arguments, requestId,
+          (bool approved, bool always) {
+        final result = <String, dynamic>{
+          'approved': approved,
+          'always_approve': always,
+        };
+        if (!approved) {
+          result['error_message'] = 'User rejected tool call';
+        }
+        client.clientResponse(requestId, ok: true, result: result);
 
-        // Then remove the card from the list so the UI no longer shows the
-        // approval banner.
-        _items.removeWhere((i) =>
-            i is ApprovalRequestCard &&
-            i.approvalId == event.approvalId &&
-            i.tool == event.tool);
+        _items.removeWhere(
+            (i) => i is ApprovalRequestCard && i.requestId == requestId);
         notifyListeners();
       }, metadata: event.metadata));
     } else if (event is ConnectedEvent) {
@@ -1917,12 +1918,13 @@ class ToolResultCard implements ChatItem {
 }
 
 class ApprovalRequestCard implements ChatItem {
-  ApprovalRequestCard(
-      this.approvalId, this.tool, this.arguments, this.onDecision,
+  ApprovalRequestCard(this.approvalId, this.tool, this.arguments,
+      this.requestId, this.onDecision,
       {this.metadata});
   final String approvalId;
   final String tool;
   final String arguments;
+  final String requestId;
   final Function(bool, bool) onDecision;
   final Map<String, dynamic>? metadata;
 }

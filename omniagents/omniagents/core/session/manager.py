@@ -49,12 +49,16 @@ class Session:  # noqa: D101
         # may have more than one in case the user opens multiple tabs.
         # Disconnected channels are automatically culled when a send fails.
         self.channels: list[Any] = []
+        # Map active run_id -> preferred channel that initiated the run.
+        self.run_channels: Dict[str, Any] = {}
         # Flag indicating whether this session was archived by the client.
         self.archived: bool = (
             get_archived(self.id, project_slug=project_slug, agent_slug=agent_slug)
             if session_id
             else False
         )
+        self.always_allow_tools: set[str] = set()
+        self.always_allow_patterns: set[str] = set()
 
     def append_message(self, message: dict) -> None:
         """Add a message to this session and persist it."""

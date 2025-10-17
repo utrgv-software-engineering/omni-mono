@@ -281,9 +281,6 @@ class _ClientEventMethods(RpcMethodsBase):
     async def run_end(self, **params):
         return await self._push("run_end", **params)
 
-    async def tool_approval_request(self, **params):
-        return await self._push("tool_approval_request", **params)
-
     async def run_status(self, **params):
         return await self._push("run_status", **params)
 

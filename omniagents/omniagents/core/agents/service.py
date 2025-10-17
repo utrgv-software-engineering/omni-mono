@@ -8,6 +8,7 @@ execution modes (CLI, Flet, Server), exposing methods via JSON-RPC protocol.
 import os
 import asyncio
 import uuid
+import copy
 from types import SimpleNamespace
 from typing import Optional, Dict, Any
 import inspect
@@ -90,8 +91,6 @@ class AgentService(RpcMethodsBase):
                 setup_tracing(self.spec.tracing_config)
         except Exception:
             pass
-        # Tool-approval request / response helper state
-        self._pending_approvals: dict[str, asyncio.Future] = {}
         # Client-function request tracking (server→client RPC-style)
         self._pending_client_requests: dict[str, asyncio.Future] = {}
         # Optional capability registry per connected channel
@@ -102,6 +101,84 @@ class AgentService(RpcMethodsBase):
         # Note: we intentionally do NOT register built-in example functions
         # like "session.get_history" so they won't surface in UIs that
         # dynamically list server functions (e.g., Bubble Tea /help).
+
+    async def _build_agent_for_session(self, session: Session, approval_callback) -> Any:
+        stub_app = SimpleNamespace(
+            spec=self.spec,
+            _request_tool_approval=approval_callback,
+        )
+
+        if self.spec.build_agent:
+            agent = await self.spec.build_agent({}, None, stub_app)
+            if self.spec.use_safe_agent and approval_callback and not isinstance(agent, SafeAgent):
+                opts = self.spec.safe_agent_options
+                agent = SafeAgent(
+                    name=agent.name,
+                    tools=agent.tools,
+                    instructions=agent.instructions,
+                    model=agent.model,
+                    model_settings=getattr(agent, "model_settings", None),
+                    mcp_servers=getattr(agent, "mcp_servers", []) or [],
+                    handoffs=getattr(agent, "handoffs", []),
+                    handoff_description=getattr(agent, "handoff_description", None),
+                    prompt=getattr(agent, "prompt", None),
+                    approval_callback=approval_callback,
+                    safe_tool_names=opts.safe_tool_names,
+                    safe_tool_patterns=opts.safe_tool_patterns,
+                    skip_approvals=opts.skip_approvals,
+                    halt_on_rejection=opts.halt_on_rejection,
+                )
+            elif isinstance(agent, SafeAgent) and approval_callback:
+                try:
+                    agent.set_approval_callback(approval_callback)
+                except Exception:
+                    pass
+        else:
+            agent = await _default_build_agent(
+                {},
+                None,
+                self.spec,
+                approval_callback,
+            )
+
+        agent = self._clone_agent(agent)
+
+        if approval_callback and hasattr(agent, "set_approval_callback") and callable(getattr(agent, "set_approval_callback")):
+            try:
+                agent.set_approval_callback(approval_callback)
+            except Exception:
+                pass
+
+        self._apply_session_tool_policy(session, agent)
+        return agent
+
+    def _clone_agent(self, agent: Any) -> Any:
+        try:
+            return copy.deepcopy(agent)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                "Agent builder must return deepcopy-able agent instances for per-run isolation"
+            ) from exc
+
+    def _apply_session_tool_policy(self, session: Session, agent: Any) -> None:
+        names = getattr(session, "always_allow_tools", None)
+        if not names:
+            return
+
+        if isinstance(agent, SafeAgent):
+            for tool_name in names:
+                try:
+                    agent.add_safe_tool(tool_name)
+                except Exception:
+                    pass
+            return
+
+        try:
+            existing = set(getattr(agent, "always_allow_tools", set()))
+            merged = existing | set(names)
+            setattr(agent, "always_allow_tools", merged)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     #  Server Functions registry APIs (programmatic registration)
@@ -287,10 +364,7 @@ class AgentService(RpcMethodsBase):
                 "error_message": error_message,
             },
         )
-        fut = self._pending_approvals.pop(approval_id, None)
-        if fut and not fut.done():
-            fut.set_result((approved, always_approve, error_message))
-        return True
+        return False
 
     # ------------------------------------------------------------------
     #  Client function registration (capability handshake)
@@ -407,17 +481,28 @@ class AgentService(RpcMethodsBase):
     #  waits for the matching response.
     # ------------------------------------------------------------------
 
-    async def _request_tool_approval(self, tool_name: str, formatted_args: str, metadata: Optional[Dict[str, Any]] = None, _sess: Session | None = None):  # noqa: D401
+    async def _request_tool_approval(
+        self,
+        tool_name: str,
+        formatted_args: str,
+        _sess: Session,
+        metadata: Optional[Dict[str, Any]] = None,
+        _run_id: str | None = None,
+    ):  # noqa: D401
         """Ask the client for approval; buffer request if not delivered."""
 
+        if _sess is None:
+            raise RuntimeError("Tool approval requests require an explicit session context")
+
         approval_id = uuid.uuid4().hex
-        current_task = asyncio.current_task()
-        run_id = None
-        if current_task is not None:
-            try:
-                run_id = current_task.get_name()
-            except Exception:
-                run_id = None
+        run_id = _run_id
+        if run_id is None:
+            current_task = asyncio.current_task()
+            if current_task is not None:
+                try:
+                    run_id = current_task.get_name()
+                except Exception:
+                    run_id = None
         payload = {
             "approval_id": approval_id,
             "tool": tool_name,
@@ -425,34 +510,110 @@ class AgentService(RpcMethodsBase):
         }
         if run_id:
             payload["run_id"] = run_id
-        if _sess is not None:
-            payload["session_id"] = _sess.id
 
-        # Add metadata if present (backward compatible)
+        payload["session_id"] = _sess.id
+
         if metadata:
             payload["metadata"] = metadata
 
         if Debug.enabled():
+            print(
+                f"[srv]   → tool_approval_request approval_id={approval_id}"
+                f" session={_sess.id}"
+                f" run_id={run_id}"
+            )
             print(f"[srv]   → tool_approval_request approval_id={approval_id} details={payload}")
 
-        primary_channel = getattr(self, "channel", None)
-        if _sess is not None and primary_channel and primary_channel not in _sess.channels:
-            _sess.channels.append(primary_channel)
+        request_args = dict(payload)
+        req_id = uuid.uuid4().hex
+        request_args.pop("approval_id", None)
 
-        if _sess is not None:
-            delivered = await self._broadcast_session(_sess, "tool_approval_request", payload, queue_if_unseen=True)
-        else:
-            delivered = False
-            if primary_channel is not None:
-                delivered = await self._safe_notify(primary_channel, "tool_approval_request", payload)
-            if not delivered:
-                # No session context to queue; best-effort only
-                pass
+        targets: list[Any] = []
+        if run_id:
+            preferred = _sess.run_channels.get(run_id)
+            if preferred is not None:
+                targets.append(preferred)
+        for ch in _sess.channels:
+            if ch is None:
+                continue
+            if ch not in targets:
+                targets.append(ch)
 
-        # Wait for user decision
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
-        self._pending_approvals[approval_id] = fut
-        return await fut  # -> (approved, always_approve, error_message)
+        self._pending_client_requests[req_id] = fut
+
+        delivered_any = False
+        dead_channels = []
+        for ch in list(targets):
+            if ch is None:
+                continue
+            ok = await self._safe_notify(
+                ch,
+                "client_request",
+                {
+                    "request_id": req_id,
+                    "function": "ui.request_tool_approval",
+                    "args": request_args,
+                    "session_id": payload.get("session_id"),
+                    "run_id": payload.get("run_id"),
+                    "approval_id": approval_id,
+                },
+            )
+            if ok:
+                delivered_any = True
+            else:
+                dead_channels.append(ch)
+
+        for dead in dead_channels:
+            try:
+                _sess.channels.remove(dead)
+            except ValueError:
+                pass
+            if run_id and _sess.run_channels.get(run_id) is dead:
+                _sess.run_channels.pop(run_id, None)
+
+        if not delivered_any and hasattr(_sess, "pending_events"):
+            _sess.pending_events.append(
+                (
+                    "client_request",
+                    {
+                        "request_id": req_id,
+                        "function": "ui.request_tool_approval",
+                        "args": request_args,
+                        "session_id": payload.get("session_id"),
+                        "run_id": payload.get("run_id"),
+                        "approval_id": approval_id,
+                    },
+                )
+            )
+
+        try:
+            envelope = await fut
+        finally:
+            self._pending_client_requests.pop(req_id, None)
+
+        if not isinstance(envelope, dict):
+            raise RuntimeError("Invalid client response for tool approval")
+
+        ok = envelope.get("ok")
+        result = envelope.get("result") or {}
+        error = envelope.get("error") or {}
+
+        if not ok:
+            return False, False, (error.get("message") if isinstance(error, dict) else None)
+
+        approved = bool(result.get("approved"))
+        always_approve = bool(result.get("always_approve"))
+        error_message = result.get("error_message")
+
+        if approved and always_approve:
+            allow_set = getattr(_sess, "always_allow_tools", None)
+            if allow_set is None:
+                allow_set = set()
+                setattr(_sess, "always_allow_tools", allow_set)
+            allow_set.add(tool_name)
+
+        return approved, always_approve, error_message
 
     async def start_run(self, prompt: str, session_id: str | None = None, variables: dict | None = None, context: Any | None = None) -> dict:  # noqa: D401
         sess: Session = self._session_manager.get_or_create(session_id)
@@ -490,71 +651,31 @@ class AgentService(RpcMethodsBase):
                     still_pending.append((meth, payl))
             sess.pending_events = still_pending
 
-        # Build (or reuse) agent for this session
-        if not hasattr(sess, "agent"):
-            # Always create approval callback that captures session context so prebuilt SafeAgent can use it
-            approval_callback = lambda name, args, metadata=None: self._request_tool_approval(name, args, metadata, _sess=sess)
-            
-            # Build agent using spec's build_agent method
-            from types import SimpleNamespace
-            stub_app = SimpleNamespace(
-                spec=self.spec,
-                _request_tool_approval=approval_callback,
-            )
-            
-            # Use the spec's build_agent method if available, otherwise use default
-            # Ensure global approval callback is available to any SafeAgent created during build
-            try:
-                SafeAgent.set_global_approval_callback(approval_callback)
-            except Exception:
-                pass
+        approval_callback_base = getattr(sess, "approval_callback_base", None)
+        if approval_callback_base is None:
+            approval_callback_base = lambda name, args, metadata=None: self._request_tool_approval(name, args, sess, metadata)
+            sess.approval_callback_base = approval_callback_base
+        sess.approval_callback = approval_callback_base
 
-            if self.spec.build_agent:
-                agent = await self.spec.build_agent({}, None, stub_app)
-                
-                # If safe mode is enabled and agent is not already a SafeAgent, wrap it
-                if self.spec.use_safe_agent and approval_callback and not isinstance(agent, SafeAgent):
-                    opts = self.spec.safe_agent_options
-                    
-                    agent = SafeAgent(
-                        name=agent.name,
-                        tools=agent.tools,
-                        instructions=agent.instructions,
-                        model=agent.model,
-                        model_settings=getattr(agent, 'model_settings', None),
-                        mcp_servers=getattr(agent, 'mcp_servers', []) or [],
-                        handoffs=getattr(agent, 'handoffs', []),
-                        handoff_description=getattr(agent, 'handoff_description', None),
-                        prompt=getattr(agent, 'prompt', None),
-                        approval_callback=approval_callback,
-                        safe_tool_names=opts.safe_tool_names,
-                        safe_tool_patterns=opts.safe_tool_patterns,
-                        skip_approvals=opts.skip_approvals,
-                        halt_on_rejection=opts.halt_on_rejection,
-                    )
-                # If a prebuilt SafeAgent was returned, ensure it has the callback even when safe=False
-                elif isinstance(agent, SafeAgent) and approval_callback:
-                    try:
-                        agent.set_approval_callback(approval_callback)
-                    except Exception:
-                        pass
-                
-                sess.agent = agent
-            else:
-                from omniagents.core.agents.builder import _default_build_agent
-                sess.agent = await _default_build_agent(
-                    {},  # Server doesn't use settings from UI
-                    None,  # Server doesn't support MCP yet
-                    self.spec,
-                    approval_callback
-                )
-        
-        agent = sess.agent
+        agent = await self._build_agent_for_session(sess, approval_callback_base)
 
         async def _worker():
             end_reason = "error"  # Default in case of unexpected exception
             final_details: dict | None = None
             error_info: dict | None = None
+
+            current_task = asyncio.current_task()
+            run_name = current_task.get_name() if current_task else None
+
+            async def run_scoped_approval(tool_name: str, args: str, metadata: Optional[Dict[str, Any]] = None):  # noqa: ANN001
+                return await self._request_tool_approval(tool_name, args, sess, metadata, _run_id=run_name)
+
+            try:
+                if hasattr(agent, "set_approval_callback") and callable(getattr(agent, "set_approval_callback")):
+                    agent.set_approval_callback(run_scoped_approval)
+            except Exception:
+                pass
+            sess.approval_callback = run_scoped_approval
 
             # Resolve runtime context once
             if hasattr(sess, 'context') and sess.context is not None:
@@ -634,7 +755,7 @@ class AgentService(RpcMethodsBase):
                                     sess,
                                     "run_status",
                                     {
-                                        "run_id": asyncio.current_task().get_name(),
+                                        "run_id": run_name,
                                         "status": "retrying",
                                         "message": str(e),
                                         "attempt": attempt,
@@ -658,7 +779,7 @@ class AgentService(RpcMethodsBase):
             finally:
                 # Inform client the run finished
                 payload = {
-                    "run_id": asyncio.current_task().get_name(),
+                    "run_id": run_name,
                     "end_reason": end_reason,
                 }
                 if error_info is not None:
@@ -679,6 +800,12 @@ class AgentService(RpcMethodsBase):
                 # Best-effort notify; avoid raising if socket is gone
                 await self._broadcast_session(sess, "run_end", payload, queue_if_unseen=True)
 
+                if run_name:
+                    try:
+                        sess.run_channels.pop(run_name, None)
+                    except Exception:
+                        pass
+
         task_name = f"run_{uuid.uuid4().hex}"
         _debug_rpc(
             "start_run",
@@ -691,6 +818,8 @@ class AgentService(RpcMethodsBase):
         )
         task = asyncio.create_task(_worker(), name=task_name)
         self._session_manager.bind_task(task, sess)
+        if channel is not None:
+            sess.run_channels[task_name] = channel
         # Proactively notify clients that the run has started so UIs can
         # correlate subsequent status and end events even if they arrive
         # before the RPC response is processed client-side.

@@ -15,6 +15,7 @@ export interface PlaygroundChatEvent {
   output?: string
   severity?: 'info' | 'error'
   approvalId?: string
+  requestId?: string
   arguments?: string
   metadata?: Record<string, unknown>
 }
@@ -234,7 +235,6 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
   const pendingRunRef = useRef(false)
   const serverSessionRef = useRef<string | null>(null)
   const pendingMethodRef = useRef<Map<number, string>>(new Map())
-  const pendingRequestRef = useRef<Map<number, { resolve: () => void; reject: (error: Error) => void; method: string }>>(new Map())
   const latestSessionIdRef = useRef<string | null>(null)
   const latestAgentKeyRef = useRef<string | undefined>(undefined)
 
@@ -250,10 +250,6 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
     pendingRunRef.current = false
     serverSessionRef.current = null
     pendingMethodRef.current.clear()
-    pendingRequestRef.current.forEach(({ reject }) => {
-      reject(new Error('Session reset'))
-    })
-    pendingRequestRef.current.clear()
   }, [])
 
   useEffect(() => {
@@ -267,7 +263,6 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
   useEffect(() => {
     dispatch({ type: 'reset' })
     const methodStore = pendingMethodRef.current
-    const requestStore = pendingRequestRef.current
     if (!sessionId) {
       if (wsRef.current) {
         wsRef.current.close()
@@ -278,10 +273,6 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
       pendingRunRef.current = false
       serverSessionRef.current = null
       methodStore.clear()
-      requestStore.forEach(({ reject }) => {
-        reject(new Error('Session reset'))
-      })
-      requestStore.clear()
       return
     }
 
@@ -312,6 +303,10 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
               name: 'ui.set_status',
               description: 'Override inline status text',
             },
+            {
+              name: 'ui.request_tool_approval',
+              description: 'Prompt the user to approve a tool invocation',
+            },
           ],
         },
       }
@@ -325,16 +320,7 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
         console.debug('[playground] ← message', payload)
         if (payload.id !== undefined) {
           const numericId = Number(payload.id)
-          const pendingRequest = requestStore.get(numericId)
-          const pendingMethod = methodStore.get(numericId) || pendingRequest?.method
-          if (pendingRequest) {
-            requestStore.delete(numericId)
-            if (payload.error && payload.error.message) {
-              pendingRequest.reject(new Error(String(payload.error.message)))
-            } else {
-              pendingRequest.resolve()
-            }
-          }
+          const pendingMethod = methodStore.get(numericId)
           if (pendingMethod === 'start_run' && payload.result && typeof payload.result === 'object') {
             const result = payload.result as { session_id?: string }
             if (typeof result.session_id === 'string') {
@@ -342,7 +328,7 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
             }
           }
           methodStore.delete(numericId)
-          if (payload.error && payload.error.message && pendingMethod !== 'tool_approval_response') {
+          if (payload.error && payload.error.message) {
             dispatch({
               type: 'status',
               event: {
@@ -459,59 +445,69 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
               }
               break
             }
-            case 'tool_approval_request': {
-              const toolName = params.tool || 'tool'
-              const rawApprovalId = params.approval_id || params.approvalId
-              const approvalId = typeof rawApprovalId === 'string' ? rawApprovalId : createId()
-              let argsText = ''
-              const rawArgs = params.arguments
-              if (typeof rawArgs === 'string') {
-                argsText = rawArgs
-              } else if (rawArgs !== undefined) {
-                try {
-                  argsText = JSON.stringify(rawArgs)
-                } catch {
-                  argsText = String(rawArgs)
-                }
-              }
-              let metadata: Record<string, unknown> | undefined
-              const rawMetadata = params.metadata
-              if (typeof rawMetadata === 'string') {
-                try {
-                  const parsed = JSON.parse(rawMetadata)
-                  if (parsed && typeof parsed === 'object') {
-                    metadata = parsed as Record<string, unknown>
-                  }
-                } catch {
-                  metadata = undefined
-                }
-              } else if (rawMetadata && typeof rawMetadata === 'object') {
-                metadata = rawMetadata as Record<string, unknown>
-              }
-              dispatch({
-                type: 'append-approval',
-                event: {
-                  id: createId(),
-                  type: 'approval',
-                  approvalId,
-                  name: toolName,
-                  arguments: argsText,
-                  metadata,
-                },
-              })
-              dispatch({
-                type: 'status',
-                event: {
-                  id: createId(),
-                  type: 'status',
-                  content: `Approval requested for ${toolName}`,
-                  severity: 'info',
-                },
-              })
-              break
-            }
             case 'client_request': {
-              const functionName = params.function || params.name
+              const functionNameRaw = params.function || params.name
+              const functionName = typeof functionNameRaw === 'string' ? functionNameRaw.toLowerCase() : ''
+              const requestId = typeof params.request_id === 'string' ? params.request_id : undefined
+
+              if (functionName === 'ui.request_tool_approval') {
+                const args = (params.args as Record<string, unknown> | undefined) ?? {}
+                const toolName = typeof args.tool === 'string' && args.tool.trim().length > 0 ? args.tool : 'tool'
+                const approvalSource = (params.approval_id ?? params.approvalId ?? args.approval_id ?? args.approvalId) as
+                  | string
+                  | undefined
+                const approvalId = approvalSource && approvalSource.trim().length > 0 ? approvalSource : createId()
+                let argsText = ''
+                const rawArgs = args.arguments ?? params.arguments
+                if (typeof rawArgs === 'string') {
+                  argsText = rawArgs
+                } else if (rawArgs !== undefined) {
+                  try {
+                    argsText = JSON.stringify(rawArgs)
+                  } catch {
+                    argsText = String(rawArgs)
+                  }
+                }
+
+                let metadata: Record<string, unknown> | undefined
+                const rawMetadata = (params.metadata ?? args.metadata) as unknown
+                if (typeof rawMetadata === 'string') {
+                  try {
+                    const parsed = JSON.parse(rawMetadata)
+                    if (parsed && typeof parsed === 'object') {
+                      metadata = parsed as Record<string, unknown>
+                    }
+                  } catch {
+                    metadata = undefined
+                  }
+                } else if (rawMetadata && typeof rawMetadata === 'object') {
+                  metadata = rawMetadata as Record<string, unknown>
+                }
+
+                dispatch({
+                  type: 'append-approval',
+                  event: {
+                    id: createId(),
+                    type: 'approval',
+                    approvalId,
+                    requestId,
+                    name: toolName,
+                    arguments: argsText,
+                    metadata,
+                  },
+                })
+                dispatch({
+                  type: 'status',
+                  event: {
+                    id: createId(),
+                    type: 'status',
+                    content: `Approval requested for ${toolName}`,
+                    severity: 'info',
+                  },
+                })
+                break
+              }
+
               if (functionName === 'ui.set_status' && params.args && typeof params.args.text === 'string') {
                 dispatch({
                   type: 'status',
@@ -523,13 +519,13 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
                   },
                 })
               }
-              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && params.request_id) {
+              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && requestId) {
                 wsRef.current.send(
                   JSON.stringify({
                     jsonrpc: '2.0',
                     method: 'client_response',
                     params: {
-                      request_id: params.request_id,
+                      request_id: requestId,
                       ok: true,
                       result: { ack: true },
                     },
@@ -554,10 +550,6 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
         return
       }
       console.error('[playground] websocket error', event)
-      requestStore.forEach(({ reject }) => {
-        reject(new Error('WebSocket error'))
-      })
-      requestStore.clear()
       setConnectionState('error')
       setConnectionError('WebSocket error')
     }
@@ -571,10 +563,6 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
       wsRef.current = null
       serverSessionRef.current = null
       methodStore.clear()
-      requestStore.forEach(({ reject }) => {
-        reject(new Error('Connection closed'))
-      })
-      requestStore.clear()
       if (event.wasClean) {
         setConnectionState('closed')
       } else {
@@ -587,10 +575,6 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
       pendingRunRef.current = false
       serverSessionRef.current = null
       methodStore.clear()
-      requestStore.forEach(({ reject }) => {
-        reject(new Error('Session closed'))
-      })
-      requestStore.clear()
       if (wsRef.current === ws) {
         wsRef.current.close()
         wsRef.current = null
@@ -662,39 +646,39 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
         throw new Error('Playground connection is not ready')
       }
-      const rpcId = ++requestCounter.current
-      pendingMethodRef.current.set(rpcId, 'tool_approval_response')
-      const params: Record<string, unknown> = {
-        approval_id: approvalId,
+      const pendingApproval = state.events.find((event) => event.type === 'approval' && event.approvalId === approvalId)
+      if (!pendingApproval || !pendingApproval.requestId) {
+        throw new Error('Unknown or expired approval request')
+      }
+
+      const resultPayload: Record<string, unknown> = {
         approved: decision.approved,
       }
       if (decision.alwaysApprove) {
-        params.always_approve = true
+        resultPayload.always_approve = true
       }
       if (!decision.approved && decision.errorMessage) {
         const trimmed = decision.errorMessage.trim()
         if (trimmed) {
-          params.error_message = trimmed
+          resultPayload.error_message = trimmed
         }
       }
-      const promise = new Promise<void>((resolve, reject) => {
-        pendingRequestRef.current.set(rpcId, {
-          method: 'tool_approval_response',
-          resolve,
-          reject,
-        })
-      })
+
       wsRef.current.send(
         JSON.stringify({
           jsonrpc: '2.0',
-          id: rpcId,
-          method: 'tool_approval_response',
-          params,
+          method: 'client_response',
+          params: {
+            request_id: pendingApproval.requestId,
+            ok: true,
+            result: resultPayload,
+          },
         })
       )
-      await promise
+
       dispatch({ type: 'resolve-approval', approvalId })
-      const label = decision.toolName && decision.toolName.trim().length > 0 ? decision.toolName : 'tool'
+      const labelSource = decision.toolName && decision.toolName.trim().length > 0 ? decision.toolName : pendingApproval.name
+      const label = labelSource && labelSource.trim().length > 0 ? labelSource.trim() : 'tool'
       const message = decision.approved
         ? decision.alwaysApprove
           ? `Always approve enabled for ${label}`
@@ -710,7 +694,7 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
         },
       })
     },
-    [dispatch]
+    [dispatch, state.events]
   )
 
   const isRunning = useMemo(() => state.running || pendingRunRef.current, [state.running])

@@ -33,7 +33,7 @@ This separation allows:
 The protocol supports optional metadata fields for enhanced UI experiences:
 
 ### Tool Approval Metadata
-The `tool_approval_request` event may include a `metadata` field containing structured information for rich approval dialogs (diffs, previews, etc.) instead of displaying raw JSON arguments.
+Tool approval requests are delivered via `client_request` notifications with `function` set to `ui.request_tool_approval`. The `args.metadata` field can contain structured information for rich approval dialogs (diffs, previews, previews, etc.) instead of displaying raw JSON arguments.
 
 ### Tool Result Metadata  
 The `tool_result` event may include a `metadata` field containing UI-specific data (charts, tables, visualizations) separate from the text output sent to the agent.
@@ -113,9 +113,10 @@ Start a new agent run with the given prompt and optional initial variables.
 - `tool_called`: Agent is calling a tool
 - `tool_result`: Tool execution completed
 - `message_output`: Agent generated text response
-- `tool_approval_request`: Requesting approval for tool execution (if safe mode enabled)
 - `run_started`: Run has been scheduled and is now active (contains run_id and session_id)
 - `run_end`: Agent run completed
+
+When tool approval is required, the server emits a `client_request` with `function` `ui.request_tool_approval` instead of a dedicated event.
 
 ### stop_run(run_id: string)
 Cancel an active agent run.
@@ -259,36 +260,6 @@ The server sends notifications during agent runs:
 }
 ```
 
-### tool_approval_request
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "tool_approval_request",
-  "params": {
-    "approval_id": "approval-123",
-    "tool": "delete_file",
-    "arguments": "{\"path\": \"/important/file.txt\"}",
-    "metadata": {
-      "display_type": "file_delete",
-      "summary": "Delete /important/file.txt",
-      "preview": "This will permanently delete the file",
-      "file_info": {
-        "size": 1024,
-        "modified": "2024-01-01T00:00:00Z"
-      }
-    }
-  }
-}
-```
-
-**Note:** The `metadata` field is optional and provides rich UI hints for tool approval dialogs. Common metadata fields include:
-- `display_type`: UI rendering hint (e.g., "diff", "file_write", "table", "custom")
-- `summary`: Brief description of the operation
-- `preview`: Preview text for the UI
-- `value`: The actual data to display (diffs, content, etc.)
-- `metadata`: Additional context (file paths, operations, stats, etc.)
-- `truncated`: Boolean indicating if content was truncated
-
 ### run_end
 ```json
 {
@@ -378,9 +349,9 @@ Notes:
 
 ## Client Functions (optional)
 
-Client Functions enable server-initiated calls to client-provided capabilities. This allows richer UIs and local integrations (e.g., rendering artifacts, file pickers) while keeping the server stateless.
+Client Functions enable server-initiated calls to client-provided capabilities. This allows richer UIs and local integrations (e.g., rendering artifacts, file pickers, approval dialogs) while keeping the server stateless.
 
-The pattern mirrors the existing tool_approval flow and is designed to be backward compatible: older clients simply ignore these notifications.
+Tool approvals are implemented using this mechanism, so clients that do not support `ui.request_tool_approval` should auto-approve or fail closed according to their security posture.
 
 ### client_functions (client → server)
 Optional capability handshake sent by the client after connecting. Declares supported functions.
@@ -422,6 +393,54 @@ Server asks the client to run a function. Clients should execute and respond wit
 Notes:
 - Servers may broadcast to all active channels for the session. Clients should ignore unknown functions or return an error via client_response.
 - Use idempotency_key if the server may replay requests on reconnect.
+- Tool approvals are issued with `function` set to `ui.request_tool_approval`. Clients should render the prompt to the user and respond via `client_response` once a decision is made.
+
+#### Tool approval (`ui.request_tool_approval`)
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "client_request",
+  "params": {
+    "request_id": "approval_req_001",
+    "function": "ui.request_tool_approval",
+    "args": {
+      "tool": "delete_file",
+      "arguments": "{\"path\": \"/important/file.txt\"}",
+      "metadata": {
+        "display_type": "file_delete",
+        "summary": "Delete /important/file.txt",
+        "preview": "This will permanently delete the file",
+        "file_info": {
+          "size": 1024,
+          "modified": "2024-01-01T00:00:00Z"
+        }
+      }
+    },
+    "session_id": "sess_123",
+    "run_id": "run_456"
+  }
+}
+```
+
+Clients answer with `client_response`, including the approval decision:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "client_response",
+  "params": {
+    "request_id": "approval_req_001",
+    "ok": true,
+    "result": {
+      "approved": true,
+      "always_approve": false
+    }
+  }
+}
+```
+
+If the user rejects the request, return `approved: false` and optionally supply `error_message` explaining the rejection. Setting `always_approve: true` instructs the server to mark the tool as trusted for the remainder of the session.
 
 ### client_response (client → server)
 Client responds to a client_request. If multiple clients are connected, any may reply.

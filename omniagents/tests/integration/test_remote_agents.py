@@ -33,10 +33,17 @@ async def fake_stream_agent(agent, prompt, sess, channel, max_turns=20):
     append_message(sess.id, assistant_msg)
 
     approval_id = "appr1"
-    print(f"DEBUG fake_stream_agent: Sending tool_approval_request")
+    print(f"DEBUG fake_stream_agent: Sending client_request for approval")
     await channel.async_call(
-        "tool_approval_request",
-        {"approval_id": approval_id, "tool": "echo", "arguments": "{}"},
+        "client_request",
+        {
+            "request_id": approval_id,
+            "function": "ui.request_tool_approval",
+            "args": {"tool": "echo", "arguments": "{}"},
+            "run_id": run_id,
+            "session_id": sess.id,
+            "approval_id": approval_id,
+        },
     )
     await asyncio.sleep(0.01)
 
@@ -116,10 +123,19 @@ async def _integration_flow():
             print(f"DEBUG: Got event {event_count}: type={event.type}")
             if event.type == "message_output_created":
                 events["msg"].append(event.item.raw_item.content[0].text)
-            elif event.type == "tool_approval_request":
-                await proxy._client.other.tool_approval_response(
-                    approval_id=event.item["approval_id"], approved=True
-                )
+            elif event.type == "client_request":
+                payload = event.item if isinstance(event.item, dict) else {}
+                if payload.get("function") == "ui.request_tool_approval":
+                    await proxy._client.other.client_response(
+                        request_id=payload.get("request_id"),
+                        ok=True,
+                        result={
+                            "approved": True,
+                            "always_approve": False,
+                            "error_message": None,
+                        },
+                        error=None,
+                    )
             elif event.type == "tool_called":
                 events["tool_call"].append((event.item.name, event.item.arguments))
             elif event.type == "tool_output":

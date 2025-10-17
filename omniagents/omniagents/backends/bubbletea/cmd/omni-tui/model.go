@@ -1,12 +1,12 @@
 package main
 
 import (
-    "encoding/json"
-    "fmt"
-    "os"
-    "strconv"
-    "strings"
-    "time"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
@@ -23,11 +23,11 @@ import (
 type AppState int
 
 const (
-    StateConnecting AppState = iota
-    StateReady
-    StateWaitingForResponse
-    StateApprovalRequired
-    StateSessionList
+	StateConnecting AppState = iota
+	StateReady
+	StateWaitingForResponse
+	StateApprovalRequired
+	StateSessionList
 )
 
 // keyMap defines keybindings for the application
@@ -124,12 +124,12 @@ type Model struct {
 	welcomeText string
 	useSafeMode bool
 
-    // Display
-    width  int
-    height int
+	// Display
+	width  int
+	height int
 
-    // Channel for sending messages to the program
-    msgChan chan tea.Msg
+	// Channel for sending messages to the program
+	msgChan chan tea.Msg
 
 	// Debug mode
 	debugMode bool
@@ -141,29 +141,29 @@ type Model struct {
 	pulseFrame int
 	pulseTimer int
 
-    // Double Ctrl+C tracking
-    firstCtrlCTime *time.Time // Track when first Ctrl+C was pressed
+	// Double Ctrl+C tracking
+	firstCtrlCTime *time.Time // Track when first Ctrl+C was pressed
 
-    // Usage tracking (updated via token events and run_end)
-    usageTotals *UsageDetails
-    // Current model info and last-turn delta input tokens
-    modelName         string
-    contextWindow     int
-    lastDeltaInputTok int
-    // Totals from last turn/run for stable context remaining calc
-    lastTotalsInputTok int
-    maxOutputTokens    int
+	// Usage tracking (updated via token events and run_end)
+	usageTotals *UsageDetails
+	// Current model info and last-turn delta input tokens
+	modelName         string
+	contextWindow     int
+	lastDeltaInputTok int
+	// Totals from last turn/run for stable context remaining calc
+	lastTotalsInputTok int
+	maxOutputTokens    int
 
-    // Status and retry display
-    statusOverride   string // when non-empty, overrides default status line
-    statusShowSpinner bool   // show spinner with override status
-    retryAttempt     int    // current retry attempt (1-based)
-    retryTotal       int    // total retry attempts planned
-    lastErrorMessage string // last transient error message
+	// Status and retry display
+	statusOverride    string // when non-empty, overrides default status line
+	statusShowSpinner bool   // show spinner with override status
+	retryAttempt      int    // current retry attempt (1-based)
+	retryTotal        int    // total retry attempts planned
+	lastErrorMessage  string // last transient error message
 
-    globalHistory []string
-    historyIndex  int
-    historyDraft  string
+	globalHistory []string
+	historyIndex  int
+	historyDraft  string
 }
 
 // Message represents a chat message
@@ -177,6 +177,7 @@ type Message struct {
 // ToolApprovalInfo contains approval request details
 type ToolApprovalInfo struct {
 	ApprovalID string
+	RequestID  string
 	Tool       string
 	Arguments  string
 	Metadata   map[string]interface{} // Rich metadata for approval UI
@@ -225,15 +226,15 @@ func NewModel(client *RPCClient, agentName string, welcomeText string, safeMode 
 	// Set styles for blurred state (same as focused for now)
 	ta.BlurredStyle = ta.FocusedStyle
 
-    // Customize key bindings:
-    // - Enter sends
-    // - Alt+Enter (Option+Enter on macOS) inserts a newline
-    // - Ctrl+J inserts a newline (portable fallback across terminals)
-    ta.KeyMap.InsertNewline = key.NewBinding(
-        key.WithKeys("alt+enter", "ctrl+j"),
-        // Show only Alt+Enter in the on-screen help to keep it simple
-        key.WithHelp("alt+enter", "new line"),
-    )
+	// Customize key bindings:
+	// - Enter sends
+	// - Alt+Enter (Option+Enter on macOS) inserts a newline
+	// - Ctrl+J inserts a newline (portable fallback across terminals)
+	ta.KeyMap.InsertNewline = key.NewBinding(
+		key.WithKeys("alt+enter", "ctrl+j"),
+		// Show only Alt+Enter in the on-screen help to keep it simple
+		key.WithHelp("alt+enter", "new line"),
+	)
 
 	// Initialize viewport
 	vp := viewport.New(80, 20)
@@ -301,6 +302,7 @@ type PulseTickMsg struct{}
 
 // ClearCtrlCMsg is sent to clear the first Ctrl+C state after timeout
 type ClearCtrlCMsg struct{}
+
 // (Auto-clear of status disabled by design; no ClearStatusMsg.)
 
 // max function is now in textarea.go
@@ -319,46 +321,49 @@ func (m Model) connect() tea.Cmd {
 			}
 		}
 
-        handlers := ParseEventHandlers(send)
-        for method, handler := range handlers {
-            m.rpcClient.RegisterHandler(method, handler)
-        }
+		handlers := ParseEventHandlers(send)
+		for method, handler := range handlers {
+			m.rpcClient.RegisterHandler(method, handler)
+		}
 
-        // Set up callback for when RPC receiveLoop is ready
-        m.rpcClient.SetOnReady(func() {
-            if m.debugMode {
-                fmt.Fprintf(os.Stderr, "[DEBUG] RPC receiveLoop is ready\n")
-            }
-            // Send a message indicating RPC is ready
-            send(RPCReadyMsg{})
+		// Set up callback for when RPC receiveLoop is ready
+		m.rpcClient.SetOnReady(func() {
+			if m.debugMode {
+				fmt.Fprintf(os.Stderr, "[DEBUG] RPC receiveLoop is ready\n")
+			}
+			// Send a message indicating RPC is ready
+			send(RPCReadyMsg{})
 
-            // Best-effort: advertise supported client functions
-            go func() {
-                // For now, advertise only ui.set_status
-                functions := []map[string]interface{}{
-                    {
-                        "name":        "ui.set_status",
-                        "description": "Override the inline status text (non-blocking)",
-                    },
-                }
-                if err := m.rpcClient.ClientFunctions(1, functions); err != nil && m.debugMode {
-                    fmt.Fprintf(os.Stderr, "[DEBUG] client_functions failed: %v\n", err)
-                }
-            }()
-        })
+			// Best-effort: advertise supported client functions
+			go func() {
+				functions := []map[string]interface{}{
+					{
+						"name":        "ui.set_status",
+						"description": "Override the inline status text (non-blocking)",
+					},
+					{
+						"name":        "ui.request_tool_approval",
+						"description": "Prompt the user to approve tool execution",
+					},
+				}
+				if err := m.rpcClient.ClientFunctions(1, functions); err != nil && m.debugMode {
+					fmt.Fprintf(os.Stderr, "[DEBUG] client_functions failed: %v\n", err)
+				}
+			}()
+		})
 
-        // Notify UI when the socket disconnects so we don't get stuck in a
-        // waiting state after server-side failures.
-        m.rpcClient.SetOnDisconnect(func(err error) {
-            if m.debugMode {
-                if err != nil {
-                    fmt.Fprintf(os.Stderr, "[DEBUG] WebSocket disconnected: %v\n", err)
-                } else {
-                    fmt.Fprintf(os.Stderr, "[DEBUG] WebSocket disconnected (no error)\n")
-                }
-            }
-            send(DisconnectedMsg{})
-        })
+		// Notify UI when the socket disconnects so we don't get stuck in a
+		// waiting state after server-side failures.
+		m.rpcClient.SetOnDisconnect(func(err error) {
+			if m.debugMode {
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[DEBUG] WebSocket disconnected: %v\n", err)
+				} else {
+					fmt.Fprintf(os.Stderr, "[DEBUG] WebSocket disconnected (no error)\n")
+				}
+			}
+			send(DisconnectedMsg{})
+		})
 
 		if m.debugMode {
 			fmt.Fprintf(os.Stderr, "[DEBUG] Registered %d event handlers\n", len(handlers))
@@ -388,27 +393,27 @@ type ChannelMsg struct {
 
 // listenForMessages listens for messages from the RPC client
 func (m Model) listenForMessages() tea.Cmd {
-    // Never block the UI thread waiting on channel reads. Some Bubble Tea
-    // versions/environments execute commands synchronously which would hang the
-    // interface if we block here. Instead, poll the channel on a short timer
-    // and return immediately. Any message found is wrapped and delivered as a
-    // Tea message; otherwise we return nil.
-    return tea.Tick(30*time.Millisecond, func(t time.Time) tea.Msg {
-        if m.msgChan == nil {
-            // Return a noop ChannelMsg so Update will re-schedule the next tick
-            return ChannelMsg{Msg: nil}
-        }
-        select {
-        case raw := <-m.msgChan:
-            if m.debugMode {
-                fmt.Fprintf(os.Stderr, "[DEBUG] listenForMessages: received message: %T\n", raw)
-            }
-            return ChannelMsg{Msg: raw}
-        default:
-            // No message ready; return a noop to keep the listener alive
-            return ChannelMsg{Msg: nil}
-        }
-    })
+	// Never block the UI thread waiting on channel reads. Some Bubble Tea
+	// versions/environments execute commands synchronously which would hang the
+	// interface if we block here. Instead, poll the channel on a short timer
+	// and return immediately. Any message found is wrapped and delivered as a
+	// Tea message; otherwise we return nil.
+	return tea.Tick(30*time.Millisecond, func(t time.Time) tea.Msg {
+		if m.msgChan == nil {
+			// Return a noop ChannelMsg so Update will re-schedule the next tick
+			return ChannelMsg{Msg: nil}
+		}
+		select {
+		case raw := <-m.msgChan:
+			if m.debugMode {
+				fmt.Fprintf(os.Stderr, "[DEBUG] listenForMessages: received message: %T\n", raw)
+			}
+			return ChannelMsg{Msg: raw}
+		default:
+			// No message ready; return a noop to keep the listener alive
+			return ChannelMsg{Msg: nil}
+		}
+	})
 }
 
 // Update handles messages and updates the model
@@ -449,10 +454,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			})
 
 		case tea.KeyEsc:
-			if m.state == StateApprovalRequired {
+			if m.state == StateApprovalRequired && m.pendingTool != nil {
 				// Deny the approval when Escape is pressed
-				// Save approval ID before clearing
-				approvalID := m.pendingTool.ApprovalID
+				reqID := m.pendingTool.RequestID
 
 				// Remove approval message from messages
 				for i := len(m.messages) - 1; i >= 0; i-- {
@@ -484,8 +488,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(
 					tea.ClearScreen,
 					func() tea.Msg {
-						// Send denial (approved=false, alwaysApprove=false)
-						err := m.rpcClient.ToolApprovalResponse(approvalID, false, false)
+						if reqID == "" {
+							return nil
+						}
+						err := m.rpcClient.ClientResponse(
+							reqID,
+							true,
+							map[string]interface{}{
+								"approved":       false,
+								"always_approve": false,
+								"error_message":  "User rejected tool call",
+							},
+							nil,
+						)
 						if err != nil {
 							return ErrorMsg{Error: err}
 						}
@@ -507,7 +522,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 				}
-
 
 				// Change state back to ready
 				m.state = StateReady
@@ -683,14 +697,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				headerLines = 7 // Add lines for session display
 			}
 		}
-        // Calculate footer lines based on textarea height including border frame
-        inputFrameV := m.input.FocusedStyle.Base.GetVerticalFrameSize()
-        footerLines := m.input.Height() + inputFrameV + 2 // textarea lines + frame + help(1) + gap(1)
-        if m.state == StateApprovalRequired {
-            footerLines = 3 // Just help text when approval is in the message list
-        }
-        topSpacing := 2 // Always 2 lines of top spacing
-        m.viewport.Height = msg.Height - headerLines - footerLines - topSpacing
+		// Calculate footer lines based on textarea height including border frame
+		inputFrameV := m.input.FocusedStyle.Base.GetVerticalFrameSize()
+		footerLines := m.input.Height() + inputFrameV + 2 // textarea lines + frame + help(1) + gap(1)
+		if m.state == StateApprovalRequired {
+			footerLines = 3 // Just help text when approval is in the message list
+		}
+		topSpacing := 2 // Always 2 lines of top spacing
+		m.viewport.Height = msg.Height - headerLines - footerLines - topSpacing
 
 		// Update textarea width to align with messages padding
 		m.input.SetWidth(msg.Width - 4)
@@ -707,7 +721,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.approvalList.SetSize(listWidth, m.approvalList.Height())
 		}
 
-case ConnectedMsg:
+	case ConnectedMsg:
 		if m.debugMode {
 			fmt.Fprintf(os.Stderr, "[DEBUG] Received ConnectedMsg, changing state from %v to StateReady\n", m.state)
 		}
@@ -737,21 +751,21 @@ case ConnectedMsg:
 			cmds = append(cmds, cmd)
 		}
 
-case DisconnectedMsg:
-        // Non-breaking UX: show a non-fatal status and keep UI usable
-        m.state = StateReady
-        m.statusOverride = "Disconnected from server"
-        m.statusShowSpinner = false
-        m.updateViewport()
+	case DisconnectedMsg:
+		// Non-breaking UX: show a non-fatal status and keep UI usable
+		m.state = StateReady
+		m.statusOverride = "Disconnected from server"
+		m.statusShowSpinner = false
+		m.updateViewport()
 
-    case ErrorMsg:
-        // Treat RPC errors (e.g., transient timeouts) as non-breaking; show status and stay interactive
-        m.lastErrorMessage = msg.Error.Error()
-        m.statusOverride = fmt.Sprintf("Error: %s", m.lastErrorMessage)
-        m.statusShowSpinner = false
-        // Return to ready so user can retry or continue
-        m.state = StateReady
-        m.updateViewport()
+	case ErrorMsg:
+		// Treat RPC errors (e.g., transient timeouts) as non-breaking; show status and stay interactive
+		m.lastErrorMessage = msg.Error.Error()
+		m.statusOverride = fmt.Sprintf("Error: %s", m.lastErrorMessage)
+		m.statusShowSpinner = false
+		// Return to ready so user can retry or continue
+		m.state = StateReady
+		m.updateViewport()
 
 	case ToolCalledMsg:
 		// Clear any transient retry/progress status once we see forward progress
@@ -766,30 +780,30 @@ case DisconnectedMsg:
 				Name:      msg.Tool,
 				Arguments: msg.Input,
 				CallID:    msg.CallID,
-                Running:   true,
+				Running:   true,
 			},
 		})
 		m.updateViewport()
 
-    case ToolResultMsg:
-        // Clear any transient retry/progress status once we see forward progress
-        if m.state == StateWaitingForResponse && m.statusOverride != "" {
-            m.statusOverride = ""
-            m.statusShowSpinner = false
-        }
-        // Find the corresponding tool call and update it
-        for i := len(m.messages) - 1; i >= 0; i-- {
-            if m.messages[i].Role == "tool_call" && m.messages[i].ToolCall != nil {
-                if m.messages[i].ToolCall.CallID == msg.CallID {
-                    m.messages[i].ToolCall.Result = msg.Output
-                    m.messages[i].ToolCall.Metadata = msg.Metadata
-                    // Mark tool as no longer running even if output is empty or metadata-only
-                    m.messages[i].ToolCall.Running = false
-                    break
-                }
-            }
-        }
-        m.updateViewport()
+	case ToolResultMsg:
+		// Clear any transient retry/progress status once we see forward progress
+		if m.state == StateWaitingForResponse && m.statusOverride != "" {
+			m.statusOverride = ""
+			m.statusShowSpinner = false
+		}
+		// Find the corresponding tool call and update it
+		for i := len(m.messages) - 1; i >= 0; i-- {
+			if m.messages[i].Role == "tool_call" && m.messages[i].ToolCall != nil {
+				if m.messages[i].ToolCall.CallID == msg.CallID {
+					m.messages[i].ToolCall.Result = msg.Output
+					m.messages[i].ToolCall.Metadata = msg.Metadata
+					// Mark tool as no longer running even if output is empty or metadata-only
+					m.messages[i].ToolCall.Running = false
+					break
+				}
+			}
+		}
+		m.updateViewport()
 
 	case MessageOutputMsg:
 		// Clear any transient retry/progress status once we see forward progress
@@ -814,10 +828,13 @@ case DisconnectedMsg:
 	case ToolApprovalRequestMsg:
 		m.state = StateApprovalRequired
 		m.pendingTool = &ToolApprovalRequestEvent{
+			RequestID:  msg.RequestID,
 			ApprovalID: msg.ApprovalID,
 			Tool:       msg.Tool,
 			Arguments:  msg.Arguments,
 			Metadata:   msg.Metadata,
+			SessionID:  msg.SessionID,
+			RunID:      msg.RunID,
 		}
 		// Create approval list sized to the inner width of the approval box
 		listWidth := m.viewport.Width - 6 // borders (2) + padding (4)
@@ -830,6 +847,7 @@ case DisconnectedMsg:
 			Role: "approval_request",
 			Approval: &ToolApprovalInfo{
 				ApprovalID: msg.ApprovalID,
+				RequestID:  msg.RequestID,
 				Tool:       msg.Tool,
 				Arguments:  msg.Arguments,
 				Metadata:   msg.Metadata,
@@ -860,18 +878,18 @@ case DisconnectedMsg:
 		// Only change state to Ready if not waiting for approval
 		if m.state != StateApprovalRequired {
 			// If the run ended with an error and error details are present, show it as a non-breaking status
-            if strings.ToLower(msg.EndReason) == "error" && msg.Error != nil {
-                m.lastErrorMessage = msg.Error.Message
-                m.state = StateReady
-                // Show minimal, non-judgmental status; do not block UI
-                m.statusOverride = fmt.Sprintf("Error: %s", m.lastErrorMessage)
-                m.statusShowSpinner = false
-            } else {
-                m.state = StateReady
-                // Clear any transient retry/progress status on successful completion
-                m.statusOverride = ""
-                m.statusShowSpinner = false
-            }
+			if strings.ToLower(msg.EndReason) == "error" && msg.Error != nil {
+				m.lastErrorMessage = msg.Error.Message
+				m.state = StateReady
+				// Show minimal, non-judgmental status; do not block UI
+				m.statusOverride = fmt.Sprintf("Error: %s", m.lastErrorMessage)
+				m.statusShowSpinner = false
+			} else {
+				m.state = StateReady
+				// Clear any transient retry/progress status on successful completion
+				m.statusOverride = ""
+				m.statusShowSpinner = false
+			}
 		}
 		m.currentRunID = ""
 		// Capture final usage totals if provided
@@ -889,7 +907,7 @@ case DisconnectedMsg:
 		// Don't clear pendingTool or approvalList - let user handle approval
 		m.updateViewport()
 
-    case TokenUsageMsg:
+	case TokenUsageMsg:
 		// Update running totals so footer can reflect near-real-time usage
 		totals := msg.Totals
 		m.usageTotals = &totals
@@ -901,86 +919,86 @@ case DisconnectedMsg:
 			m.contextWindow = msg.ContextWindow
 		}
 		// Track last turn's input tokens for context usage estimation
-        m.lastDeltaInputTok = msg.Delta.InputTokens
+		m.lastDeltaInputTok = msg.Delta.InputTokens
 
-    case RunStatusMsg:
-        // Ignore status updates that don't belong to the active run to avoid
-        // flipping state after the run has already ended.
-        if m.currentRunID == "" || (msg.RunID != "" && msg.RunID != m.currentRunID) {
-            if m.debugMode {
-                fmt.Fprintf(os.Stderr, "[DEBUG] Ignoring run_status for run_id=%s (current=%s)\n", msg.RunID, m.currentRunID)
-            }
-            break
-        }
-        // Server indicates it is retrying internally after a transient error
-        m.retryAttempt = msg.Attempt
-        m.retryTotal = msg.Total
-        m.lastErrorMessage = msg.Message
-        // Show retry status while we continue waiting for response (neutral wording).
-        if m.retryTotal > 0 && m.retryAttempt > 0 {
-            m.statusOverride = fmt.Sprintf("Retrying %d/%d: %s", m.retryAttempt, m.retryTotal, m.lastErrorMessage)
-        } else {
-            m.statusOverride = fmt.Sprintf("Retrying: %s", m.lastErrorMessage)
-        }
-        m.statusShowSpinner = true
-        // Ensure we stay in waiting state so spinner/status are visible
-        if m.state != StateApprovalRequired {
-            m.state = StateWaitingForResponse
-        }
-        m.updateViewportContent()
+	case RunStatusMsg:
+		// Ignore status updates that don't belong to the active run to avoid
+		// flipping state after the run has already ended.
+		if m.currentRunID == "" || (msg.RunID != "" && msg.RunID != m.currentRunID) {
+			if m.debugMode {
+				fmt.Fprintf(os.Stderr, "[DEBUG] Ignoring run_status for run_id=%s (current=%s)\n", msg.RunID, m.currentRunID)
+			}
+			break
+		}
+		// Server indicates it is retrying internally after a transient error
+		m.retryAttempt = msg.Attempt
+		m.retryTotal = msg.Total
+		m.lastErrorMessage = msg.Message
+		// Show retry status while we continue waiting for response (neutral wording).
+		if m.retryTotal > 0 && m.retryAttempt > 0 {
+			m.statusOverride = fmt.Sprintf("Retrying %d/%d: %s", m.retryAttempt, m.retryTotal, m.lastErrorMessage)
+		} else {
+			m.statusOverride = fmt.Sprintf("Retrying: %s", m.lastErrorMessage)
+		}
+		m.statusShowSpinner = true
+		// Ensure we stay in waiting state so spinner/status are visible
+		if m.state != StateApprovalRequired {
+			m.state = StateWaitingForResponse
+		}
+		m.updateViewportContent()
 
-    case CommandResultMsg:
-        // Show command output as an assistant message
-        if msg.Content != "" {
-            m.messages = append(m.messages, Message{Role: "assistant", Content: msg.Content})
-            m.updateViewport()
-        }
+	case CommandResultMsg:
+		// Show command output as an assistant message
+		if msg.Content != "" {
+			m.messages = append(m.messages, Message{Role: "assistant", Content: msg.Content})
+			m.updateViewport()
+		}
 
 	case ClientRequestMsg:
-        // Handle server-initiated client function calls without changing state
-        // Supported: ui.set_status
-        fn := strings.ToLower(msg.Function)
-        handled := false
-        var handleErr error
-        if fn == "ui.set_status" {
-            // Expect args: text (string), show_spinner (bool, optional)
-            // Do not change m.state; simply override the status line
-            if text, ok := msg.Args["text"].(string); ok {
-                m.statusOverride = text
-            } else {
-                m.statusOverride = ""
-            }
-            show := true
-            if v, ok := msg.Args["show_spinner"]; ok {
-                if b, okb := v.(bool); okb {
-                    show = b
-                }
-            }
-            m.statusShowSpinner = show
-            m.updateViewportContent()
-            handled = true
-        }
+		// Handle server-initiated client function calls without changing state
+		// Supported: ui.set_status
+		fn := strings.ToLower(msg.Function)
+		handled := false
+		var handleErr error
+		if fn == "ui.set_status" {
+			// Expect args: text (string), show_spinner (bool, optional)
+			// Do not change m.state; simply override the status line
+			if text, ok := msg.Args["text"].(string); ok {
+				m.statusOverride = text
+			} else {
+				m.statusOverride = ""
+			}
+			show := true
+			if v, ok := msg.Args["show_spinner"]; ok {
+				if b, okb := v.(bool); okb {
+					show = b
+				}
+			}
+			m.statusShowSpinner = show
+			m.updateViewportContent()
+			handled = true
+		}
 
-        // Reply with client_response (best-effort)
-        go func() {
-            var res map[string]interface{}
-            var errObj map[string]interface{}
-            ok := handled && handleErr == nil
-            if !handled {
-                errObj = map[string]interface{}{
-                    "message": fmt.Sprintf("Unsupported client function: %s", msg.Function),
-                    "type":    "UnsupportedFunction",
-                }
-            } else if handleErr != nil {
-                errObj = map[string]interface{}{
-                    "message": handleErr.Error(),
-                    "type":    "ClientFunctionError",
-                }
-            } else {
-                res = map[string]interface{}{"ack": true}
-            }
-            _ = m.rpcClient.ClientResponse(msg.RequestID, ok, res, errObj)
-        }()
+		// Reply with client_response (best-effort)
+		go func() {
+			var res map[string]interface{}
+			var errObj map[string]interface{}
+			ok := handled && handleErr == nil
+			if !handled {
+				errObj = map[string]interface{}{
+					"message": fmt.Sprintf("Unsupported client function: %s", msg.Function),
+					"type":    "UnsupportedFunction",
+				}
+			} else if handleErr != nil {
+				errObj = map[string]interface{}{
+					"message": handleErr.Error(),
+					"type":    "ClientFunctionError",
+				}
+			} else {
+				res = map[string]interface{}{"ack": true}
+			}
+			_ = m.rpcClient.ClientResponse(msg.RequestID, ok, res, errObj)
+		}()
 
 	case RPCReadyMsg:
 		if m.debugMode {
@@ -1060,7 +1078,7 @@ case DisconnectedMsg:
 		m.updateViewport()
 		cmds = append(cmds, m.startRun(text))
 
-    }
+	}
 
 	// Update viewport only with mouse events (not keyboard)
 	// This prevents viewport keyboard shortcuts from interfering with text input
@@ -1086,26 +1104,26 @@ case DisconnectedMsg:
 		}
 	}
 
-    // Handle pulse animation tick
-    if _, isPulseTick := msg.(PulseTickMsg); isPulseTick {
-        // Check if any tool calls are running
-        hasRunningTools := false
-        for _, message := range m.messages {
-            if message.Role == "tool_call" && message.ToolCall != nil && message.ToolCall.Running {
-                hasRunningTools = true
-                break
-            }
-        }
+	// Handle pulse animation tick
+	if _, isPulseTick := msg.(PulseTickMsg); isPulseTick {
+		// Check if any tool calls are running
+		hasRunningTools := false
+		for _, message := range m.messages {
+			if message.Role == "tool_call" && message.ToolCall != nil && message.ToolCall.Running {
+				hasRunningTools = true
+				break
+			}
+		}
 
-        if hasRunningTools {
-            // Advance pulse frame
-            m.pulseFrame = (m.pulseFrame + 1) % 8 // 8 frames for smooth pulse
-            m.updateViewportContent()             // Use content-only update to preserve scroll
-        }
+		if hasRunningTools {
+			// Advance pulse frame
+			m.pulseFrame = (m.pulseFrame + 1) % 8 // 8 frames for smooth pulse
+			m.updateViewportContent()             // Use content-only update to preserve scroll
+		}
 
-        // Continue the pulse animation
-        cmds = append(cmds, m.tickPulse())
-    }
+		// Continue the pulse animation
+		cmds = append(cmds, m.tickPulse())
+	}
 
 	// Update text input (unless in approval mode or already updated)
 	if m.state != StateApprovalRequired && !textareaAlreadyUpdated {
@@ -1160,17 +1178,17 @@ case DisconnectedMsg:
 			// Check if we're at the bottom before resizing
 			wasAtBottom := m.viewport.AtBottom()
 
-            headerLines := 0
-            if len(m.messages) == 0 {
-                headerLines = 5
-                if m.sessionID != "" {
-                    headerLines = 7
-                }
-            }
-            inputFrameV := m.input.FocusedStyle.Base.GetVerticalFrameSize()
-            footerLines := m.input.Height() + inputFrameV + 2 // textarea lines + frame + help + gap
-            topSpacing := 2                     // Always 2 lines of top spacing
-            newViewportHeight := m.height - headerLines - footerLines - topSpacing
+			headerLines := 0
+			if len(m.messages) == 0 {
+				headerLines = 5
+				if m.sessionID != "" {
+					headerLines = 7
+				}
+			}
+			inputFrameV := m.input.FocusedStyle.Base.GetVerticalFrameSize()
+			footerLines := m.input.Height() + inputFrameV + 2 // textarea lines + frame + help + gap
+			topSpacing := 2                                   // Always 2 lines of top spacing
+			newViewportHeight := m.height - headerLines - footerLines - topSpacing
 
 			// Ensure minimum viewport height of 5 lines
 			minViewportHeight := 5
@@ -1200,11 +1218,11 @@ case DisconnectedMsg:
 
 // View renders the UI
 func (m Model) View() string {
-    if m.state == StateConnecting {
-        return m.renderConnecting()
-    } else if m.state == StateSessionList {
-        return m.renderSessionList()
-    }
+	if m.state == StateConnecting {
+		return m.renderConnecting()
+	} else if m.state == StateSessionList {
+		return m.renderSessionList()
+	}
 
 	// Main chat view with proper layout
 	var header, middle, footer string
@@ -1549,20 +1567,20 @@ func (m Model) createSimpleASCII(text string) []string {
 }
 
 func (m Model) renderStatusLine() string {
-    var status string
-    var showSpinner bool
+	var status string
+	var showSpinner bool
 
-    switch m.state {
-    case StateReady:
-        status = "" // Will be overridden by statusOverride if present
-        showSpinner = false
-    case StateWaitingForResponse:
-        if m.currentRunID != "" {
-            status = "Thinking... (esc to cancel)"
-        } else {
-            status = "Thinking..."
-        }
-        showSpinner = true
+	switch m.state {
+	case StateReady:
+		status = "" // Will be overridden by statusOverride if present
+		showSpinner = false
+	case StateWaitingForResponse:
+		if m.currentRunID != "" {
+			status = "Thinking... (esc to cancel)"
+		} else {
+			status = "Thinking..."
+		}
+		showSpinner = true
 	case StateApprovalRequired:
 		status = "" // Don't show status - approval dialog is in message list
 		showSpinner = false
@@ -1572,65 +1590,65 @@ func (m Model) renderStatusLine() string {
 	default:
 		status = ""
 		showSpinner = false
-    }
+	}
 
-    // If there's an override (e.g., retrying or non-blocking error), prefer that
-    if m.statusOverride != "" {
-        status = m.statusOverride
-        showSpinner = m.statusShowSpinner
-    }
+	// If there's an override (e.g., retrying or non-blocking error), prefer that
+	if m.statusOverride != "" {
+		status = m.statusOverride
+		showSpinner = m.statusShowSpinner
+	}
 
-    if status == "" {
-        return ""
-    }
+	if status == "" {
+		return ""
+	}
 
-    // Sanitize status text to prevent ANSI/OSC control sequences from corrupting the TUI
-    status = safeText(status)
+	// Sanitize status text to prevent ANSI/OSC control sequences from corrupting the TUI
+	status = safeText(status)
 
-    // Choose color: semantic error color when the status looks like an error; otherwise spinner color
-    var statusStyle lipgloss.Style
-    if strings.HasPrefix(strings.ToLower(status), "error:") {
-        statusStyle = lipgloss.NewStyle().
-            Foreground(Styles.Error.GetForeground()).
-            Italic(true)
-    } else {
-        statusStyle = lipgloss.NewStyle().
-            Foreground(Styles.Spinner.GetForeground()).
-            Italic(true)
-    }
+	// Choose color: semantic error color when the status looks like an error; otherwise spinner color
+	var statusStyle lipgloss.Style
+	if strings.HasPrefix(strings.ToLower(status), "error:") {
+		statusStyle = lipgloss.NewStyle().
+			Foreground(Styles.Error.GetForeground()).
+			Italic(true)
+	} else {
+		statusStyle = lipgloss.NewStyle().
+			Foreground(Styles.Spinner.GetForeground()).
+			Italic(true)
+	}
 
-    // Build a wrapped, multi-line status with proper alignment
-    var prefix string
-    if showSpinner {
-        // Spinner view includes a trailing space
-        prefix = m.spinner.View()
-    } else {
-        // Align with messages when not showing a spinner
-        prefix = "  "
-    }
+	// Build a wrapped, multi-line status with proper alignment
+	var prefix string
+	if showSpinner {
+		// Spinner view includes a trailing space
+		prefix = m.spinner.View()
+	} else {
+		// Align with messages when not showing a spinner
+		prefix = "  "
+	}
 
-    // Compute available width for the status text after the prefix
-    available := m.viewport.Width - lipgloss.Width(prefix)
-    if available < 1 {
-        available = 1
-    }
+	// Compute available width for the status text after the prefix
+	available := m.viewport.Width - lipgloss.Width(prefix)
+	if available < 1 {
+		available = 1
+	}
 
-    // Wrap the status text
-    parts := wrapLineHard(status, available)
-    if len(parts) == 0 {
-        return ""
-    }
+	// Wrap the status text
+	parts := wrapLineHard(status, available)
+	if len(parts) == 0 {
+		return ""
+	}
 
-    // Compose multi-line output, prefix on the first line; indent on continuations
-    var b strings.Builder
-    b.WriteString(prefix)
-    b.WriteString(statusStyle.Render(parts[0]))
-    for i := 1; i < len(parts); i++ {
-        b.WriteString("\n")
-        b.WriteString(strings.Repeat(" ", lipgloss.Width(prefix)))
-        b.WriteString(statusStyle.Render(parts[i]))
-    }
-    return b.String()
+	// Compose multi-line output, prefix on the first line; indent on continuations
+	var b strings.Builder
+	b.WriteString(prefix)
+	b.WriteString(statusStyle.Render(parts[0]))
+	for i := 1; i < len(parts); i++ {
+		b.WriteString("\n")
+		b.WriteString(strings.Repeat(" ", lipgloss.Width(prefix)))
+		b.WriteString(statusStyle.Render(parts[i]))
+	}
+	return b.String()
 }
 
 func (m Model) renderMessages() string {
@@ -1663,72 +1681,72 @@ func (m Model) renderMessages() string {
 }
 
 func (m Model) renderInput() string {
-    var s strings.Builder
+	var s strings.Builder
 
-    // Input field (no padding - border aligns with message indicators)
-    s.WriteString(m.input.View())
-    s.WriteString("\n")
+	// Input field (no padding - border aligns with message indicators)
+	s.WriteString(m.input.View())
+	s.WriteString("\n")
 
-    // Footer line: help on the left, usage (context remaining) on the right
-    usage, pct, hasPct := m.getUsageFooterText()
-    helpView := m.getContextualHelp()
-    if usage != "" || helpView != "" {
-        // Available content width inside the padded layout area
-        contentWidth := m.width - 4
-        left := helpView // help already styled
-        // Choose style based on remaining context percentage
-        rightStyle := Styles.Help
-        if hasPct {
-            if pct <= 10 {
-                rightStyle = Styles.Error
-            } else if pct <= 25 {
-                rightStyle = Styles.Warning
-            }
-        }
-        right := rightStyle.Render(usage)
-        // Compute visual widths (ignore ANSI sequences)
-        leftW := lipgloss.Width(left)
-        rightW := lipgloss.Width(right)
+	// Footer line: help on the left, usage (context remaining) on the right
+	usage, pct, hasPct := m.getUsageFooterText()
+	helpView := m.getContextualHelp()
+	if usage != "" || helpView != "" {
+		// Available content width inside the padded layout area
+		contentWidth := m.width - 4
+		left := helpView // help already styled
+		// Choose style based on remaining context percentage
+		rightStyle := Styles.Help
+		if hasPct {
+			if pct <= 10 {
+				rightStyle = Styles.Error
+			} else if pct <= 25 {
+				rightStyle = Styles.Warning
+			}
+		}
+		right := rightStyle.Render(usage)
+		// Compute visual widths (ignore ANSI sequences)
+		leftW := lipgloss.Width(left)
+		rightW := lipgloss.Width(right)
 
-        // Space between left text and right text
-        gap := contentWidth - leftW - rightW
-        if gap < 1 {
-            gap = 1
-        }
+		// Space between left text and right text
+		gap := contentWidth - leftW - rightW
+		if gap < 1 {
+			gap = 1
+		}
 
-        // Left content
-        s.WriteString(left)
-        // Gap between left and right content
-        s.WriteString(strings.Repeat(" ", gap))
-        // Right content
-        s.WriteString(right)
-        // No trailing padding; the 2-column right margin is implicit by reducing
-        // contentWidth above so the token ends two columns before the edge.
-        s.WriteString("\n")
-    }
+		// Left content
+		s.WriteString(left)
+		// Gap between left and right content
+		s.WriteString(strings.Repeat(" ", gap))
+		// Right content
+		s.WriteString(right)
+		// No trailing padding; the 2-column right margin is implicit by reducing
+		// contentWidth above so the token ends two columns before the edge.
+		s.WriteString("\n")
+	}
 
-    return s.String()
+	return s.String()
 }
 
 // getUsageFooterText formats the usage summary for the footer
 func (m Model) getUsageFooterText() (string, int, bool) {
-    // Use totals.total_tokens from the last completed turn. That entire
-    // amount becomes the next run's input size (prior input + prior output).
-    if m.modelName != "" && m.contextWindow > 0 && m.usageTotals != nil {
-        used := m.usageTotals.TotalTokens
-        remaining := m.contextWindow - used
-        if remaining < 0 {
-            remaining = 0
-        }
-        pct := (remaining * 100) / m.contextWindow
-        if pct < 0 {
-            pct = 0
-        } else if pct > 100 {
-            pct = 100
-        }
-        return fmt.Sprintf("context remaining: %d%% • %s", pct, m.modelName), pct, true
-    }
-    return "", 0, false
+	// Use totals.total_tokens from the last completed turn. That entire
+	// amount becomes the next run's input size (prior input + prior output).
+	if m.modelName != "" && m.contextWindow > 0 && m.usageTotals != nil {
+		used := m.usageTotals.TotalTokens
+		remaining := m.contextWindow - used
+		if remaining < 0 {
+			remaining = 0
+		}
+		pct := (remaining * 100) / m.contextWindow
+		if pct < 0 {
+			pct = 0
+		} else if pct > 100 {
+			pct = 100
+		}
+		return fmt.Sprintf("context remaining: %d%% • %s", pct, m.modelName), pct, true
+	}
+	return "", 0, false
 }
 
 // formatWithCommas formats an integer with thousands separators (e.g., 12345 -> "12,345")
@@ -1782,22 +1800,22 @@ func (m Model) getContextualHelp() string {
 			helpStyle.Render("or wait to continue")
 	}
 
-    switch m.state {
-    case StateReady:
-        contextKeys = []key.Binding{
-            key.NewBinding(
-                key.WithKeys("enter"),
-                key.WithHelp("enter", "send"),
-            ),
-            key.NewBinding(
-                // Only advertise Alt+Enter in help; Ctrl+J remains a hidden fallback
-                key.WithKeys("alt+enter"),
-                key.WithHelp("alt+enter", "new line"),
-            ),
-            key.NewBinding(
-                key.WithKeys("ctrl+c"),
-                key.WithHelp("ctrl+c", "quit"),
-            ),
+	switch m.state {
+	case StateReady:
+		contextKeys = []key.Binding{
+			key.NewBinding(
+				key.WithKeys("enter"),
+				key.WithHelp("enter", "send"),
+			),
+			key.NewBinding(
+				// Only advertise Alt+Enter in help; Ctrl+J remains a hidden fallback
+				key.WithKeys("alt+enter"),
+				key.WithHelp("alt+enter", "new line"),
+			),
+			key.NewBinding(
+				key.WithKeys("ctrl+c"),
+				key.WithHelp("ctrl+c", "quit"),
+			),
 		}
 	case StateWaitingForResponse:
 		contextKeys = []key.Binding{
@@ -1868,10 +1886,10 @@ func (m Model) getContextualHelp() string {
 }
 
 func (m Model) renderConnecting() string {
-    connectStyle := lipgloss.NewStyle().
-        Foreground(Styles.Info.GetForeground())
+	connectStyle := lipgloss.NewStyle().
+		Foreground(Styles.Info.GetForeground())
 
-    return connectStyle.Render("Connecting to server...")
+	return connectStyle.Render("Connecting to server...")
 }
 
 func (m Model) renderSessionList() string {
@@ -1976,41 +1994,41 @@ func (m Model) renderSessionList() string {
 // Helper methods for actions
 
 func (m Model) sendMessage() (Model, tea.Cmd) {
-    text := strings.TrimSpace(m.input.Value())
-    if text == "" {
-        return m, nil
-    }
+	text := strings.TrimSpace(m.input.Value())
+	if text == "" {
+		return m, nil
+	}
 
-    // Slash commands: handle locally without invoking the model
-    if strings.HasPrefix(text, "/") {
-        // Clear input and route ALL slash commands through handler.
-        // The handler will try built-ins, then server functions, and
-        // if not found will emit a fallback message to send to the LLM.
-        m.input.SetValue("")
-        return m, m.handleSlashCommand(text)
-    }
+	// Slash commands: handle locally without invoking the model
+	if strings.HasPrefix(text, "/") {
+		// Clear input and route ALL slash commands through handler.
+		// The handler will try built-ins, then server functions, and
+		// if not found will emit a fallback message to send to the LLM.
+		m.input.SetValue("")
+		return m, m.handleSlashCommand(text)
+	}
 
-    // Add user message
-    m.messages = append(m.messages, Message{
-        Role:    "user",
-        Content: text,
-    })
+	// Add user message
+	m.messages = append(m.messages, Message{
+		Role:    "user",
+		Content: text,
+	})
 
-    if len(m.globalHistory) == 0 || m.globalHistory[len(m.globalHistory)-1] != text {
-        m.globalHistory = append(m.globalHistory, text)
-    }
-    m.historyIndex = len(m.globalHistory)
+	if len(m.globalHistory) == 0 || m.globalHistory[len(m.globalHistory)-1] != text {
+		m.globalHistory = append(m.globalHistory, text)
+	}
+	m.historyIndex = len(m.globalHistory)
 
 	// Clear input
 	m.input.SetValue("")
 
-    // If this is the first message, recalculate viewport height since header will disappear
-    if len(m.messages) == 1 {
-        inputFrameV := m.input.FocusedStyle.Base.GetVerticalFrameSize()
-        footerLines := m.input.Height() + inputFrameV + 2 // textarea lines + frame + help + gap
-        // No header anymore, but still 2 lines of top spacing
-        m.viewport.Height = m.height - 2 - footerLines
-    }
+	// If this is the first message, recalculate viewport height since header will disappear
+	if len(m.messages) == 1 {
+		inputFrameV := m.input.FocusedStyle.Base.GetVerticalFrameSize()
+		footerLines := m.input.Height() + inputFrameV + 2 // textarea lines + frame + help + gap
+		// No header anymore, but still 2 lines of top spacing
+		m.viewport.Height = m.height - 2 - footerLines
+	}
 
 	// Update state
 	m.state = StateWaitingForResponse
@@ -2021,135 +2039,135 @@ func (m Model) sendMessage() (Model, tea.Cmd) {
 	m.updateViewport()
 
 	// Start run
-    return m, m.startRun(text)
+	return m, m.startRun(text)
 }
 
 // CommandResultMsg carries the textual result of a slash command
 type CommandResultMsg struct {
-    Content string
+	Content string
 }
 
 // FallbackToLLMMsg indicates a slash command should be treated as a normal message
 // and sent to the LLM after failing to match server functions.
 type FallbackToLLMMsg struct {
-    Text string
+	Text string
 }
 
 // handleSlashCommand executes built-in slash commands and returns a Tea command
 // that will emit either CommandResultMsg or ErrorMsg when complete.
 func (m Model) handleSlashCommand(cmd string) tea.Cmd {
-    return func() tea.Msg {
-        // Normalize
-        parts := strings.Fields(cmd)
-        if len(parts) == 0 {
-            return CommandResultMsg{Content: ""}
-        }
+	return func() tea.Msg {
+		// Normalize
+		parts := strings.Fields(cmd)
+		if len(parts) == 0 {
+			return CommandResultMsg{Content: ""}
+		}
 
-        name := strings.ToLower(parts[0]) // e.g., "/set_note"
-        arg := ""
-        if len(parts) > 1 {
-            // Preserve original spacing after the command name
-            idx := strings.Index(cmd, " ")
-            if idx >= 0 && idx+1 < len(cmd) {
-                arg = strings.TrimSpace(cmd[idx+1:])
-            }
-        }
+		name := strings.ToLower(parts[0]) // e.g., "/set_note"
+		arg := ""
+		if len(parts) > 1 {
+			// Preserve original spacing after the command name
+			idx := strings.Index(cmd, " ")
+			if idx >= 0 && idx+1 < len(cmd) {
+				arg = strings.TrimSpace(cmd[idx+1:])
+			}
+		}
 
-        switch name {
-        case "/exit":
-            return tea.Quit()
-        case "/help":
-            // Build dynamic help from server functions only (no static fallback)
-            funcs, err := m.rpcClient.ListServerFunctions()
-            if err != nil {
-                return ErrorMsg{Error: err}
-            }
-            var b strings.Builder
-            b.WriteString("Available commands:\n\n")
-            // Include built-in exit
-            b.WriteString("- /exit – Quit\n")
-            // Map server function names to slash commands as a Markdown list (no code fences)
-            for _, f := range funcs {
-                // Show the exact server function name so the user can call it directly
-                alias := "/" + f.Name
-                // Simple arg hint when a 'text' property exists
-                argHint := ""
-                if f.ParamsSchema != nil {
-                    if props, ok := f.ParamsSchema["properties"].(map[string]interface{}); ok {
-                        if _, hasText := props["text"]; hasText {
-                            argHint = " <text>"
-                        }
-                    }
-                }
-                desc := f.Description
-                if desc == "" {
-                    desc = "Invoke server function '" + f.Name + "'"
-                }
-                // Markdown bullet item without code fences (Glamour will wrap nicely)
-                b.WriteString(fmt.Sprintf("- %s%s – %s\n", alias, argHint, desc))
-            }
-            helpBody := strings.TrimRight(b.String(), "\n")
-            return CommandResultMsg{Content: helpBody}
-        default:
-            // Try server function first; if not available, fallback to LLM
-            fn := strings.TrimPrefix(name, "/")
-            // Check advertised server functions to decide if we should call or fallback
-            funcs, err := m.rpcClient.ListServerFunctions()
-            if err == nil {
-                found := false
-                for _, f := range funcs {
-                    if strings.EqualFold(f.Name, fn) {
-                        found = true
-                        break
-                    }
-                }
-                if !found {
-                    // Not a server function: let the LLM handle the slash text
-                    return FallbackToLLMMsg{Text: cmd}
-                }
-            }
-            // Parse args: try JSON; otherwise map raw to {"text": arg} if present
-            var args map[string]interface{}
-            if arg != "" {
-                var any interface{}
-                if jerr := json.Unmarshal([]byte(arg), &any); jerr == nil {
-                    switch v := any.(type) {
-                    case map[string]interface{}:
-                        args = v
-                    case []interface{}:
-                        args = map[string]interface{}{"args": v}
-                    case string:
-                        args = map[string]interface{}{"text": v}
-                    default:
-                        args = map[string]interface{}{"value": v}
-                    }
-                } else {
-                    args = map[string]interface{}{"text": arg}
-                }
-            } else {
-                args = map[string]interface{}{}
-            }
+		switch name {
+		case "/exit":
+			return tea.Quit()
+		case "/help":
+			// Build dynamic help from server functions only (no static fallback)
+			funcs, err := m.rpcClient.ListServerFunctions()
+			if err != nil {
+				return ErrorMsg{Error: err}
+			}
+			var b strings.Builder
+			b.WriteString("Available commands:\n\n")
+			// Include built-in exit
+			b.WriteString("- /exit – Quit\n")
+			// Map server function names to slash commands as a Markdown list (no code fences)
+			for _, f := range funcs {
+				// Show the exact server function name so the user can call it directly
+				alias := "/" + f.Name
+				// Simple arg hint when a 'text' property exists
+				argHint := ""
+				if f.ParamsSchema != nil {
+					if props, ok := f.ParamsSchema["properties"].(map[string]interface{}); ok {
+						if _, hasText := props["text"]; hasText {
+							argHint = " <text>"
+						}
+					}
+				}
+				desc := f.Description
+				if desc == "" {
+					desc = "Invoke server function '" + f.Name + "'"
+				}
+				// Markdown bullet item without code fences (Glamour will wrap nicely)
+				b.WriteString(fmt.Sprintf("- %s%s – %s\n", alias, argHint, desc))
+			}
+			helpBody := strings.TrimRight(b.String(), "\n")
+			return CommandResultMsg{Content: helpBody}
+		default:
+			// Try server function first; if not available, fallback to LLM
+			fn := strings.TrimPrefix(name, "/")
+			// Check advertised server functions to decide if we should call or fallback
+			funcs, err := m.rpcClient.ListServerFunctions()
+			if err == nil {
+				found := false
+				for _, f := range funcs {
+					if strings.EqualFold(f.Name, fn) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					// Not a server function: let the LLM handle the slash text
+					return FallbackToLLMMsg{Text: cmd}
+				}
+			}
+			// Parse args: try JSON; otherwise map raw to {"text": arg} if present
+			var args map[string]interface{}
+			if arg != "" {
+				var any interface{}
+				if jerr := json.Unmarshal([]byte(arg), &any); jerr == nil {
+					switch v := any.(type) {
+					case map[string]interface{}:
+						args = v
+					case []interface{}:
+						args = map[string]interface{}{"args": v}
+					case string:
+						args = map[string]interface{}{"text": v}
+					default:
+						args = map[string]interface{}{"value": v}
+					}
+				} else {
+					args = map[string]interface{}{"text": arg}
+				}
+			} else {
+				args = map[string]interface{}{}
+			}
 
-            var sessPtr *string
-            if m.sessionID != "" {
-                sessPtr = &m.sessionID
-            }
-            out, err := m.rpcClient.ServerCall(fn, args, sessPtr)
-            if err != nil {
-                // On RPC or server errors, show error rather than silently falling back
-                return ErrorMsg{Error: err}
-            }
-            if msg, ok := out["message"].(string); ok && msg != "" {
-                return CommandResultMsg{Content: msg}
-            }
-            pretty, _ := json.MarshalIndent(out, "", "  ")
-            content := string(pretty)
-            if strings.TrimSpace(content) == "" || content == "null" {
-                content = "Done."
-            }
-            return CommandResultMsg{Content: content}
-        }
-    }
+			var sessPtr *string
+			if m.sessionID != "" {
+				sessPtr = &m.sessionID
+			}
+			out, err := m.rpcClient.ServerCall(fn, args, sessPtr)
+			if err != nil {
+				// On RPC or server errors, show error rather than silently falling back
+				return ErrorMsg{Error: err}
+			}
+			if msg, ok := out["message"].(string); ok && msg != "" {
+				return CommandResultMsg{Content: msg}
+			}
+			pretty, _ := json.MarshalIndent(out, "", "  ")
+			content := string(pretty)
+			if strings.TrimSpace(content) == "" || content == "null" {
+				content = "Done."
+			}
+			return CommandResultMsg{Content: content}
+		}
+	}
 }
 
 func (m Model) startRun(prompt string) tea.Cmd {
@@ -2179,6 +2197,10 @@ func (m Model) handleApprovalListChoice() (Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.pendingTool == nil {
+		return m, nil
+	}
+
 	var approved bool
 	var alwaysApprove bool
 
@@ -2197,7 +2219,7 @@ func (m Model) handleApprovalListChoice() (Model, tea.Cmd) {
 	}
 
 	// Save approval ID before clearing
-	approvalID := m.pendingTool.ApprovalID
+	reqID := m.pendingTool.RequestID
 
 	// Remove approval message from messages
 	for i := len(m.messages) - 1; i >= 0; i-- {
@@ -2229,7 +2251,17 @@ func (m Model) handleApprovalListChoice() (Model, tea.Cmd) {
 	return m, tea.Batch(
 		tea.ClearScreen,
 		func() tea.Msg {
-			err := m.rpcClient.ToolApprovalResponse(approvalID, approved, alwaysApprove)
+			if reqID == "" {
+				return nil
+			}
+			res := map[string]interface{}{
+				"approved":       approved,
+				"always_approve": alwaysApprove,
+			}
+			if !approved {
+				res["error_message"] = "User rejected tool call"
+			}
+			err := m.rpcClient.ClientResponse(reqID, true, res, nil)
 			if err != nil {
 				return ErrorMsg{Error: err}
 			}
@@ -2284,22 +2316,22 @@ func (m Model) selectSession() (Model, tea.Cmd) {
 }
 
 func (m *Model) updateViewport() {
-    m.viewport.SetContent(m.renderMessages())
-    m.viewport.GotoBottom()
+	m.viewport.SetContent(m.renderMessages())
+	m.viewport.GotoBottom()
 }
 
 // updateViewportContent updates the viewport content without changing scroll position
 func (m *Model) updateViewportContent() {
-    // Save current scroll position
-    oldYOffset := m.viewport.YOffset
-    oldYPosition := m.viewport.YPosition
+	// Save current scroll position
+	oldYOffset := m.viewport.YOffset
+	oldYPosition := m.viewport.YPosition
 
-    // Update content
-    m.viewport.SetContent(m.renderMessages())
+	// Update content
+	m.viewport.SetContent(m.renderMessages())
 
-    // Restore scroll position
-    m.viewport.SetYOffset(oldYOffset)
-    m.viewport.YPosition = oldYPosition
+	// Restore scroll position
+	m.viewport.SetYOffset(oldYOffset)
+	m.viewport.YPosition = oldYPosition
 }
 
 // truncateMessageForList truncates a message for display in the session list
@@ -2368,52 +2400,52 @@ func (m Model) truncateMessageForList(content string, maxWidth int) string {
 }
 
 type GlobalHistoryLoadedMsg struct {
-    Items []string
-    Error error
+	Items []string
+	Error error
 }
 
 func (m Model) loadGlobalHistory() (Model, tea.Cmd) {
-    client := m.rpcClient
-    msgChan := m.msgChan
-    go func() {
-        items, err := client.GetUserHistory(200, true)
-        if msgChan == nil {
-            return
-        }
-        if err != nil {
-            msgChan <- GlobalHistoryLoadedMsg{Items: nil, Error: err}
-            return
-        }
-        list := make([]string, 0, len(items))
-        seen := make(map[string]struct{}, len(items))
-        for _, it := range items {
-            t := strings.TrimSpace(it.Content)
-            if t == "" {
-                continue
-            }
-            if _, ok := seen[t]; ok {
-                continue
-            }
-            seen[t] = struct{}{}
-            list = append(list, t)
-        }
-        msgChan <- GlobalHistoryLoadedMsg{Items: list, Error: nil}
-    }()
-    return m, nil
+	client := m.rpcClient
+	msgChan := m.msgChan
+	go func() {
+		items, err := client.GetUserHistory(200, true)
+		if msgChan == nil {
+			return
+		}
+		if err != nil {
+			msgChan <- GlobalHistoryLoadedMsg{Items: nil, Error: err}
+			return
+		}
+		list := make([]string, 0, len(items))
+		seen := make(map[string]struct{}, len(items))
+		for _, it := range items {
+			t := strings.TrimSpace(it.Content)
+			if t == "" {
+				continue
+			}
+			if _, ok := seen[t]; ok {
+				continue
+			}
+			seen[t] = struct{}{}
+			list = append(list, t)
+		}
+		msgChan <- GlobalHistoryLoadedMsg{Items: list, Error: nil}
+	}()
+	return m, nil
 }
 
 func (m Model) atTopEdge() bool {
-    if m.input.Line() != 0 {
-        return false
-    }
-    li := m.input.LineInfo()
-    return li.RowOffset <= 0
+	if m.input.Line() != 0 {
+		return false
+	}
+	li := m.input.LineInfo()
+	return li.RowOffset <= 0
 }
 
 func (m Model) atBottomEdge() bool {
-    if m.input.Line() != m.input.LineCount()-1 {
-        return false
-    }
-    li := m.input.LineInfo()
-    return li.RowOffset >= li.Height-1
+	if m.input.Line() != m.input.LineCount()-1 {
+		return false
+	}
+	li := m.input.LineInfo()
+	return li.RowOffset >= li.Height-1
 }

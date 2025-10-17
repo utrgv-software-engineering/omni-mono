@@ -113,10 +113,6 @@ def map_notification_to_event(method: str, payload: Dict[str, Any]):
         item = MessageOutputItem(payload.get("content", ""))
         return new_item_event("message_output_created", item)
     
-    elif method == "tool_approval_request":
-        # Pass raw payload; UI will manage approval
-        return new_item_event("tool_approval_request", payload)
-    
     elif method == "token":
         # Wrap usage (token) update as a stream event
         # Consumers can check event.name == "token_usage" and inspect event.item (payload dict)

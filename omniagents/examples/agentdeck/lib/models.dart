@@ -18,7 +18,8 @@ class ToolCalledEvent extends RemoteEvent {
 }
 
 class ToolResultEvent extends RemoteEvent {
-  ToolResultEvent(this.runId, this.callId, this.tool, this.output, this.metadata);
+  ToolResultEvent(
+      this.runId, this.callId, this.tool, this.output, this.metadata);
   final String? runId;
   final String? callId;
   final String tool;
@@ -34,8 +35,15 @@ class MessageOutputEvent extends RemoteEvent {
 }
 
 class ToolApprovalRequestEvent extends RemoteEvent {
-  ToolApprovalRequestEvent(this.approvalId, this.tool, this.arguments,
-      {this.metadata, this.runId, this.sessionId});
+  ToolApprovalRequestEvent(
+      {required this.requestId,
+      required this.approvalId,
+      required this.tool,
+      required this.arguments,
+      this.metadata,
+      this.runId,
+      this.sessionId});
+  final String requestId;
   final String approvalId;
   final String tool;
   final String arguments;

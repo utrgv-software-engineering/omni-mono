@@ -75,18 +75,21 @@ class TestDisconnectionScenarios:
     
     def test_session_pending_events_mechanism(self):
         """Test that sessions can buffer events when no channels are available."""
-        session = Session()
+        session = Session(None, None)
         
         # No channels connected
         assert len(session.channels) == 0
         assert len(session.pending_events) == 0
         
         # Add pending events
-        session.pending_events.append(("tool_approval_request", {
-            "approval_id": "123",
-            "tool": "test_tool",
-            "arguments": "{}"
-        }))
+        session.pending_events.append((
+            "client_request",
+            {
+                "request_id": "req_123",
+                "function": "ui.request_tool_approval",
+                "args": {"tool": "test_tool", "arguments": "{}"},
+            },
+        ))
         
         assert len(session.pending_events) == 1
         
@@ -102,7 +105,7 @@ class TestDisconnectionScenarios:
         """Test broadcasting to multiple channels with some disconnected."""
         from omniagents.core.runtime.bridge import _broadcast
         
-        session = Session()
+        session = Session(None, None)
         
         # Create mix of live and dead channels
         live_channel = AsyncMock()
@@ -132,7 +135,7 @@ class TestDisconnectionScenarios:
         """Test broadcasting when no channels are connected."""
         from omniagents.core.runtime.bridge import _broadcast
         
-        session = Session()
+        session = Session(None, None)
         session.channels = []
         
         # Should return False
@@ -142,11 +145,18 @@ class TestDisconnectionScenarios:
     def test_reconnection_replay_pattern(self):
         """Test the pattern for replaying events on reconnection."""
         # This tests the conceptual pattern used in start_run
-        session = Session()
+        session = Session(None, None)
         
         # Simulate pending events from previous connection
         session.pending_events = [
-            ("tool_approval_request", {"approval_id": "1", "tool": "tool1"}),
+            (
+                "client_request",
+                {
+                    "request_id": "req_1",
+                    "function": "ui.request_tool_approval",
+                    "args": {"tool": "tool1", "arguments": "{}"},
+                },
+            ),
             ("message_output", {"content": "Hello", "run_id": "run1"}),
         ]
         
@@ -196,7 +206,7 @@ class TestDisconnectionScenarios:
     
     def test_session_cleanup_on_disconnect(self):
         """Test that sessions clean up properly on disconnect."""
-        session = Session()
+        session = Session(None, None)
         
         # Add multiple channels
         ch1, ch2, ch3 = Mock(), Mock(), Mock()
@@ -231,11 +241,17 @@ class TestReconnectionIntegration:
         
         # Add pending events (simulating failed delivery)
         session.pending_events = [
-            ("tool_approval_request", {
-                "approval_id": "pending_1",
-                "tool": "file_write",
-                "arguments": '{"path": "/tmp/test.txt"}'
-            })
+            (
+                "client_request",
+                {
+                    "request_id": "pending_1",
+                    "function": "ui.request_tool_approval",
+                    "args": {
+                        "tool": "file_write",
+                        "arguments": '{"path": "/tmp/test.txt"}'
+                    },
+                },
+            )
         ]
         
         # Simulate new connection
@@ -245,5 +261,5 @@ class TestReconnectionIntegration:
         # In real server, start_run would replay these
         # Here we just verify the structure is correct
         assert len(session.pending_events) == 1
-        assert session.pending_events[0][0] == "tool_approval_request"
-        assert session.pending_events[0][1]["approval_id"] == "pending_1"
+        assert session.pending_events[0][0] == "client_request"
+        assert session.pending_events[0][1]["request_id"] == "pending_1"

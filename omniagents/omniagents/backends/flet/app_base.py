@@ -767,6 +767,21 @@ class AgentApp:
                                     mode=args.get("mode", "markdown"),
                                     artifact_id=args.get("artifact_id"),
                                 )
+                            elif func == "ui.request_tool_approval":
+                                tool_name = args.get("tool", "<tool>")
+                                formatted_args = args.get("arguments", "")
+                                metadata = args.get("metadata")
+
+                                approved, always_approve, err_msg = await self._request_tool_approval(
+                                    tool_name, formatted_args, metadata
+                                )
+
+                                result_payload = {
+                                    "approved": approved,
+                                    "always_approve": always_approve,
+                                }
+                                if err_msg:
+                                    result_payload["error_message"] = err_msg
                             else:
                                 # Unknown function – mark as not ok
                                 ok = False
@@ -789,39 +804,6 @@ class AgentApp:
                         except Exception as _resp_err:
                             print(f"Error sending client_response: {_resp_err}")
 
-                        continue
-
-                    # --------------------------------------------------
-                    # Intercept approval requests (from remote SafeAgent)
-                    # --------------------------------------------------
-                    if getattr(event, "name", None) == "tool_approval_request":
-                        payload = event.item if isinstance(event.item, dict) else {}
-                        approval_id = payload.get("approval_id")
-                        tool_name = payload.get("tool", "<tool>")
-                        args_str = payload.get("arguments", "")
-
-                        # Show approval UI and wait for user decision
-                        approved, always_approve, err_msg = (
-                            await self._request_tool_approval(tool_name, args_str)
-                        )
-
-                        # Send decision back to server (remote mode only)
-                        try:
-                            if (
-                                self.spec.remote_ws_url
-                                and hasattr(self.agent_instance, "_client")
-                                and self.agent_instance._client
-                            ):
-                                await self.agent_instance._client.other.tool_approval_response(
-                                    approval_id=approval_id,
-                                    approved=approved,
-                                    always_approve=always_approve,
-                                    error_message=err_msg,
-                                )
-                        except Exception as _resp_err:
-                            print(f"Error sending tool_approval_response: {_resp_err}")
-
-                        # Continue to next streamed event
                         continue
 
                     item = event.item
@@ -1389,7 +1371,11 @@ class AgentApp:
                 {
                     "name": "ui.add_artifact",
                     "description": "Render or update an artifact in the UI",
-                }
+                },
+                {
+                    "name": "ui.request_tool_approval",
+                    "description": "Prompt the user to approve tool execution",
+                },
             ],
         }
 

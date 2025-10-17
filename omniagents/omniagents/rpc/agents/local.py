@@ -41,9 +41,6 @@ class _ClientEventMethods(RpcMethodsBase):
     async def run_end(self, **params):
         return await self._push_event("run_end", **params)
 
-    async def tool_approval_request(self, **params):
-        return await self._push_event("tool_approval_request", **params)
-
     async def run_status(self, **params):
         return await self._push_event("run_status", **params)
 
@@ -119,12 +116,7 @@ class LocalAgent(UnifiedAgentBase):
         
         async def custom_build_agent(stub_settings, mcp_server, stub_app):
             # Set global approval callback and safe tools if we have them
-            # This will be available to all SafeAgent instances including handoffs
             from omniagents.core.agents.safe import SafeAgent
-            if approval_callback:
-                SafeAgent.set_global_approval_callback(approval_callback)
-            
-            # Set global safe tool settings
             if self.spec.safe_agent_options:
                 SafeAgent.set_global_safe_tools(
                     tool_names=self.spec.safe_agent_options.safe_tool_names,
@@ -172,17 +164,14 @@ class LocalAgent(UnifiedAgentBase):
             from omniagents.core.agents.builder import _default_build_agent
             
             # Use our captured settings instead of stub_settings
-            # Use our captured approval_callback if safe agent is enabled
-            approval_cb = approval_callback if self.spec.use_safe_agent else None
-            
             # Use our captured MCP servers, preferring the first one if available
             mcp_to_use = mcp_servers[0] if mcp_servers else mcp_server
-            
+
             return await _default_build_agent(
                 settings,
                 mcp_to_use,
                 self.spec,
-                approval_cb
+                approval_callback
             )
         
         # Set the custom builder on the spec

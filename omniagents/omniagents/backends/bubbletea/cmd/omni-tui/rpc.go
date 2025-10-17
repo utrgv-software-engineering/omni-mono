@@ -15,20 +15,20 @@ import (
 
 // RPCClient handles JSON-RPC communication with the Python server
 type RPCClient struct {
-    conn      *websocket.Conn
-    url       string
-    token     string
-    nextID    int32
-    pending   map[string]chan json.RawMessage
-    mu        sync.RWMutex
-    handlers  map[string]func(json.RawMessage)
-    connected bool
-    closeChan chan struct{}
-    onReady   func() // Callback when receiveLoop is ready
-    // onDisconnect is called exactly once when the receiveLoop exits due to a
-    // connection error or normal close. Use this to notify the UI so it can
-    // update state without freezing the interface.
-    onDisconnect func(error)
+	conn      *websocket.Conn
+	url       string
+	token     string
+	nextID    int32
+	pending   map[string]chan json.RawMessage
+	mu        sync.RWMutex
+	handlers  map[string]func(json.RawMessage)
+	connected bool
+	closeChan chan struct{}
+	onReady   func() // Callback when receiveLoop is ready
+	// onDisconnect is called exactly once when the receiveLoop exits due to a
+	// connection error or normal close. Use this to notify the UI so it can
+	// update state without freezing the interface.
+	onDisconnect func(error)
 }
 
 // NewRPCClient creates a new RPC client
@@ -114,13 +114,13 @@ func (c *RPCClient) Close() error {
 
 // receiveLoop handles incoming messages from the server
 func (c *RPCClient) receiveLoop() {
-    // Small delay to ensure goroutine is scheduled and ready
-    time.Sleep(10 * time.Millisecond)
+	// Small delay to ensure goroutine is scheduled and ready
+	time.Sleep(10 * time.Millisecond)
 
-    // Signal that the receive loop is ready
-    if c.onReady != nil {
-        c.onReady()
-    }
+	// Signal that the receive loop is ready
+	if c.onReady != nil {
+		c.onReady()
+	}
 
 	for {
 		select {
@@ -131,18 +131,18 @@ func (c *RPCClient) receiveLoop() {
 				return
 			}
 
-            _, message, err := c.conn.ReadMessage()
-            if err != nil {
-                // Mark as disconnected and inform listeners so the UI can
-                // remain interactive and show a non-blocking status.
-                c.connected = false
-                if c.onDisconnect != nil {
-                    // Call in a separate goroutine to avoid blocking the
-                    // receiveLoop on UI processing.
-                    go c.onDisconnect(err)
-                }
-                return
-            }
+			_, message, err := c.conn.ReadMessage()
+			if err != nil {
+				// Mark as disconnected and inform listeners so the UI can
+				// remain interactive and show a non-blocking status.
+				c.connected = false
+				if c.onDisconnect != nil {
+					// Call in a separate goroutine to avoid blocking the
+					// receiveLoop on UI processing.
+					go c.onDisconnect(err)
+				}
+				return
+			}
 
 			var msg map[string]json.RawMessage
 			if err := json.Unmarshal(message, &msg); err != nil {
@@ -235,41 +235,41 @@ func (c *RPCClient) call(method string, params interface{}) (json.RawMessage, er
 		fmt.Fprintf(os.Stderr, "[DEBUG] RPC call: waiting for response on channel for id %s\n", idStr)
 	}
 
-    // Wait for response with timeout to avoid hanging forever if server doesn't respond
-    // Allow override via OMNI_RPC_TIMEOUT seconds; fall back to sensible defaults.
-    timeout := 15 * time.Second
-    if env := os.Getenv("OMNI_RPC_TIMEOUT"); env != "" {
-        if v, err := time.ParseDuration(env); err == nil {
-            timeout = v
-        } else {
-            // If not a duration, try to parse seconds as int
-            if sec, perr := strconv.Atoi(env); perr == nil {
-                timeout = time.Duration(sec) * time.Second
-            }
-        }
-    }
-    // Some methods are known to be very fast; keep a minimum sensible timeout
-    if method == "stop_run" || method == "tool_approval_response" {
-        if timeout > 10*time.Second {
-            timeout = 10 * time.Second
-        }
-    }
-    select {
-    case result := <-respChan:
-        if debug {
-            fmt.Fprintf(os.Stderr, "[DEBUG] RPC call: received response for id %s\n", idStr)
-        }
-        return result, nil
-    case <-time.After(timeout):
-        if debug {
-            fmt.Fprintf(os.Stderr, "[DEBUG] RPC call: timeout waiting for response for id %s (method=%s)\n", idStr, method)
-        }
-        // Clean up pending map to avoid leaks
-        c.mu.Lock()
-        delete(c.pending, idStr)
-        c.mu.Unlock()
-        return nil, fmt.Errorf("rpc call timeout for method '%s'", method)
-    }
+	// Wait for response with timeout to avoid hanging forever if server doesn't respond
+	// Allow override via OMNI_RPC_TIMEOUT seconds; fall back to sensible defaults.
+	timeout := 15 * time.Second
+	if env := os.Getenv("OMNI_RPC_TIMEOUT"); env != "" {
+		if v, err := time.ParseDuration(env); err == nil {
+			timeout = v
+		} else {
+			// If not a duration, try to parse seconds as int
+			if sec, perr := strconv.Atoi(env); perr == nil {
+				timeout = time.Duration(sec) * time.Second
+			}
+		}
+	}
+	// Some methods are known to be very fast; keep a minimum sensible timeout
+	if method == "stop_run" || method == "tool_approval_response" {
+		if timeout > 10*time.Second {
+			timeout = 10 * time.Second
+		}
+	}
+	select {
+	case result := <-respChan:
+		if debug {
+			fmt.Fprintf(os.Stderr, "[DEBUG] RPC call: received response for id %s\n", idStr)
+		}
+		return result, nil
+	case <-time.After(timeout):
+		if debug {
+			fmt.Fprintf(os.Stderr, "[DEBUG] RPC call: timeout waiting for response for id %s (method=%s)\n", idStr, method)
+		}
+		// Clean up pending map to avoid leaks
+		c.mu.Lock()
+		delete(c.pending, idStr)
+		c.mu.Unlock()
+		return nil, fmt.Errorf("rpc call timeout for method '%s'", method)
+	}
 }
 
 // RegisterHandler registers a handler for server notifications
@@ -281,7 +281,7 @@ func (c *RPCClient) RegisterHandler(method string, handler func(json.RawMessage)
 
 // SetOnReady sets the callback to be called when receiveLoop is ready
 func (c *RPCClient) SetOnReady(callback func()) {
-    c.onReady = callback
+	c.onReady = callback
 }
 
 // SetOnDisconnect sets a callback that fires when the WebSocket connection
@@ -289,7 +289,7 @@ func (c *RPCClient) SetOnReady(callback func()) {
 // closes. This allows the UI to remain responsive and update status instead
 // of appearing to hang after a server-side error.
 func (c *RPCClient) SetOnDisconnect(callback func(error)) {
-    c.onDisconnect = callback
+	c.onDisconnect = callback
 }
 
 // RPC method implementations
@@ -311,19 +311,19 @@ func (c *RPCClient) StartRun(prompt string, sessionID *string, variables map[str
 		return nil, err
 	}
 
-    var response RunResponse
-    if err := json.Unmarshal(result, &response); err != nil {
-        // Try to parse JSON-RPC error object (receiveLoop passes the error payload directly)
-        var rpcErr struct {
-            Code    int             `json:"code"`
-            Message string          `json:"message"`
-            Data    json.RawMessage `json:"data,omitempty"`
-        }
-        if perr := json.Unmarshal(result, &rpcErr); perr == nil && rpcErr.Message != "" {
-            return nil, fmt.Errorf("start_run failed: %s", rpcErr.Message)
-        }
-        return nil, err
-    }
+	var response RunResponse
+	if err := json.Unmarshal(result, &response); err != nil {
+		// Try to parse JSON-RPC error object (receiveLoop passes the error payload directly)
+		var rpcErr struct {
+			Code    int             `json:"code"`
+			Message string          `json:"message"`
+			Data    json.RawMessage `json:"data,omitempty"`
+		}
+		if perr := json.Unmarshal(result, &rpcErr); perr == nil && rpcErr.Message != "" {
+			return nil, fmt.Errorf("start_run failed: %s", rpcErr.Message)
+		}
+		return nil, err
+	}
 
 	return &response, nil
 }
@@ -363,50 +363,38 @@ func (c *RPCClient) ListSessions() ([]Session, error) {
 
 // ArchiveSession archives a session
 func (c *RPCClient) ArchiveSession(sessionID string) error {
-    params := map[string]interface{}{
-        "session_id": sessionID,
-    }
+	params := map[string]interface{}{
+		"session_id": sessionID,
+	}
 
-    _, err := c.call("archive_session", params)
-    return err
-}
-
-// ToolApprovalResponse responds to a tool approval request
-func (c *RPCClient) ToolApprovalResponse(approvalID string, approved bool, alwaysApprove bool) error {
-    params := map[string]interface{}{
-        "approval_id":    approvalID,
-        "approved":       approved,
-        "always_approve": alwaysApprove,
-    }
-
-    _, err := c.call("tool_approval_response", params)
-    return err
+	_, err := c.call("archive_session", params)
+	return err
 }
 
 // ClientFunctions advertises client capabilities to the server (optional)
 func (c *RPCClient) ClientFunctions(version int, functions []map[string]interface{}) error {
-    params := map[string]interface{}{
-        "version":   version,
-        "functions": functions,
-    }
-    _, err := c.call("client_functions", params)
-    return err
+	params := map[string]interface{}{
+		"version":   version,
+		"functions": functions,
+	}
+	_, err := c.call("client_functions", params)
+	return err
 }
 
 // ClientResponse replies to a client_request issued by the server
 func (c *RPCClient) ClientResponse(requestID string, ok bool, result map[string]interface{}, errObj map[string]interface{}) error {
-    params := map[string]interface{}{
-        "request_id": requestID,
-        "ok":         ok,
-    }
-    if result != nil {
-        params["result"] = result
-    }
-    if errObj != nil {
-        params["error"] = errObj
-    }
-    _, err := c.call("client_response", params)
-    return err
+	params := map[string]interface{}{
+		"request_id": requestID,
+		"ok":         ok,
+	}
+	if result != nil {
+		params["result"] = result
+	}
+	if errObj != nil {
+		params["error"] = errObj
+	}
+	_, err := c.call("client_response", params)
+	return err
 }
 
 // Response types
@@ -450,92 +438,92 @@ func (m *SessionMessage) GetContentText() string {
 }
 
 type Session struct {
-    ID           string          `json:"id"`
-    CreatedAt    string          `json:"created_at"`
-    Archived     bool            `json:"archived"`
-    MessageCount int             `json:"message_count"`
-    FirstMessage *SessionMessage `json:"first_message,omitempty"`
-    LastMessage  *SessionMessage `json:"last_message,omitempty"`
+	ID           string          `json:"id"`
+	CreatedAt    string          `json:"created_at"`
+	Archived     bool            `json:"archived"`
+	MessageCount int             `json:"message_count"`
+	FirstMessage *SessionMessage `json:"first_message,omitempty"`
+	LastMessage  *SessionMessage `json:"last_message,omitempty"`
 }
 
 // Server functions RPC -------------------------------------------------
 
 type ServerFunctionMeta struct {
-    Name        string                 `json:"name"`
-    Description string                 `json:"description,omitempty"`
-    // Optional schemas omitted for simplicity
-    ParamsSchema map[string]interface{} `json:"params_schema,omitempty"`
-    ResultSchema map[string]interface{} `json:"result_schema,omitempty"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// Optional schemas omitted for simplicity
+	ParamsSchema map[string]interface{} `json:"params_schema,omitempty"`
+	ResultSchema map[string]interface{} `json:"result_schema,omitempty"`
 }
 
 func (c *RPCClient) ListServerFunctions() ([]ServerFunctionMeta, error) {
-    result, err := c.call("list_server_functions", map[string]interface{}{})
-    if err != nil {
-        return nil, err
-    }
-    var funcs []ServerFunctionMeta
-    if err := json.Unmarshal(result, &funcs); err != nil {
-        return nil, err
-    }
-    return funcs, nil
+	result, err := c.call("list_server_functions", map[string]interface{}{})
+	if err != nil {
+		return nil, err
+	}
+	var funcs []ServerFunctionMeta
+	if err := json.Unmarshal(result, &funcs); err != nil {
+		return nil, err
+	}
+	return funcs, nil
 }
 
 func (c *RPCClient) ServerCall(function string, args map[string]interface{}, sessionID *string) (map[string]interface{}, error) {
-    params := map[string]interface{}{
-        "function": function,
-    }
-    if args != nil {
-        params["args"] = args
-    }
-    if sessionID != nil {
-        params["session_id"] = *sessionID
-    }
-    raw, err := c.call("server_call", params)
-    if err != nil {
-        return nil, err
-    }
-    var out map[string]interface{}
-    if err := json.Unmarshal(raw, &out); err != nil {
-        return nil, err
-    }
-    return out, nil
+	params := map[string]interface{}{
+		"function": function,
+	}
+	if args != nil {
+		params["args"] = args
+	}
+	if sessionID != nil {
+		params["session_id"] = *sessionID
+	}
+	raw, err := c.call("server_call", params)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // History RPCs -------------------------------------------------------
 
 func (c *RPCClient) GetSessionHistory(sessionID string) ([]SessionMessage, error) {
-    params := map[string]interface{}{
-        "session_id": sessionID,
-    }
-    raw, err := c.call("get_session_history", params)
-    if err != nil {
-        return nil, err
-    }
-    var msgs []SessionMessage
-    if err := json.Unmarshal(raw, &msgs); err != nil {
-        return nil, err
-    }
-    return msgs, nil
+	params := map[string]interface{}{
+		"session_id": sessionID,
+	}
+	raw, err := c.call("get_session_history", params)
+	if err != nil {
+		return nil, err
+	}
+	var msgs []SessionMessage
+	if err := json.Unmarshal(raw, &msgs); err != nil {
+		return nil, err
+	}
+	return msgs, nil
 }
 
 type UserHistoryItem struct {
-    Content   string `json:"content"`
-    SessionID string `json:"session_id,omitempty"`
-    Timestamp string `json:"timestamp,omitempty"`
+	Content   string `json:"content"`
+	SessionID string `json:"session_id,omitempty"`
+	Timestamp string `json:"timestamp,omitempty"`
 }
 
 func (c *RPCClient) GetUserHistory(limit int, includeArchived bool) ([]UserHistoryItem, error) {
-    params := map[string]interface{}{
-        "limit":             limit,
-        "include_archived":  includeArchived,
-    }
-    raw, err := c.call("get_user_history", params)
-    if err != nil {
-        return nil, err
-    }
-    var items []UserHistoryItem
-    if err := json.Unmarshal(raw, &items); err != nil {
-        return nil, err
-    }
-    return items, nil
+	params := map[string]interface{}{
+		"limit":            limit,
+		"include_archived": includeArchived,
+	}
+	raw, err := c.call("get_user_history", params)
+	if err != nil {
+		return nil, err
+	}
+	var items []UserHistoryItem
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

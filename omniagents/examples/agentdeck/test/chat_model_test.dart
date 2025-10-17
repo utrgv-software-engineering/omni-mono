@@ -56,13 +56,6 @@ class FakeRemoteAgentClient extends RemoteAgentClient {
       Map<String, dynamic>? error}) async {}
 
   @override
-  Future<void> toolApprovalResponse(
-      {required String approvalId,
-      required bool approved,
-      bool alwaysApprove = false,
-      String? errorMessage}) async {}
-
-  @override
   Future<List<String>> getUserHistory(
       {int limit = 200, bool includeArchived = true}) async {
     return <String>[];

@@ -278,7 +278,9 @@ class _TerminalPane extends StatelessWidget {
               autofocus: true,
               backgroundOpacity: 1.0,
               onKeyEvent: (node, event) {
-                if (!kIsWeb || event is! KeyUpEvent || event.logicalKey != LogicalKeyboardKey.space) {
+                if (!kIsWeb ||
+                    event is! KeyUpEvent ||
+                    event.logicalKey != LogicalKeyboardKey.space) {
                   return KeyEventResult.ignored;
                 }
                 terminal.textInput(' ');

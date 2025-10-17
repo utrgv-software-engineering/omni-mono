@@ -97,7 +97,9 @@ class _FolderPickerDialogState extends State<FolderPickerDialog> {
                           IconButton(
                             icon: const Icon(Icons.arrow_upward),
                             tooltip: 'Up',
-                            onPressed: _parentPath == null ? null : () => _load(_parentPath),
+                            onPressed: _parentPath == null
+                                ? null
+                                : () => _load(_parentPath),
                           ),
                         ],
                       ),
@@ -110,9 +112,13 @@ class _FolderPickerDialogState extends State<FolderPickerDialog> {
                             final isDir = e['is_dir'] == true;
                             final name = e['name']?.toString() ?? '';
                             return ListTile(
-                              leading: Icon(isDir ? Icons.folder : Icons.insert_drive_file),
+                              leading: Icon(isDir
+                                  ? Icons.folder
+                                  : Icons.insert_drive_file),
                               title: Text(name),
-                              onTap: isDir ? () => _load(e['path']?.toString()) : null,
+                              onTap: isDir
+                                  ? () => _load(e['path']?.toString())
+                                  : null,
                             );
                           },
                         ),

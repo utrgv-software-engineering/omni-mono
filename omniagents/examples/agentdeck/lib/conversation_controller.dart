@@ -99,8 +99,7 @@ class ConversationController extends ChangeNotifier {
         return;
       }
       if (event.sessionId.isNotEmpty) {
-        if (_sessionId == null ||
-            _sessionId == event.sessionId) {
+        if (_sessionId == null || _sessionId == event.sessionId) {
           _sessionId = event.sessionId;
           client.resumeSession(event.sessionId);
           notifyListeners();
@@ -134,7 +133,8 @@ class ConversationController extends ChangeNotifier {
     if (event is MessageOutputEvent) {
       _trackPendingRun(event.runId);
       if (client.debug) {
-        debugPrint('[controller ${client.label ?? '?'}] message run=${event.runId} emit=${_shouldEmit(event.runId)} active=$_activeRunIds current=$_currentRunId');
+        debugPrint(
+            '[controller ${client.label ?? '?'}] message run=${event.runId} emit=${_shouldEmit(event.runId)} active=$_activeRunIds current=$_currentRunId');
       }
       if (_shouldEmit(event.runId)) {
         _eventStream.add(event);
@@ -145,7 +145,8 @@ class ConversationController extends ChangeNotifier {
     if (event is ToolCalledEvent) {
       _trackPendingRun(event.runId);
       if (client.debug) {
-        debugPrint('[controller ${client.label ?? '?'}] tool_called run=${event.runId} emit=${_shouldEmit(event.runId)}');
+        debugPrint(
+            '[controller ${client.label ?? '?'}] tool_called run=${event.runId} emit=${_shouldEmit(event.runId)}');
       }
       if (_shouldEmit(event.runId)) {
         _eventStream.add(event);
@@ -156,7 +157,8 @@ class ConversationController extends ChangeNotifier {
     if (event is ToolResultEvent) {
       _trackPendingRun(event.runId);
       if (client.debug) {
-        debugPrint('[controller ${client.label ?? '?'}] tool_result run=${event.runId} emit=${_shouldEmit(event.runId)}');
+        debugPrint(
+            '[controller ${client.label ?? '?'}] tool_result run=${event.runId} emit=${_shouldEmit(event.runId)}');
       }
       if (_shouldEmit(event.runId)) {
         _eventStream.add(event);
