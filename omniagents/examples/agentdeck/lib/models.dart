@@ -34,12 +34,14 @@ class MessageOutputEvent extends RemoteEvent {
 }
 
 class ToolApprovalRequestEvent extends RemoteEvent {
-  ToolApprovalRequestEvent(
-      this.approvalId, this.tool, this.arguments, this.metadata);
+  ToolApprovalRequestEvent(this.approvalId, this.tool, this.arguments,
+      {this.metadata, this.runId, this.sessionId});
   final String approvalId;
   final String tool;
   final String arguments;
   final Map<String, dynamic>? metadata;
+  final String? runId;
+  final String? sessionId;
 }
 
 class RunEndEvent extends RemoteEvent {

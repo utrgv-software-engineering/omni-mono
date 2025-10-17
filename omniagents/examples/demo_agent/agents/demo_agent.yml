@@ -1,6 +1,0 @@
-name: demo_agent
-model: gpt-4.1
-instructions_file: ../instructions/demo_agent.md
-welcome_text: "Hello from demo_agent."
-
-tools: []

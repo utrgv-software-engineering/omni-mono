@@ -533,7 +533,9 @@ class RemoteAgentClient {
           payload['approval_id'] as String,
           payload['tool'] as String,
           payload['arguments'] as String,
-          (payload['metadata'] as Map?)?.cast<String, dynamic>(),
+          metadata: (payload['metadata'] as Map?)?.cast<String, dynamic>(),
+          runId: payload['run_id']?.toString(),
+          sessionId: payload['session_id']?.toString(),
         ));
         break;
       case 'run_started':

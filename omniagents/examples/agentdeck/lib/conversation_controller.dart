@@ -51,8 +51,11 @@ class ConversationController extends ChangeNotifier {
     return client.stopRun(runId);
   }
 
-  bool _shouldEmit(String? runId) {
+  bool _shouldEmit(String? runId, {String? sessionId}) {
     if (runId == null || runId.isEmpty) {
+      if (sessionId != null && sessionId.isNotEmpty && _sessionId != null) {
+        return _sessionId == sessionId;
+      }
       return true;
     }
     if (_activeRunIds.contains(runId)) {
@@ -61,7 +64,31 @@ class ConversationController extends ChangeNotifier {
     if (_currentRunId != null && _currentRunId == runId) {
       return true;
     }
+    if (sessionId != null &&
+        sessionId.isNotEmpty &&
+        _sessionId != null &&
+        _sessionId == sessionId) {
+      return true;
+    }
     return false;
+  }
+
+  void _trackPendingRun(String? runId, {String? sessionId}) {
+    if (!_awaitingRunStart) {
+      return;
+    }
+    if (sessionId != null && sessionId.isNotEmpty) {
+      if (_sessionId == null) {
+        _sessionId = sessionId;
+        client.resumeSession(sessionId);
+      }
+    }
+    if (runId != null && runId.isNotEmpty) {
+      if (!_activeRunIds.contains(runId)) {
+        _activeRunIds.add(runId);
+      }
+      _currentRunId ??= runId;
+    }
   }
 
   void _handleEvent(RemoteEvent event) {
@@ -93,6 +120,7 @@ class ConversationController extends ChangeNotifier {
     }
 
     if (event is RunEndEvent) {
+      _trackPendingRun(event.runId);
       if (_shouldEmit(event.runId)) {
         _eventStream.add(event);
         _activeRunIds.remove(event.runId);
@@ -104,6 +132,7 @@ class ConversationController extends ChangeNotifier {
     }
 
     if (event is MessageOutputEvent) {
+      _trackPendingRun(event.runId);
       if (client.debug) {
         debugPrint('[controller ${client.label ?? '?'}] message run=${event.runId} emit=${_shouldEmit(event.runId)} active=$_activeRunIds current=$_currentRunId');
       }
@@ -114,6 +143,7 @@ class ConversationController extends ChangeNotifier {
     }
 
     if (event is ToolCalledEvent) {
+      _trackPendingRun(event.runId);
       if (client.debug) {
         debugPrint('[controller ${client.label ?? '?'}] tool_called run=${event.runId} emit=${_shouldEmit(event.runId)}');
       }
@@ -124,6 +154,7 @@ class ConversationController extends ChangeNotifier {
     }
 
     if (event is ToolResultEvent) {
+      _trackPendingRun(event.runId);
       if (client.debug) {
         debugPrint('[controller ${client.label ?? '?'}] tool_result run=${event.runId} emit=${_shouldEmit(event.runId)}');
       }
@@ -133,7 +164,16 @@ class ConversationController extends ChangeNotifier {
       return;
     }
 
+    if (event is ToolApprovalRequestEvent) {
+      _trackPendingRun(event.runId, sessionId: event.sessionId);
+      if (_shouldEmit(event.runId, sessionId: event.sessionId)) {
+        _eventStream.add(event);
+      }
+      return;
+    }
+
     if (event is RunStatusEvent) {
+      _trackPendingRun(event.runId);
       if (_shouldEmit(event.runId)) {
         _eventStream.add(event);
       }
@@ -141,6 +181,7 @@ class ConversationController extends ChangeNotifier {
     }
 
     if (event is TokenUsageEvent) {
+      _trackPendingRun(event.runId);
       if (_shouldEmit(event.runId)) {
         _eventStream.add(event);
       }
