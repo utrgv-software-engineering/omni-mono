@@ -70,85 +70,93 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
     else:
         endpoint.register_route(app, "/ws")
 
-    async def _terminal_route(websocket: WebSocket):
-        if auth_token:
-            if websocket.query_params.get("token") != auth_token:
+    if getattr(service, "terminal_manager", None) is not None:
+        async def _terminal_route(websocket: WebSocket):
+            terminal_manager = getattr(service, "terminal_manager", None)
+            if terminal_manager is None:
                 await websocket.close(code=4403)
                 return
-        session_id = websocket.query_params.get("session_id") or ""
-        terminal_id = websocket.query_params.get("terminal_id") or ""
-        term_token = websocket.query_params.get("terminal_token") or ""
-        if not session_id or not terminal_id or not term_token:
-            await websocket.close(code=4403)
-            return
-        try:
-            terminal = await service.terminal_manager.authorize(session_id, terminal_id, term_token)
-        except Exception:
-            await websocket.close(code=4403)
-            return
-        await websocket.accept()
+            if auth_token:
+                if websocket.query_params.get("token") != auth_token:
+                    await websocket.close(code=4403)
+                    return
+            session_id = websocket.query_params.get("session_id") or ""
+            terminal_id = websocket.query_params.get("terminal_id") or ""
+            term_token = websocket.query_params.get("terminal_token") or ""
+            if not session_id or not terminal_id or not term_token:
+                await websocket.close(code=4403)
+                return
+            try:
+                terminal = await terminal_manager.authorize(session_id, terminal_id, term_token)
+            except Exception:
+                await websocket.close(code=4403)
+                return
+            await websocket.accept()
 
-        async def _forward_output():
+            async def _forward_output():
+                try:
+                    while True:
+                        chunk = await terminal_manager.read_output(terminal)
+                        if chunk is None:
+                            await websocket.send_json({
+                                "type": "exit",
+                                "terminal_id": terminal_id,
+                                "code": terminal.exit_code,
+                            })
+                            break
+                        await websocket.send_json({
+                            "type": "output",
+                            "terminal_id": terminal_id,
+                            "data": terminal_manager.encode_output(chunk),
+                        })
+                except Exception:
+                    pass
+
+            output_task = asyncio.create_task(_forward_output())
             try:
                 while True:
-                    chunk = await service.terminal_manager.read_output(terminal)
-                    if chunk is None:
-                        await websocket.send_json({
-                            "type": "exit",
-                            "terminal_id": terminal_id,
-                            "code": terminal.exit_code,
-                        })
-                        break
-                    await websocket.send_json({
-                        "type": "output",
-                        "terminal_id": terminal_id,
-                        "data": service.terminal_manager.encode_output(chunk),
-                    })
-            except Exception:
-                pass
-
-        output_task = asyncio.create_task(_forward_output())
-        try:
-            while True:
-                try:
-                    message = await websocket.receive_json()
-                except WebSocketDisconnect:
-                    break
-                except Exception:
-                    break
-                if not isinstance(message, dict):
-                    continue
-                msg_type = message.get("type")
-                if msg_type == "input":
-                    data = message.get("data")
-                    if isinstance(data, str):
-                        try:
-                            payload = service.terminal_manager.decode_input(data)
-                        except Exception:
-                            payload = b""
-                        if payload:
-                            await service.terminal_manager.write_input(terminal, payload)
-                elif msg_type == "resize":
-                    cols = message.get("cols")
-                    rows = message.get("rows")
                     try:
-                        c = int(cols)
-                        r = int(rows)
+                        message = await websocket.receive_json()
+                    except WebSocketDisconnect:
+                        break
                     except Exception:
+                        break
+                    if not isinstance(message, dict):
                         continue
-                    await service.terminal_manager.resize(terminal, c, r)
-                elif msg_type == "close":
-                    break
-        finally:
-            await service.terminal_manager.close_terminal(session_id, terminal_id)
-            try:
-                await output_task
-            except Exception:
-                pass
-            try:
-                await websocket.close()
-            except Exception:
-                pass
+                    msg_type = message.get("type")
+                    if msg_type == "input":
+                        data = message.get("data")
+                        if isinstance(data, str):
+                            try:
+                                payload = terminal_manager.decode_input(data)
+                            except Exception:
+                                payload = b""
+                            if payload:
+                                await terminal_manager.write_input(terminal, payload)
+                    elif msg_type == "resize":
+                        cols = message.get("cols")
+                        rows = message.get("rows")
+                        try:
+                            c = int(cols)
+                            r = int(rows)
+                        except Exception:
+                            continue
+                        await terminal_manager.resize(terminal, c, r)
+                    elif msg_type == "close":
+                        break
+            finally:
+                try:
+                    await terminal_manager.close_terminal(session_id, terminal_id)
+                except Exception:
+                    pass
+                try:
+                    await output_task
+                except Exception:
+                    pass
+                try:
+                    await websocket.close()
+                except Exception:
+                    pass
 
-    app.add_api_websocket_route("/ws/terminal", _terminal_route)
+        app.add_api_websocket_route("/ws/terminal", _terminal_route)
     return app

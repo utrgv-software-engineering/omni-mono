@@ -1624,7 +1624,7 @@ function ScenarioSetDetail({
                               : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600'
                           }`}
                         >
-                          Judgment: {judgment === 'unacceptable' ? 'needs improvement' : 'acceptable'}
+                          Judgment: {judgment === 'unacceptable' ? 'unacceptable' : 'acceptable'}
                         </span>
                       ) : null}
                       {typeof analysisBlock?.workflow === 'string' && analysisBlock.workflow.trim().length > 0 ? (

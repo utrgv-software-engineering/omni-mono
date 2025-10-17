@@ -20,7 +20,6 @@ from omniagents.core.session.history_db import get_user_messages
 from omniagents.core.runtime.bridge import stream_agent
 from omniagents.core.agents.builder import _default_build_agent
 from omniagents.core.debug import Debug
-from omniagents.rpc.terminal import TerminalManager
 
 
 # Optional verbose logging controlled by env var or global Debug
@@ -103,51 +102,6 @@ class AgentService(RpcMethodsBase):
         # Note: we intentionally do NOT register built-in example functions
         # like "session.get_history" so they won't surface in UIs that
         # dynamically list server functions (e.g., Bubble Tea /help).
-        self._terminal_manager = TerminalManager()
-        self.register_server_function(
-            "terminal.create",
-            self._server_terminal_create,
-            description="Start an interactive shell for this session",
-            params_schema={
-                "type": "object",
-                "properties": {
-                    "shell": {"type": "string"},
-                    "cwd": {"type": "string"},
-                    "cols": {"type": "integer", "minimum": 10},
-                    "rows": {"type": "integer", "minimum": 5},
-                },
-                "additionalProperties": False,
-            },
-            result_schema={
-                "type": "object",
-                "properties": {
-                    "terminal_id": {"type": "string"},
-                    "token": {"type": "string"},
-                    "shell": {"type": "string"},
-                    "cwd": {"type": ["string", "null"]},
-                    "created_at": {"type": "string"},
-                    "cols": {"type": "integer"},
-                    "rows": {"type": "integer"},
-                },
-                "required": ["terminal_id", "token"],
-            },
-        )
-        self.register_server_function(
-            "terminal.close",
-            self._server_terminal_close,
-            description="Stop a running terminal for this session",
-            params_schema={
-                "type": "object",
-                "properties": {"terminal_id": {"type": "string"}},
-                "required": ["terminal_id"],
-                "additionalProperties": False,
-            },
-            result_schema={
-                "type": "object",
-                "properties": {"ok": {"type": "boolean"}},
-                "required": ["ok"],
-            },
-        )
 
     # ------------------------------------------------------------------
     #  Server Functions registry APIs (programmatic registration)
@@ -262,83 +216,6 @@ class AgentService(RpcMethodsBase):
                     continue
             return fn()
 
-    @property
-    def terminal_manager(self) -> TerminalManager:
-        return self._terminal_manager
-
-    async def _server_terminal_create(
-        self,
-        session: Session | None,
-        args: dict | None = None,
-    ) -> dict:
-        if session is None:
-            raise ValueError("session required")
-        payload = args or {}
-        shell_raw = payload.get("shell")
-        cwd_raw = payload.get("cwd")
-        shell = shell_raw if isinstance(shell_raw, str) else None
-        cwd = cwd_raw if isinstance(cwd_raw, str) else None
-        cols = payload.get("cols")
-        rows = payload.get("rows")
-        width = self._coerce_positive_int(cols)
-        height = self._coerce_positive_int(rows)
-        resolved_cwd = self._resolve_workspace_root(session, cwd)
-        data = await self._terminal_manager.create_terminal(
-            session.id,
-            shell=shell,
-            cwd=resolved_cwd,
-            cols=width,
-            rows=height,
-        )
-        data["cwd"] = resolved_cwd
-        data["path"] = "/ws/terminal"
-        data["terminal_token"] = data.get("token")
-        data["session_id"] = session.id
-        return data
-
-    async def _server_terminal_close(
-        self,
-        session: Session | None,
-        args: dict | None = None,
-    ) -> dict:
-        if session is None:
-            raise ValueError("session required")
-        payload = args or {}
-        terminal_id = payload.get("terminal_id")
-        if not isinstance(terminal_id, str) or not terminal_id.strip():
-            raise ValueError("terminal_id required")
-        await self._terminal_manager.close_terminal(session.id, terminal_id)
-        return {"ok": True}
-
-    def _coerce_positive_int(self, value: Any | None) -> int | None:
-        if value is None:
-            return None
-        try:
-            ivalue = int(value)
-        except (TypeError, ValueError):
-            return None
-        if ivalue <= 0:
-            return None
-        return ivalue
-
-    def _resolve_workspace_root(self, session: Session, override: str | None) -> str | None:
-        if override and override.strip():
-            return override
-        ctx = getattr(session, "context", None)
-        if isinstance(ctx, dict):
-            value = ctx.get("workspace_root")
-            if isinstance(value, str) and value.strip():
-                return value
-        if ctx is not None:
-            value = getattr(ctx, "workspace_root", None)
-            if isinstance(value, str) and value.strip():
-                return value
-        variables = getattr(session, "variables", None)
-        if isinstance(variables, dict):
-            value = variables.get("workspace_root")
-            if isinstance(value, str) and value.strip():
-                return value
-        return None
 
     # --- Built-in server functions -------------------------------------
     def _sf_session_get_history(self, session: Session | None, args: dict | None = None) -> list[dict]:
@@ -534,12 +411,23 @@ class AgentService(RpcMethodsBase):
         """Ask the client for approval; buffer request if not delivered."""
 
         approval_id = uuid.uuid4().hex
+        current_task = asyncio.current_task()
+        run_id = None
+        if current_task is not None:
+            try:
+                run_id = current_task.get_name()
+            except Exception:
+                run_id = None
         payload = {
             "approval_id": approval_id,
             "tool": tool_name,
             "arguments": formatted_args,
         }
-        
+        if run_id:
+            payload["run_id"] = run_id
+        if _sess is not None:
+            payload["session_id"] = _sess.id
+
         # Add metadata if present (backward compatible)
         if metadata:
             payload["metadata"] = metadata
@@ -873,7 +761,9 @@ class AgentService(RpcMethodsBase):
         """Archive *session_id* so clients can hide it."""
         _debug_rpc("archive_session", {"session_id": session_id})
         ok = self._session_manager.archive_session(session_id)
-        await self._terminal_manager.cleanup_session(session_id)
+        manager = getattr(self, "terminal_manager", None)
+        if manager is not None:
+            await manager.cleanup_session(session_id)
         return ok
 
     # (Removed) get_model_info: model metadata is now sent inline with usage events
