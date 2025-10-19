@@ -376,9 +376,8 @@ export function AgentWorkbench({
   const [modelSettingsDirty, setModelSettingsDirty] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [useSafeAgent, setUseSafeAgent] = useState(false)
-  const [safeAgentDirty, setSafeAgentDirty] = useState(false)
   const [safeOptions, setSafeOptions] = useState<SafeOptionsState>(createDefaultSafeOptions)
-  const [safeOptionsDirty, setSafeOptionsDirty] = useState(false)
+  const [, setSafeOptionsDirty] = useState(false)
   const [safePatternInput, setSafePatternInput] = useState('')
   const [selectedInputGuardrails, setSelectedInputGuardrails] = useState<string[]>([])
   const [selectedOutputGuardrails, setSelectedOutputGuardrails] = useState<string[]>([])
@@ -457,15 +456,19 @@ export function AgentWorkbench({
     const shouldPrefill = Boolean(agentKey)
     const defaultModel = data?.default_model ?? ''
     const resolvedInstructions = shouldPrefill ? data?.default_instructions ?? '' : ''
+    const availableToolNames = tools.map((tool) => tool.name)
     const resolvedTools = shouldPrefill ? Array.from(new Set(data?.default_tools ?? [])) : []
     const resolvedModelSettings = shouldPrefill ? data?.default_model_settings ?? {} : {}
-    const resolvedUseSafe = shouldPrefill ? Boolean(data?.safe_defaults?.use_safe_agent) : false
-    const resolvedSafeOptions = shouldPrefill ? sanitizeSafeOptions(data?.safe_defaults?.options, resolvedTools) : createDefaultSafeOptions()
+    const resolvedUseSafe = Boolean(data?.safe_defaults?.use_safe_agent)
+    const resolvedSafeOptions = sanitizeSafeOptions(
+      data?.safe_defaults?.options,
+      shouldPrefill ? resolvedTools : availableToolNames,
+    )
     const resolvedInputGuardrails = shouldPrefill ? data?.guardrails?.default_input ?? [] : []
     const resolvedOutputGuardrails = shouldPrefill ? data?.guardrails?.default_output ?? [] : []
     const resolvedOutputFields = shouldPrefill ? schemaToFields(structuredOutputConfig?.default_schema) : []
     const resolvedOutputStrict = structuredOutputConfig ? structuredOutputConfig.default_strict ?? true : true
-    const baselineSafeOptions = shouldPrefill ? resolvedSafeOptions : createDefaultSafeOptions()
+    const baselineSafeOptions = resolvedSafeOptions
     const baselineInputGuardrails = shouldPrefill ? resolvedInputGuardrails : []
     const baselineOutputGuardrails = shouldPrefill ? resolvedOutputGuardrails : []
     const baselineOutputFields = shouldPrefill ? resolvedOutputFields : []
@@ -478,7 +481,6 @@ export function AgentWorkbench({
       setModelSettings(resolvedModelSettings)
       setModelSettingsDirty(false)
       setUseSafeAgent(resolvedUseSafe)
-      setSafeAgentDirty(false)
       setSafeOptions(baselineSafeOptions)
       setSafeOptionsDirty(false)
       setSafePatternInput(baselineSafeOptions.safe_tool_patterns.join('\n'))
@@ -493,11 +495,10 @@ export function AgentWorkbench({
       setToolsDirty(false)
       setModelSettings({})
       setModelSettingsDirty(false)
-      setUseSafeAgent(false)
-      setSafeAgentDirty(false)
+      setUseSafeAgent(resolvedUseSafe)
       setSafeOptions(baselineSafeOptions)
       setSafeOptionsDirty(false)
-      setSafePatternInput('')
+      setSafePatternInput(baselineSafeOptions.safe_tool_patterns.join('\n'))
       setSelectedInputGuardrails([])
       setSelectedOutputGuardrails([])
       setGuardrailsDirty(false)
@@ -528,7 +529,7 @@ export function AgentWorkbench({
     )
     setInitialComparison(JSON.stringify(prepareComparison(snapshot)))
     setDefaultsApplied(true)
-  }, [agentKey, data, defaultsApplied, structuredOutputConfig, updateSelection])
+  }, [agentKey, data, defaultsApplied, structuredOutputConfig, tools, updateSelection])
 
   useEffect(() => {
     const projectName = data?.project_name || ''
@@ -923,7 +924,6 @@ export function AgentWorkbench({
       setModelSettingsDirty(false)
       const useSafeByDefault = Boolean(data?.safe_defaults?.use_safe_agent)
       setUseSafeAgent(useSafeByDefault)
-      setSafeAgentDirty(false)
       const resetSafeOptions = sanitizeSafeOptions(data?.safe_defaults?.options, defaultTools)
       setSafeOptions(resetSafeOptions)
       setSafeOptionsDirty(false)
@@ -942,12 +942,15 @@ export function AgentWorkbench({
       setToolsDirty(false)
       setModelSettings({})
       setModelSettingsDirty(false)
-      setUseSafeAgent(false)
-      setSafeAgentDirty(false)
-      const resetSafeOptions = createDefaultSafeOptions()
+      const useSafeByDefault = Boolean(data?.safe_defaults?.use_safe_agent)
+      setUseSafeAgent(useSafeByDefault)
+      const resetSafeOptions = sanitizeSafeOptions(
+        data?.safe_defaults?.options,
+        tools.map((tool) => tool.name),
+      )
       setSafeOptions(resetSafeOptions)
       setSafeOptionsDirty(false)
-      setSafePatternInput('')
+      setSafePatternInput(resetSafeOptions.safe_tool_patterns.join('\n'))
       setSelectedInputGuardrails([])
       setSelectedOutputGuardrails([])
       setGuardrailsDirty(false)
@@ -1021,7 +1024,6 @@ export function AgentWorkbench({
       setInstructionsDirty(false)
       setToolsDirty(false)
       setModelSettingsDirty(false)
-      setSafeAgentDirty(false)
       setSafeOptionsDirty(false)
       setGuardrailsDirty(false)
       setOutputConfigDirty(false)
@@ -1060,7 +1062,13 @@ export function AgentWorkbench({
   ])
 
   const ensureSession = async (trimmedModel: string) => {
-    if (!sessionId || configDirty) {
+    const hasSession = Boolean(sessionId)
+    const shouldConfigure = !sessionId || configDirty
+    const needsReconnect = configDirty && hasSession
+    if (needsReconnect) {
+      resetConversation()
+    }
+    if (shouldConfigure) {
       setFormError('')
       try {
         let schemaPayload: Record<string, unknown> | null = null
@@ -1085,12 +1093,14 @@ export function AgentWorkbench({
           payload.model_settings = modelSettings
         }
 
-        if (safeAgentDirty) {
-          payload.use_safe_agent = useSafeAgent
-        }
-
-        if (safeOptionsDirty && useSafeAgent) {
-          payload.safe_agent_options = safeOptions
+        payload.use_safe_agent = useSafeAgent
+        if (useSafeAgent || safeOptions.skip_approvals || !safeOptions.halt_on_rejection || safeOptions.safe_tool_names.length > 0 || safeOptions.safe_tool_patterns.length > 0) {
+          payload.safe_agent_options = {
+            skip_approvals: Boolean(safeOptions.skip_approvals),
+            halt_on_rejection: Boolean(safeOptions.halt_on_rejection),
+            safe_tool_names: [...safeOptions.safe_tool_names],
+            safe_tool_patterns: [...safeOptions.safe_tool_patterns],
+          }
         }
 
         if (guardrailsDirty) {
@@ -1110,7 +1120,7 @@ export function AgentWorkbench({
           }
         }
 
-        if (sessionId) {
+        if (!needsReconnect && hasSession) {
           payload.session_id = sessionId
         }
 
@@ -1123,7 +1133,6 @@ export function AgentWorkbench({
         setInstructionsDirty(false)
         setToolsDirty(false)
         setModelSettingsDirty(false)
-        setSafeAgentDirty(false)
         setSafeOptionsDirty(false)
         setGuardrailsDirty(false)
         setOutputConfigDirty(false)
@@ -1532,7 +1541,6 @@ export function AgentWorkbench({
                     checked={useSafeAgent}
                     onChange={(event) => {
                       setUseSafeAgent(event.target.checked)
-                      setSafeAgentDirty(true)
                       setConfigDirty(true)
                     }}
                     className="h-3 w-3 rounded border-input"
@@ -1571,7 +1579,8 @@ export function AgentWorkbench({
                         <span className="text-xs text-muted-foreground">No tools selected.</span>
                       ) : (
                         selectedTools.map((toolName) => {
-                          const active = safeOptions.safe_tool_names.includes(toolName)
+                          const isMarkedSafe = safeOptions.safe_tool_names.includes(toolName)
+                          const requiresApproval = !isMarkedSafe
                           return (
                             <label
                               key={toolName}
@@ -1581,11 +1590,11 @@ export function AgentWorkbench({
                             >
                               <span className="font-medium text-foreground">{toolName}</span>
                               <span className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                                <span>{active ? 'Safe' : 'Requires approval'}</span>
+                                <span>Requires approval</span>
                                 <input
                                   type="checkbox"
-                                  checked={active}
-                                  onChange={(event) => updateSafeToolName(toolName, event.target.checked)}
+                                  checked={requiresApproval}
+                                  onChange={(event) => updateSafeToolName(toolName, !event.target.checked)}
                                   disabled={!useSafeAgent}
                                   className="h-3 w-3 rounded border-input"
                                 />

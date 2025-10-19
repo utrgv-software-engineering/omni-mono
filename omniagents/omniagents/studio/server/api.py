@@ -223,27 +223,44 @@ def _resolve_agent_spec(resources: Dict[str, Any], agent_key: Optional[str]) -> 
 
 def _compute_playground_ws_url(request: Request) -> str:
     forwarded_proto = request.headers.get("x-forwarded-proto")
-    scheme = forwarded_proto.split(",")[0].strip() if forwarded_proto else request.url.scheme
-
     forwarded_host = request.headers.get("x-forwarded-host")
     forwarded_port = request.headers.get("x-forwarded-port")
 
-    base_url = request.base_url
+    http_url = URL(str(request.url_for("playground_ws")))
+
+    scheme = forwarded_proto.split(",")[0].strip() if forwarded_proto else http_url.scheme
+
+    host = http_url.hostname or http_url.host
+    port = http_url.port
+
     if forwarded_host:
-        host = forwarded_host.split(",")[0].strip()
-        if forwarded_port and ":" not in host:
-            host = f"{host}:{forwarded_port.split(',')[0].strip()}"
-        base_url = URL(f"{scheme}://{host}{base_url.path}")
-    else:
-        base_url = base_url.replace(scheme=scheme)
+        host_value = forwarded_host.split(",")[0].strip()
+        if host_value:
+            if ":" in host_value:
+                host_part, _, port_part = host_value.partition(":")
+                host = host_part or host
+                try:
+                    port = int(port_part)
+                except ValueError:
+                    pass
+            else:
+                host = host_value or host
+
+    if forwarded_port:
+        port_value = forwarded_port.split(",")[0].strip()
+        try:
+            port = int(port_value)
+        except ValueError:
+            pass
 
     ws_scheme = "wss" if scheme == "https" else "ws"
-    ws_base = base_url.replace(scheme=ws_scheme)
+    ws_url = http_url.replace(scheme=ws_scheme)
 
-    base_path = ws_base.path.rstrip("/")
-    ws_path = "/playground/ws" if not base_path else f"{base_path}/playground/ws"
+    if host:
+        ws_url = ws_url.replace(hostname=host)
+    ws_url = ws_url.replace(port=port)
 
-    return str(ws_base.replace(path=ws_path))
+    return str(ws_url)
 
 
 def _build_metadata_response(
