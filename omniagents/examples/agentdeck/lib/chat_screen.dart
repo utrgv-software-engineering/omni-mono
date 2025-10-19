@@ -162,9 +162,11 @@ class _ChatViewState extends State<_ChatView> {
     // other insets because the header/app-bar already handles the top and the
     // horizontal padding is managed elsewhere.
     final content = SafeArea(
-      top: false,
-      left: false,
-      right: false,
+      top: widget.embedded,
+      bottom: true,
+      left: true,
+      right: true,
+      maintainBottomViewPadding: true,
       child: Column(
         children: [
           // Header (only for embedded mode)
@@ -332,8 +334,10 @@ class _ChatViewState extends State<_ChatView> {
   Widget _buildInputRow(ChatModel model) {
     final screenHeight = MediaQuery.of(context).size.height;
     final maxInputHeight = screenHeight * 0.5;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+    return SafeArea(
+      top: false,
+      maintainBottomViewPadding: true,
+      minimum: const EdgeInsets.fromLTRB(12, 8, 12, 16),
       child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: maxInputHeight),
         child: Shortcuts(

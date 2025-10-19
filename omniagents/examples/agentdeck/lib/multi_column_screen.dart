@@ -424,7 +424,7 @@ class _MultiColumnScreenState extends State<MultiColumnScreen>
             ),
           ),
           child: SafeArea(
-            bottom: false,
+            maintainBottomViewPadding: true,
             child: Column(
               children: [
                 Padding(
