@@ -2,8 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, JSX } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronUp, Plus, ShieldCheck, Trash2 } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import { useToastStore } from '../../stores/toastStore'
 import { api, type PlaygroundSessionPayload } from '../../lib/api'
 import type {
@@ -21,6 +19,7 @@ import {
   type PlaygroundConnectionState,
   type PlaygroundUsageTotals,
 } from './usePlaygroundSession'
+import { MarkdownMessage } from '../../shared/components/MarkdownMessage'
 
 export interface PlaygroundContext {
   projectName: string
@@ -2080,11 +2079,7 @@ function PlaygroundChatPanel({
           key={event.id}
           className="mr-auto inline-block max-w-[70%] rounded-lg border border-border bg-background px-3 py-2 text-sm shadow"
         >
-          <div className="prose prose-sm max-w-none dark:prose-invert">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {event.content || ''}
-            </ReactMarkdown>
-          </div>
+          <MarkdownMessage content={event.content || ''} variant="assistant" />
         </div>
       )
     }

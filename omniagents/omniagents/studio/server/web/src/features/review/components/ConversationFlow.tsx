@@ -1,11 +1,6 @@
 import React, { useMemo } from 'react'
 import type { Span } from '../../../types'
 import { cn } from '../../../lib/utils'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import remarkMath from 'remark-math'
-import rehypeKatex from 'rehype-katex'
-import 'katex/dist/katex.min.css'
 import {
   User,
   Bot,
@@ -21,6 +16,7 @@ import {
 } from 'lucide-react'
 import { useTrace } from '../../traces/hooks/useTraces'
 import { useTraceStore } from '../../traces/store/traceStore'
+import { MarkdownMessage } from '../../../shared/components/MarkdownMessage'
 
 interface ConversationFlowProps {
   spans: Span[]
@@ -988,36 +984,10 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
               )}
             </div>
             <div className="flex-1 min-w-0">
-              <div className={cn(
-                "prose prose-sm max-w-none",
-                isUser ? 
-                  // User message styles - white text
-                  "prose-invert prose-p:text-white prose-headings:text-white prose-strong:text-white prose-em:text-white prose-a:text-blue-200 hover:prose-a:text-blue-100 prose-li:text-white prose-blockquote:text-white/90 prose-code:text-white prose-code:bg-blue-600/50" :
-                  // Assistant/System message styles - normal theme colors
-                  "dark:prose-invert prose-strong:text-foreground prose-headings:text-foreground prose-a:text-blue-500 hover:prose-a:underline prose-code:bg-muted",
-                // Common styles for all messages
-                "prose-p:whitespace-pre-wrap prose-p:break-words prose-p:my-1 prose-p:first:mt-0 prose-p:last:mb-0 prose-p:leading-relaxed",
-                "prose-pre:bg-muted prose-pre:border prose-pre:border-border prose-pre:my-2",
-                "prose-code:text-xs prose-code:px-1 prose-code:py-0.5 prose-code:rounded",
-                "prose-code:before:content-none prose-code:after:content-none prose-code:font-mono",
-                "prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5",
-                "prose-blockquote:border-l-4 prose-blockquote:border-muted prose-blockquote:pl-4 prose-blockquote:italic",
-                "prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-2",
-                // KaTeX color styling for user messages
-                isUser ? "[&_.katex]:text-white" : ""
-              )}>
-                <ReactMarkdown 
-                  remarkPlugins={[remarkGfm, remarkMath]}
-                  rehypePlugins={[[rehypeKatex, { strict: false }]]}
-                >
-                  {item.content
-                    // Convert LaTeX-style delimiters to dollar sign delimiters that remark-math recognizes
-                    .replace(/\\\(/g, '$')
-                    .replace(/\\\)/g, '$')
-                    .replace(/\\\[/g, '$$')
-                    .replace(/\\\]/g, '$$')}
-                </ReactMarkdown>
-              </div>
+              <MarkdownMessage
+                content={item.content}
+                variant={isUser ? 'user' : isSystem ? 'system' : 'assistant'}
+              />
               {item.error && (
                 <div className="flex items-center gap-1 mt-2 text-destructive">
                   <AlertCircle className="w-3 h-3" />
