@@ -16,7 +16,7 @@ Create a lightweight agent experimentation flow inside OmniAgents Studio that mi
 - ➡️ Trace list already filters by workflow; playground runs appear once recorded. No additional UI needed.
 
 ## Remaining Work / Ideas
-- Handle SafeAgent approvals in-playground (UI for `tool_approval_request` + response buttons).
+- Handle SafeAgent approvals in-playground (UI for `client_request` `ui.request_tool_approval` + response buttons).
 - Toasts or inline errors when websocket disconnects unexpectedly; optional auto-retry.
 - Persist chat history across page reloads (local storage keyed by session id) if desired.
 - “Save run to traces” or “Export conversation” actions.

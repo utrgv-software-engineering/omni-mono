@@ -1,9 +1,9 @@
 # OmniAgents Issue Register
-_Last updated: 2025-10-16_
+_Last updated: 2025-10-18_
 
 ## Summary
-- 10 active bug reports (2 partially mitigated) across optimization, logging, streaming, and client backends.
-- 9 improvement tasks covering logging focus, navigation, variable handling, linting, and project scaffolding.
+- 10 active bug reports (2 partially mitigated) across optimization, logging, streaming, and AgentDeck clients.
+- 10 improvement tasks covering logging focus, navigation, variable handling, linting, project scaffolding, UI polish, and Flutter deprecation cleanup.
 - 9 feature requests targeting MCP management, evaluation taxonomy/tooling, persistence, and API discoverability.
 - Documentation remains sparse; MCP server health still unverified; major initiatives include SSO integration and deployment automation.
 
@@ -48,11 +48,11 @@ _Last updated: 2025-10-16_
 - Related: `omniagents/studio/server/api.py`
 
 ### B-06 • AgentDeck approvals land in the wrong column
-- Status: Open
+- Status: Resolved
 - Severity: Medium
 - Summary: Tool approval cards render inside each conversation column instead of a dedicated approvals column, so approvals stream in the wrong place.
 - Evidence: `_buildItem` in `examples/agentdeck/lib/chat_screen.dart` injects `ApprovalRequestCard`; `MultiColumnScreen` only renders chat columns with no approvals rail.
-- Next Steps: Add a separate approvals feed column or central queue, and decouple approvals from per-conversation timelines.
+- Fix: `MultiColumnScreen` now renders a dedicated approvals rail and chat columns only contain conversation cards.
 - Related: `examples/agentdeck/lib/multi_column_screen.dart`, `examples/agentdeck/lib/models.dart`
 
 ### B-07 • Flet backend no longer launches
@@ -86,6 +86,44 @@ _Last updated: 2025-10-16_
 - Evidence: `_maybe_filter` in `omniagents/core/eval/optimize.py` ignores `label is None`; `StratifiedBatchSampler` treats falsy labels as negatives.
 - Next Steps: Filter out unlabeled scenarios or require failure categories before optimization; add dataset validation.
 - Related: `omniagents/core/eval/stratified_sampler.py`
+
+### B-11 • AgentDeck chat input autocorrects prompts
+- Status: Resolved
+- Severity: Medium
+- Summary: Mobile keyboards replace agent prompts because the chat input enables OS autocorrect and suggestions by default.
+- Evidence: The `TextField` in `examples/agentdeck/lib/chat_screen.dart` lacks `autocorrect: false` (and related flags), so Flutter leaves autocorrect and predictive suggestions on.
+- Fix: The chat input now disables autocorrect, predictive suggestions, and smart punctuation so prompts remain untouched.
+- Related: `examples/agentdeck/lib/chat_screen.dart`
+
+### B-12 • AgentDeck auto-scroll ignores status rows
+- Status: Resolved
+- Severity: Medium
+- Summary: Conversation columns stopped short of the latest content when long status messages appeared because `_ChatViewState` only compared `model.items.length` before auto-scrolling, ignoring the extra status row.
+- Fix: `_ChatViewState` now tracks status text/spinner changes and adds the status row to the scroll metrics so the view snaps to the bottom whenever status content updates.
+- Related: `examples/agentdeck/lib/chat_screen.dart`
+
+### B-13 • AgentDeck input draft lost when docking terminal
+- Status: Needs triage
+- Severity: High
+- Summary: Partially typed messages disappear if the user opens a docked terminal because the chat subtree is rebuilt when focus layout toggles, resetting `_ChatViewState` and its `TextEditingController`.
+- Evidence: `_buildFocusLayout` in `examples/agentdeck/lib/multi_column_screen.dart` swaps `chatPane` into a new `Row` once `deck.docked` becomes true, causing Flutter to discard the old state keyed by `ValueKey(conv.id)`.
+- Next Steps: Keep the chat widget in a stable position (e.g., wrap in `KeyedSubtree` or pre-build the layout) so docking terminals doesn’t drop the existing state.
+- Related: `examples/agentdeck/lib/multi_column_screen.dart`, `examples/agentdeck/lib/chat_screen.dart`
+
+### B-14 • AgentDeck context tooltip inaccessible on touch
+- Status: Resolved
+- Severity: Medium
+- Summary: The context-remaining “info” icon relied on hover-only `Tooltip` events, leaving touch users without a way to reveal the message.
+- Fix: Converted the context usage indicator into an `IconButton` that opens a dialog while keeping hover tooltips, restoring accessibility on touch devices.
+- Related: `examples/agentdeck/lib/chat_screen.dart`
+
+### B-15 • AgentDeck columns ignore horizontal SafeArea
+- Status: Open
+- Severity: Medium
+- Summary: Chat columns render edge-to-edge in embedded mode so the timeline and input row slide under iPhone landscape camera notches and home indicators.
+- Evidence: `_ChatViewState.build` wraps the column in `SafeArea(top: false, left: false, right: false, …)` in `examples/agentdeck/lib/chat_screen.dart`, disabling horizontal insets for both deck and paged layouts.
+- Next Steps: Respect horizontal safe-area padding (or apply `MediaQuery.viewPadding`) for conversation columns and ensure the chat input stays clear of system intrusions in deck and focus layouts.
+- Related: `examples/agentdeck/lib/chat_screen.dart`, `examples/agentdeck/lib/multi_column_screen.dart`
 
 ## Improvements
 
@@ -157,6 +195,21 @@ _Last updated: 2025-10-16_
 - Dependencies: Requires Gemfury credentials pipeline.
 - Next Steps: Provide optional workflow that runs on tagged releases and pushes to Gemfury.
 - Related: `omniagents/core/project/scaffold.py`
+
+### I-10 • Align AgentDeck header icon spacing
+- Status: Resolved
+- Priority: Low
+- Summary: Header icons for info, terminal, folder, and close used a mix of raw `Icon` and `IconButton` widgets with inconsistent padding, producing uneven hit areas and spacing.
+- Fix: Standardized the header actions on compact `IconButton` widgets with shared spacing so controls align and maintain consistent hit targets.
+- Related: `examples/agentdeck/lib/chat_screen.dart`
+
+### I-11 • Clear Flutter deprecation warnings
+- Status: Open
+- Priority: Medium
+- Summary: Running `fvm flutter analyze` surfaces numerous Flutter 3.18 deprecations (`RawKeyboard`, `surfaceVariant`, `withOpacity`, etc.), causing the analyzer to exit with status 1.
+- Evidence: `/home/ericm/.fvm_flutter/bin/fvm flutter analyze` output from 2025-10-18 lists 32 `deprecated_member_use` findings across `examples/agentdeck/lib/chat_screen.dart`, `terminal_panel.dart`, and related theme files.
+- Next Steps: Replace deprecated APIs with current alternatives (e.g., `HardwareKeyboard`, `.withValues()`, `surfaceContainerHighest`) and introduce analyzer suppression only where migration is infeasible.
+- Related: `examples/agentdeck/lib/chat_screen.dart`, `examples/agentdeck/lib/terminal_panel.dart`, `examples/agentdeck/lib/theme/tweetdeck_scheme.dart`
 
 ## Features
 

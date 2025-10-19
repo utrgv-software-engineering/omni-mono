@@ -100,6 +100,13 @@ class _ChatView extends StatefulWidget {
   State<_ChatView> createState() => _ChatViewState();
 }
 
+class _StatusData {
+  const _StatusData({required this.text, required this.showSpinner});
+
+  final String text;
+  final bool showSpinner;
+}
+
 class _ChatViewState extends State<_ChatView> {
   final _scrollController = ScrollController();
   final _inputController = TextEditingController();
@@ -109,6 +116,7 @@ class _ChatViewState extends State<_ChatView> {
   // scroll to the bottom when new items arrive, not on every rebuild (e.g.
   // when the user simply taps inside the column).
   int _lastItemCount = 0;
+  String? _lastStatusSignature;
 
   @override
   void initState() {
@@ -128,26 +136,24 @@ class _ChatViewState extends State<_ChatView> {
   @override
   Widget build(BuildContext context) {
     final model = context.watch<ChatModel>();
-
-    bool hasStatus() {
-      String? text;
-      if (model.statusText != null && model.statusText!.trim().isNotEmpty) {
-        text = model.statusText!.trim();
-      } else if (model.isStreaming) {
-        text = 'Thinking…';
-      }
-      return text != null;
-    }
+    final status = _statusData(model);
+    final hasStatus = status != null;
+    final totalCount = model.items.length + (hasStatus ? 1 : 0);
+    final statusSignature =
+        status == null ? null : '${status.text}::${status.showSpinner}';
+    final usageButtonAppBar = _buildUsageButton(model, compact: true);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final totalCount = model.items.length + (hasStatus() ? 1 : 0);
-      if (totalCount != _lastItemCount && _scrollController.hasClients) {
+      if (_scrollController.hasClients &&
+          (totalCount != _lastItemCount ||
+              statusSignature != _lastStatusSignature)) {
         _scrollController.animateTo(
           _scrollController.position.maxScrollExtent,
           duration: const Duration(milliseconds: 300),
           curve: Curves.easeOut,
         );
         _lastItemCount = totalCount;
+        _lastStatusSignature = statusSignature;
       }
     });
 
@@ -166,13 +172,16 @@ class _ChatViewState extends State<_ChatView> {
           Expanded(
             child: ListView.builder(
               controller: _scrollController,
-              itemCount: model.items.length + (hasStatus() ? 1 : 0),
+              itemCount: totalCount,
               itemBuilder: (context, index) {
                 if (index < model.items.length) {
                   final item = model.items[index];
                   return _buildItem(item);
                 }
-                return _buildStatusRow(model);
+                if (status != null) {
+                  return _buildStatusRow(status);
+                }
+                return const SizedBox.shrink();
               },
             ),
           ),
@@ -191,16 +200,9 @@ class _ChatViewState extends State<_ChatView> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Flexible(child: _buildTitleWithCwd(model, appBar: true)),
-            if (_usageTooltip(model) != null) ...[
+            if (usageButtonAppBar != null) ...[
               const SizedBox(width: 8),
-              Tooltip(
-                message: _usageTooltip(model)!,
-                child: Icon(
-                  Icons.info_outline,
-                  size: 18,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
+              usageButtonAppBar,
             ],
           ],
         ),
@@ -284,25 +286,13 @@ class _ChatViewState extends State<_ChatView> {
     }
   }
 
-  Widget _buildStatusRow(ChatModel model) {
-    String? text;
-    bool showSpinner = false;
-    if (model.statusText != null && model.statusText!.trim().isNotEmpty) {
-      text = model.statusText!.trim();
-      showSpinner = model.statusShowSpinner;
-    } else if (model.isStreaming) {
-      text = model.currentRunId != null && model.currentRunId!.isNotEmpty
-          ? 'Thinking…'
-          : 'Thinking…';
-      showSpinner = true;
-    }
-    if (text == null) return const SizedBox.shrink();
+  Widget _buildStatusRow(_StatusData status) {
     final style = Theme.of(context).textTheme.bodySmall;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
       child: Row(
         children: [
-          if (showSpinner)
+          if (status.showSpinner)
             SizedBox(
               width: 14,
               height: 14,
@@ -316,11 +306,27 @@ class _ChatViewState extends State<_ChatView> {
             const SizedBox(width: 14, height: 14),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(text, style: style),
+            child: Text(status.text, style: style),
           ),
         ],
       ),
     );
+  }
+
+  _StatusData? _statusData(ChatModel model) {
+    String? text;
+    var showSpinner = false;
+    if (model.statusText != null && model.statusText!.trim().isNotEmpty) {
+      text = model.statusText!.trim();
+      showSpinner = model.statusShowSpinner;
+    } else if (model.isStreaming) {
+      text = model.currentRunId != null && model.currentRunId!.isNotEmpty
+          ? 'Thinking…'
+          : 'Thinking…';
+      showSpinner = true;
+    }
+    if (text == null) return null;
+    return _StatusData(text: text, showSpinner: showSpinner);
   }
 
   Widget _buildInputRow(ChatModel model) {
@@ -474,6 +480,68 @@ class _ChatViewState extends State<_ChatView> {
       return 'context remaining: $pct% • $name';
     }
     return null;
+  }
+
+  Widget? _buildUsageButton(ChatModel model, {required bool compact}) {
+    final message = _usageTooltip(model);
+    if (message == null) return null;
+    final color = Theme.of(context).colorScheme.onSurfaceVariant;
+    final constraints = compact
+        ? const BoxConstraints(minWidth: 32, minHeight: 32)
+        : const BoxConstraints(minWidth: 36, minHeight: 36);
+    final splashRadius = compact ? 18.0 : 20.0;
+    return Tooltip(
+      message: message,
+      child: IconButton(
+        onPressed: () => _showUsageDetails(message),
+        padding: EdgeInsets.zero,
+        constraints: constraints,
+        splashRadius: splashRadius,
+        iconSize: 20,
+        visualDensity: VisualDensity.compact,
+        icon: Icon(
+          Icons.info_outline,
+          size: 20,
+          color: color,
+        ),
+      ),
+    );
+  }
+
+  Widget _headerIconButton({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback? onPressed,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: IconButton(
+        onPressed: onPressed,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+        splashRadius: 18,
+        iconSize: 20,
+        visualDensity: VisualDensity.compact,
+        icon: Icon(icon, size: 20),
+      ),
+    );
+  }
+
+  Future<void> _showUsageDetails(String message) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Context usage'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildItem(ChatItem item) {
@@ -881,10 +949,81 @@ class _ChatViewState extends State<_ChatView> {
     }
     if (display == 'command') {
       final meta = metadata['metadata'];
-      final cmd = meta is Map && meta['command'] is String
-          ? meta['command'] as String
-          : (plainOutput ?? '');
-      return _codeInline('4 $cmd');
+      String command = plainOutput ?? '';
+      if (meta is Map && meta['command'] is String) {
+        command = meta['command'] as String;
+      }
+      String output = '';
+      final value = metadata['value'];
+      if (value is String && value.trim().isNotEmpty) {
+        output = value;
+      } else {
+        final preview = metadata['preview'];
+        if (preview is String && preview.trim().isNotEmpty) {
+          output = preview;
+        } else if (meta is Map) {
+          final stdout = meta['stdout'];
+          final stderr = meta['stderr'];
+          final buffer = StringBuffer();
+          bool hasContent = false;
+          if (stdout is String && stdout.trim().isNotEmpty) {
+            buffer.write(stdout);
+            hasContent = true;
+          }
+          if (stderr is String && stderr.trim().isNotEmpty) {
+            if (hasContent) buffer.write('\n');
+            buffer.write('[stderr]\n$stderr');
+            hasContent = true;
+          }
+          if (hasContent) {
+            output = buffer.toString();
+          }
+        }
+        if (output.isEmpty &&
+            plainOutput != null &&
+            plainOutput.trim().isNotEmpty) {
+          output = plainOutput;
+        }
+      }
+      int? exitCode;
+      bool? success;
+      bool hasStderr = false;
+      if (meta is Map) {
+        if (meta['exit_code'] is int) exitCode = meta['exit_code'] as int;
+        if (meta['success'] is bool) success = meta['success'] as bool;
+        if (meta['has_stderr'] is bool) hasStderr = meta['has_stderr'] as bool;
+      }
+      final children = <Widget>[
+        _codeInline('4 $command'),
+      ];
+      final statusParts = <String>[];
+      if (success != null) {
+        statusParts.add(success ? 'success' : 'failed');
+      }
+      if (exitCode != null) {
+        statusParts.add('exit $exitCode');
+      }
+      if (hasStderr &&
+          meta is Map &&
+          meta['stderr'] is String &&
+          (meta['stderr'] as String).trim().isNotEmpty) {
+        statusParts.add('stderr captured');
+      }
+      if (statusParts.isNotEmpty) {
+        children.add(const SizedBox(height: 6));
+        final tone =
+            Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.8);
+        children.add(Text(statusParts.join(' • '),
+            style: TextStyle(fontSize: 12, color: tone)));
+      }
+      if (output.trim().isNotEmpty) {
+        children.add(const SizedBox(height: 8));
+        children.add(_preText(output.trimRight()));
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: children,
+      );
     }
     final prev = metadata['preview'];
     if (prev is String && prev.isNotEmpty) {
@@ -1137,6 +1276,41 @@ class _ChatViewState extends State<_ChatView> {
       );
     }
 
+    final usageButtonHeader = _buildUsageButton(model, compact: true);
+
+    final headerActionButtons = <Widget>[
+      _headerIconButton(
+        icon: Icons.terminal,
+        tooltip: 'Open Terminal',
+        onPressed:
+            model.client.hasSession ? () => _openTerminal(model) : null,
+      ),
+      _headerIconButton(
+        icon: Icons.folder_open,
+        tooltip: 'Open Folder',
+        onPressed:
+            model.client.hasSession ? null : () => _openFolderPicker(model),
+      ),
+    ];
+
+    if (widget.onClose != null) {
+      headerActionButtons.add(
+        _headerIconButton(
+          icon: Icons.close,
+          tooltip: 'Close',
+          onPressed: widget.onClose,
+        ),
+      );
+    }
+
+    final spacedHeaderActions = <Widget>[];
+    for (final button in headerActionButtons) {
+      if (spacedHeaderActions.isNotEmpty) {
+        spacedHeaderActions.add(const SizedBox(width: 6));
+      }
+      spacedHeaderActions.add(button);
+    }
+
     return Container(
       height: 48,
       padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -1158,46 +1332,17 @@ class _ChatViewState extends State<_ChatView> {
             child: Row(
               children: [
                 Expanded(child: _buildTitleWithCwd(model)),
-                if (_usageTooltip(model) != null) ...[
+                if (usageButtonHeader != null) ...[
                   const SizedBox(width: 6),
-                  Tooltip(
-                    message: _usageTooltip(model)!,
-                    child: Icon(
-                      Icons.info_outline,
-                      size: 16,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
+                  usageButtonHeader,
                 ],
               ],
             ),
           ),
-          const SizedBox(width: 6),
-          IconButton(
-            padding: EdgeInsets.zero,
-            iconSize: 20,
-            icon: const Icon(Icons.terminal),
-            tooltip: 'Open Terminal',
-            onPressed:
-                model.client.hasSession ? () => _openTerminal(model) : null,
-          ),
-          const SizedBox(width: 6),
-          IconButton(
-            padding: EdgeInsets.zero,
-            iconSize: 20,
-            icon: const Icon(Icons.folder_open),
-            tooltip: 'Open Folder',
-            onPressed:
-                model.client.hasSession ? null : () => _openFolderPicker(model),
-          ),
-          if (widget.onClose != null) const SizedBox(width: 6),
-          if (widget.onClose != null)
-            IconButton(
-              padding: EdgeInsets.zero,
-              iconSize: 20,
-              icon: const Icon(Icons.close),
-              onPressed: widget.onClose,
-            ),
+          if (spacedHeaderActions.isNotEmpty) ...[
+            const SizedBox(width: 6),
+            ...spacedHeaderActions,
+          ],
         ],
       ),
     );
