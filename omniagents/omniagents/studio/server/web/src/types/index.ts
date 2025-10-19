@@ -612,6 +612,7 @@ export interface EvaluationJudgeOptimizationStatus {
   result_path?: string | null
   workflow_name?: string | null
   error?: string | null
+  eta_seconds?: number | null
 }
 
 export interface EvaluationJudgeOptimizationResponse {

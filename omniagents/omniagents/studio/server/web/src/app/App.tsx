@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { BrowserRouter } from 'react-router-dom'
 import { Dashboard } from './Dashboard'
 
 const queryClient = new QueryClient({
@@ -13,7 +14,9 @@ const queryClient = new QueryClient({
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <Dashboard />
+      <BrowserRouter>
+        <Dashboard />
+      </BrowserRouter>
     </QueryClientProvider>
   )
 }

@@ -26,10 +26,11 @@ _Last updated: 2025-10-18_
 - Related: `omniagents/studio/server/web/src/app/Dashboard.tsx`
 
 ### B-03 • Optimizer trace markdown hard to read
-- Status: Open
+- Status: Resolved
 - Severity: Medium
-- Summary: CSS/styling issues make it difficult to read certain conversation traces
-- Related: `omniagents/studio/server/web/src/features/evaluation/EvaluationView.tsx`
+- Summary: Markdown messages lacked syntax highlighting and reused muted backgrounds, so assistant/user code blocks were low-contrast and hard to read. Shared renderer now applies Highlight.js, theme-aware colors, and consistent typography.
+- Fix: `MarkdownMessage` component centralizes markdown styling; `ConversationFlow` and `PlaygroundView` use it with `rehype-highlight` and updated Tailwind styles.
+- Related: `omniagents/studio/server/web/src/shared/components/MarkdownMessage.tsx`, `omniagents/studio/server/web/src/features/review/components/ConversationFlow.tsx`, `omniagents/studio/server/web/src/features/playground/PlaygroundView.tsx`, `omniagents/studio/server/web/src/index.css`
 
 ### B-04 • Optimization progress feedback is thin
 - Status: Open
