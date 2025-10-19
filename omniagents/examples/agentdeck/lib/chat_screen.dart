@@ -157,43 +157,40 @@ class _ChatViewState extends State<_ChatView> {
       }
     });
 
-    // Wrap the entire chat column in a SafeArea so the bottom system insets
-    // (e.g. iOS home-indicator) never obscure the input row.  We disable the
-    // other insets because the header/app-bar already handles the top and the
-    // horizontal padding is managed elsewhere.
-    final content = SafeArea(
+    final content = Column(
+      children: [
+        if (widget.embedded) _buildHeader(model),
+        Expanded(
+          child: ListView.builder(
+            controller: _scrollController,
+            itemCount: totalCount,
+            itemBuilder: (context, index) {
+              if (index < model.items.length) {
+                final item = model.items[index];
+                return _buildItem(item);
+              }
+              if (status != null) {
+                return _buildStatusRow(status);
+              }
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+        _buildInputRow(model),
+      ],
+    );
+
+    final wrappedContent = SafeArea(
       top: widget.embedded,
-      bottom: true,
       left: true,
       right: true,
+      bottom: true,
       maintainBottomViewPadding: true,
-      child: Column(
-        children: [
-          // Header (only for embedded mode)
-          if (widget.embedded) _buildHeader(model),
-          Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              itemCount: totalCount,
-              itemBuilder: (context, index) {
-                if (index < model.items.length) {
-                  final item = model.items[index];
-                  return _buildItem(item);
-                }
-                if (status != null) {
-                  return _buildStatusRow(status);
-                }
-                return const SizedBox.shrink();
-              },
-            ),
-          ),
-          _buildInputRow(model),
-        ],
-      ),
+      child: content,
     );
 
     if (widget.embedded) {
-      return content;
+      return wrappedContent;
     }
 
     return Scaffold(
@@ -236,7 +233,7 @@ class _ChatViewState extends State<_ChatView> {
           ],
         ],
       ),
-      body: content,
+      body: wrappedContent,
     );
   }
 
@@ -332,17 +329,19 @@ class _ChatViewState extends State<_ChatView> {
   }
 
   Widget _buildInputRow(ChatModel model) {
-    final screenHeight = MediaQuery.of(context).size.height;
+    final media = MediaQuery.of(context);
+    final screenHeight = media.size.height;
+    final keyboardVisible = media.viewInsets.bottom > 0;
+    final bottomPadding = keyboardVisible ? 16.0 : 24.0;
     final maxInputHeight = screenHeight * 0.5;
-    return SafeArea(
-      top: false,
-      maintainBottomViewPadding: true,
-      minimum: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+    return Padding(
+      padding: EdgeInsets.fromLTRB(12, 8, 12, bottomPadding),
       child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: maxInputHeight),
         child: Shortcuts(
           shortcuts: <LogicalKeySet, Intent>{
-            LogicalKeySet(LogicalKeyboardKey.enter): const _SendMessageIntent(),
+            LogicalKeySet(LogicalKeyboardKey.enter):
+                const _SendMessageIntent(),
             LogicalKeySet(LogicalKeyboardKey.numpadEnter):
                 const _SendMessageIntent(),
             LogicalKeySet(LogicalKeyboardKey.alt, LogicalKeyboardKey.enter):
