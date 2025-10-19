@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { Search, Filter, AlertCircle } from 'lucide-react'
 import { useTraceStore } from '../store/traceStore'
 import { useProjects } from '../hooks/useTraces'
@@ -8,18 +7,11 @@ export function TraceFilters() {
     searchQuery, 
     setSearchQuery, 
     filters, 
-    selectedProject, 
+    selectedProject,
     setSelectedProject 
   } = useTraceStore()
   
   const { data: projectsData } = useProjects()
-  
-  // Set first project as default when projects are loaded
-  useEffect(() => {
-    if (projectsData?.projects?.length && !selectedProject) {
-      setSelectedProject(projectsData.projects[0])
-    }
-  }, [projectsData, selectedProject, setSelectedProject])
   
   return (
     <div className="border-b border-border p-3">
@@ -28,7 +20,7 @@ export function TraceFilters() {
         
         {/* Project Selector */}
         <select
-          className="flex items-center gap-1 px-3 py-1 text-sm border border-input rounded-md bg-background hover:bg-muted/50 cursor-pointer"
+          className="flex items-center gap-1 px-3 py-1 text-sm border border-input rounded-md bg-background cursor-pointer"
           value={selectedProject || ''}
           onChange={(e) => setSelectedProject(e.target.value || null)}
         >

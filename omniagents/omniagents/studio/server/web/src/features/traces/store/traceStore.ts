@@ -331,8 +331,7 @@ export const useTraceStore = create<TraceStore>()(
     {
       name: 'agentio-ui-state', // localStorage key
       partialize: (state) => ({ 
-        // Persist selected project and analysis goals
-        selectedProject: state.selectedProject,
+        // Persist selected workflow and analysis goals
         selectedWorkflow: state.selectedWorkflow,
         analysisGoals: state.analysisGoals
       }),

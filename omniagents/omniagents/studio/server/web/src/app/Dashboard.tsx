@@ -69,6 +69,21 @@ export function Dashboard() {
   useWebSocket()
 
   useEffect(() => {
+    if (activeSection !== 'logs') {
+      return
+    }
+    const manifestProject = studioProject?.project?.trim()
+    if (!manifestProject) {
+      return
+    }
+    const currentProject = useTraceStore.getState().selectedProject
+    if (currentProject === manifestProject) {
+      return
+    }
+    selectTraceProject(manifestProject)
+  }, [activeSection, studioProject?.project, selectTraceProject])
+
+  useEffect(() => {
     if (!isLogs) {
       return
     }

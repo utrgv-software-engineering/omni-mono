@@ -24,7 +24,7 @@ export function AppHeader({ viewMode, onViewModeChange, showViewToggle = false, 
   const [showGoalsModal, setShowGoalsModal] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const settingsMenuRef = useRef<HTMLDivElement>(null)
-  
+
   // Close settings menu on outside click
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -38,12 +38,6 @@ export function AppHeader({ viewMode, onViewModeChange, showViewToggle = false, 
       return () => document.removeEventListener('mousedown', handleClickOutside)
     }
   }, [showSettingsMenu])
-
-  useEffect(() => {
-    if (!selectedProject && projectsData?.projects?.length) {
-      setSelectedProject(projectsData.projects[0])
-    }
-  }, [selectedProject, projectsData, setSelectedProject])
 
   useEffect(() => {
     if (selectedProject && !selectedWorkflow && workflowsData?.workflows?.length) {
@@ -73,11 +67,6 @@ export function AppHeader({ viewMode, onViewModeChange, showViewToggle = false, 
       await queryClient.invalidateQueries()
       await refetchProjects()
       
-      // Select first available project if any remain
-      const remainingProjects = projectsData?.projects?.filter(p => p !== selectedProject) || []
-      if (remainingProjects.length > 0) {
-        setSelectedProject(remainingProjects[0])
-      }
     } catch (error) {
       console.error('Error deleting project:', error)
       alert('Failed to delete project. Please try again.')
