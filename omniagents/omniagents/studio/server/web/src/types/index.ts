@@ -522,6 +522,41 @@ export interface EvaluationDatasetDeleteResponse {
   datasets: EvaluationDataset[]
 }
 
+export interface EvaluationMeasure {
+  name: string
+  label?: string | null
+  description?: string | null
+  module?: string | null
+  sourcePath?: string | null
+  docstring?: string | null
+  hasFunction: boolean
+  usageCount: number
+}
+
+export interface EvaluationMeasuresResponse {
+  project?: string | null
+  measures: EvaluationMeasure[]
+}
+
+export interface EvaluationMeasureCreatePayload {
+  name: string
+  label?: string | null
+  description?: string | null
+  createStub?: boolean
+}
+
+export interface EvaluationMeasureUpdatePayload {
+  name: string
+  label?: string | null
+  description?: string | null
+}
+
+export interface EvaluationMeasureDeleteResponse {
+  project?: string | null
+  deleted: string
+  measures: EvaluationMeasure[]
+}
+
 export interface EvaluationJudge {
   key: string
   agent_name?: string | null

@@ -1,5 +1,6 @@
 """FastAPI routes for the React UI"""
 
+import inspect
 import asyncio
 import csv
 import hashlib
@@ -37,7 +38,8 @@ from omniagents.core.eval.scenarios import run_scenarios_against_agent, generate
 from omniagents.core.eval.split import create_splits
 from omniagents.core.eval.annotate import annotate_scenarios, write_annotation_output, _slugify
 from omniagents.core.eval.optimize import optimize_judge_from_project, optimize_agent_from_project
-from omniagents.core.eval.pipeline import run_evaluation
+from omniagents.core.eval.pipeline import run_evaluation, _load_local_measures
+from omniagents.core.evaluation.registry import _MEASURES as _REGISTERED_MEASURES
 from omniagents.core.project.apply import apply_agent_instructions
 from omniagents.core.project.scaffold import scaffold_judge, scaffold_agent, delete_agent
 
@@ -580,6 +582,41 @@ class FailureCategoryModel(BaseModel):
     description: Optional[str] = None
     measures: List[str] = Field(default_factory=list)
     usageCount: int = 0
+
+
+class EvaluationMeasureModel(BaseModel):
+    name: str
+    label: Optional[str] = None
+    description: Optional[str] = None
+    module: Optional[str] = None
+    sourcePath: Optional[str] = None
+    docstring: Optional[str] = None
+    hasFunction: bool = False
+    usageCount: int = 0
+
+
+class EvaluationMeasuresResponse(BaseModel):
+    project: Optional[str] = None
+    measures: List[EvaluationMeasureModel] = Field(default_factory=list)
+
+
+class EvaluationMeasureCreatePayload(BaseModel):
+    name: str
+    label: Optional[str] = None
+    description: Optional[str] = None
+    createStub: bool = True
+
+
+class EvaluationMeasureUpdatePayload(BaseModel):
+    name: str
+    label: Optional[str] = None
+    description: Optional[str] = None
+
+
+class EvaluationMeasureDeleteResponse(BaseModel):
+    project: Optional[str] = None
+    deleted: str
+    measures: List[EvaluationMeasureModel] = Field(default_factory=list)
 
 
 class ScenarioEntryModel(BaseModel):
@@ -2323,6 +2360,233 @@ def create_api_app(
                 updated_entries.append(scenario)
             if changed:
                 _write_scenarios_file(file, updated_entries)
+
+    def _measures_files(ctx) -> List[Path]:
+        files: List[Path] = []
+        for directory in _evaluation_dirs(ctx):
+            candidate = directory / "measures.py"
+            if candidate.is_file():
+                files.append(candidate)
+        eval_paths = ctx.paths.get("evaluations") or []
+        for entry in eval_paths:
+            if entry.is_file() and entry.name == "measures.py":
+                files.append(entry)
+        return _unique_paths(files)
+
+    def _load_measures_metadata(
+        ctx,
+        manifest_path: Path,
+    ) -> Tuple[List[Dict[str, Any]], Path, Dict[str, Any], Dict[str, Any], bool]:
+        target_file, exists = _resolve_eval_file(ctx, manifest_path)
+        if exists:
+            try:
+                data = yaml.safe_load(target_file.read_text(encoding="utf-8")) or {}
+            except Exception:
+                data = {}
+        else:
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        has_eval_section = isinstance(data.get("evaluation"), dict)
+        evaluation_cfg = dict(data.get("evaluation") or {}) if has_eval_section else dict(data)
+        raw_measures = evaluation_cfg.get("measures") if isinstance(evaluation_cfg.get("measures"), list) else []
+        normalized: List[Dict[str, Any]] = []
+        seen: Set[str] = set()
+        for entry in raw_measures or []:
+            if isinstance(entry, dict):
+                raw_name = entry.get("name") or entry.get("key") or entry.get("id")
+                label = entry.get("label") if isinstance(entry.get("label"), str) else None
+                description = entry.get("description") if isinstance(entry.get("description"), str) else None
+                module = entry.get("module") if isinstance(entry.get("module"), str) else None
+                path_value = entry.get("path") if isinstance(entry.get("path"), str) else entry.get("sourcePath") if isinstance(entry.get("sourcePath"), str) else None
+            elif isinstance(entry, str):
+                raw_name = entry
+                label = None
+                description = None
+                module = None
+                path_value = None
+            else:
+                continue
+            name = str(raw_name or "").strip()
+            if not name:
+                continue
+            if name in seen:
+                continue
+            seen.add(name)
+            normalized.append(
+                {
+                    "name": name,
+                    "label": label,
+                    "description": description,
+                    "module": module,
+                    "sourcePath": path_value,
+                }
+            )
+        return normalized, target_file, data, evaluation_cfg, has_eval_section
+
+    def _persist_measures(
+        target_file: Path,
+        data: Dict[str, Any],
+        evaluation_cfg: Dict[str, Any],
+        has_eval_section: bool,
+        measures: List[Dict[str, Any]],
+    ) -> None:
+        serialized: List[Dict[str, Any]] = []
+        for measure in measures:
+            entry: Dict[str, Any] = {"name": measure["name"]}
+            if measure.get("label"):
+                entry["label"] = measure.get("label")
+            if measure.get("description"):
+                entry["description"] = measure.get("description")
+            if measure.get("module"):
+                entry["module"] = measure.get("module")
+            if measure.get("sourcePath"):
+                entry["path"] = measure.get("sourcePath")
+            serialized.append(entry)
+        updated_eval = dict(evaluation_cfg)
+        updated_eval["measures"] = serialized
+        if has_eval_section or data:
+            updated = dict(data)
+            updated["evaluation"] = updated_eval
+        else:
+            updated = {"evaluation": updated_eval}
+        _write_yaml_with_backup(target_file, updated)
+
+    def _collect_measure_usage(ctx, manifest_path: Path) -> Dict[str, int]:
+        usage: Dict[str, int] = {}
+        try:
+            categories, _target, _data, _cfg, _flag = _load_failure_categories(ctx, manifest_path)
+        except Exception:
+            categories = []
+        for category in categories:
+            measures = category.get("measures") if isinstance(category.get("measures"), list) else []
+            for name in measures:
+                key = str(name)
+                if key:
+                    usage[key] = usage.get(key, 0) + 1
+        for file in _scenarios_files(ctx):
+            entries = _read_scenarios_file(file)
+            for item in entries:
+                ms = item.get("measures") if isinstance(item.get("measures"), list) else []
+                for name in ms:
+                    key = str(name)
+                    if key:
+                        usage[key] = usage.get(key, 0) + 1
+        eval_file, exists = _resolve_eval_file(ctx, manifest_path)
+        if exists:
+            try:
+                data = yaml.safe_load(eval_file.read_text(encoding="utf-8")) or {}
+            except Exception:
+                data = {}
+            if isinstance(data, dict):
+                evaluation_cfg = data.get("evaluation") if isinstance(data.get("evaluation"), dict) else data
+                if isinstance(evaluation_cfg, dict):
+                    metrics = evaluation_cfg.get("metrics") if isinstance(evaluation_cfg.get("metrics"), list) else []
+                    for metric in metrics:
+                        if not isinstance(metric, dict):
+                            continue
+                        fm = metric.get("from_measure")
+                        if isinstance(fm, str) and fm.strip():
+                            key = fm.strip()
+                            usage[key] = usage.get(key, 0) + 1
+                        single = metric.get("measure")
+                        if isinstance(single, str) and single.strip():
+                            key = single.strip()
+                            usage[key] = usage.get(key, 0) + 1
+                        multi = metric.get("measures")
+                        if isinstance(multi, list):
+                            for name in multi:
+                                key = str(name)
+                                if key:
+                                    usage[key] = usage.get(key, 0) + 1
+        return usage
+
+    def _derive_measure_label(name: str, label: Optional[str]) -> Optional[str]:
+        if label:
+            return label
+        parts = [segment for segment in name.replace("-", "_").split("_") if segment]
+        if not parts:
+            return None
+        return " ".join(part.capitalize() for part in parts)
+
+    def _ensure_measure_stub(ctx, measure_name: str) -> None:
+        files = _measures_files(ctx)
+        if files:
+            target = files[0]
+        else:
+            eval_dir = ctx.root / "evaluations"
+            eval_dir.mkdir(parents=True, exist_ok=True)
+            target = eval_dir / "measures.py"
+        if not target.exists():
+            target.write_text("from omniagents.core.evaluation import evaluation_measure, pass_reason\n\n", encoding="utf-8")
+        existing = target.read_text(encoding="utf-8")
+        if f"def {measure_name}(" in existing:
+            return
+        header_import = "from omniagents.core.evaluation import evaluation_measure, pass_reason"
+        if header_import not in existing:
+            if "evaluation_measure" in existing and "pass_reason" not in existing:
+                existing = existing.replace("evaluation_measure", "evaluation_measure, pass_reason", 1)
+            else:
+                existing = header_import + "\n\n" + existing.lstrip()
+        block = (
+            f"\n\n@evaluation_measure\n"
+            f"def {measure_name}(ctx):\n"
+            f"    return pass_reason('not_implemented')\n"
+        )
+        updated = existing.rstrip() + block
+        updated = updated.rstrip() + "\n"
+        target.write_text(updated, encoding="utf-8")
+
+    def _assemble_measures(ctx, manifest_path: Path) -> List[EvaluationMeasureModel]:
+        measures_meta, _target_file, _data, _cfg, _flag = _load_measures_metadata(ctx, manifest_path)
+        usage_map = _collect_measure_usage(ctx, manifest_path)
+        saved_registry = dict(_REGISTERED_MEASURES)
+        runtime_info: Dict[str, Dict[str, Any]] = {}
+        try:
+            _REGISTERED_MEASURES.clear()
+            eval_file, exists = _resolve_eval_file(ctx, manifest_path)
+            if exists and eval_file.is_file():
+                _load_local_measures(eval_file)
+            for key, fn in _REGISTERED_MEASURES.items():
+                module = getattr(fn, "__module__", None)
+                try:
+                    source_path = inspect.getsourcefile(fn)
+                except Exception:
+                    source_path = None
+                docstring = inspect.getdoc(fn)
+                runtime_info[key] = {
+                    "module": module,
+                    "path": source_path,
+                    "doc": docstring,
+                }
+        finally:
+            _REGISTERED_MEASURES.clear()
+            _REGISTERED_MEASURES.update(saved_registry)
+
+        meta_map = {item["name"]: item for item in measures_meta}
+        all_names = sorted(meta_map.keys() | runtime_info.keys())
+        measures_payload: List[EvaluationMeasureModel] = []
+        for name in all_names:
+            meta = meta_map.get(name, {})
+            runtime = runtime_info.get(name, {})
+            label_value = _derive_measure_label(name, meta.get("label"))
+            description_value = meta.get("description") if meta.get("description") else None
+            module_value = meta.get("module") or runtime.get("module")
+            source_value = meta.get("sourcePath") or runtime.get("path")
+            doc_value = runtime.get("doc") if runtime.get("doc") else None
+            measures_payload.append(
+                EvaluationMeasureModel(
+                    name=name,
+                    label=label_value,
+                    description=description_value,
+                    module=module_value,
+                    sourcePath=str(source_value) if source_value else None,
+                    docstring=doc_value,
+                    hasFunction=name in runtime_info,
+                    usageCount=usage_map.get(name, 0),
+                )
+            )
+        return measures_payload
 
     def _resolve_relative_file(base: Path, value: Optional[str]) -> Optional[Path]:
         if not value:
@@ -5482,18 +5746,37 @@ def create_api_app(
                 description = description.strip() or None
             else:
                 description = None
+            raw_measures = category_data.get("measures")
             slug = _slugify(name)
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
             categories, target_file, data, evaluation_cfg, has_eval_section = _load_failure_categories(ctx, manifest_path)
             if any(item["slug"] == slug for item in categories):
                 raise HTTPException(status_code=409, detail="Category with this name already exists")
+            measures_list: List[str] = []
+            if raw_measures is not None:
+                if not isinstance(raw_measures, list):
+                    raise HTTPException(status_code=400, detail="Measures must be a list")
+                available_measures = _assemble_measures(ctx, manifest_path)
+                valid_names = {item.name for item in available_measures}
+                normalized: List[str] = []
+                for value in raw_measures:
+                    if not isinstance(value, str):
+                        raise HTTPException(status_code=400, detail="Measures must be strings")
+                    trimmed = value.strip()
+                    if not trimmed:
+                        continue
+                    if trimmed not in valid_names:
+                        raise HTTPException(status_code=400, detail=f"Unknown measure: {trimmed}")
+                    if trimmed not in normalized:
+                        normalized.append(trimmed)
+                measures_list = normalized
             categories.append(
                 {
                     "slug": slug,
                     "name": name,
                     "description": description,
-                    "measures": [],
+                    "measures": measures_list,
                 }
             )
             _persist_failure_categories(target_file, data, evaluation_cfg, has_eval_section, categories)
@@ -5503,6 +5786,73 @@ def create_api_app(
                 id=slug,
                 name=name,
                 description=description,
+                measures=measures_list,
+                usageCount=scenario_usage.get(slug, 0) + analysis_usage.get(slug, 0),
+            )
+            return model.model_dump()
+        except ValueError:
+            raise HTTPException(status_code=404, detail="Project not found")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.put("/api/categories/{project}/{category_slug}")
+    async def update_failure_category(project: str, category_slug: str, payload: Dict[str, Any]):
+        try:
+            storage_manager.get_storage(project)
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            categories, target_file, data, evaluation_cfg, has_eval_section = _load_failure_categories(ctx, manifest_path)
+            slug = _slugify(category_slug)
+            if not slug:
+                raise HTTPException(status_code=404, detail="Category not found")
+            entry_index: Optional[int] = None
+            for idx, item in enumerate(categories):
+                if item.get("slug") == slug:
+                    entry_index = idx
+                    break
+            if entry_index is None:
+                raise HTTPException(status_code=404, detail="Category not found")
+            entry = dict(categories[entry_index])
+            if "description" in payload:
+                description_value = payload.get("description")
+                if description_value is None:
+                    entry["description"] = None
+                elif isinstance(description_value, str):
+                    entry["description"] = description_value.strip() or None
+                else:
+                    raise HTTPException(status_code=400, detail="Description must be a string")
+            if "measures" in payload:
+                raw_measures = payload.get("measures")
+                if raw_measures is None:
+                    normalized_measures: List[str] = []
+                elif not isinstance(raw_measures, list):
+                    raise HTTPException(status_code=400, detail="Measures must be a list")
+                else:
+                    available_measures = _assemble_measures(ctx, manifest_path)
+                    valid_names = {item.name for item in available_measures}
+                    normalized_measures = []
+                    for value in raw_measures:
+                        if not isinstance(value, str):
+                            raise HTTPException(status_code=400, detail="Measures must be strings")
+                        trimmed = value.strip()
+                        if not trimmed:
+                            continue
+                        if trimmed not in valid_names:
+                            raise HTTPException(status_code=400, detail=f"Unknown measure: {trimmed}")
+                        if trimmed not in normalized_measures:
+                            normalized_measures.append(trimmed)
+                entry["measures"] = normalized_measures
+            categories[entry_index] = entry
+            _persist_failure_categories(target_file, data, evaluation_cfg, has_eval_section, categories)
+            scenario_usage = _collect_scenario_category_usage(ctx)
+            analysis_usage = storage_manager.get_storage(project).get_analysis_category_usage(project)
+            model = FailureCategoryModel(
+                id=slug,
+                name=entry.get("name", slug),
+                description=entry.get("description"),
+                measures=entry.get("measures", []),
                 usageCount=scenario_usage.get(slug, 0) + analysis_usage.get(slug, 0),
             )
             return model.model_dump()
@@ -5542,7 +5892,115 @@ def create_api_app(
             raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
-    
+
+    @app.get("/api/evaluation/measures")
+    async def get_evaluation_measures():
+        try:
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            project_name = resources.get("project_name") or app.state.default_project
+            measures_payload = _assemble_measures(ctx, manifest_path)
+            response = EvaluationMeasuresResponse(project=project_name, measures=measures_payload)
+            return response.model_dump()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.post("/api/evaluation/measures")
+    async def create_evaluation_measure(payload: EvaluationMeasureCreatePayload):
+        try:
+            measure_name = (payload.name or "").strip()
+            if not measure_name:
+                raise HTTPException(status_code=422, detail="Measure name is required")
+            if not measure_name.isidentifier():
+                raise HTTPException(status_code=422, detail="Measure name must be a valid identifier")
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            project_name = resources.get("project_name") or app.state.default_project
+            measures_meta, target_file, data, evaluation_cfg, has_eval_section = _load_measures_metadata(ctx, manifest_path)
+            existing_names = {item["name"] for item in measures_meta}
+            if measure_name in existing_names:
+                raise HTTPException(status_code=409, detail="Measure already exists")
+            label_value = payload.label.strip() if isinstance(payload.label, str) and payload.label.strip() else None
+            description_value = payload.description.strip() if isinstance(payload.description, str) and payload.description.strip() else None
+            measures_meta.append(
+                {
+                    "name": measure_name,
+                    "label": label_value,
+                    "description": description_value,
+                    "module": None,
+                    "sourcePath": None,
+                }
+            )
+            _persist_measures(target_file, data, evaluation_cfg, has_eval_section, measures_meta)
+            if payload.createStub:
+                _ensure_measure_stub(ctx, measure_name)
+            ctx_updated = load_project(str(manifest_path))
+            measures_payload = _assemble_measures(ctx_updated, manifest_path)
+            response = EvaluationMeasuresResponse(project=project_name, measures=measures_payload)
+            return response.model_dump()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.put("/api/evaluation/measures")
+    async def update_evaluation_measure(payload: EvaluationMeasureUpdatePayload):
+        try:
+            measure_name = (payload.name or "").strip()
+            if not measure_name:
+                raise HTTPException(status_code=422, detail="Measure name is required")
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            measures_meta, target_file, data, evaluation_cfg, has_eval_section = _load_measures_metadata(ctx, manifest_path)
+            updated = False
+            for entry in measures_meta:
+                if entry.get("name") == measure_name:
+                    if payload.label is not None:
+                        entry["label"] = payload.label.strip() if isinstance(payload.label, str) and payload.label.strip() else None
+                    if payload.description is not None:
+                        entry["description"] = payload.description.strip() if isinstance(payload.description, str) and payload.description.strip() else None
+                    updated = True
+                    break
+            if not updated:
+                raise HTTPException(status_code=404, detail="Measure not found")
+            _persist_measures(target_file, data, evaluation_cfg, has_eval_section, measures_meta)
+            ctx_updated = load_project(str(manifest_path))
+            measures_payload = _assemble_measures(ctx_updated, manifest_path)
+            response = EvaluationMeasuresResponse(project=project_name, measures=measures_payload)
+            return response.model_dump()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.delete("/api/evaluation/measures/{name}")
+    async def delete_evaluation_measure(name: str):
+        try:
+            measure_name = (name or "").strip()
+            if not measure_name:
+                raise HTTPException(status_code=422, detail="Measure name is required")
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            project_name = resources.get("project_name") or app.state.default_project
+            measures_meta, target_file, data, evaluation_cfg, has_eval_section = _load_measures_metadata(ctx, manifest_path)
+            filtered = [entry for entry in measures_meta if entry.get("name") != measure_name]
+            if len(filtered) == len(measures_meta):
+                raise HTTPException(status_code=404, detail="Measure not found")
+            _persist_measures(target_file, data, evaluation_cfg, has_eval_section, filtered)
+            ctx_updated = load_project(str(manifest_path))
+            measures_payload = _assemble_measures(ctx_updated, manifest_path)
+            response = EvaluationMeasuresResponse(project=project_name, measures=measures_payload)
+            return EvaluationMeasureDeleteResponse(project=project_name, deleted=measure_name, measures=response.measures).model_dump()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
     @app.get("/api/analysis/{project}/{group_id}/categories")
     async def get_analysis_categories(project: str, group_id: str):
         """Get categories for a specific analysis"""

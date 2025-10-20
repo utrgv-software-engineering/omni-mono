@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Edit3, Trash2, Loader2, X, Upload, FileText, Clock, ArrowLeft, Play, Sparkles, Database, RefreshCw, ExternalLink, ChevronRight, ChevronDown, SplitSquareVertical, Gavel, BarChart3, Tag } from 'lucide-react'
+import { Plus, Edit3, Trash2, Loader2, X, Upload, FileText, Clock, ArrowLeft, Play, Sparkles, Database, RefreshCw, ExternalLink, ChevronRight, ChevronDown, SplitSquareVertical, Gavel, BarChart3, Tag, Activity } from 'lucide-react'
 import { api } from '../../lib/api'
+import { cn } from '../../lib/utils'
 import type {
   EvaluationDimension,
   EvaluationDimensionValue,
@@ -33,10 +34,15 @@ import type {
   EvaluationSuiteRunStatus,
   EvaluationSuiteRunRequest,
   FailureCategory,
+  EvaluationMeasuresResponse,
+  EvaluationMeasure,
+  EvaluationMeasureCreatePayload,
+  EvaluationMeasureUpdatePayload,
+  EvaluationMeasureDeleteResponse,
 } from '../../types'
 import { useTraceStore } from '../traces/store/traceStore'
 
-type EvaluationTab = 'scenarios' | 'datasets' | 'dimensions' | 'judges' | 'categories'
+type EvaluationTab = 'scenarios' | 'datasets' | 'dimensions' | 'judges' | 'categories' | 'measures'
 
 interface EvaluationViewProps {
   activeTab: EvaluationTab
@@ -3543,39 +3549,90 @@ function CategoriesPanel({ projectName }: { projectName?: string | null }) {
   const [isFormOpen, setIsFormOpen] = useState(false)
   const [nameInput, setNameInput] = useState('')
   const [descriptionInput, setDescriptionInput] = useState('')
+  const [selectedMeasures, setSelectedMeasures] = useState<string[]>([])
   const [formError, setFormError] = useState<string | null>(null)
-  const { data, isLoading, isError, refetch, isFetching } = useQuery<FailureCategory[]>(
-    {
-      queryKey: ['evaluation', 'categories', resolvedProject],
-      queryFn: () => api.getFailureCategories(resolvedProject as string),
-      enabled: Boolean(resolvedProject),
-      staleTime: 60_000,
-    },
-  )
-  const categories = data ?? []
+  const [isEditOpen, setIsEditOpen] = useState(false)
+  const [editingCategory, setEditingCategory] = useState<FailureCategory | null>(null)
+  const [editDescription, setEditDescription] = useState('')
+  const [editMeasures, setEditMeasures] = useState<string[]>([])
+  const [editError, setEditError] = useState<string | null>(null)
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
+
+  const { data, isLoading, isError, refetch, isFetching } = useQuery<FailureCategory[]>({
+    queryKey: ['evaluation', 'categories', resolvedProject],
+    queryFn: () => api.getFailureCategories(resolvedProject as string),
+    enabled: Boolean(resolvedProject),
+    staleTime: 60_000,
+  })
+  const categories = data ?? []
+
+  const { data: measuresData, isLoading: measuresLoading } = useQuery<EvaluationMeasuresResponse>({
+    queryKey: ['evaluation', 'measures'],
+    queryFn: () => api.getEvaluationMeasures(),
+    enabled: Boolean(resolvedProject),
+    staleTime: 60_000,
+  })
+  const measures = measuresData?.measures ?? []
 
   const resetForm = () => {
     setNameInput('')
     setDescriptionInput('')
+    setSelectedMeasures([])
     setFormError(null)
     setIsFormOpen(false)
   }
 
-  const createCategory = useMutation<FailureCategory, Error, { name: string; description?: string }>({
-    mutationFn: (payload) => api.createFailureCategory(resolvedProject as string, payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['evaluation', 'categories', resolvedProject] })
-      if (resolvedProject) {
-        void loadFailureCategories(resolvedProject)
-      }
-      resetForm()
+  const closeEditModal = () => {
+    setEditingCategory(null)
+    setEditDescription('')
+    setEditMeasures([])
+    setEditError(null)
+    setIsEditOpen(false)
+  }
+
+  const toggleSelectedMeasure = (name: string) => {
+    setSelectedMeasures((prev) => (prev.includes(name) ? prev.filter((item) => item !== name) : [...prev, name]))
+  }
+
+  const toggleEditMeasure = (name: string) => {
+    setEditMeasures((prev) => (prev.includes(name) ? prev.filter((item) => item !== name) : [...prev, name]))
+  }
+
+  const createCategory = useMutation<FailureCategory, Error, { name: string; description?: string | null; measures?: string[] | null }>(
+    {
+      mutationFn: (payload) => api.createFailureCategory(resolvedProject as string, payload),
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['evaluation', 'categories', resolvedProject] })
+        queryClient.invalidateQueries({ queryKey: ['evaluation', 'measures'] })
+        if (resolvedProject) {
+          void loadFailureCategories(resolvedProject)
+        }
+        resetForm()
+      },
+      onError: (error) => {
+        const message = error instanceof Error ? error.message : 'Failed to create category'
+        setFormError(message)
+      },
     },
-    onError: (error) => {
-      const message = error instanceof Error ? error.message : 'Failed to create category'
-      setFormError(message)
+  )
+
+  const updateCategory = useMutation<FailureCategory, Error, { slug: string; payload: { description?: string | null; measures?: string[] } }>(
+    {
+      mutationFn: ({ slug, payload }) => api.updateFailureCategory(resolvedProject as string, slug, payload),
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['evaluation', 'categories', resolvedProject] })
+        queryClient.invalidateQueries({ queryKey: ['evaluation', 'measures'] })
+        if (resolvedProject) {
+          void loadFailureCategories(resolvedProject)
+        }
+        closeEditModal()
+      },
+      onError: (error) => {
+        const message = error instanceof Error ? error.message : 'Failed to update category'
+        setEditError(message)
+      },
     },
-  })
+  )
 
   const deleteCategory = useMutation<{ message: string; previousUsageCount: number }, Error, string>({
     mutationFn: (slug) => api.deleteFailureCategory(resolvedProject as string, slug),
@@ -3584,6 +3641,7 @@ function CategoriesPanel({ projectName }: { projectName?: string | null }) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['evaluation', 'categories', resolvedProject] })
+      queryClient.invalidateQueries({ queryKey: ['evaluation', 'measures'] })
       if (resolvedProject) {
         void loadFailureCategories(resolvedProject)
       }
@@ -3597,20 +3655,47 @@ function CategoriesPanel({ projectName }: { projectName?: string | null }) {
     },
   })
 
-  const handleSubmit = (event: React.FormEvent) => {
+  const handleCreateSubmit = (event: React.FormEvent) => {
     event.preventDefault()
     if (!resolvedProject) {
       setFormError('Select a project before creating categories')
       return
     }
     const trimmedName = nameInput.trim()
-    const trimmedDescription = descriptionInput.trim()
-    if (trimmedName.length === 0) {
+    if (!trimmedName) {
       setFormError('Name is required')
       return
     }
+    const trimmedDescription = descriptionInput.trim()
     setFormError(null)
-    createCategory.mutate({ name: trimmedName, description: trimmedDescription.length > 0 ? trimmedDescription : undefined })
+    createCategory.mutate({
+      name: trimmedName,
+      description: trimmedDescription.length > 0 ? trimmedDescription : null,
+      measures: selectedMeasures,
+    })
+  }
+
+  const handleEditSubmit = (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!resolvedProject || !editingCategory) {
+      return
+    }
+    setEditError(null)
+    updateCategory.mutate({
+      slug: editingCategory.id,
+      payload: {
+        description: editDescription.trim().length > 0 ? editDescription.trim() : null,
+        measures: editMeasures,
+      },
+    })
+  }
+
+  const openEditModal = (category: FailureCategory) => {
+    setEditingCategory(category)
+    setEditDescription(category.description ?? '')
+    setEditMeasures(category.measures ?? [])
+    setEditError(null)
+    setIsEditOpen(true)
   }
 
   const handleDelete = (category: FailureCategory) => {
@@ -3706,6 +3791,7 @@ function CategoriesPanel({ projectName }: { projectName?: string | null }) {
                 <tr>
                   <th className="border-b border-border/60 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Category</th>
                   <th className="border-b border-border/60 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Description</th>
+                  <th className="border-b border-border/60 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Measures</th>
                   <th className="border-b border-border/60 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Usage</th>
                   <th className="border-b border-border/60 px-4 py-3 text-right text-xs font-semibold uppercase text-muted-foreground">Actions</th>
                 </tr>
@@ -3727,8 +3813,20 @@ function CategoriesPanel({ projectName }: { projectName?: string | null }) {
                     <td className="px-4 py-3 align-top text-sm text-muted-foreground">
                       {category.description && category.description.trim().length > 0 ? category.description : '—'}
                     </td>
+                    <td className="px-4 py-3 align-top text-sm text-muted-foreground">
+                      {category.measures && category.measures.length > 0 ? category.measures.join(', ') : '—'}
+                    </td>
                     <td className="px-4 py-3 align-top text-sm text-muted-foreground">{category.usageCount ?? 0}</td>
                     <td className="px-4 py-3 align-top text-right">
+                      <button
+                        type="button"
+                        onClick={() => openEditModal(category)}
+                        disabled={updateCategory.isPending || (deleteCategory.isPending && pendingDeleteId === category.id)}
+                        className="mr-2 inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
+                      >
+                        <Edit3 className="h-3.5 w-3.5" />
+                        Edit
+                      </button>
                       <button
                         type="button"
                         onClick={() => handleDelete(category)}
@@ -3764,7 +3862,7 @@ function CategoriesPanel({ projectName }: { projectName?: string | null }) {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <form onSubmit={handleSubmit} className="px-5 py-4">
+            <form onSubmit={handleCreateSubmit} className="px-5 py-4">
               <div className="space-y-4">
                 <div className="space-y-1">
                   <label className="text-xs font-medium uppercase text-muted-foreground">Name</label>
@@ -3787,6 +3885,32 @@ function CategoriesPanel({ projectName }: { projectName?: string | null }) {
                     disabled={createCategory.isPending}
                   />
                 </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium uppercase text-muted-foreground">Measures</label>
+                  {measuresLoading ? (
+                    <div className="text-xs text-muted-foreground">Loading measures…</div>
+                  ) : measures.length === 0 ? (
+                    <div className="text-xs text-muted-foreground">Define measures before assigning them.</div>
+                  ) : (
+                    <div className="max-h-40 space-y-2 overflow-auto rounded-md border border-border px-3 py-2">
+                      {measures.map((measure) => (
+                        <label key={measure.name} className="flex items-start gap-2 text-sm text-muted-foreground">
+                          <input
+                            type="checkbox"
+                            checked={selectedMeasures.includes(measure.name)}
+                            onChange={() => toggleSelectedMeasure(measure.name)}
+                            className="mt-1 h-3.5 w-3.5 rounded border-border"
+                            disabled={createCategory.isPending}
+                          />
+                          <span>
+                            <div className="text-sm font-medium text-foreground">{measure.label ?? measure.name}</div>
+                            <div className="text-xs text-muted-foreground">{measure.name}</div>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 {formError ? (
                   <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{formError}</div>
                 ) : null}
@@ -3806,6 +3930,467 @@ function CategoriesPanel({ projectName }: { projectName?: string | null }) {
                   disabled={createCategory.isPending}
                 >
                   {createCategory.isPending ? 'Saving…' : 'Save Category'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {isEditOpen && editingCategory ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-md rounded-lg border border-border bg-background shadow-lg">
+            <div className="flex items-center justify-between border-b border-border px-5 py-4">
+              <div>
+                <h3 className="text-lg font-semibold">Edit Category</h3>
+                <p className="text-xs text-muted-foreground">Update description and assigned measures.</p>
+              </div>
+              <button
+                type="button"
+                onClick={closeEditModal}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted"
+                disabled={updateCategory.isPending}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <form onSubmit={handleEditSubmit} className="px-5 py-4">
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium uppercase text-muted-foreground">Name</label>
+                  <input
+                    type="text"
+                    value={editingCategory.name}
+                    disabled
+                    className="w-full rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium uppercase text-muted-foreground">Description</label>
+                  <textarea
+                    value={editDescription}
+                    onChange={(event) => setEditDescription(event.target.value)}
+                    className="h-24 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary disabled:opacity-50"
+                    placeholder="Optional guidance for reviewers"
+                    disabled={updateCategory.isPending}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium uppercase text-muted-foreground">Measures</label>
+                  {measuresLoading ? (
+                    <div className="text-xs text-muted-foreground">Loading measures…</div>
+                  ) : measures.length === 0 ? (
+                    <div className="text-xs text-muted-foreground">Define measures before assigning them.</div>
+                  ) : (
+                    <div className="max-h-40 space-y-2 overflow-auto rounded-md border border-border px-3 py-2">
+                      {measures.map((measure) => (
+                        <label key={measure.name} className="flex items-start gap-2 text-sm text-muted-foreground">
+                          <input
+                            type="checkbox"
+                            checked={editMeasures.includes(measure.name)}
+                            onChange={() => toggleEditMeasure(measure.name)}
+                            className="mt-1 h-3.5 w-3.5 rounded border-border"
+                            disabled={updateCategory.isPending}
+                          />
+                          <span>
+                            <div className="text-sm font-medium text-foreground">{measure.label ?? measure.name}</div>
+                            <div className="text-xs text-muted-foreground">{measure.name}</div>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {editError ? (
+                  <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{editError}</div>
+                ) : null}
+              </div>
+              <div className="mt-6 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={closeEditModal}
+                  className="rounded-md border border-border px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
+                  disabled={updateCategory.isPending}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                  disabled={updateCategory.isPending}
+                >
+                  {updateCategory.isPending ? 'Saving…' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function MeasuresPanel({ projectName }: { projectName?: string | null }) {
+  const queryClient = useQueryClient()
+  const [isFormOpen, setIsFormOpen] = useState(false)
+  const [isEditing, setIsEditing] = useState(false)
+  const [formName, setFormName] = useState('')
+  const [formLabel, setFormLabel] = useState('')
+  const [formDescription, setFormDescription] = useState('')
+  const [formCreateStub, setFormCreateStub] = useState(true)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [pendingDeleteName, setPendingDeleteName] = useState<string | null>(null)
+
+  const { data, isLoading, isError, refetch, isFetching } = useQuery<EvaluationMeasuresResponse>({
+    queryKey: ['evaluation', 'measures', projectName ?? 'default'],
+    queryFn: () => api.getEvaluationMeasures(),
+    staleTime: 60_000,
+  })
+
+  const measures = data?.measures ?? []
+  const resolvedProjectName = projectName ?? data?.project ?? null
+
+  const resetForm = () => {
+    setIsFormOpen(false)
+    setIsEditing(false)
+    setFormName('')
+    setFormLabel('')
+    setFormDescription('')
+    setFormCreateStub(true)
+    setFormError(null)
+  }
+
+  const createMeasure = useMutation<EvaluationMeasuresResponse, Error, EvaluationMeasureCreatePayload>({
+    mutationFn: (payload) => api.createEvaluationMeasure(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['evaluation', 'measures'] })
+      resetForm()
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : 'Failed to create measure'
+      setFormError(message)
+    },
+  })
+
+  const updateMeasure = useMutation<EvaluationMeasuresResponse, Error, EvaluationMeasureUpdatePayload>({
+    mutationFn: (payload) => api.updateEvaluationMeasure(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['evaluation', 'measures'] })
+      resetForm()
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : 'Failed to update measure'
+      setFormError(message)
+    },
+  })
+
+  const deleteMeasure = useMutation<EvaluationMeasureDeleteResponse, Error, string>({
+    mutationFn: (nameValue) => api.deleteEvaluationMeasure(nameValue),
+    onMutate: (nameValue) => {
+      setPendingDeleteName(nameValue)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['evaluation', 'measures'] })
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : 'Failed to delete measure'
+      window.alert(message)
+    },
+    onSettled: () => {
+      setPendingDeleteName(null)
+    },
+  })
+
+  const handleOpenCreate = () => {
+    setIsEditing(false)
+    setFormName('')
+    setFormLabel('')
+    setFormDescription('')
+    setFormCreateStub(true)
+    setFormError(null)
+    setIsFormOpen(true)
+  }
+
+  const handleOpenEdit = (measure: EvaluationMeasure) => {
+    setIsEditing(true)
+    setFormName(measure.name)
+    setFormLabel(measure.label ?? '')
+    setFormDescription(measure.description ?? '')
+    setFormCreateStub(false)
+    setFormError(null)
+    setIsFormOpen(true)
+  }
+
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault()
+    const normalized = formName.trim()
+    if (!normalized) {
+      setFormError('Name is required')
+      return
+    }
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(normalized)) {
+      setFormError('Use a valid measure identifier')
+      return
+    }
+    const labelValue = formLabel.trim()
+    const descriptionValue = formDescription.trim()
+    if (isEditing) {
+      updateMeasure.mutate({
+        name: normalized,
+        label: labelValue.length > 0 ? labelValue : null,
+        description: descriptionValue.length > 0 ? descriptionValue : null,
+      })
+    } else {
+      createMeasure.mutate({
+        name: normalized,
+        label: labelValue.length > 0 ? labelValue : null,
+        description: descriptionValue.length > 0 ? descriptionValue : null,
+        createStub: formCreateStub,
+      })
+    }
+  }
+
+  const handleDelete = (measure: EvaluationMeasure) => {
+    if (deleteMeasure.isPending) {
+      return
+    }
+    const usage = measure.usageCount ?? 0
+    const confirmed = usage > 0
+      ? window.confirm(`"${measure.name}" is used ${usage} time${usage === 1 ? '' : 's'}. Delete anyway?`)
+      : window.confirm(`Delete "${measure.name}"?`)
+    if (!confirmed) {
+      return
+    }
+    deleteMeasure.mutate(measure.name)
+  }
+
+  const isSaving = createMeasure.isPending || updateMeasure.isPending
+
+  if (!resolvedProjectName) {
+    return (
+      <div className="flex h-full w-full items-center justify-center">
+        <div className="rounded-md border border-border bg-muted/40 px-6 py-5 text-sm text-muted-foreground">
+          Launch Studio with a project manifest to manage measures.
+        </div>
+      </div>
+    )
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin" />
+      </div>
+    )
+  }
+
+  if (isError) {
+    return (
+      <div className="flex h-full w-full items-center justify-center">
+        <div className="flex flex-col items-center gap-3 rounded-md border border-border bg-muted/40 px-6 py-5 text-sm text-muted-foreground">
+          <span>Unable to load measures for {resolvedProjectName}.</span>
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium hover:bg-muted"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Retry
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex h-full w-full flex-col overflow-hidden">
+      <div className="flex items-center justify-between border-b border-border px-6 py-4">
+        <div>
+          <h2 className="text-lg font-semibold">Measures</h2>
+          <p className="text-sm text-muted-foreground">Manage evaluation measures and their metadata.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {isFetching ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Refresh
+          </button>
+          <button
+            type="button"
+            onClick={handleOpenCreate}
+            className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            New Measure
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-auto px-6 py-4">
+        {measures.length === 0 ? (
+          <div className="flex h-full items-center justify-center rounded-md border border-dashed border-border bg-muted/30 px-6 py-5 text-sm text-muted-foreground">
+            No measures defined yet. Create one to get started.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full border-separate border-spacing-0">
+              <thead className="bg-muted/40">
+                <tr>
+                  <th className="border-b border-border/60 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Measure</th>
+                  <th className="border-b border-border/60 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Label</th>
+                  <th className="border-b border-border/60 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Description</th>
+                  <th className="border-b border-border/60 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Status</th>
+                  <th className="border-b border-border/60 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Usage</th>
+                  <th className="border-b border-border/60 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Source</th>
+                  <th className="border-b border-border/60 px-4 py-3 text-right text-xs font-semibold uppercase text-muted-foreground">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {measures.map((measure) => {
+                  const isDeleting = deleteMeasure.isPending && pendingDeleteName === measure.name
+                  return (
+                    <tr key={measure.name} className="border-b border-border/50">
+                      <td className="px-4 py-3 align-top">
+                        <div className="flex items-center gap-2">
+                          <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/10 text-primary">
+                            <Activity className="h-3.5 w-3.5" />
+                          </div>
+                          <div>
+                            <div className="text-sm font-semibold text-foreground">{measure.name}</div>
+                            {measure.docstring ? (
+                              <div className="text-xs text-muted-foreground line-clamp-2">{measure.docstring}</div>
+                            ) : null}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 align-top text-sm text-muted-foreground">{measure.label ?? '—'}</td>
+                      <td className="px-4 py-3 align-top text-sm text-muted-foreground">{measure.description ?? '—'}</td>
+                      <td className="px-4 py-3 align-top text-sm">
+                        <span className={cn('text-xs font-medium', measure.hasFunction ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive')}>
+                          {measure.hasFunction ? 'Registered' : 'Missing function'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 align-top text-sm text-muted-foreground">{measure.usageCount}</td>
+                      <td className="px-4 py-3 align-top text-xs text-muted-foreground">
+                        {measure.sourcePath ? <span className="font-mono text-[11px] leading-tight">{measure.sourcePath}</span> : '—'}
+                      </td>
+                      <td className="px-4 py-3 align-top text-right">
+                        <div className="inline-flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEdit(measure)}
+                            disabled={isSaving || isDeleting}
+                            className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
+                          >
+                            <Edit3 className="h-3.5 w-3.5" />
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(measure)}
+                            disabled={isDeleting}
+                            className="inline-flex items-center gap-1 rounded-md border border-destructive px-3 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            {isDeleting ? 'Deleting…' : 'Delete'}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {isFormOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-md rounded-lg border border-border bg-background shadow-lg">
+            <div className="flex items-center justify-between border-b border-border px-5 py-4">
+              <div>
+                <h3 className="text-lg font-semibold">{isEditing ? 'Edit Measure' : 'New Measure'}</h3>
+                <p className="text-xs text-muted-foreground">Define a measure for evaluation runs.</p>
+              </div>
+              <button
+                type="button"
+                onClick={resetForm}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted"
+                disabled={isSaving}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <form onSubmit={handleSubmit} className="px-5 py-4">
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium uppercase text-muted-foreground">Name</label>
+                  <input
+                    type="text"
+                    value={formName}
+                    onChange={(event) => setFormName(event.target.value)}
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary disabled:opacity-50"
+                    placeholder="e.g. ambiguous_location_check"
+                    disabled={isSaving || isEditing}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium uppercase text-muted-foreground">Label</label>
+                  <input
+                    type="text"
+                    value={formLabel}
+                    onChange={(event) => setFormLabel(event.target.value)}
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary disabled:opacity-50"
+                    placeholder="Optional display label"
+                    disabled={isSaving}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium uppercase text-muted-foreground">Description</label>
+                  <textarea
+                    value={formDescription}
+                    onChange={(event) => setFormDescription(event.target.value)}
+                    className="h-24 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary disabled:opacity-50"
+                    placeholder="Optional guidance for reviewers"
+                    disabled={isSaving}
+                  />
+                </div>
+                {!isEditing ? (
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={formCreateStub}
+                      onChange={(event) => setFormCreateStub(event.target.checked)}
+                      className="h-3.5 w-3.5 rounded border-border"
+                      disabled={isSaving}
+                    />
+                    <span>Create stub in measures.py</span>
+                  </label>
+                ) : null}
+                {formError ? (
+                  <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{formError}</div>
+                ) : null}
+              </div>
+              <div className="mt-6 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="rounded-md border border-border px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
+                  disabled={isSaving}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                  disabled={isSaving}
+                >
+                  {isSaving ? 'Saving…' : isEditing ? 'Save Changes' : 'Save Measure'}
                 </button>
               </div>
             </form>
@@ -5076,6 +5661,10 @@ export function EvaluationView({ activeTab, onTabChange, projectName, isAvailabl
 
   if (activeTab === 'categories') {
     return <CategoriesPanel projectName={projectName} />
+  }
+
+  if (activeTab === 'measures') {
+    return <MeasuresPanel projectName={projectName} />
   }
 
   return (

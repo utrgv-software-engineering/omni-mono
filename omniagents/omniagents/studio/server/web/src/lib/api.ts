@@ -46,6 +46,10 @@ import type {
   EvaluationAgentOptimizationResponse,
   EvaluationSuiteRunRequest,
   EvaluationSuiteRunResponse,
+  EvaluationMeasuresResponse,
+  EvaluationMeasureCreatePayload,
+  EvaluationMeasureUpdatePayload,
+  EvaluationMeasureDeleteResponse,
 } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_URL || `${window.location.origin}/api`
@@ -211,11 +215,23 @@ class ApiClient {
 
   async createFailureCategory(
     project: string,
-    category: { name: string; description?: string }
+    category: { name: string; description?: string | null; measures?: string[] | null }
   ): Promise<FailureCategory> {
     return this.fetch(`/categories/${project}`, {
       method: 'POST',
       body: JSON.stringify(category),
+    })
+  }
+
+  async updateFailureCategory(
+    project: string,
+    categorySlug: string,
+    payload: { description?: string | null; measures?: string[] | null }
+  ): Promise<FailureCategory> {
+    const encoded = encodeURIComponent(categorySlug)
+    return this.fetch(`/categories/${project}/${encoded}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
     })
   }
 
@@ -303,6 +319,31 @@ class ApiClient {
   async getEvaluationDatasetSplit(path: string): Promise<EvaluationDatasetSplitDetails> {
     const searchParams = new URLSearchParams({ path })
     return this.fetch(`/evaluation/datasets/split?${searchParams.toString()}`)
+  }
+
+  async getEvaluationMeasures(): Promise<EvaluationMeasuresResponse> {
+    return this.fetch('/evaluation/measures')
+  }
+
+  async createEvaluationMeasure(payload: EvaluationMeasureCreatePayload): Promise<EvaluationMeasuresResponse> {
+    return this.fetch('/evaluation/measures', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async updateEvaluationMeasure(payload: EvaluationMeasureUpdatePayload): Promise<EvaluationMeasuresResponse> {
+    return this.fetch('/evaluation/measures', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async deleteEvaluationMeasure(name: string): Promise<EvaluationMeasureDeleteResponse> {
+    const encoded = encodeURIComponent(name)
+    return this.fetch(`/evaluation/measures/${encoded}`, {
+      method: 'DELETE',
+    })
   }
 
   async getEvaluationJudges(): Promise<EvaluationJudgesResponse> {
