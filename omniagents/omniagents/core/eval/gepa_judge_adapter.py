@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 import asyncio
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -10,6 +11,7 @@ import yaml
 
 from omniagents.core.utils.jinja import render_template
 from omniagents.core.tools.discovery import discover_functions_in_dir
+from omniagents.core.project.runtime import load_project
 try:
     from gepa.strategies.instruction_proposal import InstructionProposalSignature
 except Exception:
@@ -79,6 +81,47 @@ class OmniAgentsJudgeAdapter:
         # fall back to the built-in judge prompts to avoid schema drift.
         self.propose_new_texts = self._propose_new_texts  # type: ignore
 
+        self._spec_kwargs: Dict[str, Any] = {}
+        self._project_root: Optional[Path] = None
+        manifest = self._locate_manifest()
+        if manifest is not None:
+            try:
+                ctx = load_project(str(manifest))
+                self._project_root = ctx.root
+                tool_registry = dict(ctx.tool_registry or {})
+                agent_tools_dir = self.compiled_yaml.parent / "tools"
+                if agent_tools_dir.is_dir():
+                    try:
+                        tool_registry.update(discover_functions_in_dir(str(agent_tools_dir)))
+                    except Exception:
+                        pass
+                project_tools_dir = self.compiled_yaml.parent / "project_tools"
+                if project_tools_dir.is_dir():
+                    try:
+                        tool_registry.update(discover_functions_in_dir(str(project_tools_dir)))
+                    except Exception:
+                        pass
+                if tool_registry:
+                    self._spec_kwargs["tool_registry"] = tool_registry
+                guardrails = ctx.guardrails_registry or {}
+                if guardrails:
+                    self._spec_kwargs["guardrails_registry"] = guardrails
+                server_functions = ctx.server_functions_registry or {}
+                if server_functions:
+                    self._spec_kwargs["server_functions_registry"] = server_functions
+                defaults: Dict[str, Any] = {}
+                if ctx.tracing_defaults:
+                    defaults["tracing"] = ctx.tracing_defaults
+                if ctx.settings_defaults:
+                    defaults["settings"] = ctx.settings_defaults
+                if ctx.ui_defaults:
+                    defaults.update(ctx.ui_defaults)
+                if defaults:
+                    self._spec_kwargs["project_defaults"] = defaults
+            except Exception:
+                self._project_root = None
+        self._ensure_sys_path()
+
     @staticmethod
     def _predict_label_from_judge_output(val: Any) -> Optional[bool]:
         try:
@@ -93,6 +136,29 @@ class OmniAgentsJudgeAdapter:
         except Exception:
             pass
         return None
+
+    def _locate_manifest(self) -> Optional[Path]:
+        current = self.compiled_yaml.parent
+        for _ in range(16):
+            candidate = current / "project.yml"
+            if candidate.is_file():
+                return candidate
+            if current == current.parent:
+                break
+            current = current.parent
+        return None
+
+    def _ensure_sys_path(self) -> None:
+        try:
+            if self._project_root:
+                proj_path = str(self._project_root)
+                if proj_path not in sys.path:
+                    sys.path.insert(0, proj_path)
+            compiled_parent = str(self.compiled_yaml.parent)
+            if compiled_parent not in sys.path:
+                sys.path.insert(0, compiled_parent)
+        except Exception:
+            pass
 
     def _build_judge_agent(self, instructions: str) -> Any:
         from omniagents.core.agents.specs import AgentSpec
@@ -125,28 +191,15 @@ class OmniAgentsJudgeAdapter:
                 out_type = TypedDict("JudgeOutput", ann)  # type: ignore
             except Exception:
                 pass
-        # Discover tools under compiled target dir
-        discovered = {}
-        try:
-            t1 = self.compiled_yaml.resolve().parent / "tools"
-            if t1.is_dir():
-                discovered.update(discover_functions_in_dir(str(t1)))
-        except Exception:
-            pass
-        try:
-            t2 = self.compiled_yaml.resolve().parent / "project_tools"
-            if t2.is_dir():
-                discovered.update(discover_functions_in_dir(str(t2)))
-        except Exception:
-            pass
         tools_list = []
         activated = agent_cfg.get("tools", [])
+        registry = dict(self._spec_kwargs.get("tool_registry", {}))
         if isinstance(activated, str) and activated.strip().lower() in {"*", "all"}:
-            tools_list = list(discovered.values())
+            tools_list = list(registry.values())
         elif isinstance(activated, list):
             for nm in activated:
-                if nm in discovered:
-                    tools_list.append(discovered[nm])
+                if nm in registry:
+                    tools_list.append(registry[nm])
 
         nm = self._judge_cfg.get("agent", {}).get("name") or f"Judge:{self.judge_key}"
         lbl = self._judge_cfg.get("agent", {}).get("label") or nm
@@ -176,7 +229,17 @@ class OmniAgentsJudgeAdapter:
             project_slug=None,
             agent_slug=f"judge_{self.judge_key}",
         )
-        return _default_build_agent({}, None, spec, None)
+        settings = {}
+        try:
+            defaults = self._spec_kwargs.get("project_defaults", {}) or {}
+            for setting in defaults.get("settings", []) if isinstance(defaults.get("settings"), list) else []:
+                key = getattr(setting, "key", None)
+                default_val = getattr(setting, "default", None)
+                if key and key not in settings:
+                    settings[key] = default_val
+        except Exception:
+            settings = {}
+        return _default_build_agent(settings, None, spec, None)
 
     def evaluate(
         self,
@@ -774,6 +837,7 @@ class OmniAgentsJudgeAdapter:
         return self._default_instruction_prompt(current_text, items)
 
     def _propose_new_texts(self, candidate: Dict[str, str], reflective_dataset: Dict[str, List[Dict[str, Any]]], components_to_update: List[str]) -> Dict[str, str]:
+        import asyncio as _asyncio
         new_texts: Dict[str, str] = {}
         async def _run():
             agent = await self._ensure_optimizer_agent()
@@ -808,12 +872,12 @@ class OmniAgentsJudgeAdapter:
                 new_texts[name] = self._extract_fenced(out_s)
             return new_texts
         try:
-            return asyncio.run(_run())
+            return _asyncio.run(_run())
         except RuntimeError:
-            loop = asyncio.get_event_loop()
+            loop = _asyncio.get_event_loop()
             if loop.is_running():
                 return loop.run_until_complete(_run())  # type: ignore
-            return asyncio.run(_run())
+            return _asyncio.run(_run())
 
     def make_reflective_dataset(
         self,

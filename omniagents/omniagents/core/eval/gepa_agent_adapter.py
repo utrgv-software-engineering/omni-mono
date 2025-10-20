@@ -5,6 +5,7 @@ import json
 import inspect
 from dataclasses import dataclass
 from pathlib import Path
+import sys
 from typing import Any, Dict, List, Optional
 
 import yaml
@@ -19,6 +20,8 @@ from omniagents.core.evaluation import (
 )
 from omniagents.core.eval.pipeline import _failure_category_map, _load_local_measures, _run_judges
 from omniagents.core.utils.jinja import render_template
+from omniagents.core.project.runtime import load_project
+from omniagents.core.tools.discovery import discover_functions_in_dir
 
 try:
     from gepa.strategies.instruction_proposal import InstructionProposalSignature
@@ -78,8 +81,74 @@ class OmniAgentsAgentAdapter:
         self.__debug_iter = 0
         self.__debug_last_batch_ids: List[str] = []
 
+        self._spec_kwargs: Dict[str, Any] = {}
+        self._project_root: Optional[Path] = None
+        manifest = self._locate_manifest()
+        if manifest is not None:
+            try:
+                ctx = load_project(str(manifest))
+                self._project_root = ctx.root
+                tool_registry = dict(ctx.tool_registry or {})
+                agent_tools_dir = self.compiled_yaml.parent / "tools"
+                if agent_tools_dir.is_dir():
+                    try:
+                        tool_registry.update(discover_functions_in_dir(str(agent_tools_dir)))
+                    except Exception:
+                        pass
+                if tool_registry:
+                    self._spec_kwargs["tool_registry"] = tool_registry
+                guardrails = ctx.guardrails_registry or {}
+                if guardrails:
+                    self._spec_kwargs["guardrails_registry"] = guardrails
+                server_functions = ctx.server_functions_registry or {}
+                if server_functions:
+                    self._spec_kwargs["server_functions_registry"] = server_functions
+                defaults: Dict[str, Any] = {}
+                if ctx.tracing_defaults:
+                    defaults["tracing"] = ctx.tracing_defaults
+                if ctx.settings_defaults:
+                    defaults["settings"] = ctx.settings_defaults
+                if ctx.ui_defaults:
+                    defaults.update(ctx.ui_defaults)
+                if defaults:
+                    self._spec_kwargs["project_defaults"] = defaults
+            except Exception:
+                self._project_root = None
+        self._ensure_sys_path()
+
+    def _locate_manifest(self) -> Optional[Path]:
+        current = self.compiled_yaml.parent
+        for _ in range(16):
+            candidate = current / "project.yml"
+            if candidate.is_file():
+                return candidate
+            if current == current.parent:
+                break
+            current = current.parent
+        return None
+
+    def _ensure_sys_path(self) -> None:
+        try:
+            if self._project_root:
+                proj_path = str(self._project_root)
+                if proj_path not in sys.path:
+                    sys.path.insert(0, proj_path)
+            compiled_parent = str(self.compiled_yaml.parent)
+            if compiled_parent not in sys.path:
+                sys.path.insert(0, compiled_parent)
+        except Exception:
+            pass
+
+    def _load_spec(self):
+        try:
+            if self._spec_kwargs:
+                return load_agent_spec_from_yaml(str(self.compiled_yaml), **self._spec_kwargs)
+        except Exception:
+            pass
+        return load_agent_spec_from_yaml(str(self.compiled_yaml))
+
     async def _run_once(self, instructions: str, prompt: str) -> Dict[str, Any]:
-        spec = load_agent_spec_from_yaml(str(self.compiled_yaml))
+        spec = self._load_spec()
         spec.use_safe_agent = False
         if self.agent_max_turns is not None:
             try:
@@ -368,7 +437,7 @@ class OmniAgentsAgentAdapter:
         md = ""
         try:
             # Use spec.available_tools to access tool objects (no async build required)
-            spec = load_agent_spec_from_yaml(str(self.compiled_yaml))
+            spec = self._load_spec()
             tools = getattr(spec, 'available_tools', []) or []
             lines: List[str] = []
             for t in tools:
