@@ -368,8 +368,8 @@ function DatasetsPanel({
                 <th className="border-b border-border/60 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Category</th>
                 <th className="border-b border-border/60 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Splits</th>
                 <th className="border-b border-border/60 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Scenarios</th>
-                <th className="border-b border-border/60 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Positives</th>
-                <th className="border-b border-border/60 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Negatives</th>
+                <th className="border-b border-border/60 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Passes</th>
+                <th className="border-b border-border/60 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Failures</th>
                 <th className="border-b border-border/60 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Updated</th>
                 <th className="border-b border-border/60 px-4 py-3 text-right text-xs font-semibold uppercase text-muted-foreground">Actions</th>
               </tr>
@@ -419,8 +419,8 @@ function DatasetsPanel({
                     <td className="px-4 py-3 align-top text-sm text-muted-foreground">{dataset.category || 'default'}</td>
                     <td className="px-4 py-3 align-top text-sm text-muted-foreground">{dataset.splits.length}</td>
                     <td className="px-4 py-3 align-top text-sm text-muted-foreground">{totals.scenarios}</td>
-                    <td className="px-4 py-3 align-top text-sm text-muted-foreground">{totals.positives}</td>
-                    <td className="px-4 py-3 align-top text-sm text-muted-foreground">{totals.negatives}</td>
+                <td className="px-4 py-3 align-top text-sm text-muted-foreground">{totals.negatives}</td>
+                <td className="px-4 py-3 align-top text-sm text-muted-foreground">{totals.positives}</td>
                     <td className="px-4 py-3 align-top text-sm text-muted-foreground">{latestLabel}</td>
                     <td className="px-4 py-3 align-top text-right">
                       <button
@@ -447,8 +447,8 @@ function DatasetsPanel({
                             <tr>
                               <th className="border-b border-border/50 px-3 py-2 text-left text-xs font-semibold uppercase text-muted-foreground">Split</th>
                               <th className="border-b border-border/50 px-3 py-2 text-left text-xs font-semibold uppercase text-muted-foreground">Scenarios</th>
-                              <th className="border-b border-border/50 px-3 py-2 text-left text-xs font-semibold uppercase text-muted-foreground">Positives</th>
-                              <th className="border-b border-border/50 px-3 py-2 text-left text-xs font-semibold uppercase text-muted-foreground">Negatives</th>
+                              <th className="border-b border-border/50 px-3 py-2 text-left text-xs font-semibold uppercase text-muted-foreground">Passes</th>
+                              <th className="border-b border-border/50 px-3 py-2 text-left text-xs font-semibold uppercase text-muted-foreground">Failures</th>
                               <th className="border-b border-border/50 px-3 py-2 text-left text-xs font-semibold uppercase text-muted-foreground">Updated</th>
                               <th className="border-b border-border/50 px-3 py-2 text-left text-xs font-semibold uppercase text-muted-foreground">Path</th>
                             </tr>
@@ -466,8 +466,8 @@ function DatasetsPanel({
                                   </button>
                                 </td>
                                 <td className="px-3 py-2 align-top text-sm text-muted-foreground">{split.scenario_count}</td>
-                                <td className="px-3 py-2 align-top text-sm text-muted-foreground">{split.positives}</td>
                                 <td className="px-3 py-2 align-top text-sm text-muted-foreground">{split.negatives}</td>
+                                <td className="px-3 py-2 align-top text-sm text-muted-foreground">{split.positives}</td>
                                 <td className="px-3 py-2 align-top text-sm text-muted-foreground">{split.updated_at ? formatTimestamp(split.updated_at) : '—'}</td>
                                 <td className="px-3 py-2 align-top text-xs text-muted-foreground">
                                   <span className="font-mono text-[11px] leading-tight">{formatScenarioPath(split.path)}</span>
@@ -541,8 +541,8 @@ function DatasetsPanel({
                   {splitSummary ? (
                     <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                       <span>{formatCount(splitSummary.scenario_count, 'scenario')}</span>
-                      <span>{formatCount(splitSummary.positives, 'positive')}</span>
-                      <span>{formatCount(splitSummary.negatives, 'negative')}</span>
+                      <span>Failures: {splitSummary.positives}</span>
+                      <span>Passes: {splitSummary.negatives}</span>
                       {splitSummary.updated_at ? <span>Updated {formatTimestamp(splitSummary.updated_at)}</span> : null}
                       <span className="font-mono text-[11px] leading-tight">{formatScenarioPath(splitSummary.path)}</span>
                     </div>
@@ -566,11 +566,11 @@ function DatasetsPanel({
                         <tbody>
                           {splitScenarios.map((scenario, index) => {
                             const labelValue = scenario.label
-                            const labelText = labelValue === true ? 'Positive' : labelValue === false ? 'Negative' : '—'
+                            const labelText = labelValue === true ? 'Fail' : labelValue === false ? 'Pass' : '—'
                             const labelClass = labelValue === true
-                              ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-600'
+                              ? 'border-destructive/60 bg-destructive/10 text-destructive'
                               : labelValue === false
-                                ? 'border-destructive/60 bg-destructive/10 text-destructive'
+                                ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-600'
                                 : 'border-border text-muted-foreground'
                             const assistantMessageRaw = scenario.metadata && typeof scenario.metadata.assistant_last_message === 'string' ? scenario.metadata.assistant_last_message : null
                             const assistantMessage = assistantMessageRaw && assistantMessageRaw.trim().length > 0 ? assistantMessageRaw : '—'
@@ -848,7 +848,6 @@ function ScenarioSetDetail({
   const runCompletionRef = useRef(false)
   const [isSplitDialogOpen, setIsSplitDialogOpen] = useState(false)
   const [splitCategory, setSplitCategory] = useState('')
-  const [isCustomSplitCategory, setIsCustomSplitCategory] = useState(false)
   const [splitTrain, setSplitTrain] = useState('0.15')
   const [splitDev, setSplitDev] = useState('0.425')
   const [splitTest, setSplitTest] = useState('0.425')
@@ -865,6 +864,19 @@ function ScenarioSetDetail({
     })
     return Array.from(categories).sort((a, b) => a.localeCompare(b))
   }, [set.scenarios])
+
+  useEffect(() => {
+    if (!isSplitDialogOpen) {
+      return
+    }
+    if (availableFailureCategories.length === 0) {
+      setSplitCategory('')
+      return
+    }
+    if (!availableFailureCategories.includes(splitCategory)) {
+      setSplitCategory(availableFailureCategories[0])
+    }
+  }, [availableFailureCategories, isSplitDialogOpen, splitCategory])
 
   useEffect(() => {
     activeRunRef.current = activeRun
@@ -992,7 +1004,6 @@ function ScenarioSetDetail({
     }
     const defaultCategory = availableFailureCategories[0] ?? ''
     setSplitCategory(defaultCategory)
-    setIsCustomSplitCategory(defaultCategory.length === 0)
     setSplitTrain('0.15')
     setSplitDev('0.425')
     setSplitTest('0.425')
@@ -1007,7 +1018,6 @@ function ScenarioSetDetail({
       return
     }
     setIsSplitDialogOpen(false)
-    setIsCustomSplitCategory(false)
     setSplitError(null)
   }
 
@@ -1064,12 +1074,6 @@ function ScenarioSetDetail({
   }
 
   const handleSplitCategoryChange = (value: string) => {
-    if (value === '__custom__') {
-      setIsCustomSplitCategory(true)
-      setSplitCategory('')
-      return
-    }
-    setIsCustomSplitCategory(false)
     setSplitCategory(value)
   }
 
@@ -1609,7 +1613,8 @@ function ScenarioSetDetail({
                     </div>
                   ) : null}
                   {showFailureCategories ? (
-                    <div className="mt-2 flex flex-wrap gap-2">
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-medium text-muted-foreground">Failure Category:</span>
                       {failureCategories.length > 0 ? (
                         failureCategories.map((category) => (
                           <span key={category} className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-0.5 text-xs text-destructive">
@@ -1752,40 +1757,31 @@ function ScenarioSetDetail({
             <div className="space-y-4">
               <div>
                 <label className="mb-1 block text-xs font-medium uppercase text-muted-foreground">Category</label>
-                {availableFailureCategories.length > 0 ? (
-                  <div className="space-y-2">
-                    <select
-                      value={isCustomSplitCategory ? '__custom__' : splitCategory}
-                      onChange={(event) => handleSplitCategoryChange(event.target.value)}
-                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
-                      disabled={splitScenario.isPending}
-                    >
-                      {availableFailureCategories.map((category) => (
+                <div className="space-y-2">
+                  <select
+                    value={availableFailureCategories.length > 0 ? splitCategory : ''}
+                    onChange={(event) => handleSplitCategoryChange(event.target.value)}
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                    disabled={splitScenario.isPending || availableFailureCategories.length === 0}
+                  >
+                    {availableFailureCategories.length === 0 ? (
+                      <option value="">
+                        No failure categories found
+                      </option>
+                    ) : (
+                      availableFailureCategories.map((category) => (
                         <option key={category} value={category}>
                           {category}
                         </option>
-                      ))}
-                      <option value="__custom__">Custom category…</option>
-                    </select>
-                    {isCustomSplitCategory ? (
-                      <input
-                        value={splitCategory}
-                        onChange={(event) => setSplitCategory(event.target.value)}
-                        placeholder="Enter category"
-                        className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
-                        disabled={splitScenario.isPending}
-                      />
-                    ) : null}
-                  </div>
-                ) : (
-                  <input
-                    value={splitCategory}
-                    onChange={(event) => setSplitCategory(event.target.value)}
-                    placeholder="failure_category"
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
-                    disabled={splitScenario.isPending}
-                  />
-                )}
+                      ))
+                    )}
+                  </select>
+                  {availableFailureCategories.length === 0 ? (
+                    <div className="text-xs text-muted-foreground">
+                      Add failure categories for scenarios before splitting.
+                    </div>
+                  ) : null}
+                </div>
               </div>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <div>
@@ -1873,7 +1869,7 @@ function ScenarioSetDetail({
               <button
                 type="submit"
                 className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-                disabled={splitScenario.isPending}
+                disabled={splitScenario.isPending || availableFailureCategories.length === 0}
               >
                 {splitScenario.isPending ? 'Splitting…' : 'Create Splits'}
               </button>
