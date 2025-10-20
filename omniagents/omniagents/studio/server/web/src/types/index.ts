@@ -70,10 +70,10 @@ export interface Conversation {
 }
 
 export interface FailureCategory {
-  id: number
+  id: string
   name: string
   description?: string | null
-  created_at?: string
+  measures?: string[] | null
   usageCount?: number
 }
 
@@ -82,7 +82,7 @@ export interface AnalysisData {
   judgment: 'acceptable' | 'unacceptable' | null
   notes: string
   analyzedAt?: string
-  categories?: number[]  // Array of category IDs
+  categories?: string[]
 }
 
 export interface PlaygroundToolDefinition {

@@ -574,6 +574,14 @@ class EvaluationDimensionsPayload(BaseModel):
     dimensions: List[EvaluationDimensionModel] = Field(default_factory=list)
 
 
+class FailureCategoryModel(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    measures: List[str] = Field(default_factory=list)
+    usageCount: int = 0
+
+
 class ScenarioEntryModel(BaseModel):
     id: Optional[str] = None
     name: str
@@ -2200,6 +2208,121 @@ def create_api_app(
 
         _write_yaml_file(target_file, updated)
         return serialized_dims
+
+    def _load_failure_categories(
+        ctx,
+        manifest_path: Path,
+    ) -> Tuple[List[Dict[str, Any]], Path, Dict[str, Any], Dict[str, Any], bool]:
+        target_file, exists = _resolve_eval_file(ctx, manifest_path)
+        if exists:
+            try:
+                data = yaml.safe_load(target_file.read_text(encoding="utf-8")) or {}
+            except Exception:
+                data = {}
+        else:
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        has_eval_section = isinstance(data.get("evaluation"), dict)
+        evaluation_cfg = dict(data.get("evaluation") or {}) if has_eval_section else dict(data)
+        raw_categories = evaluation_cfg.get("failure_categories") if isinstance(evaluation_cfg.get("failure_categories"), list) else []
+        normalized: List[Dict[str, Any]] = []
+        for entry in raw_categories or []:
+            if isinstance(entry, dict):
+                raw_name = entry.get("name") or entry.get("key") or entry.get("id")
+                description = entry.get("description") if isinstance(entry.get("description"), str) else None
+                measures = entry.get("measures") if isinstance(entry.get("measures"), list) else []
+            elif isinstance(entry, str):
+                raw_name = entry
+                description = None
+                measures = []
+            else:
+                continue
+            name = str(raw_name or "").strip()
+            if not name:
+                continue
+            slug = _slugify(name)
+            normalized.append(
+                {
+                    "slug": slug,
+                    "name": name,
+                    "description": description,
+                    "measures": [str(m).strip() for m in measures if isinstance(m, str) and str(m).strip()],
+                }
+            )
+        return normalized, target_file, data, evaluation_cfg, has_eval_section
+
+    def _persist_failure_categories(
+        target_file: Path,
+        data: Dict[str, Any],
+        evaluation_cfg: Dict[str, Any],
+        has_eval_section: bool,
+        categories: List[Dict[str, Any]],
+    ) -> None:
+        serialized: List[Dict[str, Any]] = []
+        for category in categories:
+            entry: Dict[str, Any] = {"name": category["name"]}
+            if category.get("description"):
+                entry["description"] = category["description"]
+            measures = [m for m in category.get("measures", []) if isinstance(m, str) and m.strip()]
+            if measures:
+                entry["measures"] = measures
+            serialized.append(entry)
+        updated_eval = dict(evaluation_cfg)
+        updated_eval["failure_categories"] = serialized
+        if has_eval_section or data:
+            updated = dict(data)
+            updated["evaluation"] = updated_eval
+        else:
+            updated = {"evaluation": updated_eval}
+        _write_yaml_with_backup(target_file, updated)
+
+    def _collect_scenario_category_usage(ctx) -> Dict[str, int]:
+        counts: Dict[str, int] = {}
+        for file in _scenarios_files(ctx):
+            entries = _read_scenarios_file(file)
+            for entry in entries:
+                raw = entry.get("failure_categories") if isinstance(entry, dict) else None
+                if not isinstance(raw, list):
+                    continue
+                seen: Set[str] = set()
+                for value in raw:
+                    if not isinstance(value, str):
+                        continue
+                    slug = _slugify(value)
+                    if not slug or slug in seen:
+                        continue
+                    counts[slug] = counts.get(slug, 0) + 1
+                    seen.add(slug)
+        return counts
+
+    def _remove_category_from_scenarios(ctx, slug: str) -> None:
+        normalized = _slugify(slug)
+        if not normalized:
+            return
+        for file in _scenarios_files(ctx):
+            entries = _read_scenarios_file(file)
+            if not entries:
+                continue
+            changed = False
+            updated_entries: List[Dict[str, Any]] = []
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    updated_entries.append(entry)
+                    continue
+                scenario = dict(entry)
+                raw = scenario.get("failure_categories")
+                if isinstance(raw, list):
+                    filtered = [value for value in raw if isinstance(value, str) and _slugify(value) != normalized]
+                    if filtered and filtered != raw:
+                        scenario["failure_categories"] = filtered
+                        changed = True
+                    elif not filtered and raw:
+                        scenario.pop("failure_categories", None)
+                        changed = True
+                updated_entries.append(scenario)
+            if changed:
+                _write_scenarios_file(file, updated_entries)
 
     def _resolve_relative_file(base: Path, value: Optional[str]) -> Optional[Path]:
         if not value:
@@ -5243,12 +5366,10 @@ def create_api_app(
         if target_index is None:
             return
         scenario_entry = dict(entries[target_index])
-        category_ids = storage.get_analysis_categories(group_id)
+        category_slugs = storage.get_analysis_categories(group_id)
         categories: List[str] = []
-        if category_ids:
-            defs = storage.get_failure_categories(project)
-            id_to_name = {int(item.get("id")): item.get("name") for item in defs if item.get("id") is not None}
-            slugs = {_slugify(id_to_name[cid]) for cid in category_ids if cid in id_to_name}
+        if category_slugs:
+            slugs = {_slugify(cat) for cat in category_slugs if isinstance(cat, str) and cat.strip()}
             categories = sorted(slugs)
         if categories:
             scenario_entry["failure_categories"] = categories
@@ -5318,82 +5439,109 @@ def create_api_app(
     
     @app.get("/api/categories/{project}")
     async def get_failure_categories(project: str):
-        """Get all failure categories for a project"""
         try:
             storage = storage_manager.get_storage(project)
-            categories = storage.get_failure_categories(project)
-            
-            # Get usage stats
-            usage_stats = storage.get_category_usage_stats(project)
-            
-            # Add usage count to each category
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            categories, _target_file, _data, _cfg, _flag = _load_failure_categories(ctx, manifest_path)
+            scenario_usage = _collect_scenario_category_usage(ctx)
+            analysis_usage = storage.get_analysis_category_usage(project)
+            payload: List[Dict[str, Any]] = []
             for category in categories:
-                category['usageCount'] = usage_stats.get(category['id'], 0)
-            
-            return categories
+                slug = category["slug"]
+                total_usage = scenario_usage.get(slug, 0) + analysis_usage.get(slug, 0)
+                model = FailureCategoryModel(
+                    id=slug,
+                    name=category["name"],
+                    description=category.get("description"),
+                    measures=category.get("measures", []),
+                    usageCount=total_usage,
+                )
+                payload.append(model.model_dump())
+            payload.sort(key=lambda item: item["name"].lower())
+            return payload
         except ValueError:
             raise HTTPException(status_code=404, detail="Project not found")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-    
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
     @app.post("/api/categories/{project}")
     async def create_failure_category(
         project: str,
         category_data: Dict[str, Any]
     ):
-        """Create a new failure category"""
         try:
-            storage = storage_manager.get_storage(project)
-            
-            # Validate required fields
-            if 'name' not in category_data or not category_data['name'].strip():
+            storage_manager.get_storage(project)
+            name = str(category_data.get("name", "")).strip()
+            if not name:
                 raise HTTPException(status_code=400, detail="Category name is required")
-            
-            # Create the category
-            category_id = storage.create_failure_category(
-                project,
-                category_data['name'].strip(),
-                category_data.get('description', '').strip() or None
+            description = category_data.get("description")
+            if isinstance(description, str):
+                description = description.strip() or None
+            else:
+                description = None
+            slug = _slugify(name)
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            categories, target_file, data, evaluation_cfg, has_eval_section = _load_failure_categories(ctx, manifest_path)
+            if any(item["slug"] == slug for item in categories):
+                raise HTTPException(status_code=409, detail="Category with this name already exists")
+            categories.append(
+                {
+                    "slug": slug,
+                    "name": name,
+                    "description": description,
+                    "measures": [],
+                }
             )
-            
-            return {
-                'id': category_id,
-                'name': category_data['name'].strip(),
-                'description': category_data.get('description', '').strip() or None,
-                'usageCount': 0
-            }
+            _persist_failure_categories(target_file, data, evaluation_cfg, has_eval_section, categories)
+            scenario_usage = _collect_scenario_category_usage(ctx)
+            analysis_usage = storage_manager.get_storage(project).get_analysis_category_usage(project)
+            model = FailureCategoryModel(
+                id=slug,
+                name=name,
+                description=description,
+                usageCount=scenario_usage.get(slug, 0) + analysis_usage.get(slug, 0),
+            )
+            return model.model_dump()
         except ValueError:
             raise HTTPException(status_code=404, detail="Project not found")
-        except Exception as e:
-            if "UNIQUE constraint failed" in str(e):
-                raise HTTPException(status_code=409, detail="Category with this name already exists")
-            raise HTTPException(status_code=500, detail=str(e))
-    
-    @app.delete("/api/categories/{project}/{category_id}")
-    async def delete_failure_category(project: str, category_id: int):
-        """Delete a failure category"""
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.delete("/api/categories/{project}/{category_slug}")
+    async def delete_failure_category(project: str, category_slug: str):
         try:
             storage = storage_manager.get_storage(project)
-            
-            # Get usage count before deletion
-            usage_count = storage.get_category_usage(project, category_id)
-            
-            # Delete the category
-            deleted = storage.delete_failure_category(project, category_id)
-            
-            if not deleted:
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            categories, target_file, data, evaluation_cfg, has_eval_section = _load_failure_categories(ctx, manifest_path)
+            slug = _slugify(category_slug)
+            if not slug:
                 raise HTTPException(status_code=404, detail="Category not found")
-            
+            scenario_usage = _collect_scenario_category_usage(ctx)
+            analysis_usage = storage.get_analysis_category_usage(project)
+            previous_usage = scenario_usage.get(slug, 0) + analysis_usage.get(slug, 0)
+            filtered = [item for item in categories if item["slug"] != slug]
+            if len(filtered) == len(categories):
+                raise HTTPException(status_code=404, detail="Category not found")
+            _persist_failure_categories(target_file, data, evaluation_cfg, has_eval_section, filtered)
+            storage.remove_analysis_category_slug(project, slug)
+            _remove_category_from_scenarios(ctx, slug)
             return {
-                'message': 'Category deleted successfully',
-                'previousUsageCount': usage_count
+                "message": "Category deleted successfully",
+                "previousUsageCount": previous_usage,
             }
         except ValueError:
             raise HTTPException(status_code=404, detail="Project not found")
         except HTTPException:
             raise
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
     
     @app.get("/api/analysis/{project}/{group_id}/categories")
     async def get_analysis_categories(project: str, group_id: str):
@@ -5416,17 +5564,25 @@ def create_api_app(
         """Update categories for an analysis"""
         try:
             storage = storage_manager.get_storage(project)
-            category_ids = data.get('categoryIds', [])
-            
-            # Validate that all category IDs are integers
-            try:
-                category_ids = [int(cat_id) for cat_id in category_ids]
-            except (ValueError, TypeError):
+            raw_ids = data.get('categoryIds', [])
+            if not isinstance(raw_ids, list):
                 raise HTTPException(status_code=400, detail="Invalid category IDs")
-            
-            storage.set_analysis_categories(project, group_id, category_ids)
+            manifest_path = _get_manifest_path()
+            ctx = load_project(str(manifest_path))
+            categories, _target_file, _data, _cfg, _flag = _load_failure_categories(ctx, manifest_path)
+            valid_slugs = {item['slug'] for item in categories}
+            normalized: List[str] = []
+            for value in raw_ids:
+                if not isinstance(value, str):
+                    raise HTTPException(status_code=400, detail="Invalid category IDs")
+                slug = _slugify(value)
+                if not slug or slug not in valid_slugs:
+                    raise HTTPException(status_code=400, detail="Unknown category")
+                if slug not in normalized:
+                    normalized.append(slug)
+            storage.set_analysis_categories(project, group_id, normalized)
             _sync_scenario_annotations(project, group_id)
-            return {'categoryIds': category_ids}
+            return {'categoryIds': normalized}
         except ValueError:
             raise HTTPException(status_code=404, detail="Project not found")
         except Exception as e:

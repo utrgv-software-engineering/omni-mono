@@ -31,8 +31,8 @@ export function AnalysisPanel() {
   const [newCategoryName, setNewCategoryName] = useState('')
   const [newCategoryDescription, setNewCategoryDescription] = useState('')
   const [categoryError, setCategoryError] = useState('')
-  const [categoryToDelete, setCategoryToDelete] = useState<{ id: number; name: string; usageCount: number } | null>(null)
-  const [hoveredCategoryId, setHoveredCategoryId] = useState<number | null>(null)
+  const [categoryToDelete, setCategoryToDelete] = useState<{ id: string; name: string; usageCount: number } | null>(null)
+  const [hoveredCategoryId, setHoveredCategoryId] = useState<string | null>(null)
   const notesRef = useRef<HTMLTextAreaElement>(null)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   
@@ -156,7 +156,7 @@ export function AnalysisPanel() {
     }, 500) // Save after 500ms of no typing
   }, [selectedConversation, localAnalysis, setConversationAnalysis])
   
-  const handleCategoryToggle = async (categoryId: number) => {
+  const handleCategoryToggle = async (categoryId: string) => {
     if (!selectedConversation) return
     
     const currentCategories = localAnalysis.categories || []

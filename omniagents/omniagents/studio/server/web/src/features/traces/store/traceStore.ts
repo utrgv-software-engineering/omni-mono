@@ -71,8 +71,8 @@ interface TraceStore {
   // Category Actions
   loadFailureCategories: (project: string) => Promise<void>
   createFailureCategory: (name: string, description?: string) => Promise<FailureCategory>
-  deleteFailureCategory: (categoryId: number) => Promise<void>
-  updateAnalysisCategories: (groupId: string, categoryIds: number[]) => Promise<void>
+  deleteFailureCategory: (categoryId: string) => Promise<void>
+  updateAnalysisCategories: (groupId: string, categoryIds: string[]) => Promise<void>
   
   // Goals Actions
   setAnalysisGoals: (goals: AnalysisGoals) => void
@@ -259,7 +259,7 @@ export const useTraceStore = create<TraceStore>()(
     }
   },
   
-  deleteFailureCategory: async (categoryId: number) => {
+  deleteFailureCategory: async (categoryId: string) => {
     const project = get().selectedProject
     if (!project) {
       throw new Error('No project selected')
@@ -293,7 +293,7 @@ export const useTraceStore = create<TraceStore>()(
     }
   },
   
-  updateAnalysisCategories: async (groupId: string, categoryIds: number[]) => {
+  updateAnalysisCategories: async (groupId: string, categoryIds: string[]) => {
     const project = get().selectedProject
     if (!project) {
       console.error('No project selected')

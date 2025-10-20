@@ -221,22 +221,23 @@ class ApiClient {
 
   async deleteFailureCategory(
     project: string,
-    categoryId: number
+    categorySlug: string
   ): Promise<{ message: string; previousUsageCount: number }> {
-    return this.fetch(`/categories/${project}/${categoryId}`, {
+    const encoded = encodeURIComponent(categorySlug)
+    return this.fetch(`/categories/${project}/${encoded}`, {
       method: 'DELETE',
     })
   }
 
-  async getAnalysisCategories(project: string, groupId: string): Promise<{ categoryIds: number[] }> {
+  async getAnalysisCategories(project: string, groupId: string): Promise<{ categoryIds: string[] }> {
     return this.fetch(`/analysis/${project}/${groupId}/categories`)
   }
 
   async updateAnalysisCategories(
     project: string,
     groupId: string,
-    categoryIds: number[]
-  ): Promise<{ categoryIds: number[] }> {
+    categoryIds: string[]
+  ): Promise<{ categoryIds: string[] }> {
     return this.fetch(`/analysis/${project}/${groupId}/categories`, {
       method: 'PUT',
       body: JSON.stringify({ categoryIds }),

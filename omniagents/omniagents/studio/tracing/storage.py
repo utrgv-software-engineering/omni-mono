@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from omniagents.core.paths import get_traces_dir
+from omniagents.core.eval.annotate import _slugify
 
 class SQLiteStorage:
     def __init__(self, db_path: Optional[str] = None):
@@ -89,34 +90,66 @@ class SQLiteStorage:
                 CREATE INDEX IF NOT EXISTS idx_analysis_judgment
                 ON analysis(project, judgment);
                 
-                CREATE TABLE IF NOT EXISTS failure_categories (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    project TEXT NOT NULL,
-                    name TEXT NOT NULL,
-                    description TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(project, name)
-                );
-                
-                CREATE INDEX IF NOT EXISTS idx_categories_project
-                ON failure_categories(project);
-                
-                CREATE TABLE IF NOT EXISTS analysis_categories (
-                    group_id TEXT NOT NULL,
-                    category_id INTEGER NOT NULL,
-                    project TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (group_id, category_id),
-                    FOREIGN KEY (group_id) REFERENCES analysis(group_id) ON DELETE CASCADE,
-                    FOREIGN KEY (category_id) REFERENCES failure_categories(id) ON DELETE CASCADE
-                );
-                
-                CREATE INDEX IF NOT EXISTS idx_analysis_categories_group
-                ON analysis_categories(group_id);
-                
-                CREATE INDEX IF NOT EXISTS idx_analysis_categories_category
-                ON analysis_categories(category_id);
             ''')
+            self._ensure_analysis_categories_column()
+            self._migrate_analysis_categories()
+
+    def _ensure_analysis_categories_column(self):
+        cursor = self.conn.execute("PRAGMA table_info(analysis)")
+        columns = {row[1] for row in cursor.fetchall()}
+        if "categories" not in columns:
+            with self.conn:
+                self.conn.execute("ALTER TABLE analysis ADD COLUMN categories TEXT")
+
+    def _table_exists(self, name: str) -> bool:
+        cursor = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (name,),
+        )
+        return cursor.fetchone() is not None
+
+    def _migrate_analysis_categories(self):
+        if not self._table_exists("analysis_categories"):
+            return
+        cursor = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='failure_categories'"
+        )
+        if cursor.fetchone() is None:
+            rows = self.conn.execute(
+                "SELECT group_id, category_id FROM analysis_categories"
+            ).fetchall()
+            if not rows:
+                return
+            grouped: Dict[str, set[str]] = {}
+            for row in rows:
+                group_id = row["group_id"]
+                grouped.setdefault(group_id, set()).add(str(row["category_id"]))
+        else:
+            entries = self.conn.execute(
+                """
+                SELECT ac.group_id, fc.name
+                FROM analysis_categories ac
+                JOIN failure_categories fc ON fc.id = ac.category_id
+                """
+            ).fetchall()
+            if not entries:
+                return
+            grouped = {}
+            for row in entries:
+                name = row["name"]
+                slug = _slugify(str(name)) if name else None
+                if not slug:
+                    continue
+                group_id = row["group_id"]
+                grouped.setdefault(group_id, set()).add(slug)
+        with self.conn:
+            for group_id, slugs in grouped.items():
+                payload = json.dumps(sorted(slugs)) if slugs else None
+                self.conn.execute(
+                    "UPDATE analysis SET categories = ? WHERE group_id = ?",
+                    (payload, group_id),
+                )
+            self.conn.execute("DELETE FROM analysis_categories")
     
     def insert_trace(self, trace_data: Dict[str, Any]):
         """Insert a new trace"""
@@ -337,89 +370,115 @@ class SQLiteStorage:
         with self.conn:
             self.conn.execute('DELETE FROM analysis WHERE group_id = ?', (group_id,))
     
-    def get_failure_categories(self, project: str) -> List[Dict[str, Any]]:
-        """Get all failure categories for a project"""
-        cursor = self.conn.execute('''
-            SELECT id, name, description, created_at
-            FROM failure_categories
-            WHERE project = ?
-            ORDER BY name
-        ''', (project,))
-        return [dict(row) for row in cursor]
-    
-    def create_failure_category(self, project: str, name: str, description: Optional[str] = None) -> int:
-        """Create a new failure category for a project"""
-        with self.conn:
-            cursor = self.conn.execute('''
-                INSERT INTO failure_categories (project, name, description)
-                VALUES (?, ?, ?)
-            ''', (project, name, description))
-            return cursor.lastrowid
-    
-    def get_analysis_categories(self, group_id: str) -> List[int]:
-        """Get category IDs associated with an analysis"""
-        cursor = self.conn.execute('''
-            SELECT category_id
-            FROM analysis_categories
-            WHERE group_id = ?
-        ''', (group_id,))
-        return [row['category_id'] for row in cursor]
-    
-    def set_analysis_categories(self, project: str, group_id: str, category_ids: List[int]):
-        """Set categories for an analysis (replaces existing)"""
-        with self.conn:
-            # Delete existing categories
-            self.conn.execute('DELETE FROM analysis_categories WHERE group_id = ?', (group_id,))
-            
-            # Insert new categories
-            if category_ids:
-                data = [(group_id, cat_id, project) for cat_id in category_ids]
-                self.conn.executemany('''
-                    INSERT INTO analysis_categories (group_id, category_id, project)
-                    VALUES (?, ?, ?)
-                ''', data)
-    
-    def get_category_usage_stats(self, project: str) -> Dict[int, int]:
-        """Get usage count for each category in a project"""
-        cursor = self.conn.execute('''
-            SELECT fc.id, COUNT(ac.group_id) as usage_count
-            FROM failure_categories fc
-            LEFT JOIN analysis_categories ac ON fc.id = ac.category_id
-            WHERE fc.project = ?
-            GROUP BY fc.id
-        ''', (project,))
-        return {row['id']: row['usage_count'] for row in cursor}
-    
-    def delete_failure_category(self, project: str, category_id: int) -> bool:
-        """Delete a failure category. Returns True if deleted, False if not found"""
-        with self.conn:
-            # Check if category exists and belongs to this project
-            cursor = self.conn.execute('''
-                SELECT id FROM failure_categories 
-                WHERE id = ? AND project = ?
-            ''', (category_id, project))
-            
-            if not cursor.fetchone():
-                return False
-            
-            # Delete the category (CASCADE will handle analysis_categories)
-            self.conn.execute('''
-                DELETE FROM failure_categories 
-                WHERE id = ? AND project = ?
-            ''', (category_id, project))
-            
-            return True
-    
-    def get_category_usage(self, project: str, category_id: int) -> int:
-        """Get usage count for a specific category"""
-        cursor = self.conn.execute('''
-            SELECT COUNT(*) as usage_count
-            FROM analysis_categories ac
-            JOIN failure_categories fc ON fc.id = ac.category_id
-            WHERE fc.id = ? AND fc.project = ?
-        ''', (category_id, project))
+    def get_analysis_categories(self, group_id: str) -> List[str]:
+        """Get category slugs associated with an analysis"""
+        cursor = self.conn.execute(
+            "SELECT categories FROM analysis WHERE group_id = ?",
+            (group_id,),
+        )
         row = cursor.fetchone()
-        return row['usage_count'] if row else 0
+        if not row or row["categories"] in (None, ""):
+            return []
+        try:
+            data = json.loads(row["categories"])
+        except Exception:
+            return []
+        if isinstance(data, list):
+            return [str(item) for item in data if isinstance(item, str) and item.strip()]
+        return []
+
+    def set_analysis_categories(self, project: str, group_id: str, categories: List[str]):
+        """Set categories for an analysis (replaces existing)"""
+        normalized = sorted({str(item).strip() for item in categories if str(item).strip()})
+        payload = json.dumps(normalized) if normalized else None
+        with self.conn:
+            cursor = self.conn.execute(
+                "SELECT 1 FROM analysis WHERE group_id = ?",
+                (group_id,),
+            )
+            exists = cursor.fetchone() is not None
+            if exists:
+                self.conn.execute(
+                    """
+                    UPDATE analysis
+                    SET categories = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE group_id = ?
+                    """,
+                    (payload, group_id),
+                )
+            else:
+                self.conn.execute(
+                    """
+                    INSERT INTO analysis
+                    (group_id, project, marked_for_analysis, judgment, notes, analyzed_at, categories)
+                    VALUES (?, ?, 0, NULL, '', NULL, ?)
+                    """,
+                    (group_id, project, payload),
+                )
+
+    def get_analysis_category_usage(self, project: str) -> Dict[str, int]:
+        cursor = self.conn.execute(
+            "SELECT categories FROM analysis WHERE project = ?",
+            (project,),
+        )
+        counts: Dict[str, int] = {}
+        for row in cursor:
+            raw = row["categories"]
+            if not raw:
+                continue
+            try:
+                items = json.loads(raw)
+            except Exception:
+                continue
+            if not isinstance(items, list):
+                continue
+            seen = set()
+            for item in items:
+                if not isinstance(item, str):
+                    continue
+                slug = item.strip()
+                if not slug or slug in seen:
+                    continue
+                counts[slug] = counts.get(slug, 0) + 1
+                seen.add(slug)
+        return counts
+
+    def remove_analysis_category_slug(self, project: str, slug: str) -> None:
+        normalized = str(slug).strip()
+        if not normalized:
+            return
+        cursor = self.conn.execute(
+            "SELECT group_id, categories FROM analysis WHERE project = ?",
+            (project,),
+        )
+        updates: List[tuple[str, Optional[str]]] = []
+        for row in cursor:
+            raw = row["categories"]
+            if not raw:
+                continue
+            try:
+                items = json.loads(raw)
+            except Exception:
+                continue
+            if not isinstance(items, list):
+                continue
+            filtered = [item for item in items if isinstance(item, str) and item != normalized]
+            if len(filtered) == len(items):
+                continue
+            payload = json.dumps(filtered) if filtered else None
+            updates.append((row["group_id"], payload))
+        if not updates:
+            return
+        with self.conn:
+            for group_id, payload in updates:
+                self.conn.execute(
+                    """
+                    UPDATE analysis
+                    SET categories = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE group_id = ?
+                    """,
+                    (payload, group_id),
+                )
     
     def close(self):
         """Close connection"""
