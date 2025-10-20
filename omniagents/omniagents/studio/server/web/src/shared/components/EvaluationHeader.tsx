@@ -1,7 +1,7 @@
 import { ArrowLeft, BarChart3 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 
-type EvaluationTab = 'scenarios' | 'datasets' | 'dimensions' | 'judges'
+type EvaluationTab = 'scenarios' | 'datasets' | 'dimensions' | 'judges' | 'categories'
 
 interface EvaluationHeaderProps {
   activeTab: EvaluationTab
@@ -16,6 +16,7 @@ const tabs: { key: EvaluationTab; label: string }[] = [
   { key: 'datasets', label: 'Datasets' },
   { key: 'dimensions', label: 'Dimensions' },
   { key: 'judges', label: 'Judges' },
+  { key: 'categories', label: 'Categories' },
 ]
 
 export function EvaluationHeader({ activeTab, onTabChange, onBack, projectName, isLoading }: EvaluationHeaderProps) {

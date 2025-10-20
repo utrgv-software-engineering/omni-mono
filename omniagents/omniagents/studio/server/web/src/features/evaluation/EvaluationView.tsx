@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Edit3, Trash2, Loader2, X, Upload, FileText, Clock, ArrowLeft, Play, Sparkles, Database, RefreshCw, ExternalLink, ChevronRight, ChevronDown, SplitSquareVertical, Gavel, BarChart3 } from 'lucide-react'
+import { Plus, Edit3, Trash2, Loader2, X, Upload, FileText, Clock, ArrowLeft, Play, Sparkles, Database, RefreshCw, ExternalLink, ChevronRight, ChevronDown, SplitSquareVertical, Gavel, BarChart3, Tag } from 'lucide-react'
 import { api } from '../../lib/api'
 import type {
   EvaluationDimension,
@@ -32,10 +32,11 @@ import type {
   EvaluationJudgeOptimizationStatus,
   EvaluationSuiteRunStatus,
   EvaluationSuiteRunRequest,
+  FailureCategory,
 } from '../../types'
 import { useTraceStore } from '../traces/store/traceStore'
 
-type EvaluationTab = 'scenarios' | 'datasets' | 'dimensions' | 'judges'
+type EvaluationTab = 'scenarios' | 'datasets' | 'dimensions' | 'judges' | 'categories'
 
 interface EvaluationViewProps {
   activeTab: EvaluationTab
@@ -3534,6 +3535,287 @@ function SuiteRunDetail({ jobId, status, onBack, onDismiss, onNavigateToLogs, pr
   )
 }
 
+function CategoriesPanel({ projectName }: { projectName?: string | null }) {
+  const queryClient = useQueryClient()
+  const selectedProject = useTraceStore((state) => state.selectedProject)
+  const loadFailureCategories = useTraceStore((state) => state.loadFailureCategories)
+  const resolvedProject = projectName ?? selectedProject ?? null
+  const [isFormOpen, setIsFormOpen] = useState(false)
+  const [nameInput, setNameInput] = useState('')
+  const [descriptionInput, setDescriptionInput] = useState('')
+  const [formError, setFormError] = useState<string | null>(null)
+  const { data, isLoading, isError, refetch, isFetching } = useQuery<FailureCategory[]>(
+    {
+      queryKey: ['evaluation', 'categories', resolvedProject],
+      queryFn: () => api.getFailureCategories(resolvedProject as string),
+      enabled: Boolean(resolvedProject),
+      staleTime: 60_000,
+    },
+  )
+  const categories = data ?? []
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
+
+  const resetForm = () => {
+    setNameInput('')
+    setDescriptionInput('')
+    setFormError(null)
+    setIsFormOpen(false)
+  }
+
+  const createCategory = useMutation<FailureCategory, Error, { name: string; description?: string }>({
+    mutationFn: (payload) => api.createFailureCategory(resolvedProject as string, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['evaluation', 'categories', resolvedProject] })
+      if (resolvedProject) {
+        void loadFailureCategories(resolvedProject)
+      }
+      resetForm()
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : 'Failed to create category'
+      setFormError(message)
+    },
+  })
+
+  const deleteCategory = useMutation<{ message: string; previousUsageCount: number }, Error, string>({
+    mutationFn: (slug) => api.deleteFailureCategory(resolvedProject as string, slug),
+    onMutate: (slug) => {
+      setPendingDeleteId(slug)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['evaluation', 'categories', resolvedProject] })
+      if (resolvedProject) {
+        void loadFailureCategories(resolvedProject)
+      }
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : 'Failed to delete category'
+      window.alert(message)
+    },
+    onSettled: () => {
+      setPendingDeleteId(null)
+    },
+  })
+
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!resolvedProject) {
+      setFormError('Select a project before creating categories')
+      return
+    }
+    const trimmedName = nameInput.trim()
+    const trimmedDescription = descriptionInput.trim()
+    if (trimmedName.length === 0) {
+      setFormError('Name is required')
+      return
+    }
+    setFormError(null)
+    createCategory.mutate({ name: trimmedName, description: trimmedDescription.length > 0 ? trimmedDescription : undefined })
+  }
+
+  const handleDelete = (category: FailureCategory) => {
+    if (!resolvedProject || deleteCategory.isPending) {
+      return
+    }
+    const usage = category.usageCount ?? 0
+    const confirmed = usage > 0
+      ? window.confirm(`"${category.name}" is used ${usage} time${usage === 1 ? '' : 's'}. Delete anyway?`)
+      : window.confirm(`Delete "${category.name}"?`)
+    if (!confirmed) {
+      return
+    }
+    deleteCategory.mutate(category.id)
+  }
+
+  if (!resolvedProject) {
+    return (
+      <div className="flex h-full w-full items-center justify-center">
+        <div className="rounded-md border border-border bg-muted/40 px-6 py-5 text-sm text-muted-foreground">
+          Launch Studio with a project manifest to manage failure categories.
+        </div>
+      </div>
+    )
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin" />
+      </div>
+    )
+  }
+
+  if (isError) {
+    return (
+      <div className="flex h-full w-full items-center justify-center">
+        <div className="flex flex-col items-center gap-3 rounded-md border border-border bg-muted/40 px-6 py-5 text-sm text-muted-foreground">
+          <span>Unable to load failure categories for {resolvedProject}.</span>
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium hover:bg-muted"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Retry
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex h-full w-full flex-col overflow-hidden">
+      <div className="flex items-center justify-between border-b border-border px-6 py-4">
+        <div>
+          <h2 className="text-lg font-semibold">Failure Categories</h2>
+          <p className="text-sm text-muted-foreground">Tag scenarios and analyses with reusable taxonomy.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {isFetching ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Refresh
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsFormOpen(true)
+              setFormError(null)
+            }}
+            className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            New Category
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-auto px-6 py-4">
+        {categories.length === 0 ? (
+          <div className="flex h-full items-center justify-center rounded-md border border-dashed border-border bg-muted/30 px-6 py-5 text-sm text-muted-foreground">
+            No failure categories yet. Create one to get started.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full border-separate border-spacing-0">
+              <thead className="bg-muted/40">
+                <tr>
+                  <th className="border-b border-border/60 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Category</th>
+                  <th className="border-b border-border/60 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Description</th>
+                  <th className="border-b border-border/60 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Usage</th>
+                  <th className="border-b border-border/60 px-4 py-3 text-right text-xs font-semibold uppercase text-muted-foreground">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {categories.map((category) => (
+                  <tr key={category.id} className="border-b border-border/50">
+                    <td className="px-4 py-3 align-top">
+                      <div className="flex items-center gap-2">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/10 text-primary">
+                          <Tag className="h-3.5 w-3.5" />
+                        </div>
+                        <div>
+                          <div className="text-sm font-semibold text-foreground">{category.name}</div>
+                          <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">{category.id}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 align-top text-sm text-muted-foreground">
+                      {category.description && category.description.trim().length > 0 ? category.description : '—'}
+                    </td>
+                    <td className="px-4 py-3 align-top text-sm text-muted-foreground">{category.usageCount ?? 0}</td>
+                    <td className="px-4 py-3 align-top text-right">
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(category)}
+                        disabled={deleteCategory.isPending && pendingDeleteId === category.id}
+                        className="inline-flex items-center gap-1 rounded-md border border-destructive px-3 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        {deleteCategory.isPending && pendingDeleteId === category.id ? 'Deleting…' : 'Delete'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {isFormOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-md rounded-lg border border-border bg-background shadow-lg">
+            <div className="flex items-center justify-between border-b border-border px-5 py-4">
+              <div>
+                <h3 className="text-lg font-semibold">New Failure Category</h3>
+                <p className="text-xs text-muted-foreground">Create a label for scenario reviews and logs.</p>
+              </div>
+              <button
+                type="button"
+                onClick={resetForm}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted"
+                disabled={createCategory.isPending}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <form onSubmit={handleSubmit} className="px-5 py-4">
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium uppercase text-muted-foreground">Name</label>
+                  <input
+                    type="text"
+                    value={nameInput}
+                    onChange={(event) => setNameInput(event.target.value)}
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary"
+                    placeholder="e.g. Policy violation"
+                    disabled={createCategory.isPending}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium uppercase text-muted-foreground">Description</label>
+                  <textarea
+                    value={descriptionInput}
+                    onChange={(event) => setDescriptionInput(event.target.value)}
+                    className="h-24 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary"
+                    placeholder="Optional guidance for reviewers"
+                    disabled={createCategory.isPending}
+                  />
+                </div>
+                {formError ? (
+                  <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{formError}</div>
+                ) : null}
+              </div>
+              <div className="mt-6 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="rounded-md border border-border px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted"
+                  disabled={createCategory.isPending}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                  disabled={createCategory.isPending}
+                >
+                  {createCategory.isPending ? 'Saving…' : 'Save Category'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChange, onDatasetFocus }: { projectName?: string | null; isAvailable: boolean; onNavigateToLogs?: (projectName: string | null, workflowName: string | null) => void; onTabChange: (tab: EvaluationTab) => void; onDatasetFocus?: (focus: DatasetFocusRequest) => void }) {
   const queryClient = useQueryClient()
   const { data, isLoading, isError, refetch, isFetching } = useEvaluationScenarios(isAvailable)
@@ -4790,6 +5072,10 @@ export function EvaluationView({ activeTab, onTabChange, projectName, isAvailabl
 
   if (activeTab === 'judges') {
     return <JudgesPanel projectName={projectName} />
+  }
+
+  if (activeTab === 'categories') {
+    return <CategoriesPanel projectName={projectName} />
   }
 
   return (

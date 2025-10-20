@@ -17,8 +17,8 @@ const normalizeParam = (value: string | null) => {
 
 const isValidEvaluationTab = (
   value: string | null,
-): value is 'scenarios' | 'datasets' | 'dimensions' | 'judges' =>
-  value === 'scenarios' || value === 'datasets' || value === 'dimensions' || value === 'judges'
+): value is 'scenarios' | 'datasets' | 'dimensions' | 'judges' | 'categories' =>
+  value === 'scenarios' || value === 'datasets' || value === 'dimensions' || value === 'judges' || value === 'categories'
 
 export function EvaluationPage() {
   const navigate = useNavigate()
@@ -58,7 +58,7 @@ export function EvaluationPage() {
   }, [rawTab, updateSearch])
 
   const handleTabChange = useCallback(
-    (tab: 'scenarios' | 'datasets' | 'dimensions' | 'judges') => {
+    (tab: 'scenarios' | 'datasets' | 'dimensions' | 'judges' | 'categories') => {
       if (tab === 'scenarios') {
         updateSearch({ [QUERY_PARAMS.tab]: null })
       } else {
