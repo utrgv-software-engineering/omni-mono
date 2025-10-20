@@ -6,98 +6,98 @@ export function useProjects() {
   return useQuery({
     queryKey: ['projects'],
     queryFn: () => api.getProjects(),
-    staleTime: 1000 * 60 * 5, // Consider data fresh for 5 minutes
+    staleTime: 1000 * 60 * 5,
   })
 }
 
-export function useConversations() {
-  const { filters, searchQuery, selectedProject, selectedWorkflow } = useTraceStore()
-  
+interface UseConversationsArgs {
+  project: string | null
+  workflow: string | null
+}
+
+export function useConversations({ project, workflow }: UseConversationsArgs) {
+  const { filters, searchQuery } = useTraceStore()
+
   return useQuery({
-    queryKey: ['conversations', filters, searchQuery, selectedProject, selectedWorkflow],
+    queryKey: ['conversations', filters, searchQuery, project, workflow],
     queryFn: () => {
-      if (!selectedProject || !selectedWorkflow) {
+      if (!project || !workflow) {
         return { conversations: [], total: 0 }
       }
       const dims = Object.entries(filters.syntheticDims || {})
-        .flatMap(([k, arr]) => (Array.isArray(arr) ? arr : []).filter(Boolean).map(v => `${k}:${v}`))
+        .flatMap(([k, arr]) => (Array.isArray(arr) ? arr : []).filter(Boolean).map((v) => `${k}:${v}`))
       return api.getConversations({
-        project: selectedProject,
+        project,
         limit: 100,
         search: searchQuery || undefined,
         has_errors: filters.hasErrors || undefined,
-        workflow_name: selectedWorkflow || undefined,
+        workflow_name: workflow || undefined,
         dims: dims.length ? dims : undefined,
       })
     },
-    refetchInterval: 5000, // Refetch every 5 seconds
-    enabled: !!(selectedProject && selectedWorkflow),
+    refetchInterval: 5000,
+    enabled: !!(project && workflow),
   })
 }
 
-export function useConversationTraces(groupId: string | null) {
-  const { selectedProject } = useTraceStore()
-  
+export function useConversationTraces(project: string | null, groupId: string | null) {
   return useQuery({
-    queryKey: ['conversation-traces', selectedProject, groupId],
+    queryKey: ['conversation-traces', project, groupId],
     queryFn: () => {
-      if (!selectedProject || !groupId) {
+      if (!project || !groupId) {
         return { traces: [], group_id: '', total: 0 }
       }
-      return api.getConversationTraces(selectedProject, groupId)
+      return api.getConversationTraces(project, groupId)
     },
-    enabled: !!(selectedProject && groupId),
+    enabled: !!(project && groupId),
   })
 }
 
-export function useTraces() {
-  const { filters, searchQuery, selectedProject } = useTraceStore()
-  
+export function useTraces(project: string | null) {
+  const { filters, searchQuery } = useTraceStore()
+
   return useQuery({
-    queryKey: ['traces', filters, searchQuery, selectedProject],
+    queryKey: ['traces', filters, searchQuery, project],
     queryFn: () => {
-      if (!selectedProject) {
-        return { traces: [], total: 0 }  // No project selected
+      if (!project) {
+        return { traces: [], total: 0 }
       }
       return api.getTraces({
-        project: selectedProject,
+        project,
         limit: 100,
         search: searchQuery || undefined,
         has_errors: filters.hasErrors || undefined,
-        span_type: filters.spanTypes[0] || undefined // TODO: support multiple
+        span_type: filters.spanTypes[0] || undefined,
       })
     },
-    refetchInterval: 5000, // Refetch every 5 seconds
-    enabled: !!selectedProject,  // Only fetch when a project is selected
+    refetchInterval: 5000,
+    enabled: !!project,
   })
 }
 
 export function useTrace(project: string | null, traceId: string | null) {
   return useQuery({
     queryKey: ['trace', project, traceId],
-    queryFn: () => (project && traceId) ? api.getTrace(project, traceId) : null,
+    queryFn: () => (project && traceId ? api.getTrace(project, traceId) : null),
     enabled: !!(project && traceId),
   })
 }
 
-export function useWorkflows() {
-  const { selectedProject } = useTraceStore()
+export function useWorkflows(project: string | null) {
   return useQuery({
-    queryKey: ['workflows', selectedProject],
-    queryFn: () => selectedProject ? api.getWorkflows(selectedProject) : { workflows: [] },
-    enabled: !!selectedProject,
+    queryKey: ['workflows', project],
+    queryFn: () => (project ? api.getWorkflows(project) : { workflows: [] }),
+    enabled: !!project,
     staleTime: 1000 * 60 * 5,
   })
 }
 
-export function useSyntheticDimensions() {
-  const { selectedProject, selectedWorkflow } = useTraceStore()
+export function useSyntheticDimensions(project: string | null, workflow: string | null) {
   return useQuery({
-    queryKey: ['synthetic-dimensions', selectedProject, selectedWorkflow],
-    queryFn: () => selectedProject && selectedWorkflow
-      ? api.getSyntheticDimensions(selectedProject, selectedWorkflow)
-      : { dimensions: [] },
-    enabled: !!(selectedProject && selectedWorkflow),
+    queryKey: ['synthetic-dimensions', project, workflow],
+    queryFn: () =>
+      project && workflow ? api.getSyntheticDimensions(project, workflow) : { dimensions: [] },
+    enabled: !!(project && workflow),
     staleTime: 1000 * 60 * 5,
   })
 }

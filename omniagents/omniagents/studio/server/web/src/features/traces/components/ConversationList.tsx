@@ -8,17 +8,18 @@ import { useSyntheticDimensions } from '../hooks/useTraces'
 interface ConversationListProps {
   conversations: Conversation[]
   onConversationSelect: (conversation: Conversation) => void
+  selectedConversationId?: string | null
 }
 
 type FilterType = 'all' | 'unanalyzed' | 'good' | 'bad' | 'annotated' | 'bad-no-notes'
 
-export function ConversationList({ conversations, onConversationSelect }: ConversationListProps) {
-  const { selectedConversation, searchQuery, conversationAnalysis, filters, updateFilters } = useTraceStore()
+export function ConversationList({ conversations, onConversationSelect, selectedConversationId }: ConversationListProps) {
+  const { selectedConversation, searchQuery, conversationAnalysis, filters, updateFilters, selectedProject, selectedWorkflow } = useTraceStore()
   const [activeFilter, setActiveFilter] = useState<FilterType>('all')
   const [focusedIndex, setFocusedIndex] = useState<number>(0)
   const listRef = useRef<HTMLDivElement>(null)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
-  const { data: syntheticDimsData } = useSyntheticDimensions()
+  const { data: syntheticDimsData } = useSyntheticDimensions(selectedProject, selectedWorkflow)
   const syntheticDimensions = syntheticDimsData?.dimensions || []
   const [showFilters, setShowFilters] = useState(false)
   const [expandedDims, setExpandedDims] = useState<Record<string, boolean>>({})
@@ -26,6 +27,8 @@ export function ConversationList({ conversations, onConversationSelect }: Conver
   // Auto-select first project if none selected
   // Auto-selection handled in header now
   
+  const activeConversationId = selectedConversationId ?? selectedConversation?.group_id ?? null
+
   // Filter conversations based on search and analysis status
   const filteredConversations = React.useMemo(() => {
     let filtered = conversations
@@ -72,11 +75,11 @@ export function ConversationList({ conversations, onConversationSelect }: Conver
   
   // Update focused index when selected conversation changes or filteredConversations change
   useEffect(() => {
-    const index = selectedConversation 
-      ? filteredConversations.findIndex(c => c.group_id === selectedConversation.group_id)
+    const index = activeConversationId
+      ? filteredConversations.findIndex(c => c.group_id === activeConversationId)
       : 0
     setFocusedIndex(index !== -1 ? index : 0)
-  }, [selectedConversation, filteredConversations])
+  }, [activeConversationId, filteredConversations])
   
   // Keyboard navigation
   useEffect(() => {
@@ -100,7 +103,7 @@ export function ConversationList({ conversations, onConversationSelect }: Conver
           break
         case 'ArrowLeft': {
           e.preventDefault()
-          if (conversationCount === 0 || !selectedConversation) return
+          if (conversationCount === 0 || !activeConversationId) return
           const prevIndex = focusedIndex > 0 ? focusedIndex - 1 : conversationCount - 1
           setFocusedIndex(prevIndex)
           const target = filteredConversations[prevIndex]
@@ -109,7 +112,7 @@ export function ConversationList({ conversations, onConversationSelect }: Conver
         }
         case 'ArrowRight': {
           e.preventDefault()
-          if (conversationCount === 0 || !selectedConversation) return
+          if (conversationCount === 0 || !activeConversationId) return
           const nextIndex = focusedIndex < conversationCount - 1 ? focusedIndex + 1 : 0
           setFocusedIndex(nextIndex)
           const target = filteredConversations[nextIndex]
@@ -127,7 +130,7 @@ export function ConversationList({ conversations, onConversationSelect }: Conver
     
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [filteredConversations, focusedIndex, onConversationSelect, selectedConversation])
+  }, [filteredConversations, focusedIndex, onConversationSelect, activeConversationId])
   
   // Scroll focused item into view
   useEffect(() => {
@@ -289,7 +292,7 @@ export function ConversationList({ conversations, onConversationSelect }: Conver
         {filteredConversations.length > 0 ? (
           <div className="p-2 space-y-1 pb-2">
             {filteredConversations.map((conversation, index) => {
-              const isSelected = selectedConversation?.group_id === conversation.group_id
+              const isSelected = activeConversationId === conversation.group_id
               const isFocused = index === focusedIndex
               const timeAgo = formatDistanceToNow(new Date(conversation.created_at), { addSuffix: true })
               const analysis = conversationAnalysis[conversation.group_id]

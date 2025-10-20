@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { MoreVertical, Trash2, Download, AlertTriangle, Copy, Settings, ArrowLeft } from 'lucide-react'
 import { useTraceStore } from '../../features/traces/store/traceStore'
-import { useProjects, useWorkflows } from '../../features/traces/hooks/useTraces'
 import { useQueryClient } from '@tanstack/react-query'
 import { cn } from '../../lib/utils'
 import { AnalysisGoalsModal } from './AnalysisGoalsModal'
@@ -12,12 +11,28 @@ interface AppHeaderProps {
   showViewToggle?: boolean
   showBackButton?: boolean
   onBack?: () => void
+  projects?: string[]
+  workflows?: string[]
+  selectedProject?: string | null
+  selectedWorkflow?: string | null
+  onProjectChange?: (project: string | null) => void
+  onWorkflowChange?: (workflow: string | null) => void
 }
 
-export function AppHeader({ viewMode, onViewModeChange, showViewToggle = false, showBackButton = false, onBack }: AppHeaderProps) {
-  const { selectedProject, setSelectedProject, selectedWorkflow, setSelectedWorkflow, setSelectedConversation, setSelectedTrace, conversationAnalysis, failureCategories } = useTraceStore()
-  const { data: projectsData, refetch: refetchProjects } = useProjects()
-  const { data: workflowsData } = useWorkflows()
+export function AppHeader({
+  viewMode,
+  onViewModeChange,
+  showViewToggle = false,
+  showBackButton = false,
+  onBack,
+  projects = [],
+  workflows = [],
+  selectedProject = null,
+  selectedWorkflow = null,
+  onProjectChange,
+  onWorkflowChange,
+}: AppHeaderProps) {
+  const { setSelectedConversation, setSelectedTrace, conversationAnalysis, failureCategories } = useTraceStore()
   const queryClient = useQueryClient()
   const [showSettingsMenu, setShowSettingsMenu] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
@@ -39,12 +54,6 @@ export function AppHeader({ viewMode, onViewModeChange, showViewToggle = false, 
     }
   }, [showSettingsMenu])
 
-  useEffect(() => {
-    if (selectedProject && !selectedWorkflow && workflowsData?.workflows?.length) {
-      setSelectedWorkflow(workflowsData.workflows[0])
-    }
-  }, [selectedProject, selectedWorkflow, workflowsData, setSelectedWorkflow])
-  
   const handleDeleteProject = async () => {
     if (!selectedProject) return
     
@@ -58,14 +67,11 @@ export function AppHeader({ viewMode, onViewModeChange, showViewToggle = false, 
         throw new Error('Failed to delete project')
       }
       
-      // Clear selected items
-      setSelectedProject(null)
       setSelectedConversation(null)
       setSelectedTrace(null)
-      
-      // Invalidate and refetch data
+      onProjectChange?.(null)
+      onWorkflowChange?.(null)
       await queryClient.invalidateQueries()
-      await refetchProjects()
       
     } catch (error) {
       console.error('Error deleting project:', error)
@@ -173,22 +179,22 @@ export function AppHeader({ viewMode, onViewModeChange, showViewToggle = false, 
             <div className="ml-3 flex items-center gap-2">
               <select
                 value={selectedProject || ''}
-                onChange={(e) => setSelectedProject(e.target.value || null)}
+                onChange={(e) => onProjectChange?.(e.target.value || null)}
                 className="px-2 py-1 text-xs bg-muted/50 border-0 rounded-md outline-none focus:bg-muted cursor-pointer"
               >
                 <option value="">Project</option>
-                {projectsData?.projects?.map((p) => (
+                {projects.map((p) => (
                   <option key={p} value={p}>{p}</option>
                 ))}
               </select>
               <select
                 value={selectedWorkflow || ''}
-                onChange={(e) => setSelectedWorkflow(e.target.value || null)}
+                onChange={(e) => onWorkflowChange?.(e.target.value || null)}
                 className="px-2 py-1 text-xs bg-muted/50 border-0 rounded-md outline-none focus:bg-muted cursor-pointer"
-                disabled={!workflowsData?.workflows?.length}
+                disabled={!workflows.length}
               >
                 <option value="">Workflow</option>
-                {workflowsData?.workflows?.map((w) => (
+                {workflows.map((w) => (
                   <option key={w} value={w}>{w}</option>
                 ))}
               </select>

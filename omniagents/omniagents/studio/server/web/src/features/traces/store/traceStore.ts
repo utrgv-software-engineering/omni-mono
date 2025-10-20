@@ -120,20 +120,30 @@ export const useTraceStore = create<TraceStore>()(
   setSpans: (spans) => set({ spans }),
   setSelectedSpan: (span) => set({ selectedSpan: span }),
   setSearchQuery: (query) => set({ searchQuery: query }),
-  setSelectedProject: (project) => set({ 
-    selectedProject: project,
-    selectedWorkflow: null,
-    selectedConversation: null,
-    selectedTrace: null,
-    conversationTraces: [],
-    spans: []
+  setSelectedProject: (project) => set((state) => {
+    if (state.selectedProject === project) {
+      return {}
+    }
+    return {
+      selectedProject: project,
+      selectedWorkflow: null,
+      selectedConversation: null,
+      selectedTrace: null,
+      conversationTraces: [],
+      spans: [],
+    }
   }),
-  setSelectedWorkflow: (workflow) => set({
-    selectedWorkflow: workflow,
-    selectedConversation: null,
-    selectedTrace: null,
-    conversationTraces: [],
-    spans: []
+  setSelectedWorkflow: (workflow) => set((state) => {
+    if (state.selectedWorkflow === workflow) {
+      return {}
+    }
+    return {
+      selectedWorkflow: workflow,
+      selectedConversation: null,
+      selectedTrace: null,
+      conversationTraces: [],
+      spans: [],
+    }
   }),
   updateFilters: (filters) => set((state) => ({
     filters: { ...state.filters, ...filters }
@@ -148,8 +158,7 @@ export const useTraceStore = create<TraceStore>()(
   loadProjectAnalysis: async (project: string, workflowName?: string) => {
     set({ isAnalysisLoading: true, analysisError: null })
     try {
-      const wf = workflowName ?? get().selectedWorkflow ?? undefined
-      const analysis = await api.getAllAnalysis(project, wf)
+      const analysis = await api.getAllAnalysis(project, workflowName)
       
       // Load categories for each analysis
       const analysisWithCategories: Record<string, AnalysisData> = {}
