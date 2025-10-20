@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI `--version` flag support
 - Automated versioning workflow with bump2version
 
-## [0.3.16] - 2025-10-15
+## [## [Unreleased]] - 2025-10-15
 
 ### Fixed
 - Align OmniAgents Studio websocket URLs, dev defaults, and CORS with GitHub Codespaces port forwarding.
