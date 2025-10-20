@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { StudioPage } from '../../shared/components/StudioPage'
 import { AppHeader } from '../../shared/components/AppHeader'
@@ -163,11 +163,15 @@ export function LogsPage() {
     updateSearch({ [QUERY_PARAMS.trace]: lastTrace.trace_id })
   }, [viewMode, conversationParam, traceParam, conversationTracesData, updateSearch])
 
+  const previousViewModeRef = useRef(viewMode)
+
   useEffect(() => {
-    if (viewMode === 'debug' && traceParam) {
+    const previousMode = previousViewModeRef.current
+    if (viewMode === 'debug' && previousMode !== 'debug') {
       updateSearch({ [QUERY_PARAMS.trace]: null })
     }
-  }, [viewMode, traceParam, updateSearch])
+    previousViewModeRef.current = viewMode
+  }, [viewMode, updateSearch])
 
   const handleBackToHome = () => {
     navigate(ROUTES.home)
