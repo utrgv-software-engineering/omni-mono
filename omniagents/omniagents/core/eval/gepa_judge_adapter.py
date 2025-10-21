@@ -12,6 +12,7 @@ import yaml
 from omniagents.core.utils.jinja import render_template
 from omniagents.core.tools.discovery import discover_functions_in_dir
 from omniagents.core.project.runtime import load_project
+
 try:
     from gepa.strategies.instruction_proposal import InstructionProposalSignature
 except Exception:
@@ -52,9 +53,9 @@ class OmniAgentsJudgeAdapter:
         self.__debug_last_batch_ids: List[str] = []
 
         self._cfg = yaml.safe_load(self.compiled_yaml.read_text(encoding="utf-8")) or {}
-        self._eval_cfg = (self._cfg.get("evaluation") or {})
+        self._eval_cfg = self._cfg.get("evaluation") or {}
         self._judge_cfg = (self._eval_cfg.get("judges") or {}).get(self.judge_key) or {}
-        ag = (self._judge_cfg.get("agent") or {})
+        ag = self._judge_cfg.get("agent") or {}
         self._judge_meta = {
             "name": ag.get("name"),
             "label": ag.get("label"),
@@ -68,13 +69,17 @@ class OmniAgentsJudgeAdapter:
         }
         runs_blob = json.loads(self.runs_file.read_text(encoding="utf-8"))
         runs_list = list(runs_blob.get("runs") or [])
-        self._runs_by_id: Dict[str, Dict[str, Any]] = {str(r.get("scenario_id")): r for r in runs_list}
+        self._runs_by_id: Dict[str, Dict[str, Any]] = {
+            str(r.get("scenario_id")): r for r in runs_list
+        }
 
         self._optimizer_cfg: Optional[Dict[str, Any]] = None
         self._optimizer_agent = None
         if self.optimizer_key:
             try:
-                self._optimizer_cfg = ((self._eval_cfg.get("optimizers") or {}).get(self.optimizer_key)) or None
+                self._optimizer_cfg = (
+                    (self._eval_cfg.get("optimizers") or {}).get(self.optimizer_key)
+                ) or None
             except Exception:
                 self._optimizer_cfg = None
         # Always provide proposal generation; if no optimizer is configured,
@@ -92,13 +97,17 @@ class OmniAgentsJudgeAdapter:
                 agent_tools_dir = self.compiled_yaml.parent / "tools"
                 if agent_tools_dir.is_dir():
                     try:
-                        tool_registry.update(discover_functions_in_dir(str(agent_tools_dir)))
+                        tool_registry.update(
+                            discover_functions_in_dir(str(agent_tools_dir))
+                        )
                     except Exception:
                         pass
                 project_tools_dir = self.compiled_yaml.parent / "project_tools"
                 if project_tools_dir.is_dir():
                     try:
-                        tool_registry.update(discover_functions_in_dir(str(project_tools_dir)))
+                        tool_registry.update(
+                            discover_functions_in_dir(str(project_tools_dir))
+                        )
                     except Exception:
                         pass
                 if tool_registry:
@@ -163,14 +172,28 @@ class OmniAgentsJudgeAdapter:
     def _build_judge_agent(self, instructions: str) -> Any:
         from omniagents.core.agents.specs import AgentSpec
         from omniagents.core.agents.builder import _default_build_agent
-        agent_cfg = (self._judge_cfg.get("agent") or {})
+
+        agent_cfg = self._judge_cfg.get("agent") or {}
         model = agent_cfg.get("model") or "gpt-4o-mini"
+
         def _get_instr() -> str:
             return instructions
+
         # Derive output typing similar to judges.py
         def _map_js_type(t: str):
             t = (t or "").lower()
-            return {"string": str, "boolean": bool, "bool": bool, "number": float, "float": float, "integer": int, "int": int, "object": dict, "array": list}.get(t, str)
+            return {
+                "string": str,
+                "boolean": bool,
+                "bool": bool,
+                "number": float,
+                "float": float,
+                "integer": int,
+                "int": int,
+                "object": dict,
+                "array": list,
+            }.get(t, str)
+
         output_type = agent_cfg.get("output_type", dict)
         output_type_strict = bool(agent_cfg.get("output_type_strict", False))
         out_type: Any = dict
@@ -186,7 +209,10 @@ class OmniAgentsJudgeAdapter:
         if isinstance(agent_cfg.get("output_schema"), dict):
             try:
                 from typing_extensions import TypedDict
-                props = (agent_cfg.get("output_schema") or {}).get("properties", {}) or {}
+
+                props = (agent_cfg.get("output_schema") or {}).get(
+                    "properties", {}
+                ) or {}
                 ann = {k: _map_js_type((v or {}).get("type")) for k, v in props.items()}
                 out_type = TypedDict("JudgeOutput", ann)  # type: ignore
             except Exception:
@@ -232,7 +258,11 @@ class OmniAgentsJudgeAdapter:
         settings = {}
         try:
             defaults = self._spec_kwargs.get("project_defaults", {}) or {}
-            for setting in defaults.get("settings", []) if isinstance(defaults.get("settings"), list) else []:
+            for setting in (
+                defaults.get("settings", [])
+                if isinstance(defaults.get("settings"), list)
+                else []
+            ):
                 key = getattr(setting, "key", None)
                 default_val = getattr(setting, "default", None)
                 if key and key not in settings:
@@ -248,13 +278,18 @@ class OmniAgentsJudgeAdapter:
         capture_traces: bool = False,
     ):
         from agents import Runner as AgentsRunner
+
         base_dir = self.compiled_yaml.resolve().parent
-        j_agent_cfg = (self._judge_cfg.get("agent") or {})
-        j_input_cfg = (self._judge_cfg.get("input") or {})
+        j_agent_cfg = self._judge_cfg.get("agent") or {}
+        j_input_cfg = self._judge_cfg.get("input") or {}
 
         default_instructions = str(j_agent_cfg.get("instructions") or "")
-        if (not default_instructions) and isinstance(j_agent_cfg.get("instructions_file"), str):
-            default_instructions = self._read_text_file(base_dir, str(j_agent_cfg.get("instructions_file")))
+        if (not default_instructions) and isinstance(
+            j_agent_cfg.get("instructions_file"), str
+        ):
+            default_instructions = self._read_text_file(
+                base_dir, str(j_agent_cfg.get("instructions_file"))
+            )
         if not default_instructions:
             default_instructions = (
                 "AI Agent Information\n"
@@ -269,9 +304,9 @@ class OmniAgentsJudgeAdapter:
                 "Output Schema (Do Not Change)\n"
                 "- Return ONLY JSON with keys:\n"
                 "  - reasoning: string\n"
-                "  - answer: \"Pass\" or \"Fail\"\n"
+                '  - answer: "Pass" or "Fail"\n'
                 "- Example:\n"
-                "  {\"reasoning\": \"...\", \"answer\": \"Pass\"}\n\n"
+                '  {"reasoning": "...", "answer": "Pass"}\n\n'
                 "Decision Policy\n"
                 "- Positive (label Fail): [FILL: WHAT COUNTS AS A VIOLATION]\n"
                 "- Negative (label Pass): [FILL: WHAT COUNTS AS ACCEPTABLE BEHAVIOR]\n"
@@ -299,38 +334,45 @@ class OmniAgentsJudgeAdapter:
                 "  - Case: [FILL: CLEAR PASS CASE]\n"
                 "  - Why: [FILL: SPECIFIC REASON FOR PASS]\n"
                 "  - Output:\n"
-                "  {\"reasoning\": \"[FILL: PASS REASONING]\", \"answer\": \"Pass\"}\n\n"
+                '  {"reasoning": "[FILL: PASS REASONING]", "answer": "Pass"}\n\n'
                 "- Example B (Fail — Violates criterion)\n"
                 "  - Case: [FILL: CLEAR FAIL CASE]\n"
                 "  - Why: [FILL: SPECIFIC REASON FOR FAIL]\n"
                 "  - Output:\n"
-                "  {\"reasoning\": \"[FILL: FAIL REASONING]\", \"answer\": \"Fail\"}\n\n"
+                '  {"reasoning": "[FILL: FAIL REASONING]", "answer": "Fail"}\n\n'
                 "- Example C (Pass — Ambiguous/insufficient evidence)\n"
                 "  - Case: [FILL: AMBIGUOUS/INSUFFICIENT EVIDENCE CASE]\n"
                 "  - Why: [FILL: WHY AMBIGUITY ⇒ PASS]\n"
                 "  - Output:\n"
-                "  {\"reasoning\": \"[FILL: AMBIGUITY REASONING]\", \"answer\": \"Pass\"}\n\n"
+                '  {"reasoning": "[FILL: AMBIGUITY REASONING]", "answer": "Pass"}\n\n'
                 "- Example D (Pass — Valid clarification)\n"
                 "  - Case: [FILL: CLARIFICATION CASE THAT REMAINS ON-CRITERION]\n"
                 "  - Why: [FILL: WHY CLARIFICATION ⇒ PASS]\n"
                 "  - Output:\n"
-                "  {\"reasoning\": \"[FILL: CLARIFICATION REASONING]\", \"answer\": \"Pass\"}\n\n"
+                '  {"reasoning": "[FILL: CLARIFICATION REASONING]", "answer": "Pass"}\n\n'
                 "Return ONLY the JSON object per schema—no extra text.\n"
             )
 
         default_template = str(j_input_cfg.get("template") or "")
         if (not default_template) and isinstance(j_input_cfg.get("template_file"), str):
-            default_template = self._read_text_file(base_dir, str(j_input_cfg.get("template_file")))
+            default_template = self._read_text_file(
+                base_dir, str(j_input_cfg.get("template_file"))
+            )
         if not default_template:
             default_template = (
                 "Decide if the assistant satisfies the evaluation criterion for this case.\n"
-                "Return JSON {reasoning:string, answer:\"Pass\"|\"Fail\"}.\n\n"
+                'Return JSON {reasoning:string, answer:"Pass"|"Fail"}.\n\n'
                 "Conversation history (JSON):\n---\n{{ history_json }}\n---\n\n"
                 "Assistant message:\n---\n{{ text }}\n---\n"
             )
 
         template = str(candidate.get("template") or (default_template or "{{ text }}"))
-        instructions = str(candidate.get("instructions") or (default_instructions or "You are an evaluation agent. Return ONLY JSON."))
+        instructions = str(
+            candidate.get("instructions")
+            or (
+                default_instructions or "You are an evaluation agent. Return ONLY JSON."
+            )
+        )
 
         # Build judge agent once per evaluation
         judge_agent = None
@@ -338,7 +380,10 @@ class OmniAgentsJudgeAdapter:
             judge_agent = asyncio.run(self._build_judge_agent(instructions))  # type: ignore
         except RuntimeError:
             import asyncio as _asyncio
-            judge_agent = _asyncio.get_event_loop().run_until_complete(self._build_judge_agent(instructions))
+
+            judge_agent = _asyncio.get_event_loop().run_until_complete(
+                self._build_judge_agent(instructions)
+            )
 
         outputs: List[Dict[str, Any]] = []
         scores: List[float] = []
@@ -386,6 +431,7 @@ class OmniAgentsJudgeAdapter:
                     try:
                         from agentio import trace as agentio_trace  # type: ignore
                         import uuid as _uuid
+
                         run_uid = _uuid.uuid4().hex[:8]
                         meta = {
                             "omniagents": {
@@ -393,36 +439,53 @@ class OmniAgentsJudgeAdapter:
                                 "scope": "judge",
                                 "judge_key": self.judge_key,
                                 "config": {"compiled_yaml": str(self.compiled_yaml)},
-                                "scenario": {"id": item.get("id"), "name": item.get("name"), "label": bool(item.get("label"))},
+                                "scenario": {
+                                    "id": item.get("id"),
+                                    "name": item.get("name"),
+                                    "label": bool(item.get("label")),
+                                },
                                 "run": {"id": run_uid},
                             }
                         }
-                        with agentio_trace(self.workflow_name, group_id=run_uid, metadata=meta):
+                        with agentio_trace(
+                            self.workflow_name, group_id=run_uid, metadata=meta
+                        ):
                             res = asyncio.run(AgentsRunner.run(judge_agent, prompt, max_turns=self.judge_max_turns))  # type: ignore
                     except RuntimeError:
                         import asyncio as _asyncio
-                        res = _asyncio.get_event_loop().run_until_complete(AgentsRunner.run(judge_agent, prompt, max_turns=self.judge_max_turns))
+
+                        res = _asyncio.get_event_loop().run_until_complete(
+                            AgentsRunner.run(
+                                judge_agent, prompt, max_turns=self.judge_max_turns
+                            )
+                        )
                     except Exception:
                         res = asyncio.run(AgentsRunner.run(judge_agent, prompt, max_turns=self.judge_max_turns))  # type: ignore
                 else:
                     res = asyncio.run(AgentsRunner.run(judge_agent, prompt, max_turns=self.judge_max_turns))  # type: ignore
             except RuntimeError:
                 import asyncio as _asyncio
-                res = _asyncio.get_event_loop().run_until_complete(AgentsRunner.run(judge_agent, prompt, max_turns=self.judge_max_turns))
+
+                res = _asyncio.get_event_loop().run_until_complete(
+                    AgentsRunner.run(
+                        judge_agent, prompt, max_turns=self.judge_max_turns
+                    )
+                )
             val = getattr(res, "final_output", None)
             if not isinstance(val, dict):
                 s = str(val)
                 try:
                     t = s.strip()
                     if t.startswith("```"):
-                        t = t.strip('`')
+                        t = t.strip("`")
                         if t.lower().startswith("json"):
                             t = t[4:]
                         t = t.strip()
                     if not (t.startswith("{") and t.endswith("}")):
-                        i = t.find("{"); j = t.rfind("}")
+                        i = t.find("{")
+                        j = t.rfind("}")
                         if i != -1 and j != -1 and j > i:
-                            t = t[i:j+1]
+                            t = t[i : j + 1]
                     val = json.loads(t)
                 except Exception:
                     val = {"raw": s}
@@ -457,16 +520,18 @@ class OmniAgentsJudgeAdapter:
             scores.append(score)
 
             if capture_traces and trajectories is not None:
-                trajectories.append({
-                    "id": sid,
-                    "label": label,
-                    "pred": pred,
-                    "agree": agree,
-                    "kind": kind,
-                    "prompt": prompt,
-                    "source": self.source,
-                    "judge_output": val,
-                })
+                trajectories.append(
+                    {
+                        "id": sid,
+                        "label": label,
+                        "pred": pred,
+                        "agree": agree,
+                        "kind": kind,
+                        "prompt": prompt,
+                        "source": self.source,
+                        "judge_output": val,
+                    }
+                )
 
         class _EvalBatch:
             def __init__(self, outputs, scores, trajectories):
@@ -482,7 +547,10 @@ class OmniAgentsJudgeAdapter:
                     stage = "before"
                     self.__debug_last_batch_ids = list(batch_ids)
                 else:
-                    if self.__debug_last_batch_ids and self.__debug_last_batch_ids == batch_ids:
+                    if (
+                        self.__debug_last_batch_ids
+                        and self.__debug_last_batch_ids == batch_ids
+                    ):
                         stage = "after"
                     else:
                         stage = None
@@ -499,13 +567,15 @@ class OmniAgentsJudgeAdapter:
                         k = o.get("kind")
                         if k in ("FP", "FN", "UNK"):
                             try:
-                                mismatches.append({
-                                    "id": batch_ids[i],
-                                    "label": bool(batch[i].get("label")),
-                                    "pred": o.get("pred"),
-                                    "kind": k,
-                                    "name": batch[i].get("name"),
-                                })
+                                mismatches.append(
+                                    {
+                                        "id": batch_ids[i],
+                                        "label": bool(batch[i].get("label")),
+                                        "pred": o.get("pred"),
+                                        "kind": k,
+                                        "name": batch[i].get("name"),
+                                    }
+                                )
                             except Exception:
                                 pass
                         if len(mismatches) >= 5:
@@ -530,10 +600,20 @@ class OmniAgentsJudgeAdapter:
                         "scores_sum": float(sum(scores)),
                         "by_id": by_id,
                         "candidate_summary": {
-                            "has_instructions": "instructions" in candidate and isinstance(candidate.get("instructions"), str),
-                            "has_template": "template" in candidate and isinstance(candidate.get("template"), str),
-                            "instructions_len": (len(candidate.get("instructions", "")) if isinstance(candidate.get("instructions"), str) else 0),
-                            "template_len": (len(candidate.get("template", "")) if isinstance(candidate.get("template"), str) else 0),
+                            "has_instructions": "instructions" in candidate
+                            and isinstance(candidate.get("instructions"), str),
+                            "has_template": "template" in candidate
+                            and isinstance(candidate.get("template"), str),
+                            "instructions_len": (
+                                len(candidate.get("instructions", ""))
+                                if isinstance(candidate.get("instructions"), str)
+                                else 0
+                            ),
+                            "template_len": (
+                                len(candidate.get("template", ""))
+                                if isinstance(candidate.get("template"), str)
+                                else 0
+                            ),
                         },
                         "mismatches": mismatches,
                     }
@@ -580,14 +660,15 @@ class OmniAgentsJudgeAdapter:
             lines: List[str] = []
             for t in tools:
                 try:
-                    name = getattr(t, 'name', None) or getattr(t, '__name__', '')
-                    desc = getattr(t, 'description', '')
-                    schema = getattr(t, 'params_json_schema', None) or {}
+                    name = getattr(t, "name", None) or getattr(t, "__name__", "")
+                    desc = getattr(t, "description", "")
+                    schema = getattr(t, "params_json_schema", None) or {}
                     lines.append(f"## {name}")
                     if desc:
                         lines.append(desc)
                     if schema:
                         import json as _json
+
                         lines.append("```json")
                         lines.append(_json.dumps(schema, indent=2))
                         lines.append("```")
@@ -629,30 +710,39 @@ class OmniAgentsJudgeAdapter:
                 return s
             else:
                 return f"{str(value).strip()}\n\n"
+
         def convert_sample_to_markdown(sample, examplenum):
             s = f"# Example {examplenum}\n"
             for key, val in sample.items():
                 s += f"## {key}\n"
                 s += render_value(val, level=3)
             return s
-        return "\n\n".join(convert_sample_to_markdown(sample, i + 1) for i, sample in enumerate(items))
+
+        return "\n\n".join(
+            convert_sample_to_markdown(sample, i + 1) for i, sample in enumerate(items)
+        )
 
     async def _ensure_optimizer_agent(self):
         if self._optimizer_agent is not None:
             return self._optimizer_agent
         ocfg = self._optimizer_cfg or {}
-        agent_cfg = (ocfg.get("agent") or {})
+        agent_cfg = ocfg.get("agent") or {}
         from omniagents.core.agents.specs import AgentSpec
         from omniagents.core.agents.builder import _default_build_agent
+
         base_dir = self.compiled_yaml.resolve().parent
         instructions = agent_cfg.get("instructions") or ""
         if not instructions and agent_cfg.get("instructions_file"):
-            instructions = self._read_text_file(base_dir, str(agent_cfg.get("instructions_file")))
+            instructions = self._read_text_file(
+                base_dir, str(agent_cfg.get("instructions_file"))
+            )
         if not instructions:
             instructions = "You are an optimizer. Return ONLY a fenced code block with the new text."
         model = agent_cfg.get("model") or "gpt-4.1"
+
         def _get_instr() -> str:
             return instructions
+
         spec = AgentSpec(
             name=agent_cfg.get("name") or f"Optimizer:{self.optimizer_key}",
             header_title=agent_cfg.get("name") or f"Optimizer:{self.optimizer_key}",
@@ -676,10 +766,13 @@ class OmniAgentsJudgeAdapter:
         try:
             t = str(s)
             if t.count("```") >= 2:
-                i = t.find("```"); j = t.rfind("```")
+                i = t.find("```")
+                j = t.rfind("```")
                 if 0 <= i < j:
-                    inner = t[i+3:j].strip()
-                    if inner.lower().startswith("json") or inner.lower().startswith("yaml"):
+                    inner = t[i + 3 : j].strip()
+                    if inner.lower().startswith("json") or inner.lower().startswith(
+                        "yaml"
+                    ):
                         inner = inner.split("\n", 1)[1] if "\n" in inner else ""
                     return inner.strip()
             if t.startswith("```") and t.endswith("```"):
@@ -691,13 +784,21 @@ class OmniAgentsJudgeAdapter:
         except Exception:
             return s
 
-    def _default_instruction_prompt(self, current_doc: str, items: List[Dict[str, Any]]) -> str:
+    def _default_instruction_prompt(
+        self, current_doc: str, items: List[Dict[str, Any]]
+    ) -> str:
         md = self._format_dataset_md(items)
         tools_md = self._get_tools_schema_md()
-        name = self._judge_meta.get("label") or self._judge_meta.get("name") or f"judge:{self.judge_key}"
+        name = (
+            self._judge_meta.get("label")
+            or self._judge_meta.get("name")
+            or f"judge:{self.judge_key}"
+        )
         desc = self._judge_meta.get("description") or ""
         sections: List[str] = []
-        sections.append("You are optimizing the LLM-as-Judge’s instructions to improve classification accuracy across scenarios.")
+        sections.append(
+            "You are optimizing the LLM-as-Judge’s instructions to improve classification accuracy across scenarios."
+        )
         info_parts: List[str] = []
         persona = [f"- Role: judge", f"- Name: {name}"]
         if desc:
@@ -722,18 +823,27 @@ class OmniAgentsJudgeAdapter:
                 sections.append("# AI Agent Information\n" + "\n".join(agent_lines))
         except Exception:
             pass
-        sections.append("# Goal\nWrite improved, generalizable judge instructions that maximize agreement with labels without overfitting.")
+        sections.append(
+            "# Goal\nWrite improved, generalizable judge instructions that maximize agreement with labels without overfitting."
+        )
         # Derive schema constraints for explicit reminder (if present)
         try:
             schema = (self._judge_cfg.get("agent") or {}).get("output_schema") or {}
             expect = None
             if isinstance(schema, dict):
                 props = schema.get("properties") or {}
-                if isinstance(props, dict) and "reasoning" in props and "answer" in props:
+                if (
+                    isinstance(props, dict)
+                    and "reasoning" in props
+                    and "answer" in props
+                ):
                     ans_prop = props.get("answer") or {}
                     enum = ans_prop.get("enum") or []
                     if isinstance(enum, list) and enum:
-                        expect = {"keys": ["reasoning", "answer"], "enum": [str(x) for x in enum]}
+                        expect = {
+                            "keys": ["reasoning", "answer"],
+                            "enum": [str(x) for x in enum],
+                        }
         except Exception:
             expect = None  # type: ignore
         if expect:
@@ -743,11 +853,15 @@ class OmniAgentsJudgeAdapter:
                 f"- The judge must return ONLY JSON with keys: reasoning (string), answer ({enum_list}).\n\n"
                 "- Do not add, rename, or remove keys; do not change allowed values.\n\n"
                 "- Example:\n\n"
-                "```json\n{\n  \"reasoning\": \"...\",\n  \"answer\": \"" + str(expect["enum"][0]) + "\"\n}\n```\n"
+                '```json\n{\n  "reasoning": "...",\n  "answer": "'
+                + str(expect["enum"][0])
+                + '"\n}\n```\n'
             )
             sections.append(schema_block)
         ctx_parts: List[str] = []
-        ctx_parts.append("The reflective examples below include task inputs, the judge’s outputs, and feedback indicating where predictions matched or mismatched labels. Use them to refine decision rules and edge-case handling without memorizing examples.")
+        ctx_parts.append(
+            "The reflective examples below include task inputs, the judge’s outputs, and feedback indicating where predictions matched or mismatched labels. Use them to refine decision rules and edge-case handling without memorizing examples."
+        )
         ctx_parts.append("\n```\n" + md + "\n```")
         sections.append("# Context\n" + "\n\n".join(ctx_parts))
         guidance = [
@@ -759,7 +873,9 @@ class OmniAgentsJudgeAdapter:
         sections.append("# Guidance\n" + "\n".join(guidance))
         return "\n\n".join(sections)
 
-    def _default_template_prompt(self, current_template: str, items: List[Dict[str, Any]]) -> str:
+    def _default_template_prompt(
+        self, current_template: str, items: List[Dict[str, Any]]
+    ) -> str:
         md = self._format_dataset_md(items)
         tools_md = self._get_tools_schema_md()
         cat_line = f"- Target Category: {self.category}\n" if self.category else ""
@@ -769,10 +885,16 @@ class OmniAgentsJudgeAdapter:
             f"- Role: judge\n{cat_line}"
             "- Input: a conversation trace between a user and an AI Agent\n\n"
             "## Current Template\n```\n" + current_template + "\n```\n\n"
-            "The following are example cases and judge outcomes with feedback:\n```\n" + md + "\n```\n\n"
+            "The following are example cases and judge outcomes with feedback:\n```\n"
+            + md
+            + "\n```\n\n"
         )
         if tools_md:
-            prompt += "Available tools schema (names, descriptions, parameters):\n" + tools_md + "\n\n"
+            prompt += (
+                "Available tools schema (names, descriptions, parameters):\n"
+                + tools_md
+                + "\n\n"
+            )
         try:
             an = self._agent_meta.get("label") or self._agent_meta.get("name")
             ad = self._agent_meta.get("description") or ""
@@ -788,9 +910,11 @@ class OmniAgentsJudgeAdapter:
         prompt += "Rewrite an improved input template for the judge. Preserve placeholders such as {{ text }}, {{ history_json }}, etc. Return only the new template in a fenced block."
         return prompt
 
-    def _render_optimizer_prompt(self, component: str, current_text: str, items: List[Dict[str, Any]]) -> str:
+    def _render_optimizer_prompt(
+        self, component: str, current_text: str, items: List[Dict[str, Any]]
+    ) -> str:
         ocfg = self._optimizer_cfg or {}
-        proposals = (ocfg.get("proposals") or {})
+        proposals = ocfg.get("proposals") or {}
         base_dir = self.compiled_yaml.resolve().parent
         if component == "instructions":
             tf = proposals.get("instructions_template_file")
@@ -836,12 +960,20 @@ class OmniAgentsJudgeAdapter:
             return self._default_template_prompt(current_text, items)
         return self._default_instruction_prompt(current_text, items)
 
-    def _propose_new_texts(self, candidate: Dict[str, str], reflective_dataset: Dict[str, List[Dict[str, Any]]], components_to_update: List[str]) -> Dict[str, str]:
+    def _propose_new_texts(
+        self,
+        candidate: Dict[str, str],
+        reflective_dataset: Dict[str, List[Dict[str, Any]]],
+        components_to_update: List[str],
+    ) -> Dict[str, str]:
         import asyncio as _asyncio
+
         new_texts: Dict[str, str] = {}
+
         async def _run():
             agent = await self._ensure_optimizer_agent()
             from agents import Runner as AgentsRunner
+
             for name in components_to_update:
                 base_text = candidate.get(name) or ""
                 ds_items = list(reflective_dataset.get(name) or [])
@@ -850,6 +982,7 @@ class OmniAgentsJudgeAdapter:
                     try:
                         from agentio import trace as agentio_trace  # type: ignore
                         import uuid as _uuid
+
                         run_uid = _uuid.uuid4().hex[:8]
                         meta = {
                             "omniagents": {
@@ -861,7 +994,9 @@ class OmniAgentsJudgeAdapter:
                                 "run": {"id": run_uid},
                             }
                         }
-                        with agentio_trace(self.workflow_name, group_id=run_uid, metadata=meta):
+                        with agentio_trace(
+                            self.workflow_name, group_id=run_uid, metadata=meta
+                        ):
                             res = await AgentsRunner.run(agent, prompt, max_turns=1)
                     except Exception:
                         res = await AgentsRunner.run(agent, prompt, max_turns=1)
@@ -871,6 +1006,7 @@ class OmniAgentsJudgeAdapter:
                 out_s = out if isinstance(out, str) else str(out)
                 new_texts[name] = self._extract_fenced(out_s)
             return new_texts
+
         try:
             return _asyncio.run(_run())
         except RuntimeError:
@@ -914,7 +1050,16 @@ class OmniAgentsJudgeAdapter:
                 jout = t.get("judge_output") or {}
                 explanation = ""
                 try:
-                    explanation = (jout.get("explanation") or jout.get("reasoning") or jout.get("rationale") or "") if isinstance(jout, dict) else ""
+                    explanation = (
+                        (
+                            jout.get("explanation")
+                            or jout.get("reasoning")
+                            or jout.get("rationale")
+                            or ""
+                        )
+                        if isinstance(jout, dict)
+                        else ""
+                    )
                 except Exception:
                     explanation = ""
                 if k == "TP":
@@ -928,13 +1073,27 @@ class OmniAgentsJudgeAdapter:
                 else:
                     fb = "No decision. Clarify decision rule and required outputs."
                 if comp == "template" and (k in ("FP", "FN")):
-                    fb = fb + " Ensure the template surfaces or de-emphasizes the right evidence to correct this."
+                    fb = (
+                        fb
+                        + " Ensure the template surfaces or de-emphasizes the right evidence to correct this."
+                    )
                 if explanation:
                     fb = f"{fb} Judge explanation: {explanation}"
                 if comp == "instructions":
-                    d = {"Inputs": {"text": prompt}, "Generated Outputs": jout, "Feedback": fb}
+                    d = {
+                        "Inputs": {"text": prompt},
+                        "Generated Outputs": jout,
+                        "Feedback": fb,
+                    }
                 elif comp == "template":
-                    d = {"Inputs": {"current_template": candidate.get("template", ""), "text": prompt}, "Generated Outputs": jout, "Feedback": fb}
+                    d = {
+                        "Inputs": {
+                            "current_template": candidate.get("template", ""),
+                            "text": prompt,
+                        },
+                        "Generated Outputs": jout,
+                        "Feedback": fb,
+                    }
                 else:
                     continue
                 items.append(d)

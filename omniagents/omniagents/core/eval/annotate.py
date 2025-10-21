@@ -22,7 +22,9 @@ def _extract_ts_from_filename(p: Path) -> str | None:
     return m.group(1) if m else None
 
 
-def _compute_workflow_name(agent_yaml: Path, scenarios_path: Path, override_name: str | None) -> str:
+def _compute_workflow_name(
+    agent_yaml: Path, scenarios_path: Path, override_name: str | None
+) -> str:
     if override_name:
         return override_name
     cfg = _read_yaml(agent_yaml)
@@ -62,7 +64,9 @@ def _open_db(project: str) -> sqlite3.Connection:
     return conn
 
 
-def _load_traces_for_workflow(conn: sqlite3.Connection, workflow_name: str) -> List[Dict[str, Any]]:
+def _load_traces_for_workflow(
+    conn: sqlite3.Connection, workflow_name: str
+) -> List[Dict[str, Any]]:
     cur = conn.execute(
         """
         SELECT trace_id, group_id, workflow_name, metadata
@@ -78,7 +82,14 @@ def _load_traces_for_workflow(conn: sqlite3.Connection, workflow_name: str) -> L
             meta = json.loads(md) if isinstance(md, str) else (md or {})
         except Exception:
             meta = {}
-        rows.append({"trace_id": r["trace_id"], "group_id": r["group_id"], "workflow_name": r["workflow_name"], "metadata": meta})
+        rows.append(
+            {
+                "trace_id": r["trace_id"],
+                "group_id": r["group_id"],
+                "workflow_name": r["workflow_name"],
+                "metadata": meta,
+            }
+        )
     return rows
 
 
@@ -94,7 +105,9 @@ def _category_id_to_name(conn: sqlite3.Connection, project: str) -> Dict[int, st
     return {int(r["id"]): str(r["name"]) for r in cur}
 
 
-def _group_categories(conn: sqlite3.Connection, project: str, group_id: str) -> List[int]:
+def _group_categories(
+    conn: sqlite3.Connection, project: str, group_id: str
+) -> List[int]:
     cur = conn.execute(
         """
         SELECT category_id
@@ -108,7 +121,7 @@ def _group_categories(conn: sqlite3.Connection, project: str, group_id: str) -> 
 
 def _scenario_id_from_meta(meta: Dict[str, Any]) -> str | None:
     try:
-        return (meta.get("omniagents", {}).get("scenario", {}).get("id"))
+        return meta.get("omniagents", {}).get("scenario", {}).get("id")
     except Exception:
         return None
 
@@ -125,7 +138,12 @@ def _slugify(s: str) -> str:
     return t or "category"
 
 
-def annotate_scenarios(agent_yaml: Path, scenarios_path: Path, studio_project: str, workflow_name: str | None) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Path]:
+def annotate_scenarios(
+    agent_yaml: Path,
+    scenarios_path: Path,
+    studio_project: str,
+    workflow_name: str | None,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Path]:
     cfg = _read_yaml(scenarios_path)
     scenarios = list(cfg.get("scenarios") or [])
     if not scenarios:
@@ -159,11 +177,15 @@ def annotate_scenarios(agent_yaml: Path, scenarios_path: Path, studio_project: s
     return annotated, scenarios, scenarios_path
 
 
-def write_annotation_output(project_root: Path, input_path: Path, annotated: List[Dict[str, Any]]) -> Path:
+def write_annotation_output(
+    project_root: Path, input_path: Path, annotated: List[Dict[str, Any]]
+) -> Path:
     existing: Dict[str, Any]
     if input_path.exists():
         try:
-            existing_loaded = yaml.safe_load(input_path.read_text(encoding="utf-8")) or {}
+            existing_loaded = (
+                yaml.safe_load(input_path.read_text(encoding="utf-8")) or {}
+            )
             existing = existing_loaded if isinstance(existing_loaded, dict) else {}
         except Exception:
             existing = {}
@@ -173,13 +195,20 @@ def write_annotation_output(project_root: Path, input_path: Path, annotated: Lis
     data["scenarios"] = annotated
     input_path.parent.mkdir(parents=True, exist_ok=True)
     if input_path.exists():
-        backup = input_path.with_suffix(input_path.suffix + f".bak.{datetime.now().strftime('%Y%m%d%H%M%S')}")
+        backup = input_path.with_suffix(
+            input_path.suffix + f".bak.{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        )
         try:
             shutil.copy2(input_path, backup)
         except Exception:
             pass
+
     class NoAliasDumper(yaml.SafeDumper):
         def ignore_aliases(self, data):
             return True
-    input_path.write_text(yaml.dump(data, sort_keys=False, Dumper=NoAliasDumper, allow_unicode=True), encoding="utf-8")
+
+    input_path.write_text(
+        yaml.dump(data, sort_keys=False, Dumper=NoAliasDumper, allow_unicode=True),
+        encoding="utf-8",
+    )
     return input_path

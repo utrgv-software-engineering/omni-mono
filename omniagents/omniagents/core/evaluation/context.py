@@ -197,13 +197,21 @@ class EvalContext:
         return JudgeResult(answer=ans, reasoning=reason, raw=data)
 
 
-def allowed_tool_names(agent: Any | None = None, tools: Optional[List[Any]] = None) -> Set[str]:
-    tool_objs = tools if tools is not None else getattr(agent, "tools", []) if agent is not None else []
+def allowed_tool_names(
+    agent: Any | None = None, tools: Optional[List[Any]] = None
+) -> Set[str]:
+    tool_objs = (
+        tools
+        if tools is not None
+        else getattr(agent, "tools", []) if agent is not None else []
+    )
     names: Set[str] = set()
     for t in tool_objs or []:
         n = getattr(t, "name", None)
         if not n:
-            n = getattr(getattr(t, "func", None), "__name__", None) or getattr(t, "__name__", None)
+            n = getattr(getattr(t, "func", None), "__name__", None) or getattr(
+                t, "__name__", None
+            )
         if n:
             names.add(str(n))
     return names
@@ -216,14 +224,20 @@ def extract_tool_calls(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             continue
         name = item.get("name")
         t = item.get("type")
-        if name and (t is None or isinstance(t, str) and ("function_call" in t or "tool_call" in t)):
-            calls.append({
-                "index": idx,
-                "name": str(name),
-                "arguments": item.get("arguments"),
-                "call_id": item.get("call_id"),
-                "raw": item,
-            })
+        if name and (
+            t is None
+            or isinstance(t, str)
+            and ("function_call" in t or "tool_call" in t)
+        ):
+            calls.append(
+                {
+                    "index": idx,
+                    "name": str(name),
+                    "arguments": item.get("arguments"),
+                    "call_id": item.get("call_id"),
+                    "raw": item,
+                }
+            )
     return calls
 
 
@@ -235,7 +249,11 @@ def build_eval_context(
     tools: Optional[List[Any]] = None,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> EvalContext:
-    hist = history if history is not None else (getattr(session, "history", []) if session is not None else [])
+    hist = (
+        history
+        if history is not None
+        else (getattr(session, "history", []) if session is not None else [])
+    )
     hist_list = list(hist or [])
     avail = allowed_tool_names(agent, tools)
     ctx = EvalContext(
@@ -286,7 +304,9 @@ def build_eval_context(
             continue
         role = item.get("role")
         text = _extract_message_text(item)
-        message = Message(index=idx, role=role, content=item.get("content"), text=text, raw=item)
+        message = Message(
+            index=idx, role=role, content=item.get("content"), text=text, raw=item
+        )
         messages.append(message)
         if role == "assistant":
             assistant_messages.append(message)

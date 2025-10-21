@@ -8,6 +8,7 @@ import yaml
 
 def _sanitize_name(name: str) -> str:
     import re
+
     s = name.strip().lower()
     s = re.sub(r"[^a-z0-9_]+", "_", s)
     s = re.sub(r"_+", "_", s)
@@ -23,13 +24,21 @@ def _sanitize_name(name: str) -> str:
     return s
 
 
-def scaffold_project(project_name: str, parent_dir: str = ".", model: str = "gpt-4.1", force: bool = False, include_samples: bool = True) -> Tuple[List[str], str, str]:
+def scaffold_project(
+    project_name: str,
+    parent_dir: str = ".",
+    model: str = "gpt-4.1",
+    force: bool = False,
+    include_samples: bool = True,
+) -> Tuple[List[str], str, str]:
     sanitized = _sanitize_name(project_name)
     parent = Path(parent_dir).resolve()
-    project_dir = (parent / sanitized)
+    project_dir = parent / sanitized
     if project_dir.exists() and not force:
         if any(project_dir.iterdir()):
-            raise FileExistsError(f"Directory already exists and is not empty: {project_dir}")
+            raise FileExistsError(
+                f"Directory already exists and is not empty: {project_dir}"
+            )
     project_dir.mkdir(parents=True, exist_ok=True)
 
     agents_dir = project_dir / "agents"
@@ -85,18 +94,20 @@ def scaffold_project(project_name: str, parent_dir: str = ".", model: str = "gpt
         )
         created.append(str(agent_instr))
     if not agent_yml.exists() or force:
+
         def _titleize(s: str) -> str:
             parts = [p for p in s.split("_") if p]
             return " ".join(p.capitalize() for p in parts) or s
+
         display_label = _titleize(sanitized)
         tools_list = "[echo, word_count]" if include_samples else "[]"
         agent_content = (
             f"name: {sanitized}\n"
             f"label: {display_label}\n"
-            f"description: \"A helpful AI agent. Customize this description.\"\n"
+            f'description: "A helpful AI agent. Customize this description."\n'
             f"model: {model}\n"
             f"instructions_file: instructions.md\n"
-            f"welcome_text: \"Hello from {sanitized}.\"\n\n"
+            f'welcome_text: "Hello from {sanitized}."\n\n'
             f"tools: {tools_list}\n"
         )
         agent_yml.write_text(agent_content, encoding="utf-8")
@@ -125,7 +136,8 @@ def scaffold_project(project_name: str, parent_dir: str = ".", model: str = "gpt
     gitignore = project_dir / ".gitignore"
     if not gitignore.exists() or force:
         gitignore.write_text(
-            "__pycache__/\n*.pyc\n.env\ntarget/\n.pytest_cache/\nartifacts/\n", encoding="utf-8"
+            "__pycache__/\n*.pyc\n.env\ntarget/\n.pytest_cache/\nartifacts/\n",
+            encoding="utf-8",
         )
         created.append(str(gitignore))
 
@@ -158,7 +170,9 @@ def _resolve_project_root(project_ref: str) -> Path:
     raise FileNotFoundError(f"Could not find project.yml at or under: {p}")
 
 
-def scaffold_tool(project_ref: str, tool_name: str, make_async: bool = False, force: bool = False) -> Tuple[List[str], str]:
+def scaffold_tool(
+    project_ref: str, tool_name: str, make_async: bool = False, force: bool = False
+) -> Tuple[List[str], str]:
     root = _resolve_project_root(project_ref)
     sanitized = _sanitize_name(tool_name)
     tools_dir = root / "tools"
@@ -184,7 +198,9 @@ def scaffold_tool(project_ref: str, tool_name: str, make_async: bool = False, fo
     return [str(file_path)], str(root)
 
 
-def scaffold_agent(project_ref: str, agent_name: str, model: str = "gpt-4.1", force: bool = False) -> Tuple[List[str], str, str]:
+def scaffold_agent(
+    project_ref: str, agent_name: str, model: str = "gpt-4.1", force: bool = False
+) -> Tuple[List[str], str, str]:
     root = _resolve_project_root(project_ref)
     sanitized = _sanitize_name(agent_name)
     agents_dir = root / "agents"
@@ -198,17 +214,19 @@ def scaffold_agent(project_ref: str, agent_name: str, model: str = "gpt-4.1", fo
         raise FileExistsError(f"Agent YAML exists: {agent_yml}")
     if instr_md.exists() and not force:
         raise FileExistsError(f"Instructions exists: {instr_md}")
+
     def _titleize(s: str) -> str:
         parts = [p for p in s.split("_") if p]
         return " ".join(p.capitalize() for p in parts) or s
+
     display_label = _titleize(sanitized)
     agent_content = (
         f"name: {sanitized}\n"
         f"label: {display_label}\n"
-        f"description: \"A helpful AI agent. Customize this description.\"\n"
+        f'description: "A helpful AI agent. Customize this description."\n'
         f"model: {model}\n"
         f"instructions_file: instructions.md\n"
-        f"welcome_text: \"Hello from {sanitized}.\"\n\n"
+        f'welcome_text: "Hello from {sanitized}."\n\n'
         "tools: []\n"
     )
     agent_yml.write_text(agent_content, encoding="utf-8")
@@ -239,7 +257,11 @@ def delete_agent(project_ref: str, agent_key: str) -> Tuple[List[str], str, str]
     target_dir = agents_dir / agent_key
     if not target_dir.exists() or not target_dir.is_dir():
         raise FileNotFoundError(f"Agent directory not found: {target_dir}")
-    existing_keys = sorted(p.name for p in agents_dir.iterdir() if p.is_dir() and (p / "agent.yml").is_file())
+    existing_keys = sorted(
+        p.name
+        for p in agents_dir.iterdir()
+        if p.is_dir() and (p / "agent.yml").is_file()
+    )
     if agent_key not in existing_keys:
         raise FileNotFoundError(f"Agent not found: {agent_key}")
     if len(existing_keys) <= 1:
@@ -259,11 +281,15 @@ def delete_agent(project_ref: str, agent_key: str) -> Tuple[List[str], str, str]
                     agents_cfg["entrypoint"] = candidate
                     break
         data["agents"] = agents_cfg
-        project_yml.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        project_yml.write_text(
+            yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
+        )
     return removed, str(root), agent_key
 
 
-def scaffold_eval_quickstart(project_ref: str, force: bool = False) -> Tuple[List[str], str]:
+def scaffold_eval_quickstart(
+    project_ref: str, force: bool = False
+) -> Tuple[List[str], str]:
     root = _resolve_project_root(project_ref)
     eval_dir = root / "evaluations"
     eval_dir.mkdir(exist_ok=True)
@@ -272,7 +298,12 @@ def scaffold_eval_quickstart(project_ref: str, force: bool = False) -> Tuple[Lis
     metrics_yml = eval_dir / "metrics.yml"
     scenarios_yml = eval_dir / "scenarios.yml"
     measures_py = eval_dir / "measures.py"
-    if (evaluation_yml.exists() or metrics_yml.exists() or scenarios_yml.exists() or measures_py.exists()) and not force:
+    if (
+        evaluation_yml.exists()
+        or metrics_yml.exists()
+        or scenarios_yml.exists()
+        or measures_py.exists()
+    ) and not force:
         raise FileExistsError("Evaluations already exist; use --force to overwrite")
     evaluation_yml.write_text(
         "evaluation:\n  defaults:\n    runs_per_prompt: 1\n    max_turns: 6\n",
@@ -291,14 +322,20 @@ def scaffold_eval_quickstart(project_ref: str, force: bool = False) -> Tuple[Lis
     )
     created.append(str(scenarios_yml))
     measures_py.write_text(
-        "from omniagents.core.evaluation import evaluation_measure\n\n@evaluation_measure\ndef always_pass(ctx):\n    return {\"passed\": True}\n",
+        'from omniagents.core.evaluation import evaluation_measure\n\n@evaluation_measure\ndef always_pass(ctx):\n    return {"passed": True}\n',
         encoding="utf-8",
     )
     created.append(str(measures_py))
     return created, str(root)
 
 
-def scaffold_guardrail(project_ref: str, kind: str, name: str, make_async: bool = False, force: bool = False) -> Tuple[List[str], str]:
+def scaffold_guardrail(
+    project_ref: str,
+    kind: str,
+    name: str,
+    make_async: bool = False,
+    force: bool = False,
+) -> Tuple[List[str], str]:
     root = _resolve_project_root(project_ref)
     sanitized = _sanitize_name(name)
     guard_dir = root / "guardrails"
@@ -340,7 +377,9 @@ def scaffold_guardrail(project_ref: str, kind: str, name: str, make_async: bool 
     return [str(file_path)], str(root)
 
 
-def scaffold_server_function(project_ref: str, name: str, make_async: bool = False, force: bool = False) -> Tuple[List[str], str]:
+def scaffold_server_function(
+    project_ref: str, name: str, make_async: bool = False, force: bool = False
+) -> Tuple[List[str], str]:
     root = _resolve_project_root(project_ref)
     sanitized = _sanitize_name(name)
     sf_dir = root / "server_functions"
@@ -386,6 +425,7 @@ def scaffold_judge(
     def _camel(s: str) -> str:
         parts = [p for p in s.split("_") if p]
         return "".join(p.capitalize() for p in parts)
+
     def _titleize(s: str) -> str:
         parts = [p for p in s.split("_") if p]
         return " ".join(p.capitalize() for p in parts) or s
@@ -428,7 +468,9 @@ def scaffold_judge(
         }
     }
 
-    judge_yml.write_text(yaml.safe_dump(judge_cfg, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    judge_yml.write_text(
+        yaml.safe_dump(judge_cfg, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
     created.append(str(judge_yml))
 
     if not judge_instructions_md.exists() or force:
@@ -446,9 +488,9 @@ def scaffold_judge(
                 "Output Schema (Do Not Change)\n"
                 "- Return ONLY JSON with keys:\n"
                 "  - reasoning: string\n"
-                "  - answer: \"Pass\" or \"Fail\"\n"
+                '  - answer: "Pass" or "Fail"\n'
                 "- Example:\n"
-                "  {\"reasoning\": \"...\", \"answer\": \"Pass\"}\n\n"
+                '  {"reasoning": "...", "answer": "Pass"}\n\n'
                 "Decision Policy\n"
                 "- Positive (label Fail): [FILL: WHAT COUNTS AS A VIOLATION]\n"
                 "- Negative (label Pass): [FILL: WHAT COUNTS AS ACCEPTABLE BEHAVIOR]\n"
@@ -476,22 +518,22 @@ def scaffold_judge(
                 "  - Case: [FILL: CLEAR PASS CASE]\n"
                 "  - Why: [FILL: SPECIFIC REASON FOR PASS]\n"
                 "  - Output:\n"
-                "  {\"reasoning\": \"[FILL: PASS REASONING]\", \"answer\": \"Pass\"}\n\n"
+                '  {"reasoning": "[FILL: PASS REASONING]", "answer": "Pass"}\n\n'
                 "- Example B (Fail — Violates criterion)\n"
                 "  - Case: [FILL: CLEAR FAIL CASE]\n"
                 "  - Why: [FILL: SPECIFIC REASON FOR FAIL]\n"
                 "  - Output:\n"
-                "  {\"reasoning\": \"[FILL: FAIL REASONING]\", \"answer\": \"Fail\"}\n\n"
+                '  {"reasoning": "[FILL: FAIL REASONING]", "answer": "Fail"}\n\n'
                 "- Example C (Pass — Ambiguous/insufficient evidence)\n"
                 "  - Case: [FILL: AMBIGUOUS/INSUFFICIENT EVIDENCE CASE]\n"
                 "  - Why: [FILL: WHY AMBIGUITY ⇒ PASS]\n"
                 "  - Output:\n"
-                "  {\"reasoning\": \"[FILL: AMBIGUITY REASONING]\", \"answer\": \"Pass\"}\n\n"
+                '  {"reasoning": "[FILL: AMBIGUITY REASONING]", "answer": "Pass"}\n\n'
                 "- Example D (Pass — Valid clarification)\n"
                 "  - Case: [FILL: CLARIFICATION CASE THAT REMAINS ON-CRITERION]\n"
                 "  - Why: [FILL: WHY CLARIFICATION ⇒ PASS]\n"
                 "  - Output:\n"
-                "  {\"reasoning\": \"[FILL: CLARIFICATION REASONING]\", \"answer\": \"Pass\"}\n\n"
+                '  {"reasoning": "[FILL: CLARIFICATION REASONING]", "answer": "Pass"}\n\n'
                 "Return ONLY the JSON object per schema—no extra text.\n"
             ),
             encoding="utf-8",
@@ -502,7 +544,7 @@ def scaffold_judge(
         judge_template_md.write_text(
             (
                 "Decide if the assistant satisfies the evaluation criterion for this case.\n"
-                "Return JSON {reasoning:string, answer:\"Pass\"|\"Fail\"}.\n\n"
+                'Return JSON {reasoning:string, answer:"Pass"|"Fail"}.\n\n'
                 "Conversation history (JSON):\n---\n{{ history_json }}\n---\n\n"
                 "Assistant message:\n---\n{{ text }}\n---\n"
             ),
@@ -522,13 +564,19 @@ def scaffold_judge(
             "    return judge.to_result()",
         ]
         block = "\n".join(block_lines)
-        import_line = "from omniagents.core.evaluation import evaluation_measure, fail_reason"
+        import_line = (
+            "from omniagents.core.evaluation import evaluation_measure, fail_reason"
+        )
         if measures_py.exists():
             existing = measures_py.read_text(encoding="utf-8")
             if f"def {fn_name}(" not in existing:
                 import re
+
                 updated = existing
-                pattern = re.compile(r"from omniagents\.core\.evaluation import (?P<body>\([^\)]*\)|[^\n]*)", re.DOTALL)
+                pattern = re.compile(
+                    r"from omniagents\.core\.evaluation import (?P<body>\([^\)]*\)|[^\n]*)",
+                    re.DOTALL,
+                )
                 match = pattern.search(updated)
                 need_import = match is None
                 if match:
@@ -544,19 +592,29 @@ def scaffold_judge(
                     if changed:
                         if body.strip().startswith("("):
                             indent = "    "
-                            inner = ",\n".join(f"{indent}{name}" for name in names) + ","
+                            inner = (
+                                ",\n".join(f"{indent}{name}" for name in names) + ","
+                            )
                             new_body = f"(\n{inner}\n)"
                         else:
                             new_body = ", ".join(names)
                         new_line = f"from omniagents.core.evaluation import {new_body}"
-                        updated = updated[:match.start()] + new_line + updated[match.end():]
+                        updated = (
+                            updated[: match.start()] + new_line + updated[match.end() :]
+                        )
                     need_import = False
                 if need_import:
                     doc_pattern = re.compile(r'(\s*("""|\'\'\').*?\2\s*)', re.DOTALL)
                     doc_match = doc_pattern.match(updated)
                     if doc_match:
                         start = doc_match.end()
-                        updated = updated[:start] + "\n" + import_line + "\n\n" + updated[start:]
+                        updated = (
+                            updated[:start]
+                            + "\n"
+                            + import_line
+                            + "\n\n"
+                            + updated[start:]
+                        )
                     else:
                         trimmed = updated.lstrip("\n")
                         prefix = "\n" if updated.startswith("\n") else ""
@@ -600,7 +658,9 @@ def scaffold_judge(
                 found["measures"] = ms
         ev["failure_categories"] = fcs
         base["evaluation"] = ev
-        evaluation_yml.write_text(yaml.safe_dump(base, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        evaluation_yml.write_text(
+            yaml.safe_dump(base, sort_keys=False, allow_unicode=True), encoding="utf-8"
+        )
         created.append(str(evaluation_yml))
 
     return created, str(root)
@@ -651,7 +711,9 @@ def scaffold_optimizer(
         }
     }
 
-    optimizer_yml.write_text(yaml.safe_dump(opt_cfg, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    optimizer_yml.write_text(
+        yaml.safe_dump(opt_cfg, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
     created.append(str(optimizer_yml))
 
     if not optimizer_instructions_md.exists() or force:
@@ -691,10 +753,10 @@ def scaffold_optimizer(
                 "The reflective examples below include task inputs, the judge’s outputs, and feedback indicating where predictions matched or mismatched labels. Use them to refine decision rules and edge-case handling without memorizing examples.\n\n"
                 "```\n{{ dataset_md }}\n```\n\n"
                 "# Output Schema (Do Not Change)\n"
-                "- The judge must return ONLY JSON with keys: reasoning (string), answer (\"Pass\" or \"Fail\").\n"
+                '- The judge must return ONLY JSON with keys: reasoning (string), answer ("Pass" or "Fail").\n'
                 "- Do not add, rename, or remove keys; do not change allowed values.\n"
                 "- Example:\n"
-                "```json\n{\n  \"reasoning\": \"...\",\n  \"answer\": \"Pass\"\n}\n```\n\n"
+                '```json\n{\n  "reasoning": "...",\n  "answer": "Pass"\n}\n```\n\n'
                 "# Guidance\n"
                 "- Do: clarify decision rules; include edge-case handling and tie-breakers.\n"
                 "- Don’t: rely on example-specific artifacts; avoid leaking labels or overfitting.\n"

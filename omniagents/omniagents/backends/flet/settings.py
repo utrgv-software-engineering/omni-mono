@@ -5,13 +5,16 @@ from typing import List, Callable, Dict, Any, Optional
 from collections import defaultdict
 from omniagents.core.agents.specs import AgentSpec, SettingField
 
+
 class SettingsScreen(ft.View):
-    def __init__(self,
-                 spec: AgentSpec,
-                 fields: List[SettingField],
-                 initial_values: Dict[str, Any],
-                 on_save: Callable[[Dict[str, Any]], None],
-                 on_back: Callable[[Any], None]):
+    def __init__(
+        self,
+        spec: AgentSpec,
+        fields: List[SettingField],
+        initial_values: Dict[str, Any],
+        on_save: Callable[[Dict[str, Any]], None],
+        on_back: Callable[[Any], None],
+    ):
         super().__init__()
 
         self.route = "/settings"
@@ -29,72 +32,89 @@ class SettingsScreen(ft.View):
         settings_header = ft.Container(
             content=ft.SafeArea(
                 # --- Wrap Row in a Container and Column like app_base.py ---
-                content=ft.Column([
-                    ft.Container(
-                        content=ft.Row([
-                            ft.IconButton(
-                                icon=ft.Icons.ARROW_BACK,
-                                icon_color=ft.Colors.WHITE,
-                                icon_size=20,
-                                on_click=self._go_back,
-                                style=ft.ButtonStyle(
-                                    padding=8,
-                                    shape=ft.CircleBorder(),
-                                ),
-                                height=40,
-                                width=40,
+                content=ft.Column(
+                    [
+                        ft.Container(
+                            content=ft.Row(
+                                [
+                                    ft.IconButton(
+                                        icon=ft.Icons.ARROW_BACK,
+                                        icon_color=ft.Colors.WHITE,
+                                        icon_size=20,
+                                        on_click=self._go_back,
+                                        style=ft.ButtonStyle(
+                                            padding=8,
+                                            shape=ft.CircleBorder(),
+                                        ),
+                                        height=40,
+                                        width=40,
+                                    ),
+                                    ft.Text(
+                                        "Settings",
+                                        color=ft.Colors.WHITE,
+                                        size=20,
+                                        weight="w500",
+                                    ),
+                                    ft.TextButton(
+                                        text="Save",
+                                        on_click=self._save_settings,
+                                        style=ft.ButtonStyle(color=ft.Colors.WHITE),
+                                    ),
+                                ],
+                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
                             ),
-                            ft.Text("Settings", color=ft.Colors.WHITE, size=20, weight="w500"),
-                            ft.TextButton(
-                                text="Save",
-                                on_click=self._save_settings,
-                                style=ft.ButtonStyle(color=ft.Colors.WHITE),
-                            ),
-                        ],
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER
-                        ),
-                        # --- Apply height and padding to inner container ---
-                        padding=ft.padding.symmetric(horizontal=20, vertical=0),
-                        height=64,
-                        alignment=ft.alignment.center, # Center content vertically in inner container
-                    )
-                ]),
-                bottom=False
+                            # --- Apply height and padding to inner container ---
+                            padding=ft.padding.symmetric(horizontal=20, vertical=0),
+                            height=64,
+                            alignment=ft.alignment.center,  # Center content vertically in inner container
+                        )
+                    ]
+                ),
+                bottom=False,
             ),
             # --- Remove height and padding from outer container ---
             gradient=ft.LinearGradient(
-                begin=ft.alignment.top_left, end=ft.alignment.bottom_right,
-                colors=[ft.Colors.INDIGO_900, self.spec.theme_color, ft.Colors.with_opacity(0.8, self.spec.theme_color)],
+                begin=ft.alignment.top_left,
+                end=ft.alignment.bottom_right,
+                colors=[
+                    ft.Colors.INDIGO_900,
+                    self.spec.theme_color,
+                    ft.Colors.with_opacity(0.8, self.spec.theme_color),
+                ],
             ),
             # padding=ft.padding.symmetric(horizontal=20, vertical=0), # Removed
             # height=64, # Removed
             alignment=ft.alignment.center,
             shadow=ft.BoxShadow(
-                spread_radius=0, blur_radius=4,
+                spread_radius=0,
+                blur_radius=4,
                 color=ft.Colors.with_opacity(0.3, ft.Colors.BLACK),
-                offset=ft.Offset(0, 2)
+                offset=ft.Offset(0, 2),
             ),
         )
 
-        # --- MOVED UI Building Logic Inside Init --- 
+        # --- MOVED UI Building Logic Inside Init ---
 
         # Check if a custom client has been set
         from agents.models._openai_shared import get_default_openai_client
+
         has_custom_client = get_default_openai_client() is not None
 
-        # --- Group Fields and Build UI --- 
+        # --- Group Fields and Build UI ---
         grouped_fields = defaultdict(list)
-        all_groups = [] # Keep track of group order
-        
+        all_groups = []  # Keep track of group order
+
         # Filter out OpenAI-specific fields if custom client is set
-        openai_keys = {'openai_api_key', 'openai_base_url'}
+        openai_keys = {"openai_api_key", "openai_base_url"}
         for field_spec in self.fields_spec:
             # Skip OpenAI fields if custom client is set
             if has_custom_client and field_spec.key in openai_keys:
                 continue
-                
-            group_name = field_spec.group or "General" # Default group if none specified
+
+            group_name = (
+                field_spec.group or "General"
+            )  # Default group if none specified
             if group_name not in grouped_fields:
                 all_groups.append(group_name)
             grouped_fields[group_name].append(field_spec)
@@ -111,29 +131,35 @@ class SettingsScreen(ft.View):
 
         # Build controls for each group
         grouped_controls = []
-        
+
         # Check if we have any fields to show after filtering
         if has_custom_client and len(self.text_fields) == 0:
             # Show message only if ALL fields were filtered out (no custom settings)
             grouped_controls.append(
                 ft.Container(
-                    content=ft.Column([
-                        ft.Icon(ft.Icons.INFO_OUTLINE, color=ft.Colors.BLUE_400, size=48),
-                        ft.Text(
-                            "Using Custom Client Configuration",
-                            size=18,
-                            weight="w500",
-                            color=ft.Colors.BLACK87,
-                            text_align=ft.TextAlign.CENTER,
-                        ),
-                        ft.Text(
-                            "A custom OpenAI client has been configured programmatically.\n"
-                            "OpenAI settings are managed by your application code.",
-                            size=14,
-                            color=ft.Colors.BLACK54,
-                            text_align=ft.TextAlign.CENTER,
-                        ),
-                    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=12),
+                    content=ft.Column(
+                        [
+                            ft.Icon(
+                                ft.Icons.INFO_OUTLINE, color=ft.Colors.BLUE_400, size=48
+                            ),
+                            ft.Text(
+                                "Using Custom Client Configuration",
+                                size=18,
+                                weight="w500",
+                                color=ft.Colors.BLACK87,
+                                text_align=ft.TextAlign.CENTER,
+                            ),
+                            ft.Text(
+                                "A custom OpenAI client has been configured programmatically.\n"
+                                "OpenAI settings are managed by your application code.",
+                                size=14,
+                                color=ft.Colors.BLACK54,
+                                text_align=ft.TextAlign.CENTER,
+                            ),
+                        ],
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        spacing=12,
+                    ),
                     padding=ft.padding.all(40),
                     margin=ft.margin.only(top=40),
                     bgcolor=ft.Colors.BLUE_50,
@@ -142,37 +168,50 @@ class SettingsScreen(ft.View):
             )
         elif len(self.text_fields) > 0:
             # Build settings fields (either all fields if no custom client, or non-OpenAI fields if custom client)
-            
+
             # If custom client is set, add a note about hidden OpenAI fields
             if has_custom_client:
                 grouped_controls.append(
                     ft.Container(
-                        content=ft.Row([
-                            ft.Icon(ft.Icons.INFO_OUTLINE, color=ft.Colors.BLUE_400, size=20),
-                            ft.Text(
-                                "Note: OpenAI settings are hidden (using custom client)",
-                                size=12,
-                                color=ft.Colors.BLUE_700,
-                            ),
-                        ], spacing=8),
+                        content=ft.Row(
+                            [
+                                ft.Icon(
+                                    ft.Icons.INFO_OUTLINE,
+                                    color=ft.Colors.BLUE_400,
+                                    size=20,
+                                ),
+                                ft.Text(
+                                    "Note: OpenAI settings are hidden (using custom client)",
+                                    size=12,
+                                    color=ft.Colors.BLUE_700,
+                                ),
+                            ],
+                            spacing=8,
+                        ),
                         padding=ft.padding.all(12),
                         margin=ft.margin.only(bottom=16),
                         bgcolor=ft.Colors.BLUE_50,
                         border_radius=8,
                     )
                 )
-            
+
             for group_name in all_groups:
                 field_controls_in_group = []
                 for i, field_spec in enumerate(grouped_fields[group_name]):
                     tf = self.text_fields[field_spec.key]
-                    is_last_in_group = (i == len(grouped_fields[group_name]) - 1)
+                    is_last_in_group = i == len(grouped_fields[group_name]) - 1
                     field_controls_in_group.append(
                         ft.Container(
                             content=tf,
                             padding=ft.padding.symmetric(horizontal=16, vertical=8),
                             # Add border only if not the last item in the group
-                            border=ft.border.only(bottom=ft.border.BorderSide(1, ft.Colors.BLACK12)) if not is_last_in_group else None,
+                            border=(
+                                ft.border.only(
+                                    bottom=ft.border.BorderSide(1, ft.Colors.BLACK12)
+                                )
+                                if not is_last_in_group
+                                else None
+                            ),
                         )
                     )
 
@@ -180,26 +219,34 @@ class SettingsScreen(ft.View):
                 grouped_controls.append(
                     ft.Container(
                         content=ft.Text(
-                            group_name.upper(), # Display group name as header
+                            group_name.upper(),  # Display group name as header
                             size=12,
                             weight="w500",
                             color=ft.Colors.BLACK54,
                         ),
-                        margin=ft.margin.only(left=16, bottom=6, top=20 if len(grouped_controls) > 0 else 0), # Add top margin for subsequent groups
+                        margin=ft.margin.only(
+                            left=16,
+                            bottom=6,
+                            top=20 if len(grouped_controls) > 0 else 0,
+                        ),  # Add top margin for subsequent groups
                     )
                 )
 
                 # Add the container for the fields in this group
                 grouped_controls.append(
-                     ft.Container(
+                    ft.Container(
                         content=ft.Column(field_controls_in_group, spacing=0),
                         bgcolor=ft.Colors.WHITE,
                         border_radius=10,
                         shadow=ft.BoxShadow(
-                            spread_radius=0, blur_radius=2,
-                            color=ft.Colors.with_opacity(0.1, ft.Colors.BLACK), offset=ft.Offset(0, 1)
+                            spread_radius=0,
+                            blur_radius=2,
+                            color=ft.Colors.with_opacity(0.1, ft.Colors.BLACK),
+                            offset=ft.Offset(0, 1),
                         ),
-                        margin=ft.margin.only(bottom=6) # Smaller margin below group box
+                        margin=ft.margin.only(
+                            bottom=6
+                        ),  # Smaller margin below group box
                     )
                 )
                 # Optionally add a hint/footer for the group if needed
@@ -210,10 +257,9 @@ class SettingsScreen(ft.View):
                 #         margin=ft.margin.only(left=16, top=6, bottom=24)
                 #     ))
                 # else:
-                grouped_controls.append(ft.Container(height=18)) # Space between groups
+                grouped_controls.append(ft.Container(height=18))  # Space between groups
 
-
-        # --- Create Scrollable Content --- 
+        # --- Create Scrollable Content ---
         settings_content = ft.ListView(
             controls=[
                 ft.Container(height=12),
@@ -227,7 +273,7 @@ class SettingsScreen(ft.View):
                     margin=ft.margin.only(bottom=0, top=10),
                     expand=True,
                 ),
-                *grouped_controls, # Unpack the generated group controls
+                *grouped_controls,  # Unpack the generated group controls
                 ft.Container(height=30),
             ],
             expand=True,
@@ -238,10 +284,10 @@ class SettingsScreen(ft.View):
         # View controls: Header followed by content list (remove SafeArea from content)
         self.controls = [
             settings_header,
-            settings_content, # Directly add settings_content
+            settings_content,  # Directly add settings_content
         ]
         # View properties are set directly on the View instance
-        self.spacing = 0 # Prevent spacing between header and content
+        self.spacing = 0  # Prevent spacing between header and content
 
     # --- Make the save method async --- #
     async def _save_settings(self, e):
@@ -252,4 +298,4 @@ class SettingsScreen(ft.View):
 
     def _go_back(self, e):
         if self.on_back:
-            self.on_back(e) 
+            self.on_back(e)

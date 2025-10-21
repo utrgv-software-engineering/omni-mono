@@ -58,30 +58,41 @@ class ProjectContext:
 
 def _validate_agent_name(expected_key: str, yaml_name: Any, path: Path) -> str:
     if not isinstance(yaml_name, str) or not yaml_name.strip():
-        raise ValueError(f"Agent YAML missing a valid 'name' (file: {path}) — set name: {expected_key}")
+        raise ValueError(
+            f"Agent YAML missing a valid 'name' (file: {path}) — set name: {expected_key}"
+        )
     if yaml_name != expected_key:
-        raise ValueError(f"Agent name must equal its directory key. Got name='{yaml_name}' file='{path.name}'. Expected name='{expected_key}'.")
+        raise ValueError(
+            f"Agent name must equal its directory key. Got name='{yaml_name}' file='{path.name}'. Expected name='{expected_key}'."
+        )
     if len(yaml_name) > 64:
         raise ValueError(f"Agent name '{yaml_name}' too long (>64). File: {path}")
     if yaml_name.lower() != yaml_name:
         raise ValueError(f"Agent name '{yaml_name}' must be lowercase. File: {path}")
     if not re.fullmatch(r"[a-z][a-z0-9_]*", yaml_name):
-        raise ValueError(f"Agent name '{yaml_name}' invalid. Allowed: [a-z][a-z0-9_]*. File: {path}")
+        raise ValueError(
+            f"Agent name '{yaml_name}' invalid. Allowed: [a-z][a-z0-9_]*. File: {path}"
+        )
     return yaml_name
 
 
 def load_project(project_path: str) -> ProjectContext:
     p = Path(project_path).resolve()
     if p.is_file() and p.name != "project.yml":
-        raise FileNotFoundError(f"Expected 'project.yml' but got '{p.name}'. Rename to project.yml.")
+        raise FileNotFoundError(
+            f"Expected 'project.yml' but got '{p.name}'. Rename to project.yml."
+        )
     base_dir = p.parent if p.is_file() else p
     if not p.is_file():
         proj_file = base_dir / "project.yml"
         if not proj_file.is_file():
-            raise FileNotFoundError(f"Could not find project.yml in directory: {base_dir}")
+            raise FileNotFoundError(
+                f"Could not find project.yml in directory: {base_dir}"
+            )
     proj = _read_yaml(p if p.is_file() else (base_dir / "project.yml"))
 
     paths_cfg = proj.get("paths") or {}
+
     def _resolve_many(kind: str, default: Optional[str] = None) -> List[Path]:
         vals = _to_list(paths_cfg.get(kind, default))
         out: List[Path] = []
@@ -111,13 +122,23 @@ def load_project(project_path: str) -> ProjectContext:
     entry = agents_section.get("entrypoint")
     include = agents_section.get("include")
     exclude = agents_section.get("exclude")
-    include_globs = [str(x) for x in (include or [])] if isinstance(include, list) else ([] if include in (None, "") else [str(include)])
-    exclude_globs = [str(x) for x in (exclude or [])] if isinstance(exclude, list) else ([] if exclude in (None, "") else [str(exclude)])
+    include_globs = (
+        [str(x) for x in (include or [])]
+        if isinstance(include, list)
+        else ([] if include in (None, "") else [str(include)])
+    )
+    exclude_globs = (
+        [str(x) for x in (exclude or [])]
+        if isinstance(exclude, list)
+        else ([] if exclude in (None, "") else [str(exclude)])
+    )
     # Strict v2: discover per-entity agent.yml under agents/<key>/agent.yml
     candidates: List[Path] = []
     for adir in agents_dir:
         if adir.is_file():
-            raise FileNotFoundError(f"Strict layout requires 'agents/<key>/agent.yml'. Got file instead of directory: {adir}")
+            raise FileNotFoundError(
+                f"Strict layout requires 'agents/<key>/agent.yml'. Got file instead of directory: {adir}"
+            )
         if adir.is_dir():
             for y in sorted(list(adir.rglob("agent.yml"))):
                 # only accept files with a directory parent key
@@ -143,22 +164,32 @@ def load_project(project_path: str) -> ProjectContext:
         if exclude_globs and any(fnmatch.fnmatch(key, g) for g in exclude_globs):
             continue
         if key in seen:
-            raise ValueError(f"Duplicate agent name/key '{key}'. Another folder already defines this agent. Current: {y}")
+            raise ValueError(
+                f"Duplicate agent name/key '{key}'. Another folder already defines this agent. Current: {y}"
+            )
         seen.add(key)
         agents_map[key] = y.resolve()
     if not agents_map:
-        raise FileNotFoundError("No agents discovered. Strict layout requires 'agents/<key>/agent.yml'.")
+        raise FileNotFoundError(
+            "No agents discovered. Strict layout requires 'agents/<key>/agent.yml'."
+        )
     if isinstance(entry, str) and entry:
         if entry not in agents_map:
-            raise FileNotFoundError(f"Entrypoint '{entry}' not found among agents: {sorted(agents_map.keys())}")
+            raise FileNotFoundError(
+                f"Entrypoint '{entry}' not found among agents: {sorted(agents_map.keys())}"
+            )
     else:
         if len(agents_map) == 1:
             entry = next(iter(agents_map.keys()))
         else:
             entry = None
 
-    tracing_defaults = proj.get("tracing") if isinstance(proj.get("tracing"), dict) else None
-    settings_defaults = proj.get("settings") if isinstance(proj.get("settings"), list) else []
+    tracing_defaults = (
+        proj.get("tracing") if isinstance(proj.get("tracing"), dict) else None
+    )
+    settings_defaults = (
+        proj.get("settings") if isinstance(proj.get("settings"), list) else []
+    )
     ui_defaults = {}
     for k in ("theme_color", "layout", "icon_map"):
         if k in proj:
@@ -209,7 +240,11 @@ def load_project(project_path: str) -> ProjectContext:
         raw=proj,
         paths=paths,
         agents_map=agents_map,
-        entrypoint=(str(entry) if entry else (next(iter(agents_map.keys())) if agents_map else None)),
+        entrypoint=(
+            str(entry)
+            if entry
+            else (next(iter(agents_map.keys())) if agents_map else None)
+        ),
         tracing_defaults=tracing_defaults,
         settings_defaults=settings_defaults,
         ui_defaults=ui_defaults,
@@ -219,7 +254,9 @@ def load_project(project_path: str) -> ProjectContext:
     )
 
 
-def resolve_agent(project: ProjectContext, agent_key: Optional[str] = None) -> Tuple[str, Path]:
+def resolve_agent(
+    project: ProjectContext, agent_key: Optional[str] = None
+) -> Tuple[str, Path]:
     key = agent_key or project.entrypoint
     if not key:
         raise FileNotFoundError("No agent entrypoint defined in project.yml")

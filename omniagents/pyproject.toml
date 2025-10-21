@@ -37,7 +37,26 @@ all = ["omniagents[cli,flet,server,studio,studio-server]"]
 dev = [
     "pytest",
     "bump2version",
+    "black",
 ]
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
 
 [project.entry-points."omniagents.backends"]
 cli = "omniagents.backends.cli:CLIBackend"

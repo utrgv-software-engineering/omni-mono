@@ -67,4 +67,3 @@ def display_artifact(
     """
     emit_artifact(title, content, mode, artifact_id)
     return {"success": True}
-

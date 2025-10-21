@@ -22,7 +22,7 @@ async def fake_stream_agent(agent, prompt, sess, channel, max_turns=20):
     from omniagents.core.session import append_message
 
     append_message(sess.id, user_msg)
-    
+
     print(f"DEBUG fake_stream_agent: Sending message_output")
     await channel.async_call(
         "message_output",
@@ -66,7 +66,7 @@ async def fake_stream_agent(agent, prompt, sess, channel, max_turns=20):
         "tool_result",
         {"run_id": run_id, "tool": "echo", "output": "ok"},
     )
-    
+
     print(f"DEBUG fake_stream_agent: Finished")
     out_item = {
         "role": "assistant",
@@ -76,7 +76,7 @@ async def fake_stream_agent(agent, prompt, sess, channel, max_turns=20):
     }
     sess.history.append(out_item)
     append_message(sess.id, out_item)
-    
+
     # Don't send run_end here - it's sent by AgentService._worker()
 
 
@@ -95,7 +95,7 @@ async def _run_server(app, port):
     return server, task
 
 
-@patch('omniagents.core.agents.service.stream_agent', new=fake_stream_agent)
+@patch("omniagents.core.agents.service.stream_agent", new=fake_stream_agent)
 async def _integration_flow():
     spec = AgentSpec(
         name="A",
@@ -148,7 +148,11 @@ async def _integration_flow():
 
         sess_id = proxy._session_id
         hist_resp = await proxy._client.other.get_session_history(session_id=sess_id)
-        history = hist_resp if isinstance(hist_resp, list) else getattr(hist_resp, "result", hist_resp)
+        history = (
+            hist_resp
+            if isinstance(hist_resp, list)
+            else getattr(hist_resp, "result", hist_resp)
+        )
         assert history[0]["content"] == "ping"
         assert history[1]["content"] == "pong"
         assert history[2]["type"] == "tool_call"

@@ -13,7 +13,9 @@ def _deep_get(d: Any, path: str) -> Any:
     return cur
 
 
-def _apply_target(value: Optional[float], target: Dict[str, Any] | None) -> Optional[bool]:
+def _apply_target(
+    value: Optional[float], target: Dict[str, Any] | None
+) -> Optional[bool]:
     if value is None or not target:
         return None
     op = str(target.get("op", ">=")).strip()
@@ -36,7 +38,9 @@ def _apply_target(value: Optional[float], target: Dict[str, Any] | None) -> Opti
     return None
 
 
-def compute_metrics(runs: List[Dict[str, Any]], metrics_cfg: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def compute_metrics(
+    runs: List[Dict[str, Any]], metrics_cfg: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
     per_measure: Dict[str, List[Dict[str, Any]]] = {}
     for r in runs:
         for m in r.get("measures", []) or []:
@@ -55,12 +59,14 @@ def compute_metrics(runs: List[Dict[str, Any]], metrics_cfg: List[Dict[str, Any]
             total = len(items)
             passed = sum(1 for it in items if bool(it.get("passed")) is True)
             value = (passed / total) if total else None
-            res.update({
-                "source_measure": src,
-                "value": value,
-                "runs": total,
-                "passed_runs": passed,
-            })
+            res.update(
+                {
+                    "source_measure": src,
+                    "value": value,
+                    "runs": total,
+                    "passed_runs": passed,
+                }
+            )
             target = mc.get("target")
             if target is not None:
                 res["target"] = target
@@ -68,7 +74,9 @@ def compute_metrics(runs: List[Dict[str, Any]], metrics_cfg: List[Dict[str, Any]
                 res["meets_target"] = bool(meets) if meets is not None else False
 
         elif mtype == "rate":
-            src = mc.get("from_measure") or mc.get("source_measure") or mc.get("measure")
+            src = (
+                mc.get("from_measure") or mc.get("source_measure") or mc.get("measure")
+            )
             num_path = mc.get("numerator")
             den_path = mc.get("denominator")
             items = per_measure.get(src, [])
@@ -85,12 +93,14 @@ def compute_metrics(runs: List[Dict[str, Any]], metrics_cfg: List[Dict[str, Any]
                 except Exception:
                     continue
             value = (num_sum / den_sum) if den_sum else None
-            res.update({
-                "source_measure": src,
-                "value": value,
-                "numerator_sum": num_sum,
-                "denominator_sum": den_sum,
-            })
+            res.update(
+                {
+                    "source_measure": src,
+                    "value": value,
+                    "numerator_sum": num_sum,
+                    "denominator_sum": den_sum,
+                }
+            )
             target = mc.get("target")
             if target is not None:
                 res["target"] = target
@@ -103,4 +113,3 @@ def compute_metrics(runs: List[Dict[str, Any]], metrics_cfg: List[Dict[str, Any]
         results.append(res)
 
     return results
-

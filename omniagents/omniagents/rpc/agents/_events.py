@@ -11,7 +11,7 @@ def new_item_event(event_name: str, item: Any) -> RunItemStreamEvent:
 
 class ToolCallItem:
     """Represents a tool call for UI display."""
-    
+
     def __init__(self, name: str, arguments: str, call_id: str | None = None):
         self.type = "tool_call_item"
         self.name = name
@@ -21,10 +21,10 @@ class ToolCallItem:
     def to_input_item(self):
         """Convert to input format for conversation history."""
         base = {
-            "name": self.name, 
-            "arguments": self.arguments, 
-            "role": "assistant", 
-            "type": "tool_call"
+            "name": self.name,
+            "arguments": self.arguments,
+            "role": "assistant",
+            "type": "tool_call",
         }
         if self.call_id:
             base["call_id"] = self.call_id
@@ -33,7 +33,7 @@ class ToolCallItem:
 
 class ToolCallOutputItem:
     """Represents tool output for UI display, matching OpenAI SDK format."""
-    
+
     def __init__(self, name: str, output: str, call_id: str | None = None):
         self.type = "tool_call_output_item"
         self.name = name
@@ -42,16 +42,16 @@ class ToolCallOutputItem:
         self.raw_item = {
             "call_id": call_id,
             "output": output,
-            "type": "function_call_output"
+            "type": "function_call_output",
         }
 
     def to_input_item(self):
         """Convert to input format for conversation history."""
         base = {
-            "name": self.name, 
-            "output": self.output, 
-            "role": "assistant", 
-            "type": "tool_call_output"
+            "name": self.name,
+            "output": self.output,
+            "role": "assistant",
+            "type": "tool_call_output",
         }
         if self.raw_item.get("call_id"):
             base["call_id"] = self.raw_item["call_id"]
@@ -60,18 +60,14 @@ class ToolCallOutputItem:
 
 class MessageOutputItem:
     """Represents assistant message output."""
-    
+
     def __init__(self, content: str):
         # Import here to avoid heavy cost at module load
         from openai.types.responses import ResponseOutputText, ResponseOutputMessage
         import uuid
 
         # Build minimal valid OpenAI response objects so ItemHelpers works
-        text_part = ResponseOutputText(
-            annotations=[], 
-            text=content, 
-            type="output_text"
-        )
+        text_part = ResponseOutputText(annotations=[], text=content, type="output_text")
         message = ResponseOutputMessage(
             id=uuid.uuid4().hex,
             content=[text_part],
@@ -86,8 +82,8 @@ class MessageOutputItem:
     def to_input_item(self):
         """Convert to model input format (simple assistant message)."""
         return {
-            "role": "assistant", 
-            "content": ItemHelpers.extract_last_text(self.raw_item) or ""
+            "role": "assistant",
+            "content": ItemHelpers.extract_last_text(self.raw_item) or "",
         }
 
 
@@ -95,24 +91,20 @@ def map_notification_to_event(method: str, payload: Dict[str, Any]):
     """Map JSON-RPC notification to StreamEvent."""
     if method == "tool_called":
         item = ToolCallItem(
-            payload.get("tool"), 
-            payload.get("input", "{}"), 
-            payload.get("call_id")
+            payload.get("tool"), payload.get("input", "{}"), payload.get("call_id")
         )
         return new_item_event("tool_called", item)
-    
+
     elif method == "tool_result":
         item = ToolCallOutputItem(
-            payload.get("tool"), 
-            payload.get("output", ""), 
-            payload.get("call_id")
+            payload.get("tool"), payload.get("output", ""), payload.get("call_id")
         )
         return new_item_event("tool_output", item)
-    
+
     elif method == "message_output":
         item = MessageOutputItem(payload.get("content", ""))
         return new_item_event("message_output_created", item)
-    
+
     elif method == "token":
         # Wrap usage (token) update as a stream event
         # Consumers can check event.name == "token_usage" and inspect event.item (payload dict)

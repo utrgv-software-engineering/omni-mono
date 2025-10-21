@@ -21,6 +21,7 @@ def get_current_time() -> str:
     """Return the current time as a string."""
     return datetime.now().strftime("%H:%M:%S")
 
+
 @function_tool
 def flip_coin() -> str:
     sleep(5)
@@ -42,13 +43,11 @@ def main() -> None:
     agentio.init(
         project="basic_python_demo",
         name="tool_demo",
-        resume="never"  # Always create a new trace
+        resume="never",  # Always create a new trace
     )
-    
+
     runner = Runner.from_agent(
-        build_agent(), 
-        welcome_text="Ask me the time or to flip a coin!", 
-        safe=False
+        build_agent(), welcome_text="Ask me the time or to flip a coin!", safe=False
     )
     runner.main(default_mode="cli")
 

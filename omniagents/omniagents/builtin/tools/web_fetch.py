@@ -4,6 +4,7 @@ from typing import Any, Optional
 from omniagents.core.tools import rich_function_tool, RichToolOutput
 from agents.run_context import RunContextWrapper
 
+
 @rich_function_tool
 def web_fetch(
     ctx: RunContextWrapper[Any],
@@ -12,17 +13,17 @@ def web_fetch(
 ) -> RichToolOutput:
     """
     Fetches content from a given URL and optionally extracts text content.
-    
+
     Args:
         url: The URL to fetch content from.
         extract_text: Whether to extract and return text content (true) or return raw HTML (false).
-    
+
     Returns:
         Dictionary with status, content, and metadata.
-    
+
     Usage:
         This function requires all parameters to be explicitly provided.
-        
+
     Example:
         web_fetch(
             url="https://example.com",
@@ -35,9 +36,9 @@ def web_fetch(
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
-        
+
         response = requests.get(url, headers=headers, timeout=10)
-        
+
         if response.status_code != 200:
             error_msg = f"Request failed with status code {response.status_code}"
             ui_metadata = {
@@ -49,76 +50,79 @@ def web_fetch(
                 "metadata": {
                     "error_type": "http_error",
                     "status_code": response.status_code,
-                    "url": url
-                }
+                    "url": url,
+                },
             }
             return RichToolOutput(error_msg, ui_metadata)
-        
+
         # Get the content type from headers
-        content_type = response.headers.get('Content-Type', '')
-        
+        content_type = response.headers.get("Content-Type", "")
+
         # Check if response is HTML
-        is_html = 'text/html' in content_type.lower()
-        
+        is_html = "text/html" in content_type.lower()
+
         result = {
             "status": "success",
             "url": url,
             "content_type": content_type,
             "size": len(response.content),
-            "headers": dict(response.headers)
+            "headers": dict(response.headers),
         }
-        
+
         # Process HTML content if requested and content is HTML
         if extract_text and is_html:
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
+            soup = BeautifulSoup(response.text, "html.parser")
+
             # Extract title
-            title = soup.title.string if soup.title else ''
+            title = soup.title.string if soup.title else ""
             result["title"] = title
-            
+
             # Remove script and style elements
             for script in soup(["script", "style"]):
                 script.extract()
-            
+
             # Get text content
-            text_content = soup.get_text(separator='\n', strip=True)
-            
+            text_content = soup.get_text(separator="\n", strip=True)
+
             # Clean up text: remove excessive newlines
-            lines = [line.strip() for line in text_content.split('\n')]
-            text_content = '\n'.join(line for line in lines if line)
-            
+            lines = [line.strip() for line in text_content.split("\n")]
+            text_content = "\n".join(line for line in lines if line)
+
             result["text_content"] = text_content
-            
+
             # Extract metadata
             meta_tags = {}
-            for meta in soup.find_all('meta'):
-                name = meta.get('name') or meta.get('property')
-                content = meta.get('content')
+            for meta in soup.find_all("meta"):
+                name = meta.get("name") or meta.get("property")
+                content = meta.get("content")
                 if name and content:
                     meta_tags[name] = content
-            
+
             result["meta_tags"] = meta_tags
-            
+
             # Extract links
             links = []
-            for link in soup.find_all('a', href=True):
-                href = link['href']
+            for link in soup.find_all("a", href=True):
+                href = link["href"]
                 link_text = link.get_text(strip=True)
-                if href and not href.startswith('#') and not href.startswith('javascript:'):
-                    links.append({
-                        "href": href,
-                        "text": link_text if link_text else None
-                    })
-            
+                if (
+                    href
+                    and not href.startswith("#")
+                    and not href.startswith("javascript:")
+                ):
+                    links.append(
+                        {"href": href, "text": link_text if link_text else None}
+                    )
+
             result["links"] = links[:100]  # Limit to 100 links
-            
+
             # For LLM output, provide the extracted text
             llm_output = text_content
-            
+
             # Create preview for UI
             preview = text_content[:500]
             truncated = len(text_content) > 500
-            
+
             ui_metadata = {
                 "value": text_content,
                 "display_type": "web_content",
@@ -132,13 +136,15 @@ def web_fetch(
                     "size": len(response.content),
                     "meta_tags": meta_tags,
                     "link_count": len(links),
-                    "extracted_text": True
-                }
+                    "extracted_text": True,
+                },
             }
         else:
             # Return raw HTML content
-            llm_output = response.text[:5000] if len(response.text) > 5000 else response.text
-            
+            llm_output = (
+                response.text[:5000] if len(response.text) > 5000 else response.text
+            )
+
             ui_metadata = {
                 "value": response.text,
                 "display_type": "web_content",
@@ -149,12 +155,12 @@ def web_fetch(
                     "url": url,
                     "content_type": content_type,
                     "size": len(response.content),
-                    "extracted_text": False
-                }
+                    "extracted_text": False,
+                },
             }
-        
+
         return RichToolOutput(llm_output, ui_metadata)
-        
+
     except requests.RequestException as e:
         error_msg = f"Network error occurred: {str(e)}"
         ui_metadata = {
@@ -163,11 +169,7 @@ def web_fetch(
             "summary": "Network error",
             "preview": str(e),
             "truncated": False,
-            "metadata": {
-                "error_type": "network_error",
-                "url": url,
-                "error": str(e)
-            }
+            "metadata": {"error_type": "network_error", "url": url, "error": str(e)},
         }
         return RichToolOutput(error_msg, ui_metadata)
     except Exception as e:
@@ -178,10 +180,6 @@ def web_fetch(
             "summary": "Fetch error",
             "preview": str(e),
             "truncated": False,
-            "metadata": {
-                "error_type": "fetch_error",
-                "url": url,
-                "error": str(e)
-            }
+            "metadata": {"error_type": "fetch_error", "url": url, "error": str(e)},
         }
         return RichToolOutput(error_msg, ui_metadata)

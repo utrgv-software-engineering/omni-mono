@@ -225,8 +225,11 @@ def _collect_base_eval(paths: List[Path]) -> Dict[str, Any]:
     return result
 
 
-def _filter_scenarios(items: List[Dict[str, Any]], select: str | None, exclude: str | None) -> List[Dict[str, Any]]:
+def _filter_scenarios(
+    items: List[Dict[str, Any]], select: str | None, exclude: str | None
+) -> List[Dict[str, Any]]:
     import fnmatch
+
     sel = [s.strip() for s in (select or "").split(",") if s.strip()]
     exc = [s.strip() for s in (exclude or "").split(",") if s.strip()]
     if not sel and not exc:
@@ -263,15 +266,24 @@ def _filter_scenarios(items: List[Dict[str, Any]], select: str | None, exclude: 
     return [items[i] for i in range(len(items)) if i in keep]
 
 
-def compile_project(project_path: str, select: str | None = None, exclude: str | None = None, agent_key: Optional[str] = None) -> Tuple[Path, Dict[str, Any]]:
+def compile_project(
+    project_path: str,
+    select: str | None = None,
+    exclude: str | None = None,
+    agent_key: Optional[str] = None,
+) -> Tuple[Path, Dict[str, Any]]:
     p = Path(project_path).resolve()
     if p.is_file() and p.name != "project.yml":
-        raise FileNotFoundError(f"Expected 'project.yml' but got '{p.name}'. Rename to project.yml.")
+        raise FileNotFoundError(
+            f"Expected 'project.yml' but got '{p.name}'. Rename to project.yml."
+        )
     base_dir = p.parent if p.is_file() else p
     if not p.is_file():
         proj_file = base_dir / "project.yml"
         if not proj_file.is_file():
-            raise FileNotFoundError(f"Could not find project.yml in directory: {base_dir}")
+            raise FileNotFoundError(
+                f"Could not find project.yml in directory: {base_dir}"
+            )
     proj = _read_yaml(p if p.is_file() else (base_dir / "project.yml")) or {}
     paths = proj.get("paths") or {}
     eval_dir = base_dir / str(paths.get("evaluations", "evaluations"))
@@ -279,7 +291,9 @@ def compile_project(project_path: str, select: str | None = None, exclude: str |
     target_dir = base_dir / str(paths.get("target", "target"))
     tools_dir = base_dir / str(paths.get("tools", "tools"))
     guardrails_dir = base_dir / str(paths.get("guardrails", "guardrails"))
-    server_functions_dir = base_dir / str(paths.get("server_functions", "server_functions"))
+    server_functions_dir = base_dir / str(
+        paths.get("server_functions", "server_functions")
+    )
 
     def _uniq(ps: List[Path]) -> List[Path]:
         seen = set()
@@ -295,31 +309,44 @@ def compile_project(project_path: str, select: str | None = None, exclude: str |
             out.append(x)
         return out
 
-    scenarios_sources = _uniq([
-        base_dir / "evaluations" / "scenarios.yml",
-        eval_dir / "scenarios.yml",
-        eval_dir / "scenarios",
-    ])
-    judges_sources = _uniq([
-        eval_dir / "judges",
-    ])
-    optimizers_sources = _uniq([
-        eval_dir / "optimizers",
-    ])
-    metrics_sources = _uniq([
-        base_dir / "evaluations" / "metrics.yml",
-        eval_dir / "metrics.yml",
-        eval_dir / "metrics",
-    ])
-    base_eval_sources = _uniq([
-        base_dir / "evaluations" / "evaluation.yml",
-        eval_dir / "evaluation.yml",
-        eval_dir,
-    ])
+    scenarios_sources = _uniq(
+        [
+            base_dir / "evaluations" / "scenarios.yml",
+            eval_dir / "scenarios.yml",
+            eval_dir / "scenarios",
+        ]
+    )
+    judges_sources = _uniq(
+        [
+            eval_dir / "judges",
+        ]
+    )
+    optimizers_sources = _uniq(
+        [
+            eval_dir / "optimizers",
+        ]
+    )
+    metrics_sources = _uniq(
+        [
+            base_dir / "evaluations" / "metrics.yml",
+            eval_dir / "metrics.yml",
+            eval_dir / "metrics",
+        ]
+    )
+    base_eval_sources = _uniq(
+        [
+            base_dir / "evaluations" / "evaluation.yml",
+            eval_dir / "evaluation.yml",
+            eval_dir,
+        ]
+    )
     # Resolve agent path via discovery using runtime
     from .runtime import load_project, resolve_agent
+
     prj = load_project(str(p))
-    _key, agent_path = resolve_agent(prj, agent_key=(str(agent_key) if agent_key else None))
+    _key, agent_path = resolve_agent(
+        prj, agent_key=(str(agent_key) if agent_key else None)
+    )
 
     base_eval = _collect_base_eval([s for s in base_eval_sources if s.exists()])
     scenarios = _collect_scenarios([s for s in scenarios_sources if s.exists()])
@@ -353,13 +380,15 @@ def compile_project(project_path: str, select: str | None = None, exclude: str |
 
     target_dir.mkdir(parents=True, exist_ok=True)
     compiled_yaml = target_dir / "evaluation_compiled.yml"
-    compiled_yaml.write_text(yaml.safe_dump(agent_out, sort_keys=False), encoding="utf-8")
+    compiled_yaml.write_text(
+        yaml.safe_dump(agent_out, sort_keys=False), encoding="utf-8"
+    )
 
     try:
         instr = agent_cfg.get("instructions_file")
         if isinstance(instr, str) and instr.strip():
             src_instr = (agent_path.parent / instr).resolve()
-            dst_instr = (target_dir / Path(instr).name)
+            dst_instr = target_dir / Path(instr).name
             if src_instr.is_file():
                 if not (dst_instr.exists() or dst_instr.is_symlink()):
                     try:
@@ -371,7 +400,7 @@ def compile_project(project_path: str, select: str | None = None, exclude: str |
 
     try:
         src_tools = (agent_path.parent / "tools").resolve()
-        dst_tools = (target_dir / "tools")
+        dst_tools = target_dir / "tools"
         if src_tools.is_dir():
             if not (dst_tools.exists() or dst_tools.is_symlink()):
                 try:
@@ -380,7 +409,9 @@ def compile_project(project_path: str, select: str | None = None, exclude: str |
                     shutil.copytree(src_tools, dst_tools)
         else:
             # If agent-local tools not present, link project tools to standard 'tools' for loader compatibility
-            if tools_dir.is_dir() and not (dst_tools.exists() or dst_tools.is_symlink()):
+            if tools_dir.is_dir() and not (
+                dst_tools.exists() or dst_tools.is_symlink()
+            ):
                 try:
                     dst_tools.symlink_to(tools_dir.resolve())
                 except Exception:
@@ -394,7 +425,7 @@ def compile_project(project_path: str, select: str | None = None, exclude: str |
     # Also link project-level shared assets if present
     try:
         if tools_dir.is_dir():
-            dst = (target_dir / "project_tools")
+            dst = target_dir / "project_tools"
             if not (dst.exists() or dst.is_symlink()):
                 try:
                     dst.symlink_to(tools_dir.resolve())
@@ -405,7 +436,7 @@ def compile_project(project_path: str, select: str | None = None, exclude: str |
 
     try:
         if guardrails_dir.is_dir():
-            dst = (target_dir / "guardrails")
+            dst = target_dir / "guardrails"
             if not (dst.exists() or dst.is_symlink()):
                 try:
                     dst.symlink_to(guardrails_dir.resolve())
@@ -416,7 +447,7 @@ def compile_project(project_path: str, select: str | None = None, exclude: str |
 
     try:
         if server_functions_dir.is_dir():
-            dst = (target_dir / "server_functions")
+            dst = target_dir / "server_functions"
             if not (dst.exists() or dst.is_symlink()):
                 try:
                     dst.symlink_to(server_functions_dir.resolve())
@@ -426,9 +457,9 @@ def compile_project(project_path: str, select: str | None = None, exclude: str |
         pass
 
     try:
-        src_measures = (eval_dir / "measures.py")
+        src_measures = eval_dir / "measures.py"
         if src_measures.is_file():
-            dst_measures = (target_dir / "measures.py")
+            dst_measures = target_dir / "measures.py"
             if not (dst_measures.exists() or dst_measures.is_symlink()):
                 try:
                     dst_measures.symlink_to(src_measures.resolve())
@@ -440,12 +471,15 @@ def compile_project(project_path: str, select: str | None = None, exclude: str |
     # Agents manifest for runtime tooling
     try:
         from .runtime import load_project
+
         prj = load_project(str(p))
         manifest = {
             "entrypoint": prj.entrypoint,
             "agents": [{"key": k, "file": str(v)} for k, v in prj.agents_map.items()],
         }
-        (target_dir / "agents.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        (target_dir / "agents.json").write_text(
+            json.dumps(manifest, indent=2), encoding="utf-8"
+        )
     except Exception:
         pass
 
@@ -459,6 +493,8 @@ def compile_project(project_path: str, select: str | None = None, exclude: str |
             "metrics": [m.get("name") or m.get("label") for m in metrics],
         },
     }
-    (target_dir / "graph.json").write_text(json.dumps(graph, indent=2), encoding="utf-8")
+    (target_dir / "graph.json").write_text(
+        json.dumps(graph, indent=2), encoding="utf-8"
+    )
 
     return compiled_yaml, graph

@@ -6,7 +6,7 @@ from .server import JsonRpcEndpoint, JsonRpcChannel
 
 __all__ = [
     "RpcMethodsBase",
-    "JsonRpcClient", 
+    "JsonRpcClient",
     "JsonRpcEndpoint",
     "JsonRpcChannel",
 ]

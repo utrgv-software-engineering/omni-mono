@@ -57,7 +57,10 @@ from agents import (  # <-- Imports for default builder
 from openai import AsyncOpenAI  # <-- Import for default builder
 
 # Import SafeAgent components directly as they are part of the core package now
-from omniagents.core.agents.safe import SafeAgent, ApprovalResult  # Added SafeAgent and ApprovalResult
+from omniagents.core.agents.safe import (
+    SafeAgent,
+    ApprovalResult,
+)  # Added SafeAgent and ApprovalResult
 from omniagents.core.debug import Debug
 
 # Use TYPE_CHECKING to avoid circular import issues at runtime
@@ -159,7 +162,7 @@ class AgentApp:
             max_turns=max_turns if max_turns is not None else 20,
             layout=layout,
             project_slug=None,
-            agent_slug=storage_prefix.rstrip('.'),
+            agent_slug=storage_prefix.rstrip("."),
         )
         return cls(spec=spec)
 
@@ -661,18 +664,20 @@ class AgentApp:
         """Create or update the agent instance using unified factory."""
         try:
             # Build unified agent
-            mcp_servers = [self._mcp_server_instance] if self._mcp_server_instance else None
-            
+            mcp_servers = (
+                [self._mcp_server_instance] if self._mcp_server_instance else None
+            )
+
             self.agent_instance = await create_unified_agent(
                 spec=self.spec,
                 settings=self.current_settings,
                 # Pass approval callback unconditionally so prebuilt SafeAgent works even if safe=False
                 approval_callback=self._request_tool_approval,
-                mcp_servers=mcp_servers
+                mcp_servers=mcp_servers,
             )
-            
+
             print(f"Agent instance ready: {type(self.agent_instance)}")
-            
+
         except Exception as e:
             print(f"Error creating agent: {e}")
             self.agent_instance = None
@@ -772,8 +777,10 @@ class AgentApp:
                                 formatted_args = args.get("arguments", "")
                                 metadata = args.get("metadata")
 
-                                approved, always_approve, err_msg = await self._request_tool_approval(
-                                    tool_name, formatted_args, metadata
+                                approved, always_approve, err_msg = (
+                                    await self._request_tool_approval(
+                                        tool_name, formatted_args, metadata
+                                    )
                                 )
 
                                 result_payload = {
@@ -800,7 +807,12 @@ class AgentApp:
 
                         # Send response back (best-effort)
                         try:
-                            await self._send_client_response(req_id, ok=ok, result=result_payload, error=error_payload)
+                            await self._send_client_response(
+                                req_id,
+                                ok=ok,
+                                result=result_payload,
+                                error=error_payload,
+                            )
                         except Exception as _resp_err:
                             print(f"Error sending client_response: {_resp_err}")
 
@@ -816,7 +828,9 @@ class AgentApp:
                                 it_repr = json.dumps(item)[:200]
                             except Exception:
                                 it_repr = str(item)[:200]
-                            print(f"[DEBUG] Skipping non-item payload event: {getattr(event, 'name', '')} item={it_repr}")
+                            print(
+                                f"[DEBUG] Skipping non-item payload event: {getattr(event, 'name', '')} item={it_repr}"
+                            )
                         continue
 
                     final_items.append(item)  # Store raw items for conversation history
@@ -1389,12 +1403,24 @@ class AgentApp:
 
         # Fallback to local RPC client (LocalAgent)
         try:
-            if hasattr(self.agent_instance, "_rpc_client") and self.agent_instance._rpc_client:
-                await self.agent_instance._rpc_client.other.client_functions(**capabilities)
+            if (
+                hasattr(self.agent_instance, "_rpc_client")
+                and self.agent_instance._rpc_client
+            ):
+                await self.agent_instance._rpc_client.other.client_functions(
+                    **capabilities
+                )
         except Exception:
             pass
 
-    async def _send_client_response(self, request_id: str | None, *, ok: bool, result: dict | None = None, error: dict | None = None) -> None:
+    async def _send_client_response(
+        self,
+        request_id: str | None,
+        *,
+        ok: bool,
+        result: dict | None = None,
+        error: dict | None = None,
+    ) -> None:
         """Send client_response back to the server (remote or local)."""
         if not request_id:
             return
@@ -1410,7 +1436,10 @@ class AgentApp:
 
         # Fallback to local RPC client (LocalAgent)
         try:
-            if hasattr(self.agent_instance, "_rpc_client") and self.agent_instance._rpc_client:
+            if (
+                hasattr(self.agent_instance, "_rpc_client")
+                and self.agent_instance._rpc_client
+            ):
                 await self.agent_instance._rpc_client.other.client_response(**payload)
         except Exception:
             pass
@@ -1453,7 +1482,7 @@ class AgentApp:
     async def _update_mcp_connection(self):
         """Connects, disconnects, or updates the MCP server instance based on settings."""
         prev_status = self._mcp_connection_status
-        
+
         if not self.spec.uses_mcp:
             if self._mcp_server_instance:  # Disconnect if MCP was used but now disabled
                 await self._disconnect_mcp()
@@ -1554,11 +1583,13 @@ class AgentApp:
                 # For now, just show error. Agent build/run will handle missing MCP.
             finally:
                 self._update_mcp_ui_indicator()  # Update UI with final status
-        
+
         # If MCP status changed and we have an agent, rebuild it
-        if (self._mcp_connection_status != prev_status and 
-            self.agent_instance is not None and
-            prev_status != MCPConnectionStatus.UNKNOWN):
+        if (
+            self._mcp_connection_status != prev_status
+            and self.agent_instance is not None
+            and prev_status != MCPConnectionStatus.UNKNOWN
+        ):
             print("MCP connection status changed, rebuilding agent...")
             try:
                 await self._create_or_update_agent()

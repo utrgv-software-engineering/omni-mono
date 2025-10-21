@@ -22,6 +22,7 @@ def server_function(
 ) -> Callable:
     def _jsonify(obj: Any) -> Any:
         import dataclasses
+
         if obj is None:
             return None
         if isinstance(obj, (str, int, float, bool)):
@@ -44,6 +45,7 @@ def server_function(
                 pass
         try:
             import json as _json
+
             _json.dumps(obj)
             return obj
         except Exception:
@@ -76,6 +78,7 @@ def server_function(
             try:
                 from pydantic import BaseModel, Field, create_model
                 from pydantic.fields import FieldInfo
+
                 fields: dict[str, Any] = {}
                 for name_, p in filtered_params:
                     payload_names.append(name_)
@@ -97,11 +100,20 @@ def server_function(
                         else:
                             fields[name_] = (ann, Field(default=default))
                 if fields:
-                    Model = create_model(f"{fn_name}_args", __base__=BaseModel, **fields)
+                    Model = create_model(
+                        f"{fn_name}_args", __base__=BaseModel, **fields
+                    )
                     schema = Model.model_json_schema()
                 else:
-                    schema = {"type": "object", "properties": {}, "required": [], "additionalProperties": False}
-                auto_params_schema = ensure_strict_json_schema(schema) if strict else schema
+                    schema = {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                        "additionalProperties": False,
+                    }
+                auto_params_schema = (
+                    ensure_strict_json_schema(schema) if strict else schema
+                )
             except Exception:
                 auto_params_schema = None
 
@@ -109,6 +121,7 @@ def server_function(
         if result_schema is None:
             try:
                 from pydantic import TypeAdapter
+
                 ret_ann = sig.return_annotation
                 if ret_ann is not inspect._empty:
                     auto_result_schema = TypeAdapter(ret_ann).json_schema()
@@ -148,7 +161,15 @@ def server_function(
         if description is not None:
             setattr(f, "_server_function_description", description)
         if params_schema is not None:
-            setattr(f, "_server_function_params_schema", params_schema if not strict else ensure_strict_json_schema(params_schema))
+            setattr(
+                f,
+                "_server_function_params_schema",
+                (
+                    params_schema
+                    if not strict
+                    else ensure_strict_json_schema(params_schema)
+                ),
+            )
         elif auto_params_schema is not None:
             setattr(f, "_server_function_params_schema", auto_params_schema)
         if result_schema is not None:
@@ -164,13 +185,17 @@ def server_function(
     return decorator(func)
 
 
-def discover_server_functions_in_dir(base_dir: str = "server_functions") -> Dict[str, dict]:
+def discover_server_functions_in_dir(
+    base_dir: str = "server_functions",
+) -> Dict[str, dict]:
     discovered: Dict[str, dict] = {}
     base_path = Path(base_dir).resolve()
 
     if not base_path.is_dir():
         if Debug.enabled():
-            print(f"Warning: Server function directory '{base_dir}' not found or not a directory.")
+            print(
+                f"Warning: Server function directory '{base_dir}' not found or not a directory."
+            )
         return discovered
 
     if Debug.enabled():
@@ -203,7 +228,9 @@ def discover_server_functions_in_dir(base_dir: str = "server_functions") -> Dict
             try:
                 module = importlib.import_module(module_path)
             except Exception as e:
-                print(f"ERROR: Could not import module '{module_path}' from '{filepath}': {e}")
+                print(
+                    f"ERROR: Could not import module '{module_path}' from '{filepath}': {e}"
+                )
                 continue
 
             for name_, obj in inspect.getmembers(module):
@@ -212,9 +239,15 @@ def discover_server_functions_in_dir(base_dir: str = "server_functions") -> Dict
                     meta = {
                         "func": obj,
                         "name": fn_name,
-                        "description": getattr(obj, "_server_function_description", None),
-                        "params_schema": getattr(obj, "_server_function_params_schema", None),
-                        "result_schema": getattr(obj, "_server_function_result_schema", None),
+                        "description": getattr(
+                            obj, "_server_function_description", None
+                        ),
+                        "params_schema": getattr(
+                            obj, "_server_function_params_schema", None
+                        ),
+                        "result_schema": getattr(
+                            obj, "_server_function_result_schema", None
+                        ),
                         "on_invoke": getattr(obj, "_server_function_on_invoke", None),
                         "strict": getattr(obj, "_server_function_strict", None),
                     }
@@ -234,8 +267,18 @@ def discover_server_functions_in_dir(base_dir: str = "server_functions") -> Dict
     return discovered
 
 
-def build_server_functions_registrar(functions: List[Callable] | Dict[str, Callable] | Dict[str, dict]):
-    def _extract(name_key: str, value: Any) -> tuple[str, Callable, Optional[str], Optional[dict], Optional[dict], Optional[Callable], Optional[bool]]:
+def build_server_functions_registrar(
+    functions: List[Callable] | Dict[str, Callable] | Dict[str, dict],
+):
+    def _extract(name_key: str, value: Any) -> tuple[
+        str,
+        Callable,
+        Optional[str],
+        Optional[dict],
+        Optional[dict],
+        Optional[Callable],
+        Optional[bool],
+    ]:
         if isinstance(value, dict) and "func" in value:
             return (
                 value.get("name") or name_key,
@@ -247,7 +290,11 @@ def build_server_functions_registrar(functions: List[Callable] | Dict[str, Calla
                 value.get("strict"),
             )
         if callable(value):
-            n = getattr(value, "_server_function_name", None) or name_key or value.__name__
+            n = (
+                getattr(value, "_server_function_name", None)
+                or name_key
+                or value.__name__
+            )
             desc = getattr(value, "_server_function_description", None)
             ps = getattr(value, "_server_function_params_schema", None)
             rs = getattr(value, "_server_function_result_schema", None)
@@ -256,7 +303,17 @@ def build_server_functions_registrar(functions: List[Callable] | Dict[str, Calla
             return (n, value, desc, ps, rs, oi, st)
         raise TypeError("Unsupported server function value type")
 
-    items: List[tuple[str, Callable, Optional[str], Optional[dict], Optional[dict], Optional[Callable], Optional[bool]]] = []
+    items: List[
+        tuple[
+            str,
+            Callable,
+            Optional[str],
+            Optional[dict],
+            Optional[dict],
+            Optional[Callable],
+            Optional[bool],
+        ]
+    ] = []
     if isinstance(functions, dict):
         for k, v in functions.items():
             items.append(_extract(k, v))
@@ -268,7 +325,13 @@ def build_server_functions_registrar(functions: List[Callable] | Dict[str, Calla
         for name_, fn, desc, ps, rs, oi, st in items:
             try:
                 service.register_server_function(
-                    name_, fn, description=desc, params_schema=ps, result_schema=rs, on_invoke=oi, strict=st
+                    name_,
+                    fn,
+                    description=desc,
+                    params_schema=ps,
+                    result_schema=rs,
+                    on_invoke=oi,
+                    strict=st,
                 )
             except Exception as e:
                 print(f"Warning: Failed to register server function '{name_}': {e}")

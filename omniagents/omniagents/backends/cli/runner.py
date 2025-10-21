@@ -19,7 +19,9 @@ from omniagents.core.debug import Debug
 ApprovalResult = Tuple[bool, bool, Optional[str]]
 
 
-async def cli_approval_callback(tool_name: str, formatted_args: str, metadata: dict | None = None) -> ApprovalResult:
+async def cli_approval_callback(
+    tool_name: str, formatted_args: str, metadata: dict | None = None
+) -> ApprovalResult:
     """
     CLI implementation for tool approval.
     Returns a tuple: (approved: bool, always_approve: bool, error_message: Optional[str])
@@ -36,7 +38,7 @@ async def cli_approval_callback(tool_name: str, formatted_args: str, metadata: d
         except Exception:
             pass
     print("  ⎿  Approval Required")
-    print(f"\n⚠ Do you want to allow tool '{tool_name}' with args: {formatted_args}?" )
+    print(f"\n⚠ Do you want to allow tool '{tool_name}' with args: {formatted_args}?")
     print("  1. Yes")
     print("  2. Yes, and don't ask again for this session")
     print("  3. No, cancel this tool call")
@@ -60,11 +62,7 @@ async def cli_approval_callback(tool_name: str, formatted_args: str, metadata: d
             return False, False, "Operation cancelled by user"
 
 
-async def run_cli(
-    config_path: str | None = None,
-    args=None,
-    spec=None
-) -> None:
+async def run_cli(config_path: str | None = None, args=None, spec=None) -> None:
     """
     Run an OmniAgents agent in CLI mode using the given YAML config and command-line args.
     """
@@ -74,17 +72,18 @@ async def run_cli(
         load_dotenv()
     except Exception:
         pass
-    
+
     # If we have a config path, also try loading .env from the config's directory tree
     # This handles the case where the user runs the command from a different directory
     if config_path:
         from pathlib import Path
+
         config_dir = Path(config_path).resolve().parent
-        
+
         # Walk up from config directory to find .env file
         current = config_dir
         while current != current.parent:
-            env_file = current / '.env'
+            env_file = current / ".env"
             if env_file.exists():
                 try:
                     load_dotenv(env_file, override=True)
@@ -109,7 +108,7 @@ async def run_cli(
     # Initialize debug system if not already initialized
     if args is not None:
         Debug.init(cli_flag=getattr(args, "debug", False))
-    
+
     # Apply CLI overrides if args provided (strict flags)
     if args is not None:
         approvals = getattr(args, "approvals", None)
@@ -139,7 +138,9 @@ async def run_cli(
     if spec.uses_mcp:
         mcp_url = settings.get(spec.mcp_url_setting_key)
         if not mcp_url:
-            print(f"Warning: MCP URL not set (environment '{spec.mcp_url_setting_key.upper()}').")
+            print(
+                f"Warning: MCP URL not set (environment '{spec.mcp_url_setting_key.upper()}')."
+            )
             mcp_url = ""
         mcp_params = {
             "url": mcp_url,
@@ -162,16 +163,16 @@ async def run_cli(
     async def _chat_loop(mcp_server):
         # Build unified agent using factory
         mcp_list = [mcp_server] if mcp_server else None
-        
+
         # Pass approval callback unconditionally so prebuilt SafeAgent works even if safe=False
         approval_cb = approval_callback
-            
+
         # Create agent through unified factory
         agent = await create_unified_agent(
             spec=spec,
             settings=settings,
             approval_callback=approval_cb,
-            mcp_servers=mcp_list
+            mcp_servers=mcp_list,
         )
 
         from omniagents.core.tools.artifacts import set_artifact_callback
@@ -233,7 +234,9 @@ async def run_cli(
                                 it_repr = json.dumps(item)[:200]
                             except Exception:
                                 it_repr = str(item)[:200]
-                            print(f"[DEBUG] Skipping non-item payload event: {event.type} item={it_repr}")
+                            print(
+                                f"[DEBUG] Skipping non-item payload event: {event.type} item={it_repr}"
+                            )
                         continue
                     # Tool call: always display in CLI
                     if item.type == "tool_call_item":
@@ -248,8 +251,10 @@ async def run_cli(
                             )
                         except Exception:
                             formatted_args = args_str
-                    # Emit colored, bold tool call, with leading newline for spacing
-                        print(f"\n\033[36m⏺\033[0m \033[1m{name}\033[0m({formatted_args})")
+                        # Emit colored, bold tool call, with leading newline for spacing
+                        print(
+                            f"\n\033[36m⏺\033[0m \033[1m{name}\033[0m({formatted_args})"
+                        )
                     # Tool output: optionally debug-print
                     elif item.type == "tool_call_output_item":
                         if Debug.enabled():
@@ -261,7 +266,9 @@ async def run_cli(
                             print(f"[DEBUG] Message building: {message_output}")
                     # Other events: debug only
                     elif Debug.enabled():
-                        print(f"[DEBUG] Event: {event.type}, Item: {getattr(item, 'type', None)}")
+                        print(
+                            f"[DEBUG] Event: {event.type}, Item: {getattr(item, 'type', None)}"
+                        )
 
             # Append assistant and tool items to conversation
             for item in final_items:
@@ -270,7 +277,7 @@ async def run_cli(
                     if inp:
                         conversation.append(inp)
                         local_session.append_message(inp)
-            
+
             # Display response
             print(f"\n⏺ {message_output}\n")
 

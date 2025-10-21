@@ -11,9 +11,9 @@ logger = logging.getLogger(__name__)
 
 def setup_tracing(tracing_config: Optional[Dict[str, Any]]) -> None:
     """Setup tracing based on configuration.
-    
+
     Defaults to OpenAI SDK's default behavior (sending traces to OpenAI).
-    
+
     Args:
         tracing_config: Tracing configuration from YAML or None for defaults.
             Expected keys include:
@@ -30,10 +30,10 @@ def setup_tracing(tracing_config: Optional[Dict[str, Any]]) -> None:
     if not tracing_config:
         # No tracing config - keep SDK's default behavior
         return
-    
-    provider = (tracing_config.get('provider') or 'default').lower()
-    
-    if provider == 'default':
+
+    provider = (tracing_config.get("provider") or "default").lower()
+
+    if provider == "default":
         # Keep SDK's default behavior (traces go to OpenAI)
         logger.debug("Using default OpenAI tracing")
         return
@@ -59,12 +59,14 @@ def setup_tracing(tracing_config: Optional[Dict[str, Any]]) -> None:
         if tracing_module is None:
             logger.warning("Studio tracing not available, using default OpenAI tracing")
             if errors:
-                print("⚠️  OmniAgents Studio tracing is not installed. Install with: pip install omniagents[studio]")
+                print(
+                    "⚠️  OmniAgents Studio tracing is not installed. Install with: pip install omniagents[studio]"
+                )
             return
 
-        project = tracing_config.get('project', 'omniagents')
-        name = tracing_config.get('name')
-        settings = tracing_config.get('settings', {})
+        project = tracing_config.get("project", "omniagents")
+        name = tracing_config.get("name")
+        settings = tracing_config.get("settings", {})
 
         try:
             tracing_module.init(
@@ -79,16 +81,17 @@ def setup_tracing(tracing_config: Optional[Dict[str, Any]]) -> None:
             print(f"❌ Error initializing studio tracing: {exc}")
             print("    Falling back to default OpenAI tracing")
 
-    elif provider == 'none':
+    elif provider == "none":
         try:
             from agents import set_trace_processors
+
             set_trace_processors([])
             logger.info("Tracing disabled")
             print("🔇 Tracing disabled")
         except ImportError as e:
             logger.error(f"Failed to disable tracing: {e}")
             print(f"❌ Error disabling tracing: {e}")
-            
+
     else:
         logger.warning(f"Unknown tracing provider: {provider}")
         print(f"⚠️  Unknown tracing provider: {provider}")

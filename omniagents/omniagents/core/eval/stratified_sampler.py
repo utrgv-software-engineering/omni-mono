@@ -28,6 +28,7 @@ class StratifiedBatchSampler:
 
         if isinstance(label_getter, str):
             key = str(label_getter)
+
             def _is_pos(x: Any) -> bool:
                 try:
                     if isinstance(x, dict):
@@ -35,6 +36,7 @@ class StratifiedBatchSampler:
                     return bool(getattr(x, key))
                 except Exception:
                     return False
+
             self._is_pos: Callable[[Any], bool] = _is_pos
         else:
             self._is_pos = label_getter
@@ -58,7 +60,9 @@ class StratifiedBatchSampler:
             return batch
 
         if self.pos_fraction is not None:
-            p = max(self.min_pos_per_batch, round(self.pos_fraction * self.minibatch_size))
+            p = max(
+                self.min_pos_per_batch, round(self.pos_fraction * self.minibatch_size)
+            )
         else:
             p = self.min_pos_per_batch
         p = min(p, self.minibatch_size - self.min_neg_per_batch)
@@ -69,4 +73,3 @@ class StratifiedBatchSampler:
         batch = pos_part + neg_part
         self.rng.shuffle(batch)
         return batch
-

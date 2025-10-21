@@ -23,12 +23,18 @@ def _token_dependency(required_token: Optional[str] = None):  # noqa: D401
             if websocket.query_params.get("token") != required_token:
                 # Close immediately with 4403 (custom) if invalid
                 await websocket.close(code=4403)
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid token")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN, detail="Invalid token"
+                )
 
     return Depends(_verify_token)
 
 
-def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, auth_token: str | None = None) -> FastAPI:  # noqa: D401
+def build_app(
+    config_path: str | None = None,
+    spec: "AgentSpec" | None = None,
+    auth_token: str | None = None,
+) -> FastAPI:  # noqa: D401
     """Return a fully configured FastAPI app exposing the agent via RPC.
 
     Args:
@@ -46,7 +52,9 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
     # ------------------------------------------------------------------
     if spec is None:
         if config_path is None:
-            raise ValueError("Either `config_path` or `spec` must be provided to build_app().")
+            raise ValueError(
+                "Either `config_path` or `spec` must be provided to build_app()."
+            )
         spec = load_agent_spec_from_yaml(config_path)
 
     app = FastAPI()
@@ -66,11 +74,14 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
     endpoint = JsonRpcEndpoint(service)
 
     if auth_token:
-        endpoint.register_route(app, "/ws", dependencies=[_token_dependency(auth_token)])
+        endpoint.register_route(
+            app, "/ws", dependencies=[_token_dependency(auth_token)]
+        )
     else:
         endpoint.register_route(app, "/ws")
 
     if getattr(service, "terminal_manager", None) is not None:
+
         async def _terminal_route(websocket: WebSocket):
             terminal_manager = getattr(service, "terminal_manager", None)
             if terminal_manager is None:
@@ -87,7 +98,9 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
                 await websocket.close(code=4403)
                 return
             try:
-                terminal = await terminal_manager.authorize(session_id, terminal_id, term_token)
+                terminal = await terminal_manager.authorize(
+                    session_id, terminal_id, term_token
+                )
             except Exception:
                 await websocket.close(code=4403)
                 return
@@ -98,17 +111,21 @@ def build_app(config_path: str | None = None, spec: 'AgentSpec' | None = None, a
                     while True:
                         chunk = await terminal_manager.read_output(terminal)
                         if chunk is None:
-                            await websocket.send_json({
-                                "type": "exit",
-                                "terminal_id": terminal_id,
-                                "code": terminal.exit_code,
-                            })
+                            await websocket.send_json(
+                                {
+                                    "type": "exit",
+                                    "terminal_id": terminal_id,
+                                    "code": terminal.exit_code,
+                                }
+                            )
                             break
-                        await websocket.send_json({
-                            "type": "output",
-                            "terminal_id": terminal_id,
-                            "data": terminal_manager.encode_output(chunk),
-                        })
+                        await websocket.send_json(
+                            {
+                                "type": "output",
+                                "terminal_id": terminal_id,
+                                "data": terminal_manager.encode_output(chunk),
+                            }
+                        )
                 except Exception:
                     pass
 

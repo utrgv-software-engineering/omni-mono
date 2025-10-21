@@ -13,6 +13,7 @@ Then run this client:
 
 from omniagents import Runner
 
+
 def main():
     # Only send user_id - server will fetch full user profile
     # This simulates a real-world scenario where:
@@ -21,22 +22,23 @@ def main():
     variables = {
         "user_id": "user_001"  # Server will fetch Alice Johnson's full profile
     }
-    
+
     print(f"Sending minimal variables to remote agent: {variables}")
     print("Server will fetch full user profile based on user_id")
     print("=" * 60)
-    
+
     # Use from_remote with proper 'variables' parameter
     # The server will use its build_context factory to transform these variables
     runner = Runner.from_remote(
         url="ws://0.0.0.0:8000/ws",
         name="Remote Assistant",
         welcome_text="Connected to your personalized assistant!",
-        variables=variables  # Will be sent as 'variables' to server for transformation
+        variables=variables,  # Will be sent as 'variables' to server for transformation
     )
-    
+
     # Run in CLI mode
     runner.main(default_mode="cli")
+
 
 if __name__ == "__main__":
     main()

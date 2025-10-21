@@ -16,7 +16,7 @@ set_default_openai_api("chat_completions")
 agentio.init(
     project="handoff_demo",  # Group traces under this project
     name="multi_agent_handoff",  # Name for this trace
-    resume="never"  # Always create a new trace
+    resume="never",  # Always create a new trace
 )
 
 
@@ -24,6 +24,7 @@ agentio.init(
 def get_current_time() -> str:
     """Return the current time as a string."""
     from datetime import datetime
+
     return datetime.now().strftime("%H:%M:%S")
 
 
@@ -54,6 +55,7 @@ time_agent = Agent(
     model="gpt-4o",
 )
 
+
 # Main agent that hands off to specialists
 def build_agent() -> Agent:
     return Agent(
@@ -74,7 +76,7 @@ def main() -> None:
     runner = Runner.from_agent(
         build_agent(),
         welcome_text="Hi! I can help with general questions, math, or time. What do you need?",
-        safe=True  # Enable SafeAgent mode - automatically wraps ALL agents including handoffs
+        safe=True,  # Enable SafeAgent mode - automatically wraps ALL agents including handoffs
     )
     runner.main(default_mode="cli")
 

@@ -22,16 +22,20 @@ load_dotenv()
 @dataclass
 class UserContext:
     """Typed context for the personal assistant."""
+
     user_id: str
     user_name: str
     location: str
     age: int
     timezone: str = "UTC"
-    
+
     def now(self) -> str:
         """Get current time in user's timezone."""
         from zoneinfo import ZoneInfo
-        return datetime.now(ZoneInfo(self.timezone)).strftime('%A, %B %d, %Y at %I:%M:%S %p')
+
+        return datetime.now(ZoneInfo(self.timezone)).strftime(
+            "%A, %B %d, %Y at %I:%M:%S %p"
+        )
 
 
 def fetch_user_data(user_id: str) -> Optional[dict]:
@@ -42,41 +46,41 @@ def fetch_user_data(user_id: str) -> Optional[dict]:
             "name": "Alice Johnson",
             "location": "San Francisco",
             "age": 28,
-            "timezone": "America/Los_Angeles"
+            "timezone": "America/Los_Angeles",
         },
         "user_002": {
             "name": "Bob Smith",
             "location": "New York",
             "age": 35,
-            "timezone": "America/New_York"
-        }
+            "timezone": "America/New_York",
+        },
     }
     return user_database.get(user_id)
 
 
 def build_context_from_variables(variables: dict) -> UserContext:
     """Factory function to build typed context from variables."""
-    user_id = variables.get('user_id', 'anonymous')
-    
+    user_id = variables.get("user_id", "anonymous")
+
     # Fetch user data from database/API
     user_data = fetch_user_data(user_id)
-    
+
     if user_data:
         return UserContext(
             user_id=user_id,
-            user_name=user_data['name'],
-            location=user_data['location'],
-            age=user_data['age'],
-            timezone=user_data['timezone']
+            user_name=user_data["name"],
+            location=user_data["location"],
+            age=user_data["age"],
+            timezone=user_data["timezone"],
         )
     else:
         # Default for unknown users
         return UserContext(
             user_id=user_id,
-            user_name='Guest',
-            location='Unknown',
+            user_name="Guest",
+            location="Unknown",
             age=0,
-            timezone='UTC'
+            timezone="UTC",
         )
 
 
@@ -86,9 +90,9 @@ def main():
     agentio.init(
         project="dynamic_instructions_string",
         name="personal_assistant",
-        resume="never"  # Always create a new trace
+        resume="never",  # Always create a new trace
     )
-    
+
     # Create agent with dataclass context type hint
     # The string instructions will be automatically converted to a Jinja2 template
     # Note: Methods like now() can be called in templates
@@ -98,7 +102,7 @@ def main():
         tools=[],
         model="gpt-4o-mini",
     )
-    
+
     # Use variables + factory pattern for consistency across all examples
     # Client only needs to send user_id, server fetches the rest
     runner = Runner.from_agent(
@@ -109,7 +113,7 @@ def main():
         build_context=build_context_from_variables,
         welcome_text="Hello! I'm your personal assistant.",
     )
-    
+
     runner.main(default_mode="cli")
 
 

@@ -122,7 +122,9 @@ async def test_tool_approval_does_not_fall_back_to_unrelated_channel():
     request_id = payload.get("request_id")
     assert request_id
 
-    assert not unrelated_channel.events, "unrelated service channel must not receive approval"
+    assert (
+        not unrelated_channel.events
+    ), "unrelated service channel must not receive approval"
 
     await service.client_response(
         request_id=request_id,
@@ -174,7 +176,9 @@ async def test_tool_approval_queues_when_no_channels():
 
     await asyncio.sleep(0)
 
-    assert sess.pending_events, "Approval request should be queued when no channels are attached"
+    assert (
+        sess.pending_events
+    ), "Approval request should be queued when no channels are attached"
     method, payload = sess.pending_events[0]
     assert method == "client_request"
     assert payload["function"] == "ui.request_tool_approval"
@@ -301,7 +305,11 @@ async def test_tool_approval_requests_stay_with_origin_session(monkeypatch):
                 await service.client_response(
                     request_id=req_id,
                     ok=True,
-                    result={"approved": True, "always_approve": False, "error_message": None},
+                    result={
+                        "approved": True,
+                        "always_approve": False,
+                        "error_message": None,
+                    },
                     error=None,
                 )
                 delivered = True
@@ -382,9 +390,17 @@ async def test_always_approve_remains_session_local(monkeypatch):
                 requests.append((channel_name, payload))
                 idx = len(requests)
                 if idx == 1:
-                    result = {"approved": True, "always_approve": True, "error_message": None}
+                    result = {
+                        "approved": True,
+                        "always_approve": True,
+                        "error_message": None,
+                    }
                 else:
-                    result = {"approved": True, "always_approve": False, "error_message": None}
+                    result = {
+                        "approved": True,
+                        "always_approve": False,
+                        "error_message": None,
+                    }
                 await service.client_response(
                     request_id=req_id,
                     ok=True,

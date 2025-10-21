@@ -16,7 +16,14 @@ from typing import Any, Dict, List, Optional, Tuple, Literal, Set
 
 from dataclasses import replace, asdict, dataclass
 
-from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -32,16 +39,34 @@ from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions
 from omniagents.rpc.server import JsonRpcChannel
 from omniagents.rpc.transport.websocket import ServerWebSocketTransport
 from omniagents.rpc.transport import TransportClosedError
-from omniagents.core.project.runtime import load_project, build_spec_from_project, resolve_agent
+from omniagents.core.project.runtime import (
+    load_project,
+    build_spec_from_project,
+    resolve_agent,
+)
 from omniagents.core.project.compiler import compile_project
-from omniagents.core.eval.scenarios import run_scenarios_against_agent, generate_scenarios
+from omniagents.core.eval.scenarios import (
+    run_scenarios_against_agent,
+    generate_scenarios,
+)
 from omniagents.core.eval.split import create_splits
-from omniagents.core.eval.annotate import annotate_scenarios, write_annotation_output, _slugify
-from omniagents.core.eval.optimize import optimize_judge_from_project, optimize_agent_from_project
+from omniagents.core.eval.annotate import (
+    annotate_scenarios,
+    write_annotation_output,
+    _slugify,
+)
+from omniagents.core.eval.optimize import (
+    optimize_judge_from_project,
+    optimize_agent_from_project,
+)
 from omniagents.core.eval.pipeline import run_evaluation, _load_local_measures
 from omniagents.core.evaluation.registry import _MEASURES as _REGISTERED_MEASURES
 from omniagents.core.project.apply import apply_agent_instructions
-from omniagents.core.project.scaffold import scaffold_judge, scaffold_agent, delete_agent
+from omniagents.core.project.scaffold import (
+    scaffold_judge,
+    scaffold_agent,
+    delete_agent,
+)
 
 from ..tracing.storage import SQLiteStorage
 
@@ -53,14 +78,52 @@ except Exception:  # pragma: no cover - optional dependency
 logger = logging.getLogger(__name__)
 
 MODEL_SETTING_SCHEMA: List[Dict[str, Any]] = [
-    {"key": "temperature", "label": "Temperature", "type": "number", "min": 0, "max": 2, "step": 0.1},
-    {"key": "top_p", "label": "Top P", "type": "number", "min": 0, "max": 1, "step": 0.01},
-    {"key": "frequency_penalty", "label": "Frequency Penalty", "type": "number", "min": -2, "max": 2, "step": 0.1},
-    {"key": "presence_penalty", "label": "Presence Penalty", "type": "number", "min": -2, "max": 2, "step": 0.1},
+    {
+        "key": "temperature",
+        "label": "Temperature",
+        "type": "number",
+        "min": 0,
+        "max": 2,
+        "step": 0.1,
+    },
+    {
+        "key": "top_p",
+        "label": "Top P",
+        "type": "number",
+        "min": 0,
+        "max": 1,
+        "step": 0.01,
+    },
+    {
+        "key": "frequency_penalty",
+        "label": "Frequency Penalty",
+        "type": "number",
+        "min": -2,
+        "max": 2,
+        "step": 0.1,
+    },
+    {
+        "key": "presence_penalty",
+        "label": "Presence Penalty",
+        "type": "number",
+        "min": -2,
+        "max": 2,
+        "step": 0.1,
+    },
     {"key": "max_tokens", "label": "Max Output Tokens", "type": "integer", "min": 1},
-    {"key": "tool_choice", "label": "Tool Choice", "type": "enum", "options": ["auto", "required", "none"]},
+    {
+        "key": "tool_choice",
+        "label": "Tool Choice",
+        "type": "enum",
+        "options": ["auto", "required", "none"],
+    },
     {"key": "parallel_tool_calls", "label": "Parallel Tool Calls", "type": "boolean"},
-    {"key": "truncation", "label": "Truncation", "type": "enum", "options": ["auto", "disabled"]},
+    {
+        "key": "truncation",
+        "label": "Truncation",
+        "type": "enum",
+        "options": ["auto", "disabled"],
+    },
     {"key": "store", "label": "Store Responses", "type": "boolean"},
     {"key": "include_usage", "label": "Include Usage", "type": "boolean"},
 ]
@@ -163,7 +226,9 @@ def _structured_output_options(default_label: str) -> List[Dict[str, str]]:
     return base_options
 
 
-def _guardrail_keys(active_guardrails: Optional[List[Any]], registry: Dict[str, Any]) -> List[str]:
+def _guardrail_keys(
+    active_guardrails: Optional[List[Any]], registry: Dict[str, Any]
+) -> List[str]:
     if not active_guardrails:
         return []
     keys: List[str] = []
@@ -216,7 +281,9 @@ def _safe_options_dict(spec: AgentSpec) -> Dict[str, Any]:
     return {}
 
 
-def _resolve_agent_spec(resources: Dict[str, Any], agent_key: Optional[str]) -> Optional[AgentSpec]:
+def _resolve_agent_spec(
+    resources: Dict[str, Any], agent_key: Optional[str]
+) -> Optional[AgentSpec]:
     if agent_key:
         specs = resources.get("agent_specs") or {}
         return specs.get(agent_key)
@@ -230,7 +297,9 @@ def _compute_playground_ws_url(request: Request) -> str:
 
     http_url = URL(str(request.url_for("playground_ws")))
 
-    scheme = forwarded_proto.split(",")[0].strip() if forwarded_proto else http_url.scheme
+    scheme = (
+        forwarded_proto.split(",")[0].strip() if forwarded_proto else http_url.scheme
+    )
 
     host = http_url.hostname or http_url.host
     port = http_url.port
@@ -273,8 +342,12 @@ def _build_metadata_response(
     agent_key: Optional[str],
 ) -> Dict[str, Any]:
     tool_registry: Dict[str, Any] = resources.get("tool_registry", {})
-    guardrails_registry: Dict[str, Any] = resources.get("guardrails_registry", {"input": {}, "output": {}})
-    project_name = resources.get("project_name") or request.app.state.default_project or "default"
+    guardrails_registry: Dict[str, Any] = resources.get(
+        "guardrails_registry", {"input": {}, "output": {}}
+    )
+    project_name = (
+        resources.get("project_name") or request.app.state.default_project or "default"
+    )
 
     tools_payload: List[Dict[str, Any]] = []
     for key, tool in tool_registry.items():
@@ -304,8 +377,12 @@ def _build_metadata_response(
             instructions_text = ""
 
     default_output_key = _canonical_output_type_key(getattr(spec, "output_type", None))
-    default_output_label = _output_type_label(default_output_key, getattr(spec, "output_type", None))
-    default_output_schema = _structured_output_schema(getattr(spec, "output_type", None), getattr(spec, "output_type_strict", True))
+    default_output_label = _output_type_label(
+        default_output_key, getattr(spec, "output_type", None)
+    )
+    default_output_schema = _structured_output_schema(
+        getattr(spec, "output_type", None), getattr(spec, "output_type_strict", True)
+    )
 
     ws_url = _compute_playground_ws_url(request)
 
@@ -325,8 +402,12 @@ def _build_metadata_response(
     output_guardrails_payload.sort(key=lambda item: item["label"].lower())
 
     default_guardrails = {
-        "input": _guardrail_keys(getattr(spec, "input_guardrails", None), input_guardrails),
-        "output": _guardrail_keys(getattr(spec, "output_guardrails", None), output_guardrails),
+        "input": _guardrail_keys(
+            getattr(spec, "input_guardrails", None), input_guardrails
+        ),
+        "output": _guardrail_keys(
+            getattr(spec, "output_guardrails", None), output_guardrails
+        ),
     }
 
     safe_defaults = {
@@ -365,7 +446,9 @@ def _build_metadata_response(
     }
 
 
-def _structured_output_schema(output_type: Any, strict: bool) -> Optional[Dict[str, Any]]:
+def _structured_output_schema(
+    output_type: Any, strict: bool
+) -> Optional[Dict[str, Any]]:
     if AgentOutputSchema is None:
         return None
     if output_type is None:
@@ -401,11 +484,11 @@ def _build_type_from_schema(schema: Dict[str, Any], agent_name: str) -> Optional
         return None
 
     required_raw = schema.get("required")
-    required_names = {
-        str(item)
-        for item in required_raw
-        if isinstance(item, str)
-    } if isinstance(required_raw, list) else set()
+    required_names = (
+        {str(item) for item in required_raw if isinstance(item, str)}
+        if isinstance(required_raw, list)
+        else set()
+    )
 
     annotations: Dict[str, Any] = {}
     for key, value in properties.items():
@@ -433,7 +516,10 @@ def _build_type_from_schema(schema: Dict[str, Any], agent_name: str) -> Optional
     if not annotations:
         return dict
 
-    safe_name = "".join(ch for ch in (agent_name or "Playground") if ch.isalnum()) or "Playground"
+    safe_name = (
+        "".join(ch for ch in (agent_name or "Playground") if ch.isalnum())
+        or "Playground"
+    )
     type_name = f"{safe_name}StructuredOutput"
     try:
         return TypedDict(type_name, annotations)  # type: ignore[arg-type]
@@ -454,12 +540,14 @@ def _guardrail_name(value: Any) -> Optional[str]:
     name = getattr(value, "name", None)
     return str(name) if name else None
 
+
 class StorageManager:
     """Manages multiple storage instances for different projects"""
+
     def __init__(self):
         self.storages: Dict[str, SQLiteStorage] = {}
         self.storage_dir = get_traces_dir()
-    
+
     def get_storage(self, project: str) -> SQLiteStorage:
         """Get or create storage instance for a project"""
         if project not in self.storages:
@@ -469,18 +557,19 @@ class StorageManager:
             if created:
                 logger.info("Created Studio database for project '%s'", project)
         return self.storages[project]
-    
+
     def get_all_storages(self) -> Dict[str, SQLiteStorage]:
         """Load all available project storages"""
         if not self.storage_dir.exists():
             return {}
-        
+
         for db_file in self.storage_dir.glob("*.db"):
             project = db_file.stem
             if project not in self.storages:
                 self.storages[project] = SQLiteStorage(str(db_file))
-        
+
         return self.storages
+
 
 class ConnectionManager:
     def __init__(self):
@@ -499,6 +588,7 @@ class ConnectionManager:
                 await connection.send_json(message)
             except:
                 pass
+
 
 manager = ConnectionManager()
 
@@ -642,7 +732,7 @@ class ScenarioSetModel(BaseModel):
 
 
 class EvaluationDatasetSplitModel(BaseModel):
-    split: Literal['train', 'dev', 'test']
+    split: Literal["train", "dev", "test"]
     path: str
     scenario_count: int
     positives: int
@@ -674,7 +764,7 @@ class EvaluationDatasetSplitBrowseResponse(BaseModel):
 
 class ScenarioSplitPayload(BaseModel):
     set_path: str
-    kind: Literal['golden', 'generated', 'annotated']
+    kind: Literal["golden", "generated", "annotated"]
     category: str
     train: float = Field(default=0.15, ge=0.0)
     dev: float = Field(default=0.425, ge=0.0)
@@ -700,7 +790,7 @@ class EvaluationDatasetDeleteResponse(BaseModel):
 
 
 class ScenarioPromotionPayload(BaseModel):
-    source_kind: Literal['generated', 'annotated']
+    source_kind: Literal["generated", "annotated"]
     set_path: str
     scenario_id: Optional[str] = None
     scenario_name: Optional[str] = None
@@ -715,7 +805,7 @@ class ScenarioWriteModel(BaseModel):
 
 
 class ScenarioCreatePayload(BaseModel):
-    kind: Literal['golden', 'generated', 'annotated']
+    kind: Literal["golden", "generated", "annotated"]
     set_path: str
     scenario: ScenarioWriteModel
 
@@ -727,7 +817,7 @@ class ScenarioUpdatePayload(ScenarioCreatePayload):
 
 
 class ScenarioDeletePayload(BaseModel):
-    kind: Literal['golden', 'generated', 'annotated']
+    kind: Literal["golden", "generated", "annotated"]
     set_path: str
     scenario_id: Optional[str] = None
     scenario_name: Optional[str] = None
@@ -735,7 +825,7 @@ class ScenarioDeletePayload(BaseModel):
 
 
 class ScenarioAnnotatePayload(BaseModel):
-    kind: Literal['golden', 'generated', 'annotated']
+    kind: Literal["golden", "generated", "annotated"]
     set_path: str
     agent: Optional[str] = None
 
@@ -747,7 +837,7 @@ class ScenarioAnnotateResponseModel(BaseModel):
 
 
 class ScenarioSetDeletePayload(BaseModel):
-    kind: Literal['generated', 'annotated']
+    kind: Literal["generated", "annotated"]
     set_path: str
 
 
@@ -835,7 +925,7 @@ class JudgeOptimizationStatusModel(BaseModel):
     dataset: JudgeOptimizationDatasetPayload
     max_metric_calls: int
     seed: Optional[int] = None
-    state: Literal['pending', 'running', 'completed', 'failed', 'cancelled']
+    state: Literal["pending", "running", "completed", "failed", "cancelled"]
     total: int
     completed: int
     created_at: str
@@ -878,7 +968,7 @@ class AgentOptimizationStatusModel(BaseModel):
     positives_only: bool
     max_metric_calls: int
     seed: Optional[int] = None
-    state: Literal['pending', 'running', 'completed', 'failed', 'cancelled']
+    state: Literal["pending", "running", "completed", "failed", "cancelled"]
     total: int
     completed: int
     created_at: str
@@ -951,7 +1041,9 @@ class ScenarioRunManager:
         self.connections: Dict[str, List[WebSocket]] = defaultdict(list)
         self.lock = asyncio.Lock()
 
-    async def create_job(self, project: Optional[str], payload: 'ScenarioRunRequest', total: int) -> ScenarioRunJob:
+    async def create_job(
+        self, project: Optional[str], payload: "ScenarioRunRequest", total: int
+    ) -> ScenarioRunJob:
         async with self.lock:
             job_id = uuid.uuid4().hex
             now = _utc_now()
@@ -1033,7 +1125,9 @@ class ScenarioRunManager:
             if not connections and job_id in self.connections:
                 self.connections.pop(job_id, None)
 
-    async def broadcast(self, job_id: str, snapshot: Optional[Dict[str, Any]] = None) -> None:
+    async def broadcast(
+        self, job_id: str, snapshot: Optional[Dict[str, Any]] = None
+    ) -> None:
         async with self.lock:
             job = self.jobs.get(job_id)
             if not job and snapshot is None:
@@ -1119,7 +1213,9 @@ class SuiteRunManager:
         self.connections: Dict[str, List[WebSocket]] = defaultdict(list)
         self.lock = asyncio.Lock()
 
-    async def create_job(self, project: Optional[str], payload: 'EvaluationSuiteRunRequest') -> SuiteRunJob:
+    async def create_job(
+        self, project: Optional[str], payload: "EvaluationSuiteRunRequest"
+    ) -> SuiteRunJob:
         async with self.lock:
             job_id = uuid.uuid4().hex
             now = _utc_now()
@@ -1200,7 +1296,9 @@ class SuiteRunManager:
             if not connections and job_id in self.connections:
                 self.connections.pop(job_id, None)
 
-    async def broadcast(self, job_id: str, snapshot: Optional[Dict[str, Any]] = None) -> None:
+    async def broadcast(
+        self, job_id: str, snapshot: Optional[Dict[str, Any]] = None
+    ) -> None:
         async with self.lock:
             job = self.jobs.get(job_id)
             if not job and snapshot is None:
@@ -1280,7 +1378,9 @@ class ScenarioGenerationManager:
         self.connections: Dict[str, List[WebSocket]] = defaultdict(list)
         self.lock = asyncio.Lock()
 
-    async def create_job(self, project: Optional[str], payload: 'ScenarioGenerationRequest') -> ScenarioGenerationJob:
+    async def create_job(
+        self, project: Optional[str], payload: "ScenarioGenerationRequest"
+    ) -> ScenarioGenerationJob:
         async with self.lock:
             job_id = uuid.uuid4().hex
             now = _utc_now()
@@ -1317,7 +1417,9 @@ class ScenarioGenerationManager:
         async with self.lock:
             self.tasks.pop(job_id, None)
 
-    async def update_job(self, job_id: str, **fields: Any) -> Optional[ScenarioGenerationJob]:
+    async def update_job(
+        self, job_id: str, **fields: Any
+    ) -> Optional[ScenarioGenerationJob]:
         async with self.lock:
             job = self.jobs.get(job_id)
             if not job:
@@ -1360,7 +1462,9 @@ class ScenarioGenerationManager:
             if not connections and job_id in self.connections:
                 self.connections.pop(job_id, None)
 
-    async def broadcast(self, job_id: str, snapshot: Optional[Dict[str, Any]] = None) -> None:
+    async def broadcast(
+        self, job_id: str, snapshot: Optional[Dict[str, Any]] = None
+    ) -> None:
         async with self.lock:
             job = self.jobs.get(job_id)
             if not job and snapshot is None:
@@ -1436,7 +1540,9 @@ class JudgeOptimizationManager:
         self.connections: Dict[str, List[WebSocket]] = defaultdict(list)
         self.lock = asyncio.Lock()
 
-    async def create_job(self, project: Optional[str], payload: JudgeOptimizationRequest) -> JudgeOptimizationJob:
+    async def create_job(
+        self, project: Optional[str], payload: JudgeOptimizationRequest
+    ) -> JudgeOptimizationJob:
         async with self.lock:
             job_id = uuid.uuid4().hex
             now = _utc_now()
@@ -1470,7 +1576,9 @@ class JudgeOptimizationManager:
         async with self.lock:
             self.tasks.pop(job_id, None)
 
-    async def update_job(self, job_id: str, **fields: Any) -> Optional[JudgeOptimizationJob]:
+    async def update_job(
+        self, job_id: str, **fields: Any
+    ) -> Optional[JudgeOptimizationJob]:
         async with self.lock:
             job = self.jobs.get(job_id)
             if not job:
@@ -1513,7 +1621,9 @@ class JudgeOptimizationManager:
             if not connections and job_id in self.connections:
                 self.connections.pop(job_id, None)
 
-    async def broadcast(self, job_id: str, snapshot: Optional[Dict[str, Any]] = None) -> None:
+    async def broadcast(
+        self, job_id: str, snapshot: Optional[Dict[str, Any]] = None
+    ) -> None:
         async with self.lock:
             job = self.jobs.get(job_id)
             if not job and snapshot is None:
@@ -1595,7 +1705,9 @@ class AgentOptimizationManager:
         self.connections: Dict[str, List[WebSocket]] = defaultdict(list)
         self.lock = asyncio.Lock()
 
-    async def create_job(self, project: Optional[str], payload: AgentOptimizationRequest) -> AgentOptimizationJob:
+    async def create_job(
+        self, project: Optional[str], payload: AgentOptimizationRequest
+    ) -> AgentOptimizationJob:
         async with self.lock:
             job_id = uuid.uuid4().hex
             now = _utc_now()
@@ -1630,7 +1742,9 @@ class AgentOptimizationManager:
         async with self.lock:
             self.tasks.pop(job_id, None)
 
-    async def update_job(self, job_id: str, **fields: Any) -> Optional[AgentOptimizationJob]:
+    async def update_job(
+        self, job_id: str, **fields: Any
+    ) -> Optional[AgentOptimizationJob]:
         async with self.lock:
             job = self.jobs.get(job_id)
             if not job:
@@ -1673,7 +1787,9 @@ class AgentOptimizationManager:
             if not connections and job_id in self.connections:
                 self.connections.pop(job_id, None)
 
-    async def broadcast(self, job_id: str, snapshot: Optional[Dict[str, Any]] = None) -> None:
+    async def broadcast(
+        self, job_id: str, snapshot: Optional[Dict[str, Any]] = None
+    ) -> None:
         async with self.lock:
             job = self.jobs.get(job_id)
             if not job and snapshot is None:
@@ -1701,7 +1817,7 @@ class AgentOptimizationManager:
 
 
 class ScenarioRunRequest(BaseModel):
-    kind: Literal['golden', 'generated', 'annotated']
+    kind: Literal["golden", "generated", "annotated"]
     set_path: str
     agent: Optional[str] = None
     select: Optional[str] = None
@@ -1714,14 +1830,14 @@ class ScenarioRunRequest(BaseModel):
 class ScenarioRunStatusModel(BaseModel):
     job_id: str
     project: Optional[str] = None
-    kind: Literal['golden', 'generated', 'annotated']
+    kind: Literal["golden", "generated", "annotated"]
     set_path: str
     include_history: bool
     max_turns: Optional[int] = None
     output_path: Optional[str] = None
     select: Optional[str] = None
     exclude: Optional[str] = None
-    state: Literal['pending', 'running', 'completed', 'failed', 'cancelled']
+    state: Literal["pending", "running", "completed", "failed", "cancelled"]
     total: int
     completed: int
     created_at: str
@@ -1759,7 +1875,7 @@ class ScenarioGenerationStatusModel(BaseModel):
     count: Optional[int] = None
     seed: Optional[int] = None
     dimensions: Optional[Dict[str, List[str]]] = None
-    state: Literal['pending', 'running', 'completed', 'failed', 'cancelled']
+    state: Literal["pending", "running", "completed", "failed", "cancelled"]
     total: int
     completed: int
     created_at: str
@@ -1776,7 +1892,7 @@ class ScenarioGenerationResponseModel(BaseModel):
     status: Optional[ScenarioGenerationStatusModel]
 
 
-SuiteRunStateLiteral = Literal['pending', 'running', 'completed', 'failed', 'cancelled']
+SuiteRunStateLiteral = Literal["pending", "running", "completed", "failed", "cancelled"]
 
 
 class EvaluationSuiteRunSummaryModel(BaseModel):
@@ -1802,8 +1918,8 @@ class EvaluationSuiteRunRequest(BaseModel):
     include_unmeasured: Optional[bool] = False
     output_path: Optional[str] = None
     agent: Optional[str] = None
-    reporter: Optional[Literal['auto', 'pretty', 'tap']] = None
-    color: Optional[Literal['auto', 'always', 'never']] = None
+    reporter: Optional[Literal["auto", "pretty", "tap"]] = None
+    color: Optional[Literal["auto", "always", "never"]] = None
 
 
 class EvaluationSuiteRunStatusModel(BaseModel):
@@ -1844,7 +1960,9 @@ def build_playground_spec(
     *,
     session_label: Optional[str] = None,
 ) -> AgentSpec:
-    instructions_override = config.get("instructions") if "instructions" in config else None
+    instructions_override = (
+        config.get("instructions") if "instructions" in config else None
+    )
     base_instructions_supplier = getattr(base_spec, "get_agent_instructions", None)
 
     def _instructions_supplier() -> str:
@@ -1859,7 +1977,9 @@ def build_playground_spec(
 
     if "tools" in config:
         selected_tool_names = config.get("tools") or []
-        selected_tools = [tool_registry[name] for name in selected_tool_names if name in tool_registry]
+        selected_tools = [
+            tool_registry[name] for name in selected_tool_names if name in tool_registry
+        ]
     else:
         selected_tools = getattr(base_spec, "available_tools", None)
 
@@ -1867,21 +1987,37 @@ def build_playground_spec(
     model_settings = dict(base_model_settings)
     incoming_model_settings = config.get("model_settings")
     if isinstance(incoming_model_settings, dict):
-        overrides = {k: v for k, v in incoming_model_settings.items() if v not in (None, "")}
+        overrides = {
+            k: v for k, v in incoming_model_settings.items() if v not in (None, "")
+        }
         if overrides:
             model_settings = {**base_model_settings, **overrides}
 
-    use_safe_agent = base_spec.use_safe_agent if config.get("use_safe_agent") is None else bool(config.get("use_safe_agent"))
+    use_safe_agent = (
+        base_spec.use_safe_agent
+        if config.get("use_safe_agent") is None
+        else bool(config.get("use_safe_agent"))
+    )
 
     base_output_type = getattr(base_spec, "output_type", None)
     base_output_type_strict = getattr(base_spec, "output_type_strict", True)
     output_type_override = config.get("output_type")
-    normalized_output_key = _resolve_output_type_override(output_type_override) if isinstance(output_type_override, str) else None
+    normalized_output_key = (
+        _resolve_output_type_override(output_type_override)
+        if isinstance(output_type_override, str)
+        else None
+    )
     schema_override = config.get("output_schema")
-    custom_output_type = _build_type_from_schema(schema_override, base_spec.name or "Playground") if isinstance(schema_override, dict) else None
+    custom_output_type = (
+        _build_type_from_schema(schema_override, base_spec.name or "Playground")
+        if isinstance(schema_override, dict)
+        else None
+    )
     resolved_output_type = base_output_type
     if normalized_output_key is not None:
-        resolved_output_type = _map_output_type_key_to_python(normalized_output_key, fallback=base_output_type)
+        resolved_output_type = _map_output_type_key_to_python(
+            normalized_output_key, fallback=base_output_type
+        )
         if normalized_output_key in ("string", "str"):
             resolved_output_type = str
     if custom_output_type is not None:
@@ -1903,17 +2039,33 @@ def build_playground_spec(
         for key in ("skip_approvals", "halt_on_rejection"):
             if key in incoming_safe_options:
                 safe_options_dict[key] = bool(incoming_safe_options[key])
-        if "safe_tool_names" in incoming_safe_options and isinstance(incoming_safe_options["safe_tool_names"], list):
-            safe_options_dict["safe_tool_names"] = [str(item) for item in incoming_safe_options["safe_tool_names"] if isinstance(item, str)]
-        if "safe_tool_patterns" in incoming_safe_options and isinstance(incoming_safe_options["safe_tool_patterns"], list):
-            safe_options_dict["safe_tool_patterns"] = [str(item) for item in incoming_safe_options["safe_tool_patterns"] if isinstance(item, str)]
+        if "safe_tool_names" in incoming_safe_options and isinstance(
+            incoming_safe_options["safe_tool_names"], list
+        ):
+            safe_options_dict["safe_tool_names"] = [
+                str(item)
+                for item in incoming_safe_options["safe_tool_names"]
+                if isinstance(item, str)
+            ]
+        if "safe_tool_patterns" in incoming_safe_options and isinstance(
+            incoming_safe_options["safe_tool_patterns"], list
+        ):
+            safe_options_dict["safe_tool_patterns"] = [
+                str(item)
+                for item in incoming_safe_options["safe_tool_patterns"]
+                if isinstance(item, str)
+            ]
     safe_agent_options = SafeAgentOptions(**safe_options_dict)
 
     guardrails_config = config.get("guardrails") or {}
     guardrail_registry_input = (guardrails_registry or {}).get("input", {})
     guardrail_registry_output = (guardrails_registry or {}).get("output", {})
 
-    def _resolve_guardrails(names: Optional[List[str]], registry: Dict[str, Any], fallback: Optional[List[Any]]) -> List[Any]:
+    def _resolve_guardrails(
+        names: Optional[List[str]],
+        registry: Dict[str, Any],
+        fallback: Optional[List[Any]],
+    ) -> List[Any]:
         if not isinstance(names, list):
             return list(fallback or [])
         resolved = [registry.get(name) for name in names if name in registry]
@@ -1955,6 +2107,7 @@ def build_playground_spec(
 
     spec.build_agent = None
     return spec
+
 
 def create_api_app(
     storage: Optional[SQLiteStorage] = None,
@@ -2015,7 +2168,7 @@ def create_api_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
+
     @app.get("/api/projects")
     async def get_projects():
         """Get list of all available project databases"""
@@ -2024,7 +2177,7 @@ def create_api_app(
             return {"projects": projects}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-    
+
     @app.delete("/api/projects/{project}")
     async def delete_project(project: str):
         """Delete a project database"""
@@ -2032,13 +2185,15 @@ def create_api_app(
             # Validate project exists
             projects = SQLiteStorage.get_projects()
             if project not in projects:
-                raise HTTPException(status_code=404, detail=f"Project '{project}' not found")
-            
+                raise HTTPException(
+                    status_code=404, detail=f"Project '{project}' not found"
+                )
+
             # Close any existing storage connections
             if project in storage_manager.storages:
                 storage_manager.storages[project].conn.close()
                 del storage_manager.storages[project]
-            
+
             # Delete the database file
             db_path = storage_manager.storage_dir / f"{project}.db"
             if db_path.exists():
@@ -2048,8 +2203,11 @@ def create_api_app(
             journal_path = storage_manager.storage_dir / f"{project}.db-journal"
             if journal_path.exists():
                 journal_path.unlink()
-            
-            return {"success": True, "message": f"Project '{project}' deleted successfully"}
+
+            return {
+                "success": True,
+                "message": f"Project '{project}' deleted successfully",
+            }
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -2057,7 +2215,9 @@ def create_api_app(
     async def get_studio_project():
         resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
         manifest_hint = resources.get("manifest_path")
-        project_name = resources.get("project_name") or app.state.default_project or None
+        project_name = (
+            resources.get("project_name") or app.state.default_project or None
+        )
         manifest_path = None
         available = False
         if isinstance(manifest_hint, str):
@@ -2080,7 +2240,9 @@ def create_api_app(
                 return manifest_path
         raise HTTPException(status_code=404, detail="Project manifest not available")
 
-    def _reload_playground_resources(ctx, manifest_path: Path) -> Tuple[Dict[str, Any], Dict[str, AgentSpec]]:
+    def _reload_playground_resources(
+        ctx, manifest_path: Path
+    ) -> Tuple[Dict[str, Any], Dict[str, AgentSpec]]:
         agent_specs: Dict[str, AgentSpec] = {}
         base_spec = build_spec_from_project(ctx)
         for key in sorted(ctx.agents_map.keys()):
@@ -2093,7 +2255,11 @@ def create_api_app(
                     continue
         resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
         updated_resources = dict(resources or {})
-        project_name = ctx.raw.get("name") or resources.get("project_name") or app.state.default_project
+        project_name = (
+            ctx.raw.get("name")
+            or resources.get("project_name")
+            or app.state.default_project
+        )
         updated_resources["project_name"] = project_name
         updated_resources["tool_registry"] = ctx.tool_registry
         updated_resources["guardrails_registry"] = ctx.guardrails_registry
@@ -2105,15 +2271,27 @@ def create_api_app(
             base_reference = next(iter(agent_specs.values()))
         if base_reference:
             updated_resources["base_spec"] = base_reference
-            updated_resources["default_model_settings"] = base_reference.model_settings or {}
-            updated_resources["default_safe_agent"] = bool(getattr(base_reference, "use_safe_agent", False))
+            updated_resources["default_model_settings"] = (
+                base_reference.model_settings or {}
+            )
+            updated_resources["default_safe_agent"] = bool(
+                getattr(base_reference, "use_safe_agent", False)
+            )
             if base_reference.safe_agent_options:
-                updated_resources["default_safe_agent_options"] = asdict(base_reference.safe_agent_options)
+                updated_resources["default_safe_agent_options"] = asdict(
+                    base_reference.safe_agent_options
+                )
             else:
                 updated_resources["default_safe_agent_options"] = {}
             updated_resources["default_guardrails"] = {
-                "input": _guardrail_keys(getattr(base_reference, "input_guardrails", None), ctx.guardrails_registry.get("input", {})),
-                "output": _guardrail_keys(getattr(base_reference, "output_guardrails", None), ctx.guardrails_registry.get("output", {})),
+                "input": _guardrail_keys(
+                    getattr(base_reference, "input_guardrails", None),
+                    ctx.guardrails_registry.get("input", {}),
+                ),
+                "output": _guardrail_keys(
+                    getattr(base_reference, "output_guardrails", None),
+                    ctx.guardrails_registry.get("output", {}),
+                ),
             }
         else:
             updated_resources["base_spec"] = None
@@ -2124,7 +2302,9 @@ def create_api_app(
         app.state.playground_resources = updated_resources
         return updated_resources, agent_specs
 
-    def _serialize_dimensions_payload(dimensions: List[EvaluationDimensionModel]) -> List[Dict[str, Any]]:
+    def _serialize_dimensions_payload(
+        dimensions: List[EvaluationDimensionModel],
+    ) -> List[Dict[str, Any]]:
         serialized: List[Dict[str, Any]] = []
         for dim in dimensions:
             serialized_values: List[Dict[str, Any]] = []
@@ -2137,7 +2317,10 @@ def create_api_app(
                 if val.examples:
                     entry["examples"] = [str(x) for x in val.examples]
                 serialized_values.append(entry)
-            serialized_dim: Dict[str, Any] = {"name": dim.name, "values": serialized_values}
+            serialized_dim: Dict[str, Any] = {
+                "name": dim.name,
+                "values": serialized_values,
+            }
             if dim.label:
                 serialized_dim["label"] = dim.label
             if dim.description:
@@ -2173,7 +2356,9 @@ def create_api_app(
             for val in values:
                 if not isinstance(val, dict):
                     continue
-                examples = val.get("examples") if isinstance(val.get("examples"), list) else []
+                examples = (
+                    val.get("examples") if isinstance(val.get("examples"), list) else []
+                )
                 normalized_values.append(
                     {
                         "name": str(val.get("name", "")),
@@ -2207,15 +2392,26 @@ def create_api_app(
             evaluation_cfg = data.get("evaluation") or {}
         else:
             evaluation_cfg = data
-        synthetic_cfg = evaluation_cfg.get("synthetic_data_generation") if isinstance(evaluation_cfg.get("synthetic_data_generation"), dict) else {}
-        raw_dims = synthetic_cfg.get("dimensions") if isinstance(synthetic_cfg, dict) else []
+        synthetic_cfg = (
+            evaluation_cfg.get("synthetic_data_generation")
+            if isinstance(evaluation_cfg.get("synthetic_data_generation"), dict)
+            else {}
+        )
+        raw_dims = (
+            synthetic_cfg.get("dimensions") if isinstance(synthetic_cfg, dict) else []
+        )
         return _normalize_dimensions(raw_dims if isinstance(raw_dims, list) else [])
-    
+
     def _write_yaml_file(path: Path, content: Dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(yaml.safe_dump(content, sort_keys=False, allow_unicode=True), encoding="utf-8")
-    
-    def _persist_dimensions(manifest_path: Path, dimensions: List[EvaluationDimensionModel]) -> List[Dict[str, Any]]:
+        path.write_text(
+            yaml.safe_dump(content, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
+
+    def _persist_dimensions(
+        manifest_path: Path, dimensions: List[EvaluationDimensionModel]
+    ) -> List[Dict[str, Any]]:
         ctx = load_project(str(manifest_path))
         serialized_dims = _serialize_dimensions_payload(dimensions)
         target_file, exists = _resolve_eval_file(ctx, manifest_path)
@@ -2226,17 +2422,23 @@ def create_api_app(
                 data = {}
         else:
             data = {}
-    
+
         if not isinstance(data, dict):
             data = {}
-    
+
         has_eval_section = isinstance(data.get("evaluation"), dict)
-        evaluation_cfg = dict(data.get("evaluation") or {}) if has_eval_section else dict(data)
-        synthetic_cfg = evaluation_cfg.get("synthetic_data_generation") if isinstance(evaluation_cfg.get("synthetic_data_generation"), dict) else {}
+        evaluation_cfg = (
+            dict(data.get("evaluation") or {}) if has_eval_section else dict(data)
+        )
+        synthetic_cfg = (
+            evaluation_cfg.get("synthetic_data_generation")
+            if isinstance(evaluation_cfg.get("synthetic_data_generation"), dict)
+            else {}
+        )
         synthetic_cfg = dict(synthetic_cfg)
         synthetic_cfg["dimensions"] = serialized_dims
         evaluation_cfg["synthetic_data_generation"] = synthetic_cfg
-    
+
         if has_eval_section or data:
             updated = dict(data)
             updated["evaluation"] = evaluation_cfg
@@ -2261,14 +2463,28 @@ def create_api_app(
         if not isinstance(data, dict):
             data = {}
         has_eval_section = isinstance(data.get("evaluation"), dict)
-        evaluation_cfg = dict(data.get("evaluation") or {}) if has_eval_section else dict(data)
-        raw_categories = evaluation_cfg.get("failure_categories") if isinstance(evaluation_cfg.get("failure_categories"), list) else []
+        evaluation_cfg = (
+            dict(data.get("evaluation") or {}) if has_eval_section else dict(data)
+        )
+        raw_categories = (
+            evaluation_cfg.get("failure_categories")
+            if isinstance(evaluation_cfg.get("failure_categories"), list)
+            else []
+        )
         normalized: List[Dict[str, Any]] = []
         for entry in raw_categories or []:
             if isinstance(entry, dict):
                 raw_name = entry.get("name") or entry.get("key") or entry.get("id")
-                description = entry.get("description") if isinstance(entry.get("description"), str) else None
-                measures = entry.get("measures") if isinstance(entry.get("measures"), list) else []
+                description = (
+                    entry.get("description")
+                    if isinstance(entry.get("description"), str)
+                    else None
+                )
+                measures = (
+                    entry.get("measures")
+                    if isinstance(entry.get("measures"), list)
+                    else []
+                )
             elif isinstance(entry, str):
                 raw_name = entry
                 description = None
@@ -2284,7 +2500,11 @@ def create_api_app(
                     "slug": slug,
                     "name": name,
                     "description": description,
-                    "measures": [str(m).strip() for m in measures if isinstance(m, str) and str(m).strip()],
+                    "measures": [
+                        str(m).strip()
+                        for m in measures
+                        if isinstance(m, str) and str(m).strip()
+                    ],
                 }
             )
         return normalized, target_file, data, evaluation_cfg, has_eval_section
@@ -2301,7 +2521,11 @@ def create_api_app(
             entry: Dict[str, Any] = {"name": category["name"]}
             if category.get("description"):
                 entry["description"] = category["description"]
-            measures = [m for m in category.get("measures", []) if isinstance(m, str) and m.strip()]
+            measures = [
+                m
+                for m in category.get("measures", [])
+                if isinstance(m, str) and m.strip()
+            ]
             if measures:
                 entry["measures"] = measures
             serialized.append(entry)
@@ -2319,7 +2543,9 @@ def create_api_app(
         for file in _scenarios_files(ctx):
             entries = _read_scenarios_file(file)
             for entry in entries:
-                raw = entry.get("failure_categories") if isinstance(entry, dict) else None
+                raw = (
+                    entry.get("failure_categories") if isinstance(entry, dict) else None
+                )
                 if not isinstance(raw, list):
                     continue
                 seen: Set[str] = set()
@@ -2350,7 +2576,11 @@ def create_api_app(
                 scenario = dict(entry)
                 raw = scenario.get("failure_categories")
                 if isinstance(raw, list):
-                    filtered = [value for value in raw if isinstance(value, str) and _slugify(value) != normalized]
+                    filtered = [
+                        value
+                        for value in raw
+                        if isinstance(value, str) and _slugify(value) != normalized
+                    ]
                     if filtered and filtered != raw:
                         scenario["failure_categories"] = filtered
                         changed = True
@@ -2388,17 +2618,41 @@ def create_api_app(
         if not isinstance(data, dict):
             data = {}
         has_eval_section = isinstance(data.get("evaluation"), dict)
-        evaluation_cfg = dict(data.get("evaluation") or {}) if has_eval_section else dict(data)
-        raw_measures = evaluation_cfg.get("measures") if isinstance(evaluation_cfg.get("measures"), list) else []
+        evaluation_cfg = (
+            dict(data.get("evaluation") or {}) if has_eval_section else dict(data)
+        )
+        raw_measures = (
+            evaluation_cfg.get("measures")
+            if isinstance(evaluation_cfg.get("measures"), list)
+            else []
+        )
         normalized: List[Dict[str, Any]] = []
         seen: Set[str] = set()
         for entry in raw_measures or []:
             if isinstance(entry, dict):
                 raw_name = entry.get("name") or entry.get("key") or entry.get("id")
-                label = entry.get("label") if isinstance(entry.get("label"), str) else None
-                description = entry.get("description") if isinstance(entry.get("description"), str) else None
-                module = entry.get("module") if isinstance(entry.get("module"), str) else None
-                path_value = entry.get("path") if isinstance(entry.get("path"), str) else entry.get("sourcePath") if isinstance(entry.get("sourcePath"), str) else None
+                label = (
+                    entry.get("label") if isinstance(entry.get("label"), str) else None
+                )
+                description = (
+                    entry.get("description")
+                    if isinstance(entry.get("description"), str)
+                    else None
+                )
+                module = (
+                    entry.get("module")
+                    if isinstance(entry.get("module"), str)
+                    else None
+                )
+                path_value = (
+                    entry.get("path")
+                    if isinstance(entry.get("path"), str)
+                    else (
+                        entry.get("sourcePath")
+                        if isinstance(entry.get("sourcePath"), str)
+                        else None
+                    )
+                )
             elif isinstance(entry, str):
                 raw_name = entry
                 label = None
@@ -2455,11 +2709,17 @@ def create_api_app(
     def _collect_measure_usage(ctx, manifest_path: Path) -> Dict[str, int]:
         usage: Dict[str, int] = {}
         try:
-            categories, _target, _data, _cfg, _flag = _load_failure_categories(ctx, manifest_path)
+            categories, _target, _data, _cfg, _flag = _load_failure_categories(
+                ctx, manifest_path
+            )
         except Exception:
             categories = []
         for category in categories:
-            measures = category.get("measures") if isinstance(category.get("measures"), list) else []
+            measures = (
+                category.get("measures")
+                if isinstance(category.get("measures"), list)
+                else []
+            )
             for name in measures:
                 key = str(name)
                 if key:
@@ -2467,7 +2727,11 @@ def create_api_app(
         for file in _scenarios_files(ctx):
             entries = _read_scenarios_file(file)
             for item in entries:
-                ms = item.get("measures") if isinstance(item.get("measures"), list) else []
+                ms = (
+                    item.get("measures")
+                    if isinstance(item.get("measures"), list)
+                    else []
+                )
                 for name in ms:
                     key = str(name)
                     if key:
@@ -2479,9 +2743,17 @@ def create_api_app(
             except Exception:
                 data = {}
             if isinstance(data, dict):
-                evaluation_cfg = data.get("evaluation") if isinstance(data.get("evaluation"), dict) else data
+                evaluation_cfg = (
+                    data.get("evaluation")
+                    if isinstance(data.get("evaluation"), dict)
+                    else data
+                )
                 if isinstance(evaluation_cfg, dict):
-                    metrics = evaluation_cfg.get("metrics") if isinstance(evaluation_cfg.get("metrics"), list) else []
+                    metrics = (
+                        evaluation_cfg.get("metrics")
+                        if isinstance(evaluation_cfg.get("metrics"), list)
+                        else []
+                    )
                     for metric in metrics:
                         if not isinstance(metric, dict):
                             continue
@@ -2518,14 +2790,21 @@ def create_api_app(
             eval_dir.mkdir(parents=True, exist_ok=True)
             target = eval_dir / "measures.py"
         if not target.exists():
-            target.write_text("from omniagents.core.evaluation import evaluation_measure, pass_reason\n\n", encoding="utf-8")
+            target.write_text(
+                "from omniagents.core.evaluation import evaluation_measure, pass_reason\n\n",
+                encoding="utf-8",
+            )
         existing = target.read_text(encoding="utf-8")
         if f"def {measure_name}(" in existing:
             return
-        header_import = "from omniagents.core.evaluation import evaluation_measure, pass_reason"
+        header_import = (
+            "from omniagents.core.evaluation import evaluation_measure, pass_reason"
+        )
         if header_import not in existing:
             if "evaluation_measure" in existing and "pass_reason" not in existing:
-                existing = existing.replace("evaluation_measure", "evaluation_measure, pass_reason", 1)
+                existing = existing.replace(
+                    "evaluation_measure", "evaluation_measure, pass_reason", 1
+                )
             else:
                 existing = header_import + "\n\n" + existing.lstrip()
         block = (
@@ -2538,7 +2817,9 @@ def create_api_app(
         target.write_text(updated, encoding="utf-8")
 
     def _assemble_measures(ctx, manifest_path: Path) -> List[EvaluationMeasureModel]:
-        measures_meta, _target_file, _data, _cfg, _flag = _load_measures_metadata(ctx, manifest_path)
+        measures_meta, _target_file, _data, _cfg, _flag = _load_measures_metadata(
+            ctx, manifest_path
+        )
         usage_map = _collect_measure_usage(ctx, manifest_path)
         saved_registry = dict(_REGISTERED_MEASURES)
         runtime_info: Dict[str, Dict[str, Any]] = {}
@@ -2570,7 +2851,9 @@ def create_api_app(
             meta = meta_map.get(name, {})
             runtime = runtime_info.get(name, {})
             label_value = _derive_measure_label(name, meta.get("label"))
-            description_value = meta.get("description") if meta.get("description") else None
+            description_value = (
+                meta.get("description") if meta.get("description") else None
+            )
             module_value = meta.get("module") or runtime.get("module")
             source_value = meta.get("sourcePath") or runtime.get("path")
             doc_value = runtime.get("doc") if runtime.get("doc") else None
@@ -2622,16 +2905,23 @@ def create_api_app(
     def _write_text_with_backup(path: Path, content: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists():
-            backup = path.with_suffix(path.suffix + f".bak.{datetime.now().strftime('%Y%m%d%H%M%S')}")
+            backup = path.with_suffix(
+                path.suffix + f".bak.{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            )
             shutil.copy2(path, backup)
         path.write_text(content, encoding="utf-8")
 
     def _write_yaml_with_backup(path: Path, payload: Dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists():
-            backup = path.with_suffix(path.suffix + f".bak.{datetime.now().strftime('%Y%m%d%H%M%S')}")
+            backup = path.with_suffix(
+                path.suffix + f".bak.{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            )
             shutil.copy2(path, backup)
-        path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        path.write_text(
+            yaml.safe_dump(payload, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
 
     def _judge_directories(ctx) -> List[Path]:
         dirs: List[Path] = []
@@ -2660,20 +2950,53 @@ def create_api_app(
                 for key, cfg in judges_cfg.items():
                     if not isinstance(cfg, dict):
                         continue
-                    agent_cfg = cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
-                    input_cfg = cfg.get("input") if isinstance(cfg.get("input"), dict) else {}
-                    instructions_file = agent_cfg.get("instructions_file") if isinstance(agent_cfg.get("instructions_file"), str) else None
-                    template_file = input_cfg.get("template_file") if isinstance(input_cfg.get("template_file"), str) else None
-                    resolved_instr = _resolve_relative_file(cfg_path.parent, instructions_file) or (entry / "instructions.md")
-                    resolved_template = _resolve_relative_file(cfg_path.parent, template_file) or (entry / "template.md")
+                    agent_cfg = (
+                        cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
+                    )
+                    input_cfg = (
+                        cfg.get("input") if isinstance(cfg.get("input"), dict) else {}
+                    )
+                    instructions_file = (
+                        agent_cfg.get("instructions_file")
+                        if isinstance(agent_cfg.get("instructions_file"), str)
+                        else None
+                    )
+                    template_file = (
+                        input_cfg.get("template_file")
+                        if isinstance(input_cfg.get("template_file"), str)
+                        else None
+                    )
+                    resolved_instr = _resolve_relative_file(
+                        cfg_path.parent, instructions_file
+                    ) or (entry / "instructions.md")
+                    resolved_template = _resolve_relative_file(
+                        cfg_path.parent, template_file
+                    ) or (entry / "template.md")
                     instructions_text = _read_text_optional(resolved_instr)
                     template_text = _read_text_optional(resolved_template)
-                    updated_at = _latest_timestamp([cfg_path, resolved_instr, resolved_template])
-                    source_value = str(input_cfg.get("source", "final_assistant_text") or "final_assistant_text")
+                    updated_at = _latest_timestamp(
+                        [cfg_path, resolved_instr, resolved_template]
+                    )
+                    source_value = str(
+                        input_cfg.get("source", "final_assistant_text")
+                        or "final_assistant_text"
+                    )
                     failure_value = cfg.get("failure_category") or cfg.get("category")
-                    model_value = agent_cfg.get("model") if isinstance(agent_cfg.get("model"), str) else None
-                    agent_name = agent_cfg.get("name") if isinstance(agent_cfg.get("name"), str) else None
-                    agent_label = agent_cfg.get("label") if isinstance(agent_cfg.get("label"), str) else None
+                    model_value = (
+                        agent_cfg.get("model")
+                        if isinstance(agent_cfg.get("model"), str)
+                        else None
+                    )
+                    agent_name = (
+                        agent_cfg.get("name")
+                        if isinstance(agent_cfg.get("name"), str)
+                        else None
+                    )
+                    agent_label = (
+                        agent_cfg.get("label")
+                        if isinstance(agent_cfg.get("label"), str)
+                        else None
+                    )
                     judge_model = EvaluationJudgeModel(
                         key=str(key),
                         agent_name=agent_name,
@@ -2685,15 +3008,21 @@ def create_api_app(
                         template=template_text,
                         instructions_file=instructions_file,
                         template_file=template_file,
-                        instructions_path=str(resolved_instr) if resolved_instr else None,
-                        template_path=str(resolved_template) if resolved_template else None,
+                        instructions_path=(
+                            str(resolved_instr) if resolved_instr else None
+                        ),
+                        template_path=(
+                            str(resolved_template) if resolved_template else None
+                        ),
                         judge_path=str(cfg_path),
                         updated_at=updated_at,
                     )
                     result.append(judge_model)
         return result
 
-    def _find_judge_entry(ctx, key: str) -> Optional[Tuple[Path, Path, Dict[str, Any], Dict[str, Any]]]:
+    def _find_judge_entry(
+        ctx, key: str
+    ) -> Optional[Tuple[Path, Path, Dict[str, Any], Dict[str, Any]]]:
         for root in _judge_directories(ctx):
             for entry in root.iterdir():
                 if not entry.is_dir():
@@ -2713,7 +3042,9 @@ def create_api_app(
                     return entry, cfg_path, data, cfg
         return None
 
-    def _ensure_failure_category_mapping(ctx, judge_key: str, failure_category: Optional[str]) -> None:
+    def _ensure_failure_category_mapping(
+        ctx, judge_key: str, failure_category: Optional[str]
+    ) -> None:
         if not failure_category:
             return
         eval_dir = ctx.root / "evaluations"
@@ -2735,7 +3066,9 @@ def create_api_app(
             categories = []
         found = None
         for item in categories:
-            if isinstance(item, dict) and str(item.get("name")) == str(failure_category):
+            if isinstance(item, dict) and str(item.get("name")) == str(
+                failure_category
+            ):
                 found = item
                 break
         measure_name = f"{judge_key}_agent"
@@ -2750,6 +3083,7 @@ def create_api_app(
         evaluation_cfg["failure_categories"] = categories
         base["evaluation"] = evaluation_cfg
         _write_yaml_with_backup(evaluation_yml, base)
+
     def _unique_paths(items: List[Path]) -> List[Path]:
         seen: set[str] = set()
         result: List[Path] = []
@@ -2785,7 +3119,11 @@ def create_api_app(
                 files.append(candidate)
         eval_paths = ctx.paths.get("evaluations") or []
         for entry in eval_paths:
-            if entry.is_file() and entry.name.endswith(".yml") and entry.name == "scenarios.yml":
+            if (
+                entry.is_file()
+                and entry.name.endswith(".yml")
+                and entry.name == "scenarios.yml"
+            ):
                 files.append(entry)
         return _unique_paths(files)
 
@@ -2800,22 +3138,42 @@ def create_api_app(
                 return [s for s in scenarios if isinstance(s, dict)]
         return []
 
-    def _build_scenario_entries(raw_items: List[Dict[str, Any]], source_path: Path) -> List[ScenarioEntryModel]:
+    def _build_scenario_entries(
+        raw_items: List[Dict[str, Any]], source_path: Path
+    ) -> List[ScenarioEntryModel]:
         scenarios: List[ScenarioEntryModel] = []
         for idx, item in enumerate(raw_items):
             name = str(item.get("name") or f"scenario_{idx + 1}")
             prompt = str(item.get("prompt") or "")
             scenario_id = item.get("id")
-            dimensions = item.get("dimensions") if isinstance(item.get("dimensions"), dict) else None
-            measures = item.get("measures") if isinstance(item.get("measures"), list) else None
-            raw_failure_categories = item.get("failure_categories") if isinstance(item.get("failure_categories"), list) else None
+            dimensions = (
+                item.get("dimensions")
+                if isinstance(item.get("dimensions"), dict)
+                else None
+            )
+            measures = (
+                item.get("measures") if isinstance(item.get("measures"), list) else None
+            )
+            raw_failure_categories = (
+                item.get("failure_categories")
+                if isinstance(item.get("failure_categories"), list)
+                else None
+            )
             failure_categories: Optional[List[str]] = None
             if raw_failure_categories:
-                filtered = [str(value).strip() for value in raw_failure_categories if isinstance(value, str) and str(value).strip()]
+                filtered = [
+                    str(value).strip()
+                    for value in raw_failure_categories
+                    if isinstance(value, str) and str(value).strip()
+                ]
                 if filtered:
                     failure_categories = filtered
-            analysis_data = item.get("analysis") if isinstance(item.get("analysis"), dict) else None
-            label_value = item.get("label") if isinstance(item.get("label"), bool) else None
+            analysis_data = (
+                item.get("analysis") if isinstance(item.get("analysis"), dict) else None
+            )
+            label_value = (
+                item.get("label") if isinstance(item.get("label"), bool) else None
+            )
             metadata = {
                 "index": idx,
                 "source_path": str(source_path),
@@ -2867,7 +3225,9 @@ def create_api_app(
     def _artifact_root(ctx) -> Path:
         return (ctx.root / "artifacts" / "eval").resolve()
 
-    def _build_artifact_set(kind: str, file_path: Path, base_dir: Path) -> ScenarioSetModel:
+    def _build_artifact_set(
+        kind: str, file_path: Path, base_dir: Path
+    ) -> ScenarioSetModel:
         raw = _read_scenarios_file(file_path)
         scenarios = _build_scenario_entries(raw, file_path)
         try:
@@ -2878,7 +3238,9 @@ def create_api_app(
         manifest_path = base_dir / "manifest.json"
         if manifest_path.is_file():
             try:
-                metadata["manifest"] = json.loads(manifest_path.read_text(encoding="utf-8"))
+                metadata["manifest"] = json.loads(
+                    manifest_path.read_text(encoding="utf-8")
+                )
             except Exception:
                 metadata["manifest_error"] = "unreadable"
         labeled_count = sum(1 for item in scenarios if item.failure_categories)
@@ -2887,7 +3249,11 @@ def create_api_app(
         analysis_count = sum(1 for item in scenarios if item.analysis)
         if analysis_count:
             metadata["analysis_count"] = analysis_count
-        label = metadata.get("manifest", {}).get("name") if isinstance(metadata.get("manifest"), dict) else None
+        label = (
+            metadata.get("manifest", {}).get("name")
+            if isinstance(metadata.get("manifest"), dict)
+            else None
+        )
         if not label:
             label = f"{base_dir.name} ({kind.title()})"
         return ScenarioSetModel(
@@ -2937,9 +3303,14 @@ def create_api_app(
         updated["scenarios"] = entries
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists():
-            backup_path = path.with_suffix(path.suffix + f".bak.{datetime.now().strftime('%Y%m%d%H%M%S')}")
+            backup_path = path.with_suffix(
+                path.suffix + f".bak.{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            )
             shutil.copy2(path, backup_path)
-        path.write_text(yaml.safe_dump(updated, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        path.write_text(
+            yaml.safe_dump(updated, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
 
     def _ensure_scenario_ids(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         normalized: List[Dict[str, Any]] = []
@@ -2949,13 +3320,25 @@ def create_api_app(
             scenario = dict(entry)
             scenario_id = scenario.get("id")
             if not scenario_id:
-                dimensions = scenario.get("dimensions") if isinstance(scenario.get("dimensions"), dict) else {}
-                blob = json.dumps({"prompt": str(scenario.get("prompt") or ""), "dimensions": dimensions}, sort_keys=True)
+                dimensions = (
+                    scenario.get("dimensions")
+                    if isinstance(scenario.get("dimensions"), dict)
+                    else {}
+                )
+                blob = json.dumps(
+                    {
+                        "prompt": str(scenario.get("prompt") or ""),
+                        "dimensions": dimensions,
+                    },
+                    sort_keys=True,
+                )
                 scenario["id"] = hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
             normalized.append(scenario)
         return normalized
 
-    def _get_scenario_set_by_path(ctx, kind: str, target_path: Path) -> ScenarioSetModel:
+    def _get_scenario_set_by_path(
+        ctx, kind: str, target_path: Path
+    ) -> ScenarioSetModel:
         normalized = target_path.expanduser().resolve(strict=False)
         if kind == "golden":
             candidates = _load_golden_sets(ctx)
@@ -2971,7 +3354,12 @@ def create_api_app(
                 return candidate
         raise HTTPException(status_code=404, detail="Scenario set not found")
 
-    def _locate_scenario_entry(entries: List[Dict[str, Any]], scenario_id: Optional[str], scenario_name: Optional[str], index: Optional[int]) -> Optional[Tuple[int, Dict[str, Any]]]:
+    def _locate_scenario_entry(
+        entries: List[Dict[str, Any]],
+        scenario_id: Optional[str],
+        scenario_name: Optional[str],
+        index: Optional[int],
+    ) -> Optional[Tuple[int, Dict[str, Any]]]:
         candidate_id = _scenario_id_value(scenario_id)
         if candidate_id:
             for idx, entry in enumerate(entries):
@@ -3017,10 +3405,16 @@ def create_api_app(
                         continue
                     raw_entries = _read_scenarios_file(split_file)
                     scenario_count = len(raw_entries)
-                    positives = sum(1 for item in raw_entries if item.get("label") is True)
-                    negatives = sum(1 for item in raw_entries if item.get("label") is False)
+                    positives = sum(
+                        1 for item in raw_entries if item.get("label") is True
+                    )
+                    negatives = sum(
+                        1 for item in raw_entries if item.get("label") is False
+                    )
                     try:
-                        updated_at = datetime.fromtimestamp(split_file.stat().st_mtime).isoformat()
+                        updated_at = datetime.fromtimestamp(
+                            split_file.stat().st_mtime
+                        ).isoformat()
                     except Exception:
                         updated_at = None
                     splits.append(
@@ -3035,19 +3429,27 @@ def create_api_app(
                     )
                 if splits:
                     order = {"train": 0, "dev": 1, "test": 2}
-                    splits.sort(key=lambda item: (order.get(item.split, 99), item.split))
+                    splits.sort(
+                        key=lambda item: (order.get(item.split, 99), item.split)
+                    )
                     dataset = EvaluationDatasetModel(
                         set_name=set_dir.name,
                         category=category_dir.name,
                         artifact_dir=str(set_dir),
-                        scenario_set_path=str(scenario_set_path) if scenario_set_path.is_file() else None,
-                        manifest_path=str(manifest_path) if manifest_path.is_file() else None,
+                        scenario_set_path=(
+                            str(scenario_set_path)
+                            if scenario_set_path.is_file()
+                            else None
+                        ),
+                        manifest_path=(
+                            str(manifest_path) if manifest_path.is_file() else None
+                        ),
                         splits=splits,
                     )
                     datasets.append(dataset)
         datasets.sort(key=lambda item: (item.set_name.lower(), item.category.lower()))
         return datasets
-    
+
     @app.get("/api/evaluation/dimensions")
     async def get_evaluation_dimensions():
         try:
@@ -3060,12 +3462,19 @@ def create_api_app(
             raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
-    
-    async def _run_scenario_generation_job(job_id: str, payload: ScenarioGenerationRequest, manifest_path: Path) -> None:
+
+    async def _run_scenario_generation_job(
+        job_id: str, payload: ScenarioGenerationRequest, manifest_path: Path
+    ) -> None:
         manager: ScenarioGenerationManager = app.state.scenario_generation_manager
         await manager.update_job(job_id, state="running", started_at=_utc_now())
         try:
-            compiled_cfg_path, _ = compile_project(str(manifest_path), select=str(payload.select or ""), exclude=str(payload.exclude or ""), agent_key=(payload.agent or None))
+            compiled_cfg_path, _ = compile_project(
+                str(manifest_path),
+                select=str(payload.select or ""),
+                exclude=str(payload.exclude or ""),
+                agent_key=(payload.agent or None),
+            )
             compiled_path = Path(compiled_cfg_path).resolve()
             cfg = yaml.safe_load(compiled_path.read_text(encoding="utf-8")) or {}
             tracing = cfg.get("tracing") or {}
@@ -3083,14 +3492,14 @@ def create_api_app(
             if provider in {"studio", "agentio"}:
                 try:
                     from omniagents.studio import tracing as studio_tracing
-    
+
                     tracing_module = studio_tracing
                 except ImportError:
                     tracing_module = None
                 if tracing_module is None:
                     try:
                         import agentio as legacy_tracing
-    
+
                         tracing_module = legacy_tracing
                     except Exception:
                         tracing_module = None
@@ -3100,8 +3509,13 @@ def create_api_app(
                     ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
                     workflow_name = f"{base_name}_scenarios_{label}_{ts}_generate"
                     resume_mode = (tracing.get("settings") or {}).get("resume", "never")
-                    tracing_module.init(project=str(tracing.get("project") or "scenario_generation"), name=workflow_name, resume=str(resume_mode), replace_default=True)
-    
+                    tracing_module.init(
+                        project=str(tracing.get("project") or "scenario_generation"),
+                        name=workflow_name,
+                        resume=str(resume_mode),
+                        replace_default=True,
+                    )
+
             base_dir = manifest_path.parent.resolve()
             output_path_obj: Optional[Path]
             if payload.output_path:
@@ -3110,12 +3524,18 @@ def create_api_app(
                     candidate = (base_dir / candidate).resolve()
                 output_path_obj = candidate
             elif payload.name:
-                output_path_obj = (base_dir / "artifacts" / "eval" / payload.name / "generated_scenarios.yml").resolve()
+                output_path_obj = (
+                    base_dir
+                    / "artifacts"
+                    / "eval"
+                    / payload.name
+                    / "generated_scenarios.yml"
+                ).resolve()
             else:
                 output_path_obj = None
-    
+
             progress = {"target": int(payload.count or 0), "completed": 0}
-    
+
             def _progress_cb(event: Dict[str, Any]) -> None:
                 evt = event.get("event")
                 if evt == "start":
@@ -3125,15 +3545,23 @@ def create_api_app(
                         asyncio.create_task(manager.update_job(job_id, total=target))
                 elif evt == "progress":
                     progress["completed"] += 1
-                    asyncio.create_task(manager.update_job(job_id, completed=progress["completed"]))
+                    asyncio.create_task(
+                        manager.update_job(job_id, completed=progress["completed"])
+                    )
                 elif evt == "done":
                     count = event.get("count")
                     if isinstance(count, int) and count >= 0:
                         progress["completed"] = count
                         if progress["target"] == 0:
                             progress["target"] = count
-                    asyncio.create_task(manager.update_job(job_id, completed=progress["completed"], total=progress["target"]))
-    
+                    asyncio.create_task(
+                        manager.update_job(
+                            job_id,
+                            completed=progress["completed"],
+                            total=progress["target"],
+                        )
+                    )
+
             scenarios, out_path, _ = await generate_scenarios(
                 Path(compiled_cfg_path),
                 count=payload.count,
@@ -3144,7 +3572,7 @@ def create_api_app(
                 progress_cb=_progress_cb,
                 dimension_filters=payload.dimensions,
             )
-    
+
             final_total = progress["target"] or len(scenarios)
             await manager.update_job(
                 job_id,
@@ -3157,11 +3585,20 @@ def create_api_app(
             )
         except Exception as exc:
             logger.exception("Scenario generation %s failed", job_id)
-            await manager.update_job(job_id, state="failed", error=str(exc), finished_at=_utc_now())
+            await manager.update_job(
+                job_id, state="failed", error=str(exc), finished_at=_utc_now()
+            )
 
-    async def _run_judge_optimization_job(job_id: str, payload: JudgeOptimizationRequest, manifest_path: Path) -> None:
+    async def _run_judge_optimization_job(
+        job_id: str, payload: JudgeOptimizationRequest, manifest_path: Path
+    ) -> None:
         manager: JudgeOptimizationManager = app.state.judge_optimization_manager
-        await manager.update_job(job_id, state="running", started_at=_utc_now(), total=int(payload.max_metric_calls))
+        await manager.update_job(
+            job_id,
+            state="running",
+            started_at=_utc_now(),
+            total=int(payload.max_metric_calls),
+        )
         loop = asyncio.get_running_loop()
         dataset = payload.dataset
         dataset_runs_path = dataset.runs_path
@@ -3175,7 +3612,9 @@ def create_api_app(
             found = _find_judge_entry(ctx, payload.judge_key)
             if found:
                 _dir, _cfg_path, _data, cfg = found
-                input_cfg = cfg.get("input") if isinstance(cfg.get("input"), dict) else {}
+                input_cfg = (
+                    cfg.get("input") if isinstance(cfg.get("input"), dict) else {}
+                )
                 inferred = input_cfg.get("source")
                 if isinstance(inferred, str) and inferred.strip():
                     source_value = inferred.strip()
@@ -3217,22 +3656,42 @@ def create_api_app(
                 found = _find_judge_entry(ctx_refresh, payload.judge_key)
                 if found:
                     judge_dir, cfg_path, data, cfg = found
-                    agent_cfg = cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
-                    input_cfg = cfg.get("input") if isinstance(cfg.get("input"), dict) else {}
-                    instructions_value = result.get("instructions") if isinstance(result, dict) else None
-                    template_value = result.get("template") if isinstance(result, dict) else None
+                    agent_cfg = (
+                        cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
+                    )
+                    input_cfg = (
+                        cfg.get("input") if isinstance(cfg.get("input"), dict) else {}
+                    )
+                    instructions_value = (
+                        result.get("instructions") if isinstance(result, dict) else None
+                    )
+                    template_value = (
+                        result.get("template") if isinstance(result, dict) else None
+                    )
                     if instructions_value:
-                        resolved_instr = _resolve_relative_file(cfg_path.parent, agent_cfg.get("instructions_file")) or (judge_dir / "instructions.md")
+                        resolved_instr = _resolve_relative_file(
+                            cfg_path.parent, agent_cfg.get("instructions_file")
+                        ) or (judge_dir / "instructions.md")
                         if resolved_instr:
                             _write_text_with_backup(resolved_instr, instructions_value)
-                            logger.info("Applied optimized judge instructions: %s", resolved_instr)
+                            logger.info(
+                                "Applied optimized judge instructions: %s",
+                                resolved_instr,
+                            )
                     if template_value:
-                        resolved_template = _resolve_relative_file(cfg_path.parent, input_cfg.get("template_file")) or (judge_dir / "template.md")
+                        resolved_template = _resolve_relative_file(
+                            cfg_path.parent, input_cfg.get("template_file")
+                        ) or (judge_dir / "template.md")
                         if resolved_template:
                             _write_text_with_backup(resolved_template, template_value)
-                            logger.info("Applied optimized judge template: %s", resolved_template)
+                            logger.info(
+                                "Applied optimized judge template: %s",
+                                resolved_template,
+                            )
             except Exception as apply_exc:
-                logger.exception("Failed to apply judge optimization updates: %s", apply_exc)
+                logger.exception(
+                    "Failed to apply judge optimization updates: %s", apply_exc
+                )
             await manager.update_job(
                 job_id,
                 state="completed",
@@ -3243,11 +3702,21 @@ def create_api_app(
             )
         except (Exception, SystemExit) as exc:
             logger.exception("Judge optimization %s failed", job_id)
-            await manager.update_job(job_id, state="failed", error=str(exc), finished_at=_utc_now(), completed=1)
+            await manager.update_job(
+                job_id,
+                state="failed",
+                error=str(exc),
+                finished_at=_utc_now(),
+                completed=1,
+            )
 
-    async def _run_agent_optimization_job(job_id: str, payload: AgentOptimizationRequest, manifest_path: Path) -> None:
+    async def _run_agent_optimization_job(
+        job_id: str, payload: AgentOptimizationRequest, manifest_path: Path
+    ) -> None:
         manager: AgentOptimizationManager = app.state.agent_optimization_manager
-        await manager.update_job(job_id, state="running", started_at=_utc_now(), total=1)
+        await manager.update_job(
+            job_id, state="running", started_at=_utc_now(), total=1
+        )
         loop = asyncio.get_running_loop()
         dataset = payload.dataset
         log_file_holder: Dict[str, Optional[str]] = {"value": None}
@@ -3257,10 +3726,14 @@ def create_api_app(
             if text.startswith("LOG_PATH:"):
                 path_value = text.split("LOG_PATH:", 1)[1].strip()
                 log_file_holder["value"] = path_value
-                asyncio.run_coroutine_threadsafe(manager.update_job(job_id, log_path=path_value), loop)
+                asyncio.run_coroutine_threadsafe(
+                    manager.update_job(job_id, log_path=path_value), loop
+                )
                 return
             if "Exception during reflection/proposal" in text:
-                asyncio.run_coroutine_threadsafe(manager.update_job(job_id, error=text), loop)
+                asyncio.run_coroutine_threadsafe(
+                    manager.update_job(job_id, error=text), loop
+                )
                 return
             if text.startswith("PROGRESS:"):
                 try:
@@ -3275,7 +3748,10 @@ def create_api_app(
                             eta_value = None
                 except Exception:
                     return
-                asyncio.run_coroutine_threadsafe(manager.update_job(job_id, completed=value, eta_seconds=eta_value), loop)
+                asyncio.run_coroutine_threadsafe(
+                    manager.update_job(job_id, completed=value, eta_seconds=eta_value),
+                    loop,
+                )
 
         def _execute() -> Dict[str, Any]:
             return optimize_agent_from_project(
@@ -3289,8 +3765,8 @@ def create_api_app(
                 positives_only=bool(payload.positives_only),
                 max_turns=None,
                 max_metric_calls=int(payload.max_metric_calls),
-                reflection_model='gpt-4.1',
-                score_mode='fraction',
+                reflection_model="gpt-4.1",
+                score_mode="fraction",
                 optimizer_key=None,
                 seed=int(payload.seed or 0),
                 output_dir=None,
@@ -3302,11 +3778,17 @@ def create_api_app(
         try:
             result = await loop.run_in_executor(None, _execute)
             try:
-                instructions_value = result.get("instructions") if isinstance(result, dict) else None
+                instructions_value = (
+                    result.get("instructions") if isinstance(result, dict) else None
+                )
                 if instructions_value:
-                    apply_agent_instructions(str(manifest_path), payload.agent_key, instructions_value)
+                    apply_agent_instructions(
+                        str(manifest_path), payload.agent_key, instructions_value
+                    )
             except Exception as apply_exc:
-                logger.exception("Failed to apply agent optimization updates: %s", apply_exc)
+                logger.exception(
+                    "Failed to apply agent optimization updates: %s", apply_exc
+                )
             log_path_value = None
             if isinstance(result, dict):
                 log_path_value = result.get("log_file") or log_file_holder.get("value")
@@ -3318,7 +3800,9 @@ def create_api_app(
                 completed=int(payload.max_metric_calls),
                 finished_at=_utc_now(),
                 run_dir=result.get("run_dir") if isinstance(result, dict) else None,
-                result_path=result.get("out_json") if isinstance(result, dict) else None,
+                result_path=(
+                    result.get("out_json") if isinstance(result, dict) else None
+                ),
                 log_path=log_path_value,
                 error=None,
                 eta_seconds=0.0,
@@ -3326,7 +3810,14 @@ def create_api_app(
         except (Exception, SystemExit) as exc:
             logger.exception("Agent optimization %s failed", job_id)
             log_path_value = log_file_holder.get("value")
-            await manager.update_job(job_id, state="failed", error=str(exc), log_path=log_path_value, finished_at=_utc_now(), eta_seconds=None)
+            await manager.update_job(
+                job_id,
+                state="failed",
+                error=str(exc),
+                log_path=log_path_value,
+                finished_at=_utc_now(),
+                eta_seconds=None,
+            )
 
     @app.post("/api/evaluation/scenarios/generate")
     async def generate_evaluation_scenarios(payload: ScenarioGenerationRequest):
@@ -3349,22 +3840,29 @@ def create_api_app(
                         normalized_dims[str(key)] = filtered_values
                 payload.dimensions = normalized_dims or None
             if not payload.name and not payload.output_path:
-                raise HTTPException(status_code=422, detail="Provide a scenario set name or output_path")
+                raise HTTPException(
+                    status_code=422, detail="Provide a scenario set name or output_path"
+                )
             manifest_path = _get_manifest_path()
             resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             manager: ScenarioGenerationManager = app.state.scenario_generation_manager
             job = await manager.create_job(project_name, payload)
-            task = asyncio.create_task(_run_scenario_generation_job(job.job_id, payload, manifest_path))
+            task = asyncio.create_task(
+                _run_scenario_generation_job(job.job_id, payload, manifest_path)
+            )
             await manager.register_task(job.job_id, task)
             status = await manager.get_status(job.job_id)
             status_model = ScenarioGenerationStatusModel(**status) if status else None
-            return {"job_id": job.job_id, "status": status_model.model_dump() if status_model else None}
+            return {
+                "job_id": job.job_id,
+                "status": status_model.model_dump() if status_model else None,
+            }
         except HTTPException:
             raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
-    
+
     @app.get("/api/evaluation/scenarios/generate/{job_id}")
     async def get_evaluation_scenario_generation(job_id: str):
         manager: ScenarioGenerationManager = app.state.scenario_generation_manager
@@ -3373,7 +3871,7 @@ def create_api_app(
             raise HTTPException(status_code=404, detail="Scenario generation not found")
         status_model = ScenarioGenerationStatusModel(**status)
         return {"job_id": job_id, "status": status_model.model_dump()}
-    
+
     @app.put("/api/evaluation/dimensions")
     async def update_evaluation_dimensions(payload: EvaluationDimensionsPayload):
         try:
@@ -3386,7 +3884,7 @@ def create_api_app(
             raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
-    
+
     @app.get("/api/evaluation/scenarios")
     async def get_evaluation_scenarios():
         try:
@@ -3407,7 +3905,7 @@ def create_api_app(
             raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
-    
+
     @app.get("/api/evaluation/datasets")
     async def get_evaluation_datasets():
         try:
@@ -3416,7 +3914,9 @@ def create_api_app(
             resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             datasets = _discover_dataset_entries(ctx)
-            payload = EvaluationDatasetsResponse(project=project_name, datasets=datasets)
+            payload = EvaluationDatasetsResponse(
+                project=project_name, datasets=datasets
+            )
             return payload.model_dump()
         except HTTPException:
             raise
@@ -3441,7 +3941,9 @@ def create_api_app(
     @app.post("/api/evaluation/judges")
     async def create_evaluation_judge(payload: EvaluationJudgeCreatePayload):
         try:
-            raw_name = (payload.name or payload.agent_label or payload.key or "").strip()
+            raw_name = (
+                payload.name or payload.agent_label or payload.key or ""
+            ).strip()
             if not raw_name:
                 raise HTTPException(status_code=422, detail="Judge name is required")
             key_value = (payload.key or _slugify(raw_name)).strip()
@@ -3459,7 +3961,9 @@ def create_api_app(
             model_value = model_candidate or "gpt-4.1"
             agent_label_value = (payload.agent_label or raw_name).strip()
             agent_name_value = (payload.agent_name or "").strip()
-            source_value = (payload.source or "final_assistant_text").strip() or "final_assistant_text"
+            source_value = (
+                payload.source or "final_assistant_text"
+            ).strip() or "final_assistant_text"
             resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             failure_category_value = (payload.failure_category or "").strip() or None
@@ -3490,7 +3994,9 @@ def create_api_app(
                         judge_path = candidate
                         break
             if judge_path is None or not judge_path.is_file():
-                raise HTTPException(status_code=500, detail="Judge manifest not found after creation")
+                raise HTTPException(
+                    status_code=500, detail="Judge manifest not found after creation"
+                )
             try:
                 data = yaml.safe_load(judge_path.read_text(encoding="utf-8")) or {}
             except Exception as exc:
@@ -3516,14 +4022,20 @@ def create_api_app(
             judges_cfg[actual_key] = cfg
             data["judges"] = judges_cfg
             _write_yaml_with_backup(judge_path, data)
-            resolved_instr = _resolve_relative_file(judge_path.parent, agent_cfg.get("instructions_file")) or (judge_path.parent / "instructions.md")
-            resolved_template = _resolve_relative_file(judge_path.parent, input_cfg.get("template_file")) or (judge_path.parent / "template.md")
+            resolved_instr = _resolve_relative_file(
+                judge_path.parent, agent_cfg.get("instructions_file")
+            ) or (judge_path.parent / "instructions.md")
+            resolved_template = _resolve_relative_file(
+                judge_path.parent, input_cfg.get("template_file")
+            ) or (judge_path.parent / "template.md")
             if payload.instructions is not None and resolved_instr is not None:
                 _write_text_with_backup(resolved_instr, payload.instructions)
             if payload.template is not None and resolved_template is not None:
                 _write_text_with_backup(resolved_template, payload.template)
             if failure_category_value:
-                _ensure_failure_category_mapping(ctx, actual_key, failure_category_value)
+                _ensure_failure_category_mapping(
+                    ctx, actual_key, failure_category_value
+                )
             ctx = load_project(str(manifest_path))
             judges = _load_judge_models(ctx)
             response = EvaluationJudgesResponse(project=project_name, judges=judges)
@@ -3573,13 +4085,21 @@ def create_api_app(
             judges_block[key_value] = cfg
             data["judges"] = judges_block
             _write_yaml_with_backup(cfg_path, data)
-            resolved_instr = _resolve_relative_file(cfg_path.parent, agent_cfg.get("instructions_file")) or (judge_dir / "instructions.md")
-            resolved_template = _resolve_relative_file(cfg_path.parent, input_cfg.get("template_file")) or (judge_dir / "template.md")
+            resolved_instr = _resolve_relative_file(
+                cfg_path.parent, agent_cfg.get("instructions_file")
+            ) or (judge_dir / "instructions.md")
+            resolved_template = _resolve_relative_file(
+                cfg_path.parent, input_cfg.get("template_file")
+            ) or (judge_dir / "template.md")
             if payload.instructions is not None and resolved_instr is not None:
                 _write_text_with_backup(resolved_instr, payload.instructions)
             if payload.template is not None and resolved_template is not None:
                 _write_text_with_backup(resolved_template, payload.template)
-            failure_value = payload.failure_category.strip() if isinstance(payload.failure_category, str) else None
+            failure_value = (
+                payload.failure_category.strip()
+                if isinstance(payload.failure_category, str)
+                else None
+            )
             if failure_value:
                 _ensure_failure_category_mapping(ctx, key_value, failure_value)
             ctx = load_project(str(manifest_path))
@@ -3611,7 +4131,9 @@ def create_api_app(
                 raise HTTPException(status_code=500, detail=str(exc))
             ctx = load_project(str(manifest_path))
             judges = _load_judge_models(ctx)
-            response = EvaluationJudgeDeleteResponse(project=project_name, deleted=key_value, judges=judges)
+            response = EvaluationJudgeDeleteResponse(
+                project=project_name, deleted=key_value, judges=judges
+            )
             return response.model_dump()
         except HTTPException:
             raise
@@ -3626,11 +4148,15 @@ def create_api_app(
                 raise HTTPException(status_code=422, detail="Judge key is required")
             dataset = payload.dataset
             if not dataset:
-                raise HTTPException(status_code=422, detail="Dataset selection is required")
+                raise HTTPException(
+                    status_code=422, detail="Dataset selection is required"
+                )
             set_name_value = (dataset.set_name or "").strip()
             category_value = (dataset.category or "").strip()
             if not set_name_value or not category_value:
-                raise HTTPException(status_code=422, detail="Dataset set_name and category are required")
+                raise HTTPException(
+                    status_code=422, detail="Dataset set_name and category are required"
+                )
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
             resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
@@ -3640,7 +4166,11 @@ def create_api_app(
                 raise HTTPException(status_code=404, detail="Judge not found")
             _judge_dir, _cfg_path, data, cfg = found
             input_cfg = cfg.get("input") if isinstance(cfg.get("input"), dict) else {}
-            judge_source = input_cfg.get("source") if isinstance(input_cfg.get("source"), str) else None
+            judge_source = (
+                input_cfg.get("source")
+                if isinstance(input_cfg.get("source"), str)
+                else None
+            )
             split_paths = {
                 "train": dataset.train_path,
                 "dev": dataset.dev_path,
@@ -3650,15 +4180,24 @@ def create_api_app(
             for split_name, raw_path in split_paths.items():
                 candidate = Path(str(raw_path)).expanduser().resolve(strict=False)
                 if not candidate.is_file():
-                    raise HTTPException(status_code=422, detail=f"{split_name.title()} split not found at {candidate}")
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"{split_name.title()} split not found at {candidate}",
+                    )
                 resolved_splits[split_name] = str(candidate)
             runs_path = dataset.runs_path
             if (not runs_path) and dataset.artifact_dir:
-                candidate = Path(dataset.artifact_dir).expanduser().resolve(strict=False) / "generated_runs.json"
+                candidate = (
+                    Path(dataset.artifact_dir).expanduser().resolve(strict=False)
+                    / "generated_runs.json"
+                )
                 if candidate.is_file():
                     runs_path = str(candidate)
             if not runs_path:
-                raise HTTPException(status_code=422, detail="Runs file not found. Run the scenarios before optimizing.")
+                raise HTTPException(
+                    status_code=422,
+                    detail="Runs file not found. Run the scenarios before optimizing.",
+                )
             dataset.set_name = set_name_value
             dataset.category = category_value
             dataset.train_path = resolved_splits["train"]
@@ -3673,8 +4212,12 @@ def create_api_app(
             job_payload = JudgeOptimizationRequest(**payload.model_dump())
             manager: JudgeOptimizationManager = app.state.judge_optimization_manager
             job = await manager.create_job(project_name, job_payload)
-            await manager.update_job(job.job_id, dataset=job_payload.dataset.model_dump())
-            task = asyncio.create_task(_run_judge_optimization_job(job.job_id, job_payload, manifest_path))
+            await manager.update_job(
+                job.job_id, dataset=job_payload.dataset.model_dump()
+            )
+            task = asyncio.create_task(
+                _run_judge_optimization_job(job.job_id, job_payload, manifest_path)
+            )
             await manager.register_task(job.job_id, task)
             status = await manager.get_status(job.job_id)
             status_model = JudgeOptimizationStatusModel(**status) if status else None
@@ -3703,11 +4246,15 @@ def create_api_app(
                 raise HTTPException(status_code=422, detail="Agent key is required")
             dataset_payload = payload.dataset
             if not dataset_payload:
-                raise HTTPException(status_code=422, detail="Dataset selection is required")
+                raise HTTPException(
+                    status_code=422, detail="Dataset selection is required"
+                )
             set_name_value = (dataset_payload.set_name or "").strip()
             category_value = (dataset_payload.category or "").strip()
             if not set_name_value or not category_value:
-                raise HTTPException(status_code=422, detail="Dataset set_name and category are required")
+                raise HTTPException(
+                    status_code=422, detail="Dataset set_name and category are required"
+                )
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
             resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
@@ -3725,7 +4272,10 @@ def create_api_app(
             for split_name, raw_path in split_paths.items():
                 candidate = Path(str(raw_path)).expanduser().resolve(strict=False)
                 if not candidate.is_file():
-                    raise HTTPException(status_code=422, detail=f"{split_name.title()} split not found at {candidate}")
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"{split_name.title()} split not found at {candidate}",
+                    )
                 resolved_splits[split_name] = str(candidate)
             normalized_dataset = AgentOptimizationDatasetPayload(
                 set_name=set_name_value,
@@ -3738,7 +4288,10 @@ def create_api_app(
             positives_only_value = bool(payload.positives_only)
             max_metric_calls_value = int(payload.max_metric_calls or 100)
             if max_metric_calls_value < 6:
-                raise HTTPException(status_code=422, detail="Budget must be at least 6 to run optimization")
+                raise HTTPException(
+                    status_code=422,
+                    detail="Budget must be at least 6 to run optimization",
+                )
             seed_value = int(payload.seed or 0)
             normalized_request = AgentOptimizationRequest(
                 agent_key=agent_key,
@@ -3749,8 +4302,14 @@ def create_api_app(
             )
             manager: AgentOptimizationManager = app.state.agent_optimization_manager
             job = await manager.create_job(project_name, normalized_request)
-            await manager.update_job(job.job_id, dataset=normalized_dataset.model_dump())
-            task = asyncio.create_task(_run_agent_optimization_job(job.job_id, normalized_request, manifest_path))
+            await manager.update_job(
+                job.job_id, dataset=normalized_dataset.model_dump()
+            )
+            task = asyncio.create_task(
+                _run_agent_optimization_job(
+                    job.job_id, normalized_request, manifest_path
+                )
+            )
             await manager.register_task(job.job_id, task)
             status = await manager.get_status(job.job_id)
             status_model = AgentOptimizationStatusModel(**status) if status else None
@@ -3772,7 +4331,9 @@ def create_api_app(
         return response.model_dump()
 
     @app.get("/api/evaluation/datasets/split")
-    async def get_evaluation_dataset_split(path: str = Query(..., description="Absolute path to the split file")):
+    async def get_evaluation_dataset_split(
+        path: str = Query(..., description="Absolute path to the split file")
+    ):
         try:
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
@@ -3806,14 +4367,20 @@ def create_api_app(
                         runs_payload = json.loads(run_file.read_text(encoding="utf-8"))
                     except Exception:
                         continue
-                    runs_list = runs_payload.get("runs") if isinstance(runs_payload, dict) else None
+                    runs_list = (
+                        runs_payload.get("runs")
+                        if isinstance(runs_payload, dict)
+                        else None
+                    )
                     if not isinstance(runs_list, list):
                         continue
                     for run in runs_list:
                         if not isinstance(run, dict):
                             continue
                         scenario_id = run.get("scenario_id")
-                        if scenario_id is None and isinstance(run.get("scenario"), dict):
+                        if scenario_id is None and isinstance(
+                            run.get("scenario"), dict
+                        ):
                             scenario_id = run["scenario"].get("id")
                         if scenario_id is not None:
                             runs_index[str(scenario_id)] = run
@@ -3857,15 +4424,27 @@ def create_api_app(
                     run_entry = runs_index.get(str(scenario.id))
                 if run_entry is None and scenario.name:
                     run_entry = runs_index.get(f"name::{scenario.name}")
-                assistant_message = _extract_assistant_message(run_entry or {}) if run_entry else None
+                assistant_message = (
+                    _extract_assistant_message(run_entry or {}) if run_entry else None
+                )
                 if assistant_message:
                     metadata = dict(scenario.metadata or {})
                     metadata["assistant_last_message"] = assistant_message
                     scenario.metadata = metadata
-            positives = sum(1 for item in raw_entries if isinstance(item.get("label"), bool) and item.get("label") is True)
-            negatives = sum(1 for item in raw_entries if isinstance(item.get("label"), bool) and item.get("label") is False)
+            positives = sum(
+                1
+                for item in raw_entries
+                if isinstance(item.get("label"), bool) and item.get("label") is True
+            )
+            negatives = sum(
+                1
+                for item in raw_entries
+                if isinstance(item.get("label"), bool) and item.get("label") is False
+            )
             try:
-                updated_at = datetime.fromtimestamp(target_path.stat().st_mtime).isoformat()
+                updated_at = datetime.fromtimestamp(
+                    target_path.stat().st_mtime
+                ).isoformat()
             except Exception:
                 updated_at = matched_split.updated_at
             split_payload = EvaluationDatasetSplitModel(
@@ -3888,7 +4467,7 @@ def create_api_app(
             raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
-    
+
     @app.post("/api/evaluation/scenarios/promote")
     async def promote_evaluation_scenario(payload: ScenarioPromotionPayload):
         try:
@@ -3896,8 +4475,10 @@ def create_api_app(
             ctx = load_project(str(manifest_path))
             source_path = Path(payload.set_path).expanduser().resolve()
             if not source_path.is_file():
-                raise HTTPException(status_code=404, detail="Scenario set path not found")
-    
+                raise HTTPException(
+                    status_code=404, detail="Scenario set path not found"
+                )
+
             raw_scenarios = _read_scenarios_file(source_path)
             target_entry: Optional[Dict[str, Any]] = None
             for idx, entry in enumerate(raw_scenarios):
@@ -3905,59 +4486,94 @@ def create_api_app(
                     if str(entry.get("id")) == payload.scenario_id:
                         target_entry = entry
                         break
-                elif payload.scenario_name is not None and entry.get("name") == payload.scenario_name:
+                elif (
+                    payload.scenario_name is not None
+                    and entry.get("name") == payload.scenario_name
+                ):
                     target_entry = entry
                     break
                 elif payload.index is not None and payload.index == idx:
                     target_entry = entry
                     break
             if target_entry is None:
-                raise HTTPException(status_code=404, detail="Scenario not found in source set")
-    
+                raise HTTPException(
+                    status_code=404, detail="Scenario not found in source set"
+                )
+
             golden_file = _resolve_golden_target(ctx)
             if golden_file.is_file():
                 try:
-                    golden_data = yaml.safe_load(golden_file.read_text(encoding="utf-8")) or {}
+                    golden_data = (
+                        yaml.safe_load(golden_file.read_text(encoding="utf-8")) or {}
+                    )
                 except Exception:
                     golden_data = {}
             else:
                 golden_data = {}
-    
+
             if not isinstance(golden_data, dict):
                 golden_data = {}
-    
-            existing = golden_data.get("scenarios") if isinstance(golden_data.get("scenarios"), list) else []
-            existing_list: List[Dict[str, Any]] = [e for e in existing if isinstance(e, dict)]
-    
+
+            existing = (
+                golden_data.get("scenarios")
+                if isinstance(golden_data.get("scenarios"), list)
+                else []
+            )
+            existing_list: List[Dict[str, Any]] = [
+                e for e in existing if isinstance(e, dict)
+            ]
+
             new_entry = dict(target_entry)
-    
+
             scenario_id = new_entry.get("id")
             scenario_name = new_entry.get("name")
-    
+
             for entry in existing_list:
                 if scenario_id is not None and str(entry.get("id")) == str(scenario_id):
-                    raise HTTPException(status_code=409, detail="Scenario already present in golden set")
-                if scenario_id is None and scenario_name and entry.get("name") == scenario_name:
-                    raise HTTPException(status_code=409, detail="Scenario already present in golden set")
-    
+                    raise HTTPException(
+                        status_code=409, detail="Scenario already present in golden set"
+                    )
+                if (
+                    scenario_id is None
+                    and scenario_name
+                    and entry.get("name") == scenario_name
+                ):
+                    raise HTTPException(
+                        status_code=409, detail="Scenario already present in golden set"
+                    )
+
             existing_list.append(new_entry)
             golden_data = dict(golden_data)
             golden_data["scenarios"] = existing_list
-    
+
             golden_file.parent.mkdir(parents=True, exist_ok=True)
             if golden_file.exists():
-                backup_path = golden_file.with_suffix(golden_file.suffix + f".bak.{datetime.now().strftime('%Y%m%d%H%M%S')}")
+                backup_path = golden_file.with_suffix(
+                    golden_file.suffix
+                    + f".bak.{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                )
                 shutil.copy2(golden_file, backup_path)
-            golden_file.write_text(yaml.safe_dump(golden_data, sort_keys=False, allow_unicode=True), encoding="utf-8")
-    
+            golden_file.write_text(
+                yaml.safe_dump(golden_data, sort_keys=False, allow_unicode=True),
+                encoding="utf-8",
+            )
+
             resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             golden_sets = _load_golden_sets(ctx)
             promoted_entry = ScenarioEntryModel(
-                id=str(new_entry.get("id")) if new_entry.get("id") is not None else None,
+                id=(
+                    str(new_entry.get("id"))
+                    if new_entry.get("id") is not None
+                    else None
+                ),
                 name=str(new_entry.get("name") or ""),
                 prompt=str(new_entry.get("prompt") or ""),
-                dimensions=new_entry.get("dimensions") if isinstance(new_entry.get("dimensions"), dict) else None,
+                dimensions=(
+                    new_entry.get("dimensions")
+                    if isinstance(new_entry.get("dimensions"), dict)
+                    else None
+                ),
                 metadata={
                     "source_kind": payload.source_kind,
                     "source_path": str(source_path),
@@ -3979,9 +4595,12 @@ def create_api_app(
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
             target_path = Path(payload.set_path).expanduser().resolve(strict=False)
-            if payload.kind == 'golden':
-                raise HTTPException(status_code=422, detail="Annotation is only supported for generated or annotated sets")
-            scenario_set = _get_scenario_set_by_path(ctx, 'generated', target_path)
+            if payload.kind == "golden":
+                raise HTTPException(
+                    status_code=422,
+                    detail="Annotation is only supported for generated or annotated sets",
+                )
+            scenario_set = _get_scenario_set_by_path(ctx, "generated", target_path)
             file_path = Path(scenario_set.path)
             if not file_path.is_file():
                 raise HTTPException(status_code=404, detail="Scenario file not found")
@@ -3998,14 +4617,19 @@ def create_api_app(
                     if isinstance(candidate, str) and candidate.strip():
                         project_name = candidate.strip()
             if not project_name:
-                raise HTTPException(status_code=422, detail="Tracing project not configured; set tracing.project in project.yml")
+                raise HTTPException(
+                    status_code=422,
+                    detail="Tracing project not configured; set tracing.project in project.yml",
+                )
             try:
                 _, agent_yaml_path = resolve_agent(ctx, payload.agent)
             except Exception as exc:
                 raise HTTPException(status_code=404, detail=str(exc))
-            annotated, _original, source_path = annotate_scenarios(Path(agent_yaml_path), file_path, str(project_name), None)
+            annotated, _original, source_path = annotate_scenarios(
+                Path(agent_yaml_path), file_path, str(project_name), None
+            )
             output_path = write_annotation_output(ctx.root, source_path, annotated)
-            annotated_set = _get_scenario_set_by_path(ctx, 'generated', output_path)
+            annotated_set = _get_scenario_set_by_path(ctx, "generated", output_path)
             response = ScenarioAnnotateResponseModel(
                 project=str(project_name),
                 annotated_path=str(output_path),
@@ -4025,11 +4649,18 @@ def create_api_app(
             category = payload.category.strip()
             if not category:
                 raise HTTPException(status_code=422, detail="Category is required")
-            if payload.kind == 'golden':
-                raise HTTPException(status_code=422, detail="Cannot split golden scenarios")
-            total_fraction = float(payload.train) + float(payload.dev) + float(payload.test)
+            if payload.kind == "golden":
+                raise HTTPException(
+                    status_code=422, detail="Cannot split golden scenarios"
+                )
+            total_fraction = (
+                float(payload.train) + float(payload.dev) + float(payload.test)
+            )
             if total_fraction <= 0:
-                raise HTTPException(status_code=422, detail="Train/dev/test fractions must sum to more than zero")
+                raise HTTPException(
+                    status_code=422,
+                    detail="Train/dev/test fractions must sum to more than zero",
+                )
             target_path = Path(payload.set_path).expanduser().resolve(strict=False)
             scenario_set = _get_scenario_set_by_path(ctx, payload.kind, target_path)
             file_path = Path(scenario_set.path)
@@ -4051,7 +4682,11 @@ def create_api_app(
                     f_dev=float(payload.dev),
                     f_test=float(payload.test),
                     seed=int(payload.seed),
-                    negatives_ratio=float(payload.negatives_ratio) if payload.negatives_ratio is not None else None,
+                    negatives_ratio=(
+                        float(payload.negatives_ratio)
+                        if payload.negatives_ratio is not None
+                        else None
+                    ),
                 )
             except Exception as exc:
                 raise HTTPException(status_code=500, detail=str(exc))
@@ -4064,10 +4699,15 @@ def create_api_app(
                     matched_dataset = dataset
                     break
             if matched_dataset is None:
-                raise HTTPException(status_code=500, detail="Failed to locate created dataset")
+                raise HTTPException(
+                    status_code=500, detail="Failed to locate created dataset"
+                )
             resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
-            response = ScenarioSplitResponse(project=str(project_name) if project_name else None, dataset=matched_dataset)
+            response = ScenarioSplitResponse(
+                project=str(project_name) if project_name else None,
+                dataset=matched_dataset,
+            )
             return response.model_dump()
         except HTTPException:
             raise
@@ -4081,7 +4721,9 @@ def create_api_app(
             ctx = load_project(str(manifest_path))
             base_dir = (_artifact_root(ctx) / payload.set_name).resolve()
             if not base_dir.is_dir():
-                raise HTTPException(status_code=404, detail="Dataset set directory not found")
+                raise HTTPException(
+                    status_code=404, detail="Dataset set directory not found"
+                )
             splits_root = base_dir / "splits" / payload.category
             if splits_root.is_dir():
                 shutil.rmtree(splits_root)
@@ -4101,7 +4743,9 @@ def create_api_app(
             datasets = _discover_dataset_entries(refreshed_ctx)
             resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
-            response = EvaluationDatasetDeleteResponse(project=str(project_name) if project_name else None, datasets=datasets)
+            response = EvaluationDatasetDeleteResponse(
+                project=str(project_name) if project_name else None, datasets=datasets
+            )
             return response.model_dump()
         except HTTPException:
             raise
@@ -4117,7 +4761,7 @@ def create_api_app(
             scenario_set = _get_scenario_set_by_path(ctx, payload.kind, target_path)
             file_path = Path(scenario_set.path)
             parent_dir = file_path.parent
-            if payload.kind == 'generated':
+            if payload.kind == "generated":
                 if parent_dir.is_dir():
                     shutil.rmtree(parent_dir)
             else:
@@ -4128,7 +4772,9 @@ def create_api_app(
                         shutil.rmtree(file_path)
                 if parent_dir.is_dir():
                     try:
-                        remaining = [child for child in parent_dir.iterdir() if child.exists()]
+                        remaining = [
+                            child for child in parent_dir.iterdir() if child.exists()
+                        ]
                         if not remaining:
                             parent_dir.rmdir()
                     except Exception:
@@ -4148,9 +4794,13 @@ def create_api_app(
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
 
-    async def _run_suite_job(job_id: str, payload: EvaluationSuiteRunRequest, manifest_path: Path) -> None:
+    async def _run_suite_job(
+        job_id: str, payload: EvaluationSuiteRunRequest, manifest_path: Path
+    ) -> None:
         manager: SuiteRunManager = app.state.suite_run_manager
-        await manager.update_job(job_id, state="running", started_at=_utc_now(), completed=0)
+        await manager.update_job(
+            job_id, state="running", started_at=_utc_now(), completed=0
+        )
         loop = asyncio.get_running_loop()
         progress_state = {"total": 0, "completed": 0}
         try:
@@ -4189,7 +4839,12 @@ def create_api_app(
                     ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
                     workflow_name = f"{base_name}_suite_{label_segment}_{ts}"
                     resume_mode = (tracing.get("settings") or {}).get("resume", "never")
-                    tracing_module.init(project=str(tracing.get("project") or "evaluation_suite"), name=workflow_name, resume=str(resume_mode), replace_default=True)
+                    tracing_module.init(
+                        project=str(tracing.get("project") or "evaluation_suite"),
+                        name=workflow_name,
+                        resume=str(resume_mode),
+                        replace_default=True,
+                    )
 
             base_dir = manifest_path.parent.resolve()
             output_arg = (payload.output_path or "").strip()
@@ -4199,11 +4854,15 @@ def create_api_app(
                     final_out = (base_dir / output_arg).resolve()
             else:
                 name_value = label or "suite"
-                final_out = (base_dir / "artifacts" / "eval" / name_value / "run_results.json").resolve()
+                final_out = (
+                    base_dir / "artifacts" / "eval" / name_value / "run_results.json"
+                ).resolve()
             final_out.parent.mkdir(parents=True, exist_ok=True)
 
             def _schedule_update(**updates: Any) -> None:
-                asyncio.run_coroutine_threadsafe(manager.update_job(job_id, **updates), loop)
+                asyncio.run_coroutine_threadsafe(
+                    manager.update_job(job_id, **updates), loop
+                )
 
             def _progress_cb(event: Dict[str, Any]) -> None:
                 evt = event.get("event")
@@ -4216,7 +4875,9 @@ def create_api_app(
                     if isinstance(idx, int) and idx >= 0:
                         progress_state["completed"] = idx
                     else:
-                        progress_state["completed"] = max(progress_state["completed"] + 1, 1)
+                        progress_state["completed"] = max(
+                            progress_state["completed"] + 1, 1
+                        )
                     _schedule_update(completed=progress_state["completed"])
 
             include_unmeasured = bool(payload.include_unmeasured or False)
@@ -4299,13 +4960,33 @@ def create_api_app(
             )
         except Exception as exc:
             logger.exception("Evaluation suite run %s failed", job_id)
-            await manager.update_job(job_id, state="failed", error=str(exc), finished_at=_utc_now())
+            await manager.update_job(
+                job_id, state="failed", error=str(exc), finished_at=_utc_now()
+            )
 
-    async def _run_scenario_job(job_id: str, payload: ScenarioRunRequest, manifest_path: Path, scenario_set: ScenarioSetModel, scenarios: List[Dict[str, Any]], output_path: Path) -> None:
+    async def _run_scenario_job(
+        job_id: str,
+        payload: ScenarioRunRequest,
+        manifest_path: Path,
+        scenario_set: ScenarioSetModel,
+        scenarios: List[Dict[str, Any]],
+        output_path: Path,
+    ) -> None:
         manager: ScenarioRunManager = app.state.scenario_run_manager
-        await manager.update_job(job_id, state="running", started_at=_utc_now(), total=len(scenarios), completed=0)
+        await manager.update_job(
+            job_id,
+            state="running",
+            started_at=_utc_now(),
+            total=len(scenarios),
+            completed=0,
+        )
         try:
-            compiled_cfg_path, _ = compile_project(str(manifest_path), select=str(payload.select or ""), exclude=str(payload.exclude or ""), agent_key=(payload.agent or None))
+            compiled_cfg_path, _ = compile_project(
+                str(manifest_path),
+                select=str(payload.select or ""),
+                exclude=str(payload.exclude or ""),
+                agent_key=(payload.agent or None),
+            )
             compiled_path = Path(compiled_cfg_path).resolve()
             cfg = yaml.safe_load(compiled_path.read_text(encoding="utf-8")) or {}
             tracing = cfg.get("tracing") or {}
@@ -4315,14 +4996,14 @@ def create_api_app(
             if provider in {"studio", "agentio"}:
                 try:
                     from omniagents.studio import tracing as studio_tracing
-    
+
                     tracing_module = studio_tracing
                 except ImportError:
                     tracing_module = None
                 if tracing_module is None:
                     try:
                         import agentio as legacy_tracing
-    
+
                         tracing_module = legacy_tracing
                     except Exception:
                         tracing_module = None
@@ -4333,10 +5014,15 @@ def create_api_app(
                     ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
                     workflow_name = f"{base_name}_scenarios_{label}_{ts}"
                     resume_mode = (tracing.get("settings") or {}).get("resume", "never")
-                    tracing_module.init(project=str(tracing.get("project") or "scenario_runs"), name=workflow_name, resume=str(resume_mode), replace_default=True)
-    
+                    tracing_module.init(
+                        project=str(tracing.get("project") or "scenario_runs"),
+                        name=workflow_name,
+                        resume=str(resume_mode),
+                        replace_default=True,
+                    )
+
             progress = {"total": len(scenarios), "completed": 0}
-    
+
             def _progress_cb(event: Dict[str, Any]) -> None:
                 evt = event.get("event")
                 if evt == "start":
@@ -4349,40 +5035,70 @@ def create_api_app(
                         progress["completed"] = max(progress["completed"], current)
                     else:
                         progress["completed"] += 1
-                    asyncio.create_task(manager.update_job(job_id, completed=progress["completed"]))
+                    asyncio.create_task(
+                        manager.update_job(job_id, completed=progress["completed"])
+                    )
                 elif evt == "done":
                     count = event.get("count")
                     if isinstance(count, int) and count >= 0:
                         progress["completed"] = count
-                    asyncio.create_task(manager.update_job(job_id, completed=progress["completed"]))
-    
+                    asyncio.create_task(
+                        manager.update_job(job_id, completed=progress["completed"])
+                    )
+
             for sc in scenarios:
-                sc.setdefault('_source_path', str(Path(scenario_set.path)))
-            runs = await run_scenarios_against_agent(compiled_path, scenarios, max_turns=payload.max_turns, include_history=payload.include_history, workflow_name=workflow_name, progress_cb=_progress_cb, scenario_source_path=Path(scenario_set.path))
-    
+                sc.setdefault("_source_path", str(Path(scenario_set.path)))
+            runs = await run_scenarios_against_agent(
+                compiled_path,
+                scenarios,
+                max_turns=payload.max_turns,
+                include_history=payload.include_history,
+                workflow_name=workflow_name,
+                progress_cb=_progress_cb,
+                scenario_source_path=Path(scenario_set.path),
+            )
+
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(json.dumps({"runs": runs}, indent=2), encoding="utf-8")
-    
+            output_path.write_text(
+                json.dumps({"runs": runs}, indent=2), encoding="utf-8"
+            )
+
             manifest_file = Path(scenario_set.path).resolve().parent / "manifest.json"
             if workflow_name:
                 try:
                     if manifest_file.exists():
-                        data = json.loads(manifest_file.read_text(encoding="utf-8")) or {}
+                        data = (
+                            json.loads(manifest_file.read_text(encoding="utf-8")) or {}
+                        )
                     else:
                         data = {}
                     data["workflow_run"] = workflow_name
                     data["workflow_run_at"] = _utc_now()
                     manifest_file.parent.mkdir(parents=True, exist_ok=True)
-                    manifest_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                    manifest_file.write_text(
+                        json.dumps(data, indent=2), encoding="utf-8"
+                    )
                 except Exception:
                     pass
-    
-            await manager.update_job(job_id, state="completed", completed=len(runs), total=progress["total"], finished_at=_utc_now(), runs_path=str(output_path), workflow_name=workflow_name)
+
+            await manager.update_job(
+                job_id,
+                state="completed",
+                completed=len(runs),
+                total=progress["total"],
+                finished_at=_utc_now(),
+                runs_path=str(output_path),
+                workflow_name=workflow_name,
+            )
         except Exception as exc:
             logger.exception("Scenario run %s failed", job_id)
-            await manager.update_job(job_id, state="failed", error=str(exc), finished_at=_utc_now())
+            await manager.update_job(
+                job_id, state="failed", error=str(exc), finished_at=_utc_now()
+            )
 
-    def _resolve_runs_output_path(manifest_path: Path, scenario_path: Path, override: Optional[str]) -> Path:
+    def _resolve_runs_output_path(
+        manifest_path: Path, scenario_path: Path, override: Optional[str]
+    ) -> Path:
         base_dir = manifest_path.parent.resolve()
         if override:
             candidate = Path(override)
@@ -4409,11 +5125,15 @@ def create_api_app(
             project_name = resources.get("project_name") or app.state.default_project
             manager: SuiteRunManager = app.state.suite_run_manager
             job = await manager.create_job(project_name, payload)
-            task = asyncio.create_task(_run_suite_job(job.job_id, payload, manifest_path))
+            task = asyncio.create_task(
+                _run_suite_job(job.job_id, payload, manifest_path)
+            )
             await manager.register_task(job.job_id, task)
             status = await manager.get_status(job.job_id)
             status_model = EvaluationSuiteRunStatusModel(**status) if status else None
-            response = EvaluationSuiteRunResponse(job_id=job.job_id, status=status_model)
+            response = EvaluationSuiteRunResponse(
+                job_id=job.job_id, status=status_model
+            )
             return response.model_dump()
         except HTTPException:
             raise
@@ -4425,7 +5145,9 @@ def create_api_app(
         manager: SuiteRunManager = app.state.suite_run_manager
         status = await manager.get_status(job_id)
         if not status:
-            raise HTTPException(status_code=404, detail="Evaluation suite run not found")
+            raise HTTPException(
+                status_code=404, detail="Evaluation suite run not found"
+            )
         status_model = EvaluationSuiteRunStatusModel(**status)
         response = EvaluationSuiteRunResponse(job_id=job_id, status=status_model)
         return response.model_dump()
@@ -4445,22 +5167,36 @@ def create_api_app(
                 raise HTTPException(status_code=422, detail="Scenario set is empty")
             scenarios = _ensure_scenario_ids(entries)
             for sc in scenarios:
-                sc['_source_path'] = str(file_path)
-            output_path = _resolve_runs_output_path(manifest_path, file_path, payload.output_path)
+                sc["_source_path"] = str(file_path)
+            output_path = _resolve_runs_output_path(
+                manifest_path, file_path, payload.output_path
+            )
             resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             manager: ScenarioRunManager = app.state.scenario_run_manager
             job = await manager.create_job(project_name, payload, len(scenarios))
-            task = asyncio.create_task(_run_scenario_job(job.job_id, payload, manifest_path, scenario_set, scenarios, output_path))
+            task = asyncio.create_task(
+                _run_scenario_job(
+                    job.job_id,
+                    payload,
+                    manifest_path,
+                    scenario_set,
+                    scenarios,
+                    output_path,
+                )
+            )
             await manager.register_task(job.job_id, task)
             status = await manager.get_status(job.job_id)
             status_model = ScenarioRunStatusModel(**status) if status else None
-            return {"job_id": job.job_id, "status": status_model.model_dump() if status_model else None}
+            return {
+                "job_id": job.job_id,
+                "status": status_model.model_dump() if status_model else None,
+            }
         except HTTPException:
             raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
-    
+
     @app.get("/api/evaluation/scenarios/run/{job_id}")
     async def get_evaluation_scenario_run(job_id: str):
         manager: ScenarioRunManager = app.state.scenario_run_manager
@@ -4469,7 +5205,7 @@ def create_api_app(
             raise HTTPException(status_code=404, detail="Scenario run not found")
         status_model = ScenarioRunStatusModel(**status)
         return {"job_id": job_id, "status": status_model.model_dump()}
-    
+
     @app.post("/api/evaluation/scenarios/item")
     async def create_evaluation_scenario(payload: ScenarioCreatePayload):
         try:
@@ -4487,7 +5223,9 @@ def create_api_app(
                 raise HTTPException(status_code=422, detail="Scenario name is required")
             prompt_value = str(scenario_data.get("prompt", "")).strip()
             if not prompt_value:
-                raise HTTPException(status_code=422, detail="Scenario prompt is required")
+                raise HTTPException(
+                    status_code=422, detail="Scenario prompt is required"
+                )
             new_entry: Dict[str, Any] = {"name": name_value, "prompt": prompt_value}
             scenario_id_value = None
             if "id" in scenario_data:
@@ -4501,17 +5239,25 @@ def create_api_app(
                 elif isinstance(dims_value, dict):
                     new_entry["dimensions"] = dims_value
                 else:
-                    raise HTTPException(status_code=422, detail="Scenario dimensions must be an object")
+                    raise HTTPException(
+                        status_code=422, detail="Scenario dimensions must be an object"
+                    )
             if scenario_id_value:
                 for entry in entries:
                     entry_id_value = _scenario_id_value(entry.get("id"))
                     if entry_id_value == scenario_id_value:
-                        raise HTTPException(status_code=409, detail="Scenario id already exists in this set")
+                        raise HTTPException(
+                            status_code=409,
+                            detail="Scenario id already exists in this set",
+                        )
             else:
                 for entry in entries:
                     entry_id_value = _scenario_id_value(entry.get("id"))
                     if entry_id_value is None and entry.get("name") == name_value:
-                        raise HTTPException(status_code=409, detail="Scenario name already exists in this set")
+                        raise HTTPException(
+                            status_code=409,
+                            detail="Scenario name already exists in this set",
+                        )
             entries.append(new_entry)
             _write_scenarios_file(file_path, entries)
             resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
@@ -4522,7 +5268,7 @@ def create_api_app(
             raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
-    
+
     @app.put("/api/evaluation/scenarios/item")
     async def update_evaluation_scenario(payload: ScenarioUpdatePayload):
         try:
@@ -4534,9 +5280,13 @@ def create_api_app(
             if not file_path.is_file():
                 raise HTTPException(status_code=404, detail="Scenario file not found")
             entries = _read_scenarios_file(file_path)
-            located = _locate_scenario_entry(entries, payload.scenario_id, payload.scenario_name, payload.index)
+            located = _locate_scenario_entry(
+                entries, payload.scenario_id, payload.scenario_name, payload.index
+            )
             if not located:
-                raise HTTPException(status_code=404, detail="Scenario not found in target set")
+                raise HTTPException(
+                    status_code=404, detail="Scenario not found in target set"
+                )
             idx, current_entry = located
             scenario_data = payload.scenario.model_dump(exclude_unset=True)
             name_value = str(scenario_data.get("name", "")).strip()
@@ -4544,7 +5294,9 @@ def create_api_app(
                 raise HTTPException(status_code=422, detail="Scenario name is required")
             prompt_value = str(scenario_data.get("prompt", "")).strip()
             if not prompt_value:
-                raise HTTPException(status_code=422, detail="Scenario prompt is required")
+                raise HTTPException(
+                    status_code=422, detail="Scenario prompt is required"
+                )
             updated_entry = dict(current_entry)
             updated_entry["name"] = name_value
             updated_entry["prompt"] = prompt_value
@@ -4562,15 +5314,26 @@ def create_api_app(
                 elif isinstance(dims_value, dict):
                     updated_entry["dimensions"] = dims_value
                 else:
-                    raise HTTPException(status_code=422, detail="Scenario dimensions must be an object")
+                    raise HTTPException(
+                        status_code=422, detail="Scenario dimensions must be an object"
+                    )
             for entry_index, entry in enumerate(entries):
                 if entry_index == idx:
                     continue
                 other_id = _scenario_id_value(entry.get("id"))
                 if new_id_value and other_id == new_id_value:
-                    raise HTTPException(status_code=409, detail="Scenario id already exists in this set")
-                if not new_id_value and other_id is None and entry.get("name") == name_value:
-                    raise HTTPException(status_code=409, detail="Scenario name already exists in this set")
+                    raise HTTPException(
+                        status_code=409, detail="Scenario id already exists in this set"
+                    )
+                if (
+                    not new_id_value
+                    and other_id is None
+                    and entry.get("name") == name_value
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Scenario name already exists in this set",
+                    )
             entries[idx] = updated_entry
             _write_scenarios_file(file_path, entries)
             resources = getattr(app.state, "playground_resources", {})
@@ -4581,7 +5344,7 @@ def create_api_app(
             raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
-    
+
     @app.delete("/api/evaluation/scenarios/item")
     async def delete_evaluation_scenario(payload: ScenarioDeletePayload):
         try:
@@ -4593,9 +5356,13 @@ def create_api_app(
             if not file_path.is_file():
                 raise HTTPException(status_code=404, detail="Scenario file not found")
             entries = _read_scenarios_file(file_path)
-            located = _locate_scenario_entry(entries, payload.scenario_id, payload.scenario_name, payload.index)
+            located = _locate_scenario_entry(
+                entries, payload.scenario_id, payload.scenario_name, payload.index
+            )
             if not located:
-                raise HTTPException(status_code=404, detail="Scenario not found in target set")
+                raise HTTPException(
+                    status_code=404, detail="Scenario not found in target set"
+                )
             idx, _ = located
             entries.pop(idx)
             _write_scenarios_file(file_path, entries)
@@ -4607,7 +5374,7 @@ def create_api_app(
             raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
-    
+
     @app.get("/api/playground/metadata")
     async def get_playground_metadata(request: Request):
         resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
@@ -4615,8 +5382,10 @@ def create_api_app(
         if not base_spec:
             return {"available": False}
         entry_key = resources.get("entry_agent_key")
-        return _build_metadata_response(base_spec, resources, request, agent_key=entry_key)
-    
+        return _build_metadata_response(
+            base_spec, resources, request, agent_key=entry_key
+        )
+
     @app.post("/api/agents")
     async def create_agent(payload: AgentCreatePayload, request: Request):
         name_value = payload.name.strip() if isinstance(payload.name, str) else ""
@@ -4625,16 +5394,22 @@ def create_api_app(
         model_value = payload.model.strip() if isinstance(payload.model, str) else None
         manifest_path = _get_manifest_path()
         try:
-            _, _, sanitized = scaffold_agent(str(manifest_path), name_value, model=model_value or "gpt-4.1")
+            _, _, sanitized = scaffold_agent(
+                str(manifest_path), name_value, model=model_value or "gpt-4.1"
+            )
         except FileExistsError:
             raise HTTPException(status_code=409, detail="Agent already exists")
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
         refreshed_ctx = load_project(str(manifest_path))
-        updated_resources, agent_specs = _reload_playground_resources(refreshed_ctx, manifest_path)
+        updated_resources, agent_specs = _reload_playground_resources(
+            refreshed_ctx, manifest_path
+        )
         spec = agent_specs.get(sanitized)
         if not spec:
-            raise HTTPException(status_code=500, detail="Agent metadata unavailable after creation")
+            raise HTTPException(
+                status_code=500, detail="Agent metadata unavailable after creation"
+            )
         entry_key = updated_resources.get("entry_agent_key")
         summary = {
             "key": sanitized,
@@ -4644,7 +5419,9 @@ def create_api_app(
             "model": spec.model_name or "",
             "is_entry": sanitized == entry_key,
         }
-        metadata = _build_metadata_response(spec, updated_resources, request, agent_key=sanitized)
+        metadata = _build_metadata_response(
+            spec, updated_resources, request, agent_key=sanitized
+        )
         return {"agent": summary, "metadata": metadata}
 
     @app.get("/api/agents")
@@ -4666,6 +5443,7 @@ def create_api_app(
                     "is_entry": key == entry_key,
                 }
             )
+
         def _sort_key(item: Dict[str, Any]) -> tuple:
             is_entry = 0 if item.get("is_entry") else 1
             label_key = (item.get("label") or item.get("key") or "").lower()
@@ -4673,25 +5451,33 @@ def create_api_app(
 
         agents_payload.sort(key=_sort_key)
         return {"agents": agents_payload}
-    
+
     @app.get("/api/agents/{agent_key}/metadata")
     async def get_agent_metadata(agent_key: str, request: Request):
         resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
         spec = _resolve_agent_spec(resources, agent_key)
         if not spec:
-            raise HTTPException(status_code=404, detail=f"Agent '{agent_key}' not found")
+            raise HTTPException(
+                status_code=404, detail=f"Agent '{agent_key}' not found"
+            )
         return _build_metadata_response(spec, resources, request, agent_key=agent_key)
-    
+
     @app.put("/api/agents/{agent_key}")
-    async def update_agent(agent_key: str, payload: AgentUpdatePayload, request: Request):
+    async def update_agent(
+        agent_key: str, payload: AgentUpdatePayload, request: Request
+    ):
         try:
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
             agent_path = ctx.agents_map.get(agent_key)
             if not agent_path:
-                raise HTTPException(status_code=404, detail=f"Agent '{agent_key}' not found")
+                raise HTTPException(
+                    status_code=404, detail=f"Agent '{agent_key}' not found"
+                )
             try:
-                raw_config = yaml.safe_load(agent_path.read_text(encoding="utf-8")) or {}
+                raw_config = (
+                    yaml.safe_load(agent_path.read_text(encoding="utf-8")) or {}
+                )
             except Exception:
                 raw_config = {}
             if not isinstance(raw_config, dict):
@@ -4705,7 +5491,9 @@ def create_api_app(
             if isinstance(instructions_file, str) and instructions_file.strip():
                 instructions_path = Path(instructions_file)
                 if not instructions_path.is_absolute():
-                    instructions_path = (agent_path.parent / instructions_path).resolve()
+                    instructions_path = (
+                        agent_path.parent / instructions_path
+                    ).resolve()
                 instructions_path.parent.mkdir(parents=True, exist_ok=True)
                 instructions_path.write_text(instructions_text, encoding="utf-8")
             else:
@@ -4742,10 +5530,18 @@ def create_api_app(
             raw_config["use_safe_agent"] = bool(payload.use_safe_agent)
             safe_options_input = payload.safe_agent_options or {}
             sanitized_safe_options: Dict[str, Any] = {}
-            sanitized_safe_options["skip_approvals"] = bool(safe_options_input.get("skip_approvals", False))
-            sanitized_safe_options["halt_on_rejection"] = bool(safe_options_input.get("halt_on_rejection", True))
+            sanitized_safe_options["skip_approvals"] = bool(
+                safe_options_input.get("skip_approvals", False)
+            )
+            sanitized_safe_options["halt_on_rejection"] = bool(
+                safe_options_input.get("halt_on_rejection", True)
+            )
             tool_set = set(tools_list)
-            names_raw = safe_options_input.get("safe_tool_names") if isinstance(safe_options_input.get("safe_tool_names"), list) else []
+            names_raw = (
+                safe_options_input.get("safe_tool_names")
+                if isinstance(safe_options_input.get("safe_tool_names"), list)
+                else []
+            )
             safe_tool_names: List[str] = []
             seen_safe_names: Set[str] = set()
             for name in names_raw:
@@ -4757,7 +5553,11 @@ def create_api_app(
                 seen_safe_names.add(trimmed)
                 safe_tool_names.append(trimmed)
             sanitized_safe_options["safe_tool_names"] = safe_tool_names
-            patterns_raw = safe_options_input.get("safe_tool_patterns") if isinstance(safe_options_input.get("safe_tool_patterns"), list) else []
+            patterns_raw = (
+                safe_options_input.get("safe_tool_patterns")
+                if isinstance(safe_options_input.get("safe_tool_patterns"), list)
+                else []
+            )
             patterns_clean: List[str] = []
             for pattern in patterns_raw:
                 if not isinstance(pattern, str):
@@ -4766,13 +5566,27 @@ def create_api_app(
                 if trimmed and trimmed not in patterns_clean:
                     patterns_clean.append(trimmed)
             sanitized_safe_options["safe_tool_patterns"] = patterns_clean
-            if payload.use_safe_agent or sanitized_safe_options["safe_tool_names"] or sanitized_safe_options["safe_tool_patterns"] or sanitized_safe_options["skip_approvals"] or not sanitized_safe_options["halt_on_rejection"]:
+            if (
+                payload.use_safe_agent
+                or sanitized_safe_options["safe_tool_names"]
+                or sanitized_safe_options["safe_tool_patterns"]
+                or sanitized_safe_options["skip_approvals"]
+                or not sanitized_safe_options["halt_on_rejection"]
+            ):
                 raw_config["safe_agent_options"] = sanitized_safe_options
             else:
                 raw_config.pop("safe_agent_options", None)
             guardrails_input = payload.guardrails or {}
-            input_guardrails = guardrails_input.get("input") if isinstance(guardrails_input.get("input"), list) else []
-            output_guardrails = guardrails_input.get("output") if isinstance(guardrails_input.get("output"), list) else []
+            input_guardrails = (
+                guardrails_input.get("input")
+                if isinstance(guardrails_input.get("input"), list)
+                else []
+            )
+            output_guardrails = (
+                guardrails_input.get("output")
+                if isinstance(guardrails_input.get("output"), list)
+                else []
+            )
             input_values: List[str] = []
             seen_input: Set[str] = set()
             for item in input_guardrails:
@@ -4810,17 +5624,26 @@ def create_api_app(
                     raw_config["output_type_strict"] = bool(payload.output_type_strict)
                 else:
                     raw_config.pop("output_type_strict", None)
-                if output_type_value in {"dict", "dictionary"} and payload.output_schema:
+                if (
+                    output_type_value in {"dict", "dictionary"}
+                    and payload.output_schema
+                ):
                     raw_config["output_schema"] = payload.output_schema
                 else:
                     raw_config.pop("output_schema", None)
             _write_yaml_file(agent_path, raw_config)
             refreshed_ctx = load_project(str(manifest_path))
-            updated_resources, agent_specs = _reload_playground_resources(refreshed_ctx, manifest_path)
+            updated_resources, agent_specs = _reload_playground_resources(
+                refreshed_ctx, manifest_path
+            )
             spec = agent_specs.get(agent_key)
             if not spec:
-                raise HTTPException(status_code=500, detail="Agent metadata unavailable after update")
-            return _build_metadata_response(spec, updated_resources, request, agent_key=agent_key)
+                raise HTTPException(
+                    status_code=500, detail="Agent metadata unavailable after update"
+                )
+            return _build_metadata_response(
+                spec, updated_resources, request, agent_key=agent_key
+            )
         except HTTPException:
             raise
         except Exception as exc:
@@ -4832,7 +5655,9 @@ def create_api_app(
         try:
             delete_agent(str(manifest_path), agent_key)
         except FileNotFoundError:
-            raise HTTPException(status_code=404, detail=f"Agent '{agent_key}' not found")
+            raise HTTPException(
+                status_code=404, detail=f"Agent '{agent_key}' not found"
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         except Exception as exc:
@@ -4840,77 +5665,105 @@ def create_api_app(
         refreshed_ctx = load_project(str(manifest_path))
         _reload_playground_resources(refreshed_ctx, manifest_path)
         return {"deleted": agent_key}
-    
-    async def _configure_session(agent_key: Optional[str], payload: PlaygroundSessionRequest) -> Dict[str, str]:
+
+    async def _configure_session(
+        agent_key: Optional[str], payload: PlaygroundSessionRequest
+    ) -> Dict[str, str]:
         resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
         spec = _resolve_agent_spec(resources, agent_key)
         if not spec:
             if agent_key:
-                raise HTTPException(status_code=404, detail=f"Agent '{agent_key}' not found")
+                raise HTTPException(
+                    status_code=404, detail=f"Agent '{agent_key}' not found"
+                )
             raise HTTPException(status_code=400, detail="Playground is not available")
-    
+
         payload_data = payload.model_dump(exclude_unset=True)
-    
+
         model_name = (payload.model or "").strip()
         if not model_name:
             raise HTTPException(status_code=422, detail="Model name is required")
-    
+
         tool_registry: Dict[str, Any] = resources.get("tool_registry", {})
-        guardrails_registry: Dict[str, Any] = resources.get("guardrails_registry", {"input": {}, "output": {}})
+        guardrails_registry: Dict[str, Any] = resources.get(
+            "guardrails_registry", {"input": {}, "output": {}}
+        )
         tools_value = payload_data.get("tools")
-        unknown_tools = [name for name in (tools_value or []) if name not in tool_registry]
+        unknown_tools = [
+            name for name in (tools_value or []) if name not in tool_registry
+        ]
         if unknown_tools:
-            raise HTTPException(status_code=400, detail=f"Unknown tools: {', '.join(sorted(unknown_tools))}")
-    
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown tools: {', '.join(sorted(unknown_tools))}",
+            )
+
         store: PlaygroundSessionStore = app.state.playground_session_store
         config: Dict[str, Any] = {"model": model_name}
-    
+
         if "instructions" in payload_data:
             config["instructions"] = str(payload_data.get("instructions") or "")
-    
+
         if tools_value is not None:
             config["tools"] = tools_value or []
-    
+
         if isinstance(payload.model_settings, dict):
-            sanitized_settings = {k: v for k, v in payload.model_settings.items() if v not in (None, "")}
+            sanitized_settings = {
+                k: v for k, v in payload.model_settings.items() if v not in (None, "")
+            }
             if sanitized_settings:
                 config["model_settings"] = sanitized_settings
-    
+
         if payload.use_safe_agent is not None:
             config["use_safe_agent"] = bool(payload.use_safe_agent)
-    
-        if isinstance(payload.safe_agent_options, dict) and "safe_agent_options" in payload_data:
+
+        if (
+            isinstance(payload.safe_agent_options, dict)
+            and "safe_agent_options" in payload_data
+        ):
             safe_options: Dict[str, Any] = {}
             for key in ("skip_approvals", "halt_on_rejection"):
                 if key in payload.safe_agent_options:
                     safe_options[key] = bool(payload.safe_agent_options[key])
-            if "safe_tool_names" in payload.safe_agent_options and isinstance(payload.safe_agent_options["safe_tool_names"], list):
+            if "safe_tool_names" in payload.safe_agent_options and isinstance(
+                payload.safe_agent_options["safe_tool_names"], list
+            ):
                 safe_options["safe_tool_names"] = [
                     name
                     for name in payload.safe_agent_options["safe_tool_names"]
                     if isinstance(name, str) and name in tool_registry
                 ]
-            if "safe_tool_patterns" in payload.safe_agent_options and isinstance(payload.safe_agent_options["safe_tool_patterns"], list):
+            if "safe_tool_patterns" in payload.safe_agent_options and isinstance(
+                payload.safe_agent_options["safe_tool_patterns"], list
+            ):
                 safe_options["safe_tool_patterns"] = [
                     pattern
                     for pattern in payload.safe_agent_options["safe_tool_patterns"]
                     if isinstance(pattern, str) and pattern
                 ]
             config["safe_agent_options"] = safe_options
-    
+
         if isinstance(payload.guardrails, dict) and "guardrails" in payload_data:
             guardrails_config: Dict[str, List[str]] = {}
             input_registry = guardrails_registry.get("input", {})
             output_registry = guardrails_registry.get("output", {})
             input_names = payload.guardrails.get("input")
             if isinstance(input_names, list):
-                guardrails_config["input"] = [name for name in input_names if isinstance(name, str) and name in input_registry]
+                guardrails_config["input"] = [
+                    name
+                    for name in input_names
+                    if isinstance(name, str) and name in input_registry
+                ]
             output_names = payload.guardrails.get("output")
             if isinstance(output_names, list):
-                guardrails_config["output"] = [name for name in output_names if isinstance(name, str) and name in output_registry]
+                guardrails_config["output"] = [
+                    name
+                    for name in output_names
+                    if isinstance(name, str) and name in output_registry
+                ]
             if guardrails_config:
                 config["guardrails"] = guardrails_config
-    
+
         normalized_for_schema: Optional[str] = None
         if "output_type" in payload_data:
             raw_output_type = payload_data.get("output_type")
@@ -4922,36 +5775,46 @@ def create_api_app(
                     config["output_type"] = normalized
                     normalized_for_schema = normalized
                 else:
-                    raise HTTPException(status_code=400, detail=f"Unsupported output_type '{raw_output_type}'")
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Unsupported output_type '{raw_output_type}'",
+                    )
         if "output_type_strict" in payload_data:
             raw_strict = payload_data.get("output_type_strict")
             if raw_strict is not None:
                 config["output_type_strict"] = bool(raw_strict)
-    
+
         if "output_schema" in payload_data:
             raw_schema = payload_data.get("output_schema")
             if raw_schema is not None:
                 if not isinstance(raw_schema, dict):
-                    raise HTTPException(status_code=400, detail="output_schema must be a JSON object")
+                    raise HTTPException(
+                        status_code=400, detail="output_schema must be a JSON object"
+                    )
                 if normalized_for_schema not in (None, "dict", "dictionary", "object"):
-                    raise HTTPException(status_code=400, detail="output_schema requires output_type 'dict'")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="output_schema requires output_type 'dict'",
+                    )
                 config["output_schema"] = raw_schema
-    
+
         session_label = "playground" if not agent_key else f"agent:{agent_key}"
         config["__agent_key"] = agent_key
         config["__session_label"] = session_label
-    
+
         session_id = await store.upsert(payload.session_id, config)
         return {"session_id": session_id}
-    
+
     @app.post("/api/playground/session")
     async def configure_playground_session(payload: PlaygroundSessionRequest):
         return await _configure_session(None, payload)
-    
+
     @app.post("/api/agents/{agent_key}/session")
-    async def configure_agent_session(agent_key: str, payload: PlaygroundSessionRequest):
+    async def configure_agent_session(
+        agent_key: str, payload: PlaygroundSessionRequest
+    ):
         return await _configure_session(agent_key, payload)
-    
+
     @app.get("/api/conversations")
     async def get_conversations(
         project: str = Query(..., description="Project name"),
@@ -4960,7 +5823,9 @@ def create_api_app(
         search: Optional[str] = None,
         has_errors: Optional[bool] = None,
         workflow_name: Optional[str] = None,
-        dim: Optional[List[str]] = Query(None, description="Synthetic dimension filters as 'dimension:value'")
+        dim: Optional[List[str]] = Query(
+            None, description="Synthetic dimension filters as 'dimension:value'"
+        ),
     ):
         """Get conversations (grouped traces) with filtering and pagination"""
         try:
@@ -4969,74 +5834,90 @@ def create_api_app(
                 storage = storage_manager.get_storage(project)
             except ValueError:
                 return {"conversations": [], "total": 0}
-            
+
             # Get many traces for coverage
             traces = storage.get_traces(limit=1000000)
-            
+
             # Group by group_id
             conversations = {}
             for trace in traces:
-                group_id = trace.get('group_id') or trace['trace_id']  # Use trace_id if no group
-                
+                group_id = (
+                    trace.get("group_id") or trace["trace_id"]
+                )  # Use trace_id if no group
+
                 if group_id not in conversations:
                     conversations[group_id] = {
-                        'group_id': group_id,
-                        'traces': [],
-                        'trace_count': 0,
-                        'has_errors': False,
-                        'created_at': trace['created_at'],
-                        'workflow_name': trace.get('workflow_name'),
-                        'metadata': trace.get('metadata', {}),
-                        'first_input': None  # Will extract from first trace
+                        "group_id": group_id,
+                        "traces": [],
+                        "trace_count": 0,
+                        "has_errors": False,
+                        "created_at": trace["created_at"],
+                        "workflow_name": trace.get("workflow_name"),
+                        "metadata": trace.get("metadata", {}),
+                        "first_input": None,  # Will extract from first trace
                     }
-                
-                conversations[group_id]['traces'].append(trace)
-                conversations[group_id]['trace_count'] += 1
-                
+
+                conversations[group_id]["traces"].append(trace)
+                conversations[group_id]["trace_count"] += 1
+
                 # Check for errors in spans and extract first input from first trace
-                spans = storage.get_spans_for_trace(trace['trace_id'])
-                if any(s.get('error') for s in spans):
-                    conversations[group_id]['has_errors'] = True
-                
+                spans = storage.get_spans_for_trace(trace["trace_id"])
+                if any(s.get("error") for s in spans):
+                    conversations[group_id]["has_errors"] = True
+
                 # Extract first input from the first trace in the conversation
-                if conversations[group_id]['first_input'] is None:
+                if conversations[group_id]["first_input"] is None:
                     for span in spans:
                         try:
                             # Parse the data field
-                            if isinstance(span.get('data'), str):
-                                full_span = json.loads(span['data'])
+                            if isinstance(span.get("data"), str):
+                                full_span = json.loads(span["data"])
                             else:
-                                full_span = span.get('data', {})
-                            
-                            span_data = full_span.get('span_data', {})
-                            
+                                full_span = span.get("data", {})
+
+                            span_data = full_span.get("span_data", {})
+
                             # Look for first user input in response or generation spans
-                            if span.get('span_type') in ['response', 'generation'] and span_data.get('input'):
-                                input_msgs = span_data['input']
-                                user_msgs = [m for m in input_msgs if isinstance(m, dict) and m.get('role') == 'user']
+                            if span.get("span_type") in [
+                                "response",
+                                "generation",
+                            ] and span_data.get("input"):
+                                input_msgs = span_data["input"]
+                                user_msgs = [
+                                    m
+                                    for m in input_msgs
+                                    if isinstance(m, dict) and m.get("role") == "user"
+                                ]
                                 if user_msgs:
-                                    conversations[group_id]['first_input'] = user_msgs[0].get('content', '')
+                                    conversations[group_id]["first_input"] = user_msgs[
+                                        0
+                                    ].get("content", "")
                                     break
                         except:
                             pass
-            
+
             # Convert to list and sort by created_at
             conv_list = list(conversations.values())
-            conv_list.sort(key=lambda x: x['created_at'], reverse=True)
-            
+            conv_list.sort(key=lambda x: x["created_at"], reverse=True)
+
             # Apply filters
             if search:
-                conv_list = [c for c in conv_list 
-                           if search.lower() in (c.get('workflow_name') or '').lower() 
-                           or search.lower() in c['group_id'].lower()]
-            
+                conv_list = [
+                    c
+                    for c in conv_list
+                    if search.lower() in (c.get("workflow_name") or "").lower()
+                    or search.lower() in c["group_id"].lower()
+                ]
+
             if has_errors is not None:
-                conv_list = [c for c in conv_list if c['has_errors'] == has_errors]
-    
+                conv_list = [c for c in conv_list if c["has_errors"] == has_errors]
+
             if workflow_name:
                 wn = workflow_name.lower()
-                conv_list = [c for c in conv_list if (c.get('workflow_name') or '').lower() == wn]
-    
+                conv_list = [
+                    c for c in conv_list if (c.get("workflow_name") or "").lower() == wn
+                ]
+
             # Apply synthetic dimension filters
             if dim:
                 dim_map: Dict[str, set] = {}
@@ -5050,8 +5931,8 @@ def create_api_app(
                     filtered_conv = []
                     for conv in conv_list:
                         matched = False
-                        for t in conv.get('traces', []):
-                            md = t.get('metadata')
+                        for t in conv.get("traces", []):
+                            md = t.get("metadata")
                             try:
                                 if isinstance(md, str):
                                     meta = json.loads(md)
@@ -5059,36 +5940,38 @@ def create_api_app(
                                     meta = md or {}
                             except:
                                 meta = {}
-                            mapping = meta.get('omniagents', {})\
-                                               .get('synthetic', {})\
-                                               .get('selection', {})\
-                                               .get('mapping', {})
-                            if all(mapping.get(k) in allowed for k, allowed in dim_map.items()):
+                            mapping = (
+                                meta.get("omniagents", {})
+                                .get("synthetic", {})
+                                .get("selection", {})
+                                .get("mapping", {})
+                            )
+                            if all(
+                                mapping.get(k) in allowed
+                                for k, allowed in dim_map.items()
+                            ):
                                 matched = True
                                 break
                         if matched:
                             filtered_conv.append(conv)
                     conv_list = filtered_conv
-            
+
             # Apply pagination
             total = len(conv_list)
-            paginated = conv_list[offset:offset + limit]
-            
+            paginated = conv_list[offset : offset + limit]
+
             # Remove full traces from response (just keep count)
             for conv in paginated:
-                del conv['traces']
-            
-            return {
-                "conversations": paginated,
-                "total": total
-            }
+                del conv["traces"]
+
+            return {"conversations": paginated, "total": total}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-    
+
     @app.get("/api/synthetic_dimensions")
     async def get_synthetic_dimensions(
         project: str = Query(..., description="Project name"),
-        workflow_name: Optional[str] = None
+        workflow_name: Optional[str] = None,
     ):
         """Get distinct synthetic dimension definitions for a project/workflow"""
         try:
@@ -5098,12 +5981,17 @@ def create_api_app(
                 return {"dimensions": []}
             traces = storage.get_traces(limit=1000000)
             dims_map: Dict[str, Dict[str, Any]] = {}
+
             def display_name(s: str) -> str:
-                return s.replace('_', ' ').title()
+                return s.replace("_", " ").title()
+
             for t in traces:
-                if workflow_name and (t.get('workflow_name') or '').lower() != workflow_name.lower():
+                if (
+                    workflow_name
+                    and (t.get("workflow_name") or "").lower() != workflow_name.lower()
+                ):
                     continue
-                md = t.get('metadata')
+                md = t.get("metadata")
                 try:
                     if isinstance(md, str):
                         meta = json.loads(md)
@@ -5111,32 +5999,39 @@ def create_api_app(
                         meta = md or {}
                 except:
                     meta = {}
-                dims = meta.get('omniagents', {})\
-                           .get('synthetic', {})\
-                           .get('catalog', {})\
-                           .get('dimensions', [])
+                dims = (
+                    meta.get("omniagents", {})
+                    .get("synthetic", {})
+                    .get("catalog", {})
+                    .get("dimensions", [])
+                )
                 for d in dims or []:
-                    name = d.get('name')
+                    name = d.get("name")
                     if not name:
                         continue
-                    label = d.get('label') or display_name(name)
+                    label = d.get("label") or display_name(name)
                     if name not in dims_map:
-                        dims_map[name] = { 'label': label, 'values': {} }
-                    for v in d.get('values', []) or []:
-                        vname = v.get('name')
+                        dims_map[name] = {"label": label, "values": {}}
+                    for v in d.get("values", []) or []:
+                        vname = v.get("name")
                         if not vname:
                             continue
-                        vlabel = v.get('label') or display_name(vname)
-                        dims_map[name]['values'][vname] = vlabel
+                        vlabel = v.get("label") or display_name(vname)
+                        dims_map[name]["values"][vname] = vlabel
             dimensions = []
             for name, defn in dims_map.items():
-                values = [{ 'name': vn, 'label': vl } for vn, vl in sorted(defn['values'].items())]
-                dimensions.append({ 'name': name, 'label': defn['label'], 'values': values })
-            dimensions.sort(key=lambda d: d['label'].lower())
-            return { 'dimensions': dimensions }
+                values = [
+                    {"name": vn, "label": vl}
+                    for vn, vl in sorted(defn["values"].items())
+                ]
+                dimensions.append(
+                    {"name": name, "label": defn["label"], "values": values}
+                )
+            dimensions.sort(key=lambda d: d["label"].lower())
+            return {"dimensions": dimensions}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-    
+
     @app.get("/api/workflows")
     async def get_workflows(project: str = Query(..., description="Project name")):
         """Get distinct workflow names for a project"""
@@ -5149,79 +6044,82 @@ def create_api_app(
             return {"workflows": names}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-    
+
     @app.get("/api/conversations/{project}/{group_id}/traces")
-    async def get_conversation_traces(
-        project: str,
-        group_id: str
-    ):
+    async def get_conversation_traces(project: str, group_id: str):
         """Get all traces in a conversation"""
         try:
             storage = storage_manager.get_storage(project)
-            
+
             # Get all traces for this group_id
             all_traces = storage.get_traces(limit=10000)
-            
+
             # Filter by group_id (or traces where trace_id == group_id for single traces)
             # Make sure we have mutable dicts
             conversation_traces = []
             for t in all_traces:
-                if t.get('group_id') == group_id or (not t.get('group_id') and t['trace_id'] == group_id):
+                if t.get("group_id") == group_id or (
+                    not t.get("group_id") and t["trace_id"] == group_id
+                ):
                     # Create a new dict to ensure mutability
                     trace_dict = dict(t)
                     conversation_traces.append(trace_dict)
-            
+
             # Sort by created_at
-            conversation_traces.sort(key=lambda x: x['created_at'])
-            
+            conversation_traces.sort(key=lambda x: x["created_at"])
+
             # Add span counts and error flags, extract input/output
             for trace in conversation_traces:
-                spans = storage.get_spans_for_trace(trace['trace_id'])
-                trace['span_count'] = len(spans)
-                trace['has_errors'] = any(s.get('error') for s in spans)
-                
+                spans = storage.get_spans_for_trace(trace["trace_id"])
+                trace["span_count"] = len(spans)
+                trace["has_errors"] = any(s.get("error") for s in spans)
+
                 # Ensure metadata exists and is a dict
-                if 'metadata' not in trace:
-                    trace['metadata'] = {}
-                elif trace['metadata'] is None:
-                    trace['metadata'] = {}
-                elif isinstance(trace['metadata'], str):
+                if "metadata" not in trace:
+                    trace["metadata"] = {}
+                elif trace["metadata"] is None:
+                    trace["metadata"] = {}
+                elif isinstance(trace["metadata"], str):
                     try:
-                        trace['metadata'] = json.loads(trace['metadata'])
-                        if trace['metadata'] is None:
-                            trace['metadata'] = {}
+                        trace["metadata"] = json.loads(trace["metadata"])
+                        if trace["metadata"] is None:
+                            trace["metadata"] = {}
                     except:
-                        trace['metadata'] = {}
-                
+                        trace["metadata"] = {}
+
                 # Try to extract input/output from spans
                 # Sort spans by sequence number to get chronological order
-                sorted_spans = sorted(spans, key=lambda x: x.get('sequence_number', 0))
-                
+                sorted_spans = sorted(spans, key=lambda x: x.get("sequence_number", 0))
+
                 trace_input = None
                 trace_outputs = []
                 previous_messages = []  # Track messages from previous traces
-                
+
                 for span in sorted_spans:
                     try:
                         # Parse the data field which contains the full span JSON
-                        if isinstance(span.get('data'), str):
-                            full_span = json.loads(span['data'])
+                        if isinstance(span.get("data"), str):
+                            full_span = json.loads(span["data"])
                         else:
-                            full_span = span.get('data', {})
-                        
-                        span_data = full_span.get('span_data', {})
-                        
+                            full_span = span.get("data", {})
+
+                        span_data = full_span.get("span_data", {})
+
                         # Extract input from response or generation spans - find the NEW user input for THIS trace
-                        if span.get('span_type') in ['response', 'generation'] and span_data.get('input') and not trace_input:
-                            input_msgs = span_data['input']
-                            
+                        if (
+                            span.get("span_type") in ["response", "generation"]
+                            and span_data.get("input")
+                            and not trace_input
+                        ):
+                            input_msgs = span_data["input"]
+
                             # Look through the input messages to find the most recent user message
                             # that isn't from a previous trace
                             user_msgs = []
                             for msg in input_msgs:
-                                if isinstance(msg, dict) and msg.get('role') == 'user':
-                                    user_msgs.append(msg.get('content', ''))
-                            
+                                if isinstance(msg, dict) and msg.get("role") == "user":
+                                    user_msgs.append(msg.get("content", ""))
+
                             # For the first trace, use the first user message
                             # For subsequent traces, use the last user message (most recent)
                             if user_msgs:
@@ -5232,80 +6130,111 @@ def create_api_app(
                                 else:
                                     # This is the first interaction - use the first message
                                     trace_input = user_msgs[0]
-                        
+
                         # Collect ALL response outputs (we'll use the last one)
-                        if span.get('span_type') == 'response' and span_data.get('response'):
-                            response = span_data['response']
-                            if response.get('output') and isinstance(response['output'], list):
-                                for output_item in response['output']:
+                        if span.get("span_type") == "response" and span_data.get(
+                            "response"
+                        ):
+                            response = span_data["response"]
+                            if response.get("output") and isinstance(
+                                response["output"], list
+                            ):
+                                for output_item in response["output"]:
                                     # Handle message type outputs (actual text responses)
-                                    if output_item.get('type') == 'message' and output_item.get('content'):
-                                        for content_item in output_item['content']:
-                                            if content_item.get('type') == 'output_text':
-                                                text = content_item.get('text', '')
+                                    if output_item.get(
+                                        "type"
+                                    ) == "message" and output_item.get("content"):
+                                        for content_item in output_item["content"]:
+                                            if (
+                                                content_item.get("type")
+                                                == "output_text"
+                                            ):
+                                                text = content_item.get("text", "")
                                                 if text:
                                                     trace_outputs.append(text)
                                     # Handle function calls (show what function was called)
-                                    elif output_item.get('type') == 'function_call':
-                                        func_name = output_item.get('name', 'function')
+                                    elif output_item.get("type") == "function_call":
+                                        func_name = output_item.get("name", "function")
                                         trace_outputs.append(f"→ {func_name}()")
-                        
+
                         # Handle Chat Completions format (generation spans)
-                        if span.get('span_type') == 'generation' and span_data.get('output'):
-                            output_list = span_data['output']
+                        if span.get("span_type") == "generation" and span_data.get(
+                            "output"
+                        ):
+                            output_list = span_data["output"]
                             if isinstance(output_list, list) and output_list:
                                 # Chat Completions has nested structure: output[0].output[0].content[0].text
                                 first_output = output_list[0]
-                                if isinstance(first_output, dict) and 'output' in first_output:
-                                    inner_outputs = first_output['output']
+                                if (
+                                    isinstance(first_output, dict)
+                                    and "output" in first_output
+                                ):
+                                    inner_outputs = first_output["output"]
                                     if isinstance(inner_outputs, list):
                                         for item in inner_outputs:
                                             if isinstance(item, dict):
                                                 # Check for message with content
-                                                if item.get('type') == 'message' and item.get('role') == 'assistant':
-                                                    content_items = item.get('content', [])
+                                                if (
+                                                    item.get("type") == "message"
+                                                    and item.get("role") == "assistant"
+                                                ):
+                                                    content_items = item.get(
+                                                        "content", []
+                                                    )
                                                     if isinstance(content_items, list):
                                                         for content in content_items:
-                                                            if isinstance(content, dict) and content.get('text'):
-                                                                trace_outputs.append(content['text'])
+                                                            if isinstance(
+                                                                content, dict
+                                                            ) and content.get("text"):
+                                                                trace_outputs.append(
+                                                                    content["text"]
+                                                                )
                                                 # Check for function call
-                                                elif item.get('type') == 'function_call':
-                                                    func_name = item.get('name', 'function')
-                                                    trace_outputs.append(f"→ {func_name}()")
+                                                elif (
+                                                    item.get("type") == "function_call"
+                                                ):
+                                                    func_name = item.get(
+                                                        "name", "function"
+                                                    )
+                                                    trace_outputs.append(
+                                                        f"→ {func_name}()"
+                                                    )
                     except Exception as e:
                         pass
-                
+
                 # Use the LAST output as the trace output (final response)
                 trace_output = trace_outputs[-1] if trace_outputs else None
-                
+
                 # Set the extracted input/output in metadata
                 if trace_input:
-                    trace['metadata']['input'] = trace_input
+                    trace["metadata"]["input"] = trace_input
                 if trace_output:
-                    trace['metadata']['output'] = trace_output
-                
+                    trace["metadata"]["output"] = trace_output
+
                 # Calculate duration from spans
                 if spans:
-                    started_times = [s['started_at'] for s in spans if s.get('started_at')]
-                    ended_times = [s['ended_at'] for s in spans if s.get('ended_at')]
-                    
+                    started_times = [
+                        s["started_at"] for s in spans if s.get("started_at")
+                    ]
+                    ended_times = [s["ended_at"] for s in spans if s.get("ended_at")]
+
                     if started_times and ended_times:
                         start = min(datetime.fromisoformat(t) for t in started_times)
                         end = max(datetime.fromisoformat(t) for t in ended_times)
-                        trace['duration'] = (end - start).total_seconds() * 1000
+                        trace["duration"] = (end - start).total_seconds() * 1000
                     else:
-                        trace['duration'] = 0
+                        trace["duration"] = 0
                 else:
-                    trace['duration'] = 0
-            
+                    trace["duration"] = 0
+
             return {
                 "traces": conversation_traces,
                 "group_id": group_id,
-                "total": len(conversation_traces)
+                "total": len(conversation_traces),
             }
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-    
+
     @app.get("/api/traces")
     async def get_traces(
         project: str = Query(..., description="Project name"),
@@ -5313,7 +6242,7 @@ def create_api_app(
         offset: int = Query(0, ge=0),
         search: Optional[str] = None,
         has_errors: Optional[bool] = None,
-        span_type: Optional[str] = None
+        span_type: Optional[str] = None,
     ):
         """Get traces with filtering and pagination"""
         try:
@@ -5323,51 +6252,59 @@ def create_api_app(
             except ValueError:
                 # Project doesn't exist
                 return {"traces": [], "total": 0}
-            
+
             # Get traces from the storage
             traces = storage.get_traces(limit=limit + offset)
-            
+
             # Apply filters
             filtered_traces = traces
-            
+
             if search:
                 filtered_traces = [
-                    t for t in filtered_traces 
-                    if search.lower() in (t.get('workflow_name') or '').lower()
+                    t
+                    for t in filtered_traces
+                    if search.lower() in (t.get("workflow_name") or "").lower()
                 ]
-            
+
             if has_errors is not None:
                 # Check if trace has any spans with errors
                 traces_with_errors = set()
                 for trace in filtered_traces:
-                    spans = storage.get_spans_for_trace(trace['trace_id'])
-                    if any(s.get('error') for s in spans):
-                        traces_with_errors.add(trace['trace_id'])
-                
+                    spans = storage.get_spans_for_trace(trace["trace_id"])
+                    if any(s.get("error") for s in spans):
+                        traces_with_errors.add(trace["trace_id"])
+
                 if has_errors:
-                    filtered_traces = [t for t in filtered_traces if t['trace_id'] in traces_with_errors]
+                    filtered_traces = [
+                        t
+                        for t in filtered_traces
+                        if t["trace_id"] in traces_with_errors
+                    ]
                 else:
-                    filtered_traces = [t for t in filtered_traces if t['trace_id'] not in traces_with_errors]
-            
+                    filtered_traces = [
+                        t
+                        for t in filtered_traces
+                        if t["trace_id"] not in traces_with_errors
+                    ]
+
             if span_type:
                 # Filter traces that contain specific span type
                 traces_with_type = set()
                 for trace in filtered_traces:
-                    spans = storage.get_spans_for_trace(trace['trace_id'])
-                    if any(s.get('span_type') == span_type for s in spans):
-                        traces_with_type.add(trace['trace_id'])
-                filtered_traces = [t for t in filtered_traces if t['trace_id'] in traces_with_type]
-            
+                    spans = storage.get_spans_for_trace(trace["trace_id"])
+                    if any(s.get("span_type") == span_type for s in spans):
+                        traces_with_type.add(trace["trace_id"])
+                filtered_traces = [
+                    t for t in filtered_traces if t["trace_id"] in traces_with_type
+                ]
+
             # Apply pagination
-            paginated = filtered_traces[offset:offset + limit]
-            
-            return {
-                "traces": paginated,
-                "total": len(filtered_traces)
-            }
+            paginated = filtered_traces[offset : offset + limit]
+
+            return {"traces": paginated, "total": len(filtered_traces)}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-    
+
     @app.get("/api/traces/{project}/{trace_id}")
     async def get_trace(project: str, trace_id: str):
         """Get a single trace with all its spans"""
@@ -5377,55 +6314,49 @@ def create_api_app(
                 storage = storage_manager.get_storage(project)
             except ValueError:
                 raise HTTPException(status_code=404, detail="Project not found")
-            
+
             # Get the specific trace by ID
             trace = storage.get_trace(trace_id)
-            
+
             if not trace:
                 raise HTTPException(status_code=404, detail="Trace not found")
-            
+
             spans = storage.get_spans_for_trace(trace_id)
-            
+
             # Parse span data and calculate durations
             processed_spans = []
             for span in spans:
-                span_data = json.loads(span.get('data', '{}'))
-                processed_span = {
-                    **span,
-                    'data': span_data
-                }
-                
+                span_data = json.loads(span.get("data", "{}"))
+                processed_span = {**span, "data": span_data}
+
                 # Calculate duration if both timestamps exist
-                if span.get('started_at') and span.get('ended_at'):
-                    start = datetime.fromisoformat(span['started_at'])
-                    end = datetime.fromisoformat(span['ended_at'])
-                    processed_span['duration'] = (end - start).total_seconds() * 1000
-                
+                if span.get("started_at") and span.get("ended_at"):
+                    start = datetime.fromisoformat(span["started_at"])
+                    end = datetime.fromisoformat(span["ended_at"])
+                    processed_span["duration"] = (end - start).total_seconds() * 1000
+
                 processed_spans.append(processed_span)
-            
+
             # Build span hierarchy
-            span_map = {s['span_id']: s for s in processed_spans}
+            span_map = {s["span_id"]: s for s in processed_spans}
             for span in processed_spans:
-                if span.get('parent_id') and span['parent_id'] in span_map:
-                    parent = span_map[span['parent_id']]
-                    if 'children' not in parent:
-                        parent['children'] = []
-                    parent['children'].append(span)
-            
-            return {
-                "trace": trace,
-                "spans": processed_spans
-            }
+                if span.get("parent_id") and span["parent_id"] in span_map:
+                    parent = span_map[span["parent_id"]]
+                    if "children" not in parent:
+                        parent["children"] = []
+                    parent["children"].append(span)
+
+            return {"trace": trace, "spans": processed_spans}
         except HTTPException:
             raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-    
+
     @app.get("/api/search")
     async def search(
         project: str = Query(..., description="Project name"),
         q: str = Query(..., min_length=1),
-        type: str = Query("traces", regex="^(traces|spans)$")
+        type: str = Query("traces", regex="^(traces|spans)$"),
     ):
         """Search traces or spans within a project"""
         try:
@@ -5434,35 +6365,35 @@ def create_api_app(
                 storage = storage_manager.get_storage(project)
             except ValueError:
                 return {"results": [], "total": 0}
-            
+
             results = []
-            
+
             if type == "traces":
                 traces = storage.get_traces(limit=1000)
                 results = [
-                    t for t in traces
-                    if q.lower() in (t.get('workflow_name') or '').lower() or
-                       q.lower() in t.get('trace_id', '').lower()
+                    t
+                    for t in traces
+                    if q.lower() in (t.get("workflow_name") or "").lower()
+                    or q.lower() in t.get("trace_id", "").lower()
                 ]
             else:
                 # Search in spans
                 traces = storage.get_traces(limit=1000)
                 for trace in traces:
-                    spans = storage.get_spans_for_trace(trace['trace_id'])
+                    spans = storage.get_spans_for_trace(trace["trace_id"])
                     for span in spans:
-                        span_data = json.loads(span.get('data', '{}'))
-                        if (q.lower() in span.get('span_name', '').lower() or
-                            q.lower() in span.get('span_type', '').lower() or
-                            q.lower() in json.dumps(span_data).lower()):
+                        span_data = json.loads(span.get("data", "{}"))
+                        if (
+                            q.lower() in span.get("span_name", "").lower()
+                            or q.lower() in span.get("span_type", "").lower()
+                            or q.lower() in json.dumps(span_data).lower()
+                        ):
                             results.append(span)
-            
-            return {
-                "results": results[:100],  # Limit results
-                "total": len(results)
-            }
+
+            return {"results": results[:100], "total": len(results)}  # Limit results
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-    
+
     @app.get("/api/stats/overview")
     async def get_stats(project: str = Query(..., description="Project name")):
         """Get statistics overview for a project"""
@@ -5476,112 +6407,116 @@ def create_api_app(
                     "total_spans": 0,
                     "error_rate": 0,
                     "avg_duration": 0,
-                    "spans_by_type": {}
+                    "spans_by_type": {},
                 }
-            
+
             traces = storage.get_traces(limit=10000)
             total_spans = 0
             error_count = 0
             durations = []
             spans_by_type = {}
-            
+
             for trace in traces:
-                spans = storage.get_spans_for_trace(trace['trace_id'])
+                spans = storage.get_spans_for_trace(trace["trace_id"])
                 total_spans += len(spans)
-                
+
                 for span in spans:
                     # Count errors
-                    if span.get('error'):
+                    if span.get("error"):
                         error_count += 1
-                    
+
                     # Count by type
-                    span_type = span.get('span_type', 'unknown')
+                    span_type = span.get("span_type", "unknown")
                     spans_by_type[span_type] = spans_by_type.get(span_type, 0) + 1
-                    
+
                     # Calculate duration
-                    if span.get('started_at') and span.get('ended_at'):
-                        start = datetime.fromisoformat(span['started_at'])
-                        end = datetime.fromisoformat(span['ended_at'])
+                    if span.get("started_at") and span.get("ended_at"):
+                        start = datetime.fromisoformat(span["started_at"])
+                        end = datetime.fromisoformat(span["ended_at"])
                         duration = (end - start).total_seconds() * 1000
                         durations.append(duration)
-            
+
             avg_duration = sum(durations) / len(durations) if durations else 0
             error_rate = (error_count / total_spans * 100) if total_spans > 0 else 0
-            
+
             return {
                 "total_traces": len(traces),
                 "total_spans": total_spans,
                 "error_rate": error_rate,
                 "avg_duration": avg_duration,
-                "spans_by_type": spans_by_type
+                "spans_by_type": spans_by_type,
             }
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-    
+
     @app.get("/api/analysis/{project}")
     async def get_all_analysis(project: str, workflow_name: Optional[str] = None):
         """Get all analysis data for a project, optionally filtered by workflow name"""
         try:
             storage = storage_manager.get_storage(project)
             analysis_data = storage.get_all_analysis(project)
-            
+
             # If a workflow filter is provided, determine which group_ids belong to it
             if workflow_name:
                 traces = storage.get_traces(limit=10000)
                 wn = workflow_name.lower()
                 allowed_group_ids = set()
                 for t in traces:
-                    twn = (t.get('workflow_name') or '').lower()
+                    twn = (t.get("workflow_name") or "").lower()
                     if twn == wn:
-                        gid = t.get('group_id') or t.get('trace_id')
+                        gid = t.get("group_id") or t.get("trace_id")
                         if gid:
                             allowed_group_ids.add(gid)
                 # Filter analysis to only allowed group_ids
-                analysis_data = [a for a in analysis_data if a.get('group_id') in allowed_group_ids]
-            
+                analysis_data = [
+                    a for a in analysis_data if a.get("group_id") in allowed_group_ids
+                ]
+
             # Convert to frontend format
             result = {}
             for item in analysis_data:
-                result[item['group_id']] = {
-                    'markedForAnalysis': bool(item['marked_for_analysis']),
-                    'judgment': item['judgment'],
-                    'notes': item['notes'] or '',
-                    'analyzedAt': item['analyzed_at']
+                result[item["group_id"]] = {
+                    "markedForAnalysis": bool(item["marked_for_analysis"]),
+                    "judgment": item["judgment"],
+                    "notes": item["notes"] or "",
+                    "analyzedAt": item["analyzed_at"],
                 }
-            
+
             return result
         except ValueError:
             raise HTTPException(status_code=404, detail="Project not found")
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-    
+
     @app.get("/api/analysis/{project}/{group_id}")
     async def get_analysis(project: str, group_id: str):
         """Get analysis data for a specific conversation"""
         try:
             storage = storage_manager.get_storage(project)
             analysis = storage.get_analysis(project, group_id)
-            
+
             if not analysis:
                 return {
-                    'markedForAnalysis': False,
-                    'judgment': None,
-                    'notes': '',
-                    'analyzedAt': None
+                    "markedForAnalysis": False,
+                    "judgment": None,
+                    "notes": "",
+                    "analyzedAt": None,
                 }
-            
+
             return {
-                'markedForAnalysis': bool(analysis['marked_for_analysis']),
-                'judgment': analysis['judgment'],
-                'notes': analysis['notes'] or '',
-                'analyzedAt': analysis['analyzed_at']
+                "markedForAnalysis": bool(analysis["marked_for_analysis"]),
+                "judgment": analysis["judgment"],
+                "notes": analysis["notes"] or "",
+                "analyzedAt": analysis["analyzed_at"],
             }
         except ValueError:
             raise HTTPException(status_code=404, detail="Project not found")
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-    
-    def _sync_scenario_annotations(project: str, group_id: str, analysis_payload: Optional[Dict[str, Any]] = None) -> None:
+
+    def _sync_scenario_annotations(
+        project: str, group_id: str, analysis_payload: Optional[Dict[str, Any]] = None
+    ) -> None:
         try:
             storage = storage_manager.get_storage(project)
         except ValueError:
@@ -5594,7 +6529,11 @@ def create_api_app(
         for trace in traces:
             metadata_raw = trace.get("metadata")
             try:
-                metadata = json.loads(metadata_raw) if isinstance(metadata_raw, str) else metadata_raw or {}
+                metadata = (
+                    json.loads(metadata_raw)
+                    if isinstance(metadata_raw, str)
+                    else metadata_raw or {}
+                )
             except Exception:
                 metadata = {}
             scenario_meta = metadata.get("omniagents", {}).get("scenario") or {}
@@ -5633,7 +6572,11 @@ def create_api_app(
         category_slugs = storage.get_analysis_categories(group_id)
         categories: List[str] = []
         if category_slugs:
-            slugs = {_slugify(cat) for cat in category_slugs if isinstance(cat, str) and cat.strip()}
+            slugs = {
+                _slugify(cat)
+                for cat in category_slugs
+                if isinstance(cat, str) and cat.strip()
+            }
             categories = sorted(slugs)
         if categories:
             scenario_entry["failure_categories"] = categories
@@ -5667,28 +6610,26 @@ def create_api_app(
 
     @app.put("/api/analysis/{project}/{group_id}")
     async def update_analysis(
-        project: str,
-        group_id: str,
-        analysis_data: Dict[str, Any]
+        project: str, group_id: str, analysis_data: Dict[str, Any]
     ):
         """Update or create analysis data for a conversation"""
         try:
             storage = storage_manager.get_storage(project)
             storage.upsert_analysis(project, group_id, analysis_data)
             _sync_scenario_annotations(project, group_id, analysis_data)
-            
+
             # Return the updated data
             return {
-                'markedForAnalysis': analysis_data.get('markedForAnalysis', False),
-                'judgment': analysis_data.get('judgment'),
-                'notes': analysis_data.get('notes', ''),
-                'analyzedAt': analysis_data.get('analyzedAt')
+                "markedForAnalysis": analysis_data.get("markedForAnalysis", False),
+                "judgment": analysis_data.get("judgment"),
+                "notes": analysis_data.get("notes", ""),
+                "analyzedAt": analysis_data.get("analyzedAt"),
             }
         except ValueError:
             raise HTTPException(status_code=404, detail="Project not found")
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-    
+
     @app.delete("/api/analysis/{project}/{group_id}")
     async def delete_analysis(project: str, group_id: str):
         """Delete analysis data for a conversation"""
@@ -5700,14 +6641,16 @@ def create_api_app(
             raise HTTPException(status_code=404, detail="Project not found")
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-    
+
     @app.get("/api/categories/{project}")
     async def get_failure_categories(project: str):
         try:
             storage = storage_manager.get_storage(project)
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
-            categories, _target_file, _data, _cfg, _flag = _load_failure_categories(ctx, manifest_path)
+            categories, _target_file, _data, _cfg, _flag = _load_failure_categories(
+                ctx, manifest_path
+            )
             scenario_usage = _collect_scenario_category_usage(ctx)
             analysis_usage = storage.get_analysis_category_usage(project)
             payload: List[Dict[str, Any]] = []
@@ -5732,10 +6675,7 @@ def create_api_app(
             raise HTTPException(status_code=500, detail=str(exc))
 
     @app.post("/api/categories/{project}")
-    async def create_failure_category(
-        project: str,
-        category_data: Dict[str, Any]
-    ):
+    async def create_failure_category(project: str, category_data: Dict[str, Any]):
         try:
             storage_manager.get_storage(project)
             name = str(category_data.get("name", "")).strip()
@@ -5750,24 +6690,34 @@ def create_api_app(
             slug = _slugify(name)
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
-            categories, target_file, data, evaluation_cfg, has_eval_section = _load_failure_categories(ctx, manifest_path)
+            categories, target_file, data, evaluation_cfg, has_eval_section = (
+                _load_failure_categories(ctx, manifest_path)
+            )
             if any(item["slug"] == slug for item in categories):
-                raise HTTPException(status_code=409, detail="Category with this name already exists")
+                raise HTTPException(
+                    status_code=409, detail="Category with this name already exists"
+                )
             measures_list: List[str] = []
             if raw_measures is not None:
                 if not isinstance(raw_measures, list):
-                    raise HTTPException(status_code=400, detail="Measures must be a list")
+                    raise HTTPException(
+                        status_code=400, detail="Measures must be a list"
+                    )
                 available_measures = _assemble_measures(ctx, manifest_path)
                 valid_names = {item.name for item in available_measures}
                 normalized: List[str] = []
                 for value in raw_measures:
                     if not isinstance(value, str):
-                        raise HTTPException(status_code=400, detail="Measures must be strings")
+                        raise HTTPException(
+                            status_code=400, detail="Measures must be strings"
+                        )
                     trimmed = value.strip()
                     if not trimmed:
                         continue
                     if trimmed not in valid_names:
-                        raise HTTPException(status_code=400, detail=f"Unknown measure: {trimmed}")
+                        raise HTTPException(
+                            status_code=400, detail=f"Unknown measure: {trimmed}"
+                        )
                     if trimmed not in normalized:
                         normalized.append(trimmed)
                 measures_list = normalized
@@ -5779,9 +6729,13 @@ def create_api_app(
                     "measures": measures_list,
                 }
             )
-            _persist_failure_categories(target_file, data, evaluation_cfg, has_eval_section, categories)
+            _persist_failure_categories(
+                target_file, data, evaluation_cfg, has_eval_section, categories
+            )
             scenario_usage = _collect_scenario_category_usage(ctx)
-            analysis_usage = storage_manager.get_storage(project).get_analysis_category_usage(project)
+            analysis_usage = storage_manager.get_storage(
+                project
+            ).get_analysis_category_usage(project)
             model = FailureCategoryModel(
                 id=slug,
                 name=name,
@@ -5798,12 +6752,16 @@ def create_api_app(
             raise HTTPException(status_code=500, detail=str(exc))
 
     @app.put("/api/categories/{project}/{category_slug}")
-    async def update_failure_category(project: str, category_slug: str, payload: Dict[str, Any]):
+    async def update_failure_category(
+        project: str, category_slug: str, payload: Dict[str, Any]
+    ):
         try:
             storage_manager.get_storage(project)
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
-            categories, target_file, data, evaluation_cfg, has_eval_section = _load_failure_categories(ctx, manifest_path)
+            categories, target_file, data, evaluation_cfg, has_eval_section = (
+                _load_failure_categories(ctx, manifest_path)
+            )
             slug = _slugify(category_slug)
             if not slug:
                 raise HTTPException(status_code=404, detail="Category not found")
@@ -5822,32 +6780,44 @@ def create_api_app(
                 elif isinstance(description_value, str):
                     entry["description"] = description_value.strip() or None
                 else:
-                    raise HTTPException(status_code=400, detail="Description must be a string")
+                    raise HTTPException(
+                        status_code=400, detail="Description must be a string"
+                    )
             if "measures" in payload:
                 raw_measures = payload.get("measures")
                 if raw_measures is None:
                     normalized_measures: List[str] = []
                 elif not isinstance(raw_measures, list):
-                    raise HTTPException(status_code=400, detail="Measures must be a list")
+                    raise HTTPException(
+                        status_code=400, detail="Measures must be a list"
+                    )
                 else:
                     available_measures = _assemble_measures(ctx, manifest_path)
                     valid_names = {item.name for item in available_measures}
                     normalized_measures = []
                     for value in raw_measures:
                         if not isinstance(value, str):
-                            raise HTTPException(status_code=400, detail="Measures must be strings")
+                            raise HTTPException(
+                                status_code=400, detail="Measures must be strings"
+                            )
                         trimmed = value.strip()
                         if not trimmed:
                             continue
                         if trimmed not in valid_names:
-                            raise HTTPException(status_code=400, detail=f"Unknown measure: {trimmed}")
+                            raise HTTPException(
+                                status_code=400, detail=f"Unknown measure: {trimmed}"
+                            )
                         if trimmed not in normalized_measures:
                             normalized_measures.append(trimmed)
                 entry["measures"] = normalized_measures
             categories[entry_index] = entry
-            _persist_failure_categories(target_file, data, evaluation_cfg, has_eval_section, categories)
+            _persist_failure_categories(
+                target_file, data, evaluation_cfg, has_eval_section, categories
+            )
             scenario_usage = _collect_scenario_category_usage(ctx)
-            analysis_usage = storage_manager.get_storage(project).get_analysis_category_usage(project)
+            analysis_usage = storage_manager.get_storage(
+                project
+            ).get_analysis_category_usage(project)
             model = FailureCategoryModel(
                 id=slug,
                 name=entry.get("name", slug),
@@ -5869,7 +6839,9 @@ def create_api_app(
             storage = storage_manager.get_storage(project)
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
-            categories, target_file, data, evaluation_cfg, has_eval_section = _load_failure_categories(ctx, manifest_path)
+            categories, target_file, data, evaluation_cfg, has_eval_section = (
+                _load_failure_categories(ctx, manifest_path)
+            )
             slug = _slugify(category_slug)
             if not slug:
                 raise HTTPException(status_code=404, detail="Category not found")
@@ -5879,7 +6851,9 @@ def create_api_app(
             filtered = [item for item in categories if item["slug"] != slug]
             if len(filtered) == len(categories):
                 raise HTTPException(status_code=404, detail="Category not found")
-            _persist_failure_categories(target_file, data, evaluation_cfg, has_eval_section, filtered)
+            _persist_failure_categories(
+                target_file, data, evaluation_cfg, has_eval_section, filtered
+            )
             storage.remove_analysis_category_slug(project, slug)
             _remove_category_from_scenarios(ctx, slug)
             return {
@@ -5901,7 +6875,9 @@ def create_api_app(
             resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             measures_payload = _assemble_measures(ctx, manifest_path)
-            response = EvaluationMeasuresResponse(project=project_name, measures=measures_payload)
+            response = EvaluationMeasuresResponse(
+                project=project_name, measures=measures_payload
+            )
             return response.model_dump()
         except HTTPException:
             raise
@@ -5915,17 +6891,29 @@ def create_api_app(
             if not measure_name:
                 raise HTTPException(status_code=422, detail="Measure name is required")
             if not measure_name.isidentifier():
-                raise HTTPException(status_code=422, detail="Measure name must be a valid identifier")
+                raise HTTPException(
+                    status_code=422, detail="Measure name must be a valid identifier"
+                )
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
             resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
-            measures_meta, target_file, data, evaluation_cfg, has_eval_section = _load_measures_metadata(ctx, manifest_path)
+            measures_meta, target_file, data, evaluation_cfg, has_eval_section = (
+                _load_measures_metadata(ctx, manifest_path)
+            )
             existing_names = {item["name"] for item in measures_meta}
             if measure_name in existing_names:
                 raise HTTPException(status_code=409, detail="Measure already exists")
-            label_value = payload.label.strip() if isinstance(payload.label, str) and payload.label.strip() else None
-            description_value = payload.description.strip() if isinstance(payload.description, str) and payload.description.strip() else None
+            label_value = (
+                payload.label.strip()
+                if isinstance(payload.label, str) and payload.label.strip()
+                else None
+            )
+            description_value = (
+                payload.description.strip()
+                if isinstance(payload.description, str) and payload.description.strip()
+                else None
+            )
             measures_meta.append(
                 {
                     "name": measure_name,
@@ -5935,12 +6923,16 @@ def create_api_app(
                     "sourcePath": None,
                 }
             )
-            _persist_measures(target_file, data, evaluation_cfg, has_eval_section, measures_meta)
+            _persist_measures(
+                target_file, data, evaluation_cfg, has_eval_section, measures_meta
+            )
             if payload.createStub:
                 _ensure_measure_stub(ctx, measure_name)
             ctx_updated = load_project(str(manifest_path))
             measures_payload = _assemble_measures(ctx_updated, manifest_path)
-            response = EvaluationMeasuresResponse(project=project_name, measures=measures_payload)
+            response = EvaluationMeasuresResponse(
+                project=project_name, measures=measures_payload
+            )
             return response.model_dump()
         except HTTPException:
             raise
@@ -5955,22 +6947,37 @@ def create_api_app(
                 raise HTTPException(status_code=422, detail="Measure name is required")
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
-            measures_meta, target_file, data, evaluation_cfg, has_eval_section = _load_measures_metadata(ctx, manifest_path)
+            measures_meta, target_file, data, evaluation_cfg, has_eval_section = (
+                _load_measures_metadata(ctx, manifest_path)
+            )
             updated = False
             for entry in measures_meta:
                 if entry.get("name") == measure_name:
                     if payload.label is not None:
-                        entry["label"] = payload.label.strip() if isinstance(payload.label, str) and payload.label.strip() else None
+                        entry["label"] = (
+                            payload.label.strip()
+                            if isinstance(payload.label, str) and payload.label.strip()
+                            else None
+                        )
                     if payload.description is not None:
-                        entry["description"] = payload.description.strip() if isinstance(payload.description, str) and payload.description.strip() else None
+                        entry["description"] = (
+                            payload.description.strip()
+                            if isinstance(payload.description, str)
+                            and payload.description.strip()
+                            else None
+                        )
                     updated = True
                     break
             if not updated:
                 raise HTTPException(status_code=404, detail="Measure not found")
-            _persist_measures(target_file, data, evaluation_cfg, has_eval_section, measures_meta)
+            _persist_measures(
+                target_file, data, evaluation_cfg, has_eval_section, measures_meta
+            )
             ctx_updated = load_project(str(manifest_path))
             measures_payload = _assemble_measures(ctx_updated, manifest_path)
-            response = EvaluationMeasuresResponse(project=project_name, measures=measures_payload)
+            response = EvaluationMeasuresResponse(
+                project=project_name, measures=measures_payload
+            )
             return response.model_dump()
         except HTTPException:
             raise
@@ -5987,15 +6994,25 @@ def create_api_app(
             ctx = load_project(str(manifest_path))
             resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
-            measures_meta, target_file, data, evaluation_cfg, has_eval_section = _load_measures_metadata(ctx, manifest_path)
-            filtered = [entry for entry in measures_meta if entry.get("name") != measure_name]
+            measures_meta, target_file, data, evaluation_cfg, has_eval_section = (
+                _load_measures_metadata(ctx, manifest_path)
+            )
+            filtered = [
+                entry for entry in measures_meta if entry.get("name") != measure_name
+            ]
             if len(filtered) == len(measures_meta):
                 raise HTTPException(status_code=404, detail="Measure not found")
-            _persist_measures(target_file, data, evaluation_cfg, has_eval_section, filtered)
+            _persist_measures(
+                target_file, data, evaluation_cfg, has_eval_section, filtered
+            )
             ctx_updated = load_project(str(manifest_path))
             measures_payload = _assemble_measures(ctx_updated, manifest_path)
-            response = EvaluationMeasuresResponse(project=project_name, measures=measures_payload)
-            return EvaluationMeasureDeleteResponse(project=project_name, deleted=measure_name, measures=response.measures).model_dump()
+            response = EvaluationMeasuresResponse(
+                project=project_name, measures=measures_payload
+            )
+            return EvaluationMeasureDeleteResponse(
+                project=project_name, deleted=measure_name, measures=response.measures
+            ).model_dump()
         except HTTPException:
             raise
         except Exception as exc:
@@ -6007,28 +7024,28 @@ def create_api_app(
         try:
             storage = storage_manager.get_storage(project)
             category_ids = storage.get_analysis_categories(group_id)
-            return {'categoryIds': category_ids}
+            return {"categoryIds": category_ids}
         except ValueError:
             raise HTTPException(status_code=404, detail="Project not found")
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-    
+
     @app.put("/api/analysis/{project}/{group_id}/categories")
     async def update_analysis_categories(
-        project: str,
-        group_id: str,
-        data: Dict[str, Any]
+        project: str, group_id: str, data: Dict[str, Any]
     ):
         """Update categories for an analysis"""
         try:
             storage = storage_manager.get_storage(project)
-            raw_ids = data.get('categoryIds', [])
+            raw_ids = data.get("categoryIds", [])
             if not isinstance(raw_ids, list):
                 raise HTTPException(status_code=400, detail="Invalid category IDs")
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
-            categories, _target_file, _data, _cfg, _flag = _load_failure_categories(ctx, manifest_path)
-            valid_slugs = {item['slug'] for item in categories}
+            categories, _target_file, _data, _cfg, _flag = _load_failure_categories(
+                ctx, manifest_path
+            )
+            valid_slugs = {item["slug"] for item in categories}
             normalized: List[str] = []
             for value in raw_ids:
                 if not isinstance(value, str):
@@ -6040,17 +7057,15 @@ def create_api_app(
                     normalized.append(slug)
             storage.set_analysis_categories(project, group_id, normalized)
             _sync_scenario_annotations(project, group_id)
-            return {'categoryIds': normalized}
+            return {"categoryIds": normalized}
         except ValueError:
             raise HTTPException(status_code=404, detail="Project not found")
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-    
+
     @app.get("/api/export/{project}/{trace_id}")
     async def export_trace(
-        project: str,
-        trace_id: str,
-        format: str = Query("json", regex="^(json|csv)$")
+        project: str, trace_id: str, format: str = Query("json", regex="^(json|csv)$")
     ):
         """Export a trace in different formats"""
         try:
@@ -6059,56 +7074,68 @@ def create_api_app(
                 storage = storage_manager.get_storage(project)
             except ValueError:
                 raise HTTPException(status_code=404, detail="Project not found")
-            
+
             # Get the specific trace by ID
             trace = storage.get_trace(trace_id)
-            
+
             if not trace:
                 raise HTTPException(status_code=404, detail="Trace not found")
-            
+
             spans = storage.get_spans_for_trace(trace_id)
-            
+
             if format == "json":
-                data = {
-                    "trace": trace,
-                    "spans": spans
-                }
+                data = {"trace": trace, "spans": spans}
                 return StreamingResponse(
                     io.BytesIO(json.dumps(data, indent=2).encode()),
                     media_type="application/json",
-                    headers={"Content-Disposition": f"attachment; filename=trace_{trace_id}.json"}
+                    headers={
+                        "Content-Disposition": f"attachment; filename=trace_{trace_id}.json"
+                    },
                 )
             else:
                 # CSV format
                 output = io.StringIO()
-                writer = csv.DictWriter(output, fieldnames=[
-                    'span_id', 'span_type', 'span_name', 'started_at', 'ended_at', 
-                    'parent_id', 'sequence_number', 'error'
-                ])
+                writer = csv.DictWriter(
+                    output,
+                    fieldnames=[
+                        "span_id",
+                        "span_type",
+                        "span_name",
+                        "started_at",
+                        "ended_at",
+                        "parent_id",
+                        "sequence_number",
+                        "error",
+                    ],
+                )
                 writer.writeheader()
-                
+
                 for span in spans:
-                    writer.writerow({
-                        'span_id': span.get('span_id'),
-                        'span_type': span.get('span_type'),
-                        'span_name': span.get('span_name'),
-                        'started_at': span.get('started_at'),
-                        'ended_at': span.get('ended_at'),
-                        'parent_id': span.get('parent_id'),
-                        'sequence_number': span.get('sequence_number'),
-                        'error': 'Yes' if span.get('error') else 'No'
-                    })
-                
+                    writer.writerow(
+                        {
+                            "span_id": span.get("span_id"),
+                            "span_type": span.get("span_type"),
+                            "span_name": span.get("span_name"),
+                            "started_at": span.get("started_at"),
+                            "ended_at": span.get("ended_at"),
+                            "parent_id": span.get("parent_id"),
+                            "sequence_number": span.get("sequence_number"),
+                            "error": "Yes" if span.get("error") else "No",
+                        }
+                    )
+
                 return StreamingResponse(
                     io.BytesIO(output.getvalue().encode()),
                     media_type="text/csv",
-                    headers={"Content-Disposition": f"attachment; filename=trace_{trace_id}.csv"}
+                    headers={
+                        "Content-Disposition": f"attachment; filename=trace_{trace_id}.csv"
+                    },
                 )
         except HTTPException:
             raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-    
+
     @app.websocket("/api/evaluation/suite/run/{job_id}/ws")
     async def suite_run_ws(job_id: str, websocket: WebSocket):
         manager: SuiteRunManager = app.state.suite_run_manager
@@ -6146,7 +7173,7 @@ def create_api_app(
                 await websocket.close()
             except Exception:
                 pass
-    
+
     @app.websocket("/api/evaluation/scenarios/generate/{job_id}/ws")
     async def scenario_generation_ws(job_id: str, websocket: WebSocket):
         manager: ScenarioGenerationManager = app.state.scenario_generation_manager
@@ -6214,32 +7241,41 @@ def create_api_app(
                 await asyncio.sleep(1)
         except WebSocketDisconnect:
             manager.disconnect(websocket)
-    
+
     @app.websocket("/api/playground/ws")
     async def playground_ws(websocket: WebSocket):
-        logger.debug("[playground] incoming websocket request %s", websocket.query_params)
+        logger.debug(
+            "[playground] incoming websocket request %s", websocket.query_params
+        )
         resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
         session_id = websocket.query_params.get("session_id")
         if not session_id:
             logger.debug("[playground] closing websocket: session_id missing")
             await websocket.close(code=4400)
             return
-    
+
         store: PlaygroundSessionStore = app.state.playground_session_store
         config = await store.get(session_id)
         if not config:
-            logger.debug("[playground] closing websocket: session config missing for %s", session_id)
+            logger.debug(
+                "[playground] closing websocket: session config missing for %s",
+                session_id,
+            )
             await websocket.close(code=4404)
             return
-    
+
         agent_key = config.get("__agent_key")
         spec = _resolve_agent_spec(resources, agent_key)
         if not spec:
-            logger.debug("[playground] closing websocket: spec missing for agent %s", agent_key)
+            logger.debug(
+                "[playground] closing websocket: spec missing for agent %s", agent_key
+            )
             await websocket.close(code=4404)
             return
-        session_label = config.get("__session_label") or ("playground" if not agent_key else f"agent:{agent_key}")
-    
+        session_label = config.get("__session_label") or (
+            "playground" if not agent_key else f"agent:{agent_key}"
+        )
+
         try:
             spec = build_playground_spec(
                 spec,
@@ -6252,10 +7288,10 @@ def create_api_app(
             logger.exception("[playground] failed to build spec")
             await websocket.close(code=1011, reason=str(exc))
             return
-    
+
         service = AgentService(spec)
         transport = ServerWebSocketTransport(websocket)
-    
+
         try:
             logger.debug("[playground] accepting websocket for session %s", session_id)
             await transport.connect()
@@ -6268,11 +7304,11 @@ def create_api_app(
                     break
                 except WebSocketDisconnect:
                     break
-    
+
                 call_id = data.get("id")
                 method = data.get("method")
                 params = data.get("params") or data.get("args") or {}
-    
+
                 if method:
                     try:
                         func = getattr(service, method)
@@ -6280,7 +7316,9 @@ def create_api_app(
                         if call_id is not None:
                             await channel.send_result(call_id, result)
                     except Exception as exc:
-                        logger.exception("[playground] error handling method %s", method)
+                        logger.exception(
+                            "[playground] error handling method %s", method
+                        )
                         if call_id is not None:
                             error_payload = {
                                 "jsonrpc": "2.0",
@@ -6298,14 +7336,14 @@ def create_api_app(
         finally:
             logger.debug("[playground] websocket closed for session %s", session_id)
             await transport.disconnect()
-    
+
     if dev_server_url:
         dev_base = dev_server_url.rstrip("/")
-    
+
         @app.get("/", include_in_schema=False)
         async def dev_root():
             return RedirectResponse(dev_base, status_code=307)
-    
+
         @app.get("/{path:path}", include_in_schema=False)
         async def dev_proxy(path: str, request: Request):
             target = f"{dev_base}/{path}" if path else dev_base
@@ -6313,6 +7351,7 @@ def create_api_app(
             if query:
                 target = f"{target}?{query}"
             return RedirectResponse(target, status_code=307)
+
     else:
         # Serve static files in production
         # Prefer packaged assets under studio/server/static; fall back to local web dist for dev
@@ -6322,7 +7361,11 @@ def create_api_app(
         ]
         for static_dir in candidate_dirs:
             if static_dir.exists():
-                app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+                app.mount(
+                    "/",
+                    StaticFiles(directory=str(static_dir), html=True),
+                    name="static",
+                )
                 break
-    
+
     return app, manager

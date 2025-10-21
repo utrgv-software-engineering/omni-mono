@@ -56,7 +56,7 @@ def _safe_slug(value: str | None, fallback: str) -> str:
 
 class AgentService(RpcMethodsBase):
     """JSON-RPC methods for agent operations.
-    
+
     This service handles:
     - Starting and stopping agent runs
     - Managing conversation history
@@ -67,7 +67,7 @@ class AgentService(RpcMethodsBase):
 
     def __init__(self, spec: AgentSpec) -> None:
         """Initialize AgentService with an agent specification.
-        
+
         Args:
             spec: The agent specification containing configuration,
                   instructions, tools, and other settings.
@@ -102,7 +102,9 @@ class AgentService(RpcMethodsBase):
         # like "session.get_history" so they won't surface in UIs that
         # dynamically list server functions (e.g., Bubble Tea /help).
 
-    async def _build_agent_for_session(self, session: Session, approval_callback) -> Any:
+    async def _build_agent_for_session(
+        self, session: Session, approval_callback
+    ) -> Any:
         stub_app = SimpleNamespace(
             spec=self.spec,
             _request_tool_approval=approval_callback,
@@ -110,7 +112,11 @@ class AgentService(RpcMethodsBase):
 
         if self.spec.build_agent:
             agent = await self.spec.build_agent({}, None, stub_app)
-            if self.spec.use_safe_agent and approval_callback and not isinstance(agent, SafeAgent):
+            if (
+                self.spec.use_safe_agent
+                and approval_callback
+                and not isinstance(agent, SafeAgent)
+            ):
                 opts = self.spec.safe_agent_options
                 agent = SafeAgent(
                     name=agent.name,
@@ -143,7 +149,11 @@ class AgentService(RpcMethodsBase):
 
         agent = self._clone_agent(agent)
 
-        if approval_callback and hasattr(agent, "set_approval_callback") and callable(getattr(agent, "set_approval_callback")):
+        if (
+            approval_callback
+            and hasattr(agent, "set_approval_callback")
+            and callable(getattr(agent, "set_approval_callback"))
+        ):
             try:
                 agent.set_approval_callback(approval_callback)
             except Exception:
@@ -230,7 +240,9 @@ class AgentService(RpcMethodsBase):
         _debug_rpc("list_server_functions", {"count": len(result)})
         return result
 
-    async def server_call(self, function: str, args: dict | None = None, session_id: str | None = None) -> Any:  # noqa: D401
+    async def server_call(
+        self, function: str, args: dict | None = None, session_id: str | None = None
+    ) -> Any:  # noqa: D401
         """Invoke a registered server function.
 
         Args:
@@ -238,7 +250,10 @@ class AgentService(RpcMethodsBase):
             args: Arguments dict passed to the function
             session_id: Optional session identifier, provided to the function if it accepts a session
         """
-        _debug_rpc("server_call", {"function": function, "has_args": bool(args), "session_id": session_id})
+        _debug_rpc(
+            "server_call",
+            {"function": function, "has_args": bool(args), "session_id": session_id},
+        )
         entry = self._server_functions.get(function)
         if not entry:
             raise ValueError(f"Unknown server function: {function}")
@@ -265,7 +280,7 @@ class AgentService(RpcMethodsBase):
         if is_bound:
             candidates_sync = [
                 (sess, args or {}),
-                (args or {} ,),
+                (args or {},),
                 tuple(),
             ]
         else:
@@ -293,9 +308,10 @@ class AgentService(RpcMethodsBase):
                     continue
             return fn()
 
-
     # --- Built-in server functions -------------------------------------
-    def _sf_session_get_history(self, session: Session | None, args: dict | None = None) -> list[dict]:
+    def _sf_session_get_history(
+        self, session: Session | None, args: dict | None = None
+    ) -> list[dict]:
         """Return the current history for the given session.
         If no session was supplied, return an empty list.
         """
@@ -310,14 +326,23 @@ class AgentService(RpcMethodsBase):
     #  had already been closed.
     # ------------------------------------------------------------------
 
-    async def _safe_notify(self, channel, method: str, payload: dict) -> bool:  # noqa: D401
+    async def _safe_notify(
+        self, channel, method: str, payload: dict
+    ) -> bool:  # noqa: D401
         try:
             await channel.async_call(method, args=payload)
             return True
         except Exception:
             return False
 
-    async def _broadcast_session(self, session: Session, method: str, payload: dict, *, queue_if_unseen: bool = False) -> bool:
+    async def _broadcast_session(
+        self,
+        session: Session,
+        method: str,
+        payload: dict,
+        *,
+        queue_if_unseen: bool = False,
+    ) -> bool:
         if not session.channels:
             if queue_if_unseen and hasattr(session, "pending_events"):
                 session.pending_events.append((method, payload))
@@ -369,7 +394,9 @@ class AgentService(RpcMethodsBase):
     # ------------------------------------------------------------------
     #  Client function registration (capability handshake)
     # ------------------------------------------------------------------
-    async def client_functions(self, version: int | None = None, functions: list[dict] | None = None) -> bool:  # noqa: D401
+    async def client_functions(
+        self, version: int | None = None, functions: list[dict] | None = None
+    ) -> bool:  # noqa: D401
         """Register client-supported functions for the current channel.
 
         The information is stored best-effort and currently advisory only.
@@ -386,7 +413,13 @@ class AgentService(RpcMethodsBase):
     # ------------------------------------------------------------------
     #  Client function response: resolves the future awaited by server
     # ------------------------------------------------------------------
-    async def client_response(self, request_id: str, ok: bool, result: Any | None = None, error: dict | None = None) -> bool:  # noqa: D401
+    async def client_response(
+        self,
+        request_id: str,
+        ok: bool,
+        result: Any | None = None,
+        error: dict | None = None,
+    ) -> bool:  # noqa: D401
         _debug_rpc("client_response", {"request_id": request_id, "ok": ok})
         fut = self._pending_client_requests.pop(request_id, None)
         if fut and not fut.done():
@@ -492,7 +525,9 @@ class AgentService(RpcMethodsBase):
         """Ask the client for approval; buffer request if not delivered."""
 
         if _sess is None:
-            raise RuntimeError("Tool approval requests require an explicit session context")
+            raise RuntimeError(
+                "Tool approval requests require an explicit session context"
+            )
 
         approval_id = uuid.uuid4().hex
         run_id = _run_id
@@ -522,7 +557,9 @@ class AgentService(RpcMethodsBase):
                 f" session={_sess.id}"
                 f" run_id={run_id}"
             )
-            print(f"[srv]   → tool_approval_request approval_id={approval_id} details={payload}")
+            print(
+                f"[srv]   → tool_approval_request approval_id={approval_id} details={payload}"
+            )
 
         request_args = dict(payload)
         req_id = uuid.uuid4().hex
@@ -600,7 +637,11 @@ class AgentService(RpcMethodsBase):
         error = envelope.get("error") or {}
 
         if not ok:
-            return False, False, (error.get("message") if isinstance(error, dict) else None)
+            return (
+                False,
+                False,
+                (error.get("message") if isinstance(error, dict) else None),
+            )
 
         approved = bool(result.get("approved"))
         always_approve = bool(result.get("always_approve"))
@@ -615,10 +656,16 @@ class AgentService(RpcMethodsBase):
 
         return approved, always_approve, error_message
 
-    async def start_run(self, prompt: str, session_id: str | None = None, variables: dict | None = None, context: Any | None = None) -> dict:  # noqa: D401
+    async def start_run(
+        self,
+        prompt: str,
+        session_id: str | None = None,
+        variables: dict | None = None,
+        context: Any | None = None,
+    ) -> dict:  # noqa: D401
         sess: Session = self._session_manager.get_or_create(session_id)
         channel = getattr(self, "channel", None)
-        
+
         # Store variables and/or context in session
         if variables is not None:
             sess.variables = variables
@@ -639,9 +686,11 @@ class AgentService(RpcMethodsBase):
 
         if sess.pending_events:
             if DEBUG_SERVER:
-                print(f"[srv]  ↻ replay {len(sess.pending_events)} queued events for {sess.id[:8]}")
+                print(
+                    f"[srv]  ↻ replay {len(sess.pending_events)} queued events for {sess.id[:8]}"
+                )
             still_pending: list[tuple[str, dict]] = []
-            for (meth, payl) in list(sess.pending_events):
+            for meth, payl in list(sess.pending_events):
                 delivered_any = False
                 # Try every channel currently known for the session
                 for ch in list(sess.channels):
@@ -653,7 +702,11 @@ class AgentService(RpcMethodsBase):
 
         approval_callback_base = getattr(sess, "approval_callback_base", None)
         if approval_callback_base is None:
-            approval_callback_base = lambda name, args, metadata=None: self._request_tool_approval(name, args, sess, metadata)
+            approval_callback_base = (
+                lambda name, args, metadata=None: self._request_tool_approval(
+                    name, args, sess, metadata
+                )
+            )
             sess.approval_callback_base = approval_callback_base
         sess.approval_callback = approval_callback_base
 
@@ -667,20 +720,26 @@ class AgentService(RpcMethodsBase):
             current_task = asyncio.current_task()
             run_name = current_task.get_name() if current_task else None
 
-            async def run_scoped_approval(tool_name: str, args: str, metadata: Optional[Dict[str, Any]] = None):  # noqa: ANN001
-                return await self._request_tool_approval(tool_name, args, sess, metadata, _run_id=run_name)
+            async def run_scoped_approval(
+                tool_name: str, args: str, metadata: Optional[Dict[str, Any]] = None
+            ):  # noqa: ANN001
+                return await self._request_tool_approval(
+                    tool_name, args, sess, metadata, _run_id=run_name
+                )
 
             try:
-                if hasattr(agent, "set_approval_callback") and callable(getattr(agent, "set_approval_callback")):
+                if hasattr(agent, "set_approval_callback") and callable(
+                    getattr(agent, "set_approval_callback")
+                ):
                     agent.set_approval_callback(run_scoped_approval)
             except Exception:
                 pass
             sess.approval_callback = run_scoped_approval
 
             # Resolve runtime context once
-            if hasattr(sess, 'context') and sess.context is not None:
+            if hasattr(sess, "context") and sess.context is not None:
                 runtime_context = sess.context
-            elif hasattr(sess, 'variables') and sess.variables is not None:
+            elif hasattr(sess, "variables") and sess.variables is not None:
                 if self.spec.build_context:
                     runtime_context = self.spec.build_context(sess.variables)
                 else:
@@ -690,6 +749,7 @@ class AgentService(RpcMethodsBase):
 
             # Retry policy (env configurable)
             import math
+
             max_retries = int(os.getenv("OMNIAGENTS_RETRY_MAX", "3"))
             base_delay = float(os.getenv("OMNIAGENTS_RETRY_BASE", "1.5"))
 
@@ -723,7 +783,9 @@ class AgentService(RpcMethodsBase):
             try:
                 workflow_name_override = None
                 if isinstance(self.spec.tracing_config, dict):
-                    workflow_name_override = self.spec.tracing_config.get("workflow_name")
+                    workflow_name_override = self.spec.tracing_config.get(
+                        "workflow_name"
+                    )
                 while True:
                     try:
                         final_details = await stream_agent(
@@ -792,13 +854,17 @@ class AgentService(RpcMethodsBase):
                     if final_details.get("context_window") is not None:
                         payload["context_window"] = final_details.get("context_window")
                     if final_details.get("max_output_tokens") is not None:
-                        payload["max_output_tokens"] = final_details.get("max_output_tokens")
+                        payload["max_output_tokens"] = final_details.get(
+                            "max_output_tokens"
+                        )
                     if final_details.get("truncation") is not None:
                         payload["truncation"] = final_details.get("truncation")
                 # Debug log the payload for visibility when debugging (single source)
                 _debug_rpc("run_end", payload)
                 # Best-effort notify; avoid raising if socket is gone
-                await self._broadcast_session(sess, "run_end", payload, queue_if_unseen=True)
+                await self._broadcast_session(
+                    sess, "run_end", payload, queue_if_unseen=True
+                )
 
                 if run_name:
                     try:
@@ -864,7 +930,7 @@ class AgentService(RpcMethodsBase):
         # before we hand back the static history.
         if sess.pending_events:
             still_pending: list[tuple[str, dict]] = []
-            for (meth, payl) in list(sess.pending_events):
+            for meth, payl in list(sess.pending_events):
                 delivered_any = False
                 # Try every channel currently known for the session
                 for ch in list(sess.channels):

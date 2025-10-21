@@ -14,10 +14,10 @@ def get_current_time() -> str:
 def calculate(expression: str) -> str:
     """
     Safely evaluate a mathematical expression.
-    
+
     Args:
         expression: A mathematical expression to evaluate (e.g., "2 + 2", "10 * 5")
-    
+
     Returns:
         The result of the calculation as a string.
     """

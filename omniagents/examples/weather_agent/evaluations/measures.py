@@ -30,10 +30,20 @@ def ambiguous_location_requires_clarification(ctx):
     if final_message:
         text = final_message.text or ""
         low = text.lower()
-        if "°" in text or any(term in low for term in ["fahrenheit", "celsius", "degree", "degrees"]):
+        if "°" in text or any(
+            term in low for term in ["fahrenheit", "celsius", "degree", "degrees"]
+        ):
             return fail_reason("weather_details_after_ambiguous_geocode")
         if "?" in text:
-            keywords = ["which", "specify", "clarify", "city", "location", "state", "country"]
+            keywords = [
+                "which",
+                "specify",
+                "clarify",
+                "city",
+                "location",
+                "state",
+                "country",
+            ]
             if any(word in low for word in keywords):
                 return pass_reason("asked_for_clarification")
     return pass_reason("no_weather_details")

@@ -26,10 +26,16 @@ class RemoteAgent(UnifiedAgentBase):
     model_settings: Dict[str, Any] = {}
     mcp_servers = None
 
-    def __init__(self, url: str, token: str | None = None, variables: Dict[str, Any] | None = None, context: Any | None = None) -> None:
+    def __init__(
+        self,
+        url: str,
+        token: str | None = None,
+        variables: Dict[str, Any] | None = None,
+        context: Any | None = None,
+    ) -> None:
         """
         Initialize remote agent.
-        
+
         Args:
             url: WebSocket URL of the remote agent server
             token: Optional authentication token
@@ -37,12 +43,12 @@ class RemoteAgent(UnifiedAgentBase):
             context: Optional pre-built context to use as-is
         """
         super().__init__()
-        
+
         # Add token to URL if provided
         if token:
             sep = "&" if "?" in url else "?"
             url = f"{url}{sep}token={token}"
-        
+
         self._url = url
         self._client: JsonRpcClient | None = None
         self._run_lock: asyncio.Lock = asyncio.Lock()
@@ -61,7 +67,9 @@ class RemoteAgent(UnifiedAgentBase):
         """Reset agent state (no-op for remote agents)."""
         pass
 
-    def run_streamed(self, messages: List[Dict[str, str]], *, run_config: RunConfig | None = None) -> Any:
+    def run_streamed(
+        self, messages: List[Dict[str, str]], *, run_config: RunConfig | None = None
+    ) -> Any:
         """Return an object that mimics Runner.run_streamed()."""
 
         async def _events_gen() -> AsyncGenerator[StreamEvent, None]:
@@ -71,11 +79,8 @@ class RemoteAgent(UnifiedAgentBase):
             prompt = messages[-1]["content"] if messages else ""
 
             # Prepare start_run parameters
-            start_params = {
-                "prompt": prompt,
-                "session_id": self._session_id
-            }
-            
+            start_params = {"prompt": prompt, "session_id": self._session_id}
+
             # Only send variables/context on first run (when we don't have a session_id yet)
             if self._session_id is None:
                 if self._variables is not None:
@@ -103,7 +108,7 @@ class RemoteAgent(UnifiedAgentBase):
             run_id = self._extract_run_id(resp)
             if Debug.enabled():
                 print(f"[cli] ▶ run_id={run_id}  prompt={prompt[:60]!r}")
-            
+
             # Store current run_id for potential cancellation
             self._current_run_id = run_id
 
@@ -123,7 +128,7 @@ class RemoteAgent(UnifiedAgentBase):
                     # Clear current run_id when run ends
                     self._current_run_id = None
                     break
-                
+
                 event = map_notification_to_event(msg["method"], msg["params"])
                 if event:
                     if Debug.enabled():
@@ -161,13 +166,13 @@ class RemoteAgent(UnifiedAgentBase):
     async def stop_run(self) -> bool:
         """
         Stop the currently running agent execution.
-        
+
         Returns:
             bool: True if the run was successfully cancelled, False otherwise
         """
         if not self._current_run_id:
             return False
-        
+
         await self._ensure_client()
         try:
             resp = await self._client.other.stop_run(run_id=self._current_run_id)
@@ -186,7 +191,9 @@ class RemoteAgent(UnifiedAgentBase):
         if self._client is None:
             # Build methods object that forwards events into queue
             self._methods = _ClientEventMethods(self._event_queue)
-            self._client = await JsonRpcClient.from_url(self._url, self._methods).__aenter__()
+            self._client = await JsonRpcClient.from_url(
+                self._url, self._methods
+            ).__aenter__()
 
     def _extract_run_id(self, resp) -> Optional[str]:
         """Extract run_id from various response formats."""
@@ -207,6 +214,7 @@ class RemoteAgent(UnifiedAgentBase):
         if isinstance(result, str):
             try:
                 import json
+
                 parsed = json.loads(result)
                 if isinstance(parsed, dict):
                     return parsed.get("run_id")
@@ -214,6 +222,7 @@ class RemoteAgent(UnifiedAgentBase):
                 # Try Python dict string format
                 try:
                     import ast
+
                     parsed = ast.literal_eval(result)
                     if isinstance(parsed, dict):
                         return parsed.get("run_id")
@@ -238,12 +247,14 @@ class RemoteAgent(UnifiedAgentBase):
         if isinstance(result, str):
             try:
                 import json
+
                 parsed = json.loads(result)
                 if isinstance(parsed, dict):
                     return parsed.get("session_id")
             except Exception:
                 try:
                     import ast
+
                     parsed = ast.literal_eval(result)
                     if isinstance(parsed, dict):
                         return parsed.get("session_id")

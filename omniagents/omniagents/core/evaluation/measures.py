@@ -12,7 +12,14 @@ def tool_hallucination(ctx) -> Dict[str, Any]:
     unknown = []
     for call in calls:
         if call.name and call.name not in allowed:
-            unknown.append({"index": call.index, "name": call.name, "arguments": call.args, "call_id": call.call_id})
+            unknown.append(
+                {
+                    "index": call.index,
+                    "name": call.name,
+                    "arguments": call.args,
+                    "call_id": call.call_id,
+                }
+            )
     total = len(calls)
     bad = len(unknown)
     result = {

@@ -33,7 +33,9 @@ def _parse_json_maybe(value: Any) -> Optional[dict]:
     return None
 
 
-def parse_tool_calls(history: List[Dict[str, Any]], include_types: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+def parse_tool_calls(
+    history: List[Dict[str, Any]], include_types: Optional[List[str]] = None
+) -> List[Dict[str, Any]]:
     calls: List[Dict[str, Any]] = []
     allowed = set(include_types) if include_types else set(CALL_TYPES.keys())
     for idx, item in enumerate(history or []):
@@ -81,7 +83,9 @@ def parse_tool_outputs(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return outs
 
 
-def link_outputs(calls: List[Dict[str, Any]], outs: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+def link_outputs(
+    calls: List[Dict[str, Any]], outs: List[Dict[str, Any]]
+) -> Dict[str, Dict[str, Any]]:
     by_id: Dict[str, Dict[str, Any]] = {}
     idx: Dict[str, Dict[str, Any]] = {}
     for c in calls:
@@ -112,7 +116,11 @@ def final_assistant_text(history: List[Dict[str, Any]]) -> Optional[str]:
         if isinstance(content, list) and it.get("type") == "message":
             txt = ""
             for part in content:
-                if isinstance(part, dict) and part.get("type") == "output_text" and isinstance(part.get("text"), str):
+                if (
+                    isinstance(part, dict)
+                    and part.get("type") == "output_text"
+                    and isinstance(part.get("text"), str)
+                ):
                     txt += part.get("text")
             if txt:
                 return txt.strip()
@@ -127,7 +135,13 @@ def _in_window(index: int, after: Optional[int], before: Optional[int]) -> bool:
     return True
 
 
-def assert_args_subset(args: Any, expected: Dict[str, Any], *, coerce_numbers: bool = True, tol: float = 1e-6) -> bool:
+def assert_args_subset(
+    args: Any,
+    expected: Dict[str, Any],
+    *,
+    coerce_numbers: bool = True,
+    tol: float = 1e-6,
+) -> bool:
     if not isinstance(expected, dict):
         return False
     if not isinstance(args, dict):
@@ -158,7 +172,11 @@ def assert_tool_called(
     after: Optional[int] = None,
     before: Optional[int] = None,
 ) -> Tuple[bool, Dict[str, Any]]:
-    calls = [c for c in parse_tool_calls(history) if c.get("name") == tool_name and _in_window(c.get("index", -1), after, before)]
+    calls = [
+        c
+        for c in parse_tool_calls(history)
+        if c.get("name") == tool_name and _in_window(c.get("index", -1), after, before)
+    ]
     if args is not None:
         calls = [c for c in calls if assert_args_subset(c.get("args"), args)]
     if count is None:
@@ -175,7 +193,9 @@ def assert_no_tool_called(
     after: Optional[int] = None,
     before: Optional[int] = None,
 ) -> Tuple[bool, Dict[str, Any]]:
-    ok, info = assert_tool_called(history, tool_name, None, None, after=after, before=before)
+    ok, info = assert_tool_called(
+        history, tool_name, None, None, after=after, before=before
+    )
     return (not ok), info
 
 
@@ -189,7 +209,9 @@ def assert_tool_call_sequence(
 ) -> Tuple[bool, Dict[str, Any]]:
     calls = parse_tool_calls(history)
     if window:
-        calls = [c for c in calls if _in_window(c.get("index", -1), window[0], window[1])]
+        calls = [
+            c for c in calls if _in_window(c.get("index", -1), window[0], window[1])
+        ]
     names = [c.get("name") for c in calls]
     if not ordered:
         present = all(n in names for n in sequence)
@@ -202,7 +224,11 @@ def assert_tool_call_sequence(
             break
         if n == sequence[seq_idx]:
             if contiguous and last_pos != -1 and i != last_pos + 1:
-                return False, {"reason": "not_contiguous", "positions": positions, "calls": calls}
+                return False, {
+                    "reason": "not_contiguous",
+                    "positions": positions,
+                    "calls": calls,
+                }
             positions.append(i)
             last_pos = i
             seq_idx += 1
@@ -262,7 +288,14 @@ def assert_coords_propagated(
     except Exception:
         return False, {"reason": "invalid_source_coords"}
     idx_src = src.get("index", -1)
-    dest = next((c for c in calls if c.get("name") == to_call and c.get("index", 1<<30) > idx_src), None)
+    dest = next(
+        (
+            c
+            for c in calls
+            if c.get("name") == to_call and c.get("index", 1 << 30) > idx_src
+        ),
+        None,
+    )
     if not dest:
         return False, {"reason": "no_dest_call"}
     args = dest.get("args") or {}

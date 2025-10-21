@@ -15,26 +15,26 @@ from ._events import map_notification_to_event
 
 class _ClientEventMethods(RpcMethodsBase):
     """RPC methods for receiving events from the local agent service."""
-    
+
     def __init__(self, event_queue: asyncio.Queue):
         super().__init__()
         self._event_queue = event_queue
-    
+
     async def _push_event(self, method: str, **params) -> bool:
         """Push event to the queue."""
         await self._event_queue.put({"method": method, "params": params})
         return True
-    
+
     # Event notification methods
     async def tool_called(self, **params):
         return await self._push_event("tool_called", **params)
-    
+
     async def tool_result(self, **params):
         return await self._push_event("tool_result", **params)
-    
+
     async def message_output(self, **params):
         return await self._push_event("message_output", **params)
-    
+
     async def token(self, **params):
         return await self._push_event("token", **params)
 
@@ -54,16 +54,21 @@ class _ClientEventMethods(RpcMethodsBase):
 class LocalAgent(UnifiedAgentBase):
     """
     Local agent implementation using in-memory RPC.
-    
+
     This adapter creates an in-memory RPC connection to an AgentService,
     providing the same interface as RemoteAgent but for local agents.
     """
-    
-    def __init__(self, spec: AgentSpec, settings: Optional[Dict[str, Any]] = None, 
-                 approval_callback: Optional[Any] = None, mcp_servers: Optional[List[Any]] = None):
+
+    def __init__(
+        self,
+        spec: AgentSpec,
+        settings: Optional[Dict[str, Any]] = None,
+        approval_callback: Optional[Any] = None,
+        mcp_servers: Optional[List[Any]] = None,
+    ):
         """
         Initialize local agent.
-        
+
         Args:
             spec: Agent specification
             settings: Settings dictionary
@@ -75,7 +80,7 @@ class LocalAgent(UnifiedAgentBase):
         self.settings = settings or {}
         self.approval_callback = approval_callback
         self.mcp_servers = mcp_servers or []
-        
+
         # RPC infrastructure
         self._agent_service: Optional[AgentService] = None
         self._rpc_client: Optional[JsonRpcClient] = None
@@ -86,10 +91,12 @@ class LocalAgent(UnifiedAgentBase):
         self._current_run_id: Optional[str] = None
         self._initialized = False
         self._last_run_end: Optional[Dict[str, Any]] = None
-        
+
         # Set agent properties from spec
         self.name = spec.name
-        self.instructions = spec.get_agent_instructions() if spec.get_agent_instructions else ""
+        self.instructions = (
+            spec.get_agent_instructions() if spec.get_agent_instructions else ""
+        )
         self.model = spec.model_name or "gpt-4"
         self.tools: List[Any] = []
         self.model_settings: Dict[str, Any] = {}
@@ -101,41 +108,47 @@ class LocalAgent(UnifiedAgentBase):
         """Initialize the RPC connection."""
         if self._initialized:
             return
-        
+
         # Create in-memory transport pair
         self._client_transport, self._server_transport = InMemoryTransport.create_pair()
-        
+
         # Create custom build_agent function that captures settings and callbacks
         settings = self.settings
         approval_callback = self.approval_callback
         mcp_servers = self.mcp_servers
-        
+
         # Store the original builder before replacing it
         self._original_builder = self.spec.build_agent
-        
-        
+
         async def custom_build_agent(stub_settings, mcp_server, stub_app):
             # Set global approval callback and safe tools if we have them
             from omniagents.core.agents.safe import SafeAgent
+
             if self.spec.safe_agent_options:
                 SafeAgent.set_global_safe_tools(
                     tool_names=self.spec.safe_agent_options.safe_tool_names,
-                    tool_patterns=self.spec.safe_agent_options.safe_tool_patterns
+                    tool_patterns=self.spec.safe_agent_options.safe_tool_patterns,
                 )
-            
+
             # If spec already has a custom builder, use it
             if self._original_builder:
-                agent = await self._original_builder(settings, mcp_servers[0] if mcp_servers else mcp_server, self.spec)
-                
+                agent = await self._original_builder(
+                    settings, mcp_servers[0] if mcp_servers else mcp_server, self.spec
+                )
+
                 # Check if agent is already a SafeAgent that needs callback
                 if isinstance(agent, SafeAgent) and approval_callback:
                     # Set the instance callback as well for this specific agent
                     agent.set_approval_callback(approval_callback)
-                
+
                 # If safe mode is enabled and agent is not already a SafeAgent, wrap it
-                elif self.spec.use_safe_agent and approval_callback and not isinstance(agent, SafeAgent):
+                elif (
+                    self.spec.use_safe_agent
+                    and approval_callback
+                    and not isinstance(agent, SafeAgent)
+                ):
                     opts = self.spec.safe_agent_options
-                    
+
                     # Create SafeAgent, passing through all attributes via **kwargs
                     # SafeAgent's __init__ accepts **kwargs and passes them to Agent.__init__
                     safe_agent = SafeAgent(
@@ -143,12 +156,13 @@ class LocalAgent(UnifiedAgentBase):
                         tools=agent.tools,  # Use static tools at build time
                         instructions=agent.instructions,
                         model=agent.model,
-                        model_settings=getattr(agent, 'model_settings', None),
-                        mcp_servers=getattr(agent, 'mcp_servers', []) or [],  # Ensure it's a list, not None
+                        model_settings=getattr(agent, "model_settings", None),
+                        mcp_servers=getattr(agent, "mcp_servers", [])
+                        or [],  # Ensure it's a list, not None
                         # Pass through other Agent attributes
-                        handoffs=getattr(agent, 'handoffs', []),
-                        handoff_description=getattr(agent, 'handoff_description', None),
-                        prompt=getattr(agent, 'prompt', None),
+                        handoffs=getattr(agent, "handoffs", []),
+                        handoff_description=getattr(agent, "handoff_description", None),
+                        prompt=getattr(agent, "prompt", None),
                         # SafeAgent specific parameters
                         approval_callback=approval_callback,
                         safe_tool_names=opts.safe_tool_names,
@@ -157,44 +171,43 @@ class LocalAgent(UnifiedAgentBase):
                         halt_on_rejection=opts.halt_on_rejection,
                     )
                     return safe_agent
-                
+
                 return agent
-            
+
             # Otherwise use the default builder
             from omniagents.core.agents.builder import _default_build_agent
-            
+
             # Use our captured settings instead of stub_settings
             # Use our captured MCP servers, preferring the first one if available
             mcp_to_use = mcp_servers[0] if mcp_servers else mcp_server
 
             return await _default_build_agent(
-                settings,
-                mcp_to_use,
-                self.spec,
-                approval_callback
+                settings, mcp_to_use, self.spec, approval_callback
             )
-        
+
         # Set the custom builder on the spec
         self.spec.build_agent = custom_build_agent
-        
+
         # Connect server transport
         await self._server_transport.connect()
-        
+
         # Create the channel first
         from omniagents.rpc.server import JsonRpcChannel
+
         channel = JsonRpcChannel(self._server_transport)
-        
+
         # Create agent service with custom spec and set channel immediately
         self._agent_service = AgentService(self.spec)
         self._agent_service.channel = channel
-        
+
         # Create and start server endpoint
         from omniagents.rpc import JsonRpcEndpoint
+
         endpoint = JsonRpcEndpoint(self._agent_service)
-        
+
         # Start server task
         self._server_task = asyncio.create_task(self._run_server(endpoint, channel))
-        
+
         # Don't start the RPC client yet - use lazy initialization like RemoteAgent
         self._initialized = True
 
@@ -203,10 +216,10 @@ class LocalAgent(UnifiedAgentBase):
         if self._rpc_client is None:
             # Make sure we're initialized first
             await self.initialize()
-            
+
             # Connect client transport
             await self._client_transport.connect()
-            
+
             # Create and start RPC client
             event_methods = _ClientEventMethods(self._event_queue)
             self._rpc_client = JsonRpcClient(self._client_transport, event_methods)
@@ -222,12 +235,12 @@ class LocalAgent(UnifiedAgentBase):
                     break
                 except Exception:
                     continue
-                
+
                 # Process RPC call
                 call_id = data.get("id")
                 method = data.get("method")
                 params = data.get("params") or data.get("args") or {}
-                
+
                 if method:
                     try:
                         func = getattr(endpoint.methods, method)
@@ -246,7 +259,7 @@ class LocalAgent(UnifiedAgentBase):
                                         "type": e.__class__.__name__,
                                         "method": method,
                                     },
-                                }
+                                },
                             }
                             await self._server_transport.send_json(error_response)
         except Exception:
@@ -256,21 +269,21 @@ class LocalAgent(UnifiedAgentBase):
     async def cleanup(self):
         """Clean up resources."""
         self._initialized = False
-        
+
         # Restore original builder
-        if hasattr(self, '_original_builder') and self.spec:
+        if hasattr(self, "_original_builder") and self.spec:
             self.spec.build_agent = self._original_builder
-        
+
         # Cancel server task
-        if hasattr(self, '_server_task'):
+        if hasattr(self, "_server_task"):
             self._server_task.cancel()
             with suppress(asyncio.CancelledError, Exception):
                 await self._server_task
-        
+
         # Clean up RPC client
         if self._rpc_client:
             await self._rpc_client.__aexit__(None, None, None)
-        
+
         # Disconnect transports
         if self._client_transport:
             await self._client_transport.disconnect()
@@ -279,34 +292,34 @@ class LocalAgent(UnifiedAgentBase):
 
     def run_streamed(self, messages: List[Dict[str, str]], *, run_config=None):
         """Run agent with streaming output."""
+
         async def _events_gen():
             await self._ensure_client()
-            
+
             # Extract prompt from messages
             prompt = messages[-1]["content"] if messages else ""
-            
+
             # Start run via RPC
             response = await self._rpc_client.other.start_run(
-                prompt=prompt,
-                session_id=self._session_id
+                prompt=prompt, session_id=self._session_id
             )
-            
+
             # Extract session_id and run_id
-            if hasattr(response, 'result'):
+            if hasattr(response, "result"):
                 result = response.result
             else:
                 result = response
-                
+
             if isinstance(result, dict):
                 if not self._session_id and "session_id" in result:
                     self._session_id = result["session_id"]
                 run_id = result.get("run_id")
             else:
                 run_id = None
-            
+
             # Store current run_id for potential cancellation
             self._current_run_id = run_id
-            
+
             # Stream events until run_end
             while True:
                 event_data = await self._event_queue.get()
@@ -322,22 +335,21 @@ class LocalAgent(UnifiedAgentBase):
                         # Clear current run_id when run ends
                         self._current_run_id = None
                         break
-                
+
                 # Convert to StreamEvent
                 event = map_notification_to_event(
-                    event_data["method"], 
-                    event_data.get("params", {})
+                    event_data["method"], event_data.get("params", {})
                 )
                 if event:
                     yield event
-        
+
         class _StreamResult:
             def __init__(self, events_gen):
                 self._events_gen = events_gen
-            
+
             def stream_events(self):
                 return self._events_gen
-        
+
         return _StreamResult(_events_gen())
 
     def get_last_run_end(self) -> Optional[Dict[str, Any]]:
@@ -349,25 +361,27 @@ class LocalAgent(UnifiedAgentBase):
         await self._ensure_client()
         response = await self._rpc_client.other.list_sessions()
         return getattr(response, "result", response)
-    
+
     async def archive_session(self, session_id: str) -> None:
         """Archive a session."""
         await self._ensure_client()
         await self._rpc_client.other.archive_session(session_id=session_id)
-    
+
     async def stop_run(self) -> bool:
         """
         Stop the currently running agent execution.
-        
+
         Returns:
             bool: True if the run was successfully cancelled, False otherwise
         """
         if not self._current_run_id:
             return False
-        
+
         await self._ensure_client()
         try:
-            response = await self._rpc_client.other.stop_run(run_id=self._current_run_id)
+            response = await self._rpc_client.other.stop_run(
+                run_id=self._current_run_id
+            )
             result = getattr(response, "result", response)
             if result:
                 # Clear the run_id since we've cancelled it
@@ -375,20 +389,20 @@ class LocalAgent(UnifiedAgentBase):
             return result
         except Exception:
             return False
-    
+
     # Context manager support for resource cleanup
     async def __aenter__(self):
         await self.initialize()
         return self
-    
+
     async def __aexit__(self, exc_type, exc, tb):
         await self.cleanup()
-    
+
     # Compatibility methods
     def get_all_tools(self) -> List[Any]:
         """Get all available tools (empty for RPC agents)."""
         return []
-    
+
     def reset_run_state(self) -> None:
         """Reset agent state (no-op for RPC agents)."""
         pass

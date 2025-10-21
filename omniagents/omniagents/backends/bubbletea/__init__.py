@@ -29,14 +29,14 @@ from glob import glob
 
 class BubbleTeaBackend:
     """Bubble Tea TUI backend implementation.
-    
+
     This backend launches a Go-based terminal UI that communicates with
     the Python agent server via WebSocket/JSON-RPC protocol.
     """
-    
+
     def run(self, spec: AgentSpec, **kwargs) -> None:
         """Run the Bubble Tea backend with the given agent specification.
-        
+
         Args:
             spec: The agent specification containing configuration,
                   instructions, tools, and other settings
@@ -51,31 +51,40 @@ class BubbleTeaBackend:
             from omniagents.backends.server.app import build_app
             import uvicorn
         except ImportError as e:
-            print(f"Error: Server dependencies not installed. Install with: pip install omniagents[server]")
+            print(
+                f"Error: Server dependencies not installed. Install with: pip install omniagents[server]"
+            )
             print(f"Details: {e}")
             sys.exit(1)
-        
+
         # Find an available port
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(('', 0))
+            s.bind(("", 0))
             port = s.getsockname()[1]
-        
+
         # Extract configuration from kwargs
-        config_path = kwargs.get('config_path')
-        auth_token = kwargs.get('auth_token')
-        debug = kwargs.get('debug', False)
-        session_id = kwargs.get('session_id')
-        
+        config_path = kwargs.get("config_path")
+        auth_token = kwargs.get("auth_token")
+        debug = kwargs.get("debug", False)
+        session_id = kwargs.get("session_id")
+
         # Build the FastAPI app with the agent spec
         app = build_app(config_path=config_path, spec=spec, auth_token=auth_token)
-        
+
         # Start server in background thread
         def run_server():
             """Run the FastAPI server in a background thread."""
             # Minimal safeguard: silence noisy third-party loggers so their
             # output cannot corrupt the Bubble Tea TUI. We keep uvicorn quiet
             # via log_level/access_log below, but some SDKs emit via root loggers.
-            for name in ("agents", "openai", "httpx", "urllib3", "anthropic", "litellm"):
+            for name in (
+                "agents",
+                "openai",
+                "httpx",
+                "urllib3",
+                "anthropic",
+                "litellm",
+            ):
                 try:
                     lg = logging.getLogger(name)
                     lg.handlers.clear()
@@ -86,16 +95,16 @@ class BubbleTeaBackend:
                     # Best-effort; never crash server startup on logging config
                     pass
             uvicorn.run(
-                app, 
-                host="127.0.0.1", 
-                port=port, 
+                app,
+                host="127.0.0.1",
+                port=port,
                 log_level="error",  # Suppress server logs in TUI
-                access_log=False,   # Disable access logs
+                access_log=False,  # Disable access logs
             )
-        
+
         server_thread = Thread(target=run_server, daemon=True)
         server_thread.start()
-        
+
         # Give server time to start up and verify it's running
         max_retries = 10
         for i in range(max_retries):
@@ -103,25 +112,33 @@ class BubbleTeaBackend:
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     s.settimeout(1)
-                    s.connect(('127.0.0.1', port))
+                    s.connect(("127.0.0.1", port))
                     s.close()
                     if debug:
                         print(f"[DEBUG] Server started successfully on port {port}")
                     break
             except (socket.timeout, ConnectionRefusedError):
                 if i == max_retries - 1:
-                    print(f"Error: Failed to start server on port {port} after {max_retries} attempts")
+                    print(
+                        f"Error: Failed to start server on port {port} after {max_retries} attempts"
+                    )
                     sys.exit(1)
                 if debug:
-                    print(f"[DEBUG] Waiting for server to start... attempt {i+1}/{max_retries}")
-        
+                    print(
+                        f"[DEBUG] Waiting for server to start... attempt {i+1}/{max_retries}"
+                    )
+
         # Find or build the Go binary
         binary_path = self._find_binary()
         cache_dir = self._user_cache_dir()
         source_hash = self._compute_source_hash()
         if not binary_path:
             # Attempt auto-build if allowed
-            auto_build = os.environ.get("OMNI_TUI_AUTO_BUILD", "1").lower() not in {"0", "false", "no"}
+            auto_build = os.environ.get("OMNI_TUI_AUTO_BUILD", "1").lower() not in {
+                "0",
+                "false",
+                "no",
+            }
             if auto_build:
                 try:
                     binary_path = self._build_binary(debug=debug)
@@ -132,7 +149,11 @@ class BubbleTeaBackend:
                     sys.exit(1)
 
         # If we found a cached binary, ensure it matches current source; otherwise rebuild
-        if binary_path and cache_dir and binary_path.parent.resolve() == cache_dir.resolve():
+        if (
+            binary_path
+            and cache_dir
+            and binary_path.parent.resolve() == cache_dir.resolve()
+        ):
             cached_hash = self._read_cached_hash(cache_dir)
             if source_hash and cached_hash and cached_hash != source_hash:
                 if debug:
@@ -151,47 +172,55 @@ class BubbleTeaBackend:
             print("  cd omniagents/backends/bubbletea/cmd/omni-tui")
             out_name = self._binary_filename()
             print(f"  go build -o ../../bin/{out_name}")
-            print("\nIf you don't have Go installed, download it from https://go.dev/dl/")
+            print(
+                "\nIf you don't have Go installed, download it from https://go.dev/dl/"
+            )
             sys.exit(1)
-        
+
         # Prepare environment
         env = os.environ.copy()
         if debug:
-            env['OMNI_DEBUG'] = '1'
-        
+            env["OMNI_DEBUG"] = "1"
+
         # Build command line arguments
-        server_url = f'ws://127.0.0.1:{port}/ws'
-        
+        server_url = f"ws://127.0.0.1:{port}/ws"
+
         # Debug output
         if debug:
             print(f"[DEBUG] Server URL: {server_url}")
             print(f"[DEBUG] Binary path: {binary_path}")
             print(f"[DEBUG] Agent name: {spec.name}")
-        
+
         cmd = [
             str(binary_path),
-            '--server', server_url,
-            '--name', spec.name or "OmniAgent",
+            "--server",
+            server_url,
+            "--name",
+            spec.name or "OmniAgent",
         ]
-        
+
         # Add optional parameters
         if auth_token:
-            cmd.extend(['--token', auth_token])
-        
+            cmd.extend(["--token", auth_token])
+
         if spec.welcome_text:
-            cmd.extend(['--welcome', spec.welcome_text])
-        
+            cmd.extend(["--welcome", spec.welcome_text])
+
         if spec.use_safe_agent:
-            cmd.append('--safe-mode')
-        
+            cmd.append("--safe-mode")
+
         if session_id:
-            cmd.extend(['--session', session_id])
-        
+            cmd.extend(["--session", session_id])
+
         if debug:
-            cmd.append('--debug')
-        
+            cmd.append("--debug")
+
         # Launch the Bubble Tea UI with stdout/stderr isolation
-        sink_to_devnull = os.getenv("OMNI_TUI_SILENT", "0").lower() in {"1", "true", "yes"}
+        sink_to_devnull = os.getenv("OMNI_TUI_SILENT", "0").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
         cache_dir = self._user_cache_dir() or Path.home()
         cache_dir.mkdir(parents=True, exist_ok=True)
         sink_path = os.devnull if sink_to_devnull else str(cache_dir / "tui-server.log")
@@ -214,7 +243,9 @@ class BubbleTeaBackend:
 
             while True:
                 try:
-                    proc = subprocess.Popen(cmd, env=env, stdout=orig_out, stderr=orig_err)
+                    proc = subprocess.Popen(
+                        cmd, env=env, stdout=orig_out, stderr=orig_err
+                    )
                     exit_code = proc.wait()
                     break
                 except KeyboardInterrupt:
@@ -267,16 +298,16 @@ class BubbleTeaBackend:
         if exit_code != 0 and exit_code != -2:
             print(f"Error: omni-tui exited with code {exit_code}")
             sys.exit(exit_code)
-    
+
     def _find_binary(self) -> Optional[Path]:
         """Find the omni-tui binary.
-        
+
         Searches in the following locations:
         1. User cache directory (preferred, auto-build target)
         2. Compiled binary in package bin/ directory
         3. Development binary in cmd/omni-tui/ directory
         4. System PATH
-        
+
         Returns:
             Path to the binary if found, None otherwise
         """
@@ -290,22 +321,22 @@ class BubbleTeaBackend:
             cache_binary = cache_dir / name
             if cache_binary.exists() and cache_binary.is_file():
                 return cache_binary
-        
+
         # 2) Package bin directory
         bin_binary = base / "bin" / name
         if bin_binary.exists() and bin_binary.is_file():
             return bin_binary
-        
+
         # 3) Development location
         dev_binary = base / "cmd" / "omni-tui" / name
         if dev_binary.exists() and dev_binary.is_file():
             return dev_binary
-        
+
         # 4) System PATH
         system_binary = shutil.which("omni-tui")
         if system_binary:
             return Path(system_binary)
-        
+
         return None
 
     def _binary_filename(self) -> str:
@@ -339,7 +370,9 @@ class BubbleTeaBackend:
             SystemExit if Go is not installed or build fails.
         """
         if shutil.which("go") is None:
-            print("Error: Go toolchain not found. Install Go from https://go.dev/dl/ and retry.")
+            print(
+                "Error: Go toolchain not found. Install Go from https://go.dev/dl/ and retry."
+            )
             raise SystemExit(1)
 
         base = Path(__file__).parent
@@ -358,14 +391,19 @@ class BubbleTeaBackend:
             print(f"[DEBUG] Output: {out_path}")
 
         # Build command
-        build_cmd = [
-            "go", "build", "-ldflags", "-s -w", "-o", str(out_path)
-        ]
+        build_cmd = ["go", "build", "-ldflags", "-s -w", "-o", str(out_path)]
 
         # Optional: ensure modules are fetched. go build will fetch as needed,
         # but we can explicitly run 'go mod download' to give clearer errors.
         try:
-            subprocess.run(["go", "mod", "download"], cwd=str(workdir), check=True, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(
+                ["go", "mod", "download"],
+                cwd=str(workdir),
+                check=True,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
         except Exception:
             # Ignore; go build will try anyway and show errors if needed
             pass
@@ -373,7 +411,9 @@ class BubbleTeaBackend:
         try:
             result = subprocess.run(build_cmd, cwd=str(workdir), env=env)
             if result.returncode != 0:
-                print("Error: 'go build' failed. Ensure Go is installed and reachable, and you have internet to fetch modules.")
+                print(
+                    "Error: 'go build' failed. Ensure Go is installed and reachable, and you have internet to fetch modules."
+                )
                 raise SystemExit(result.returncode)
         except FileNotFoundError:
             print("Error: Go not found on PATH. Install from https://go.dev/dl/")
@@ -448,4 +488,4 @@ class BubbleTeaBackend:
         path.write_text(value + "\n", encoding="utf-8")
 
 
-__all__ = ['BubbleTeaBackend']
+__all__ = ["BubbleTeaBackend"]

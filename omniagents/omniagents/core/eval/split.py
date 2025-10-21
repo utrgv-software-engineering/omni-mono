@@ -32,7 +32,9 @@ def _get_failure_categories(sc: Dict[str, Any]) -> List[str]:
     return []
 
 
-def _split_list(items: List[Any], f_train: float, f_dev: float, f_test: float, rng: random.Random) -> Tuple[List[Any], List[Any], List[Any]]:
+def _split_list(
+    items: List[Any], f_train: float, f_dev: float, f_test: float, rng: random.Random
+) -> Tuple[List[Any], List[Any], List[Any]]:
     n = len(items)
     if n == 0:
         return [], [], []
@@ -43,15 +45,17 @@ def _split_list(items: List[Any], f_train: float, f_dev: float, f_test: float, r
     if t_train + t_dev > n:
         t_dev = max(0, n - t_train)
     a = idx[:t_train]
-    b = idx[t_train:t_train + t_dev]
-    c = idx[t_train + t_dev:]
+    b = idx[t_train : t_train + t_dev]
+    c = idx[t_train + t_dev :]
     train_items = [items[i] for i in a]
     dev_items = [items[i] for i in b]
     test_items = [items[i] for i in c]
     return train_items, dev_items, test_items
 
 
-def _label(items: List[Dict[str, Any]], category: str, value: bool) -> List[Dict[str, Any]]:
+def _label(
+    items: List[Dict[str, Any]], category: str, value: bool
+) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for sc in items:
         sc2 = dict(sc)
@@ -64,13 +68,27 @@ def _label(items: List[Dict[str, Any]], category: str, value: bool) -> List[Dict
 def _write_yaml(path: Path, scenarios: List[Dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {"scenarios": scenarios}
+
     class NoAliasDumper(yaml.SafeDumper):
         def ignore_aliases(self, data):
             return True
-    path.write_text(yaml.dump(data, sort_keys=False, Dumper=NoAliasDumper, allow_unicode=True), encoding="utf-8")
+
+    path.write_text(
+        yaml.dump(data, sort_keys=False, Dumper=NoAliasDumper, allow_unicode=True),
+        encoding="utf-8",
+    )
 
 
-def create_splits(input_path: Path, category: str, output_dir: Path | None = None, f_train: float = 0.15, f_dev: float = 0.425, f_test: float = 0.425, seed: int = 42, negatives_ratio: float | None = None) -> Dict[str, Path]:
+def create_splits(
+    input_path: Path,
+    category: str,
+    output_dir: Path | None = None,
+    f_train: float = 0.15,
+    f_dev: float = 0.425,
+    f_test: float = 0.425,
+    seed: int = 42,
+    negatives_ratio: float | None = None,
+) -> Dict[str, Path]:
     in_path = Path(input_path).resolve()
     items = _load_scenarios(in_path)
     rng = random.Random(int(seed))
@@ -88,8 +106,12 @@ def create_splits(input_path: Path, category: str, output_dir: Path | None = Non
     else:
         negatives = negatives_all
 
-    p_tr, p_dv, p_ts = _split_list(positives, float(f_train), float(f_dev), float(f_test), rng)
-    n_tr, n_dv, n_ts = _split_list(negatives, float(f_train), float(f_dev), float(f_test), rng)
+    p_tr, p_dv, p_ts = _split_list(
+        positives, float(f_train), float(f_dev), float(f_test), rng
+    )
+    n_tr, n_dv, n_ts = _split_list(
+        negatives, float(f_train), float(f_dev), float(f_test), rng
+    )
 
     train = _label(p_tr, category, True) + _label(n_tr, category, False)
     dev = _label(p_dv, category, True) + _label(n_dv, category, False)

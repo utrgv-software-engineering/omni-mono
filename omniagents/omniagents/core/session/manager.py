@@ -74,7 +74,9 @@ class Session:  # noqa: D101
 class SessionManager:  # noqa: D101
     """Holds *all* live sessions for the server process."""
 
-    def __init__(self, project_slug: str | None, agent_slug: str | None) -> None:  # noqa: D401
+    def __init__(
+        self, project_slug: str | None, agent_slug: str | None
+    ) -> None:  # noqa: D401
         self._project_slug = project_slug
         self._agent_slug = agent_slug
         self._by_id: Dict[str, Session] = {}
@@ -87,7 +89,9 @@ class SessionManager:  # noqa: D101
         if session_id and session_id in self._by_id:
             return self._by_id[session_id]
         sess = Session(self._project_slug, self._agent_slug, session_id)
-        register_session(sess.id, project_slug=self._project_slug, agent_slug=self._agent_slug)
+        register_session(
+            sess.id, project_slug=self._project_slug, agent_slug=self._agent_slug
+        )
         self._by_id[sess.id] = sess
         return sess
 
@@ -126,7 +130,9 @@ class SessionManager:  # noqa: D101
 
     def list_sessions(self) -> list[dict]:  # noqa: D401
         """Return metadata for all known sessions."""
-        return db_list_sessions(project_slug=self._project_slug, agent_slug=self._agent_slug)
+        return db_list_sessions(
+            project_slug=self._project_slug, agent_slug=self._agent_slug
+        )
 
     def get_user_messages(
         self,

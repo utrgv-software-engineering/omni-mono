@@ -110,7 +110,11 @@ class ToolOutputDisplay(ft.Container):
         self.animate = ft.animation.Animation(200, ft.AnimationCurve.EASE_OUT)
 
         # Normalise to string for non-JSON fallback handling
-        output_text = "" if output is None else (output if isinstance(output, str) else json.dumps(output))
+        output_text = (
+            ""
+            if output is None
+            else (output if isinstance(output, str) else json.dumps(output))
+        )
 
         parsed_dict = None
         # Detect already-materialised dicts first to avoid serialisation churn
@@ -547,9 +551,16 @@ class ArtifactDisplay(CollapsibleCard):
                     if not picker_event.path:
                         return
                     try:
-                        if content.startswith("http://") or content.startswith("https://"):
+                        if content.startswith("http://") or content.startswith(
+                            "https://"
+                        ):
                             # Download over HTTP(S)
-                            with urllib.request.urlopen(content, context=ssl._create_unverified_context()) as resp, open(picker_event.path, "wb") as out_f:
+                            with (
+                                urllib.request.urlopen(
+                                    content, context=ssl._create_unverified_context()
+                                ) as resp,
+                                open(picker_event.path, "wb") as out_f,
+                            ):
                                 shutil.copyfileobj(resp, out_f)
                         else:
                             # Copy from local filesystem path
@@ -561,8 +572,14 @@ class ArtifactDisplay(CollapsibleCard):
                 fp = ft.FilePicker(on_result=_write_file)
                 page.overlay.append(fp)
                 page.update()  # Ensure FilePicker is attached before use
-                default_name = os.path.basename(content) if not content.startswith("http") else os.path.basename(urllib.parse.urlparse(content).path) or "artifact.png"
+                default_name = (
+                    os.path.basename(content)
+                    if not content.startswith("http")
+                    else os.path.basename(urllib.parse.urlparse(content).path)
+                    or "artifact.png"
+                )
                 fp.save_file(file_name=default_name)
+
             # Save button control (shown in the card body)
             body_widget = ft.FilledButton(
                 text="Save",
@@ -605,9 +622,16 @@ class ArtifactDisplay(CollapsibleCard):
                     if not picker_event.path:
                         return
                     try:
-                        if content.startswith("http://") or content.startswith("https://"):
+                        if content.startswith("http://") or content.startswith(
+                            "https://"
+                        ):
                             # Download over HTTP(S)
-                            with urllib.request.urlopen(content, context=ssl._create_unverified_context()) as resp, open(picker_event.path, "wb") as out_f:
+                            with (
+                                urllib.request.urlopen(
+                                    content, context=ssl._create_unverified_context()
+                                ) as resp,
+                                open(picker_event.path, "wb") as out_f,
+                            ):
                                 shutil.copyfileobj(resp, out_f)
                         else:
                             # Copy from local filesystem path
@@ -619,8 +643,14 @@ class ArtifactDisplay(CollapsibleCard):
                 fp = ft.FilePicker(on_result=_write_file)
                 page.overlay.append(fp)
                 page.update()
-                default_name = os.path.basename(content) if not content.startswith("http") else os.path.basename(urllib.parse.urlparse(content).path) or "artifact.png"
+                default_name = (
+                    os.path.basename(content)
+                    if not content.startswith("http")
+                    else os.path.basename(urllib.parse.urlparse(content).path)
+                    or "artifact.png"
+                )
                 fp.save_file(file_name=default_name)
+
             self.body_widget = ft.FilledButton(
                 text="Save",
                 icon=ft.icons.DOWNLOAD,

@@ -17,7 +17,12 @@ from omniagents.studio.server import create_api_app
 from omniagents.core.paths import get_traces_dir
 from omniagents.core.project.runtime import load_project, build_spec_from_project
 
-from .processor import StudioTraceProcessor, RemoteStudioTraceProcessor, AgentIOProcessor, RemoteAgentIOProcessor
+from .processor import (
+    StudioTraceProcessor,
+    RemoteStudioTraceProcessor,
+    AgentIOProcessor,
+    RemoteAgentIOProcessor,
+)
 from .storage import SQLiteStorage
 from .utils import generate_readable_name
 
@@ -79,7 +84,9 @@ def init(
             try:
                 if resolved_db_path.exists():
                     temp_storage = SQLiteStorage(str(resolved_db_path))
-                    existing_traces = [t["workflow_name"] for t in temp_storage.get_traces()]
+                    existing_traces = [
+                        t["workflow_name"] for t in temp_storage.get_traces()
+                    ]
                 else:
                     existing_traces = []
 
@@ -87,7 +94,9 @@ def init(
                     if name is None:
                         raise ValueError("Must provide a trace name when resume='must'")
                     if name not in existing_traces:
-                        raise ValueError(f"Trace '{name}' does not exist in project '{project}'")
+                        raise ValueError(
+                            f"Trace '{name}' does not exist in project '{project}'"
+                        )
                 elif resume == "allow":
                     if name is not None and name in existing_traces:
                         print(f"* Resuming existing trace: {name}")
@@ -99,7 +108,9 @@ def init(
                                 name = new_name
                                 break
                 else:
-                    raise ValueError("resume must be one of: 'must', 'allow', or 'never'")
+                    raise ValueError(
+                        "resume must be one of: 'must', 'allow', or 'never'"
+                    )
 
                 if name is None:
                     name = generate_readable_name(existing_traces)
@@ -110,13 +121,17 @@ def init(
                     temp_storage.close()
 
         _server_url = None
-        print(f"\n📊 OmniAgents Studio tracing initialized for project: {_default_project}")
+        print(
+            f"\n📊 OmniAgents Studio tracing initialized for project: {_default_project}"
+        )
         if _current_name:
             print(f"📝 Trace name: {_current_name}")
         if _default_project:
             db_hint = resolved_db_path or (get_traces_dir() / f"{_default_project}.db")
             print(f"💾 Database: {db_hint}")
-            print(f"💡 Run 'omniagents studio serve --project {_default_project}' to view traces\n")
+            print(
+                f"💡 Run 'omniagents studio serve --project {_default_project}' to view traces\n"
+            )
         else:
             print("💡 Use trace() with project parameter to record traces\n")
 
@@ -144,7 +159,9 @@ def show(project: Optional[str] = None):
         print(f"💾 Database: {db_hint}")
         if _current_name:
             print(f"📝 Current trace: {_current_name}")
-        print(f"\n💡 To view traces, run: omniagents studio serve --project {target_project}")
+        print(
+            f"\n💡 To view traces, run: omniagents studio serve --project {target_project}"
+        )
     elif _server_url:
         print(f"Remote mode - server at: {_server_url}")
     else:
@@ -166,7 +183,9 @@ def serve(
     try:
         import uvicorn
     except ImportError:
-        raise ImportError("uvicorn is required for server mode. Install with: pip install uvicorn")
+        raise ImportError(
+            "uvicorn is required for server mode. Install with: pip install uvicorn"
+        )
 
     traces_dir = get_traces_dir()
     storage = None
@@ -207,11 +226,17 @@ def serve(
                     except Exception:
                         print(f"  • {db.stem:<20}")
 
-                print("\n✨ Serving all projects. Use the project selector in the UI to switch between them.")
-                print("📌 To serve only a specific project, use: omniagents studio serve --project <name>")
+                print(
+                    "\n✨ Serving all projects. Use the project selector in the UI to switch between them."
+                )
+                print(
+                    "📌 To serve only a specific project, use: omniagents studio serve --project <name>"
+                )
             else:
                 print(f"📭 No trace databases found in {traces_dir}")
-                print("✨ Studio will create databases as traces are recorded or when --project is provided.")
+                print(
+                    "✨ Studio will create databases as traces are recorded or when --project is provided."
+                )
 
     playground_resources = None
     if manifest_path:
@@ -222,11 +247,16 @@ def serve(
             default_tool_names: list[str] = []
             try:
                 default_tool_names = [
-                    getattr(t, "name") for t in base_spec.available_tools if getattr(t, "name", None)
+                    getattr(t, "name")
+                    for t in base_spec.available_tools
+                    if getattr(t, "name", None)
                 ]
             except Exception:
                 default_tool_names = []
-            guardrails_registry = project_context.guardrails_registry or {"input": {}, "output": {}}
+            guardrails_registry = project_context.guardrails_registry or {
+                "input": {},
+                "output": {},
+            }
 
             def _guardrail_keys(active_guardrails, registry):
                 keys: list[str] = []
@@ -248,7 +278,11 @@ def serve(
                                 guardrail_name = guardrail.get_name()
                             except Exception:
                                 guardrail_name = None
-                        if candidate_name and guardrail_name and candidate_name == guardrail_name:
+                        if (
+                            candidate_name
+                            and guardrail_name
+                            and candidate_name == guardrail_name
+                        ):
                             matched = key
                             break
                     if matched:
@@ -269,9 +303,15 @@ def serve(
                     agent_specs[agent_key] = base_spec
                 else:
                     try:
-                        agent_specs[agent_key] = build_spec_from_project(project_context, agent_key)
+                        agent_specs[agent_key] = build_spec_from_project(
+                            project_context, agent_key
+                        )
                     except Exception as agent_exc:
-                        logger.warning("Unable to load agent '%s' for Playground: %s", agent_key, agent_exc)
+                        logger.warning(
+                            "Unable to load agent '%s' for Playground: %s",
+                            agent_key,
+                            agent_exc,
+                        )
 
             playground_resources = {
                 "project_name": project or project_context.raw.get("name") or None,
@@ -282,10 +322,20 @@ def serve(
                 "manifest_path": manifest_path,
                 "default_model_settings": base_spec.model_settings or {},
                 "default_safe_agent": bool(base_spec.use_safe_agent),
-                "default_safe_agent_options": asdict(base_spec.safe_agent_options) if base_spec.safe_agent_options else {},
+                "default_safe_agent_options": (
+                    asdict(base_spec.safe_agent_options)
+                    if base_spec.safe_agent_options
+                    else {}
+                ),
                 "default_guardrails": {
-                    "input": _guardrail_keys(getattr(base_spec, "input_guardrails", None), guardrails_registry.get("input", {})),
-                    "output": _guardrail_keys(getattr(base_spec, "output_guardrails", None), guardrails_registry.get("output", {})),
+                    "input": _guardrail_keys(
+                        getattr(base_spec, "input_guardrails", None),
+                        guardrails_registry.get("input", {}),
+                    ),
+                    "output": _guardrail_keys(
+                        getattr(base_spec, "output_guardrails", None),
+                        guardrails_registry.get("output", {}),
+                    ),
                 },
                 "agent_specs": agent_specs,
                 "entry_agent_key": project_context.entrypoint,
@@ -317,19 +367,25 @@ def serve(
             print(f"🛠️  Starting Studio web dev server at {dev_server_url} ...")
             vite_process = subprocess.Popen(vite_cmd, cwd=str(web_dir), env=env)
         except FileNotFoundError as exc:
-            raise RuntimeError("npm is required to run the Studio dev server. Ensure Node.js is installed.") from exc
+            raise RuntimeError(
+                "npm is required to run the Studio dev server. Ensure Node.js is installed."
+            ) from exc
 
         try:
             start_time = time.time()
             while True:
                 if vite_process.poll() is not None:
-                    raise RuntimeError("Studio web dev server exited before becoming ready")
+                    raise RuntimeError(
+                        "Studio web dev server exited before becoming ready"
+                    )
                 try:
                     with urllib.request.urlopen(dev_server_url, timeout=1):
                         break
                 except (URLError, HTTPError):
                     if time.time() - start_time > 30:
-                        raise RuntimeError(f"Timed out waiting for Studio web dev server at {dev_server_url}")
+                        raise RuntimeError(
+                            f"Timed out waiting for Studio web dev server at {dev_server_url}"
+                        )
                     time.sleep(0.5)
         except Exception:
             if vite_process.poll() is None:
@@ -365,7 +421,9 @@ def serve(
         print("🔐 Authentication: Enabled")
 
     try:
-        uvicorn.run(app, host=host, port=port, proxy_headers=True, forwarded_allow_ips="*")
+        uvicorn.run(
+            app, host=host, port=port, proxy_headers=True, forwarded_allow_ips="*"
+        )
     finally:
         if vite_process:
             vite_process.terminate()
@@ -416,7 +474,9 @@ def export(output_path: str, format: str = "json", project: Optional[str] = None
             df = pd.DataFrame(traces)
             df.to_parquet(output_path)
         except ImportError:
-            raise ImportError("pandas and pyarrow are required for parquet export. Install with: pip install pandas pyarrow")
+            raise ImportError(
+                "pandas and pyarrow are required for parquet export. Install with: pip install pandas pyarrow"
+            )
 
     else:
         raise ValueError(f"Unknown format: {format}")
@@ -473,7 +533,11 @@ def set_conversation_analysis(
     existing = storage.get_analysis(target_project, group_id) or {}
     final_notes = notes if notes is not None else existing.get("notes", "")
     final_judgment = judgment if judgment is not None else existing.get("judgment")
-    final_analyzed_at = analyzed_at or existing.get("analyzed_at") or datetime.now(timezone.utc).isoformat()
+    final_analyzed_at = (
+        analyzed_at
+        or existing.get("analyzed_at")
+        or datetime.now(timezone.utc).isoformat()
+    )
     payload = {
         "markedForAnalysis": bool(marked),
         "judgment": final_judgment,

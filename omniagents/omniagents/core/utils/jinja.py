@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from .jinja_instructions import render_template as _render_template_core, read_text_file as _read_text_file_core
+from .jinja_instructions import (
+    render_template as _render_template_core,
+    read_text_file as _read_text_file_core,
+)
 
 
 def render_template(template_str: str, **kwargs) -> str:

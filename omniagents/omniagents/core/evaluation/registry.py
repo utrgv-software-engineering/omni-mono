@@ -22,8 +22,14 @@ def get_measure(name: str) -> Optional[Callable[[Any], Dict[str, Any]]]:
     return _MEASURES.get(name)
 
 
-def run_measures(ctx: Any, measures: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-    selected = _MEASURES if measures is None else {k: _MEASURES[k] for k in measures if k in _MEASURES}
+def run_measures(
+    ctx: Any, measures: Optional[List[str]] = None
+) -> List[Dict[str, Any]]:
+    selected = (
+        _MEASURES
+        if measures is None
+        else {k: _MEASURES[k] for k in measures if k in _MEASURES}
+    )
     results: List[Dict[str, Any]] = []
     for key, fn in selected.items():
         res = fn(ctx)
@@ -31,4 +37,3 @@ def run_measures(ctx: Any, measures: Optional[List[str]] = None) -> List[Dict[st
             res["name"] = key
         results.append(res)
     return results
-

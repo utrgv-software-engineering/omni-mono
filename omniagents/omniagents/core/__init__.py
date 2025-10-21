@@ -33,7 +33,7 @@ try:
 except Exception:
     display_artifact = set_artifact_callback = emit_artifact = None  # type: ignore
 # Optionally expose other useful components like SafeAgentOptions etc.
-# from .agents.specs import SafeAgentOptions # Example if exposing SafeAgentOptions 
+# from .agents.specs import SafeAgentOptions # Example if exposing SafeAgentOptions
 
 try:
     from agents.guardrail import input_guardrail, output_guardrail, GuardrailFunctionOutput  # type: ignore

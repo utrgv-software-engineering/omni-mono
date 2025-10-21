@@ -53,7 +53,12 @@ def geocode(city_name: str) -> Dict[str, Any]:
 
 
 @function_tool
-def get_weather(latitude: float, longitude: float, timezone: str = "auto", temperature_unit: str = "celsius") -> Dict[str, Any]:
+def get_weather(
+    latitude: float,
+    longitude: float,
+    timezone: str = "auto",
+    temperature_unit: str = "celsius",
+) -> Dict[str, Any]:
     """
     Returns current weather for given coordinates using Open‑Meteo.
 
@@ -73,7 +78,9 @@ def get_weather(latitude: float, longitude: float, timezone: str = "auto", tempe
         weather = get_weather(lat, lon)
     """
     try:
-        if not (-90.0 <= float(latitude) <= 90.0) or not (-180.0 <= float(longitude) <= 180.0):
+        if not (-90.0 <= float(latitude) <= 90.0) or not (
+            -180.0 <= float(longitude) <= 180.0
+        ):
             return json.dumps({"error": "Invalid coordinates"})
     except Exception:
         return json.dumps({"error": "Invalid coordinate types"})

@@ -29,18 +29,24 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     columns = [col[1] for col in cursor.fetchall()]
     if "created_at" not in columns:
         conn.execute("ALTER TABLE history ADD COLUMN created_at TIMESTAMP")
-        conn.execute("UPDATE history SET created_at = datetime('now') WHERE created_at IS NULL")
+        conn.execute(
+            "UPDATE history SET created_at = datetime('now') WHERE created_at IS NULL"
+        )
 
     cursor = conn.execute("PRAGMA table_info(sessions)")
     columns = [col[1] for col in cursor.fetchall()]
     if "created_at" not in columns:
         conn.execute("ALTER TABLE sessions ADD COLUMN created_at TIMESTAMP")
-        conn.execute("UPDATE sessions SET created_at = datetime('now') WHERE created_at IS NULL")
+        conn.execute(
+            "UPDATE sessions SET created_at = datetime('now') WHERE created_at IS NULL"
+        )
 
     conn.commit()
 
 
-def _get_store(project_slug: str | None, agent_slug: str | None) -> Tuple[sqlite3.Connection, Lock]:
+def _get_store(
+    project_slug: str | None, agent_slug: str | None
+) -> Tuple[sqlite3.Connection, Lock]:
     db_path = get_sessions_db_path(project_slug, agent_slug)
     key = str(db_path)
     store = _STORES.get(key)
@@ -54,7 +60,9 @@ def _get_store(project_slug: str | None, agent_slug: str | None) -> Tuple[sqlite
     return store
 
 
-def load_history(session_id: str, *, project_slug: str | None = None, agent_slug: str | None = None) -> list[dict]:
+def load_history(
+    session_id: str, *, project_slug: str | None = None, agent_slug: str | None = None
+) -> list[dict]:
     conn, lock = _get_store(project_slug, agent_slug)
     with lock:
         cur = conn.execute(
@@ -65,7 +73,13 @@ def load_history(session_id: str, *, project_slug: str | None = None, agent_slug
     return [json.loads(r[0]) for r in rows]
 
 
-def append_message(session_id: str, message: dict, *, project_slug: str | None = None, agent_slug: str | None = None) -> None:
+def append_message(
+    session_id: str,
+    message: dict,
+    *,
+    project_slug: str | None = None,
+    agent_slug: str | None = None,
+) -> None:
     conn, lock = _get_store(project_slug, agent_slug)
     msg_json = json.dumps(message)
     with lock:
@@ -76,7 +90,9 @@ def append_message(session_id: str, message: dict, *, project_slug: str | None =
         conn.commit()
 
 
-def register_session(session_id: str, *, project_slug: str | None = None, agent_slug: str | None = None) -> None:
+def register_session(
+    session_id: str, *, project_slug: str | None = None, agent_slug: str | None = None
+) -> None:
     conn, lock = _get_store(project_slug, agent_slug)
     with lock:
         conn.execute(
@@ -86,7 +102,13 @@ def register_session(session_id: str, *, project_slug: str | None = None, agent_
         conn.commit()
 
 
-def set_archived(session_id: str, archived: bool, *, project_slug: str | None = None, agent_slug: str | None = None) -> None:
+def set_archived(
+    session_id: str,
+    archived: bool,
+    *,
+    project_slug: str | None = None,
+    agent_slug: str | None = None,
+) -> None:
     conn, lock = _get_store(project_slug, agent_slug)
     with lock:
         conn.execute(
@@ -96,7 +118,9 @@ def set_archived(session_id: str, archived: bool, *, project_slug: str | None = 
         conn.commit()
 
 
-def get_archived(session_id: str, *, project_slug: str | None = None, agent_slug: str | None = None) -> bool:
+def get_archived(
+    session_id: str, *, project_slug: str | None = None, agent_slug: str | None = None
+) -> bool:
     conn, lock = _get_store(project_slug, agent_slug)
     with lock:
         cur = conn.execute(
@@ -107,7 +131,9 @@ def get_archived(session_id: str, *, project_slug: str | None = None, agent_slug
     return bool(row[0]) if row else False
 
 
-def list_sessions(*, project_slug: str | None = None, agent_slug: str | None = None) -> list[dict]:
+def list_sessions(
+    *, project_slug: str | None = None, agent_slug: str | None = None
+) -> list[dict]:
     conn, lock = _get_store(project_slug, agent_slug)
     with lock:
         cur = conn.execute(

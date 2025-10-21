@@ -21,7 +21,9 @@ class JsonRpcChannel:
     def __init__(self, transport: "Transport") -> None:
         self.transport = transport
 
-    async def async_call(self, method: str, args: Optional[Dict[str, Any]] = None) -> None:
+    async def async_call(
+        self, method: str, args: Optional[Dict[str, Any]] = None
+    ) -> None:
         payload = {"jsonrpc": "2.0", "method": method, "params": args or {}}
         if DEBUG_SERVER or Debug.enabled():
             try:
@@ -38,13 +40,13 @@ class JsonRpcChannel:
             except Exception:
                 pass
         await self.transport.send_json(payload)
-    
+
     # Backward compatibility property
-    @property 
+    @property
     def websocket(self) -> Any:
         """Backward compatibility for code that accesses channel.websocket."""
         # Return the underlying websocket if it's a ServerWebSocketTransport
-        if hasattr(self.transport, 'websocket'):
+        if hasattr(self.transport, "websocket"):
             return self.transport.websocket
         return None
 
@@ -61,13 +63,13 @@ class JsonRpcEndpoint:
         async def handler(websocket: WebSocket):
             from .transport.websocket import ServerWebSocketTransport
             from .transport import TransportClosedError
-            
+
             transport = ServerWebSocketTransport(websocket)
             await transport.connect()
-            
+
             channel = JsonRpcChannel(transport)
             self.methods.channel = channel
-            
+
             try:
                 while transport.is_connected():
                     try:
@@ -76,14 +78,16 @@ class JsonRpcEndpoint:
                         break
                     except WebSocketDisconnect:
                         break
-                    
+
                     call_id = data.get("id")
                     method = data.get("method")
                     params = data.get("params") or data.get("args") or {}
                     if DEBUG_SERVER or Debug.enabled():
                         try:
                             if method:
-                                print(f"[srv] ⇐ call id={call_id} method={method} params={params}")
+                                print(
+                                    f"[srv] ⇐ call id={call_id} method={method} params={params}"
+                                )
                             else:
                                 print(f"[srv] ⇐ message id={call_id} data={data}")
                         except Exception:
@@ -116,12 +120,14 @@ class JsonRpcEndpoint:
                                 }
                                 if DEBUG_SERVER or Debug.enabled():
                                     try:
-                                        print(f"[srv]   ← error id={call_id} error={error_payload['error']}")
+                                        print(
+                                            f"[srv]   ← error id={call_id} error={error_payload['error']}"
+                                        )
                                     except Exception:
                                         pass
                                 await transport.send_json(error_payload)
                             # On notifications (no id), just swallow the error
             finally:
                 await transport.disconnect()
-                
+
         app.add_api_websocket_route(path, handler, dependencies=dependencies)

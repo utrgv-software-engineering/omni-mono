@@ -59,12 +59,17 @@ def _load_local_measures(cfg_path: Path) -> None:
             agents_manifest = base_dir / "agents.json"
             if agents_manifest.is_file():
                 import json as _json
+
                 data = _json.loads(agents_manifest.read_text(encoding="utf-8"))
-                items = (data.get("agents") or [])
+                items = data.get("agents") or []
                 agent_file = None
                 if isinstance(items, list) and items:
                     try:
-                        agent_file = Path((items[0] or {}).get("file")) if isinstance(items[0], dict) else None
+                        agent_file = (
+                            Path((items[0] or {}).get("file"))
+                            if isinstance(items[0], dict)
+                            else None
+                        )
                     except Exception:
                         agent_file = None
                 prj_root = None
@@ -79,10 +84,18 @@ def _load_local_measures(cfg_path: Path) -> None:
                         cur = cur.parent
                 if prj_root:
                     import yaml as _yaml
-                    proj = _yaml.safe_load((prj_root / "project.yml").read_text(encoding="utf-8")) or {}
+
+                    proj = (
+                        _yaml.safe_load(
+                            (prj_root / "project.yml").read_text(encoding="utf-8")
+                        )
+                        or {}
+                    )
                     paths = proj.get("paths") or {}
                     eval_paths = paths.get("evaluations", "evaluations")
-                    eval_dirs = eval_paths if isinstance(eval_paths, list) else [eval_paths]
+                    eval_dirs = (
+                        eval_paths if isinstance(eval_paths, list) else [eval_paths]
+                    )
                     for ed in eval_dirs:
                         ep = Path(ed)
                         if not ep.is_absolute():
@@ -97,6 +110,7 @@ def _load_local_measures(cfg_path: Path) -> None:
                 if spec and spec.loader:
                     module = importlib.util.module_from_spec(spec)
                     import sys as _sys
+
                     _sys.modules[mod_name] = module
                     spec.loader.exec_module(module)  # type: ignore[attr-defined]
     except Exception:
@@ -119,11 +133,18 @@ def _catalog_with_labels(dimensions: List[Dict[str, Any]]) -> List[Dict[str, Any
         name = d.get("name")
         label = d.get("label") or _derive_label(name)
         values = []
-        for v in (d.get("values") or []):
+        for v in d.get("values") or []:
             v_name = v.get("name")
             v_label = v.get("label") or _derive_label(v_name)
             values.append({**v, "name": v_name, "label": v_label})
-        out.append({**{k: v for k, v in d.items() if k not in ("values",)}, "name": name, "label": label, "values": values})
+        out.append(
+            {
+                **{k: v for k, v in d.items() if k not in ("values",)},
+                "name": name,
+                "label": label,
+                "values": values,
+            }
+        )
     return out
 
 
@@ -143,7 +164,9 @@ def _derive_judge_keys_from_measures(measures: List[str]) -> List[str]:
     return uniq
 
 
-def _collect_judges_for_scenario(eval_cfg: Dict[str, Any], scenario: Dict[str, Any]) -> List[tuple[str, Dict[str, Any]]]:
+def _collect_judges_for_scenario(
+    eval_cfg: Dict[str, Any], scenario: Dict[str, Any]
+) -> List[tuple[str, Dict[str, Any]]]:
     judges_cfg = eval_cfg.get("judges") or {}
     if isinstance(judges_cfg, list):
         tmp: Dict[str, Any] = {}
@@ -160,9 +183,17 @@ def _collect_judges_for_scenario(eval_cfg: Dict[str, Any], scenario: Dict[str, A
 
     wanted = scenario.get("judges", "auto")
     selected_keys: List[str] = []
-    if wanted is None or (isinstance(wanted, str) and wanted.lower() == "none") or wanted is False:
+    if (
+        wanted is None
+        or (isinstance(wanted, str) and wanted.lower() == "none")
+        or wanted is False
+    ):
         selected_keys = []
-    elif wanted is True or (isinstance(wanted, str) and wanted.lower() == "auto") or wanted == "":
+    elif (
+        wanted is True
+        or (isinstance(wanted, str) and wanted.lower() == "auto")
+        or wanted == ""
+    ):
         selected_keys = list(derived)
     elif isinstance(wanted, list):
         selected_keys = list({*derived, *[str(x) for x in wanted]})
@@ -177,7 +208,12 @@ def _collect_judges_for_scenario(eval_cfg: Dict[str, Any], scenario: Dict[str, A
     return results
 
 
-async def _run_judges(cfg_path: Path, eval_cfg: Dict[str, Any], scenario: Dict[str, Any], history: List[Dict[str, Any]]) -> Dict[str, Any]:
+async def _run_judges(
+    cfg_path: Path,
+    eval_cfg: Dict[str, Any],
+    scenario: Dict[str, Any],
+    history: List[Dict[str, Any]],
+) -> Dict[str, Any]:
     metadata: Dict[str, Any] = {}
     judges = _collect_judges_for_scenario(eval_cfg, scenario)
     if not judges:
@@ -204,7 +240,9 @@ async def _run_judges(cfg_path: Path, eval_cfg: Dict[str, Any], scenario: Dict[s
             template_str = read_text_file(cfg_path.parent, str(template_file))
         if not template_str:
             template_str = "{{ text }}"
-        judge_prompt = render_template(template_str, text=text, history=history, history_json=json.dumps(history))
+        judge_prompt = render_template(
+            template_str, text=text, history=history, history_json=json.dumps(history)
+        )
 
         try:
             from agents import Runner as AgentsRunner
@@ -238,23 +276,28 @@ async def _run_judges(cfg_path: Path, eval_cfg: Dict[str, Any], scenario: Dict[s
         if expect_dict and isinstance(agent_cfg.get("output_schema"), dict):
             try:
                 from typing_extensions import TypedDict
+
                 schema = agent_cfg.get("output_schema") or {}
                 props = schema.get("properties", {}) or {}
+
                 def _map_js_type(t):
-                    t = (t or '').lower()
+                    t = (t or "").lower()
                     return {
-                        'string': str,
-                        'boolean': bool,
-                        'bool': bool,
-                        'number': float,
-                        'float': float,
-                        'integer': int,
-                        'int': int,
-                        'object': dict,
-                        'array': list,
+                        "string": str,
+                        "boolean": bool,
+                        "bool": bool,
+                        "number": float,
+                        "float": float,
+                        "integer": int,
+                        "int": int,
+                        "object": dict,
+                        "array": list,
                     }.get(t, str)
-                ann = {k: _map_js_type((v or {}).get('type')) for k, v in props.items()}
-                td_name = f"Judge_{key.title().replace('-', '_').replace(' ', '')}_Output"
+
+                ann = {k: _map_js_type((v or {}).get("type")) for k, v in props.items()}
+                td_name = (
+                    f"Judge_{key.title().replace('-', '_').replace(' ', '')}_Output"
+                )
                 base_out_type = TypedDict(td_name, ann)  # type: ignore
             except Exception:
                 pass
@@ -277,14 +320,16 @@ async def _run_judges(cfg_path: Path, eval_cfg: Dict[str, Any], scenario: Dict[s
                 agent_slug=f"judge_{key}",
             )
             judge_agent = await _default_build_agent({}, None, spec, None)
-            judge_res = await AgentsRunner.run(judge_agent, judge_prompt, max_turns=int(agent_cfg.get("max_turns", 1)))
+            judge_res = await AgentsRunner.run(
+                judge_agent, judge_prompt, max_turns=int(agent_cfg.get("max_turns", 1))
+            )
             val = getattr(judge_res, "final_output", None)
             if expect_dict and not isinstance(val, dict):
                 s = str(val)
                 try:
                     t = s.strip()
                     if t.startswith("```"):
-                        t = t.strip('`')
+                        t = t.strip("`")
                         if t.lower().startswith("json"):
                             t = t[4:]
                         t = t.strip()
@@ -292,7 +337,7 @@ async def _run_judges(cfg_path: Path, eval_cfg: Dict[str, Any], scenario: Dict[s
                         i = t.find("{")
                         j = t.rfind("}")
                         if i != -1 and j != -1 and j > i:
-                            t = t[i:j+1]
+                            t = t[i : j + 1]
                     val = json.loads(t)
                 except Exception:
                     val = {"raw": s}
@@ -302,7 +347,13 @@ async def _run_judges(cfg_path: Path, eval_cfg: Dict[str, Any], scenario: Dict[s
     return metadata
 
 
-async def _run_scenario(agent_yaml: str, scenario: Dict[str, Any], defaults: Dict[str, Any], eval_cfg: Dict[str, Any], workflow_name: str | None = None) -> Dict[str, Any]:
+async def _run_scenario(
+    agent_yaml: str,
+    scenario: Dict[str, Any],
+    defaults: Dict[str, Any],
+    eval_cfg: Dict[str, Any],
+    workflow_name: str | None = None,
+) -> Dict[str, Any]:
     spec = load_agent_spec_from_yaml(agent_yaml)
     spec.use_safe_agent = False
     try:
@@ -316,25 +367,41 @@ async def _run_scenario(agent_yaml: str, scenario: Dict[str, Any], defaults: Dic
     if workflow_name:
         try:
             from agentio import trace as agentio_trace
+
             try:
                 import omniagents as _oa
+
                 _oa_version = getattr(_oa, "__version__", None)
             except Exception:
                 _oa_version = None
             try:
                 cfg = yaml.safe_load(Path(agent_yaml).read_text(encoding="utf-8")) or {}
-                raw_dims = list((((cfg.get("evaluation") or {}).get("synthetic_data_generation") or {}).get("dimensions")) or [])
+                raw_dims = list(
+                    (
+                        (
+                            (cfg.get("evaluation") or {}).get(
+                                "synthetic_data_generation"
+                            )
+                            or {}
+                        ).get("dimensions")
+                    )
+                    or []
+                )
                 dims_catalog = _catalog_with_labels(raw_dims)
             except Exception:
                 dims_catalog = []
             import hashlib as _hashlib
             import json as _json
+
             try:
-                _cat_blob = _json.dumps(dims_catalog, sort_keys=True, ensure_ascii=False)
+                _cat_blob = _json.dumps(
+                    dims_catalog, sort_keys=True, ensure_ascii=False
+                )
                 catalog_id = _hashlib.sha1(_cat_blob.encode("utf-8")).hexdigest()[:16]
             except Exception:
                 catalog_id = None
             import uuid as _uuid
+
             try:
                 _sid = scenario.get("id") or scenario.get("name") or "scenario"
                 run_uid = f"{_sid}-{_uuid.uuid4().hex[:8]}"
@@ -343,9 +410,16 @@ async def _run_scenario(agent_yaml: str, scenario: Dict[str, Any], defaults: Dic
             meta = {
                 "omniagents": {
                     "run_type": "evaluation",
-                    "scenario": {"id": scenario.get("id"), "name": scenario.get("name")},
+                    "scenario": {
+                        "id": scenario.get("id"),
+                        "name": scenario.get("name"),
+                    },
                     "run": {"id": run_uid},
-                    "synthetic": {"catalog_id": catalog_id, "catalog": {"dimensions": dims_catalog}, "selection": {"mapping": scenario.get("dimensions", {})}},
+                    "synthetic": {
+                        "catalog_id": catalog_id,
+                        "catalog": {"dimensions": dims_catalog},
+                        "selection": {"mapping": scenario.get("dimensions", {})},
+                    },
                     "config": {"agent_yaml": str(agent_yaml)},
                     **({"omniagents_version": _oa_version} if _oa_version else {}),
                 }
@@ -375,32 +449,42 @@ async def _run_scenario(agent_yaml: str, scenario: Dict[str, Any], defaults: Dic
             run_error_payload = candidate
 
     session_id = getattr(agent, "_session_id", None)
-    history = load_history(
-        session_id,
-        project_slug=spec.project_slug,
-        agent_slug=spec.agent_slug,
-    ) if session_id else []
+    history = (
+        load_history(
+            session_id,
+            project_slug=spec.project_slug,
+            agent_slug=spec.agent_slug,
+        )
+        if session_id
+        else []
+    )
 
     measures = scenario.get("measures") or []
     metadata = await _run_judges(Path(agent_yaml), eval_cfg, scenario, history)
     if run_error_payload is not None:
         metadata.setdefault("agent_error", run_error_payload)
-    ctx = build_eval_context(history=history, tools=spec.available_tools, metadata=metadata)
+    ctx = build_eval_context(
+        history=history, tools=spec.available_tools, metadata=metadata
+    )
     measures_out = run_measures(ctx, measures=measures) if measures else []
     if run_error_payload is not None:
         err_info = run_error_payload.get("error")
         if isinstance(err_info, dict):
-            reason = err_info.get("message") or err_info.get("type") or "agent_run_failed"
+            reason = (
+                err_info.get("message") or err_info.get("type") or "agent_run_failed"
+            )
             details = err_info
         else:
             reason = str(err_info)
             details = {"message": str(err_info)}
-        measures_out.append({
-            "name": "_agent_error",
-            "passed": False,
-            "reason": reason,
-            "details": details,
-        })
+        measures_out.append(
+            {
+                "name": "_agent_error",
+                "passed": False,
+                "reason": reason,
+                "details": details,
+            }
+        )
 
     return {
         "scenario": scenario.get("name", "scenario"),
@@ -413,7 +497,12 @@ async def _run_scenario(agent_yaml: str, scenario: Dict[str, Any], defaults: Dic
     }
 
 
-async def run_evaluation_async(compiled_yaml: Path, workflow_name: str | None = None, include_unmeasured: bool = False, progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None) -> Dict[str, Any]:
+async def run_evaluation_async(
+    compiled_yaml: Path,
+    workflow_name: str | None = None,
+    include_unmeasured: bool = False,
+    progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> Dict[str, Any]:
     cfg_path = Path(compiled_yaml).resolve()
     raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     eval_cfg = (raw or {}).get("evaluation") or {}
@@ -455,11 +544,14 @@ async def run_evaluation_async(compiled_yaml: Path, workflow_name: str | None = 
     if not include_unmeasured:
         scenarios = [sc for sc in scenarios if (sc.get("measures") or [])]
     included_scenarios_count = len(scenarios)
-    skipped_unmeasured_count = max(0, original_scenarios_count - included_scenarios_count)
+    skipped_unmeasured_count = max(
+        0, original_scenarios_count - included_scenarios_count
+    )
 
     _load_local_measures(cfg_path)
 
     from omniagents.core.evaluation.registry import _MEASURES as _REG_MEASURES
+
     discovered_measures = sorted(list((_REG_MEASURES or {}).keys()))
     unknown_counts: Dict[str, int] = {}
     unknown_scenarios = 0
@@ -481,7 +573,9 @@ async def run_evaluation_async(compiled_yaml: Path, workflow_name: str | None = 
     idx = 0
     for sc in scenarios:
         for _ in range(runs_per):
-            r = await _run_scenario(str(cfg_path), sc, defaults, eval_cfg, workflow_name)
+            r = await _run_scenario(
+                str(cfg_path), sc, defaults, eval_cfg, workflow_name
+            )
             r["scenario_config"] = sc
             all_runs.append(r)
             idx += 1
@@ -496,15 +590,17 @@ async def run_evaluation_async(compiled_yaml: Path, workflow_name: str | None = 
                             passed += 1
                         elif pv is False:
                             failed += 1
-                    progress_cb({
-                        "event": "progress",
-                        "index": idx,
-                        "total": total_runs,
-                        "scenario": r.get("scenario"),
-                        "failed": failed,
-                        "passed": passed,
-                        "skipped": (len(measures) == 0),
-                    })
+                    progress_cb(
+                        {
+                            "event": "progress",
+                            "index": idx,
+                            "total": total_runs,
+                            "scenario": r.get("scenario"),
+                            "failed": failed,
+                            "passed": passed,
+                            "skipped": (len(measures) == 0),
+                        }
+                    )
                 except Exception:
                     pass
 
@@ -526,7 +622,13 @@ async def run_evaluation_async(compiled_yaml: Path, workflow_name: str | None = 
     return out
 
 
-def run_evaluation(compiled_yaml: Path, tracing_cfg: Optional[Dict[str, Any]] = None, workflow_base_name: Optional[str] = None, include_unmeasured: bool = False, progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None) -> Dict[str, Any]:
+def run_evaluation(
+    compiled_yaml: Path,
+    tracing_cfg: Optional[Dict[str, Any]] = None,
+    workflow_base_name: Optional[str] = None,
+    include_unmeasured: bool = False,
+    progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> Dict[str, Any]:
     use_agentio = False
     name = None
     try:
@@ -534,15 +636,35 @@ def run_evaluation(compiled_yaml: Path, tracing_cfg: Optional[Dict[str, Any]] = 
             use_agentio = True
             import agentio
             from datetime import datetime
-            base_name = workflow_base_name or tracing_cfg.get("name") or Path(compiled_yaml).stem
+
+            base_name = (
+                workflow_base_name
+                or tracing_cfg.get("name")
+                or Path(compiled_yaml).stem
+            )
             start_suffix = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
             name = f"{base_name}_scenarios_{start_suffix}"
             project = tracing_cfg.get("project") or "agent_eval"
             settings = tracing_cfg.get("settings") or {}
-            agentio.init(project=str(project), name=name, replace_default=True, **settings)
+            agentio.init(
+                project=str(project), name=name, replace_default=True, **settings
+            )
     except Exception:
         use_agentio = False
         name = None
     if use_agentio:
-        return asyncio.run(run_evaluation_async(compiled_yaml, workflow_name=name, include_unmeasured=include_unmeasured, progress_cb=progress_cb))
-    return asyncio.run(run_evaluation_async(compiled_yaml, include_unmeasured=include_unmeasured, progress_cb=progress_cb))
+        return asyncio.run(
+            run_evaluation_async(
+                compiled_yaml,
+                workflow_name=name,
+                include_unmeasured=include_unmeasured,
+                progress_cb=progress_cb,
+            )
+        )
+    return asyncio.run(
+        run_evaluation_async(
+            compiled_yaml,
+            include_unmeasured=include_unmeasured,
+            progress_cb=progress_cb,
+        )
+    )

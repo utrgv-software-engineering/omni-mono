@@ -13,7 +13,9 @@ from omniagents.core.session.history_db import load_history
 from omniagents.core.evaluation import build_eval_context, run_measures
 
 
-async def _run_agent_once(agent_yaml: str, prompt: str, measures: List[str]) -> Dict[str, Any]:
+async def _run_agent_once(
+    agent_yaml: str, prompt: str, measures: List[str]
+) -> Dict[str, Any]:
     spec = load_agent_spec_from_yaml(agent_yaml)
     spec.use_safe_agent = False
     agent = await create_unified_agent(spec)
@@ -22,11 +24,15 @@ async def _run_agent_once(agent_yaml: str, prompt: str, measures: List[str]) -> 
     async for _ in result.stream_events():
         pass
     session_id = getattr(agent, "_session_id", None)
-    history = load_history(
-        session_id,
-        project_slug=spec.project_slug,
-        agent_slug=spec.agent_slug,
-    ) if session_id else []
+    history = (
+        load_history(
+            session_id,
+            project_slug=spec.project_slug,
+            agent_slug=spec.agent_slug,
+        )
+        if session_id
+        else []
+    )
     ctx = build_eval_context(history=history, tools=spec.available_tools)
     out = run_measures(ctx, measures=measures)
     return {
@@ -58,10 +64,24 @@ async def _main_async(args) -> Dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Evaluate multiple agents with measures")
-    parser.add_argument("--agents", nargs="+", default=["examples/*/agent.yml"], help="YAML paths or globs")
-    parser.add_argument("--prompt", action="append", default=["Weather in Paris"], help="Prompt(s) to run; can repeat")
-    parser.add_argument("--measures", default="tool_hallucination", help="Comma-separated measure names")
+    parser = argparse.ArgumentParser(
+        description="Evaluate multiple agents with measures"
+    )
+    parser.add_argument(
+        "--agents",
+        nargs="+",
+        default=["examples/*/agent.yml"],
+        help="YAML paths or globs",
+    )
+    parser.add_argument(
+        "--prompt",
+        action="append",
+        default=["Weather in Paris"],
+        help="Prompt(s) to run; can repeat",
+    )
+    parser.add_argument(
+        "--measures", default="tool_hallucination", help="Comma-separated measure names"
+    )
     parser.add_argument("--output", default="", help="Write JSON to file if provided")
     args = parser.parse_args()
 

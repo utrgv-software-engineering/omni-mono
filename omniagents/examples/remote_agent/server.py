@@ -8,10 +8,12 @@ import agentio  # Import AgentIO for tracing
 
 INSTRUCTIONS = open("instructions.md", "r").read()
 
+
 @function_tool
 def get_current_time() -> str:
     """Return the current time as a string."""
     return datetime.now().strftime("%H:%M:%S")
+
 
 @function_tool
 def flip_coin() -> str:
@@ -33,9 +35,9 @@ def main() -> None:
     agentio.init(
         project="remote_agent_demo",
         name="remote_server",
-        resume="never"  # Always create a new trace
+        resume="never",  # Always create a new trace
     )
-    
+
     runner = Runner.from_agent(build_agent())
     runner.main(default_mode="server")
 

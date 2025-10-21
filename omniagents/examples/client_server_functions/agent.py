@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 import random
 from time import sleep
- 
+
 
 from dotenv import load_dotenv
 from agents import Agent
@@ -36,6 +36,7 @@ def flip_coin() -> str:
     # Simulate work so you can see the status override in the Bubble Tea UI
     sleep(2)
     return random.choice(["heads", "tails"])
+
 
 def build_agent() -> Agent:
     return Agent(

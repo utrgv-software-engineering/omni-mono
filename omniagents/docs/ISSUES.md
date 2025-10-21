@@ -1,36 +1,13 @@
 # OmniAgents Issue Register
-_Last updated: 2025-10-18_
+_Last updated: 2025-10-20_
 
 ## Summary
-- 10 active bug reports (2 partially mitigated) across optimization, logging, streaming, and AgentDeck clients.
+- 6 active bug reports (2 partially mitigated) across optimization, logging, streaming, and AgentDeck clients.
 - 10 improvement tasks covering logging focus, navigation, variable handling, linting, project scaffolding, UI polish, and Flutter deprecation cleanup.
-- 9 feature requests targeting MCP management, evaluation taxonomy/tooling, persistence, and API discoverability.
+- 7 feature requests targeting MCP management, evaluation taxonomy/tooling, persistence, and API discoverability.
 - Documentation remains sparse; MCP server health still unverified; major initiatives include SSO integration and deployment automation.
 
 ## Bugs
-
-### B-01 • Agent optimizer rejects low budgets
-- Status: Needs QA
-- Severity: High
-- Summary: GEPA expects `max_metric_calls` ≥ 6; Studio enforces `MIN_OPTIMIZATION_BUDGET`, but CLI/API still allow smaller budgets, letting GEPA exit before any reflective iteration.
-- Evidence: UI guard in `omniagents/studio/server/web/src/features/agents/AgentsView.tsx`; GEPA stop logic in `omniagents/core/eval/optimize.py`; CLI option `--max-metric-calls` in `omniagents/cli.py` lacks validation.
-- Next Steps: Share validation across CLI/API, surface a descriptive backend error, update docs to call out the minimum.
-- Related: `docs/OPTIMIZATION_ISSUES.md`, `omniagents/studio/server/api.py`
-
-### B-02 • Logs default to “All Projects”
-- Status: Open
-- Severity: Medium
-- Summary: The logs view resets `selectedProject` to `null`, forcing users to reselect their project each visit.
-- Evidence: Initial store state in `omniagents/studio/server/web/src/features/traces/store/traceStore.ts`; `Dashboard` always calls `selectTraceProject` after navigation.
-- Next Steps: Studio UI boots from active manifest, should hand the project over to Logs as the selectedProject
-- Related: `omniagents/studio/server/web/src/app/Dashboard.tsx`
-
-### B-03 • Optimizer trace markdown hard to read
-- Status: Resolved
-- Severity: Medium
-- Summary: Markdown messages lacked syntax highlighting and reused muted backgrounds, so assistant/user code blocks were low-contrast and hard to read. Shared renderer now applies Highlight.js, theme-aware colors, and consistent typography.
-- Fix: `MarkdownMessage` component centralizes markdown styling; `ConversationFlow` and `PlaygroundView` use it with `rehype-highlight` and updated Tailwind styles.
-- Related: `omniagents/studio/server/web/src/shared/components/MarkdownMessage.tsx`, `omniagents/studio/server/web/src/features/review/components/ConversationFlow.tsx`, `omniagents/studio/server/web/src/features/playground/PlaygroundView.tsx`, `omniagents/studio/server/web/src/index.css`
 
 ### B-04 • Optimization progress feedback is thin
 - Status: Open
@@ -48,14 +25,6 @@ _Last updated: 2025-10-18_
 - Next Steps: Implement websocket endpoint in Studio server, add `ApiClient.createWebSocket()`, and wire reconnection telemetry to keep traces live.
 - Related: `omniagents/studio/server/api.py`
 
-### B-06 • AgentDeck approvals land in the wrong column
-- Status: Resolved
-- Severity: Medium
-- Summary: Tool approval cards render inside each conversation column instead of a dedicated approvals column, so approvals stream in the wrong place.
-- Evidence: `_buildItem` in `examples/agentdeck/lib/chat_screen.dart` injects `ApprovalRequestCard`; `MultiColumnScreen` only renders chat columns with no approvals rail.
-- Fix: `MultiColumnScreen` now renders a dedicated approvals rail and chat columns only contain conversation cards.
-- Related: `examples/agentdeck/lib/multi_column_screen.dart`, `examples/agentdeck/lib/models.dart`
-
 ### B-07 • Flet backend no longer launches
 - Status: Open
 - Severity: High
@@ -63,22 +32,6 @@ _Last updated: 2025-10-18_
 - Evidence: Import block in `omniagents/backends/flet/app_base.py` references `agents.model_settings`, `agents.mcp`, and `set_default_openai_client`; backend entrypoint only guards `flet` import.
 - Next Steps: Replace legacy imports with OmniAgents equivalents or gate optional extras; add smoke test that exercises `omniagents run --mode gui`.
 - Related: `omniagents/backends/flet/ui.py`
-
-### B-08 • Bubble Tea cancelling tools times out start/end
-- Status: Resolved
-- Severity: High
-- Summary: The Bubble Tea TUI never sent a stop-run RPC when the user cancelled, so the backend held the run open and eventually emitted “Start run”/“End run” timeouts.
-- Evidence: Original `model.go` handled `esc` without triggering cancellation; synchronous tools blocked the event loop so cancellation couldn’t propagate.
-- Fix: Synchronous tool functions are now executed via `asyncio.to_thread`, allowing `stop_run` to cancel promptly without RPC timeouts.
-- Related: `omniagents/core/tools/discovery.py`, `omniagents/backends/bubbletea/cmd/omni-tui/model.go`, `omniagents/backends/bubbletea/cmd/omni-tui/rpc.go`, `omniagents/core/agents/service.py`
-
-### B-09 • “Judgment: needs improvement” label origin
-- Status: Open
-- Severity: Low
-- Summary: The string comes from front-end rendering where `judgment === 'unacceptable'` maps to “needs improvement”, not from backend scoring metadata.
-- Evidence: Conditional label at `omniagents/studio/server/web/src/features/evaluation/EvaluationView.tsx`.
-- Next Steps: Decide whether to rename the stored value, adjust the display string, or surface backend taxonomy instead.
-- Related: `omniagents/studio/server/web/src/features/evaluation/EvaluationView.tsx`
 
 ### B-10 • Optimizer samples unlabeled scenarios as positives
 - Status: Open
@@ -88,21 +41,6 @@ _Last updated: 2025-10-18_
 - Next Steps: Filter out unlabeled scenarios or require failure categories before optimization; add dataset validation.
 - Related: `omniagents/core/eval/stratified_sampler.py`
 
-### B-11 • AgentDeck chat input autocorrects prompts
-- Status: Resolved
-- Severity: Medium
-- Summary: Mobile keyboards replace agent prompts because the chat input enables OS autocorrect and suggestions by default.
-- Evidence: The `TextField` in `examples/agentdeck/lib/chat_screen.dart` lacks `autocorrect: false` (and related flags), so Flutter leaves autocorrect and predictive suggestions on.
-- Fix: The chat input now disables autocorrect, predictive suggestions, and smart punctuation so prompts remain untouched.
-- Related: `examples/agentdeck/lib/chat_screen.dart`
-
-### B-12 • AgentDeck auto-scroll ignores status rows
-- Status: Resolved
-- Severity: Medium
-- Summary: Conversation columns stopped short of the latest content when long status messages appeared because `_ChatViewState` only compared `model.items.length` before auto-scrolling, ignoring the extra status row.
-- Fix: `_ChatViewState` now tracks status text/spinner changes and adds the status row to the scroll metrics so the view snaps to the bottom whenever status content updates.
-- Related: `examples/agentdeck/lib/chat_screen.dart`
-
 ### B-13 • AgentDeck input draft lost when docking terminal
 - Status: Needs triage
 - Severity: High
@@ -110,13 +48,6 @@ _Last updated: 2025-10-18_
 - Evidence: `_buildFocusLayout` in `examples/agentdeck/lib/multi_column_screen.dart` swaps `chatPane` into a new `Row` once `deck.docked` becomes true, causing Flutter to discard the old state keyed by `ValueKey(conv.id)`.
 - Next Steps: Keep the chat widget in a stable position (e.g., wrap in `KeyedSubtree` or pre-build the layout) so docking terminals doesn’t drop the existing state.
 - Related: `examples/agentdeck/lib/multi_column_screen.dart`, `examples/agentdeck/lib/chat_screen.dart`
-
-### B-14 • AgentDeck context tooltip inaccessible on touch
-- Status: Resolved
-- Severity: Medium
-- Summary: The context-remaining “info” icon relied on hover-only `Tooltip` events, leaving touch users without a way to reveal the message.
-- Fix: Converted the context usage indicator into an `IconButton` that opens a dialog while keeping hover tooltips, restoring accessibility on touch devices.
-- Related: `examples/agentdeck/lib/chat_screen.dart`
 
 ### B-15 • AgentDeck columns ignore horizontal SafeArea
 - Status: Open
@@ -197,13 +128,6 @@ _Last updated: 2025-10-18_
 - Next Steps: Provide optional workflow that runs on tagged releases and pushes to Gemfury.
 - Related: `omniagents/core/project/scaffold.py`
 
-### I-10 • Align AgentDeck header icon spacing
-- Status: Resolved
-- Priority: Low
-- Summary: Header icons for info, terminal, folder, and close used a mix of raw `Icon` and `IconButton` widgets with inconsistent padding, producing uneven hit areas and spacing.
-- Fix: Standardized the header actions on compact `IconButton` widgets with shared spacing so controls align and maintain consistent hit targets.
-- Related: `examples/agentdeck/lib/chat_screen.dart`
-
 ### I-11 • Clear Flutter deprecation warnings
 - Status: Open
 - Priority: Medium
@@ -222,14 +146,6 @@ _Last updated: 2025-10-18_
 - Next Steps: Define MCP schema, extend Studio API, expose controls in Agents/Playground settings.
 - Related: `omniagents/backends/flet/app_base.py`
 
-### F-02 • Manage failure categories in Studio
-- Status: In progress
-- Scope: Logs review
-- Summary: Store supports CRUD for failure categories but UI exposure is limited to internal dialogs.
-- Blocked By: UI components for list/create/delete.
-- Next Steps: Build management panel in logs sidebar and sync with API.
-- Related: `omniagents/studio/server/api.py`, `omniagents/studio/server/web/src/features/traces/store/traceStore.ts`
-
 ### F-03 • Generate failure taxonomy draft
 - Status: Planned
 - Scope: Evaluation tooling
@@ -245,14 +161,6 @@ _Last updated: 2025-10-18_
 - Blocked By: Better UX for multi-select and sync with `analysis_categories`.
 - Next Steps: Add chip-based selector and show category usage counts.
 - Related: `omniagents/studio/server/web/src/features/review/components/AnalysisPanel.tsx`
-
-### F-05 • Manage measures in Studio
-- Status: Planned
-- Scope: Evaluation
-- Summary: Measures live in YAML/py files; Studio has no management UI.
-- Blocked By: API endpoints for CRUD on `evaluations/measures`.
-- Next Steps: Expose measures metadata through API and build management tab.
-- Related: `omniagents/core/eval/pipeline.py`, `omniagents/studio/server/web/src/features/evaluation/EvaluationView.tsx`
 
 ### F-06 • User model for server mode
 - Status: Planned
@@ -318,15 +226,9 @@ _Last updated: 2025-10-18_
 - Summary: Provide Kamal deployment, apt package, Brew formula, and Dockerfile for server distribution.
 
 ## Appendix
-- B-01: `docs/OPTIMIZATION_ISSUES.md`, `omniagents/core/eval/optimize.py`, `omniagents/cli.py`, `omniagents/studio/server/api.py`, `omniagents/studio/server/web/src/features/agents/AgentsView.tsx`
-- B-02: `omniagents/studio/server/web/src/features/traces/store/traceStore.ts`, `omniagents/studio/server/web/src/app/Dashboard.tsx`
-- B-03: `omniagents/core/eval/gepa_agent_adapter.py`, `omniagents/studio/server/web/src/features/review/components/ConversationFlow.tsx`
 - B-04: `omniagents/core/eval/optimize.py`, `omniagents/studio/server/api.py`, `omniagents/studio/server/web/src/features/agents/AgentsView.tsx`
 - B-05: `omniagents/studio/server/web/src/shared/hooks/useWebSocket.ts`, `omniagents/studio/server/web/src/lib/api.ts`, `omniagents/studio/server/api.py`
-- B-06: `examples/agentdeck/lib/chat_screen.dart`, `examples/agentdeck/lib/multi_column_screen.dart`, `examples/agentdeck/lib/models.dart`
 - B-07: `omniagents/backends/flet/app_base.py`, `omniagents/backends/flet/ui.py`
-- B-08: `omniagents/backends/bubbletea/cmd/omni-tui/model.go`, `omniagents/backends/bubbletea/cmd/omni-tui/rpc.go`, `omniagents/core/agents/service.py`
-- B-09: `omniagents/studio/server/web/src/features/evaluation/EvaluationView.tsx`
 - B-10: `omniagents/core/eval/optimize.py`, `omniagents/core/eval/stratified_sampler.py`
 - I-01: `omniagents/studio/server/api.py`, `omniagents/studio/tracing/storage.py`, `omniagents/studio/server/web/src/features/traces/store/traceStore.ts`
 - I-02: `omniagents/studio/server/web/src/app/App.tsx`, `omniagents/studio/server/web/src/app/Dashboard.tsx`
@@ -338,10 +240,8 @@ _Last updated: 2025-10-18_
 - I-08: `omniagents/core/project/scaffold.py`, `.github/workflows/publish.yml`
 - I-09: `omniagents/core/project/scaffold.py`
 - F-01: `omniagents/backends/flet/app_base.py`
-- F-02: `omniagents/studio/server/api.py`, `omniagents/studio/server/web/src/features/traces/store/traceStore.ts`
 - F-03: `omniagents/studio/tracing/storage.py`
 - F-04: `omniagents/studio/server/web/src/features/review/components/AnalysisPanel.tsx`
-- F-05: `omniagents/core/eval/pipeline.py`, `omniagents/studio/server/web/src/features/evaluation/EvaluationView.tsx`
 - F-06: `omniagents/core/agents/service.py`, `omniagents/studio/server/api.py`
 - F-07: `omniagents/studio/tracing/storage.py`
 - F-08: `omniagents/core/project/compiler.py`, `omniagents/studio/server/web/src/app/Dashboard.tsx`

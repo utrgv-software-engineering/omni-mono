@@ -10,49 +10,50 @@ from . import BaseTransport, TransportError, TransportClosedError
 
 class ClientWebSocketTransport(BaseTransport):
     """WebSocket transport for client-side connections using websockets library."""
-    
+
     def __init__(self, url: str):
         super().__init__()
         self.url = url
         self._ws: Optional["websockets.WebSocketClientProtocol"] = None
-    
+
     async def connect(self) -> None:
         """Establish WebSocket connection."""
         if self._connected:
             return
-        
+
         try:
             import websockets
+
             self._ws = await websockets.connect(self.url)
             self._connected = True
         except Exception as e:
             raise TransportError(f"Failed to connect to {self.url}: {e}")
-    
+
     async def disconnect(self) -> None:
         """Close WebSocket connection."""
         if self._ws and self._connected:
             await self._ws.close()
             self._ws = None
             self._connected = False
-    
+
     async def send_json(self, data: Dict[str, Any]) -> None:
         """Send JSON data through WebSocket."""
         self._ensure_connected()
         if not self._ws:
             raise TransportClosedError("WebSocket is None")
-        
+
         try:
             await self._ws.send(json.dumps(data))
         except Exception as e:
             self._connected = False
             raise TransportError(f"Failed to send data: {e}")
-    
+
     async def receive_json(self) -> Dict[str, Any]:
         """Receive JSON data from WebSocket."""
         self._ensure_connected()
         if not self._ws:
             raise TransportClosedError("WebSocket is None")
-        
+
         try:
             msg = await self._ws.recv()
             return json.loads(msg)
@@ -61,7 +62,7 @@ class ClientWebSocketTransport(BaseTransport):
         except Exception as e:
             self._connected = False
             raise TransportError(f"Failed to receive data: {e}")
-    
+
     def is_connected(self) -> bool:
         """Check if WebSocket is connected."""
         # The websockets library doesn't have an 'open' attribute
@@ -79,22 +80,22 @@ class ClientWebSocketTransport(BaseTransport):
 
 class ServerWebSocketTransport(BaseTransport):
     """WebSocket transport wrapping FastAPI WebSocket for server-side."""
-    
+
     def __init__(self, websocket: WebSocket):
         super().__init__()
         self.websocket = websocket
-    
+
     async def connect(self) -> None:
         """Accept WebSocket connection."""
         if self._connected:
             return
-        
+
         try:
             await self.websocket.accept()
             self._connected = True
         except Exception as e:
             raise TransportError(f"Failed to accept WebSocket: {e}")
-    
+
     async def disconnect(self) -> None:
         """Close WebSocket connection."""
         if self._connected:
@@ -105,21 +106,21 @@ class ServerWebSocketTransport(BaseTransport):
                 pass
             finally:
                 self._connected = False
-    
+
     async def send_json(self, data: Dict[str, Any]) -> None:
         """Send JSON data through WebSocket."""
         self._ensure_connected()
-        
+
         try:
             await self.websocket.send_json(data)
         except Exception as e:
             self._connected = False
             raise TransportError(f"Failed to send data: {e}")
-    
+
     async def receive_json(self) -> Dict[str, Any]:
         """Receive JSON data from WebSocket."""
         self._ensure_connected()
-        
+
         try:
             return await self.websocket.receive_json()
         except WebSocketDisconnect:

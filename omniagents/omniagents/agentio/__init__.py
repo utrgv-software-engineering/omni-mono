@@ -3,11 +3,14 @@ import sys
 
 _module = importlib.import_module("omniagents.studio.tracing")
 
+
 def __getattr__(name):
     return getattr(_module, name)
 
+
 def __dir__():
     return sorted(set(dir(_module)))
+
 
 __all__ = getattr(_module, "__all__", [])
 

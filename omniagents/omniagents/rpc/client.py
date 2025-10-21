@@ -22,6 +22,7 @@ class RpcError(Exception):
         self.message = message
         self.data = data
 
+
 if TYPE_CHECKING:
     from .transport import Transport
 
@@ -40,18 +41,23 @@ class _ClientProxy:
 class JsonRpcClient:
     """Lightweight JSON-RPC 2.0 client with pluggable transport."""
 
-    def __init__(self, transport: "Transport", methods: Optional[RpcMethodsBase] = None) -> None:
+    def __init__(
+        self, transport: "Transport", methods: Optional[RpcMethodsBase] = None
+    ) -> None:
         self._transport = transport
         self._methods = methods
         self._recv_task: Optional[asyncio.Task] = None
         self._pending: Dict[str, asyncio.Future] = {}
         self._id = 0
         self.other = _ClientProxy(self)
-    
+
     @classmethod
-    def from_url(cls, url: str, methods: Optional[RpcMethodsBase] = None) -> "JsonRpcClient":
+    def from_url(
+        cls, url: str, methods: Optional[RpcMethodsBase] = None
+    ) -> "JsonRpcClient":
         """Create a JsonRpcClient with WebSocket transport (backward compatibility)."""
         from .transport.websocket import ClientWebSocketTransport
+
         transport = ClientWebSocketTransport(url)
         return cls(transport, methods)
 
@@ -69,6 +75,7 @@ class JsonRpcClient:
 
     async def _recv_loop(self) -> None:
         from .transport import TransportClosedError
+
         try:
             while self._transport.is_connected():
                 try:
@@ -77,7 +84,7 @@ class JsonRpcClient:
                     break
                 except Exception:
                     continue
-                
+
                 if "method" in data:
                     func = getattr(self._methods, data["method"], None)
                     if func:

@@ -119,7 +119,9 @@ class TerminalManager:
             "rows": height,
         }
 
-    async def authorize(self, session_id: str, terminal_id: str, token: str) -> TerminalDescriptor:
+    async def authorize(
+        self, session_id: str, terminal_id: str, token: str
+    ) -> TerminalDescriptor:
         async with self._lock:
             terminal = self._terminals.get(session_id, {}).get(terminal_id)
             if terminal is None:
@@ -157,14 +159,18 @@ class TerminalManager:
         cols = max(10, cols)
         rows = max(5, rows)
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._set_winsize, terminal.master_fd, cols, rows)
+        await loop.run_in_executor(
+            None, self._set_winsize, terminal.master_fd, cols, rows
+        )
         terminal.cols = cols
         terminal.rows = rows
 
     async def read_output(self, terminal: TerminalDescriptor) -> Optional[bytes]:
         return await terminal.output_queue.get()
 
-    async def _pop_terminal(self, session_id: str, terminal_id: str) -> Optional[TerminalDescriptor]:
+    async def _pop_terminal(
+        self, session_id: str, terminal_id: str
+    ) -> Optional[TerminalDescriptor]:
         async with self._lock:
             bucket = self._terminals.get(session_id)
             if not bucket:
@@ -209,7 +215,9 @@ class TerminalManager:
         loop = asyncio.get_running_loop()
         try:
             while True:
-                data = await loop.run_in_executor(None, os.read, terminal.master_fd, 4096)
+                data = await loop.run_in_executor(
+                    None, os.read, terminal.master_fd, 4096
+                )
                 if not data:
                     break
                 await terminal.output_queue.put(data)

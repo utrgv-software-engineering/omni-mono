@@ -44,7 +44,9 @@ def trace(
         enhanced_metadata.setdefault("agentio_project", target_project)
 
     if server_url:
-        logger.warning("Remote tracing in trace() is not implemented; using local storage")
+        logger.warning(
+            "Remote tracing in trace() is not implemented; using local storage"
+        )
 
     with sdk_trace(workflow_name, trace_id, group_id, enhanced_metadata, disabled):
         yield

@@ -20,7 +20,7 @@ __all__ = [
     "append_message",
     # Advanced session features
     "register_session",
-    "set_archived", 
+    "set_archived",
     "get_archived",
     "list_sessions",
     # Session management

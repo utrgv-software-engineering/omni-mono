@@ -20,10 +20,10 @@ def main():
     """Run the handoff example."""
     # Path to the main agent's YAML configuration
     config_path = Path(__file__).parent / "main_agent.yml"
-    
+
     # Create and run the agent
     runner = Runner(config_path=str(config_path))
-    
+
     # Run in CLI mode by default
     runner.run(mode="cli")
 

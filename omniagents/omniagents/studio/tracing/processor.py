@@ -30,7 +30,9 @@ class StudioTraceProcessor(TracingProcessor):
 
     def _get_project_from_trace(self, trace: Any) -> str:
         if hasattr(trace, "metadata") and trace.metadata:
-            project = trace.metadata.get("studio_project") or trace.metadata.get("agentio_project")
+            project = trace.metadata.get("studio_project") or trace.metadata.get(
+                "agentio_project"
+            )
             if project:
                 return project
         return self.default_project or "default"
@@ -82,11 +84,21 @@ class StudioTraceProcessor(TracingProcessor):
                         if hasattr(response, "model_dump"):
                             enhanced_response = response.model_dump()
                         else:
-                            enhanced_response = dict(response) if hasattr(response, "__dict__") else str(response)
-                        span_export.setdefault("span_data", {})["response"] = enhanced_response
+                            enhanced_response = (
+                                dict(response)
+                                if hasattr(response, "__dict__")
+                                else str(response)
+                            )
+                        span_export.setdefault("span_data", {})[
+                            "response"
+                        ] = enhanced_response
                         if hasattr(span_data, "input") and span_data.input:
                             span_export["span_data"]["input"] = span_data.input
-                elif span_type == "generation" and hasattr(span_data, "input") and span_data.input:
+                elif (
+                    span_type == "generation"
+                    and hasattr(span_data, "input")
+                    and span_data.input
+                ):
                     span_export.setdefault("span_data", {})["input"] = span_data.input
 
             storage.insert_span(span_export)
@@ -111,11 +123,17 @@ class RemoteStudioTraceProcessor(TracingProcessor):
 
     def __init__(self, endpoint: str, project: str, token: Optional[str] = None):
         if httpx is None:
-            raise ImportError("httpx is required for remote processor. Install with: pip install httpx")
+            raise ImportError(
+                "httpx is required for remote processor. Install with: pip install httpx"
+            )
 
         self.endpoint = endpoint
         self.project = project
-        self.token = token or os.environ.get("OMNIAGENTS_STUDIO_TOKEN") or os.environ.get("AGENTIO_TOKEN")
+        self.token = (
+            token
+            or os.environ.get("OMNIAGENTS_STUDIO_TOKEN")
+            or os.environ.get("AGENTIO_TOKEN")
+        )
         self.client = None
         self._client_lock = threading.Lock()
         self._queued_events = deque(maxlen=1000)
@@ -134,7 +152,9 @@ class RemoteStudioTraceProcessor(TracingProcessor):
 
             try:
                 client = httpx.Client(timeout=httpx.Timeout(5.0))
-                test_url = self.endpoint.replace("/api/trace", "/").replace("/trace", "/")
+                test_url = self.endpoint.replace("/api/trace", "/").replace(
+                    "/trace", "/"
+                )
                 client.get(test_url, timeout=2.0)
 
                 with self._client_lock:
@@ -142,7 +162,10 @@ class RemoteStudioTraceProcessor(TracingProcessor):
                     while self._queued_events and not self._shutdown:
                         event = self._queued_events.popleft()
                         self._send_now(event["type"], event["data"])
-                    logger.info("Connected to OmniAgents Studio tracing server: %s", self.endpoint)
+                    logger.info(
+                        "Connected to OmniAgents Studio tracing server: %s",
+                        self.endpoint,
+                    )
                     break
             except Exception as exc:
                 logger.debug("Failed to connect to server: %s", exc)
@@ -182,11 +205,21 @@ class RemoteStudioTraceProcessor(TracingProcessor):
                         if hasattr(response, "model_dump"):
                             enhanced_response = response.model_dump()
                         else:
-                            enhanced_response = dict(response) if hasattr(response, "__dict__") else str(response)
-                        span_export.setdefault("span_data", {})["response"] = enhanced_response
+                            enhanced_response = (
+                                dict(response)
+                                if hasattr(response, "__dict__")
+                                else str(response)
+                            )
+                        span_export.setdefault("span_data", {})[
+                            "response"
+                        ] = enhanced_response
                         if hasattr(span_data, "input") and span_data.input:
                             span_export["span_data"]["input"] = span_data.input
-                elif span_type == "generation" and hasattr(span_data, "input") and span_data.input:
+                elif (
+                    span_type == "generation"
+                    and hasattr(span_data, "input")
+                    and span_data.input
+                ):
                     span_export.setdefault("span_data", {})["input"] = span_data.input
 
             self._send("span_end", span_export)

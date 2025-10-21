@@ -44,7 +44,9 @@ def _normalise_slug(value: str | None, fallback: str) -> str:
     return slug or fallback
 
 
-def get_sessions_db_path(project_slug: str | None = None, agent_slug: str | None = None) -> Path:
+def get_sessions_db_path(
+    project_slug: str | None = None, agent_slug: str | None = None
+) -> Path:
     override = os.getenv("OMNIAGENTS_HISTORY_DB")
     if override:
         return _expand_path(override)

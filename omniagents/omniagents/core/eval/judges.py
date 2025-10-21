@@ -11,7 +11,17 @@ from omniagents.core.utils.jinja import render_template
 from omniagents.core.tools.discovery import discover_functions_in_dir
 
 
-async def evaluate_split(compiled_yaml: Path, split_path: Path, judge_key: str, judge_max_turns: int = 1, run_max_turns: int | None = None, show: int = 20, replay_mode: str = "replay", runs_file: str | None = None, progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None) -> Dict[str, Any]:
+async def evaluate_split(
+    compiled_yaml: Path,
+    split_path: Path,
+    judge_key: str,
+    judge_max_turns: int = 1,
+    run_max_turns: int | None = None,
+    show: int = 20,
+    replay_mode: str = "replay",
+    runs_file: str | None = None,
+    progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> Dict[str, Any]:
 
     cfg = yaml.safe_load(Path(compiled_yaml).read_text(encoding="utf-8")) or {}
     agent_meta = {
@@ -20,8 +30,8 @@ async def evaluate_split(compiled_yaml: Path, split_path: Path, judge_key: str, 
         "description": cfg.get("description"),
         "tools": cfg.get("tools") or [],
     }
-    eval_cfg = (cfg.get("evaluation") or {})
-    judges_cfg = (eval_cfg.get("judges") or {})
+    eval_cfg = cfg.get("evaluation") or {}
+    judges_cfg = eval_cfg.get("judges") or {}
     jcfg = judges_cfg.get(str(judge_key))
     if not isinstance(jcfg, dict):
         raise SystemExit(f"Judge not found: {judge_key}")
@@ -97,10 +107,22 @@ async def evaluate_split(compiled_yaml: Path, split_path: Path, judge_key: str, 
 
     from omniagents.core.agents.specs import AgentSpec
     from omniagents.core.agents.builder import _default_build_agent
+
     async def _build_judge_agent(agent_cfg: Dict[str, Any], base_dir: Path):
         def _map_js_type(t: str):
             t = (t or "").lower()
-            return {"string": str, "boolean": bool, "bool": bool, "number": float, "float": float, "integer": int, "int": int, "object": dict, "array": list}.get(t, str)
+            return {
+                "string": str,
+                "boolean": bool,
+                "bool": bool,
+                "number": float,
+                "float": float,
+                "integer": int,
+                "int": int,
+                "object": dict,
+                "array": list,
+            }.get(t, str)
+
         instructions = agent_cfg.get("instructions") or ""
         instr_file = agent_cfg.get("instructions_file")
         if not instructions and instr_file:
@@ -133,11 +155,18 @@ async def evaluate_split(compiled_yaml: Path, split_path: Path, judge_key: str, 
         if isinstance(output_type, type):
             out_type = output_type
         elif isinstance(output_type, str):
-            out_type = dict if output_type.lower() == "dict" else (str if output_type.lower() == "str" else list)
+            out_type = (
+                dict
+                if output_type.lower() == "dict"
+                else (str if output_type.lower() == "str" else list)
+            )
         if isinstance(agent_cfg.get("output_schema"), dict):
             try:
                 from typing_extensions import TypedDict
-                props = (agent_cfg.get("output_schema") or {}).get("properties", {}) or {}
+
+                props = (agent_cfg.get("output_schema") or {}).get(
+                    "properties", {}
+                ) or {}
                 ann = {k: _map_js_type((v or {}).get("type")) for k, v in props.items()}
                 out_type = TypedDict("JudgeOutput", ann)  # type: ignore
             except Exception:
@@ -167,6 +196,7 @@ async def evaluate_split(compiled_yaml: Path, split_path: Path, judge_key: str, 
 
         def _get_instr() -> str:
             return instructions
+
         nm = agent_cfg.get("name") or "Judge"
         lbl = agent_cfg.get("label") or nm
         spec = AgentSpec(
@@ -189,6 +219,7 @@ async def evaluate_split(compiled_yaml: Path, split_path: Path, judge_key: str, 
 
     async def _run_judge(agent, prompt: str, max_turns: int = 1):
         from agents import Runner as AgentsRunner
+
         res = await AgentsRunner.run(agent, prompt, max_turns=max_turns)
         return getattr(res, "final_output", None)
 
@@ -280,34 +311,45 @@ async def evaluate_split(compiled_yaml: Path, split_path: Path, judge_key: str, 
             fp += 1
         elif pred is False and label is True:
             fn += 1
-        results.append({
-            "id": sid,
-            "name": sc.get("name"),
-            "label": label,
-            "pred": pred,
-            "agree": agree,
-            "prompt": (run.get("prompt") or ""),
-            "final_assistant_text": (run.get("final_assistant_text") or ""),
-            "judge_output": out,
-            "split_file": str(split_path),
-            "split_line": int(scen_line_by_id.get(sid) or 0),
-        })
+        results.append(
+            {
+                "id": sid,
+                "name": sc.get("name"),
+                "label": label,
+                "pred": pred,
+                "agree": agree,
+                "prompt": (run.get("prompt") or ""),
+                "final_assistant_text": (run.get("final_assistant_text") or ""),
+                "judge_output": out,
+                "split_file": str(split_path),
+                "split_line": int(scen_line_by_id.get(sid) or 0),
+            }
+        )
         idx += 1
         if progress_cb:
             try:
-                progress_cb({
-                    "event": "progress",
-                    "index": idx,
-                    "total": total,
-                    "scenario_id": sid,
-                    "agree": agree,
-                    "pred": pred,
-                    "label": label,
-                })
+                progress_cb(
+                    {
+                        "event": "progress",
+                        "index": idx,
+                        "total": total,
+                        "scenario_id": sid,
+                        "agree": agree,
+                        "pred": pred,
+                        "label": label,
+                    }
+                )
             except Exception:
                 pass
 
     tpr = (tp / (tp + fn)) if (tp + fn) > 0 else None
     tnr = (tn / (tn + fp)) if (tn + fp) > 0 else None
 
-    return {"split": str(split_path), "judge": str(judge_key), "counts": {"TP": tp, "TN": tn, "FP": fp, "FN": fn}, "tpr": tpr, "tnr": tnr, "results": results}
+    return {
+        "split": str(split_path),
+        "judge": str(judge_key),
+        "counts": {"TP": tp, "TN": tn, "FP": fp, "FN": fn},
+        "tpr": tpr,
+        "tnr": tnr,
+        "results": results,
+    }
