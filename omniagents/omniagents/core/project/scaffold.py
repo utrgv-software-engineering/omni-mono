@@ -128,6 +128,11 @@ def scaffold_project(
             tools_py.write_text(tools_content, encoding="utf-8")
             created.append(str(tools_py))
 
+    tools_init = tools_dir / "__init__.py"
+    if not tools_init.exists() or force:
+        tools_init.write_text("", encoding="utf-8")
+        created.append(str(tools_init))
+
     env_example = project_dir / ".env.example"
     if not env_example.exists() or force:
         env_example.write_text("OPENAI_API_KEY=\n", encoding="utf-8")
@@ -155,6 +160,175 @@ def scaffold_project(
             encoding="utf-8",
         )
         created.append(str(readme))
+
+    cli_py = project_dir / f"{sanitized}_cli.py"
+    if not cli_py.exists() or force:
+        cli_py.write_text(
+            (
+                "from pathlib import Path\n"
+                "import sys\n\n"
+                "def main() -> None:\n"
+                "    from omniagents.cli import main as omni_main\n\n"
+                "    project_path = Path(__file__).resolve().parent / \"project.yml\"\n"
+                "    new_args = [\"omniagents\", \"run\", \"--project\", str(project_path)]\n"
+                "    if len(sys.argv) > 1:\n"
+                "        new_args.extend(sys.argv[1:])\n"
+                "    sys.argv = new_args\n"
+                "    omni_main()\n\n"
+                "if __name__ == \"__main__\":\n"
+                "    main()\n"
+            ),
+            encoding="utf-8",
+        )
+        created.append(str(cli_py))
+
+    pyproject = project_dir / "pyproject.toml"
+    if not pyproject.exists() or force:
+        pyproject.write_text(
+            (
+                "[project]\n"
+                f"name = \"{sanitized}\"\n"
+                "version = \"0.1.0\"\n"
+                "description = \"Agent project built with OmniAgents\"\n"
+                "readme = \"README.md\"\n"
+                "requires-python = \">=3.11\"\n"
+                "dependencies = [\n"
+                "    \"openai==1.99.9\",\n"
+                "    \"omniagents[all]==0.3.16\",\n"
+                "    \"requests>=2.31.0\",\n"
+                "    \"beautifulsoup4>=4.12.0\",\n"
+                "    \"pygit2>=1.13.0\",\n"
+                "]\n\n"
+                "[project.optional-dependencies]\n"
+                "dev = [\n"
+                "    \"black>=24.0\",\n"
+                "    \"pytest>=8.3.2\",\n"
+                "]\n\n"
+                "[project.scripts]\n"
+                f"{sanitized} = \"{sanitized}_cli:main\"\n\n"
+                "[build-system]\n"
+                "requires = [\"setuptools>=68\", \"wheel\"]\n"
+                "build-backend = \"setuptools.build_meta\"\n\n"
+                "[tool.setuptools]\n"
+                f"py-modules = [\"{sanitized}_cli\"]\n\n"
+                "[tool.setuptools.packages.find]\n"
+                "include = [\"tools\", \"tools.*\"]\n\n"
+                "[tool.black]\n"
+                "line-length = 88\n"
+                "target-version = [\"py311\"]\n"
+                "include = '\\.(py|pyi)$'\n"
+                "exclude = '''\n/(\n    \\.git\n  | \\.mypy_cache\n  | \\.venv\n  | build\n  | dist\n)/\n'''\n"
+            ),
+            encoding="utf-8",
+        )
+        created.append(str(pyproject))
+
+    requirements = project_dir / "requirements.txt"
+    if not requirements.exists() or force:
+        requirements.write_text(
+            (
+                "openai==1.99.9\n"
+                "omniagents[all]==0.3.16\n"
+                "requests>=2.31.0\n"
+                "beautifulsoup4>=4.12.0\n"
+                "pygit2>=1.13.0\n"
+                "black>=24.0\n"
+            ),
+            encoding="utf-8",
+        )
+        created.append(str(requirements))
+
+    github_dir = project_dir / ".github"
+    workflows_dir = github_dir / "workflows"
+    github_dir.mkdir(exist_ok=True)
+    workflows_dir.mkdir(parents=True, exist_ok=True)
+
+    pr_template = github_dir / "pull_request_template.md"
+    if not pr_template.exists() or force:
+        pr_template.write_text(
+            (
+                "### 🎯 1. Motivation: What Failure Mode Are We Fixing?\n"
+                "*(Connects to the Analyze phase.)*\n\n"
+                "- Failure Mode: \n"
+                "- Root Cause Analysis: \n\n"
+                "### ✨ 2. The Change: What Was Improved?\n"
+                "*(Describes the Improve phase.)*\n\n"
+                "- Summary of Changes:\n"
+                "- Type of Change:\n"
+                "  - [ ] Prompt Refinement\n"
+                "  - [ ] RAG Strategy (Chunking, Retrieval, etc.)\n"
+                "  - [ ] Tool Definition / Schema\n"
+                "  - [ ] Model Change (e.g., swapped `gpt-4o-mini` → `gpt-4o`)\n"
+                "  - [ ] Evaluator Logic / LLM-as-Judge Prompt\n"
+                "  - [ ] Scenarios / Golden Dataset\n"
+                "  - [ ] Measures / Metrics / Failure Categories\n"
+                "  - [ ] Other: ________________\n\n"
+                "---\n\n"
+                "### 📊 3. Evaluation: How Do We Know It's Better?\n"
+                "Describe how you evaluated the change, including any tests or datasets used.\n\n"
+                "---\n\n"
+                "### 🧐 4. Qualitative Review: See the Difference\n"
+                "*(1–2 concrete examples so reviewers can inspect the behavior.)*\n\n"
+                "Input:\n"
+                "```\n"
+                "[example user query]\n"
+                "```\n\n"
+                "Before:\n"
+                "```\n"
+                "[paste prior output]\n"
+                "```\n\n"
+                "After:\n"
+                "```\n"
+                "[paste improved output]\n"
+                "```\n\n"
+                "---\n\n"
+                "### ✅ 5. CI & Deployment Checklist\n"
+                "- [ ] Evaluation Checks Passed Locally\n"
+                "- [ ] Golden Dataset Updated (scenarios.yml)\n"
+                "  - [ ] Yes — added examples of this failure mode to prevent regressions\n"
+                "  - [ ] No — covered by existing cases\n"
+                "- [ ] Evaluator Alignment Checked\n"
+                "  - [ ] N/A — no evaluator changes\n"
+                "  - [ ] Yes — TPR/TNR (or accuracy) re-validated for updated LLM-as-Judge\n"
+                "- [ ] Handles Non-Determinism — improvement consistent across multiple runs\n"
+            ),
+            encoding="utf-8",
+        )
+        created.append(str(pr_template))
+
+    workflow = workflows_dir / "omniagents-eval.yml"
+    if not workflow.exists() or force:
+        workflow.write_text(
+            (
+                "name: Omniagents Eval\n\n"
+                "on:\n"
+                "  push:\n"
+                "    branches:\n"
+                "      - main\n"
+                "  pull_request:\n\n"
+                "jobs:\n"
+                "  eval-suite:\n"
+                "    runs-on: ubuntu-latest\n"
+                "    env:\n"
+                "      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}\n"
+                "      OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}\n"
+                "    steps:\n"
+                "      - name: Checkout\n"
+                "        uses: actions/checkout@v4\n"
+                "      - name: Set up Python\n"
+                "        uses: actions/setup-python@v5\n"
+                "        with:\n"
+                "          python-version: \"3.12\"\n"
+                "      - name: Install dependencies\n"
+                "        run: |\n"
+                "          python -m pip install --upgrade pip\n"
+                "          pip install -r requirements.txt\n"
+                "      - name: Run eval suite\n"
+                "        run: omniagents eval suite run\n"
+            ),
+            encoding="utf-8",
+        )
+        created.append(str(workflow))
 
     eval_dir = project_dir / "evaluations"
     eval_dir.mkdir(exist_ok=True)

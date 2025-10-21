@@ -3,7 +3,7 @@ _Last updated: 2025-10-20_
 
 ## Summary
 - 6 active bug reports (2 partially mitigated) across optimization, logging, streaming, and AgentDeck clients.
-- 10 improvement tasks covering logging focus, navigation, variable handling, linting, project scaffolding, UI polish, and Flutter deprecation cleanup.
+- 9 improvement tasks covering logging focus, navigation, variable handling, linting, project scaffolding, UI polish, and Flutter deprecation cleanup.
 - 7 feature requests targeting MCP management, evaluation taxonomy/tooling, persistence, and API discoverability.
 - Documentation remains sparse; MCP server health still unverified; major initiatives include SSO integration and deployment automation.
 
@@ -80,45 +80,11 @@ _Last updated: 2025-10-20_
 - Next Steps: Add variables panel to Playground, wire to `AgentService` variable helpers, and store edits per session.
 - Related: `omniagents/core/agents/service.py`, `omniagents/studio/server/web/src/features/playground/PlaygroundView.tsx`
 
-### I-04 • Add linter configuration
-- Status: Open
-- Priority: Medium
-- Summary: The repo lacks lint tooling (`pyproject.toml` defines no `tool.ruff`/`flake8`), making CI drift easy.
-- Dependencies: Choose linter (ruff/flake8) and align with existing CI.
-- Next Steps: Add lint config and integrate with `tests.yml`.
-- Related: `pyproject.toml`, `.github/workflows/tests.yml`
-
 ### I-05 • Scaffold evaluation assets by default
-- Status: Open
+- Status: Resolved
 - Priority: Medium
-- Summary: `scaffold_project` omits evaluation files even though `scaffold_eval_quickstart` exists.
-- Dependencies: Confirm desired default footprint.
-- Next Steps: Invoke `scaffold_eval_quickstart` (flag-controlled) when creating new projects.
-- Related: `omniagents/core/project/scaffold.py`
-
-### I-06 • Scaffold pyproject template
-- Status: Open
-- Priority: Low
-- Summary: Generated projects ship without a `pyproject.toml`, pushing teams to copy it manually.
-- Dependencies: Decide on default metadata and extras.
-- Next Steps: Author template in scaffold flow.
-- Related: `omniagents/core/project/scaffold.py`
-
-### I-07 • Scaffold pull request template
-- Status: Open
-- Priority: Low
-- Summary: No pull request template is included when scaffolding projects.
-- Dependencies: Provide canonical PR template (see `weather_agent` reference).
-- Next Steps: Copy template into `.github/pull_request_template.md` during scaffold.
-- Related: `omniagents/core/project/scaffold.py`
-
-### I-08 • Scaffold release GitHub Actions
-- Status: Open
-- Priority: Low
-- Summary: Project scaffolds miss workflows to build artifacts and attach them to GitHub releases.
-- Dependencies: Decide on release toolchain.
-- Next Steps: Add optional workflow similar to org standard (build + upload release assets).
-- Related: `omniagents/core/project/scaffold.py`, `.github/workflows/publish.yml`
+- Summary: `scaffold_project` now emits `evaluations/` with quickstart files by default; the separate quickstart generator was removed.
+- Related: `omniagents/core/project/scaffold.py`, `omniagents/cli.py`
 
 ### I-09 • Scaffold Gemfury publishing workflow
 - Status: Open
