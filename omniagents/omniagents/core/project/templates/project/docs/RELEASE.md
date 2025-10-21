@@ -14,7 +14,7 @@
 ## Version Management
 
 1. Choose the bump type and run one of `make bump-patch`, `make bump-minor`, or `make bump-major`. This updates `pyproject.toml`, commits, and tags the release automatically.
-2. Push the commit and tag: `git push && git push --tags`.
+2. Push the commit and tag: `make publish`.
 
 ## Local Publish to PyPI
 

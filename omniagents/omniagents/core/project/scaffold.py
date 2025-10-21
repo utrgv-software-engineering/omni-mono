@@ -153,6 +153,21 @@ def scaffold_project(
         config_dir_windows=config_dir_windows,
     )
     _write_template(
+        package_dir / "cli.py",
+        "project/package/cli.py",
+        force,
+        created,
+        sanitized=sanitized,
+    )
+    _write_template(
+        package_dir / "setup.py",
+        "project/package/setup.py",
+        force,
+        created,
+        sanitized=sanitized,
+        setup_prog=setup_prog,
+    )
+    _write_template(
         project_dir / ".env.example",
         "project/.env.example",
         force,
@@ -170,21 +185,6 @@ def scaffold_project(
         force,
         created,
         sanitized=sanitized,
-    )
-    _write_template(
-        project_dir / f"{sanitized}_cli.py",
-        "project/cli.py",
-        force,
-        created,
-        sanitized=sanitized,
-    )
-    _write_template(
-        project_dir / f"{sanitized}_setup.py",
-        "project/setup_cli.py",
-        force,
-        created,
-        sanitized=sanitized,
-        setup_prog=setup_prog,
     )
     _write_template(
         project_dir / "pyproject.toml",

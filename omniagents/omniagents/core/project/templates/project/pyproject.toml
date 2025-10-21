@@ -22,15 +22,12 @@ dev = [
 ]
 
 [project.scripts]
-{sanitized} = "{sanitized}_cli:main"
-{sanitized}-setup = "{sanitized}_setup:main"
+{sanitized} = "{sanitized}.cli:main"
+{sanitized}-setup = "{sanitized}.setup:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
-
-[tool.setuptools]
-py-modules = ["{sanitized}_cli", "{sanitized}_setup"]
 
 [tool.setuptools.packages.find]
 include = ["{sanitized}", "{sanitized}.*", "tools", "tools.*"]

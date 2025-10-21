@@ -18,6 +18,9 @@ publish-gemfury: clean build
 		fi; \
 	done
 
+publish:
+	git push --follow-tags
+
 install:
 	pip install {sanitized}
 
@@ -39,4 +42,4 @@ bump-minor:
 bump-major:
 	bump2version major
 
-.PHONY: clean build publish-pypi publish-gemfury install install-gemfury dev format bump-patch bump-minor bump-major
+.PHONY: clean build publish-pypi publish-gemfury publish install install-gemfury dev format bump-patch bump-minor bump-major

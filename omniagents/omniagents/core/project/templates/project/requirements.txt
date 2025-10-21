@@ -1,3 +1,4 @@
+--extra-index-url https://pypi.fury.io/ericmichael/
 openai==1.99.9
 omniagents[all]==0.3.16
 requests>=2.31.0
