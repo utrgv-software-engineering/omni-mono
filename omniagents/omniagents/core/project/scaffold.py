@@ -44,9 +44,11 @@ def scaffold_project(
     agents_dir = project_dir / "agents"
     tools_dir = project_dir / "tools"
     target_dir = project_dir / "target"
+    docs_dir = project_dir / "docs"
     agents_dir.mkdir(exist_ok=True)
     tools_dir.mkdir(exist_ok=True)
     target_dir.mkdir(exist_ok=True)
+    docs_dir.mkdir(exist_ok=True)
 
     created: List[str] = []
 
@@ -203,6 +205,9 @@ def scaffold_project(
                 "dev = [\n"
                 "    \"black>=24.0\",\n"
                 "    \"pytest>=8.3.2\",\n"
+                "    \"build>=1.2.1\",\n"
+                "    \"twine>=5.1.1\",\n"
+                "    \"bump2version>=1.0.1\",\n"
                 "]\n\n"
                 "[project.scripts]\n"
                 f"{sanitized} = \"{sanitized}_cli:main\"\n\n"
@@ -237,6 +242,78 @@ def scaffold_project(
             encoding="utf-8",
         )
         created.append(str(requirements))
+
+    makefile = project_dir / "Makefile"
+    if not makefile.exists() or force:
+        makefile.write_text(
+            (
+                "include .env\n"
+                "export\n\n"
+                "clean:\n"
+                "\trm -rf build/ dist/ *.egg-info\n\n"
+                "build:\n"
+                "\tpython -m build\n\n"
+                "publish-pypi: clean build\n"
+                "\ttwine upload dist/*\n\n"
+                "publish-gemfury: clean build\n"
+                "\t@set -e; \\\n"
+                "\tfor file in dist/*; do \\\n"
+                "\t\tif [ -f \"$$file\" ]; then \\\n"
+                "\t\t\tcurl -f -sS -F package=@\"$$file\" \"https://$${FURY_TOKEN}@push.fury.io/$${FURY_USER}/\"; \\\n"
+                "\t\tfi; \\\n"
+                "\tdone\n\n"
+                "install:\n"
+                f"\tpip install {sanitized}\n\n"
+                "install-gemfury:\n"
+                "\tpip install {sanitized} --index-url https://$${FURY_TOKEN}@pypi.fury.io/$${FURY_USER}/\n\n"
+                "dev:\n"
+                "\tpip install -e .[dev]\n\n"
+                "format:\n"
+                "\tblack .\n\n"
+                ".PHONY: clean build publish-pypi publish-gemfury install install-gemfury dev format\n"
+            ),
+            encoding="utf-8",
+        )
+        created.append(str(makefile))
+
+    release_doc = docs_dir / "RELEASE.md"
+    if not release_doc.exists() or force:
+        release_doc.write_text(
+            (
+                "# Release Process\n\n"
+                "## Prerequisites\n\n"
+                "- Install build tooling: `pip install build twine bump2version`\n"
+                "- Configure PyPI credentials: `export TWINE_USERNAME=__token__` and set `TWINE_PASSWORD`\n"
+                "- Configure Gemfury credentials in `.env` or your shell:\n"
+                "  ```\n"
+                "  FURY_USER=your_username\n"
+                "  FURY_TOKEN=your_token\n"
+                "  ```\n"
+                "- Ensure the working tree is clean: `git status --porcelain=v1 --untracked-files=no`\n\n"
+                "## Version Management\n\n"
+                "1. Decide the next semantic version and update it in `pyproject.toml`.\n"
+                "2. Commit the change: `git commit -am \"Bump version to X.Y.Z\"`.\n"
+                "3. Tag the release: `git tag vX.Y.Z`.\n\n"
+                "## Local Publish to PyPI\n\n"
+                "```bash\n"
+                "make clean\n"
+                "make publish-pypi\n"
+                "```\n\n"
+                "## Local Publish to Gemfury\n\n"
+                "```bash\n"
+                "make clean\n"
+                "make publish-gemfury\n"
+                "```\n\n"
+                "## Installing from Gemfury\n\n"
+                "```bash\n"
+                "make install-gemfury\n"
+                "```\n\n"
+                "## Continuous Delivery\n\n"
+                "Workflows `publish-pypi.yml` and `publish-gemfury.yml` automate releases. Set repository secrets `PYPI_API_TOKEN`, `TEST_PYPI_API_TOKEN`, `FURY_USER`, and `FURY_TOKEN` before running them.\n"
+            ),
+            encoding="utf-8",
+        )
+        created.append(str(release_doc))
 
     github_dir = project_dir / ".github"
     workflows_dir = github_dir / "workflows"
@@ -329,6 +406,96 @@ def scaffold_project(
             encoding="utf-8",
         )
         created.append(str(workflow))
+
+    publish_pypi_workflow = workflows_dir / "publish-pypi.yml"
+    if not publish_pypi_workflow.exists() or force:
+        publish_pypi_workflow.write_text(
+            (
+                "name: Publish to PyPI\n\n"
+                "on:\n"
+                "  release:\n"
+                "    types: [published]\n"
+                "  workflow_dispatch:\n\n"
+                "jobs:\n"
+                "  publish:\n"
+                "    runs-on: ubuntu-latest\n"
+                "    steps:\n"
+                "      - name: Checkout\n"
+                "        uses: actions/checkout@v4\n"
+                "      - name: Set up Python\n"
+                "        uses: actions/setup-python@v5\n"
+                "        with:\n"
+                "          python-version: \"3.11\"\n"
+                "      - name: Install build tools\n"
+                "        run: |\n"
+                "          python -m pip install --upgrade pip\n"
+                "          pip install build twine\n"
+                "      - name: Build distributions\n"
+                "        run: python -m build\n"
+                "      - name: Check distributions\n"
+                "        run: twine check dist/*\n"
+                "      - name: Publish to TestPyPI\n"
+                "        if: github.event_name == 'workflow_dispatch'\n"
+                "        env:\n"
+                "          TWINE_USERNAME: __token__\n"
+                "          TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}\n"
+                "        run: twine upload --repository testpypi dist/*\n"
+                "      - name: Publish to PyPI\n"
+                "        if: github.event_name == 'release'\n"
+                "        env:\n"
+                "          TWINE_USERNAME: __token__\n"
+                "          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}\n"
+                "        run: twine upload dist/*\n"
+            ),
+            encoding="utf-8",
+        )
+        created.append(str(publish_pypi_workflow))
+
+    publish_gemfury_workflow = workflows_dir / "publish-gemfury.yml"
+    if not publish_gemfury_workflow.exists() or force:
+        publish_gemfury_workflow.write_text(
+            (
+                "name: Publish to Gemfury\n\n"
+                "on:\n"
+                "  release:\n"
+                "    types: [published]\n"
+                "  workflow_dispatch:\n\n"
+                "jobs:\n"
+                "  publish:\n"
+                "    runs-on: ubuntu-latest\n"
+                "    steps:\n"
+                "      - name: Checkout\n"
+                "        uses: actions/checkout@v4\n"
+                "      - name: Set up Python\n"
+                "        uses: actions/setup-python@v5\n"
+                "        with:\n"
+                "          python-version: \"3.11\"\n"
+                "      - name: Install build tools\n"
+                "        run: |\n"
+                "          python -m pip install --upgrade pip\n"
+                "          pip install build\n"
+                "      - name: Build distributions\n"
+                "        run: python -m build\n"
+                "      - name: Publish to Gemfury\n"
+                "        env:\n"
+                "          FURY_USER: ${{ secrets.FURY_USER }}\n"
+                "          FURY_TOKEN: ${{ secrets.FURY_TOKEN }}\n"
+                "        run: |\n"
+                "          set -euo pipefail\n"
+                "          if [ -z \"${FURY_USER:-}\" ] || [ -z \"${FURY_TOKEN:-}\" ]; then\n"
+                "            echo \"FURY_USER and FURY_TOKEN secrets must be set\"\n"
+                "            exit 1\n"
+                "          fi\n"
+                "          for file in dist/*; do\n"
+                "            if [ -f \"$file\" ]; then\n"
+                "              echo \"Uploading $file to Gemfury\"\n"
+                "              curl -f -sS -F package=@\"$file\" \"https://${FURY_TOKEN}@push.fury.io/${FURY_USER}/\"\n"
+                "            fi\n"
+                "          done\n"
+            ),
+            encoding="utf-8",
+        )
+        created.append(str(publish_gemfury_workflow))
 
     eval_dir = project_dir / "evaluations"
     eval_dir.mkdir(exist_ok=True)
