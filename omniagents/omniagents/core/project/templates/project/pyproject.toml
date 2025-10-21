@@ -1,0 +1,54 @@
+[project]
+name = "{sanitized}"
+version = "0.1.0"
+description = "Agent project built with OmniAgents"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "openai==1.99.9",
+    "omniagents[all]==0.3.16",
+    "requests>=2.31.0",
+    "beautifulsoup4>=4.12.0",
+    "pygit2>=1.13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black>=24.0",
+    "pytest>=8.3.2",
+    "build>=1.2.1",
+    "twine>=5.1.1",
+    "bump2version>=1.0.1",
+]
+
+[project.scripts]
+{sanitized} = "{sanitized}_cli:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["{sanitized}_cli"]
+
+[tool.setuptools.packages.find]
+include = ["tools", "tools.*"]
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+include = '\\.(py|pyi)$'
+exclude = '''
+/(\n    \\.git\n  | \\.mypy_cache\n  | \\.venv\n  | build\n  | dist\n)/
+'''
+
+[tool.bumpversion]
+current_version = "0.1.0"
+commit = true
+tag = true
+parse = '(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)'
+serialize = ['{major}.{minor}.{patch}']
+
+[tool.bumpversion:file:pyproject.toml]
+search = 'version = "{current_version}"'
+replace = 'version = "{new_version}"'

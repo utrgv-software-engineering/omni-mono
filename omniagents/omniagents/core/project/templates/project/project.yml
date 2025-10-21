@@ -1,0 +1,14 @@
+name: {sanitized}
+paths:
+  agents: agents
+  tools: tools
+  target: target
+agents:
+  entrypoint: {sanitized}
+
+tracing:
+  provider: agentio
+  project: {sanitized}_project
+  name: {sanitized}
+  settings:
+    resume: never

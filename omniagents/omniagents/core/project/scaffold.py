@@ -5,6 +5,34 @@ from typing import List, Tuple, Optional
 import shutil
 import yaml
 
+TEMPLATES_DIR = Path(__file__).with_name("templates")
+
+
+def _render_template(relative_path: str, **context: str) -> str:
+    template_path = TEMPLATES_DIR / relative_path
+    if not template_path.is_file():
+        raise FileNotFoundError(f"Missing template: {template_path}")
+    content = template_path.read_text(encoding="utf-8")
+    for key, value in context.items():
+        content = content.replace(f"{{{key}}}", value)
+    return content
+
+
+def _write_template(
+    target_path: Path,
+    template_rel_path: str,
+    force: bool,
+    created: List[str],
+    **context: str,
+) -> None:
+    if target_path.exists() and not force:
+        return
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text(
+        _render_template(template_rel_path, **context), encoding="utf-8"
+    )
+    created.append(str(target_path))
+
 
 def _sanitize_name(name: str) -> str:
     import re
@@ -22,6 +50,16 @@ def _sanitize_name(name: str) -> str:
         if not s or not s[0].isalpha():
             s = "agent"
     return s
+
+
+def _titleize(s: str) -> str:
+    parts = [p for p in s.split("_") if p]
+    return " ".join(p.capitalize() for p in parts) or s
+
+
+def _camel_case(s: str) -> str:
+    parts = [p for p in s.split("_") if p]
+    return "".join(p.capitalize() for p in parts)
 
 
 def scaffold_project(
@@ -45,492 +83,163 @@ def scaffold_project(
     tools_dir = project_dir / "tools"
     target_dir = project_dir / "target"
     docs_dir = project_dir / "docs"
-    agents_dir.mkdir(exist_ok=True)
-    tools_dir.mkdir(exist_ok=True)
-    target_dir.mkdir(exist_ok=True)
-    docs_dir.mkdir(exist_ok=True)
+    for path in (agents_dir, tools_dir, target_dir, docs_dir):
+        path.mkdir(exist_ok=True)
 
     created: List[str] = []
 
-    project_yml = project_dir / "project.yml"
-    if not project_yml.exists() or force:
-        content = (
-            f"name: {sanitized}\n"
-            "paths:\n"
-            "  agents: agents\n"
-            "  tools: tools\n"
-            "  target: target\n"
-            "agents:\n"
-            f"  entrypoint: {sanitized}\n\n"
-            "tracing:\n"
-            "  provider: agentio\n"
-            f"  project: {sanitized}_project\n"
-            f"  name: {sanitized}\n"
-            "  settings:\n"
-            "    resume: never\n"
-        )
-        project_yml.write_text(content, encoding="utf-8")
-        created.append(str(project_yml))
+    _write_template(
+        project_dir / "project.yml",
+        "project/project.yml",
+        force,
+        created,
+        sanitized=sanitized,
+    )
 
-    # New per-entity agent layout
     agent_dir = agents_dir / sanitized
     agent_dir.mkdir(parents=True, exist_ok=True)
-    agent_yml = agent_dir / "agent.yml"
-    agent_instr = agent_dir / "instructions.md"
-    if not agent_instr.exists() or force:
-        agent_instr.write_text(
-            (
-                "<1–2 sentence blurb establishing identity and high-level situation to prime the LLM>\n\n"
-                "## Persona\n"
-                "<the role, expertise, and voice to adopt>\n\n"
-                "## Goal\n"
-                "<the concrete objective and success criteria>\n\n"
-                "## Starting Context\n"
-                "<initial inputs, available tools, and constraints>\n\n"
-                "## Guidance\n"
-                "<step-by-step rules, tool order, do/don’ts, output format>\n\n"
-                "## Examples\n"
-                "<few-shot input→output pairs to show format and edge cases>\n"
-            ),
-            encoding="utf-8",
-        )
-        created.append(str(agent_instr))
-    if not agent_yml.exists() or force:
+    _write_template(
+        agent_dir / "instructions.md",
+        "project/agents/instructions.md",
+        force,
+        created,
+    )
 
-        def _titleize(s: str) -> str:
-            parts = [p for p in s.split("_") if p]
-            return " ".join(p.capitalize() for p in parts) or s
-
-        display_label = _titleize(sanitized)
-        tools_list = "[echo, word_count]" if include_samples else "[]"
-        agent_content = (
-            f"name: {sanitized}\n"
-            f"label: {display_label}\n"
-            f'description: "A helpful AI agent. Customize this description."\n'
-            f"model: {model}\n"
-            f"instructions_file: instructions.md\n"
-            f'welcome_text: "Hello from {sanitized}."\n\n'
-            f"tools: {tools_list}\n"
-        )
-        agent_yml.write_text(agent_content, encoding="utf-8")
-        created.append(str(agent_yml))
+    display_label = _titleize(sanitized)
+    tools_list = "[echo, word_count]" if include_samples else "[]"
+    _write_template(
+        agent_dir / "agent.yml",
+        "project/agents/agent.yml",
+        force,
+        created,
+        sanitized=sanitized,
+        label=display_label,
+        model=model,
+        tools=tools_list,
+    )
 
     if include_samples:
-        tools_py = tools_dir / f"{sanitized}_tools.py"
-        if not tools_py.exists() or force:
-            tools_content = (
-                "from omniagents import function_tool\n\n"
-                "@function_tool\n"
-                "def echo(text: str) -> str:\n"
-                "    return text\n\n"
-                "@function_tool\n"
-                "def word_count(text: str) -> int:\n"
-                "    return len(text.split()) if text else 0\n"
-            )
-            tools_py.write_text(tools_content, encoding="utf-8")
-            created.append(str(tools_py))
-
-    tools_init = tools_dir / "__init__.py"
-    if not tools_init.exists() or force:
-        tools_init.write_text("", encoding="utf-8")
-        created.append(str(tools_init))
-
-    env_example = project_dir / ".env.example"
-    if not env_example.exists() or force:
-        env_example.write_text("OPENAI_API_KEY=\n", encoding="utf-8")
-        created.append(str(env_example))
-
-    gitignore = project_dir / ".gitignore"
-    if not gitignore.exists() or force:
-        gitignore.write_text(
-            "__pycache__/\n*.pyc\n.env\ntarget/\n.pytest_cache/\nartifacts/\n",
-            encoding="utf-8",
+        _write_template(
+            tools_dir / f"{sanitized}_tools.py",
+            "project/tools/sample_tools.py",
+            force,
+            created,
         )
-        created.append(str(gitignore))
 
-    readme = project_dir / "README.md"
-    if not readme.exists() or force:
-        readme.write_text(
-            (
-                f"# {sanitized}\n\n"
-                "Run GUI:\n\n"
-                "```bash\n"
-                "omniagents run -P project.yml\n"
-                "```\n\n"
-                "Add tools by editing agents YAML and tools/*.py.\n"
-            ),
-            encoding="utf-8",
-        )
-        created.append(str(readme))
-
-    cli_py = project_dir / f"{sanitized}_cli.py"
-    if not cli_py.exists() or force:
-        cli_py.write_text(
-            (
-                "from pathlib import Path\n"
-                "import sys\n\n"
-                "def main() -> None:\n"
-                "    from omniagents.cli import main as omni_main\n\n"
-                "    project_path = Path(__file__).resolve().parent / \"project.yml\"\n"
-                "    new_args = [\"omniagents\", \"run\", \"--project\", str(project_path)]\n"
-                "    if len(sys.argv) > 1:\n"
-                "        new_args.extend(sys.argv[1:])\n"
-                "    sys.argv = new_args\n"
-                "    omni_main()\n\n"
-                "if __name__ == \"__main__\":\n"
-                "    main()\n"
-            ),
-            encoding="utf-8",
-        )
-        created.append(str(cli_py))
-
-    pyproject = project_dir / "pyproject.toml"
-    if not pyproject.exists() or force:
-        pyproject.write_text(
-            (
-                "[project]\n"
-                f"name = \"{sanitized}\"\n"
-                "version = \"0.1.0\"\n"
-                "description = \"Agent project built with OmniAgents\"\n"
-                "readme = \"README.md\"\n"
-                "requires-python = \">=3.11\"\n"
-                "dependencies = [\n"
-                "    \"openai==1.99.9\",\n"
-                "    \"omniagents[all]==0.3.16\",\n"
-                "    \"requests>=2.31.0\",\n"
-                "    \"beautifulsoup4>=4.12.0\",\n"
-                "    \"pygit2>=1.13.0\",\n"
-                "]\n\n"
-                "[project.optional-dependencies]\n"
-                "dev = [\n"
-                "    \"black>=24.0\",\n"
-                "    \"pytest>=8.3.2\",\n"
-                "    \"build>=1.2.1\",\n"
-                "    \"twine>=5.1.1\",\n"
-                "    \"bump2version>=1.0.1\",\n"
-                "]\n\n"
-                "[project.scripts]\n"
-                f"{sanitized} = \"{sanitized}_cli:main\"\n\n"
-                "[build-system]\n"
-                "requires = [\"setuptools>=68\", \"wheel\"]\n"
-                "build-backend = \"setuptools.build_meta\"\n\n"
-                "[tool.setuptools]\n"
-                f"py-modules = [\"{sanitized}_cli\"]\n\n"
-                "[tool.setuptools.packages.find]\n"
-                "include = [\"tools\", \"tools.*\"]\n\n"
-                "[tool.black]\n"
-                "line-length = 88\n"
-                "target-version = [\"py311\"]\n"
-                "include = '\\.(py|pyi)$'\n"
-                "exclude = '''\n/(\n    \\.git\n  | \\.mypy_cache\n  | \\.venv\n  | build\n  | dist\n)/\n'''\n"
-            ),
-            encoding="utf-8",
-        )
-        created.append(str(pyproject))
-
-    requirements = project_dir / "requirements.txt"
-    if not requirements.exists() or force:
-        requirements.write_text(
-            (
-                "openai==1.99.9\n"
-                "omniagents[all]==0.3.16\n"
-                "requests>=2.31.0\n"
-                "beautifulsoup4>=4.12.0\n"
-                "pygit2>=1.13.0\n"
-                "black>=24.0\n"
-            ),
-            encoding="utf-8",
-        )
-        created.append(str(requirements))
-
-    makefile = project_dir / "Makefile"
-    if not makefile.exists() or force:
-        makefile.write_text(
-            (
-                "include .env\n"
-                "export\n\n"
-                "clean:\n"
-                "\trm -rf build/ dist/ *.egg-info\n\n"
-                "build:\n"
-                "\tpython -m build\n\n"
-                "publish-pypi: clean build\n"
-                "\ttwine upload dist/*\n\n"
-                "publish-gemfury: clean build\n"
-                "\t@set -e; \\\n"
-                "\tfor file in dist/*; do \\\n"
-                "\t\tif [ -f \"$$file\" ]; then \\\n"
-                "\t\t\tcurl -f -sS -F package=@\"$$file\" \"https://$${FURY_TOKEN}@push.fury.io/$${FURY_USER}/\"; \\\n"
-                "\t\tfi; \\\n"
-                "\tdone\n\n"
-                "install:\n"
-                f"\tpip install {sanitized}\n\n"
-                "install-gemfury:\n"
-                "\tpip install {sanitized} --index-url https://$${FURY_TOKEN}@pypi.fury.io/$${FURY_USER}/\n\n"
-                "dev:\n"
-                "\tpip install -e .[dev]\n\n"
-                "format:\n"
-                "\tblack .\n\n"
-                ".PHONY: clean build publish-pypi publish-gemfury install install-gemfury dev format\n"
-            ),
-            encoding="utf-8",
-        )
-        created.append(str(makefile))
-
-    release_doc = docs_dir / "RELEASE.md"
-    if not release_doc.exists() or force:
-        release_doc.write_text(
-            (
-                "# Release Process\n\n"
-                "## Prerequisites\n\n"
-                "- Install build tooling: `pip install build twine bump2version`\n"
-                "- Configure PyPI credentials: `export TWINE_USERNAME=__token__` and set `TWINE_PASSWORD`\n"
-                "- Configure Gemfury credentials in `.env` or your shell:\n"
-                "  ```\n"
-                "  FURY_USER=your_username\n"
-                "  FURY_TOKEN=your_token\n"
-                "  ```\n"
-                "- Ensure the working tree is clean: `git status --porcelain=v1 --untracked-files=no`\n\n"
-                "## Version Management\n\n"
-                "1. Decide the next semantic version and update it in `pyproject.toml`.\n"
-                "2. Commit the change: `git commit -am \"Bump version to X.Y.Z\"`.\n"
-                "3. Tag the release: `git tag vX.Y.Z`.\n\n"
-                "## Local Publish to PyPI\n\n"
-                "```bash\n"
-                "make clean\n"
-                "make publish-pypi\n"
-                "```\n\n"
-                "## Local Publish to Gemfury\n\n"
-                "```bash\n"
-                "make clean\n"
-                "make publish-gemfury\n"
-                "```\n\n"
-                "## Installing from Gemfury\n\n"
-                "```bash\n"
-                "make install-gemfury\n"
-                "```\n\n"
-                "## Continuous Delivery\n\n"
-                "Workflows `publish-pypi.yml` and `publish-gemfury.yml` automate releases. Set repository secrets `PYPI_API_TOKEN`, `TEST_PYPI_API_TOKEN`, `FURY_USER`, and `FURY_TOKEN` before running them.\n"
-            ),
-            encoding="utf-8",
-        )
-        created.append(str(release_doc))
+    _write_template(
+        tools_dir / "__init__.py",
+        "project/tools/__init__.py",
+        force,
+        created,
+    )
+    _write_template(
+        project_dir / ".env.example",
+        "project/.env.example",
+        force,
+        created,
+    )
+    _write_template(
+        project_dir / ".gitignore",
+        "project/.gitignore",
+        force,
+        created,
+    )
+    _write_template(
+        project_dir / "README.md",
+        "project/README.md",
+        force,
+        created,
+        sanitized=sanitized,
+    )
+    _write_template(
+        project_dir / f"{sanitized}_cli.py",
+        "project/cli.py",
+        force,
+        created,
+    )
+    _write_template(
+        project_dir / "pyproject.toml",
+        "project/pyproject.toml",
+        force,
+        created,
+        sanitized=sanitized,
+    )
+    _write_template(
+        project_dir / "requirements.txt",
+        "project/requirements.txt",
+        force,
+        created,
+    )
+    _write_template(
+        project_dir / "Makefile",
+        "project/Makefile",
+        force,
+        created,
+        sanitized=sanitized,
+    )
+    _write_template(
+        docs_dir / "RELEASE.md",
+        "project/docs/RELEASE.md",
+        force,
+        created,
+    )
 
     github_dir = project_dir / ".github"
     workflows_dir = github_dir / "workflows"
     github_dir.mkdir(exist_ok=True)
     workflows_dir.mkdir(parents=True, exist_ok=True)
 
-    pr_template = github_dir / "pull_request_template.md"
-    if not pr_template.exists() or force:
-        pr_template.write_text(
-            (
-                "### 🎯 1. Motivation: What Failure Mode Are We Fixing?\n"
-                "*(Connects to the Analyze phase.)*\n\n"
-                "- Failure Mode: \n"
-                "- Root Cause Analysis: \n\n"
-                "### ✨ 2. The Change: What Was Improved?\n"
-                "*(Describes the Improve phase.)*\n\n"
-                "- Summary of Changes:\n"
-                "- Type of Change:\n"
-                "  - [ ] Prompt Refinement\n"
-                "  - [ ] RAG Strategy (Chunking, Retrieval, etc.)\n"
-                "  - [ ] Tool Definition / Schema\n"
-                "  - [ ] Model Change (e.g., swapped `gpt-4o-mini` → `gpt-4o`)\n"
-                "  - [ ] Evaluator Logic / LLM-as-Judge Prompt\n"
-                "  - [ ] Scenarios / Golden Dataset\n"
-                "  - [ ] Measures / Metrics / Failure Categories\n"
-                "  - [ ] Other: ________________\n\n"
-                "---\n\n"
-                "### 📊 3. Evaluation: How Do We Know It's Better?\n"
-                "Describe how you evaluated the change, including any tests or datasets used.\n\n"
-                "---\n\n"
-                "### 🧐 4. Qualitative Review: See the Difference\n"
-                "*(1–2 concrete examples so reviewers can inspect the behavior.)*\n\n"
-                "Input:\n"
-                "```\n"
-                "[example user query]\n"
-                "```\n\n"
-                "Before:\n"
-                "```\n"
-                "[paste prior output]\n"
-                "```\n\n"
-                "After:\n"
-                "```\n"
-                "[paste improved output]\n"
-                "```\n\n"
-                "---\n\n"
-                "### ✅ 5. CI & Deployment Checklist\n"
-                "- [ ] Evaluation Checks Passed Locally\n"
-                "- [ ] Golden Dataset Updated (scenarios.yml)\n"
-                "  - [ ] Yes — added examples of this failure mode to prevent regressions\n"
-                "  - [ ] No — covered by existing cases\n"
-                "- [ ] Evaluator Alignment Checked\n"
-                "  - [ ] N/A — no evaluator changes\n"
-                "  - [ ] Yes — TPR/TNR (or accuracy) re-validated for updated LLM-as-Judge\n"
-                "- [ ] Handles Non-Determinism — improvement consistent across multiple runs\n"
-            ),
-            encoding="utf-8",
-        )
-        created.append(str(pr_template))
-
-    workflow = workflows_dir / "omniagents-eval.yml"
-    if not workflow.exists() or force:
-        workflow.write_text(
-            (
-                "name: Omniagents Eval\n\n"
-                "on:\n"
-                "  push:\n"
-                "    branches:\n"
-                "      - main\n"
-                "  pull_request:\n\n"
-                "jobs:\n"
-                "  eval-suite:\n"
-                "    runs-on: ubuntu-latest\n"
-                "    env:\n"
-                "      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}\n"
-                "      OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}\n"
-                "    steps:\n"
-                "      - name: Checkout\n"
-                "        uses: actions/checkout@v4\n"
-                "      - name: Set up Python\n"
-                "        uses: actions/setup-python@v5\n"
-                "        with:\n"
-                "          python-version: \"3.12\"\n"
-                "      - name: Install dependencies\n"
-                "        run: |\n"
-                "          python -m pip install --upgrade pip\n"
-                "          pip install -r requirements.txt\n"
-                "      - name: Run eval suite\n"
-                "        run: omniagents eval suite run\n"
-            ),
-            encoding="utf-8",
-        )
-        created.append(str(workflow))
-
-    publish_pypi_workflow = workflows_dir / "publish-pypi.yml"
-    if not publish_pypi_workflow.exists() or force:
-        publish_pypi_workflow.write_text(
-            (
-                "name: Publish to PyPI\n\n"
-                "on:\n"
-                "  release:\n"
-                "    types: [published]\n"
-                "  workflow_dispatch:\n\n"
-                "jobs:\n"
-                "  publish:\n"
-                "    runs-on: ubuntu-latest\n"
-                "    steps:\n"
-                "      - name: Checkout\n"
-                "        uses: actions/checkout@v4\n"
-                "      - name: Set up Python\n"
-                "        uses: actions/setup-python@v5\n"
-                "        with:\n"
-                "          python-version: \"3.11\"\n"
-                "      - name: Install build tools\n"
-                "        run: |\n"
-                "          python -m pip install --upgrade pip\n"
-                "          pip install build twine\n"
-                "      - name: Build distributions\n"
-                "        run: python -m build\n"
-                "      - name: Check distributions\n"
-                "        run: twine check dist/*\n"
-                "      - name: Publish to TestPyPI\n"
-                "        if: github.event_name == 'workflow_dispatch'\n"
-                "        env:\n"
-                "          TWINE_USERNAME: __token__\n"
-                "          TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}\n"
-                "        run: twine upload --repository testpypi dist/*\n"
-                "      - name: Publish to PyPI\n"
-                "        if: github.event_name == 'release'\n"
-                "        env:\n"
-                "          TWINE_USERNAME: __token__\n"
-                "          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}\n"
-                "        run: twine upload dist/*\n"
-            ),
-            encoding="utf-8",
-        )
-        created.append(str(publish_pypi_workflow))
-
-    publish_gemfury_workflow = workflows_dir / "publish-gemfury.yml"
-    if not publish_gemfury_workflow.exists() or force:
-        publish_gemfury_workflow.write_text(
-            (
-                "name: Publish to Gemfury\n\n"
-                "on:\n"
-                "  release:\n"
-                "    types: [published]\n"
-                "  workflow_dispatch:\n\n"
-                "jobs:\n"
-                "  publish:\n"
-                "    runs-on: ubuntu-latest\n"
-                "    steps:\n"
-                "      - name: Checkout\n"
-                "        uses: actions/checkout@v4\n"
-                "      - name: Set up Python\n"
-                "        uses: actions/setup-python@v5\n"
-                "        with:\n"
-                "          python-version: \"3.11\"\n"
-                "      - name: Install build tools\n"
-                "        run: |\n"
-                "          python -m pip install --upgrade pip\n"
-                "          pip install build\n"
-                "      - name: Build distributions\n"
-                "        run: python -m build\n"
-                "      - name: Publish to Gemfury\n"
-                "        env:\n"
-                "          FURY_USER: ${{ secrets.FURY_USER }}\n"
-                "          FURY_TOKEN: ${{ secrets.FURY_TOKEN }}\n"
-                "        run: |\n"
-                "          set -euo pipefail\n"
-                "          if [ -z \"${FURY_USER:-}\" ] || [ -z \"${FURY_TOKEN:-}\" ]; then\n"
-                "            echo \"FURY_USER and FURY_TOKEN secrets must be set\"\n"
-                "            exit 1\n"
-                "          fi\n"
-                "          for file in dist/*; do\n"
-                "            if [ -f \"$file\" ]; then\n"
-                "              echo \"Uploading $file to Gemfury\"\n"
-                "              curl -f -sS -F package=@\"$file\" \"https://${FURY_TOKEN}@push.fury.io/${FURY_USER}/\"\n"
-                "            fi\n"
-                "          done\n"
-            ),
-            encoding="utf-8",
-        )
-        created.append(str(publish_gemfury_workflow))
+    _write_template(
+        github_dir / "pull_request_template.md",
+        "project/.github/pull_request_template.md",
+        force,
+        created,
+    )
+    _write_template(
+        workflows_dir / "omniagents-eval.yml",
+        "project/.github/workflows/omniagents-eval.yml",
+        force,
+        created,
+    )
+    _write_template(
+        workflows_dir / "publish-pypi.yml",
+        "project/.github/workflows/publish-pypi.yml",
+        force,
+        created,
+    )
+    _write_template(
+        workflows_dir / "publish-gemfury.yml",
+        "project/.github/workflows/publish-gemfury.yml",
+        force,
+        created,
+    )
 
     eval_dir = project_dir / "evaluations"
     eval_dir.mkdir(exist_ok=True)
-
-    evaluation_yml = eval_dir / "evaluation.yml"
-    if not evaluation_yml.exists() or force:
-        evaluation_yml.write_text(
-            "evaluation:\n  defaults:\n    runs_per_prompt: 1\n    max_turns: 6\n",
-            encoding="utf-8",
-        )
-        created.append(str(evaluation_yml))
-
-    metrics_yml = eval_dir / "metrics.yml"
-    if not metrics_yml.exists() or force:
-        metrics_yml.write_text(
-            "metrics:\n  - name: unknown_tool_call_rate\n    label: Unknown Tool Call Rate\n    type: rate\n    from_measure: tool_hallucination\n    numerator: counts.unknown_tool_calls\n    denominator: counts.total_tool_calls\n",
-            encoding="utf-8",
-        )
-        created.append(str(metrics_yml))
-
-    scenarios_yml = eval_dir / "scenarios.yml"
-    if not scenarios_yml.exists() or force:
-        scenarios_yml.write_text(
-            "scenarios:\n  - name: hello\n    prompt: Say hello\n",
-            encoding="utf-8",
-        )
-        created.append(str(scenarios_yml))
-
-    measures_py = eval_dir / "measures.py"
-    if not measures_py.exists() or force:
-        measures_py.write_text(
-            "from omniagents.core.evaluation import evaluation_measure\n\n@evaluation_measure\ndef always_pass(ctx):\n    return {\"passed\": True}\n",
-            encoding="utf-8",
-        )
-        created.append(str(measures_py))
+    _write_template(
+        eval_dir / "evaluation.yml",
+        "project/evaluations/evaluation.yml",
+        force,
+        created,
+    )
+    _write_template(
+        eval_dir / "metrics.yml",
+        "project/evaluations/metrics.yml",
+        force,
+        created,
+    )
+    _write_template(
+        eval_dir / "scenarios.yml",
+        "project/evaluations/scenarios.yml",
+        force,
+        created,
+    )
+    _write_template(
+        eval_dir / "measures.py",
+        "project/evaluations/measures.py",
+        force,
+        created,
+    )
 
     return created, str(project_dir), sanitized
 
@@ -556,22 +265,10 @@ def scaffold_tool(
     file_path = tools_dir / f"{sanitized}.py"
     if file_path.exists() and not force:
         raise FileExistsError(f"File exists: {file_path}")
-    if make_async:
-        body = (
-            "from omniagents import function_tool\n\n"
-            f"@function_tool\n"
-            f"async def {sanitized}(text: str) -> str:\n"
-            f"    return text\n"
-        )
-    else:
-        body = (
-            "from omniagents import function_tool\n\n"
-            f"@function_tool\n"
-            f"def {sanitized}(text: str) -> str:\n"
-            f"    return text\n"
-        )
-    file_path.write_text(body, encoding="utf-8")
-    return [str(file_path)], str(root)
+    created: List[str] = []
+    template_name = "tools/async.py" if make_async else "tools/sync.py"
+    _write_template(file_path, template_name, True, created, sanitized=sanitized)
+    return created, str(root)
 
 
 def scaffold_agent(
@@ -591,39 +288,23 @@ def scaffold_agent(
     if instr_md.exists() and not force:
         raise FileExistsError(f"Instructions exists: {instr_md}")
 
-    def _titleize(s: str) -> str:
-        parts = [p for p in s.split("_") if p]
-        return " ".join(p.capitalize() for p in parts) or s
-
     display_label = _titleize(sanitized)
-    agent_content = (
-        f"name: {sanitized}\n"
-        f"label: {display_label}\n"
-        f'description: "A helpful AI agent. Customize this description."\n'
-        f"model: {model}\n"
-        f"instructions_file: instructions.md\n"
-        f'welcome_text: "Hello from {sanitized}."\n\n'
-        "tools: []\n"
+    _write_template(
+        agent_yml,
+        "project/agents/agent.yml",
+        True,
+        created,
+        sanitized=sanitized,
+        label=display_label,
+        model=model,
+        tools="[]",
     )
-    agent_yml.write_text(agent_content, encoding="utf-8")
-    created.append(str(agent_yml))
-    instr_md.write_text(
-        (
-            "<1–2 sentence blurb establishing identity and high-level situation to prime the LLM>\n\n"
-            "## Persona\n"
-            "<the role, expertise, and voice to adopt>\n\n"
-            "## Goal\n"
-            "<the concrete objective and success criteria>\n\n"
-            "## Starting Context\n"
-            "<initial inputs, available tools, and constraints>\n\n"
-            "## Guidance\n"
-            "<step-by-step rules, tool order, do/don’ts, output format>\n\n"
-            "## Examples\n"
-            "<few-shot input→output pairs to show format and edge cases>\n"
-        ),
-        encoding="utf-8",
+    _write_template(
+        instr_md,
+        "project/agents/instructions.md",
+        True,
+        created,
     )
-    created.append(str(instr_md))
     return created, str(root), sanitized
 
 
@@ -677,38 +358,14 @@ def scaffold_guardrail(
     file_path = guard_dir / f"{sanitized}.py"
     if file_path.exists() and not force:
         raise FileExistsError(f"File exists: {file_path}")
-    if kind == "input":
-        if make_async:
-            body = (
-                "from omniagents import input_guardrail, GuardrailFunctionOutput\n\n"
-                f"@input_guardrail()\n"
-                f"async def {sanitized}(context, agent, input):\n"
-                f"    return GuardrailFunctionOutput(output_info={{}}, tripwire_triggered=False)\n"
-            )
-        else:
-            body = (
-                "from omniagents import input_guardrail, GuardrailFunctionOutput\n\n"
-                f"@input_guardrail()\n"
-                f"def {sanitized}(context, agent, input):\n"
-                f"    return GuardrailFunctionOutput(output_info={{}}, tripwire_triggered=False)\n"
-            )
+    created: List[str] = []
+    normal_kind = str(kind).lower()
+    if normal_kind == "input":
+        template = "guardrails/input_async.py" if make_async else "guardrails/input_sync.py"
     else:
-        if make_async:
-            body = (
-                "from omniagents import output_guardrail, GuardrailFunctionOutput\n\n"
-                f"@output_guardrail()\n"
-                f"async def {sanitized}(context, agent, agent_output):\n"
-                f"    return GuardrailFunctionOutput(output_info={{}}, tripwire_triggered=False)\n"
-            )
-        else:
-            body = (
-                "from omniagents import output_guardrail, GuardrailFunctionOutput\n\n"
-                f"@output_guardrail()\n"
-                f"def {sanitized}(context, agent, agent_output):\n"
-                f"    return GuardrailFunctionOutput(output_info={{}}, tripwire_triggered=False)\n"
-            )
-    file_path.write_text(body, encoding="utf-8")
-    return [str(file_path)], str(root)
+        template = "guardrails/output_async.py" if make_async else "guardrails/output_sync.py"
+    _write_template(file_path, template, True, created, sanitized=sanitized)
+    return created, str(root)
 
 
 def scaffold_server_function(
@@ -721,22 +378,12 @@ def scaffold_server_function(
     file_path = sf_dir / f"{sanitized}.py"
     if file_path.exists() and not force:
         raise FileExistsError(f"File exists: {file_path}")
-    if make_async:
-        body = (
-            "from omniagents import server_function\n\n"
-            f"@server_function\n"
-            f"async def {sanitized}(value: int = 1) -> dict:\n"
-            f"    return {{'ok': True, 'value': value}}\n"
-        )
-    else:
-        body = (
-            "from omniagents import server_function\n\n"
-            f"@server_function\n"
-            f"def {sanitized}(value: int = 1) -> dict:\n"
-            f"    return {{'ok': True, 'value': value}}\n"
-        )
-    file_path.write_text(body, encoding="utf-8")
-    return [str(file_path)], str(root)
+    created: List[str] = []
+    template = (
+        "server_functions/async.py" if make_async else "server_functions/sync.py"
+    )
+    _write_template(file_path, template, True, created, sanitized=sanitized)
+    return created, str(root)
 
 
 def scaffold_judge(
@@ -756,148 +403,51 @@ def scaffold_judge(
     judges_root.mkdir(parents=True, exist_ok=True)
     created: List[str] = []
 
-    def _camel(s: str) -> str:
-        parts = [p for p in s.split("_") if p]
-        return "".join(p.capitalize() for p in parts)
-
-    def _titleize(s: str) -> str:
-        parts = [p for p in s.split("_") if p]
-        return " ".join(p.capitalize() for p in parts) or s
-
-    agent_name = _camel(sanitized)
-    agent_label = _titleize(sanitized)
-
     judge_yml = judges_root / "judge.yml"
     if judge_yml.exists() and not force:
         raise FileExistsError(f"Judge exists: {judge_yml}")
 
-    judge_instructions_md = judges_root / "instructions.md"
-    judge_template_md = judges_root / "template.md"
+    agent_name = _camel_case(sanitized)
+    agent_label = _titleize(sanitized)
 
-    judge_cfg = {
-        "judges": {
-            sanitized: {
-                "agent": {
-                    "name": agent_name,
-                    "label": agent_label,
-                    "model": model,
-                    "output_type": "dict",
-                    "output_type_strict": False,
-                    "output_schema": {
-                        "type": "object",
-                        "properties": {
-                            "reasoning": {"type": "string"},
-                            "answer": {"type": "string", "enum": ["Pass", "Fail"]},
-                        },
-                        "required": ["reasoning", "answer"],
-                        "additionalProperties": False,
-                    },
-                    "instructions_file": f"../evaluations/judges/{sanitized}/instructions.md",
-                },
-                "input": {
-                    "source": source,
-                    "template_file": f"../evaluations/judges/{sanitized}/template.md",
-                },
-            }
-        }
-    }
-
-    judge_yml.write_text(
-        yaml.safe_dump(judge_cfg, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    _write_template(
+        judge_yml,
+        "judges/judge.yml",
+        True,
+        created,
+        sanitized=sanitized,
+        agent_name=agent_name,
+        agent_label=agent_label,
+        model=model,
+        source=source,
     )
-    created.append(str(judge_yml))
 
-    if not judge_instructions_md.exists() or force:
-        judge_instructions_md.write_text(
-            (
-                "AI Agent Information\n"
-                "- Name: {{ agent_label or agent_name }}\n"
-                "{% if agent_description -%}\n- Description: {{ agent_description }}\n{%- endif %}\n\n"
-                "Role\n"
-                "- You are an evaluation judge for the category: {{ category }}.\n\n"
-                "Goal\n"
-                "- Decide whether the assistant meets the criterion defined below.\n\n"
-                "Input\n"
-                "- You will receive a conversation trace between a user and the AI Agent described above.\n\n"
-                "Output Schema (Do Not Change)\n"
-                "- Return ONLY JSON with keys:\n"
-                "  - reasoning: string\n"
-                '  - answer: "Pass" or "Fail"\n'
-                "- Example:\n"
-                '  {"reasoning": "...", "answer": "Pass"}\n\n'
-                "Decision Policy\n"
-                "- Positive (label Fail): [FILL: WHAT COUNTS AS A VIOLATION]\n"
-                "- Negative (label Pass): [FILL: WHAT COUNTS AS ACCEPTABLE BEHAVIOR]\n"
-                "- Use only the provided input and any structured fields (e.g., history_json). Do not infer outside context.\n\n"
-                "Rules\n"
-                "1) Core decision rules:\n"
-                "   - [FILL: RULE 1]\n"
-                "   - [FILL: RULE 2]\n"
-                "   - [FILL: RULE 3]\n"
-                "2) Edge cases and clarifications:\n"
-                "   - [FILL: EDGE CASE 1]\n"
-                "   - [FILL: EDGE CASE 2]\n"
-                "3) Tie-breakers (when ambiguous):\n"
-                "   - [FILL: TIEBREAKER 1]\n"
-                "   - [FILL: TIEBREAKER 2]\n"
-                "4) Evidence requirements:\n"
-                "   - Require clear evidence before deciding Fail; otherwise prefer Pass.\n"
-                "   - Do not reward/penalize style unless it affects the criterion.\n\n"
-                "Common Pitfalls\n"
-                "- [FILL: PITFALL 1]\n"
-                "- [FILL: PITFALL 2]\n"
-                "- [FILL: PITFALL 3]\n\n"
-                "Examples\n"
-                "- Example A (Pass — Meets criterion)\n"
-                "  - Case: [FILL: CLEAR PASS CASE]\n"
-                "  - Why: [FILL: SPECIFIC REASON FOR PASS]\n"
-                "  - Output:\n"
-                '  {"reasoning": "[FILL: PASS REASONING]", "answer": "Pass"}\n\n'
-                "- Example B (Fail — Violates criterion)\n"
-                "  - Case: [FILL: CLEAR FAIL CASE]\n"
-                "  - Why: [FILL: SPECIFIC REASON FOR FAIL]\n"
-                "  - Output:\n"
-                '  {"reasoning": "[FILL: FAIL REASONING]", "answer": "Fail"}\n\n'
-                "- Example C (Pass — Ambiguous/insufficient evidence)\n"
-                "  - Case: [FILL: AMBIGUOUS/INSUFFICIENT EVIDENCE CASE]\n"
-                "  - Why: [FILL: WHY AMBIGUITY ⇒ PASS]\n"
-                "  - Output:\n"
-                '  {"reasoning": "[FILL: AMBIGUITY REASONING]", "answer": "Pass"}\n\n'
-                "- Example D (Pass — Valid clarification)\n"
-                "  - Case: [FILL: CLARIFICATION CASE THAT REMAINS ON-CRITERION]\n"
-                "  - Why: [FILL: WHY CLARIFICATION ⇒ PASS]\n"
-                "  - Output:\n"
-                '  {"reasoning": "[FILL: CLARIFICATION REASONING]", "answer": "Pass"}\n\n'
-                "Return ONLY the JSON object per schema—no extra text.\n"
-            ),
-            encoding="utf-8",
+    judge_instructions_md = judges_root / "instructions.md"
+    if force or not judge_instructions_md.exists():
+        _write_template(
+            judge_instructions_md,
+            "judges/instructions.md",
+            True,
+            created,
         )
-        created.append(str(judge_instructions_md))
 
-    if not judge_template_md.exists() or force:
-        judge_template_md.write_text(
-            (
-                "Decide if the assistant satisfies the evaluation criterion for this case.\n"
-                'Return JSON {reasoning:string, answer:"Pass"|"Fail"}.\n\n'
-                "Conversation history (JSON):\n---\n{{ history_json }}\n---\n\n"
-                "Assistant message:\n---\n{{ text }}\n---\n"
-            ),
-            encoding="utf-8",
+    judge_template_md = judges_root / "template.md"
+    if force or not judge_template_md.exists():
+        _write_template(
+            judge_template_md,
+            "judges/template.md",
+            True,
+            created,
         )
-        created.append(str(judge_template_md))
 
     if add_measure:
         measures_py = eval_dir / "measures.py"
         fn_name = f"{sanitized}_agent"
-        block_lines = [
-            "@evaluation_measure",
-            f"def {fn_name}(ctx):",
-            f"    judge = ctx.judge_result('{sanitized}')",
-            "    if not judge:",
-            "        return fail_reason('no_judge_result')",
-            "    return judge.to_result()",
-        ]
-        block = "\n".join(block_lines)
+        block = _render_template(
+            "judges/measure_block.py",
+            function_name=fn_name,
+            sanitized=sanitized,
+        )
         import_line = (
             "from omniagents.core.evaluation import evaluation_measure, fail_reason"
         )
@@ -908,7 +458,7 @@ def scaffold_judge(
 
                 updated = existing
                 pattern = re.compile(
-                    r"from omniagents\.core\.evaluation import (?P<body>\([^\)]*\)|[^\n]*)",
+                    r"from omniagents\\.core\\.evaluation import (?P<body>\([^\)]*\)|[^\n]*)",
                     re.DOTALL,
                 )
                 match = pattern.search(updated)
@@ -926,13 +476,13 @@ def scaffold_judge(
                     if changed:
                         if body.strip().startswith("("):
                             indent = "    "
-                            inner = (
-                                ",\n".join(f"{indent}{name}" for name in names) + ","
-                            )
+                            inner = ",\n".join(f"{indent}{name}" for name in names) + ","
                             new_body = f"(\n{inner}\n)"
                         else:
                             new_body = ", ".join(names)
-                        new_line = f"from omniagents.core.evaluation import {new_body}"
+                        new_line = (
+                            f"from omniagents.core.evaluation import {new_body}"
+                        )
                         updated = (
                             updated[: match.start()] + new_line + updated[match.end() :]
                         )
@@ -1015,137 +565,53 @@ def scaffold_optimizer(
     opt_root.mkdir(parents=True, exist_ok=True)
     created: List[str] = []
 
-    def _camel(s: str) -> str:
-        parts = [p for p in s.split("_") if p]
-        return "".join(p.capitalize() for p in parts)
-
-    agent_name = _camel(sanitized)
-
     optimizer_yml = opt_root / "optimizer.yml"
     if optimizer_yml.exists() and not force:
         raise FileExistsError(f"Optimizer exists: {optimizer_yml}")
 
-    optimizer_instructions_md = opt_root / "instructions.md"
-    rewrite_instr_md = opt_root / "rewrite_instructions.md"
-    rewrite_tmpl_md = opt_root / "rewrite_template.md"
+    agent_name = _camel_case(sanitized)
 
-    opt_cfg = {
-        "optimizers": {
-            sanitized: {
-                "agent": {
-                    "name": agent_name,
-                    "model": model,
-                    "instructions_file": f"../evaluations/optimizers/{sanitized}/instructions.md",
-                },
-                "proposals": {
-                    "instructions_template_file": f"../evaluations/optimizers/{sanitized}/rewrite_instructions.md",
-                    "template_template_file": f"../evaluations/optimizers/{sanitized}/rewrite_template.md",
-                },
-            }
-        }
-    }
-
-    optimizer_yml.write_text(
-        yaml.safe_dump(opt_cfg, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    _write_template(
+        optimizer_yml,
+        "optimizers/optimizer.yml",
+        True,
+        created,
+        sanitized=sanitized,
+        agent_name=agent_name,
+        model=model,
     )
-    created.append(str(optimizer_yml))
 
-    if not optimizer_instructions_md.exists() or force:
-        if str(kind).lower() == "judge":
-            body = (
-                "You are a prompt optimizer for judge components.\n\n"
-                "Goal: Propose improved text strictly within a fenced code block.\n"
-                "Focus on judge instructions and templates; do not add commentary."
-            )
-        else:
-            body = (
-                "You are a prompt optimizer.\n\n"
-                "Goal: Propose improved text strictly within a fenced code block.\n"
-                "Do not add commentary outside the fence."
-            )
-        optimizer_instructions_md.write_text(body, encoding="utf-8")
-        created.append(str(optimizer_instructions_md))
+    instructions_template = (
+        "optimizers/instructions_judge.md"
+        if str(kind).lower() == "judge"
+        else "optimizers/instructions_agent.md"
+    )
+    rewrite_instructions_template = (
+        "optimizers/rewrite_instructions_judge.md"
+        if str(kind).lower() == "judge"
+        else "optimizers/rewrite_instructions_agent.md"
+    )
 
-    if not rewrite_instr_md.exists() or force:
-        if str(kind).lower() == "judge":
-            body = (
-                "You are optimizing the LLM-as-Judge’s instructions to improve classification accuracy across scenarios.\n\n"
-                "# Judge Information\n"
-                "- Role: judge\n"
-                "- Name: {{ judge_label or judge_name }}\n"
-                "{% if judge_description -%}\n- Description: {{ judge_description }}\n{%- endif %}\n"
-                "{% if category -%}\n- Target Category: {{ category }}\n{%- endif %}\n"
-                "- Input: a conversation trace between a user and an AI Agent\n\n"
-                "# AI Agent Information\n"
-                "- Name: {{ agent_label or agent_name }}\n"
-                "{% if agent_description -%}\n- Description: {{ agent_description }}\n{%- endif %}\n\n"
-                "## Current Instructions\n```\n{{ current_instruction_doc }}\n```\n\n"
-                "## Available Tools (if any)\n{{ tools_schema_md }}\n\n"
-                "# Goal\n"
-                "Write improved, generalizable judge instructions that maximize agreement with labels without overfitting.\n\n"
-                "# Context\n"
-                "The reflective examples below include task inputs, the judge’s outputs, and feedback indicating where predictions matched or mismatched labels. Use them to refine decision rules and edge-case handling without memorizing examples.\n\n"
-                "```\n{{ dataset_md }}\n```\n\n"
-                "# Output Schema (Do Not Change)\n"
-                '- The judge must return ONLY JSON with keys: reasoning (string), answer ("Pass" or "Fail").\n'
-                "- Do not add, rename, or remove keys; do not change allowed values.\n"
-                "- Example:\n"
-                '```json\n{\n  "reasoning": "...",\n  "answer": "Pass"\n}\n```\n\n'
-                "# Guidance\n"
-                "- Do: clarify decision rules; include edge-case handling and tie-breakers.\n"
-                "- Don’t: rely on example-specific artifacts; avoid leaking labels or overfitting.\n"
-                "- Tools: use tools for verification only; do not bias outcomes.\n"
-                "- Output format: return ONLY the new instructions in a single fenced code block. No commentary.\n"
-            )
-        else:
-            body = (
-                "You are optimizing the LLM agent’s instructions to improve performance across scenarios.\n\n"
-                "# LLM Agent Information\n"
-                "- Role: {{ target_role or 'assistant' }}\n"
-                "- Name: {{ agent_label or agent_name or judge_label or judge_name }}\n"
-                "{% if agent_description or judge_description -%}\n- Description: {{ agent_description or judge_description }}\n{%- endif %}\n\n"
-                "## Current Instructions\n```\n{{ current_instruction_doc }}\n```\n\n"
-                "## Available Tools (if any)\n{{ tools_schema_md }}\n\n"
-                "# Goal\n"
-                "Write improved, generalizable instructions that maximize correct behavior across the dataset without overfitting.\n\n"
-                "# Context\n"
-                "The reflective examples below include task inputs, the LLM agent’s responses, and feedback highlighting successes and failures. Use them to identify generalizable decision rules and edge cases. Do not copy phrasing verbatim or overfit to specific example IDs.\n\n"
-                "```\n{{ dataset_md }}\n```\n\n"
-                "# Guidance\n"
-                "- Do: include domain constraints and decision rules; be explicit about edge cases.\n"
-                "- Don’t: overfit to specific IDs; avoid brittle patterns; don’t require unavailable context.\n"
-                "- Tools: use tools when they improve correctness; follow parameter schemas.\n"
-                "- Output format: return ONLY the new instructions in a single fenced code block. No commentary.\n"
-            )
-        rewrite_instr_md.write_text(body, encoding="utf-8")
-        created.append(str(rewrite_instr_md))
+    instructions_path = opt_root / "instructions.md"
+    if force or not instructions_path.exists():
+        _write_template(instructions_path, instructions_template, True, created)
 
-    if not rewrite_tmpl_md.exists() or force:
-        body = (
-            "You are optimizing the judge input template used to render evaluation inputs.\n\n"
-            "# Judge Information\n"
-            "- Role: judge\n"
-            "- Name: {{ judge_label or judge_name }}\n"
-            "{% if judge_description -%}\n- Description: {{ judge_description }}\n{%- endif %}\n"
-            "{% if category -%}\n- Target Category: {{ category }}\n{%- endif %}\n"
-            "- Input: a conversation trace between a user and an AI Agent\n\n"
-            "# AI Agent Information\n"
-            "- Name: {{ agent_label or agent_name }}\n"
-            "{% if agent_description -%}\n- Description: {{ agent_description }}\n{%- endif %}\n\n"
-            "## Current Template\n```\n{{ current_template }}\n```\n\n"
-            "## Available Tools (if any)\n{{ tools_schema_md }}\n\n"
-            "# Goal\n"
-            "Write an improved, generalizable input template that presents the right evidence and constraints for correct classification. Preserve and correctly place required placeholders (e.g., {{ text }}, {{ history_json }}, etc.).\n\n"
-            "# Context\n"
-            "The reflective examples below include input text (and history where applicable), the judge’s outputs, and feedback indicating where predictions matched or mismatched labels. Use them to adjust what evidence and instructions the template surfaces without overfitting to specific instances.\n\n"
-            "```\n{{ dataset_md }}\n```\n\n"
-            "# Guidance\n"
-            "- Preserve required placeholders and Jinja syntax.\n"
-            "- Do not leak or hint at ground-truth labels.\n"
-            "- Be concise but complete; surface the artifacts the judge needs (e.g., history_json when relevant).\n"
-            "- Output format: return ONLY the new template in a single fenced code block. No commentary.\n"
+    rewrite_instructions_path = opt_root / "rewrite_instructions.md"
+    if force or not rewrite_instructions_path.exists():
+        _write_template(
+            rewrite_instructions_path,
+            rewrite_instructions_template,
+            True,
+            created,
         )
-        rewrite_tmpl_md.write_text(body, encoding="utf-8")
-        created.append(str(rewrite_tmpl_md))
+
+    rewrite_template_path = opt_root / "rewrite_template.md"
+    if force or not rewrite_template_path.exists():
+        _write_template(
+            rewrite_template_path,
+            "optimizers/rewrite_template.md",
+            True,
+            created,
+        )
 
     return created, str(root)
