@@ -1,8 +1,14 @@
+import os
 from pathlib import Path
 import sys
 
 def main() -> None:
     from omniagents.cli import main as omni_main
+    from {sanitized}.config import load_config
+
+    for key, value in load_config().items():
+        if key not in os.environ:
+            os.environ[key] = value
 
     project_path = Path(__file__).resolve().parent / "project.yml"
     new_args = ["omniagents", "run", "--project", str(project_path)]

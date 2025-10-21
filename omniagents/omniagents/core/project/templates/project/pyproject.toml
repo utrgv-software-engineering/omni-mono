@@ -23,16 +23,17 @@ dev = [
 
 [project.scripts]
 {sanitized} = "{sanitized}_cli:main"
+{sanitized}-setup = "{sanitized}_setup:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["{sanitized}_cli"]
+py-modules = ["{sanitized}_cli", "{sanitized}_setup"]
 
 [tool.setuptools.packages.find]
-include = ["tools", "tools.*"]
+include = ["{sanitized}", "{sanitized}.*", "tools", "tools.*"]
 
 [tool.black]
 line-length = 88
@@ -49,6 +50,6 @@ tag = true
 parse = '(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)'
 serialize = ['{major}.{minor}.{patch}']
 
-[tool.bumpversion:file:pyproject.toml]
+[tool.bumpversion."file:pyproject.toml"]
 search = 'version = "{current_version}"'
 replace = 'version = "{new_version}"'

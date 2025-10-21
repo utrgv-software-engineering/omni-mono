@@ -107,6 +107,9 @@ def scaffold_project(
 
     display_label = _titleize(sanitized)
     tools_list = "[echo, word_count]" if include_samples else "[]"
+    config_dir_unix = sanitized.replace("_", "-")
+    config_dir_windows = _camel_case(sanitized)
+    setup_prog = f"{sanitized}-setup"
     _write_template(
         agent_dir / "agent.yml",
         "project/agents/agent.yml",
@@ -132,6 +135,23 @@ def scaffold_project(
         force,
         created,
     )
+
+    package_dir = project_dir / sanitized
+    package_dir.mkdir(parents=True, exist_ok=True)
+    _write_template(
+        package_dir / "__init__.py",
+        "project/package/__init__.py",
+        force,
+        created,
+    )
+    _write_template(
+        package_dir / "config.py",
+        "project/package/config.py",
+        force,
+        created,
+        config_dir_unix=config_dir_unix,
+        config_dir_windows=config_dir_windows,
+    )
     _write_template(
         project_dir / ".env.example",
         "project/.env.example",
@@ -156,6 +176,15 @@ def scaffold_project(
         "project/cli.py",
         force,
         created,
+        sanitized=sanitized,
+    )
+    _write_template(
+        project_dir / f"{sanitized}_setup.py",
+        "project/setup_cli.py",
+        force,
+        created,
+        sanitized=sanitized,
+        setup_prog=setup_prog,
     )
     _write_template(
         project_dir / "pyproject.toml",
@@ -359,7 +388,7 @@ def scaffold_guardrail(
     if file_path.exists() and not force:
         raise FileExistsError(f"File exists: {file_path}")
     created: List[str] = []
-    normal_kind = str(kind).lower()
+    normal_kind = str(kind).strip().lower()
     if normal_kind == "input":
         template = "guardrails/input_async.py" if make_async else "guardrails/input_sync.py"
     else:
@@ -583,12 +612,12 @@ def scaffold_optimizer(
 
     instructions_template = (
         "optimizers/instructions_judge.md"
-        if str(kind).lower() == "judge"
+        if str(kind).strip().lower() == "judge"
         else "optimizers/instructions_agent.md"
     )
     rewrite_instructions_template = (
         "optimizers/rewrite_instructions_judge.md"
-        if str(kind).lower() == "judge"
+        if str(kind).strip().lower() == "judge"
         else "optimizers/rewrite_instructions_agent.md"
     )
 
