@@ -19,8 +19,10 @@ import platform
 import errno
 import shutil
 from threading import Thread
-from typing import Optional
+from typing import Iterable, Optional
 import logging
+import tarfile
+import zipfile
 
 from omniagents.core.agents.specs import AgentSpec
 import hashlib
@@ -315,7 +317,10 @@ class BubbleTeaBackend:
         base = Path(__file__).parent
         name = self._binary_filename()
 
-        # 1) User cache location
+        vendor_binary = self._vendor_binary()
+        if vendor_binary:
+            return vendor_binary
+
         cache_dir = self._user_cache_dir()
         if cache_dir:
             cache_binary = cache_dir / name
@@ -338,6 +343,170 @@ class BubbleTeaBackend:
             return Path(system_binary)
 
         return None
+
+    def _vendor_root(self) -> Path:
+        return Path(__file__).parent / "vendor"
+
+    def _vendor_binary(self) -> Optional[Path]:
+        root = self._vendor_root()
+        if not root.exists() or not root.is_dir():
+            return None
+        for target in self._target_triples():
+            vendor_dir = root / target
+            if not vendor_dir.exists() or not vendor_dir.is_dir():
+                continue
+            direct = vendor_dir / self._binary_filename()
+            if direct.exists() and direct.is_file():
+                self._ensure_executable(direct)
+                return direct
+            base_direct = vendor_dir / "omni-tui"
+            if base_direct.exists() and base_direct.is_file():
+                self._ensure_executable(base_direct)
+                return base_direct
+            archive = vendor_dir / "omni-tui.tar.gz"
+            if archive.exists() and archive.is_file():
+                extracted = self._extract_vendor_archive(archive, target)
+                if extracted:
+                    return extracted
+            archive = vendor_dir / "omni-tui.zip"
+            if archive.exists() and archive.is_file():
+                extracted = self._extract_vendor_archive(archive, target)
+                if extracted:
+                    return extracted
+        return None
+
+    def _ensure_executable(self, path: Path) -> None:
+        if platform.system().lower() != "windows":
+            try:
+                mode = path.stat().st_mode
+                path.chmod(mode | 0o111)
+            except Exception:
+                pass
+
+    def _vendor_cache_dir(self) -> Path:
+        base = self._user_cache_dir()
+        if base is None:
+            base = Path.home() / ".omniagents"
+        dest = base / "tui" / "vendor"
+        dest.mkdir(parents=True, exist_ok=True)
+        return dest
+
+    def _extract_vendor_archive(self, archive: Path, target: str) -> Optional[Path]:
+        cache_root = self._vendor_cache_dir() / target
+        cache_root.mkdir(parents=True, exist_ok=True)
+        try:
+            digest = self._archive_digest(archive)
+        except Exception:
+            return None
+        stamp = cache_root / "stamp"
+        binary_name = self._binary_filename()
+        if stamp.exists() and (cache_root / binary_name).exists():
+            try:
+                cached_digest = stamp.read_text(encoding="utf-8").strip()
+            except Exception:
+                cached_digest = ""
+            if cached_digest and cached_digest == digest:
+                candidate = cache_root / binary_name
+                if candidate.exists():
+                    self._ensure_executable(candidate)
+                    return candidate
+        for item in cache_root.iterdir():
+            if item.is_file():
+                item.unlink()
+            elif item.is_dir():
+                shutil.rmtree(item)
+        if archive.name.endswith(".zip"):
+            try:
+                with zipfile.ZipFile(archive, "r") as zf:
+                    zf.extractall(cache_root)
+            except Exception:
+                return None
+        else:
+            try:
+                with tarfile.open(archive, "r:gz") as tf:
+                    members = []
+                    for member in tf.getmembers():
+                        if member.isdev():
+                            return None
+                        members.append(member)
+                    tf.extractall(cache_root, members=members)
+            except Exception:
+                return None
+        candidate = self._locate_extracted_binary(cache_root, binary_name)
+        if not candidate:
+            return None
+        self._ensure_executable(candidate)
+        try:
+            stamp.write_text(digest + "\n", encoding="utf-8")
+        except Exception:
+            pass
+        return candidate
+
+    def _locate_extracted_binary(self, root: Path, binary_name: str) -> Optional[Path]:
+        matches = list(root.rglob(binary_name))
+        if not matches:
+            alt_name = "omni-tui.exe" if binary_name.endswith(".exe") else "omni-tui"
+            matches = list(root.rglob(alt_name))
+            if not matches:
+                return None
+        target_path = matches[0]
+        dest_path = root / binary_name
+        if target_path != dest_path:
+            if dest_path.exists():
+                dest_path.unlink()
+            target_path.replace(dest_path)
+            parent = target_path.parent
+            while parent != root and parent.exists():
+                try:
+                    parent.rmdir()
+                except OSError:
+                    break
+                parent = parent.parent
+            target_path = dest_path
+        return target_path
+
+    def _archive_digest(self, archive: Path) -> str:
+        digest = hashlib.sha256()
+        with open(archive, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        checksum_path = archive.with_name(archive.name + ".sha256")
+        if checksum_path.exists() and checksum_path.is_file():
+            try:
+                expected = checksum_path.read_text(encoding="utf-8").strip().split()[0]
+                if expected:
+                    actual = digest.hexdigest()
+                    if expected != actual:
+                        raise ValueError("checksum mismatch for omni-tui archive")
+            except Exception:
+                pass
+        return digest.hexdigest()
+
+    def _target_triples(self) -> Iterable[str]:
+        system = platform.system().lower()
+        machine = platform.machine().lower()
+        arch_map = {
+            "x86_64": "x86_64",
+            "amd64": "x86_64",
+            "arm64": "aarch64",
+            "aarch64": "aarch64",
+        }
+        arch = arch_map.get(machine, machine)
+        mapping = {
+            ("darwin", "x86_64"): ["x86_64-apple-darwin"],
+            ("darwin", "aarch64"): ["aarch64-apple-darwin"],
+            ("linux", "x86_64"): [
+                "x86_64-unknown-linux-gnu",
+                "x86_64-unknown-linux-musl",
+            ],
+            ("linux", "aarch64"): [
+                "aarch64-unknown-linux-gnu",
+                "aarch64-unknown-linux-musl",
+            ],
+            ("windows", "x86_64"): ["x86_64-pc-windows-msvc"],
+            ("windows", "aarch64"): ["aarch64-pc-windows-msvc"],
+        }
+        return mapping.get((system, arch), [])
 
     def _binary_filename(self) -> str:
         """Return the platform-specific binary filename."""

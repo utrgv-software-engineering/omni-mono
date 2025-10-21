@@ -20,6 +20,11 @@ pip install -r requirements.txt
 
 After publication to PyPI you will also be able to `pip install omniagents` directly.
 
+Binary wheels published to PyPI include the Bubble Tea TUI executable for macOS,
+Linux, and Windows so no Go toolchain is required for end users. When running
+from source, the backend will fall back to building the client locally if a
+matched prebuilt archive is not available.
+
 ## Configuration
 
 Most examples expect an OpenAI API key which can be provided via the `OPENAI_API_KEY` environment variable or entered in the GUI settings screen.  Additional fields defined in your YAML file are persisted locally.  Conversation history for CLI and server sessions is stored in `sessions.db`.
@@ -83,5 +88,4 @@ Run the test suite with:
 ```bash
 pytest -q
 ```
-
 

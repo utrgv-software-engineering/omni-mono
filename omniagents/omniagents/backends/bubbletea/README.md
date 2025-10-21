@@ -16,6 +16,14 @@ A beautiful terminal user interface (TUI) backend for OmniAgents, built with Go 
 - Python with OmniAgents installed
 - Server backend dependencies: `pip install omniagents[server]`
 
+## Prebuilt binaries
+
+Official wheels published from this repository bundle precompiled
+`omni-tui` binaries for macOS (arm64 and x86_64), Linux (arm64 and x86_64), and
+Windows (arm64 and x86_64). The Python backend extracts the correct archive on
+first launch, so end users do not need a Go toolchain. Local development can
+still compile the client from source using the steps below.
+
 ## Building
 
 1. Install Go from https://golang.org/dl/

@@ -23,6 +23,24 @@
   ```
   Note: `.bumpversion.cfg` is the source of truth. Do not create or modify it manually.
 
+## Omni-tui binaries
+
+Releases ship prebuilt Bubble Tea binaries for macOS, Linux, and Windows. The
+`Publish to PyPI` workflow cross-compiles these artifacts, stages them into
+`omniagents/backends/bubbletea/vendor`, and then builds the Python
+distributions. The workflow relies on `scripts/stage_tui_vendor.py` to copy the
+downloaded archives into the correct vendor subdirectories.
+
+To test the packaging process locally, first build or download the compressed
+`omni-tui-<target>.tar.gz` / `.zip` files, then run:
+
+```bash
+python scripts/stage_tui_vendor.py --artifacts path/to/artifacts --vendor omniagents/backends/bubbletea/vendor --clear
+python -m build
+```
+
+This matches the layout produced during automated releases.
+
 ## Release Workflow
 
 1. **Ensure all changes are committed**

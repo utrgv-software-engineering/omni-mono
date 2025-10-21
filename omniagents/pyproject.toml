@@ -82,6 +82,8 @@ include-package-data = true
     "cmd/omni-tui/go.mod",
     "cmd/omni-tui/go.sum",
     "cmd/omni-tui/themes/*",
+    "vendor/*",
+    "vendor/*/*",
 ]
 "omniagents.studio.tracing" = [
     "static/*",
