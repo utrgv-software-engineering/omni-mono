@@ -156,6 +156,41 @@ def scaffold_project(
         )
         created.append(str(readme))
 
+    eval_dir = project_dir / "evaluations"
+    eval_dir.mkdir(exist_ok=True)
+
+    evaluation_yml = eval_dir / "evaluation.yml"
+    if not evaluation_yml.exists() or force:
+        evaluation_yml.write_text(
+            "evaluation:\n  defaults:\n    runs_per_prompt: 1\n    max_turns: 6\n",
+            encoding="utf-8",
+        )
+        created.append(str(evaluation_yml))
+
+    metrics_yml = eval_dir / "metrics.yml"
+    if not metrics_yml.exists() or force:
+        metrics_yml.write_text(
+            "metrics:\n  - name: unknown_tool_call_rate\n    label: Unknown Tool Call Rate\n    type: rate\n    from_measure: tool_hallucination\n    numerator: counts.unknown_tool_calls\n    denominator: counts.total_tool_calls\n",
+            encoding="utf-8",
+        )
+        created.append(str(metrics_yml))
+
+    scenarios_yml = eval_dir / "scenarios.yml"
+    if not scenarios_yml.exists() or force:
+        scenarios_yml.write_text(
+            "scenarios:\n  - name: hello\n    prompt: Say hello\n",
+            encoding="utf-8",
+        )
+        created.append(str(scenarios_yml))
+
+    measures_py = eval_dir / "measures.py"
+    if not measures_py.exists() or force:
+        measures_py.write_text(
+            "from omniagents.core.evaluation import evaluation_measure\n\n@evaluation_measure\ndef always_pass(ctx):\n    return {\"passed\": True}\n",
+            encoding="utf-8",
+        )
+        created.append(str(measures_py))
+
     return created, str(project_dir), sanitized
 
 
@@ -285,48 +320,6 @@ def delete_agent(project_ref: str, agent_key: str) -> Tuple[List[str], str, str]
             yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
         )
     return removed, str(root), agent_key
-
-
-def scaffold_eval_quickstart(
-    project_ref: str, force: bool = False
-) -> Tuple[List[str], str]:
-    root = _resolve_project_root(project_ref)
-    eval_dir = root / "evaluations"
-    eval_dir.mkdir(exist_ok=True)
-    created: List[str] = []
-    evaluation_yml = eval_dir / "evaluation.yml"
-    metrics_yml = eval_dir / "metrics.yml"
-    scenarios_yml = eval_dir / "scenarios.yml"
-    measures_py = eval_dir / "measures.py"
-    if (
-        evaluation_yml.exists()
-        or metrics_yml.exists()
-        or scenarios_yml.exists()
-        or measures_py.exists()
-    ) and not force:
-        raise FileExistsError("Evaluations already exist; use --force to overwrite")
-    evaluation_yml.write_text(
-        "evaluation:\n  defaults:\n    runs_per_prompt: 1\n    max_turns: 6\n",
-        encoding="utf-8",
-    )
-    created.append(str(evaluation_yml))
-    metrics_yml.write_text(
-        "metrics:\n  - name: unknown_tool_call_rate\n    label: Unknown Tool Call Rate\n    type: rate\n    from_measure: tool_hallucination\n    numerator: counts.unknown_tool_calls\n    denominator: counts.total_tool_calls\n",
-        encoding="utf-8",
-    )
-    created.append(str(metrics_yml))
-    # judges are now per-judge under evaluations/judges/<key>/
-    scenarios_yml.write_text(
-        "scenarios:\n  - name: hello\n    prompt: Say hello\n",
-        encoding="utf-8",
-    )
-    created.append(str(scenarios_yml))
-    measures_py.write_text(
-        'from omniagents.core.evaluation import evaluation_measure\n\n@evaluation_measure\ndef always_pass(ctx):\n    return {"passed": True}\n',
-        encoding="utf-8",
-    )
-    created.append(str(measures_py))
-    return created, str(root)
 
 
 def scaffold_guardrail(

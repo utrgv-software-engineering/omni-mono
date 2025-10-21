@@ -481,14 +481,6 @@ def main():
     gen_agent.add_argument("--model", default="gpt-4.1")
     gen_agent.add_argument("--force", action="store_true")
 
-    gen_eval = gen_sub.add_parser("eval", help="Generate evaluation scaffolds")
-    gen_eval_sub = gen_eval.add_subparsers(dest="eval_cmd")
-    gen_eval_qs = gen_eval_sub.add_parser(
-        "quickstart", help="Add evaluations quickstart scaffold"
-    )
-    gen_eval_qs.add_argument("--project", "-P", required=False, default=".")
-    gen_eval_qs.add_argument("--force", action="store_true")
-
     gen_guard = gen_sub.add_parser(
         "guardrail", help="Generate guardrails in guardrails/"
     )
@@ -3518,7 +3510,6 @@ def main():
             from omniagents.core.project.scaffold import (
                 scaffold_tool,
                 scaffold_agent,
-                scaffold_eval_quickstart,
                 scaffold_guardrail,
                 scaffold_server_function,
                 scaffold_judge,
@@ -3561,22 +3552,6 @@ def main():
                 print("Next: run with --agent or set agents.entrypoint in project.yml")
             except Exception as e:
                 print(f"Error generating agent: {e}")
-                import traceback
-
-                traceback.print_exc()
-                sys.exit(1)
-        elif args.gen_cmd == "eval" and args.eval_cmd == "quickstart":
-            try:
-                created, root = scaffold_eval_quickstart(
-                    project_ref=str(getattr(args, "project", ".") or "."),
-                    force=bool(getattr(args, "force", False)),
-                )
-                print(f"Project: {root}")
-                for p in created:
-                    print(f"  {p}")
-                print("Next: omniagents eval run -P project.yml --reporter pretty")
-            except Exception as e:
-                print(f"Error generating evaluations: {e}")
                 import traceback
 
                 traceback.print_exc()
