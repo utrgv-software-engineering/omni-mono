@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import List, Tuple, Optional
 import shutil
 import yaml
+from omniagents._version import __version__ as OMNIAGENTS_VERSION
 
 TEMPLATES_DIR = Path(__file__).with_name("templates")
 
@@ -83,7 +84,8 @@ def scaffold_project(
     tools_dir = project_dir / "tools"
     target_dir = project_dir / "target"
     docs_dir = project_dir / "docs"
-    for path in (agents_dir, tools_dir, target_dir, docs_dir):
+    devcontainer_dir = project_dir / ".devcontainer"
+    for path in (agents_dir, tools_dir, target_dir, docs_dir, devcontainer_dir):
         path.mkdir(exist_ok=True)
 
     created: List[str] = []
@@ -192,12 +194,14 @@ def scaffold_project(
         force,
         created,
         sanitized=sanitized,
+        omniagents_version=OMNIAGENTS_VERSION,
     )
     _write_template(
         project_dir / "requirements.txt",
         "project/requirements.txt",
         force,
         created,
+        omniagents_version=OMNIAGENTS_VERSION,
     )
     _write_template(
         project_dir / "Makefile",
@@ -205,6 +209,19 @@ def scaffold_project(
         force,
         created,
         sanitized=sanitized,
+    )
+    _write_template(
+        devcontainer_dir / "devcontainer.json",
+        "project/.devcontainer/devcontainer.json",
+        force,
+        created,
+        label=display_label,
+    )
+    _write_template(
+        devcontainer_dir / "postCreate.sh",
+        "project/.devcontainer/postCreate.sh",
+        force,
+        created,
     )
     _write_template(
         docs_dir / "RELEASE.md",

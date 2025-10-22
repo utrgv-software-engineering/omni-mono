@@ -1,4 +1,5 @@
 import { ArrowLeft, Sparkles } from 'lucide-react'
+import { ThemeToggle } from './ThemeToggle'
 
 interface PlaygroundHeaderProps {
   onBack: () => void
@@ -28,6 +29,9 @@ export function PlaygroundHeader({ onBack, projectName }: PlaygroundHeaderProps)
               </div>
             </div>
           </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
         </div>
       </div>
     </div>

@@ -559,8 +559,8 @@ def main():
     )
     studio_serve.add_argument(
         "--dev-host",
-        default=DEFAULT_STUDIO_DEV_HOST,
-        help=f"Host for the Studio web dev server (default: {DEFAULT_STUDIO_DEV_HOST})",
+        default=None,
+        help="Host for the Studio web dev server (default: match --host)",
     )
     studio_serve.add_argument(
         "--dev-port",
@@ -1157,6 +1157,9 @@ def main():
 
         if args.studio_cmd == "serve":
             try:
+                dev_host_value = getattr(args, "dev_host", None)
+                if dev_host_value is None:
+                    dev_host_value = args.host or DEFAULT_STUDIO_DEV_HOST
                 studio_mod.serve(
                     host=args.host,
                     port=args.port,
@@ -1164,7 +1167,7 @@ def main():
                     project=inferred_project,
                     auth_token=getattr(args, "auth_token", None),
                     dev=getattr(args, "dev", False),
-                    dev_host=getattr(args, "dev_host", "127.0.0.1"),
+                    dev_host=dev_host_value,
                     dev_port=getattr(args, "dev_port", 5173),
                     manifest_path=str(_manifest_path) if _manifest_path else None,
                 )

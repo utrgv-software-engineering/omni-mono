@@ -175,7 +175,7 @@ def serve(
     project: Optional[str] = None,
     auth_token: Optional[str] = None,
     dev: bool = False,
-    dev_host: str = "127.0.0.1",
+    dev_host: Optional[str] = None,
     dev_port: int = 5173,
     manifest_path: Optional[str] = None,
 ):
@@ -345,7 +345,9 @@ def serve(
             playground_resources = None
 
     if dev:
-        dev_server_url = f"http://{dev_host}:{dev_port}"
+        fallback_host = host or "127.0.0.1"
+        resolved_dev_host = (dev_host or fallback_host).strip() or "127.0.0.1"
+        dev_server_url = f"http://{resolved_dev_host}:{dev_port}"
         web_dir = Path(__file__).resolve().parents[1] / "server" / "web"
         package_manifest = web_dir / "package.json"
         if not package_manifest.exists():
@@ -359,7 +361,7 @@ def serve(
             "dev",
             "--",
             "--host",
-            dev_host,
+            resolved_dev_host,
             "--port",
             str(dev_port),
         ]

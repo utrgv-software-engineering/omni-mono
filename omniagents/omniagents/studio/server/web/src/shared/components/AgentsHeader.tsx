@@ -1,4 +1,5 @@
 import { ArrowLeft, Bot } from 'lucide-react'
+import { ThemeToggle } from './ThemeToggle'
 
 interface AgentsHeaderProps {
   onBack: () => void
@@ -28,6 +29,9 @@ export function AgentsHeader({ onBack, projectName }: AgentsHeaderProps) {
               </div>
             </div>
           </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
         </div>
       </div>
     </div>

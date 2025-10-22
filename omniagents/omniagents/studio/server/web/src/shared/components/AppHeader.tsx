@@ -4,6 +4,7 @@ import { useTraceStore } from '../../features/traces/store/traceStore'
 import { useQueryClient } from '@tanstack/react-query'
 import { cn } from '../../lib/utils'
 import { AnalysisGoalsModal } from './AnalysisGoalsModal'
+import { ThemeToggle } from './ThemeToggle'
 
 interface AppHeaderProps {
   viewMode?: 'debug' | 'review'
@@ -202,6 +203,7 @@ export function AppHeader({
           </div>
           
           <div className="flex items-center gap-2">
+            <ThemeToggle />
             {/* View Mode Toggle */}
             {showViewToggle && onViewModeChange && (
               <div className="flex items-center gap-1 p-0.5 bg-muted rounded-md">

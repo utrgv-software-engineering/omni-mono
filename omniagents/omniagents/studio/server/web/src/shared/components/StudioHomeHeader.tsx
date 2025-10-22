@@ -1,3 +1,5 @@
+import { ThemeToggle } from './ThemeToggle'
+
 export function StudioHomeHeader() {
   return (
     <div className="border-b border-border bg-background">
@@ -34,6 +36,9 @@ export function StudioHomeHeader() {
             </svg>
           </div>
           <h1 className="text-lg font-semibold">OmniAgents Studio</h1>
+        </div>
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
         </div>
       </div>
     </div>

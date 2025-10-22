@@ -1,5 +1,6 @@
 import { ArrowLeft, BarChart3 } from 'lucide-react'
 import { cn } from '../../lib/utils'
+import { ThemeToggle } from './ThemeToggle'
 
 type EvaluationTab = 'scenarios' | 'datasets' | 'dimensions' | 'judges' | 'categories' | 'measures'
 
@@ -42,6 +43,7 @@ export function EvaluationHeader({ activeTab, onTabChange, onBack, projectName, 
           </div>
         </div>
         <div className="flex items-center gap-3">
+          <ThemeToggle />
           <div className="flex items-center gap-1 p-1 bg-muted rounded-md">
             {tabs.map((tab) => (
               <button
