@@ -52,8 +52,12 @@
   }
 
 
+  * {
+    @apply border-border;
+  }
+
   body {
-    @apply bg-white text-gray-900 dark:bg-gray-900 dark:text-gray-100;
+    @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
     margin: 0;
     padding: 0;

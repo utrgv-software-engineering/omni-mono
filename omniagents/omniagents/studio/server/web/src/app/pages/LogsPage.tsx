@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { StudioPage } from '../../shared/components/StudioPage'
-import { AppHeader } from '../../shared/components/AppHeader'
+import { LogsHeader } from '../../shared/components/LogsHeader'
 import { ConversationList } from '../../features/traces/components/ConversationList'
 import { TraceTable } from '../../features/traces/components/TraceTable'
 import { ReviewView } from '../../features/review/ReviewView'
@@ -257,7 +257,7 @@ export function LogsPage() {
   )
 
   const header = (
-    <AppHeader
+    <LogsHeader
       viewMode={viewMode}
       onViewModeChange={handleViewModeChange}
       showViewToggle={!!selectedConversation}
