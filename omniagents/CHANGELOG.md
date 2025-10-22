@@ -81,7 +81,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Flet-based GUI
 
 [Unreleased]: https://github.com/yourusername/omniagents/compare/v0.3.19...HEAD
-[0.3.19]: https://github.com/yourusername/omniagents/compare/v0.3.18...v0.3.19
+[0.3.19]: https://github.com/yourusername/omniagents/compare/v## [Unreleased]...v0.3.19
 [## [Unreleased]]: https://github.com/yourusername/omniagents/compare/v0.3.14...v## [Unreleased]
 [0.3.14]: https://github.com/yourusername/omniagents/compare/v0.3.13...v0.3.14
 [## [Unreleased]]: https://github.com/yourusername/omniagents/compare/v0.1.2...v## [Unreleased]
