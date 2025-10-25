@@ -64,6 +64,7 @@ You can rerun `omni-setup` anytime to update credentials. After setup, run `omni
   - `AZURE_OPENAI_API_VERSION`
   - `AZURE_OPENAI_ENDPOINT` (for example `https://your-resource.openai.azure.com/`)
   - `AZURE_OPENAI_DEPLOYMENT`
+- The configured model used by the agents comes from `OMNI_CODE_MODEL`. For Azure, this automatically uses your deployment name; for OpenAI/custom, the wizard prompts for a default model (defaults to `gpt-5`).
 - Optional telemetry fields (`OPENAI_ORG`, `OPENAI_PROJECT`) are prompted when present in your existing config.
 - Launch `omni`; the runner detects `OPENAI_PROVIDER=azure` from your saved config and uses the Azure client automatically.
 - Advanced users can export the same variables manually instead of using the wizard.

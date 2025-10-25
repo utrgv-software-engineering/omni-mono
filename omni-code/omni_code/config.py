@@ -40,3 +40,11 @@ def write_config(values: Dict[str, str]) -> None:
     fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         handle.write(data)
+
+
+def get_model_name(default: str = "gpt-5") -> str:
+    provider = (os.getenv("OPENAI_PROVIDER") or "openai").strip().lower()
+    model = os.getenv("OMNI_CODE_MODEL")
+    if not model and provider == "azure":
+        model = os.getenv("AZURE_OPENAI_DEPLOYMENT")
+    return model or default

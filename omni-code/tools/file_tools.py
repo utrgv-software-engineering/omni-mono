@@ -1349,21 +1349,23 @@ def write_file_approval(file_path: str, content: str, append: Optional[bool]) ->
 # Patch parsing types
 class Hunk:
     """Represents a single file operation in a patch"""
-    pass
+
+    def __init__(self, path: str):
+        self.path = path
 
 class AddFile(Hunk):
     def __init__(self, path: str, contents: str):
-        self.path = os.path.abspath(path) if not os.path.isabs(path) else path
+        super().__init__(path)
         self.contents = contents
 
 class DeleteFile(Hunk):
     def __init__(self, path: str):
-        self.path = os.path.abspath(path) if not os.path.isabs(path) else path
+        super().__init__(path)
 
 class UpdateFile(Hunk):
     def __init__(self, path: str, chunks: List['UpdateFileChunk'], move_path: Optional[str] = None):
-        self.path = os.path.abspath(path) if not os.path.isabs(path) else path
-        self.move_path = os.path.abspath(move_path) if move_path and not os.path.isabs(move_path) else move_path
+        super().__init__(path)
+        self.move_path = move_path
         self.chunks = chunks
 
 class UpdateFileChunk:
@@ -1374,7 +1376,17 @@ class UpdateFileChunk:
         self.context_headers = context_headers or []
         self.is_end_of_file = is_end_of_file
 
-def parse_patch(patch_text: str) -> List[Hunk]:
+def _resolve_patch_path(path: Optional[str], base_dir: Optional[str]) -> Optional[str]:
+    if path is None:
+        return None
+    if os.path.isabs(path):
+        return path
+    if base_dir:
+        return os.path.abspath(os.path.join(base_dir, path))
+    return os.path.abspath(path)
+
+
+def parse_patch(patch_text: str, base_dir: Optional[str] = None) -> List[Hunk]:
     """
     Parse Codex's custom patch format into Hunk objects.
     
@@ -1425,23 +1437,25 @@ def parse_patch(patch_text: str) -> List[Hunk]:
             contents = '\n'.join(content_lines)
             if content_lines:
                 contents += '\n'
-            hunks.append(AddFile(path, contents))
+            resolved_path = _resolve_patch_path(path, base_dir)
+            hunks.append(AddFile(resolved_path, contents))
             
         elif line.startswith('*** Delete File:'):
             path = line[len('*** Delete File:'):].strip()
-            hunks.append(DeleteFile(path))
+            resolved_path = _resolve_patch_path(path, base_dir)
+            hunks.append(DeleteFile(resolved_path))
             i += 1
             
         elif line.startswith('*** Update File:'):
             path = line[len('*** Update File:'):].strip()
             i += 1
-            
+
             # Check for Move to
             move_path = None
             if i < len(lines) and lines[i].strip().startswith('*** Move to:'):
                 move_path = lines[i].strip()[len('*** Move to:'):].strip()
                 i += 1
-            
+
             # Parse chunks
             chunks = []
             while i < len(lines):
@@ -1487,10 +1501,12 @@ def parse_patch(patch_text: str) -> List[Hunk]:
                     i += 1
             
             if chunks:
-                hunks.append(UpdateFile(path, chunks, move_path))
+                resolved_path = _resolve_patch_path(path, base_dir)
+                resolved_move = _resolve_patch_path(move_path, base_dir) if move_path else None
+                hunks.append(UpdateFile(resolved_path, chunks, resolved_move))
         else:
             i += 1
-    
+
     return hunks
 
 def seek_sequence(lines: List[str], pattern: List[str], start: int, eof: bool) -> Optional[int]:
@@ -1854,6 +1870,7 @@ def apply_patch_approval(
 
 @rich_function_tool
 def apply_patch(
+    ctx: RunContextWrapper[Any],
     patch: str,
 ) -> RichToolOutput:
     """
@@ -1939,7 +1956,8 @@ def apply_patch(
     """
     try:
         # Parse the patch
-        hunks = parse_patch(patch)
+        base_dir = _workspace_root_from_ctx(ctx)
+        hunks = parse_patch(patch, base_dir)
 
         if not hunks:
             llm_output = "No changes in patch"

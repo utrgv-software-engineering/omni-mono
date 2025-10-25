@@ -74,6 +74,9 @@ def configure_provider(existing: Dict[str, str]) -> Dict[str, Optional[str]]:
             "AZURE_OPENAI_DEPLOYMENT",
         ]:
             result[key_name] = None
+        model_default = existing.get("OMNI_CODE_MODEL") or "gpt-5"
+        model = prompt_text("Default model name", model_default, True)
+        result["OMNI_CODE_MODEL"] = model
     if provider == "azure":
         result["OPENAI_API_KEY"] = None
         result["OPENAI_BASE_URL"] = None
@@ -99,6 +102,7 @@ def configure_provider(existing: Dict[str, str]) -> Dict[str, Optional[str]]:
             existing.get("AZURE_OPENAI_DEPLOYMENT"),
             True,
         )
+        result["OMNI_CODE_MODEL"] = result.get("AZURE_OPENAI_DEPLOYMENT")
     serp = prompt_secret("SerpAPI key (optional)", existing.get("SERPAPI_API_KEY"), False)
     result["SERPAPI_API_KEY"] = serp
     return result

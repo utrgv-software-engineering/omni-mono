@@ -1,122 +1,56 @@
-# AGENTS.md — Omni Code Repository Guidelines for AI Agents
+# AGENTS.md — Omni Code AI-Agent Guidance
 
 ## Purpose
-- Provide clear, concrete guidance for AI agents working in this repository.
-- Capture repo conventions, tooling, and expectations so changes integrate cleanly and tests pass.
+- Provide clear, repo-aware guardrails so automated edits land cleanly and keep the suite green.
+- Capture the implicit expectations maintainers have for code, tooling, docs, and approval safety nets.
 
 ## Scope
-- This file lives at the repo root and applies to the entire repository unless a more deeply nested AGENTS.md overrides some guidance.
+- This root policy covers the whole repository unless a nearer directory ships its own `AGENTS.md`.
+- Only add another `AGENTS.md` when a sub-package genuinely needs different rules; avoid copy-paste redundancy.
+- When changes touch setup, release, or CLI behavior, cross-check the instructions in `README.md` and `docs/`.
 
 ## Precedence
-- System/developer/user instructions in an active prompt take precedence over AGENTS.md.
-- When multiple AGENTS.md files exist, the one closest to the file being changed takes precedence over parent directories.
-- Follow existing code patterns and tests in this repo over generic preferences.
+1. System instructions
+2. Developer instructions
+3. User instructions
+4. Nearest `AGENTS.md` (this file unless a closer one exists)
+5. Other repo docs (README, `docs/`, code comments)
+6. Inferred conventions from existing implementations and tests
 
-## Repository Overview
-- Language: Python 3.10+
-- Entry point: `main.py` (also exposes CLI via `project.scripts`)
-- Packages/dirs:
-  - `tools/` — Function tools used by the agent (filesystem, search, web, conversions, shell, slash commands)
-  - `tests/` — Pytest-based unit tests for tools
-  - `README.md` — Setup, install, and run instructions
-  - `pyproject.toml` — Build metadata, dependencies, pytest config
-- CLI commands (installed): `omni-code` and `omni` run the agent.
+If directives conflict, prefer the one earlier in the list. When editing files inside a directory with its own `AGENTS.md`, that nearer file overrides this root guidance.
 
-## How Agents Should Operate Here
-- Prefer the provided workspace tools: `list_directory`, `glob_files`, `grep_files`, `read_file`, `apply_patch`, `write_file`, `execute_bash`.
-- For any file edits or creation, use `apply_patch` (preferred) or `write_file`. Do not describe manual steps; make the change.
-- Keep changes minimal, targeted, and consistent with existing code.
-- Do not introduce unrelated refactors or additional dependencies.
-- Never commit secrets. Keys are loaded from `.env` via `python-dotenv` in `main.py`.
+## Code Style & Quality
+- Python targets 3.10+. Follow `snake_case`, descriptive names, and mirror nearby formatting and import order.
+- Prefer type hints and structured responses. Tool modules should emit `RichToolOutput` metadata consistent with peers.
+- Keep edits tightly scoped to the requested task; no opportunistic refactors or wholesale formatter passes unless instructed.
+- Use docstrings and precise naming to convey intent. Add inline comments only when behavior is non-obvious.
+- Maintain ordering expectations—several tests assert deterministic file listings, metadata keys, and error strings.
 
-## Code Style and Patterns
-- Python style
-  - Use snake_case for functions/variables and descriptive names, no single-letter identifiers.
-  - Prefer type hints as seen in the codebase.
-  - Keep functions cohesive and small; avoid unnecessary complexity.
-  - Avoid adding inline comments unless explicitly requested in the prompt.
-  - Do not add license/copyright headers.
+## Tooling Expectations
+- Operate through the provided workspace helpers: `list_directory`, `glob_files`, `grep_files`, `read_file`, `apply_patch`, `write_file`, etc. Invoke `execute_bash` only when a request explicitly calls for shell execution.
+- Apply edits with the custom patch format handled by `tools.file_tools.apply_patch`:
+  - Wrap changes with `*** Begin Patch` / `*** End Patch`.
+  - Use `*** Update File: path` for modifications, `*** Add File:` when creating files, and `*** Delete File:` for removals.
+- Keep dependency versions aligned with `pyproject.toml`. Published requirements currently include `openai==1.99.9`, `omniagents[all]==0.3.16`, `markitdown[all,docx,pdf]>=0.1.1`, `requests>=2.31.0`, `beautifulsoup4>=4.12.0`, and `pygit2>=1.13.0`.
+- External prerequisites: Python 3.10+, Go 1.20+ on `PATH`, and `libgit2` (required by file tools). Assume credentials arrive via `.env`/`python-dotenv`; never hard-code or commit keys (`OPENAI_API_KEY`, `AZURE_OPENAI_*`, `SERPAPI_API_KEY`, etc.).
 
-- Tool functions (in `tools/`)
-  - Decorate tools with `@rich_function_tool` (or `@function_tool` for async slash commands).
-  - Return a `RichToolOutput(llm_output, ui_metadata)` where `ui_metadata` includes:
-    - `value`, `display_type`, `summary`, `preview`, `truncated`, and `metadata` fields consistent with existing tools.
-  - Where relevant, provide an approval metadata function via `@approval_metadata()` mirroring existing patterns.
-  - Maintain and extend `tools/__init__.py` exports and keep names consistent.
+## Testing & Validation
+- Install for development with `pip install -e .[dev] --extra-index-url https://pypi.fury.io/ericmichael/` while keeping PyPI as the default index.
+- Primary entrypoints are the `omni` console script (`main:cli_main`) and `python main.py`.
+- Run validations with `pytest -q`. Tests exercise tool metadata, deterministic ordering (especially in `tools/file_tools`), hidden-file defaults (`ignore_hidden=False`, `respect_gitignore=True`), and approval metadata wiring.
+- When extending functionality, add or update tests under `tests/` to cover new behavior, including UI metadata and error cases. Keep fixtures deterministic.
 
-- File/workspace tool defaults (important for tests)
-  - `list_directory`: `recursive=False` if unset; `ignore_hidden=False`; `respect_gitignore=True`.
-  - `glob_files`: default `ignore_hidden=False`, `respect_gitignore=True`.
-  - `grep_files`: default `ignore_hidden=False`, `respect_gitignore=True`.
-  - Preserve behavior that results are sorted by modification time (newest first) where implemented, and that hidden/gitignored handling respects provided flags.
+## Repo-Specific Conventions
+- **Project map:** Key areas include `tools/` (rich tool implementations), `oagents/` and `oagents/instructions/` (agent factories plus markdown instructions), `server_functions/` (terminal/AgentIO adapters), `omni_code/` (setup tooling, CLI helpers), `docs/`, `tests/`, and the top-level `main.py` entrypoint.
+- **Tool authoring:** Implement one tool per module in `tools/`. Decorate callable tools with `@rich_function_tool` (or `@function_tool` for slash commands), return `RichToolOutput` with populated `ui_metadata` (`value`, `display_type`, `summary`, `preview`, `truncated`, `metadata`), and add `@approval_metadata` when similar tools require approval. Export new tools via `tools/__init__.py` and ensure packaging metadata (`pyproject.toml`, `main.py`) is updated.
+- **File tooling contract:** Preserve semantics in `tools/file_tools.py`—binary detection, modification-time sorting, hidden/gitignore defaults, and error messaging are covered by tests and downstream consumers.
+- **Server functions & CLI:** Follow the patterns in `main.py` and `server_functions/` when registering terminal helpers. Only add entries to `TERMINAL_SERVER_FUNCTIONS` (and similar registries) when implementations are production-ready.
+- **Web/search/document tools:** Modules like `web_fetch.py`, `web_search.py`, `youtube_search.py`, `scholar_search.py`, `download_file.py`, and `conversion_tools.py` must validate inputs, surface actionable errors (especially when API keys are missing), and provide succinct summaries/previews.
+- **Docs & instructions:** Keep `README.md`, `docs/`, release procedures (`docs/RELEASE.md`), and `oagents/instructions/*.md` aligned with behavioral changes. Update user-facing narratives when altering CLI flows or configuration paths.
+- **Safety & approvals:** High-impact or destructive operations rely on approval metadata. Maintain conservative defaults and document rationale for actions that could alter user workspaces.
+- **Secrets & git hygiene:** Never run git commands or manipulate credentials. Respect `.env` usage, avoid logging sensitive data, and do not bake secrets into code or docs.
 
-- Apply patch format
-  - Use the custom patch format implemented by `tools.file_tools.apply_patch`:
-    - Wrap with `*** Begin Patch` and `*** End Patch`.
-    - Use `*** Add File: path` with lines prefixed by `+` for new files.
-    - Use `*** Update File: path` with `-`/`+`/space-prefixed context lines; include helpful `@@` headers where possible.
-    - Use `*** Delete File: path` to remove files.
-
-## Dependencies and Libraries
-- Core dependencies (see `pyproject.toml`):
-  - `omniagents[all]==0.3.5`, `agentio==0.1.1`
-  - `openai` (or Azure OpenAI via env configuration), `python-dotenv`
-  - `markitdown[all,docx,pdf]` for document/URL conversion to markdown
-  - `requests`, `beautifulsoup4`
-  - `pygit2` (requires system libgit2) used by workspace tools for `.gitignore` semantics
-- External prerequisites the environment must provide:
-  - Go 1.20+ on PATH (runner requirement in this project)
-  - System libgit2 (see README for install instructions)
-
-## Environment and Secrets
-- Expected environment variables:
-  - `OPENAI_PROVIDER` = `openai` (default) or `azure`
-  - OpenAI: `OPENAI_API_KEY` (and optionally `OPENAI_BASE_URL`, `OPENAI_ORG`, `OPENAI_PROJECT`)
-  - Azure OpenAI: `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_API_VERSION`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`
-  - Search tools: `SERPAPI_API_KEY`
-  - Optional packaging index: `FURY_AUTH` (if using private Gemfury)
-- `.env` at repo root is loaded by `dotenv` at runtime.
-
-## Running and Testing
-- Install (editable) for local development:
-  - If using a private index for OmniAgents libs, set `FURY_AUTH` and pass `--extra-index-url` as shown in README.
-  - Then: `pip install -e .` (or use `pipx`/`uv tool install` as documented in README).
-- Run the CLI:
-  - `omni-code` (installed script) or `python main.py`.
-- Run tests (pytest config lives in `pyproject.toml`):
-  - `pytest` or `pytest -q`
-  - Tests monkeypatch OmniAgents decorators and framework classes; keep return shapes compatible with existing tools.
-
-## Repo-Specific Conventions and Tips
-- Tools folder
-  - Place new tools in `tools/` with a focused module per tool or cohesive group.
-  - Export new tools in `tools/__init__.py` and update `main.py` tool list if the agent should use them.
-  - Follow existing `ui_metadata` schemas and naming (`display_type`, `summary`, etc.) for consistent UI.
-
-- Workspace operations
-  - Prefer `apply_patch` for multi-file edits or precise updates; include adequate context to help fuzzy matching.
-  - Use `write_file` for simple new file writes when patching is unnecessary.
-  - Avoid traversing hidden or gitignored paths unless explicitly requested; respect flags passed to the tools.
-
-- Web/search/conversion tools
-  - `web_search`, `youtube_search`, `scholar_search` require `SERPAPI_API_KEY` and must return a clear error when missing.
-  - `convert_to_markdown` uses a shared `MarkItDown` instance; verify local file existence unless the input is a URL.
-  - `web_fetch` should provide either extracted text (HTML) or raw content with correct content type metadata.
-
-- Shell execution
-  - `execute_bash` defaults to a 30s timeout if none is provided; return structured stdout/stderr/exit_code in metadata.
-
-- Safety and approvals
-  - The Runner may operate in safe mode; destructive tools will prompt for approval. Make small, reviewable changes.
-
-- Output and verbosity
-  - Keep assistant responses concise; this agent runs in a CLI/TUI. Provide summaries of what you will do before long operations.
-
-- Git usage
-  - Do not perform git operations (commits/branches) unless explicitly asked. The CI/tests do not require git commands.
-
-## When In Doubt
-- Imitate existing patterns in the nearest similar file.
-- Check `README.md` for installation/runtime details that may affect tooling.
-- Keep edits narrowly scoped and reversible.
-
+## When in Doubt
+- Mirror the nearest working pattern before inventing new abstractions.
+- Re-read the relevant instructions or docs (README, `docs/`, existing agent markdown) before modifying setup, release, or CLI behavior.
+- Keep changes minimal, reversible, and directly tied to the explicit request. If uncertainty persists, prefer the safest no-op.

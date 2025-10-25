@@ -4,7 +4,7 @@ import pytest
 from pathlib import Path
 from agents.tool import ToolContext
 from agents.usage import Usage
-from tools.file_tools import glob_files, grep_files
+from tools.file_tools import glob_files, grep_files, apply_patch
 
 
 def invoke_tool(tool, workspace_root: Path, **payload):
@@ -119,3 +119,25 @@ def test_grep_files_deduplicates_symlinks(tmp_workdir: Path):
 
     assert len(paths) == len(real_paths)
     assert any(p.resolve() == (tmp_workdir / 'b.txt').resolve() for p in paths)
+
+
+def test_apply_patch_uses_workspace_root(tmp_workdir: Path):
+    target = tmp_workdir / 'patch.txt'
+    target.write_text('hello\n', encoding='utf-8')
+
+    patch = """*** Begin Patch
+*** Update File: patch.txt
+@@
+-hello
++world
+*** Add File: newdir/newfile.txt
++created via patch
+*** End Patch
+"""
+
+    invoke_tool(apply_patch, tmp_workdir, patch=patch)
+
+    assert target.read_text(encoding='utf-8') == 'world\n'
+    created = tmp_workdir / 'newdir' / 'newfile.txt'
+    assert created.exists()
+    assert created.read_text(encoding='utf-8') == 'created via patch\n'

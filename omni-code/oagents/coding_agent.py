@@ -5,7 +5,12 @@ from importlib import resources
 
 from openai.types.shared import Reasoning
 from omniagents.core.agents.safe import SafeAgent
+from omni_code.config import get_model_name
 from agents import ModelSettings
+from omni_code.tools_bootstrap import ensure_tools_importable
+
+ensure_tools_importable()
+
 from tools import (
     invoke_slash_command,
     list_directory,
@@ -107,7 +112,7 @@ def create_agent() -> SafeAgent:
             download_file,
             convert_to_markdown,
         ],
-        model="gpt-5",
+        model=get_model_name(),
         model_settings=ModelSettings(
             reasoning=Reasoning(effort="high"),
         ),

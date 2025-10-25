@@ -1,12 +1,16 @@
 import os
-from typing import Any
 from omniagents import Runner
+from omniagents.core.agents.specs import MCPServerConfig
 from openai import AsyncAzureOpenAI, AsyncOpenAI
 from agents import (
     set_default_openai_client,
     set_default_openai_api,
 )
 import agentio
+from omni_code.tools_bootstrap import ensure_tools_importable
+
+ensure_tools_importable()
+
 from tools import *
 from omni_code.config import load_config
 from oagents.coding_agent import create_agent
@@ -17,6 +21,11 @@ from server_functions.filesystem import (
     fs_list_dir,
     fs_get_workspace_root,
     session_ensure,
+)
+from server_functions.terminal import (
+    TERMINAL_SERVER_FUNCTIONS,
+    attach_terminal_manager,
+    terminal_supported,
 )
 
 for key, value in load_config().items():
@@ -58,23 +67,45 @@ def cli_main():
 
     agent = create_agent()
 
+    terminal_available = terminal_supported()
+
+    fs_functions = [
+        fs_get_cwd,
+        fs_get_home,
+        fs_list_dir,
+        fs_get_workspace_root,
+        session_ensure,
+    ]
+
+    server_functions_list = [
+        good,
+        bad,
+        note,
+        notes,
+        *fs_functions,
+    ]
+
+    if terminal_available:
+        server_functions_list.extend(TERMINAL_SERVER_FUNCTIONS)
+
     runner = Runner.from_agent(
         agent,
         welcome_text="Welcome to Omni Code! I'm here to help you with your coding needs.",
         max_turns=1000,
         context_window=400000,
-        server_functions=[
-            good,
-            bad,
-            note,
-            notes,
-            fs_get_cwd,
-            fs_get_home,
-            fs_list_dir,
-            fs_get_workspace_root,
-            session_ensure,
-        ],
+        server_functions=server_functions_list,
     )
+
+    previous_registrar = getattr(runner.spec, "register_server_functions", None)
+
+    def _register_with_terminal(service):
+        if callable(previous_registrar):
+            previous_registrar(service)
+        if terminal_available:
+            if not attach_terminal_manager(service):
+                print("Warning: Terminal support unavailable on this platform.")
+
+    runner.spec.register_server_functions = _register_with_terminal
 
     runner.main(default_mode="tui")
 
