@@ -136,6 +136,30 @@ tool_mod.function_tool = function_tool
 sys.modules.setdefault("agents.tool", tool_mod)
 
 
+guardrail_mod = types.ModuleType("agents.guardrail")
+
+
+class _InputGuardrail:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __class_getitem__(cls, item):  # noqa: D401
+        return cls
+
+
+class _OutputGuardrail:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __class_getitem__(cls, item):  # noqa: D401
+        return cls
+
+
+guardrail_mod.InputGuardrail = _InputGuardrail
+guardrail_mod.OutputGuardrail = _OutputGuardrail
+sys.modules.setdefault("agents.guardrail", guardrail_mod)
+
+
 class ModelSettings:
     def __init__(self, **kwargs):
         pass
@@ -144,6 +168,17 @@ class ModelSettings:
 model_settings_mod = types.ModuleType("agents.model_settings")
 model_settings_mod.ModelSettings = ModelSettings
 sys.modules.setdefault("agents.model_settings", model_settings_mod)
+
+
+strict_schema_mod = types.ModuleType("agents.strict_schema")
+
+
+def ensure_strict_json_schema(schema):
+    return schema
+
+
+strict_schema_mod.ensure_strict_json_schema = ensure_strict_json_schema
+sys.modules.setdefault("agents.strict_schema", strict_schema_mod)
 
 
 class Agent:

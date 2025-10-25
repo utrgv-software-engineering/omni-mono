@@ -179,7 +179,10 @@ class LocalAgent(UnifiedAgentBase):
 
             # Use our captured settings instead of stub_settings
             # Use our captured MCP servers, preferring the first one if available
-            mcp_to_use = mcp_servers[0] if mcp_servers else mcp_server
+            if mcp_servers:
+                mcp_to_use = mcp_servers
+            else:
+                mcp_to_use = mcp_server
 
             return await _default_build_agent(
                 settings, mcp_to_use, self.spec, approval_callback

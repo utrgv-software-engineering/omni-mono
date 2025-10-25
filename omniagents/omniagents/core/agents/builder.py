@@ -5,9 +5,10 @@ from typing import Dict, Any, Optional, TYPE_CHECKING, List, Set
 from pathlib import Path
 
 from omniagents.core.utils.logging import get_logger
+from omniagents.core.agents.mcp import build_mcp_servers
 
 if TYPE_CHECKING:
-    from agents.mcp import MCPServerSse
+    from agents.mcp import MCPServer
     from omniagents.core.agents.specs import AgentSpec, AgentLike, HandoffConfig
     from agents.handoffs import Handoff
 
@@ -62,7 +63,7 @@ async def _build_handoffs_from_configs(
             # Build the handoff agent
             handoff_agent = await _default_build_agent(
                 settings=settings,
-                mcp_server=None,  # Handoff agents don't get MCP server
+                mcp_servers=None,
                 spec=handoff_spec,
                 approval_callback=approval_callback,
                 _loading_stack=new_loading_stack,
@@ -90,7 +91,7 @@ async def _build_handoffs_from_configs(
 
 async def _default_build_agent(
     settings: Dict[str, Any],
-    mcp_server: Optional["MCPServerSse"],
+    mcp_servers: Optional[Any],
     spec: "AgentSpec",
     approval_callback: Optional[Any] = None,
     _loading_stack: Optional[Set[Path]] = None,
@@ -152,7 +153,19 @@ async def _default_build_agent(
     model_name = spec.model_name or settings.get("model_name", "gpt-4o")
     instructions = process_instructions(spec.get_agent_instructions())
     tools = spec.available_tools
-    mcp_servers_list = [mcp_server] if mcp_server else []
+    provided_mcp_servers: List[Any] = []
+    if mcp_servers:
+        if isinstance(mcp_servers, (list, tuple)):
+            provided_mcp_servers = list(mcp_servers)
+        else:
+            provided_mcp_servers = [mcp_servers]
+    elif spec.mcp_servers:
+        try:
+            provided_mcp_servers = build_mcp_servers(spec, settings)
+        except Exception as exc:
+            logger.error(f"Failed to instantiate MCP servers for agent '{spec.name}': {exc}")
+            provided_mcp_servers = []
+    mcp_servers_list = provided_mcp_servers
     handoff_description = spec.handoff_description
     reset_tool_choice = spec.reset_tool_choice
     tool_use_behavior = spec.tool_use_behavior

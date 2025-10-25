@@ -167,7 +167,7 @@ python -m omniagents.cli run -c examples/basic_yaml/hello.yml --mode tui
 python -m omniagents.cli run -c examples/safe_agent_yaml/safe_weather.yml --mode tui
 
 # MCP server test (if configured)
-python -m omniagents.cli run -c examples/mcp_yaml/mcp_agent.yml --mode tui
+python -m omniagents.cli run -c examples/advanced_config_demo/agent.yml --mode tui
 ```
 
 ### Debugging

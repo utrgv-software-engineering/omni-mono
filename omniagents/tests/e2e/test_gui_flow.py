@@ -3,7 +3,7 @@ Tests for Flet GUI backend with unified agent architecture.
 """
 
 import pytest
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
+from unittest.mock import Mock, AsyncMock, patch
 from typing import Dict, Any
 
 from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions
@@ -25,8 +25,6 @@ class TestFletUnifiedAgent:
         spec.remote_ws_url = None
         spec.remote_auth_token_key = None
         spec.use_safe_agent = False
-        spec.uses_mcp = False
-        spec.show_mcp_status_indicator = False
         spec.max_turns = 10
         spec.available_tools = []
         spec.get_agent_instructions = Mock(return_value="Test instructions")
@@ -36,6 +34,7 @@ class TestFletUnifiedAgent:
         spec.theme_color = "blue"
         spec.page_title_suffix = ""
         spec.icon_map = {}
+        spec.mcp_servers = []
         return spec
 
     @pytest.fixture
@@ -78,38 +77,8 @@ class TestFletUnifiedAgent:
                 call_args = mock_create.call_args
                 assert call_args.kwargs["spec"] == mock_spec
                 assert call_args.kwargs["settings"] == {"openai_api_key": "test-key"}
-                assert call_args.kwargs["mcp_servers"] is None
+                assert "mcp_servers" not in call_args.kwargs
                 assert app.agent_instance == mock_agent
-
-    @pytest.mark.asyncio
-    async def test_agent_creation_with_mcp(self, mock_spec, mock_page):
-        """Test agent creation with MCP server."""
-        mock_spec.uses_mcp = True
-
-        with patch("omniagents.backends.flet.app_base.load_settings", return_value={}):
-            # Patch create_unified_agent at module level before import
-            with patch(
-                "omniagents.backends.flet.app_base.create_unified_agent"
-            ) as mock_create:
-                from omniagents.backends.flet.app_base import AgentApp
-
-                # Mock MCP server
-                mock_mcp = Mock()
-                mock_agent = AsyncMock()
-                mock_create.return_value = mock_agent
-
-                # Create app with MCP
-                app = AgentApp(spec=mock_spec)
-                app.page = mock_page
-                app.current_settings = {}
-                app._mcp_server_instance = mock_mcp
-
-                await app._create_or_update_agent()
-
-                # Verify MCP was passed
-                mock_create.assert_called_once()
-                call_args = mock_create.call_args
-                assert call_args.kwargs["mcp_servers"] == [mock_mcp]
 
     @pytest.mark.asyncio
     async def test_agent_creation_with_safe_agent(self, mock_spec, mock_page):
@@ -212,48 +181,6 @@ class TestFletUnifiedAgent:
                     assert mock_create.call_count == 2
                     assert app.agent_instance == mock_agent2
 
-    @pytest.mark.asyncio
-    async def test_mcp_status_change_rebuilds_agent(self, mock_spec, mock_page):
-        """Test that MCP connection status changes trigger agent rebuild."""
-        mock_spec.uses_mcp = True
-        mock_spec.mcp_url_setting_key = "mcp_url"
-
-        with patch("omniagents.backends.flet.app_base.load_settings", return_value={}):
-            with patch(
-                "omniagents.backends.flet.app_base.create_unified_agent"
-            ) as mock_create:
-                from omniagents.backends.flet.app_base import (
-                    AgentApp,
-                    MCPConnectionStatus,
-                )
-
-                mock_agent1 = AsyncMock()
-                mock_agent2 = AsyncMock()
-                mock_create.side_effect = [mock_agent1, mock_agent2]
-
-                app = AgentApp(spec=mock_spec)
-                app.page = mock_page
-                app.current_settings = {"mcp_url": "http://test"}
-                app._mcp_connection_status = MCPConnectionStatus.CONNECTED
-
-                # Create initial agent
-                await app._create_or_update_agent()
-                assert app.agent_instance == mock_agent1
-
-                # Simulate MCP disconnection
-                with patch.object(app, "_update_mcp_ui_indicator"):
-                    app._mcp_connection_status = MCPConnectionStatus.DISCONNECTED
-                    await app._update_mcp_connection()
-
-                # Agent should be reset due to MCP status change
-                # Note: In the actual implementation, the agent is reset to None
-                # and will be rebuilt on next message
-                if app.agent_instance is None:
-                    # Expected behavior when MCP disconnects
-                    assert True
-                else:
-                    # If still has agent, it should be rebuilt
-                    assert mock_create.call_count >= 2
 
     @pytest.mark.asyncio
     async def test_error_handling_in_agent_creation(self, mock_spec, mock_page):
