@@ -234,6 +234,11 @@ class Runner:
         common_group.add_argument(
             "--debug", "-d", action="store_true", help="Enable debug mode"
         )
+        common_group.add_argument(
+            "--resume",
+            action="store_true",
+            help="Show TUI session picker (Bubble Tea mode only).",
+        )
 
         # SafeAgent control arguments (strict)
         safe_group = parser.add_argument_group(
@@ -285,6 +290,13 @@ class Runner:
         kwargs = {
             "args": args,  # Pass full args for all backends
         }
+
+        resume_flag = bool(getattr(args, "resume", False))
+        if resume_flag and args.mode not in ("bubbletea", "tui"):
+            print("Error: --resume is only supported in Bubble Tea TUI mode.")
+            sys.exit(2)
+        if resume_flag:
+            kwargs["resume"] = True
 
         # Add mode-specific kwargs
         if args.mode == "cli":
