@@ -68,12 +68,12 @@ model_settings:
   # reasoning:
   #   effort: "medium"  # Reasoning effort level
   
-  # Extra parameters for provider-specific features
+# Extra parameters for provider-specific features
   # extra_args:
   #   custom_param: value
 
 # MCP configuration
-uses_mcp: false
+mcp_servers: []
 mcp_config:
   convert_schemas_to_strict: true
 

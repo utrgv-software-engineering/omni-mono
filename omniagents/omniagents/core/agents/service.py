@@ -9,6 +9,7 @@ import os
 import asyncio
 import uuid
 import copy
+from contextlib import AsyncExitStack
 from types import SimpleNamespace
 from typing import Optional, Dict, Any
 import inspect
@@ -20,6 +21,7 @@ from omniagents.core.session import Session, SessionManager
 from omniagents.core.session.history_db import get_user_messages
 from omniagents.core.runtime.bridge import stream_agent
 from omniagents.core.agents.builder import _default_build_agent
+from omniagents.core.agents.mcp import build_mcp_servers
 from omniagents.core.debug import Debug
 
 
@@ -101,6 +103,15 @@ class AgentService(RpcMethodsBase):
         # Note: we intentionally do NOT register built-in example functions
         # like "session.get_history" so they won't surface in UIs that
         # dynamically list server functions (e.g., Bubble Tea /help).
+        self._default_settings: Dict[str, Any] = {}
+        for field in getattr(self.spec, "settings_fields", []) or []:
+            key = getattr(field, "key", None)
+            if not key:
+                continue
+            value = os.getenv(key.upper())
+            if value in (None, ""):
+                value = getattr(field, "default", None)
+            self._default_settings[key] = value
 
     async def _build_agent_for_session(
         self, session: Session, approval_callback
@@ -110,42 +121,89 @@ class AgentService(RpcMethodsBase):
             _request_tool_approval=approval_callback,
         )
 
-        if self.spec.build_agent:
-            agent = await self.spec.build_agent({}, None, stub_app)
-            if (
-                self.spec.use_safe_agent
-                and approval_callback
-                and not isinstance(agent, SafeAgent)
-            ):
-                opts = self.spec.safe_agent_options
-                agent = SafeAgent(
-                    name=agent.name,
-                    tools=agent.tools,
-                    instructions=agent.instructions,
-                    model=agent.model,
-                    model_settings=getattr(agent, "model_settings", None),
-                    mcp_servers=getattr(agent, "mcp_servers", []) or [],
-                    handoffs=getattr(agent, "handoffs", []),
-                    handoff_description=getattr(agent, "handoff_description", None),
-                    prompt=getattr(agent, "prompt", None),
-                    approval_callback=approval_callback,
-                    safe_tool_names=opts.safe_tool_names,
-                    safe_tool_patterns=opts.safe_tool_patterns,
-                    skip_approvals=opts.skip_approvals,
-                    halt_on_rejection=opts.halt_on_rejection,
+        settings = dict(self._default_settings)
+
+        prev_stack = getattr(session, "_mcp_exit_stack", None)
+        if prev_stack:
+            try:
+                await prev_stack.aclose()
+            except Exception:
+                pass
+
+        stack: AsyncExitStack | None = None
+        active_servers: list[Any] = []
+        if self.spec.mcp_servers:
+            stack = AsyncExitStack()
+            try:
+                servers = build_mcp_servers(self.spec, settings)
+                for server in servers:
+                    if hasattr(server, "__aenter__") and hasattr(server, "__aexit__"):
+                        active_servers.append(await stack.enter_async_context(server))
+                    else:
+                        await server.connect()
+                        stack.push_async_callback(server.cleanup)
+                        active_servers.append(server)
+            except Exception:
+                if stack:
+                    try:
+                        await stack.aclose()
+                    except Exception:
+                        pass
+                setattr(session, "_mcp_exit_stack", None)
+                setattr(session, "_mcp_servers_active", [])
+                raise
+
+        setattr(session, "_mcp_exit_stack", stack)
+        setattr(session, "_mcp_servers_active", active_servers)
+        setattr(stub_app, "mcp_servers", active_servers)
+
+        try:
+            if self.spec.build_agent:
+                primary_server = active_servers[0] if active_servers else None
+                agent = await self.spec.build_agent(settings, primary_server, stub_app)
+                if (
+                    self.spec.use_safe_agent
+                    and approval_callback
+                    and not isinstance(agent, SafeAgent)
+                ):
+                    opts = self.spec.safe_agent_options
+                    agent = SafeAgent(
+                        name=agent.name,
+                        tools=agent.tools,
+                        instructions=agent.instructions,
+                        model=agent.model,
+                        model_settings=getattr(agent, "model_settings", None),
+                        mcp_servers=getattr(agent, "mcp_servers", []) or [],
+                        handoffs=getattr(agent, "handoffs", []),
+                        handoff_description=getattr(agent, "handoff_description", None),
+                        prompt=getattr(agent, "prompt", None),
+                        approval_callback=approval_callback,
+                        safe_tool_names=opts.safe_tool_names,
+                        safe_tool_patterns=opts.safe_tool_patterns,
+                        skip_approvals=opts.skip_approvals,
+                        halt_on_rejection=opts.halt_on_rejection,
+                    )
+                elif isinstance(agent, SafeAgent) and approval_callback:
+                    try:
+                        agent.set_approval_callback(approval_callback)
+                    except Exception:
+                        pass
+            else:
+                agent = await _default_build_agent(
+                    settings,
+                    active_servers,
+                    self.spec,
+                    approval_callback,
                 )
-            elif isinstance(agent, SafeAgent) and approval_callback:
+        except Exception:
+            if stack:
                 try:
-                    agent.set_approval_callback(approval_callback)
+                    await stack.aclose()
                 except Exception:
                     pass
-        else:
-            agent = await _default_build_agent(
-                {},
-                None,
-                self.spec,
-                approval_callback,
-            )
+            setattr(session, "_mcp_exit_stack", None)
+            setattr(session, "_mcp_servers_active", [])
+            raise
 
         agent = self._clone_agent(agent)
 
@@ -871,6 +929,14 @@ class AgentService(RpcMethodsBase):
                         sess.run_channels.pop(run_name, None)
                     except Exception:
                         pass
+                stack = getattr(sess, "_mcp_exit_stack", None)
+                if stack:
+                    try:
+                        await stack.aclose()
+                    except Exception:
+                        pass
+                setattr(sess, "_mcp_exit_stack", None)
+                setattr(sess, "_mcp_servers_active", [])
 
         task_name = f"run_{uuid.uuid4().hex}"
         _debug_rpc(

@@ -59,7 +59,7 @@ def save_agent_as_py(
     lines.append("'''\n")
     lines.append("from omniagents.core.runtime.runner import Runner")
     lines.append(
-        "from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions, SettingField\n"
+        "from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions, SettingField, MCPServerConfig\n"
     )
     lines.append("spec = AgentSpec(")
     lines.append(f"    name={spec.name!r},")
@@ -94,10 +94,14 @@ def save_agent_as_py(
     lines.append(
         f"    safe_agent_options=SafeAgentOptions(skip_approvals={so.skip_approvals}, halt_on_rejection={so.halt_on_rejection}, safe_tool_names={so.safe_tool_names!r}, safe_tool_patterns={so.safe_tool_patterns!r}),"
     )
-    lines.append(f"    uses_mcp={spec.uses_mcp},")
-    lines.append(f"    mcp_url_setting_key={spec.mcp_url_setting_key!r},")
-    lines.append(f"    mcp_token_setting_key={spec.mcp_token_setting_key!r},")
-    lines.append(f"    show_mcp_status_indicator={spec.show_mcp_status_indicator},")
+    lines.append("    mcp_servers=[")
+    for server in getattr(spec, "mcp_servers", []) or []:
+        params_repr = repr(server.params)
+        options_repr = "None" if server.options is None else repr(server.options)
+        lines.append(
+            f"        MCPServerConfig(name={server.name!r}, type={server.type!r}, params={params_repr}, options={options_repr}),"
+        )
+    lines.append("    ],")
     _proj_slug = getattr(spec, "project_slug", None)
     _agent_slug = getattr(
         spec, "agent_slug", None

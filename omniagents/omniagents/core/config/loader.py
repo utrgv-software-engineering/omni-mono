@@ -12,8 +12,9 @@ from omniagents.core.agents.specs import (
     AgentLike,
     SafeAgentOptions,
     HandoffConfig,
+    MCPServerConfig,
+    SettingField,
 )
-from omniagents.core.agents.specs import SettingField
 from omniagents.core.tools.discovery import discover_functions_in_dir
 from omniagents.core.guardrails.discovery import discover_guardrails_in_dir
 from omniagents.core.debug import Debug
@@ -39,22 +40,78 @@ DEFAULT_SETTINGS_FIELDS = [
     ),
 ]
 
-DEFAULT_MCP_SETTINGS_FIELDS = [
-    SettingField(
-        key="mcp_url",
-        label="MCP Server URL",
-        group="MCP Server",
-        default="",
-        hint="e.g., http://localhost:3000/mcp/sse",
-    ),
-    SettingField(
-        key="mcp_auth_token",
-        label="MCP Auth Token",
-        group="MCP Server",
-        secret=True,
-        hint="Optional, if MCP server requires auth",
-    ),
-]
+
+def _parse_mcp_servers_config(
+    config: Dict[str, Any],
+    *,
+    config_path: str,
+) -> List[MCPServerConfig]:
+    raw_servers = config.get("mcp_servers")
+    if raw_servers is None:
+        return []
+
+    if not isinstance(raw_servers, list):
+        print(
+            f"Warning: 'mcp_servers' in {config_path} should be a list of mappings. Ignoring."
+        )
+        return []
+
+    servers: List[MCPServerConfig] = []
+    seen_names: Set[str] = set()
+
+    for idx, entry in enumerate(raw_servers):
+        if not isinstance(entry, dict):
+            print(
+                f"Warning: Entry {idx} of 'mcp_servers' in {config_path} is not a mapping. Skipping."
+            )
+            continue
+
+        name = entry.get("name")
+        if not isinstance(name, str) or not name.strip():
+            print(
+                f"Warning: MCP server entry {idx} in {config_path} is missing a valid 'name'. Skipping."
+            )
+            continue
+        if name in seen_names:
+            print(
+                f"Warning: Duplicate MCP server name '{name}' in {config_path}. Skipping duplicate."
+            )
+            continue
+
+        server_type = entry.get("type")
+        if not isinstance(server_type, str) or not server_type.strip():
+            print(
+                f"Warning: MCP server '{name}' in {config_path} is missing a valid 'type'. Skipping."
+            )
+            continue
+
+        params = entry.get("params", {})
+        if params is None:
+            params = {}
+        if not isinstance(params, dict):
+            print(
+                f"Warning: MCP server '{name}' in {config_path} has non-dict 'params'. Skipping."
+            )
+            continue
+
+        options = entry.get("options")
+        if options is not None and not isinstance(options, dict):
+            print(
+                f"Warning: MCP server '{name}' in {config_path} has non-dict 'options'. Ignoring options."
+            )
+            options = None
+
+        servers.append(
+            MCPServerConfig(
+                name=name,
+                type=server_type,
+                params=params,
+                options=options,
+            )
+        )
+        seen_names.add(name)
+
+    return servers
 
 
 def _substitute_env_vars(value: Any) -> Any:
@@ -248,7 +305,6 @@ def _parse_inline_agent_spec(
         use_safe_agent=use_safe,
         safe_agent_options=safe_options,
         # MCP (not supported for inline agents)
-        uses_mcp=False,
         # UI/UX (minimal for inline agents)
         settings_fields=[],
         theme_color="#2196F3",
@@ -936,11 +992,7 @@ def load_agent_spec_from_yaml(
     )
 
     # --- MCP Configuration ---
-    uses_mcp = config.get("uses_mcp", False)
-    mcp_url_key = config.get("mcp_url_setting_key", "mcp_url")
-    mcp_token_key = config.get("mcp_token_setting_key", "mcp_auth_token")
-    show_mcp_indicator = config.get("show_mcp_status_indicator", True)
-
+    mcp_servers = _parse_mcp_servers_config(config, config_path=str(config_file))
     # Extended MCP config
     mcp_config_from_yaml = config.get("mcp_config", {})
     if not isinstance(mcp_config_from_yaml, dict):
@@ -970,10 +1022,6 @@ def load_agent_spec_from_yaml(
                 )
                 combined_settings_fields_dict[field.key] = field
     # Add default MCP settings if MCP is used
-    if uses_mcp:
-        for field in DEFAULT_MCP_SETTINGS_FIELDS:
-            combined_settings_fields_dict[field.key] = field
-
     # Add/override with custom settings from YAML
     custom_settings = config.get("settings", [])
     if isinstance(custom_settings, list):
@@ -1091,6 +1139,7 @@ def load_agent_spec_from_yaml(
         tool_use_behavior=tool_use_behavior,
         model_settings=model_settings_config if model_settings_config else None,
         mcp_config=mcp_config_from_yaml if mcp_config_from_yaml else None,
+        mcp_servers=mcp_servers,
         output_type=output_type,
         output_type_strict=output_type_strict,
         prompt=prompt,
@@ -1107,10 +1156,6 @@ def load_agent_spec_from_yaml(
         # Tracing Config
         tracing_config=tracing_config,
         # MCP Config
-        uses_mcp=uses_mcp,
-        mcp_url_setting_key=mcp_url_key,
-        mcp_token_setting_key=mcp_token_key,
-        show_mcp_status_indicator=show_mcp_indicator,
         # UI/UX Config
         icon_map=processed_icon_map,  # Pass the processed map
         settings_fields=final_settings_fields,

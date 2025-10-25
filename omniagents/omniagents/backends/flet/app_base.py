@@ -8,7 +8,6 @@ import os
 import uuid  # Added for unique approval IDs
 import time
 from dataclasses import dataclass, field
-from enum import Enum  # Added Enum
 from typing import (
     List,
     Dict,
@@ -17,7 +16,6 @@ from typing import (
     Optional,
     Protocol,
     Awaitable,
-    TYPE_CHECKING,
     Tuple,
 )  # Added Tuple
 
@@ -63,29 +61,11 @@ from omniagents.core.agents.safe import (
 )  # Added SafeAgent and ApprovalResult
 from omniagents.core.debug import Debug
 
-# Use TYPE_CHECKING to avoid circular import issues at runtime
-if TYPE_CHECKING:
-    # Use absolute import if AgentApp is defined elsewhere in the package,
-    # otherwise keep relative if it's defined in this file (which it is).
-    from .app_base import AgentApp  # Keep relative for self-reference check
-    from agents.mcp import MCPServerSse  # <-- Add import here
-
 # Define a protocol for Agent-like objects to avoid circular dependencies
 # and allow for different Agent types (Agent, SafeAgent, etc.)
 # --- MOVED AgentLike protocol to specs.py ---
 
 # --- MOVED SafeAgentOptions dataclass to specs.py ---
-
-
-class MCPConnectionStatus(Enum):
-    """Enum for MCP connection status."""
-
-    UNKNOWN = "unknown"
-    NOT_CONFIGURED = "not_configured"
-    CONNECTING = "connecting"
-    CONNECTED = "connected"
-    ERROR = "error"
-    DISCONNECTED = "disconnected"
 
 
 # --- MOVED AgentSpec dataclass to specs.py ---
@@ -205,13 +185,6 @@ class AgentApp:
         self.agent_instance: Optional[AgentLike] = None
         self.current_settings: Dict[str, Any] = {}
 
-        # MCP State
-        self._mcp_server_instance: Optional["MCPServerSse"] = None  # Use string literal
-        self._mcp_connection_status: MCPConnectionStatus = MCPConnectionStatus.UNKNOWN
-        self._mcp_connection_status_indicator: Optional[ft.Container] = (
-            None  # UI element
-        )
-
         # Internal state for tool approval UI
         self._approval_state: Dict[str, Any] = {
             "active_displays": {},  # Maps approval_id -> UI control
@@ -252,19 +225,12 @@ class AgentApp:
         self.local_session = Session(self.spec.project_slug, self.spec.agent_slug)
         self.conversation = list(self.local_session.history)
 
-        # Attempt initial MCP connection if configured
-        if self.spec.uses_mcp:
-            await self._update_mcp_connection()
-
-        self._build_ui()  # UI depends on initial MCP status potentially
+        self._build_ui()
         self._setup_routing()
         self._show_initial_warnings()
 
         # Set combined cleanup handler
         async def combined_cleanup():
-            # Disconnect MCP first
-            await self._disconnect_mcp()
-            # Then run custom cleanup if provided
             if self.spec.cleanup_handler:
                 await self.spec.cleanup_handler()
 
@@ -393,19 +359,6 @@ class AgentApp:
 
         # Header
         header_right_controls = []
-
-        # Add default MCP status indicator if configured
-        if self.spec.uses_mcp and self.spec.show_mcp_status_indicator:
-            self._mcp_connection_status_indicator = ft.Container(
-                width=12,
-                height=12,
-                border_radius=6,
-                bgcolor=self._get_mcp_status_color(),  # Initial color based on status
-                tooltip=self._get_mcp_status_tooltip(),
-                margin=ft.margin.only(right=8),  # Add some margin
-                alignment=ft.alignment.center,
-            )
-            header_right_controls.append(self._mcp_connection_status_indicator)
 
         # Add settings button
         header_right_controls.append(self.settings_button)
@@ -555,18 +508,11 @@ class AgentApp:
         """Show snackbar warnings based on initial settings (e.g., missing keys)."""
         missing_keys = []
         for field in self.spec.settings_fields:
-            # Check if required field is missing (simple check: empty and has 'Required' in hint)
             if (
                 not self.current_settings.get(field.key)
                 and field.hint
                 and "Required" in field.hint
             ):
-                # Special case: Don't warn about MCP token if URL is also missing
-                if (
-                    field.key == self.spec.mcp_token_setting_key
-                    and not self.current_settings.get(self.spec.mcp_url_setting_key)
-                ):
-                    continue
                 missing_keys.append(field.label)
 
         if missing_keys:
@@ -584,26 +530,6 @@ class AgentApp:
                     ]
                 ),
                 bgcolor=ft.Colors.AMBER_50,
-                open=True,
-            )
-            self.page.overlay.append(snack_bar)
-            self.page.update()
-        # Warn if MCP is configured but connection failed
-        elif (
-            self.spec.uses_mcp
-            and self._mcp_connection_status == MCPConnectionStatus.ERROR
-        ):
-            snack_bar = ft.SnackBar(
-                content=ft.Row(
-                    [
-                        ft.Icon(ft.Icons.ERROR_OUTLINE, color=ft.Colors.RED_600),
-                        ft.Text(
-                            f"MCP Connection Failed. Check URL/Token in Settings.",
-                            color=ft.Colors.BLACK87,
-                        ),
-                    ]
-                ),
-                bgcolor=ft.Colors.RED_50,
                 open=True,
             )
             self.page.overlay.append(snack_bar)
@@ -663,17 +589,11 @@ class AgentApp:
     async def _create_or_update_agent(self):
         """Create or update the agent instance using unified factory."""
         try:
-            # Build unified agent
-            mcp_servers = (
-                [self._mcp_server_instance] if self._mcp_server_instance else None
-            )
-
             self.agent_instance = await create_unified_agent(
                 spec=self.spec,
                 settings=self.current_settings,
                 # Pass approval callback unconditionally so prebuilt SafeAgent works even if safe=False
                 approval_callback=self._request_tool_approval,
-                mcp_servers=mcp_servers,
             )
 
             print(f"Agent instance ready: {type(self.agent_instance)}")
@@ -687,23 +607,6 @@ class AgentApp:
         """Core logic to interact with the agent and update the UI."""
         print(f"Processing message: {user_message}")
         try:
-            # --- Ensure MCP is connected if needed ---
-            if (
-                self.spec.uses_mcp
-                and self._mcp_connection_status != MCPConnectionStatus.CONNECTED
-            ):
-                print(
-                    "MCP not connected, attempting to connect before processing message..."
-                )
-                await self._update_mcp_connection()  # Try to connect/reconnect
-                if self._mcp_connection_status != MCPConnectionStatus.CONNECTED:
-                    # Display error and potentially stop if connection failed
-                    error_msg = "Cannot process request: Failed to connect to required MCP Server. Check Settings."
-                    print(f"ERROR: {error_msg}")
-                    self._display_error_banner(error_msg)
-                    self.page.update()
-                    return  # Stop processing if MCP is required but unavailable
-
             # --- Build or reuse agent instance ---
             if self.agent_instance is None:
                 print("Building agent instance...")
@@ -1444,177 +1347,6 @@ class AgentApp:
         except Exception:
             pass
 
-    def _get_mcp_status_color(self) -> str:
-        """Returns the color for the MCP status indicator."""
-        status_map = {
-            MCPConnectionStatus.UNKNOWN: ft.Colors.ORANGE,
-            MCPConnectionStatus.NOT_CONFIGURED: ft.Colors.GREY_400,
-            MCPConnectionStatus.CONNECTING: ft.Colors.YELLOW_700,
-            MCPConnectionStatus.CONNECTED: ft.Colors.GREEN,
-            MCPConnectionStatus.ERROR: ft.Colors.RED,
-            MCPConnectionStatus.DISCONNECTED: ft.Colors.ORANGE,
-        }
-        return status_map.get(self._mcp_connection_status, ft.Colors.ORANGE)
-
-    def _get_mcp_status_tooltip(self) -> str:
-        """Returns the tooltip text for the MCP status indicator."""
-        status_map = {
-            MCPConnectionStatus.UNKNOWN: "MCP Status: Unknown",
-            MCPConnectionStatus.NOT_CONFIGURED: "MCP Not Configured",
-            MCPConnectionStatus.CONNECTING: "MCP Connecting...",
-            MCPConnectionStatus.CONNECTED: "MCP Connected",
-            MCPConnectionStatus.ERROR: "MCP Connection Error",
-            MCPConnectionStatus.DISCONNECTED: "MCP Disconnected",
-        }
-        return status_map.get(self._mcp_connection_status, "MCP Status: Unknown")
-
-    def _update_mcp_ui_indicator(self):
-        """Updates the UI element for MCP status."""
-        if self.page and self._mcp_connection_status_indicator:
-            self._mcp_connection_status_indicator.bgcolor = self._get_mcp_status_color()
-            self._mcp_connection_status_indicator.tooltip = (
-                self._get_mcp_status_tooltip()
-            )
-            # Consider if self.page.update() is needed here or batched later
-            # It's usually safer to batch updates, but for immediate feedback:
-            self.page.update()
-
-    async def _update_mcp_connection(self):
-        """Connects, disconnects, or updates the MCP server instance based on settings."""
-        prev_status = self._mcp_connection_status
-
-        if not self.spec.uses_mcp:
-            if self._mcp_server_instance:  # Disconnect if MCP was used but now disabled
-                await self._disconnect_mcp()
-            self._mcp_connection_status = MCPConnectionStatus.NOT_CONFIGURED
-            self._update_mcp_ui_indicator()
-            return
-
-        mcp_url = self.current_settings.get(self.spec.mcp_url_setting_key)
-        mcp_auth_token = self.current_settings.get(self.spec.mcp_token_setting_key)
-
-        if not mcp_url:
-            print("MCP URL not configured in settings.")
-            if self._mcp_server_instance:
-                await self._disconnect_mcp()
-            self._mcp_connection_status = MCPConnectionStatus.NOT_CONFIGURED
-            self._update_mcp_ui_indicator()
-            return
-
-        # --- Prepare connection parameters ---
-        mcp_params = {
-            "url": mcp_url,
-            "timeout": 30,
-            "sse_read_timeout": 600,
-            "headers": {},
-        }
-        if mcp_auth_token:
-            mcp_params["headers"]["Authorization"] = f"Bearer {mcp_auth_token}"
-
-        # --- Determine if reconnection or update is needed ---
-        should_connect = False
-        needs_recreate = False
-        if self._mcp_server_instance is None:
-            print("No existing MCP instance, creating new one.")
-            should_connect = True
-            needs_recreate = True
-        elif self._mcp_server_instance.params.get(
-            "url"
-        ) != mcp_url or self._mcp_server_instance.params.get("headers", {}).get(
-            "Authorization"
-        ) != mcp_params[
-            "headers"
-        ].get(
-            "Authorization"
-        ):
-            print("MCP configuration changed, recreating connection.")
-            await self._disconnect_mcp()  # Disconnect old one first
-            should_connect = True
-            needs_recreate = True
-        elif (
-            self._mcp_server_instance._sse_client is None
-            or self._mcp_server_instance._sse_client.is_closed
-        ):
-            print(
-                "Existing MCP instance found but connection is closed, attempting to reconnect."
-            )
-            should_connect = True  # Try to reconnect existing instance
-        else:
-            print("Reusing existing and connected MCP server instance.")
-            self._mcp_connection_status = (
-                MCPConnectionStatus.CONNECTED
-            )  # Already connected
-            self._update_mcp_ui_indicator()
-            return  # Nothing more to do
-
-        # --- Attempt connection/reconnection ---
-        if should_connect:
-            print("Attempting to connect/reconnect to MCP server...")
-            self._mcp_connection_status = MCPConnectionStatus.CONNECTING
-            self._update_mcp_ui_indicator()
-            try:
-                if needs_recreate or self._mcp_server_instance is None:
-                    # Dynamically import here if needed for instantiation
-                    from agents.mcp import MCPServerSse
-
-                    self._mcp_server_instance = MCPServerSse(
-                        name=f"{self.spec.name}_MCP_Server",  # Generic name based on app
-                        params=mcp_params,
-                    )
-                else:  # Update params if reconnecting existing instance
-                    self._mcp_server_instance.params = mcp_params
-
-                await self._mcp_server_instance.__aenter__()  # Connects/reconnects
-                self._mcp_connection_status = MCPConnectionStatus.CONNECTED
-                print(f"MCP Server connected successfully to {mcp_url}")
-            except Exception as e_conn:
-                print(f"############# MCP CONNECTION FAILED #############")
-                print(f"Error connecting to MCP server at {mcp_url}: {e_conn}")
-                print(f"###############################################")
-                self._mcp_connection_status = MCPConnectionStatus.ERROR
-                # Don't keep the failed instance
-                if self._mcp_server_instance:
-                    try:  # Attempt cleanup even on connection error
-                        await self._mcp_server_instance.__aexit__(None, None, None)
-                    except Exception:
-                        pass  # Ignore cleanup errors here
-                self._mcp_server_instance = None
-                # Reset agent if connection fails? Depends on desired behavior.
-                # For now, just show error. Agent build/run will handle missing MCP.
-            finally:
-                self._update_mcp_ui_indicator()  # Update UI with final status
-
-        # If MCP status changed and we have an agent, rebuild it
-        if (
-            self._mcp_connection_status != prev_status
-            and self.agent_instance is not None
-            and prev_status != MCPConnectionStatus.UNKNOWN
-        ):
-            print("MCP connection status changed, rebuilding agent...")
-            try:
-                await self._create_or_update_agent()
-            except Exception as e:
-                print(f"Error rebuilding agent after MCP status change: {e}")
-                # Reset to None so it gets rebuilt on next message
-                self.agent_instance = None
-
-    async def _disconnect_mcp(self):
-        """Gracefully disconnects the MCP server instance."""
-        if self._mcp_server_instance:
-            print("Disconnecting MCP server...")
-            try:
-                await self._mcp_server_instance.__aexit__(None, None, None)
-                print("MCP connection closed.")
-                self._mcp_connection_status = MCPConnectionStatus.DISCONNECTED
-            except Exception as e_close:
-                print(f"Error closing MCP connection: {e_close}")
-                self._mcp_connection_status = (
-                    MCPConnectionStatus.ERROR
-                )  # Error state if close fails
-            finally:
-                self._mcp_server_instance = None  # Clear instance ref
-                self._update_mcp_ui_indicator()
-
     # --- Navigation ---
 
     def _create_main_view(self):
@@ -1753,24 +1485,11 @@ class AgentApp:
     async def _handle_settings_save(self, new_settings: Dict[str, Any]):
         """Save updated settings, update MCP, and navigate back."""
         print("Saving settings...")
-        old_mcp_url = self.current_settings.get(self.spec.mcp_url_setting_key)
-        old_mcp_token = self.current_settings.get(self.spec.mcp_token_setting_key)
-
         self.current_settings = new_settings
         # --- AWAIT the async save_settings --- #
         await save_settings(
             self.page, self.spec.client_storage_prefix, self.current_settings
         )
-
-        # Check if MCP settings changed and update connection if needed
-        mcp_settings_changed = self.spec.uses_mcp and (
-            new_settings.get(self.spec.mcp_url_setting_key) != old_mcp_url
-            or new_settings.get(self.spec.mcp_token_setting_key) != old_mcp_token
-        )
-
-        if mcp_settings_changed:
-            print("MCP settings changed, updating connection...")
-            await self._update_mcp_connection()  # Reconnect/disconnect based on new settings
 
         # Rebuild agent with new settings
         if self.agent_instance is not None:
@@ -1782,26 +1501,9 @@ class AgentApp:
                 # Reset to None so it gets rebuilt on next message
                 self.agent_instance = None
 
-        # Rebuild header controls *after* potential MCP update to reflect status
+        # Rebuild header controls
         if self.header:
             header_right_controls = []
-            if self.spec.uses_mcp and self.spec.show_mcp_status_indicator:
-                # Ensure indicator exists and reflects current status
-                if not self._mcp_connection_status_indicator:
-                    self._mcp_connection_status_indicator = ft.Container(
-                        width=12,
-                        height=12,
-                        border_radius=6,
-                        margin=ft.margin.only(right=8),
-                    )
-                self._mcp_connection_status_indicator.bgcolor = (
-                    self._get_mcp_status_color()
-                )
-                self._mcp_connection_status_indicator.tooltip = (
-                    self._get_mcp_status_tooltip()
-                )
-                header_right_controls.append(self._mcp_connection_status_indicator)
-
             header_right_controls.append(
                 self.settings_button
             )  # Add settings button back

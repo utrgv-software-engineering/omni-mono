@@ -79,6 +79,14 @@ class HandoffConfig:
 
 
 @dataclass
+class MCPServerConfig:
+    name: str
+    type: str
+    params: Dict[str, Any] = field(default_factory=dict)
+    options: Optional[Dict[str, Any]] = None
+
+
+@dataclass
 class AgentSpec:
     """Specification for configuring an AgentApp."""
 
@@ -111,6 +119,7 @@ class AgentSpec:
         None  # Model-specific settings (temperature, top_p, etc.)
     )
     mcp_config: Optional[Dict[str, Any]] = None  # MCP configuration
+    mcp_servers: List[MCPServerConfig] = field(default_factory=list)
     output_type: Optional[type] = None  # Output type for structured responses
     output_type_strict: bool = True  # Whether to use strict JSON schema for output_type
     prompt: Optional[Dict[str, Any]] = None  # Prompt configuration for Responses API
@@ -145,10 +154,6 @@ class AgentSpec:
     tracing_config: Optional[Dict[str, Any]] = None
 
     # --- MCP Configuration ---
-    uses_mcp: bool = False
-    mcp_url_setting_key: str = "mcp_url"
-    mcp_token_setting_key: str = "mcp_auth_token"
-    show_mcp_status_indicator: bool = True
 
     # --- UI/UX Configuration ---
     icon_map: Dict[str, str] = field(default_factory=dict)

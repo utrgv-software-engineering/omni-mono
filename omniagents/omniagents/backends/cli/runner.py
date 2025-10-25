@@ -2,17 +2,18 @@ import os
 import sys
 import json
 import asyncio
+from contextlib import AsyncExitStack
 from types import SimpleNamespace
 from datetime import datetime
 from typing import List, Optional, Tuple, Awaitable
 
 from dotenv import load_dotenv
 from agents import RunConfig, ItemHelpers
-from agents.mcp import MCPServerSse
 
 from omniagents.core.config.loader import load_agent_spec_from_yaml
 from omniagents.core.agents.factory import create_unified_agent
 from omniagents.core.agents.safe import SafeAgent
+from omniagents.core.agents.mcp import build_mcp_servers
 from omniagents.core.session import Session
 from omniagents.core.debug import Debug
 
@@ -134,25 +135,13 @@ async def run_cli(config_path: str | None = None, args=None, spec=None) -> None:
         spec.model_name = settings.get("model_name")
 
     # Prepare MCP server context if used
-    mcp_ctx = None
-    if spec.uses_mcp:
-        mcp_url = settings.get(spec.mcp_url_setting_key)
-        if not mcp_url:
-            print(
-                f"Warning: MCP URL not set (environment '{spec.mcp_url_setting_key.upper()}')."
-            )
-            mcp_url = ""
-        mcp_params = {
-            "url": mcp_url,
-            "timeout": 30,
-            "sse_read_timeout": 600,
-        }
-        token = settings.get(spec.mcp_token_setting_key)
-        if token:
-            mcp_params["headers"] = {"Authorization": f"Bearer {token}"}
-        if Debug.enabled():
-            print(f"MCP parameters: {mcp_params}")
-        mcp_ctx = MCPServerSse(name=f"{spec.name} MCP Server", params=mcp_params)
+    mcp_server_configs = []
+    if spec.mcp_servers:
+        try:
+            mcp_server_configs = build_mcp_servers(spec, settings)
+        except Exception as exc:
+            print(f"Warning: Failed to build MCP servers: {exc}")
+            mcp_server_configs = []
 
     # Choose approval callback (always determine one so we can pass it through)
     if spec.safe_agent_options.skip_approvals:
@@ -160,9 +149,9 @@ async def run_cli(config_path: str | None = None, args=None, spec=None) -> None:
     else:
         approval_callback = cli_approval_callback
 
-    async def _chat_loop(mcp_server):
+    async def _chat_loop(mcp_servers):
         # Build unified agent using factory
-        mcp_list = [mcp_server] if mcp_server else None
+        mcp_list = mcp_servers if mcp_servers else None
 
         # Pass approval callback unconditionally so prebuilt SafeAgent works even if safe=False
         approval_cb = approval_callback
@@ -282,10 +271,17 @@ async def run_cli(config_path: str | None = None, args=None, spec=None) -> None:
             print(f"\n⏺ {message_output}\n")
 
     # Run chat loop within MCP context if configured
-    if mcp_ctx:
-        # Use the MCPServerSse as an async context manager
-        async with mcp_ctx as server:
-            await _chat_loop(server)
+    if mcp_server_configs:
+        async with AsyncExitStack() as stack:
+            active_servers = []
+            for server in mcp_server_configs:
+                if hasattr(server, "__aenter__") and hasattr(server, "__aexit__"):
+                    active_servers.append(await stack.enter_async_context(server))
+                else:
+                    await server.connect()
+                    stack.push_async_callback(server.cleanup)
+                    active_servers.append(server)
+            await _chat_loop(active_servers)
     else:
         # No MCP; run chat loop directly
-        await _chat_loop(None)
+        await _chat_loop([])
