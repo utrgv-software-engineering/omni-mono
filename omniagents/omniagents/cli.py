@@ -160,8 +160,8 @@ def main():
         "--mode",
         "-m",
         choices=["gui", "cli", "server", "bubbletea", "tui"],
-        default="gui",
-        help="Run mode: 'gui' (default) for graphical UI, 'cli' for command-line interface, 'server' for JSON-RPC server, 'bubbletea'/'tui' for Bubble Tea TUI",
+        default="tui",
+        help="Run mode: 'tui' (default) for Bubble Tea TUI, 'gui' for graphical UI, 'cli' for command-line interface, 'server' for JSON-RPC server",
     )
     run_parser.add_argument(
         "--project", "-P", type=str, help="Path to project.yml (dbt-style)."
@@ -184,6 +184,11 @@ def main():
         type=str,
         default=None,
         help="Resume a previous CLI session using this identifier.",
+    )
+    run_parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Show TUI session picker (Bubble Tea mode only).",
     )
     # Unified SafeAgent controls (strict)
     run_parser.add_argument(
@@ -601,8 +606,8 @@ def main():
         "--mode",
         "-m",
         choices=["gui", "cli", "server", "bubbletea", "tui"],
-        default="gui",
-        help="Run mode: 'gui' (default) for graphical UI, 'cli' for command-line interface, 'server' for JSON-RPC server, 'bubbletea'/'tui' for Bubble Tea TUI",
+        default="tui",
+        help="Run mode: 'tui' (default) for Bubble Tea TUI, 'gui' for graphical UI, 'cli' for command-line interface, 'server' for JSON-RPC server",
     )
     agent_run.add_argument(
         "--project", "-P", type=str, help="Path to project.yml (dbt-style)."
@@ -625,6 +630,11 @@ def main():
         type=str,
         default=None,
         help="Resume a previous CLI session using this identifier.",
+    )
+    agent_run.add_argument(
+        "--resume",
+        action="store_true",
+        help="Show TUI session picker (Bubble Tea mode only).",
     )
     agent_run.add_argument(
         "--approvals",
@@ -1064,12 +1074,20 @@ def main():
         # Initialize debug system with CLI flag
         Debug.init(cli_flag=args.debug)
 
+        resume_flag = bool(getattr(args, "resume", False))
+        if resume_flag and args.mode not in ("bubbletea", "tui"):
+            print("Error: --resume is only supported in Bubble Tea TUI mode.")
+            sys.exit(2)
+
         # Pass all relevant args to the backend
         kwargs = {
             "config_path": resolved_config_path,
             "args": args,  # Pass all CLI args for backend-specific handling
             "session_id": getattr(args, "session_id", None),
         }
+
+        if resume_flag:
+            kwargs["resume"] = True
 
         # Add server-specific kwargs if in server mode
         if args.mode == "server":
@@ -1260,11 +1278,17 @@ def main():
                     )
                     sys.exit(2)
             Debug.init(cli_flag=args.debug)
+            resume_flag = bool(getattr(args, "resume", False))
+            if resume_flag and args.mode not in ("bubbletea", "tui"):
+                print("Error: --resume is only supported in Bubble Tea TUI mode.")
+                sys.exit(2)
             kwargs = {
                 "config_path": resolved_config_path,
                 "args": args,
                 "session_id": getattr(args, "session_id", None),
             }
+            if resume_flag:
+                kwargs["resume"] = True
             if args.mode == "server":
                 kwargs.update(
                     {
