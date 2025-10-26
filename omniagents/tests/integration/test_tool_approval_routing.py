@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 
 import pytest
 
@@ -189,6 +190,78 @@ async def test_tool_approval_queues_when_no_channels():
     approval_task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await approval_task
+
+
+@pytest.mark.asyncio
+async def test_queued_tool_approval_replays_on_start_run(monkeypatch):
+    spec = AgentSpec(
+        name="Test",
+        header_title="Test",
+        page_title="Test",
+        welcome_text="hi",
+        client_storage_prefix="test",
+        get_agent_instructions=lambda: "",
+        build_agent=None,
+    )
+
+    service = AgentService(spec)
+    session = service._session_manager.get_or_create("sess")
+
+    approval_task = asyncio.create_task(
+        service._request_tool_approval("tool", "{}", session, None, _run_id="run")
+    )
+
+    await asyncio.sleep(0)
+
+    channel = FakeChannel("reconnect")
+    service.channel = channel
+
+    async def fake_stream_agent(agent, prompt, session_arg, channel_arg, **kwargs):
+        return {}
+
+    monkeypatch.setattr(
+        "omniagents.core.agents.service.stream_agent",
+        fake_stream_agent,
+    )
+
+    try:
+        result = await service.start_run("resume", session_id=session.id)
+
+        async def wait_for_request():
+            for _ in range(50):
+                for method, payload in channel.events:
+                    if (
+                        method == "client_request"
+                        and payload.get("function") == "ui.request_tool_approval"
+                    ):
+                        return payload
+                await asyncio.sleep(0)
+            raise AssertionError("approval request not delivered")
+
+        payload = await wait_for_request()
+
+        await service.client_response(
+            request_id=payload["request_id"],
+            ok=True,
+            result={
+                "approved": True,
+                "always_approve": False,
+                "error_message": None,
+            },
+            error=None,
+        )
+
+        result_tuple = await approval_task
+        assert result_tuple == (True, False, None)
+        assert session.pending_events == []
+
+        session_ref = service._session_manager.get_or_create(result["session_id"])
+        await asyncio.wait_for(session_ref.current_task, timeout=1)
+    finally:
+        if not approval_task.done():
+            approval_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await approval_task
 
 
 @pytest.mark.asyncio
