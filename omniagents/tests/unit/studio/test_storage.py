@@ -89,6 +89,55 @@ def test_sqlite_storage_migrates_legacy_categories(tmp_path):
         store.close()
 
 
+def test_sqlite_storage_migrates_categories_without_failure_table(tmp_path):
+    db_path = tmp_path / "legacy_no_failure.db"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            """
+            CREATE TABLE analysis (
+                group_id TEXT PRIMARY KEY,
+                project TEXT NOT NULL,
+                marked_for_analysis BOOLEAN,
+                judgment TEXT,
+                notes TEXT,
+                analyzed_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO analysis (group_id, project) VALUES (?, ?)",
+            ("group-2", "proj"),
+        )
+        conn.execute(
+            "CREATE TABLE analysis_categories (group_id TEXT, category_id INTEGER)"
+        )
+        conn.executemany(
+            "INSERT INTO analysis_categories (group_id, category_id) VALUES (?, ?)",
+            [("group-2", 3), ("group-2", 1)],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    store = SQLiteStorage(str(db_path))
+    try:
+        row = store.conn.execute(
+            "SELECT categories FROM analysis WHERE group_id = ?",
+            ("group-2",),
+        ).fetchone()
+        assert row is not None
+        categories = json.loads(row[0])
+        assert categories == ["1", "3"]
+        remaining = store.conn.execute(
+            "SELECT COUNT(*) FROM analysis_categories"
+        ).fetchone()[0]
+        assert remaining == 0
+    finally:
+        store.close()
+
+
 def test_insert_and_bulk_insert_assign_sequence_and_preserve_error(storage):
     storage.insert_trace(
         {
@@ -130,6 +179,40 @@ def test_insert_and_bulk_insert_assign_sequence_and_preserve_error(storage):
     payload = json.loads(spans[2]["data"])
     assert payload["id"] == "span-3"
     assert payload["span_data"]["type"] == "tool"
+
+
+def test_get_traces_by_group_and_workflow_names(storage):
+    storage.insert_trace(
+        {
+            "id": "trace-1",
+            "workflow_name": "beta",
+            "group_id": "group-x",
+        }
+    )
+    storage.insert_trace(
+        {
+            "id": "trace-2",
+            "workflow_name": "Alpha",
+            "group_id": "group-x",
+        }
+    )
+    storage.insert_trace(
+        {
+            "id": "trace-3",
+            "workflow_name": "",
+            "group_id": "group-y",
+        }
+    )
+    storage.insert_trace(
+        {
+            "id": "trace-4",
+            "group_id": "group-y",
+        }
+    )
+    group_traces = storage.get_traces_by_group("group-x")
+    assert {row["trace_id"] for row in group_traces} == {"trace-1", "trace-2"}
+    names = storage.get_workflow_names()
+    assert names == ["Alpha", "beta"]
 
 
 def test_analysis_helpers_manage_categories_and_counts(storage):
@@ -285,4 +368,48 @@ def test_processor_augments_response_spans(tmp_path, monkeypatch):
     assert payload["span_data"]["response"] == {"text": "hello"}
     assert payload["span_data"]["input"] == {"prompt": "hi"}
     assert spans[0]["span_type"] == "response"
+    processor.shutdown()
+
+
+def test_processor_handles_generation_span_inputs(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("OMNIAGENTS_HOME", str(home))
+    processor = StudioTraceProcessor(default_project="fallback")
+    trace = DummyTrace(
+        "trace-gen",
+        metadata={"agentio_project": "project-gen"},
+        group_id="group-gen",
+        workflow_name="wf",
+    )
+    processor.on_trace_start(trace)
+    import agents.tracing as tracing_module
+
+    monkeypatch.setattr(tracing_module, "get_current_trace", lambda: trace)
+    span = DummySpan(
+        "span-gen",
+        "trace-gen",
+        span_type="generation",
+        name="generate",
+        input_payload={"prompt": "content"},
+    )
+    processor.on_span_end(span)
+    storage = processor._get_storage("project-gen")
+    spans = storage.get_spans_for_trace("trace-gen")
+    assert len(spans) == 1
+    payload = json.loads(spans[0]["data"])
+    assert payload["span_data"]["input"] == {"prompt": "content"}
+    assert "response" not in payload["span_data"]
+    processor.shutdown()
+
+
+def test_processor_skips_span_without_active_trace(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("OMNIAGENTS_HOME", str(home))
+    processor = StudioTraceProcessor(default_project="fallback")
+    import agents.tracing as tracing_module
+
+    monkeypatch.setattr(tracing_module, "get_current_trace", lambda: None)
+    span = DummySpan("span-orphan", "trace-missing", span_type="generation", name="gen")
+    processor.on_span_end(span)
+    assert processor._storages == {}
     processor.shutdown()
