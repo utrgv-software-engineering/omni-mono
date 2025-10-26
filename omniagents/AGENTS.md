@@ -8,3 +8,10 @@
    - Surface the situation to the user and wait for guidance.
 4. If you began on a clean tree and have completed a coherent scope of work, you may suggest staging, committing, opening PRs, bumping versions, or publishing—follow the project’s conventions.
 5. When unsure about untracked or modified files, ask the user before running any Git operation that could overwrite their work.
+6. Run the Black formatter on all touched Python files before every commit (`black <paths>`).
+
+## GitHub CLI Examples
+- Push the current branch: `git push --set-upstream origin <branch>`
+- Open a pull request: `gh pr create --title "<title>" --body "<body>"`
+- Read the current PR: `gh pr view`
+- Read a specific PR: `gh pr view <number>`
