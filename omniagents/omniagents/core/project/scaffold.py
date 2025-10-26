@@ -407,9 +407,13 @@ def scaffold_guardrail(
     created: List[str] = []
     normal_kind = str(kind).strip().lower()
     if normal_kind == "input":
-        template = "guardrails/input_async.py" if make_async else "guardrails/input_sync.py"
+        template = (
+            "guardrails/input_async.py" if make_async else "guardrails/input_sync.py"
+        )
     else:
-        template = "guardrails/output_async.py" if make_async else "guardrails/output_sync.py"
+        template = (
+            "guardrails/output_async.py" if make_async else "guardrails/output_sync.py"
+        )
     _write_template(file_path, template, True, created, sanitized=sanitized)
     return created, str(root)
 
@@ -425,9 +429,7 @@ def scaffold_server_function(
     if file_path.exists() and not force:
         raise FileExistsError(f"File exists: {file_path}")
     created: List[str] = []
-    template = (
-        "server_functions/async.py" if make_async else "server_functions/sync.py"
-    )
+    template = "server_functions/async.py" if make_async else "server_functions/sync.py"
     _write_template(file_path, template, True, created, sanitized=sanitized)
     return created, str(root)
 
@@ -522,13 +524,13 @@ def scaffold_judge(
                     if changed:
                         if body.strip().startswith("("):
                             indent = "    "
-                            inner = ",\n".join(f"{indent}{name}" for name in names) + ","
+                            inner = (
+                                ",\n".join(f"{indent}{name}" for name in names) + ","
+                            )
                             new_body = f"(\n{inner}\n)"
                         else:
                             new_body = ", ".join(names)
-                        new_line = (
-                            f"from omniagents.core.evaluation import {new_body}"
-                        )
+                        new_line = f"from omniagents.core.evaluation import {new_body}"
                         updated = (
                             updated[: match.start()] + new_line + updated[match.end() :]
                         )

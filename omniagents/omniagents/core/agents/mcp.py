@@ -48,17 +48,25 @@ def _instantiate_server(cfg: MCPServerConfig, params: Dict[str, Any]) -> MCPServ
     }
     if server_type in {"http", "sse"}:
         if "url" not in params or not params["url"]:
-            raise ValueError(f"MCP server '{cfg.name}' requires a url for HTTP/SSE transport")
+            raise ValueError(
+                f"MCP server '{cfg.name}' requires a url for HTTP/SSE transport"
+            )
         return MCPServerSse(params, **common_kwargs)
     if server_type == "stdio":
         if "command" not in params or not params["command"]:
-            raise ValueError(f"MCP server '{cfg.name}' requires a command for stdio transport")
+            raise ValueError(
+                f"MCP server '{cfg.name}' requires a command for stdio transport"
+            )
         return MCPServerStdio(params, **common_kwargs)
     if server_type == "streamable_http":
         if "url" not in params or not params["url"]:
-            raise ValueError(f"MCP server '{cfg.name}' requires a url for streamable_http transport")
+            raise ValueError(
+                f"MCP server '{cfg.name}' requires a url for streamable_http transport"
+            )
         return MCPServerStreamableHttp(params, **common_kwargs)
-    raise ValueError(f"Unsupported MCP server type '{cfg.type}' for server '{cfg.name}'")
+    raise ValueError(
+        f"Unsupported MCP server type '{cfg.type}' for server '{cfg.name}'"
+    )
 
 
 def build_mcp_servers(spec: AgentSpec, settings: Dict[str, Any]) -> List[MCPServer]:

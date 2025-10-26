@@ -163,7 +163,9 @@ async def _default_build_agent(
         try:
             provided_mcp_servers = build_mcp_servers(spec, settings)
         except Exception as exc:
-            logger.error(f"Failed to instantiate MCP servers for agent '{spec.name}': {exc}")
+            logger.error(
+                f"Failed to instantiate MCP servers for agent '{spec.name}': {exc}"
+            )
             provided_mcp_servers = []
     mcp_servers_list = provided_mcp_servers
     handoff_description = spec.handoff_description

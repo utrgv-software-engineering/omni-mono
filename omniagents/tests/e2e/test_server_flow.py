@@ -58,6 +58,7 @@ class TestServerUnifiedAgent:
         spec.use_safe_agent = False
         spec.max_turns = 10
         spec.get_agent_instructions = Mock(return_value="Test instructions")
+
         async def _builder(settings, mcp_server, stub_app):
             return DummyAgent()
 
@@ -103,7 +104,9 @@ class TestServerUnifiedAgent:
         return sess
 
     @pytest.mark.asyncio
-    async def test_agent_creation_with_unified_factory(self, mock_spec, mock_channel, mock_session):
+    async def test_agent_creation_with_unified_factory(
+        self, mock_spec, mock_channel, mock_session
+    ):
         """Service should invoke spec.build_agent with expected arguments."""
         service = AgentService(mock_spec)
         service.channel = mock_channel
@@ -130,7 +133,9 @@ class TestServerUnifiedAgent:
         mock_stream.assert_awaited()
 
     @pytest.mark.asyncio
-    async def test_safe_agent_approval_callback(self, mock_spec, mock_channel, mock_session):
+    async def test_safe_agent_approval_callback(
+        self, mock_spec, mock_channel, mock_session
+    ):
         """Test that approval callback is passed for SafeAgent."""
         mock_spec.use_safe_agent = True
 
@@ -148,12 +153,13 @@ class TestServerUnifiedAgent:
                 captured_kwargs.update(kwargs)
                 super().__init__("SafeAgent")
 
-        with patch(
-            "omniagents.core.agents.service.SafeAgent", DummySafeAgent
-        ), patch(
-            "omniagents.core.agents.service.stream_agent",
-            new_callable=AsyncMock,
-            return_value={},
+        with (
+            patch("omniagents.core.agents.service.SafeAgent", DummySafeAgent),
+            patch(
+                "omniagents.core.agents.service.stream_agent",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
         ):
             await service.start_run("Hello", session_id="test-123")
             await _drain_run_tasks()
@@ -203,7 +209,9 @@ class TestServerUnifiedAgent:
         with patch("omniagents.core.runtime.bridge.ItemHelpers") as mock_helpers:
             mock_helpers.text_message_output.return_value = "Hello!"
 
-            with patch("agents.Runner.run_streamed", return_value=mock_stream_result) as mock_run:
+            with patch(
+                "agents.Runner.run_streamed", return_value=mock_stream_result
+            ) as mock_run:
                 # Run stream_agent
                 await stream_agent(
                     mock_agent, "Test prompt", mock_session, mock_channel
@@ -219,7 +227,9 @@ class TestServerUnifiedAgent:
                 assert any(call[0][0] == "message_output" for call in calls)
 
     @pytest.mark.asyncio
-    async def test_agent_builder_called_each_run(self, mock_spec, mock_channel, mock_session):
+    async def test_agent_builder_called_each_run(
+        self, mock_spec, mock_channel, mock_session
+    ):
         """Service should build a fresh agent for each run."""
         service = AgentService(mock_spec)
         service.channel = mock_channel

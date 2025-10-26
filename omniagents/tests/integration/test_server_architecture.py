@@ -81,7 +81,9 @@ async def test_agent_with_runner():
     mock_result.stream_events = mock_stream_events
 
     # Mock dependencies
-    with patch("agents.Runner.run_streamed", return_value=mock_result) as mock_run_streamed:
+    with patch(
+        "agents.Runner.run_streamed", return_value=mock_result
+    ) as mock_run_streamed:
 
         # Run stream_agent
         await stream_agent(mock_agent, "Test", session, mock_channel)
