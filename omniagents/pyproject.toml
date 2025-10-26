@@ -36,6 +36,7 @@ studio-server = [
 all = ["omniagents[cli,flet,server,studio,studio-server]"]
 dev = [
     "pytest",
+    "pytest-asyncio",
     "bump2version",
     "black",
 ]
