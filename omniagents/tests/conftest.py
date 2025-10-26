@@ -245,6 +245,31 @@ except ModuleNotFoundError:
     agents.set_default_openai_client = set_default_openai_client
     agents.set_default_openai_api = set_default_openai_api
     agents.set_tracing_disabled = set_tracing_disabled
+
+    agent_output_mod = types.ModuleType("agents.agent_output")
+
+    class AgentOutputSchema:
+        def __init__(self, output_type, strict_json_schema=True):
+            self._output_type = output_type
+            self._strict = bool(strict_json_schema)
+
+        def is_plain_text(self):
+            return self._output_type in (None, str)
+
+        def json_schema(self):
+            mapping = {
+                dict: "object",
+                list: "array",
+                bool: "boolean",
+                int: "integer",
+                float: "number",
+                str: "string",
+            }
+            type_name = mapping.get(self._output_type, "object")
+            return {"type": type_name, "strict": self._strict}
+
+    agent_output_mod.AgentOutputSchema = AgentOutputSchema
+    sys.modules.setdefault("agents.agent_output", agent_output_mod)
     sys.modules.setdefault("agents", agents)
 
 

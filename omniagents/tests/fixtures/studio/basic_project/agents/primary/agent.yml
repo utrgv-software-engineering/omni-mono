@@ -1,0 +1,31 @@
+name: primary
+label: Primary Agent
+description: Primary integration fixture
+model: gpt-4o
+instructions_file: instructions.md
+tools:
+  - greet_tool
+model_settings:
+  temperature: 0.4
+  top_p: 0.9
+input_guardrails:
+  - input_policy
+output_guardrails:
+  - output_policy
+output_type: dict
+output_type_strict: false
+output_schema:
+  type: object
+  properties:
+    summary:
+      type: string
+    count:
+      type: integer
+  required:
+    - summary
+use_safe_agent: true
+safe_agent_options:
+  skip_approvals: false
+  halt_on_rejection: true
+  safe_tool_names:
+    - greet_tool
