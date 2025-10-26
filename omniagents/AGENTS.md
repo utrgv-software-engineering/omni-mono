@@ -9,6 +9,8 @@
 4. If you began on a clean tree and have completed a coherent scope of work, you may suggest staging, committing, opening PRs, bumping versions, or publishing—follow the project’s conventions.
 5. When unsure about untracked or modified files, ask the user before running any Git operation that could overwrite their work.
 6. Run the Black formatter on all touched Python files before every commit (`black <paths>`).
+7. Do **not** stage or commit `docs/TESTING_ISSUES.md` from inside a worktree. Only update it when editing the main repo root, and leave the worktree copy untouched even if diffed.
+8. When told to continue autonomously through PR creation, follow through without additional checkpoints unless new blockers appear.
 
 ## GitHub CLI Examples
 - Push the current branch: `git push --set-upstream origin <branch>`
