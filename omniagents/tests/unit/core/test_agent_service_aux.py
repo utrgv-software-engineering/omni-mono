@@ -122,6 +122,15 @@ class SilentChannel:
         self.calls.append((method, args or {}))
 
 
+class FailingChannel:
+    def __init__(self):
+        self.calls: list[tuple[str, dict]] = []
+
+    async def async_call(self, method: str, args: dict | None = None):
+        self.calls.append((method, args or {}))
+        raise RuntimeError("fail")
+
+
 @pytest.mark.asyncio
 async def test_request_client_function_waits_for_response():
     service = build_service()
@@ -227,6 +236,50 @@ async def test_set_client_status_reflects_delivery(delivered):
 
 
 @pytest.mark.asyncio
+async def test_safe_notify_returns_false_on_exception():
+    service = build_service()
+    channel = FailingChannel()
+
+    result = await service._safe_notify(channel, "event", {"value": 1})
+
+    assert result is False
+    assert channel.calls == [("event", {"value": 1})]
+
+
+@pytest.mark.asyncio
+async def test_broadcast_session_removes_dead_channels():
+    service = build_service()
+    session = service._session_manager.get_or_create()
+    good = SilentChannel()
+    bad = FailingChannel()
+    session.channels.extend([good, bad])
+
+    delivered = await service._broadcast_session(session, "event", {"k": "v"})
+
+    assert delivered is True
+    assert good.calls == [("event", {"k": "v"})]
+    assert bad not in session.channels
+
+
+@pytest.mark.asyncio
+async def test_broadcast_session_queues_when_no_channels():
+    service = build_service()
+    session = service._session_manager.get_or_create()
+    session.channels.clear()
+    session.pending_events = []
+
+    delivered = await service._broadcast_session(
+        session,
+        "notice",
+        {"x": 1},
+        queue_if_unseen=True,
+    )
+
+    assert delivered is False
+    assert session.pending_events == [("notice", {"x": 1})]
+
+
+@pytest.mark.asyncio
 async def test_register_server_function_metadata_and_invocation():
     service = build_service()
     calls = []
@@ -289,3 +342,11 @@ async def test_register_server_function_metadata_and_invocation():
             "strict": False,
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_server_call_unknown_function_raises():
+    service = build_service()
+
+    with pytest.raises(ValueError):
+        await service.server_call("missing")
