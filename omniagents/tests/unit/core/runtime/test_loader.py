@@ -1,10 +1,14 @@
 import types
 
+import pytest
+
 from omniagents.core.runtime import loader
 from omniagents.core.runtime.loader import is_backend_available, load_backend
 
 
 def test_load_backend_returns_entry_point(monkeypatch):
+    backend = object()
+
     class DummyEntryPoint:
         def __init__(self, name, value):
             self.name = name
@@ -16,14 +20,19 @@ def test_load_backend_returns_entry_point(monkeypatch):
     class DummyEntryPoints:
         def select(self, group):
             assert group == "omniagents.backends"
-            return [DummyEntryPoint("cli", "entry")]
+            return [DummyEntryPoint("cli", backend)]
 
     monkeypatch.setattr(
         loader.importlib.metadata, "entry_points", lambda: DummyEntryPoints()
     )
+    monkeypatch.setattr(
+        loader.importlib,
+        "import_module",
+        lambda name: pytest.fail("should not import"),
+    )
 
     result = load_backend("cli")
-    assert result == "entry"
+    assert result is backend
 
 
 def test_load_backend_imports_alias(monkeypatch):
@@ -46,7 +55,7 @@ def test_load_backend_imports_alias(monkeypatch):
     assert result is backend
 
 
-def test_load_backend_returns_none_when_import_fails(monkeypatch):
+def test_load_backend_returns_none_when_missing(monkeypatch):
     class DummyEntryPoints:
         def select(self, group):
             return []
@@ -59,14 +68,16 @@ def test_load_backend_returns_none_when_import_fails(monkeypatch):
     )
     monkeypatch.setattr(loader.importlib, "import_module", fail_import)
 
-    result = load_backend("cli")
-    assert result is None
+    assert load_backend("cli") is None
 
 
-def test_is_backend_available_uses_loader(monkeypatch):
-    monkeypatch.setattr("omniagents.core.runtime.loader.load_backend", lambda name: "x")
-    assert is_backend_available("cli")
+def test_is_backend_available(monkeypatch):
+    monkeypatch.setattr(
+        "omniagents.core.runtime.loader.load_backend", lambda name: object()
+    )
+    assert is_backend_available("cli") is True
+
     monkeypatch.setattr(
         "omniagents.core.runtime.loader.load_backend", lambda name: None
     )
-    assert not is_backend_available("ghost")
+    assert is_backend_available("missing") is False
