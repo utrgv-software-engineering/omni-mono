@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from agents import RunConfig, ItemHelpers
 
 from omniagents.core.config.loader import load_agent_spec_from_yaml
+from omniagents.core.runtime.overrides import apply_cli_overrides
 from omniagents.core.agents.factory import create_unified_agent
 from omniagents.core.agents.safe import SafeAgent
 from omniagents.core.agents.mcp import build_mcp_servers
@@ -110,22 +111,7 @@ async def run_cli(config_path: str | None = None, args=None, spec=None) -> None:
     if args is not None:
         Debug.init(cli_flag=getattr(args, "debug", False))
 
-    # Apply CLI overrides if args provided (strict flags)
-    if args is not None:
-        approvals = getattr(args, "approvals", None)
-        if approvals == "skip":
-            spec.use_safe_agent = False
-        elif approvals == "auto":
-            spec.use_safe_agent = True
-            spec.safe_agent_options.skip_approvals = True
-        elif approvals == "require":
-            spec.use_safe_agent = True
-            spec.safe_agent_options.skip_approvals = False
-        on_reject = getattr(args, "on_reject", None)
-        if on_reject == "halt":
-            spec.safe_agent_options.halt_on_rejection = True
-        elif on_reject == "continue":
-            spec.safe_agent_options.halt_on_rejection = False
+    apply_cli_overrides(spec, args)
 
     # Note: OpenAI client configuration is now handled by the agent builder
     # which respects set_default_openai_client() if the user has set a custom client
