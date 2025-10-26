@@ -16,4 +16,4 @@ jobs:
       - name: Install dependencies
         run: pip install .[dev]
       - name: Check formatting
-        run: black --check .
+        run: black --check . --exclude 'omniagents/core/project/templates'
