@@ -1,69 +1,74 @@
+import types
+
 import pytest
 
+from omniagents.core.runtime import loader
 from omniagents.core.runtime.loader import is_backend_available, load_backend
 
 
-def test_load_backend_uses_entry_points_select(monkeypatch):
+def test_load_backend_returns_entry_point(monkeypatch):
     backend = object()
 
     class DummyEntryPoint:
-        name = "cli"
+        def __init__(self, name, value):
+            self.name = name
+            self._value = value
 
         def load(self):
-            return backend
+            return self._value
 
     class DummyEntryPoints:
         def select(self, group):
             assert group == "omniagents.backends"
-            return [DummyEntryPoint()]
+            return [DummyEntryPoint("cli", backend)]
 
     monkeypatch.setattr(
-        "omniagents.core.runtime.loader.importlib.metadata.entry_points",
-        lambda: DummyEntryPoints(),
+        loader.importlib.metadata, "entry_points", lambda: DummyEntryPoints()
     )
     monkeypatch.setattr(
-        "omniagents.core.runtime.loader.importlib.import_module",
+        loader.importlib,
+        "import_module",
         lambda name: pytest.fail("should not import"),
     )
 
-    assert load_backend("cli") is backend
+    result = load_backend("cli")
+    assert result is backend
 
 
-def test_load_backend_falls_back_to_alias_mapping(monkeypatch):
-    class EmptyEntryPoints:
+def test_load_backend_imports_alias(monkeypatch):
+    class DummyEntryPoints:
         def select(self, group):
             return []
 
-    backend_class = type("Backend", (), {})
-    module = type("Module", (), {"FletBackend": backend_class})
+    backend = object()
+
+    def fake_import_module(name):
+        assert name == "omniagents.backends.flet"
+        return types.SimpleNamespace(FletBackend=backend)
 
     monkeypatch.setattr(
-        "omniagents.core.runtime.loader.importlib.metadata.entry_points",
-        lambda: EmptyEntryPoints(),
+        loader.importlib.metadata, "entry_points", lambda: DummyEntryPoints()
     )
-    monkeypatch.setattr(
-        "omniagents.core.runtime.loader.importlib.import_module",
-        lambda name: module,
-    )
+    monkeypatch.setattr(loader.importlib, "import_module", fake_import_module)
 
-    assert load_backend("gui") is backend_class
+    result = load_backend("gui")
+    assert result is backend
 
 
 def test_load_backend_returns_none_when_missing(monkeypatch):
-    class EmptyEntryPoints:
+    class DummyEntryPoints:
         def select(self, group):
             return []
 
-    monkeypatch.setattr(
-        "omniagents.core.runtime.loader.importlib.metadata.entry_points",
-        lambda: EmptyEntryPoints(),
-    )
-    monkeypatch.setattr(
-        "omniagents.core.runtime.loader.importlib.import_module",
-        lambda name: (_ for _ in ()).throw(ImportError("missing")),
-    )
+    def fail_import(name):
+        raise ImportError("missing module")
 
-    assert load_backend("unknown") is None
+    monkeypatch.setattr(
+        loader.importlib.metadata, "entry_points", lambda: DummyEntryPoints()
+    )
+    monkeypatch.setattr(loader.importlib, "import_module", fail_import)
+
+    assert load_backend("cli") is None
 
 
 def test_is_backend_available(monkeypatch):

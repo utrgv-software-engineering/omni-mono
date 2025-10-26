@@ -9,7 +9,7 @@ from omniagents.core.runtime.runner import Runner
 
 def make_spec(**overrides):
     base = {
-        "name": overrides.pop("name", "Base"),
+        "name": overrides.pop("name", "Agent"),
         "header_title": "Header",
         "page_title": "Page",
         "welcome_text": "Welcome",
@@ -22,32 +22,21 @@ def make_spec(**overrides):
 
 
 def test_from_agent_configures_safe_options_and_server_functions(monkeypatch):
-    agent = types.SimpleNamespace(
-        name="Test Agent",
-        instructions="original",
-        tools=[object()],
-        model="model",
-    )
     processed = object()
 
-    def fake_process(value):
-        assert value == "original"
+    def fake_process(instructions):
+        assert instructions == "hello"
         return processed
 
-    registrar_calls = []
+    captured = {}
 
     def fake_registrar(functions):
-        registrar_calls.append(functions)
+        captured["functions"] = functions
 
         def registrar(target):
-            registrar_calls.append(target)
+            captured["target"] = target
 
         return registrar
-
-    def build_context(values):
-        return {"context": values}
-
-    server_fn = object()
 
     monkeypatch.setattr(
         "omniagents.core.utils.jinja_instructions.process_instructions",
@@ -58,71 +47,87 @@ def test_from_agent_configures_safe_options_and_server_functions(monkeypatch):
         fake_registrar,
     )
 
+    class DummyAgent:
+        def __init__(self):
+            self.name = "Helper Bot"
+            self.instructions = "hello"
+            self.tools = ["tool"]
+            self.model = "gpt"
+
+    agent = DummyAgent()
+    variables = {"user": "sam"}
+    built_context = {"built": True}
+
+    def build_context(data):
+        assert data is variables
+        return built_context
+
     runner = Runner.from_agent(
         agent,
+        welcome_text="Hi",
         safe=True,
         skip_approvals=True,
         halt_on_rejection=False,
-        safe_tool_names=["tool-a"],
-        safe_tool_patterns=["pattern-.*"],
-        variables={"user": "Ada"},
+        safe_tool_names=["t"],
+        safe_tool_patterns=["tool-.*"],
+        variables=variables,
         build_context=build_context,
-        server_functions=[server_fn],
-        welcome_text="Hi",
-        context_window=200,
         max_turns=5,
+        server_functions=["fn"],
     )
 
     spec = runner.spec
-
+    assert agent.instructions is processed
     assert spec.use_safe_agent is True
-    assert spec.safe_agent_options.skip_approvals is True
-    assert spec.safe_agent_options.halt_on_rejection is False
-    assert spec.safe_agent_options.safe_tool_names == ["tool-a"]
-    assert spec.safe_agent_options.safe_tool_patterns == ["pattern-.*"]
-    assert spec.context == {"context": {"user": "Ada"}}
-    assert spec.variables == {"user": "Ada"}
+    options = spec.safe_agent_options
+    assert options.skip_approvals is True
+    assert options.halt_on_rejection is False
+    assert options.safe_tool_names == ["t"]
+    assert options.safe_tool_patterns == ["tool-.*"]
+    assert spec.context is built_context
+    assert spec.variables is variables
     assert spec.build_context is build_context
+    assert spec.max_turns == 5
+    assert spec.client_storage_prefix == "helper_bot."
+    assert spec.agent_slug == "helper_bot"
+    assert captured["functions"] == ["fn"]
     assert spec.register_server_functions is not None
 
     spec.register_server_functions("service")
-
-    assert registrar_calls == [[server_fn], "service"]
-    assert spec.client_storage_prefix == "test_agent."
-    assert spec.agent_slug == "test_agent"
-    assert agent.instructions is processed
+    assert captured["target"] == "service"
 
 
-def test_from_agent_uses_variables_as_context_without_builder(monkeypatch):
-    agent = types.SimpleNamespace(
-        name="Solo",
-        instructions="raw",
-        tools=[],
-        model="m",
-    )
-    processed = object()
-
+def test_from_agent_without_build_context_uses_variables_as_context(monkeypatch):
     monkeypatch.setattr(
         "omniagents.core.utils.jinja_instructions.process_instructions",
-        lambda value: processed,
+        lambda value: value,
     )
 
-    runner = Runner.from_agent(agent, variables={"v": 1})
+    class DummyAgent:
+        def __init__(self):
+            self.name = "Solo"
+            self.instructions = "instructions"
+            self.tools = []
+            self.model = "model"
 
+    agent = DummyAgent()
+    variables = {"x": 1}
+
+    runner = Runner.from_agent(agent, variables=variables)
     spec = runner.spec
 
-    assert spec.context == {"v": 1}
+    assert spec.context is variables
     assert spec.variables is None
     assert spec.build_context is None
-    assert agent.instructions is processed
 
 
-def test_from_remote_uses_env_token_lookup(monkeypatch):
+def test_from_remote_uses_env_token(monkeypatch):
     monkeypatch.setenv("REMOTE_TOKEN", "token-value")
 
     runner = Runner.from_remote(
         "ws://example/ws",
         name="Remote Agent",
+        token=None,
         token_env_var="REMOTE_TOKEN",
         welcome_text="Hello",
         context={"existing": 1},
@@ -130,7 +135,6 @@ def test_from_remote_uses_env_token_lookup(monkeypatch):
     )
 
     spec = runner.spec
-
     assert spec.remote_ws_url == "ws://example/ws"
     assert spec.remote_auth_token_key == "REMOTE_TOKEN"
     assert spec.client_storage_prefix == "remote_agent."
@@ -138,8 +142,30 @@ def test_from_remote_uses_env_token_lookup(monkeypatch):
     assert spec.variables == {"v": 2}
 
 
-def test_run_raises_for_unknown_backend(monkeypatch):
-    runner = Runner(spec=make_spec())
+def test_run_invokes_backend_with_spec(monkeypatch):
+    spec = make_spec()
+    runner = Runner(spec=spec)
+    captured = {}
+
+    class DummyBackend:
+        def run(self, spec, **kwargs):
+            captured["spec"] = spec
+            captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(
+        "omniagents.core.runtime.runner.load_backend",
+        lambda mode: DummyBackend,
+    )
+
+    runner.run("cli", extra=True)
+
+    assert captured["spec"] is spec
+    assert captured["kwargs"] == {"extra": True}
+
+
+def test_run_unknown_backend_raises(monkeypatch):
+    spec = make_spec()
+    runner = Runner(spec=spec)
 
     monkeypatch.setattr(
         "omniagents.core.runtime.runner.load_backend", lambda mode: None
@@ -149,66 +175,49 @@ def test_run_raises_for_unknown_backend(monkeypatch):
         runner.run("missing")
 
 
-def test_run_invokes_backend_with_kwargs(monkeypatch):
-    runner = Runner(spec=make_spec())
-    calls = []
-
-    class Backend:
-        def run(self, spec, **kwargs):
-            calls.append((spec, kwargs))
-
-    backend = Backend()
-
-    monkeypatch.setattr(
-        "omniagents.core.runtime.runner.load_backend",
-        lambda mode: (lambda: backend) if mode == "cli" else None,
-    )
-
-    runner.run("cli", extra="value")
-
-    assert calls == [(runner.spec, {"extra": "value"})]
-
-
-def test_main_cli_mode_invokes_run_with_cli_options(monkeypatch):
-    runner = Runner(spec=make_spec())
-
-    parsed = types.SimpleNamespace(
+def test_main_cli_mode_invokes_run_and_debug(monkeypatch):
+    spec = make_spec()
+    runner = Runner(spec=spec)
+    args = types.SimpleNamespace(
         mode="cli",
         debug=True,
         resume=False,
-        session_id="session-1",
-        host="",
-        port=0,
+        session_id="sess",
+        host="0.0.0.0",
+        port=8000,
         auth_token=None,
         reload=False,
         approvals=None,
         on_reject=None,
     )
+    called = {}
 
-    debug_flags = []
-    calls = []
+    def fake_parse_args(self):
+        return args
 
-    monkeypatch.setattr("argparse.ArgumentParser.parse_args", lambda self: parsed)
-    monkeypatch.setattr(
-        "omniagents.core.runtime.runner.Debug.init",
-        lambda cli_flag: debug_flags.append(cli_flag),
-    )
-    monkeypatch.setattr(
-        Runner,
-        "run",
-        lambda self, mode, **kwargs: calls.append((mode, kwargs)),
-    )
+    def fake_run(self, mode, **kwargs):
+        called["mode"] = mode
+        called["kwargs"] = kwargs
+
+    def fake_debug(cli_flag):
+        called["debug"] = cli_flag
+
+    monkeypatch.setattr(argparse.ArgumentParser, "parse_args", fake_parse_args)
+    monkeypatch.setattr(Runner, "run", fake_run)
+    monkeypatch.setattr("omniagents.core.runtime.runner.Debug.init", fake_debug)
 
     runner.main()
 
-    assert debug_flags == [True]
-    assert calls == [("cli", {"args": parsed, "session_id": "session-1"})]
+    assert called["mode"] == "cli"
+    assert called["kwargs"]["session_id"] == "sess"
+    assert called["kwargs"]["args"] is args
+    assert called["debug"] is True
 
 
 def test_main_server_mode_adds_server_kwargs(monkeypatch):
-    runner = Runner(spec=make_spec())
-
-    parsed = types.SimpleNamespace(
+    spec = make_spec()
+    runner = Runner(spec=spec)
+    args = types.SimpleNamespace(
         mode="server",
         debug=False,
         resume=False,
@@ -220,95 +229,89 @@ def test_main_server_mode_adds_server_kwargs(monkeypatch):
         approvals=None,
         on_reject=None,
     )
+    called = {}
 
-    calls = []
-
-    monkeypatch.setattr("argparse.ArgumentParser.parse_args", lambda self: parsed)
+    monkeypatch.setattr(argparse.ArgumentParser, "parse_args", lambda self: args)
     monkeypatch.setattr(
         "omniagents.core.runtime.runner.Debug.init", lambda cli_flag: None
     )
     monkeypatch.setattr(
         Runner,
         "run",
-        lambda self, mode, **kwargs: calls.append((mode, kwargs)),
+        lambda self, mode, **kwargs: called.setdefault("call", (mode, kwargs)),
     )
 
     runner.main()
 
-    assert calls == [
-        (
-            "server",
-            {
-                "args": parsed,
-                "host": "127.0.0.1",
-                "port": 9000,
-                "auth_token": "secret",
-                "reload": True,
-            },
-        )
-    ]
+    mode, kwargs = called["call"]
+    assert mode == "server"
+    assert kwargs == {
+        "args": args,
+        "host": "127.0.0.1",
+        "port": 9000,
+        "auth_token": "secret",
+        "reload": True,
+    }
 
 
-def test_main_allows_resume_for_bubbletea(monkeypatch):
-    runner = Runner(spec=make_spec())
-
-    parsed = types.SimpleNamespace(
-        mode="bubbletea",
-        debug=False,
-        resume=True,
-        session_id=None,
-        host="",
-        port=0,
-        auth_token=None,
-        reload=False,
-        approvals=None,
-        on_reject=None,
-    )
-
-    calls = []
-
-    monkeypatch.setattr("argparse.ArgumentParser.parse_args", lambda self: parsed)
-    monkeypatch.setattr(
-        "omniagents.core.runtime.runner.Debug.init", lambda cli_flag: None
-    )
-    monkeypatch.setattr(
-        Runner,
-        "run",
-        lambda self, mode, **kwargs: calls.append((mode, kwargs)),
-    )
-
-    runner.main()
-
-    assert calls == [("bubbletea", {"args": parsed, "resume": True})]
-
-
-def test_main_rejects_resume_for_unsupported_mode(monkeypatch):
-    runner = Runner(spec=make_spec())
-
-    parsed = types.SimpleNamespace(
+def test_main_resume_invalid_mode_exits(monkeypatch, capsys):
+    spec = make_spec()
+    runner = Runner(spec=spec)
+    args = types.SimpleNamespace(
         mode="cli",
         debug=False,
         resume=True,
         session_id=None,
-        host="",
-        port=0,
+        host="0.0.0.0",
+        port=8000,
         auth_token=None,
         reload=False,
         approvals=None,
         on_reject=None,
     )
 
-    monkeypatch.setattr("argparse.ArgumentParser.parse_args", lambda self: parsed)
+    monkeypatch.setattr(argparse.ArgumentParser, "parse_args", lambda self: args)
     monkeypatch.setattr(
         "omniagents.core.runtime.runner.Debug.init", lambda cli_flag: None
-    )
-    monkeypatch.setattr(
-        Runner,
-        "run",
-        lambda self, mode, **kwargs: pytest.fail("run should not be called"),
     )
 
     with pytest.raises(SystemExit) as exc:
         runner.main()
 
     assert exc.value.code == 2
+    output = capsys.readouterr().out
+    assert "--resume is only supported" in output
+
+
+def test_main_resume_tui_mode_sets_flag(monkeypatch):
+    spec = make_spec()
+    runner = Runner(spec=spec)
+    args = types.SimpleNamespace(
+        mode="bubbletea",
+        debug=False,
+        resume=True,
+        session_id=None,
+        host="0.0.0.0",
+        port=8000,
+        auth_token=None,
+        reload=False,
+        approvals=None,
+        on_reject=None,
+    )
+    called = {}
+
+    def fake_run(self, mode, **kwargs):
+        called["mode"] = mode
+        called["kwargs"] = kwargs
+
+    monkeypatch.setattr(argparse.ArgumentParser, "parse_args", lambda self: args)
+    monkeypatch.setattr(Runner, "run", fake_run)
+    monkeypatch.setattr(
+        "omniagents.core.runtime.runner.Debug.init", lambda cli_flag: None
+    )
+
+    runner.main()
+
+    assert called["mode"] == "bubbletea"
+    assert called["kwargs"]["resume"] is True
+    assert called["kwargs"]["args"] is args
