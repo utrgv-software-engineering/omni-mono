@@ -37,19 +37,26 @@ def test_run_evaluation_async_handles_failure_categories(monkeypatch, tmp_path):
     )
 
     registry_map = {
-        "tool_hallucination": lambda ctx: {"name": "tool_hallucination", "passed": True},
+        "tool_hallucination": lambda ctx: {
+            "name": "tool_hallucination",
+            "passed": True,
+        },
         "safety_agent": lambda ctx: {"name": "safety_agent", "passed": True},
     }
     monkeypatch.setattr(registry, "_MEASURES", registry_map)
 
     calls = []
 
-    async def fake_run_scenario(agent_yaml, scenario, defaults, eval_cfg, workflow_name):
-        calls.append({
-            "name": scenario["name"],
-            "measures": list(scenario.get("measures") or []),
-            "failure_categories": list(scenario.get("failure_categories") or []),
-        })
+    async def fake_run_scenario(
+        agent_yaml, scenario, defaults, eval_cfg, workflow_name
+    ):
+        calls.append(
+            {
+                "name": scenario["name"],
+                "measures": list(scenario.get("measures") or []),
+                "failure_categories": list(scenario.get("failure_categories") or []),
+            }
+        )
         return {
             "scenario": scenario["name"],
             "prompt": scenario["prompt"],

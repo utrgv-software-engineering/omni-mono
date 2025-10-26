@@ -61,7 +61,9 @@ def test_parse_and_link_tool_data(sample_history):
 def test_tool_assertions(sample_history):
     ok, info = assert_tool_called(sample_history, "foo", args={"x": 1})
     assert ok and info["count"] == 1
-    ok, info = assert_tool_call_sequence(sample_history, ["foo", "bar"], contiguous=True)
+    ok, info = assert_tool_call_sequence(
+        sample_history, ["foo", "bar"], contiguous=True
+    )
     assert ok
     ok, _ = assert_no_tool_called(sample_history, "missing")
     assert ok

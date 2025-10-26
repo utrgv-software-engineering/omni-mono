@@ -19,7 +19,7 @@ def test_build_eval_context_links_calls_and_messages():
         {
             "type": "function_call_output",
             "call_id": "call-1",
-            "output": '{"results": [{"value": 1}]}'
+            "output": '{"results": [{"value": 1}]}',
         },
         {
             "role": "assistant",
