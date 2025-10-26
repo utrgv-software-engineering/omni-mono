@@ -1,0 +1,7 @@
+name: Studio Fixture
+paths:
+  agents: agents
+  tools: tools
+  guardrails: guardrails
+agents:
+  entrypoint: primary
