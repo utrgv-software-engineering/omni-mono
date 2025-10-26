@@ -277,8 +277,14 @@ def test_loader_discovers_assets_and_applies_config(tmp_path):
         assert spec.client_storage_prefix.startswith("complexagent")
         assert spec.agent_slug == "complexagent"
         keys = {field.key for field in spec.settings_fields}
-        assert {"openai_base_url", "openai_api_key", "project_setting", "custom_setting"} <= keys
+        assert {
+            "openai_base_url",
+            "openai_api_key",
+            "project_setting",
+            "custom_setting",
+        } <= keys
         assert spec.register_server_functions is not None
+
         class Service:
             def __init__(self):
                 self.calls = []
@@ -297,7 +303,9 @@ def test_loader_discovers_assets_and_applies_config(tmp_path):
         assert first_handoff.tool_name_override == "ExternalOverride"
         assert second_handoff.inline_spec.name == "InlineAgent"
         assert second_handoff.tool_description_override == "InlineOverride"
-        inline_tools = [tool.name for tool in second_handoff.inline_spec.available_tools]
+        inline_tools = [
+            tool.name for tool in second_handoff.inline_spec.available_tools
+        ]
         assert inline_tools == ["alpha_tool"]
     finally:
         for name in list(sys.modules):
