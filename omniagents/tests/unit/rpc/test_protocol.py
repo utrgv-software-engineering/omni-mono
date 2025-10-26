@@ -7,9 +7,11 @@ import asyncio
 import json
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 import pytest
+from fastapi import WebSocketDisconnect
 
 from omniagents.rpc import RpcMethodsBase, JsonRpcEndpoint, JsonRpcClient
 from omniagents.rpc.server import JsonRpcChannel
+from omniagents.rpc.transport import TransportClosedError
 from omniagents.rpc.transport.websocket import ServerWebSocketTransport
 
 
@@ -42,6 +44,17 @@ class TestJsonRpcChannel:
         assert call_args["method"] == "test_method"
         assert call_args["params"] == {"param": "value"}
         assert "id" not in call_args
+
+    @pytest.mark.asyncio
+    async def test_async_call_propagates_transport_error(self):
+        transport = AsyncMock()
+        transport.send_json.side_effect = TransportClosedError("closed")
+        channel = JsonRpcChannel(transport)
+
+        with pytest.raises(TransportClosedError):
+            await channel.async_call("failing_method")
+
+        transport.send_json.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_send_result(self):
@@ -193,3 +206,95 @@ class TestJsonRpcIntegration:
         assert response["jsonrpc"] == "2.0"
         assert response["id"] == 1
         assert response["result"] == "Echo: hello"
+        assert methods.channel is None
+
+    @pytest.mark.asyncio
+    async def test_endpoint_returns_error_on_method_failure(self):
+        methods = MockRpcMethods()
+        endpoint = JsonRpcEndpoint(methods)
+
+        ws = AsyncMock()
+        ws.receive_json = AsyncMock(
+            side_effect=[
+                {"jsonrpc": "2.0", "id": 2, "method": "error_method"},
+                WebSocketDisconnect(),
+            ]
+        )
+        ws.send_json = AsyncMock()
+        ws.accept = AsyncMock()
+        ws.close = AsyncMock()
+
+        app = Mock()
+        endpoint.register_route(app, "/ws")
+        handler = app.add_api_websocket_route.call_args[0][1]
+
+        await handler(ws)
+
+        ws.accept.assert_awaited()
+        ws.send_json.assert_called_once()
+        payload = ws.send_json.call_args[0][0]
+        assert payload["jsonrpc"] == "2.0"
+        assert payload["id"] == 2
+        assert payload["error"]["code"] == -32603
+        assert payload["error"]["data"]["method"] == "error_method"
+        assert methods.channel is None
+
+    @pytest.mark.asyncio
+    async def test_endpoint_ignores_non_dict_payloads(self):
+        methods = MockRpcMethods()
+        endpoint = JsonRpcEndpoint(methods)
+
+        ws = AsyncMock()
+        ws.receive_json = AsyncMock(
+            side_effect=[
+                ["bad", "payload"],
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "echo",
+                    "params": {"message": "after"},
+                },
+                WebSocketDisconnect(),
+            ]
+        )
+        ws.send_json = AsyncMock()
+        ws.accept = AsyncMock()
+        ws.close = AsyncMock()
+
+        app = Mock()
+        endpoint.register_route(app, "/ws")
+        handler = app.add_api_websocket_route.call_args[0][1]
+
+        await handler(ws)
+
+        ws.accept.assert_awaited()
+        ws.send_json.assert_called_once()
+        payload = ws.send_json.call_args[0][0]
+        assert payload["id"] == 3
+        assert payload["result"] == "Echo: after"
+        assert methods.channel is None
+
+    @pytest.mark.asyncio
+    async def test_endpoint_handles_transport_closed_error(self):
+        methods = MockRpcMethods()
+        endpoint = JsonRpcEndpoint(methods)
+
+        ws = AsyncMock()
+        ws.send_json = AsyncMock()
+        ws.accept = AsyncMock()
+        ws.close = AsyncMock()
+
+        app = Mock()
+        endpoint.register_route(app, "/ws")
+        handler = app.add_api_websocket_route.call_args[0][1]
+
+        async def fake_receive(self):
+            self._connected = False
+            raise TransportClosedError("closed")
+
+        with patch.object(ServerWebSocketTransport, "receive_json", new=fake_receive):
+            await handler(ws)
+
+        ws.send_json.assert_not_called()
+        assert methods.channel is None
+        ws.accept.assert_awaited()

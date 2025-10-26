@@ -78,6 +78,11 @@ class JsonRpcEndpoint:
                         break
                     except WebSocketDisconnect:
                         break
+                    except Exception:
+                        continue
+
+                    if not isinstance(data, dict):
+                        continue
 
                     call_id = data.get("id")
                     method = data.get("method")
@@ -128,6 +133,11 @@ class JsonRpcEndpoint:
                                 await transport.send_json(error_payload)
                             # On notifications (no id), just swallow the error
             finally:
+                try:
+                    if getattr(self.methods, "channel", None) is channel:
+                        self.methods.channel = None
+                except AttributeError:
+                    pass
                 await transport.disconnect()
 
         app.add_api_websocket_route(path, handler, dependencies=dependencies)
