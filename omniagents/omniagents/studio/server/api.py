@@ -6947,6 +6947,8 @@ def create_api_app(
                 raise HTTPException(status_code=422, detail="Measure name is required")
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
+            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            project_name = resources.get("project_name") or app.state.default_project
             measures_meta, target_file, data, evaluation_cfg, has_eval_section = (
                 _load_measures_metadata(ctx, manifest_path)
             )

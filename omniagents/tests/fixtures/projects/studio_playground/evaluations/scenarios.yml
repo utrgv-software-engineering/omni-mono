@@ -1,0 +1,9 @@
+version: 1
+scenarios:
+  - id: abc123
+    name: initial
+    prompt: Provide a helpful summary.
+    failure_categories:
+      - Quality Issues
+    measures:
+      - response_coherence
