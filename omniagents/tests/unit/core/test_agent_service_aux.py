@@ -34,6 +34,70 @@ async def test_stop_run_delegates_to_session_manager():
 
 
 @pytest.mark.asyncio
+async def test_stop_run_cancels_active_run(monkeypatch):
+    service = build_service()
+
+    class RecordingChannel:
+        def __init__(self):
+            self.calls = []
+
+        async def async_call(self, method: str, args: dict | None = None):
+            self.calls.append((method, args or {}))
+
+    channel = RecordingChannel()
+    service.channel = channel
+
+    async def fake_builder(self, session_arg, approval_callback):
+        return object()
+
+    service._build_agent_for_session = types.MethodType(fake_builder, service)
+
+    started = asyncio.Event()
+
+    async def fake_stream(agent, prompt, session_arg, channel_arg, **kwargs):
+        started.set()
+        try:
+            while True:
+                await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            raise
+
+    monkeypatch.setattr(
+        "omniagents.core.agents.service.stream_agent",
+        fake_stream,
+    )
+
+    response = await service.start_run("prompt")
+    run_id = response["run_id"]
+    session = service._session_manager.get_by_run_id(run_id)
+    task = session.current_task
+
+    await asyncio.wait_for(started.wait(), timeout=1)
+    assert run_id in session.run_channels
+
+    stopped = await service.stop_run(run_id)
+
+    assert stopped is True
+
+    [result] = await asyncio.gather(task, return_exceptions=True)
+
+    for _ in range(10):
+        if run_id not in session.run_channels:
+            break
+        await asyncio.sleep(0.05)
+
+    assert isinstance(result, asyncio.CancelledError)
+    assert run_id not in session.run_channels
+    assert session.current_task is None
+
+    end_events = [call for call in channel.calls if call[0] == "run_end"]
+    assert end_events
+    payload = end_events[-1][1]
+    assert payload["run_id"] == run_id
+    assert payload["end_reason"] == "cancelled"
+
+
+@pytest.mark.asyncio
 async def test_send_user_message_appends_history():
     service = build_service()
 
