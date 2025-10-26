@@ -1,3 +1,6 @@
+import asyncio
+import json
+
 from omniagents.core.tools.artifacts import (
     set_artifact_callback,
     emit_artifact,
@@ -15,5 +18,17 @@ def test_emit_artifact_callback():
 def test_display_artifact_tool():
     records = []
     set_artifact_callback(lambda t, c, m, aid: records.append((t, c, m, aid)))
-    display_artifact("a", "b", "html", artifact_id="2")
+    asyncio.run(
+        display_artifact.on_invoke_tool(
+            None,
+            json.dumps(
+                {
+                    "title": "a",
+                    "content": "b",
+                    "mode": "html",
+                    "artifact_id": "2",
+                }
+            ),
+        )
+    )
     assert records == [("a", "b", "html", "2")]

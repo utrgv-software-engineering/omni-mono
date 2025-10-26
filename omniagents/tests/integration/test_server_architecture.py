@@ -3,7 +3,7 @@ Test to verify server migration is working correctly.
 """
 
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, AsyncMock, patch
 
 from omniagents.core.agents.service import AgentService
 from omniagents.core.runtime.bridge import stream_agent
@@ -37,8 +37,8 @@ def test_agent_service_builds_agent_correctly():
     import inspect
 
     source = inspect.getsource(AgentService.start_run)
-    # Should use spec's build_agent method, not create_unified_agent
-    assert "spec.build_agent" in source or "_default_build_agent" in source
+    # Should use internal builder helper rather than direct create_unified_agent
+    assert "_build_agent_for_session" in source
     # Should NOT use create_unified_agent (causes circular dependency)
     assert "create_unified_agent" not in source
 
@@ -63,12 +63,12 @@ async def test_agent_with_runner():
     mock_agent.name = "TestAgent"
 
     # Create session
-    session = Session()
+    session = Session("test_project", "test_agent")
     session.history = []
 
     # Mock channel
     mock_channel = Mock()
-    mock_channel.async_call = Mock()
+    mock_channel.async_call = AsyncMock()
 
     # Mock Runner.run_streamed
     mock_result = Mock()
@@ -81,20 +81,18 @@ async def test_agent_with_runner():
     mock_result.stream_events = mock_stream_events
 
     # Mock dependencies
-    with patch("omniagents.core.runtime.bridge.append_message"):
-        with patch("omniagents.core.runtime.bridge._Runner") as mock_runner_class:
-            mock_runner_class.run_streamed.return_value = mock_result
+    with patch("agents.Runner.run_streamed", return_value=mock_result) as mock_run_streamed:
 
-            # Run stream_agent
-            await stream_agent(mock_agent, "Test", session, mock_channel)
+        # Run stream_agent
+        await stream_agent(mock_agent, "Test", session, mock_channel)
 
-            # Verify Runner.run_streamed was called with the agent
-            mock_runner_class.run_streamed.assert_called_once()
-            call_args = mock_runner_class.run_streamed.call_args[0]
-            assert call_args[0] == mock_agent  # First arg is the agent
-            assert call_args[1] == [
-                {"role": "user", "content": "Test"}
-            ]  # Second arg is messages
+        # Verify Runner.run_streamed was called with the agent
+        mock_run_streamed.assert_called_once()
+        call_args = mock_run_streamed.call_args[0]
+        assert call_args[0] == mock_agent  # First arg is the agent
+        assert call_args[1] == [
+            {"role": "user", "content": "Test"}
+        ]  # Second arg is messages
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ from omniagents.core.agents.factory import (
     is_remote_agent,
     is_local_agent,
 )
-from omniagents.core.agents.specs import AgentSpec, SettingField
+from omniagents.core.agents.specs import AgentSpec, SettingField, SafeAgentOptions
 
 
 class TestUnifiedAgentProtocol:
@@ -71,6 +71,14 @@ class TestLocalAgent:
         spec.use_safe_agent = False
         spec.max_turns = 10
         spec.settings_fields = []
+        spec.project_slug = "test_project"
+        spec.agent_slug = "test_agent"
+        spec.tracing_config = None
+        spec.mcp_servers = []
+        spec.safe_agent_options = SafeAgentOptions()
+        spec.variables = None
+        spec.context = None
+        spec.build_context = None
         return spec
 
     def test_init(self, mock_spec):
@@ -104,7 +112,6 @@ class TestLocalAgent:
             assert adapter._initialized
             assert adapter._client_transport is not None
             assert adapter._server_transport is not None
-            assert adapter._rpc_client is not None
             assert adapter._agent_service is not None
             assert adapter._server_task is not None
 
@@ -195,6 +202,14 @@ class TestAgentFactory:
             Mock(key="openai_api_key", default=""),
             Mock(key="model_name", default="gpt-4"),
         ]
+        spec.project_slug = "test_project"
+        spec.agent_slug = "test_agent"
+        spec.tracing_config = None
+        spec.mcp_servers = []
+        spec.safe_agent_options = SafeAgentOptions()
+        spec.variables = None
+        spec.context = None
+        spec.build_context = None
         return spec
 
     @pytest.mark.asyncio
@@ -220,7 +235,10 @@ class TestAgentFactory:
                 agent = await create_unified_agent(mock_spec)
 
                 mock_proxy.assert_called_once_with(
-                    "ws://localhost:8000/ws", "secret-token"
+                    "ws://localhost:8000/ws",
+                    "secret-token",
+                    variables=None,
+                    context=None,
                 )
                 assert agent == mock_proxy.return_value
 

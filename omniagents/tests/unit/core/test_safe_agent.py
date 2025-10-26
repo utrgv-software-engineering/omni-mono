@@ -1,7 +1,7 @@
 import asyncio
 
-from omniagents.core.agents.safe import SafeAgent
 from agents.tool import FunctionTool
+from omniagents.core.agents.safe import SafeAgent
 
 
 async def dummy_tool(ctx, params_json: str):
@@ -11,7 +11,7 @@ async def dummy_tool(ctx, params_json: str):
 def test_safe_agent_wrap(monkeypatch):
     calls = []
 
-    async def approval_cb(name, args):
+    async def approval_cb(name, args, metadata=None):
         calls.append((name, args))
         return True, False, None
 
@@ -32,7 +32,7 @@ def test_safe_agent_wrap(monkeypatch):
 
 
 def test_safe_agent_safe_tool(monkeypatch):
-    async def approval_cb(name, args):
+    async def approval_cb(name, args, metadata=None):
         return False, False, None
 
     tool = FunctionTool(

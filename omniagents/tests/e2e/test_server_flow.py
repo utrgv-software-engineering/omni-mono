@@ -4,12 +4,46 @@ Tests for server mode with unified agent architecture.
 
 import pytest
 import asyncio
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
+from unittest.mock import Mock, AsyncMock, patch
 from typing import Dict, Any, List
 
-from omniagents.core.agents.specs import AgentSpec
+from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions
 from omniagents.core.agents.service import AgentService
 from omniagents.core.session import Session
+
+
+class DummyAgent:
+    """Minimal agent stub used by service tests."""
+
+    def __init__(self, name: str = "TestAgent"):
+        self.name = name
+        self.tools: List[Any] = []
+        self.instructions = "Test instructions"
+        self.model = "gpt-4"
+        self.model_settings = None
+        self.mcp_servers: List[Any] = []
+        self.mcp_config: Dict[str, Any] = {}
+        self.handoffs: List[Any] = []
+        self.handoff_description = None
+        self.input_guardrails: List[Any] = []
+        self.output_guardrails: List[Any] = []
+        self.output_type = None
+        self.prompt = None
+
+    async def get_all_tools(self) -> List[Any]:
+        return []
+
+    def reset_run_state(self) -> None:
+        pass
+
+
+async def _drain_run_tasks() -> None:
+    tasks = [t for t in asyncio.all_tasks() if t.get_name().startswith("run_")]
+    for task in tasks:
+        try:
+            await task
+        except Exception:
+            pass
 
 
 class TestServerUnifiedAgent:
@@ -24,6 +58,31 @@ class TestServerUnifiedAgent:
         spec.use_safe_agent = False
         spec.max_turns = 10
         spec.get_agent_instructions = Mock(return_value="Test instructions")
+        async def _builder(settings, mcp_server, stub_app):
+            return DummyAgent()
+
+        spec.build_agent = AsyncMock(side_effect=_builder)
+        spec.project_slug = "test_project"
+        spec.agent_slug = "test_agent"
+        spec.tracing_config = {"provider": "none"}
+        spec.mcp_servers = []
+        spec.available_tools = []
+        spec.settings_fields = []
+        spec.safe_agent_options = SafeAgentOptions()
+        spec.input_guardrails = []
+        spec.output_guardrails = []
+        spec.output_type = None
+        spec.output_type_strict = True
+        spec.reset_tool_choice = True
+        spec.tool_use_behavior = "run_llm_again"
+        spec.model_settings = None
+        spec.prompt = None
+        spec.handoff_configs = []
+        spec.handoff_description = None
+        spec.mcp_config = {}
+        spec.variables = None
+        spec.context = None
+        spec.build_context = None
         return spec
 
     @pytest.fixture
@@ -36,7 +95,7 @@ class TestServerUnifiedAgent:
     @pytest.fixture
     def mock_session(self):
         """Create a mock session."""
-        sess = Session()
+        sess = Session("test_project", "test_agent")
         sess.id = "test-session-123"
         sess.history = []
         sess.channels = []
@@ -44,91 +103,63 @@ class TestServerUnifiedAgent:
         return sess
 
     @pytest.mark.asyncio
-    async def test_agent_creation_with_unified_factory(self, mock_spec, mock_channel):
-        """Test that AgentService creates agents using unified factory."""
+    async def test_agent_creation_with_unified_factory(self, mock_spec, mock_channel, mock_session):
+        """Service should invoke spec.build_agent with expected arguments."""
+        service = AgentService(mock_spec)
+        service.channel = mock_channel
+
+        mock_session_manager = Mock()
+        mock_session_manager.get_or_create.return_value = mock_session
+        mock_session_manager.bind_task = Mock()
+        service._session_manager = mock_session_manager
+
         with patch(
-            "omniagents.core.agents.factory.create_unified_agent",
+            "omniagents.core.agents.service.stream_agent",
             new_callable=AsyncMock,
-        ) as mock_create:
-            # Mock the unified agent
-            mock_agent = AsyncMock()
-            mock_create.return_value = mock_agent
+            return_value={},
+        ) as mock_stream:
+            await service.start_run("Hello", session_id="test-123")
+            await _drain_run_tasks()
 
-            # Create service
-            service = AgentService(mock_spec)
-            service.channel = mock_channel
-
-            # Mock session manager
-            with patch("omniagents.core.agents.service.sm") as mock_sm:
-                mock_session = Mock()
-                mock_session.history = []
-                mock_session.channels = []
-                mock_session.pending_events = []
-                mock_sm.get_or_create.return_value = mock_session
-                mock_sm.bind_task = Mock()
-
-                # Mock stream_agent to be async
-                with patch(
-                    "omniagents.core.agents.service.stream_agent",
-                    new_callable=AsyncMock,
-                ) as mock_stream:
-                    # Mock append_message to avoid database errors
-                    with patch("omniagents.core.session.append_message"):
-                        # Start a run - this will create a task
-                        result = await service.start_run("Hello", session_id="test-123")
-
-                        # Find the task that was created
-                        tasks = [
-                            t
-                            for t in asyncio.all_tasks()
-                            if t.get_name().startswith("run_")
-                        ]
-                        assert len(tasks) == 1
-
-                        # Wait for the task to complete
-                        await tasks[0]
-
-                        # Verify unified factory was called
-                        mock_create.assert_called_once()
-                        call_args = mock_create.call_args
-                        assert call_args.kwargs["spec"] == mock_spec
-                        assert call_args.kwargs["settings"] == {}
-                        assert call_args.kwargs["approval_callback"] is None
-                        assert call_args.kwargs["mcp_servers"] is None
-
-                        # Verify agent was stored in session
-                        assert hasattr(mock_session, "agent")
-                        assert mock_session.agent == mock_agent
+        mock_spec.build_agent.assert_awaited_once()
+        settings_arg, mcp_arg, stub_app = mock_spec.build_agent.await_args.args
+        assert settings_arg == {}
+        assert mcp_arg is None
+        assert hasattr(stub_app, "_request_tool_approval")
+        mock_session_manager.bind_task.assert_called_once()
+        mock_stream.assert_awaited()
 
     @pytest.mark.asyncio
-    async def test_safe_agent_approval_callback(self, mock_spec, mock_channel):
+    async def test_safe_agent_approval_callback(self, mock_spec, mock_channel, mock_session):
         """Test that approval callback is passed for SafeAgent."""
         mock_spec.use_safe_agent = True
 
+        service = AgentService(mock_spec)
+        service.channel = mock_channel
+
+        service._session_manager = Mock()
+        service._session_manager.get_or_create.return_value = mock_session
+        service._session_manager.bind_task = Mock()
+
+        captured_kwargs: Dict[str, Any] = {}
+
+        class DummySafeAgent(DummyAgent):
+            def __init__(self, *args, **kwargs):
+                captured_kwargs.update(kwargs)
+                super().__init__("SafeAgent")
+
         with patch(
-            "omniagents.core.agents.factory.create_unified_agent"
-        ) as mock_create:
-            mock_agent = AsyncMock()
-            mock_create.return_value = mock_agent
+            "omniagents.core.agents.service.SafeAgent", DummySafeAgent
+        ), patch(
+            "omniagents.core.agents.service.stream_agent",
+            new_callable=AsyncMock,
+            return_value={},
+        ):
+            await service.start_run("Hello", session_id="test-123")
+            await _drain_run_tasks()
 
-            service = AgentService(mock_spec)
-            service.channel = mock_channel
-
-            with patch("omniagents.core.agents.service.sm") as mock_sm:
-                mock_session = Mock()
-                mock_session.history = []
-                mock_session.channels = []
-                mock_session.pending_events = []
-                mock_sm.get_or_create.return_value = mock_session
-
-                with patch("omniagents.core.agents.service.stream_agent"):
-                    await service.start_run("Hello", session_id="test-123")
-
-                    # Verify approval callback was passed
-                    mock_create.assert_called_once()
-                    call_args = mock_create.call_args
-                    assert call_args.kwargs["approval_callback"] is not None
-                    assert callable(call_args.kwargs["approval_callback"])
+        mock_spec.build_agent.assert_awaited()
+        assert captured_kwargs["approval_callback"] is not None
 
     @pytest.mark.asyncio
     async def test_stream_agent_with_unified_agent(self, mock_session):
@@ -137,6 +168,11 @@ class TestServerUnifiedAgent:
 
         # Create mock unified agent
         mock_agent = Mock()
+        mock_agent.output_type = None
+        mock_agent.get_all_tools = AsyncMock(return_value=[])
+        mock_agent.handoffs = []
+        mock_agent.input_guardrails = []
+        mock_agent.output_guardrails = []
         mock_stream_result = Mock()
 
         # Create mock events
@@ -157,57 +193,52 @@ class TestServerUnifiedAgent:
             yield mock_event2
 
         mock_stream_result.stream_events = mock_stream_events
-        mock_agent.run_streamed = Mock(return_value=mock_stream_result)
 
         # Mock RPC channel
         mock_channel = Mock()
         mock_channel.async_call = AsyncMock()
+        mock_session.channels.append(mock_channel)
 
         # Mock dependencies
-        with patch("omniagents.core.runtime.bridge.append_message"):
-            with patch("omniagents.core.runtime.bridge.ItemHelpers") as mock_helpers:
-                mock_helpers.text_message_output.return_value = "Hello!"
+        with patch("omniagents.core.runtime.bridge.ItemHelpers") as mock_helpers:
+            mock_helpers.text_message_output.return_value = "Hello!"
 
+            with patch("agents.Runner.run_streamed", return_value=mock_stream_result) as mock_run:
                 # Run stream_agent
                 await stream_agent(
                     mock_agent, "Test prompt", mock_session, mock_channel
                 )
 
-                # Verify run_streamed was called with correct input
-                mock_agent.run_streamed.assert_called_once()
-                call_args = mock_agent.run_streamed.call_args[0][0]
-                assert call_args == [{"role": "user", "content": "Test prompt"}]
+                mock_run.assert_called_once()
+                args, kwargs = mock_run.call_args
+                assert args[0] == mock_agent
+                assert args[1] == [{"role": "user", "content": "Test prompt"}]
 
-                # Verify events were processed
                 assert mock_channel.async_call.called
-                # Should have called for message_output event
                 calls = mock_channel.async_call.call_args_list
                 assert any(call[0][0] == "message_output" for call in calls)
 
     @pytest.mark.asyncio
-    async def test_agent_reuse_across_runs(self, mock_spec, mock_channel, mock_session):
-        """Test that agents are reused for subsequent runs in same session."""
+    async def test_agent_builder_called_each_run(self, mock_spec, mock_channel, mock_session):
+        """Service should build a fresh agent for each run."""
+        service = AgentService(mock_spec)
+        service.channel = mock_channel
+
+        service._session_manager = Mock()
+        service._session_manager.get_or_create.return_value = mock_session
+        service._session_manager.bind_task = Mock()
+
         with patch(
-            "omniagents.core.agents.factory.create_unified_agent"
-        ) as mock_create:
-            mock_agent = AsyncMock()
-            mock_create.return_value = mock_agent
+            "omniagents.core.agents.service.stream_agent",
+            new_callable=AsyncMock,
+            return_value={},
+        ):
+            await service.start_run("First", session_id="test-123")
+            await _drain_run_tasks()
+            await service.start_run("Second", session_id="test-123")
+            await _drain_run_tasks()
 
-            service = AgentService(mock_spec)
-            service.channel = mock_channel
-
-            with patch("omniagents.core.agents.service.sm") as mock_sm:
-                mock_sm.get_or_create.return_value = mock_session
-
-                with patch("omniagents.core.agents.service.stream_agent"):
-                    # First run - should create agent
-                    await service.start_run("First", session_id="test-123")
-                    assert mock_create.call_count == 1
-                    assert hasattr(mock_session, "agent")
-
-                    # Second run - should reuse agent
-                    await service.start_run("Second", session_id="test-123")
-                    assert mock_create.call_count == 1  # Not called again
+        assert mock_spec.build_agent.await_count == 2
 
     def test_no_runner_imports(self):
         """Verify that Runner is imported locally, not at module level."""

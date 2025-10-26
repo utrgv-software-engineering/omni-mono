@@ -14,7 +14,9 @@ async def dummy_build_agent(settings, mcp, app):
     return Agent(name="a", tools=[], instructions="", model="gpt")
 
 
-async def fake_stream_agent(agent, prompt, sess, channel, max_turns=20):
+async def fake_stream_agent(
+    agent, prompt, sess, channel, max_turns=20, context=None, **kwargs
+):
     print(f"DEBUG fake_stream_agent: Started with prompt={prompt}")
     run_id = asyncio.current_task().get_name()
     user_msg = {"role": "user", "content": prompt}
@@ -121,8 +123,15 @@ async def _integration_flow():
         async for event in run.stream_events():
             event_count += 1
             print(f"DEBUG: Got event {event_count}: type={event.type}")
-            if event.type == "message_output_created":
-                events["msg"].append(event.item.raw_item.content[0].text)
+            if event.type == "run_item_stream_event":
+                item = event.item
+                item_type = getattr(item, "type", "")
+                if item_type == "message_output_item":
+                    events["msg"].append(item.to_input_item()["content"])
+                elif item_type == "tool_call_item":
+                    events["tool_call"].append((item.name, item.arguments))
+                elif item_type == "tool_call_output_item":
+                    events["tool_out"].append(item.output)
             elif event.type == "client_request":
                 payload = event.item if isinstance(event.item, dict) else {}
                 if payload.get("function") == "ui.request_tool_approval":
@@ -136,10 +145,6 @@ async def _integration_flow():
                         },
                         error=None,
                     )
-            elif event.type == "tool_called":
-                events["tool_call"].append((event.item.name, event.item.arguments))
-            elif event.type == "tool_output":
-                events["tool_out"].append(event.item.output)
         print(f"DEBUG: Total events received: {event_count}")
 
         assert events["msg"] == ["pong"]
