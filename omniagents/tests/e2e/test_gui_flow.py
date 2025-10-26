@@ -181,7 +181,6 @@ class TestFletUnifiedAgent:
                     assert mock_create.call_count == 2
                     assert app.agent_instance == mock_agent2
 
-
     @pytest.mark.asyncio
     async def test_error_handling_in_agent_creation(self, mock_spec, mock_page):
         """Test error handling when agent creation fails."""

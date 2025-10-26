@@ -30,6 +30,13 @@ class TestCLIUnifiedIntegration:
         spec.settings_fields = []
         spec.max_turns = 10
         spec.build_agent = None  # Add build_agent attribute
+        spec.project_slug = "test_project"
+        spec.agent_slug = "test_agent"
+        spec.tracing_config = None
+        spec.mcp_servers = []
+        spec.variables = None
+        spec.context = None
+        spec.build_context = None
         return spec
 
     @pytest.mark.asyncio
@@ -64,7 +71,7 @@ class TestCLIUnifiedIntegration:
             # Verify MCP server was passed to builder
             mock_build.assert_called_once()
             call_args = mock_build.call_args
-            assert call_args[0][1] == mcp_servers[0]  # Second arg is MCP server
+            assert call_args[0][1] == mcp_servers  # MCP server list passed through
 
         await adapter.cleanup()
 

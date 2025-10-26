@@ -19,9 +19,20 @@ class Artifact(NamedTuple):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Stage prebuilt omni-tui binaries")
-    parser.add_argument("--artifacts", required=True, type=Path, help="Directory containing build artifacts")
-    parser.add_argument("--vendor", required=True, type=Path, help="Target vendor directory")
-    parser.add_argument("--clear", action="store_true", help="Remove existing staged binaries before copying")
+    parser.add_argument(
+        "--artifacts",
+        required=True,
+        type=Path,
+        help="Directory containing build artifacts",
+    )
+    parser.add_argument(
+        "--vendor", required=True, type=Path, help="Target vendor directory"
+    )
+    parser.add_argument(
+        "--clear",
+        action="store_true",
+        help="Remove existing staged binaries before copying",
+    )
     return parser.parse_args()
 
 

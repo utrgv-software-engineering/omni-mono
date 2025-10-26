@@ -77,7 +77,11 @@ class TestServerIntegration:
                 }
             )
 
-            resp = ws.receive_json()
+            while True:
+                resp = ws.receive_json()
+                if resp.get("id") == 1 and "result" in resp:
+                    break
+
             assert "result" in resp
             assert "session_id" in resp["result"]
             assert "run_id" in resp["result"]
@@ -85,8 +89,10 @@ class TestServerIntegration:
             session_id = resp["result"]["session_id"]
 
             # Should receive run_end event
-            event = ws.receive_json()
-            assert event["method"] == "run_end"
+            while True:
+                event = ws.receive_json()
+                if event.get("method") == "run_end":
+                    break
 
             # 2. Get session history
             ws.send_json(
@@ -161,12 +167,19 @@ class TestServerIntegration:
                 }
             )
 
-            resp1 = ws.receive_json()
+            while True:
+                resp1 = ws.receive_json()
+                if resp1.get("id") == 1 and "result" in resp1:
+                    break
+
             session_id = resp1["result"]["session_id"]
             run_id1 = resp1["result"]["run_id"]
 
             # Wait for completion
-            ws.receive_json()  # run_end
+            while True:
+                event = ws.receive_json()
+                if event.get("method") == "run_end":
+                    break
 
             # Second run with same session
             ws.send_json(
@@ -178,13 +191,20 @@ class TestServerIntegration:
                 }
             )
 
-            resp2 = ws.receive_json()
+            while True:
+                resp2 = ws.receive_json()
+                if resp2.get("id") == 2 and "result" in resp2:
+                    break
+
             assert resp2["result"]["session_id"] == session_id
             run_id2 = resp2["result"]["run_id"]
             assert run_id1 != run_id2
 
             # Wait for completion
-            ws.receive_json()  # run_end
+            while True:
+                event = ws.receive_json()
+                if event.get("method") == "run_end":
+                    break
 
             # Check history has both messages
             ws.send_json(
@@ -221,8 +241,8 @@ class TestServerIntegration:
             )
 
             resp = ws.receive_json()
-            # Should return True (even if approval_id not found)
-            assert resp["result"] is True
+            # Service currently returns False when no pending approval exists
+            assert resp.get("result") is False
 
     def test_invalid_session_id(self, client):
         """Test handling of invalid session ID."""

@@ -44,7 +44,13 @@ def test_rpc_methods(monkeypatch):
                 "params": {"prompt": "hello"},
             }
         )
-        resp = ws.receive_json()
+        while True:
+            resp = ws.receive_json()
+            # Skip notifications (no id) such as run_started
+            if "id" not in resp:
+                continue
+            if resp.get("id") == 1 and "result" in resp:
+                break
         session_id = resp["result"]["session_id"]
         ws.receive_json()  # run_end
 
