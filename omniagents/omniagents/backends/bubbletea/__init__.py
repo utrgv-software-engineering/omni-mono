@@ -25,6 +25,7 @@ import tarfile
 import zipfile
 
 from omniagents.core.agents.specs import AgentSpec
+from omniagents.core.runtime.overrides import apply_cli_overrides
 import hashlib
 from glob import glob
 
@@ -63,6 +64,9 @@ class BubbleTeaBackend:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(("", 0))
             port = s.getsockname()[1]
+
+        args = kwargs.get("args")
+        apply_cli_overrides(spec, args)
 
         # Extract configuration from kwargs
         config_path = kwargs.get("config_path")
