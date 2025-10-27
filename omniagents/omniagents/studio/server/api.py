@@ -6356,7 +6356,7 @@ def create_api_app(
     async def search(
         project: str = Query(..., description="Project name"),
         q: str = Query(..., min_length=1),
-        type: str = Query("traces", regex="^(traces|spans)$"),
+        type: str = Query("traces", pattern="^(traces|spans)$"),
     ):
         """Search traces or spans within a project"""
         try:
@@ -7067,7 +7067,7 @@ def create_api_app(
 
     @app.get("/api/export/{project}/{trace_id}")
     async def export_trace(
-        project: str, trace_id: str, format: str = Query("json", regex="^(json|csv)$")
+        project: str, trace_id: str, format: str = Query("json", pattern="^(json|csv)$")
     ):
         """Export a trace in different formats"""
         try:
