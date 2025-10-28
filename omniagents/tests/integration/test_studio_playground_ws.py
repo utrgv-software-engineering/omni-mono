@@ -9,11 +9,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from omniagents.core.project.runtime import build_spec_from_project, load_project
-from omniagents.studio.server.api import (
-    _guardrail_keys,
-    build_playground_spec,
-    create_api_app,
-)
+from omniagents.studio.server.api import _guardrail_keys, create_api_app
 from omniagents.core.runtime import bridge
 
 
