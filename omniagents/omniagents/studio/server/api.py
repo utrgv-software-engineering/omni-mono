@@ -14,6 +14,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Literal, Set
 
+try:
+    from typing_extensions import NotRequired, TypedDict  # type: ignore
+except ImportError:  # pragma: no cover - Python 3.12+
+    from typing import NotRequired, TypedDict  # type: ignore
+
 from dataclasses import replace, asdict, dataclass
 
 from fastapi import (
@@ -471,18 +476,6 @@ def _build_type_from_schema(schema: Dict[str, Any], agent_name: str) -> Optional
     properties = schema.get("properties")
     if not isinstance(properties, dict) or not properties:
         return None
-    try:
-        try:
-            from typing import NotRequired  # type: ignore
-        except ImportError:
-            from typing_extensions import NotRequired  # type: ignore
-        try:
-            from typing import TypedDict  # type: ignore
-        except ImportError:
-            from typing_extensions import TypedDict  # type: ignore
-    except Exception:
-        return None
-
     required_raw = schema.get("required")
     required_names = (
         {str(item) for item in required_raw if isinstance(item, str)}

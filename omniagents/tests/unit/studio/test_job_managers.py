@@ -546,3 +546,23 @@ async def test_playground_session_store_is_thread_safe():
     assert final["model"] in {"gpt-4o", "gpt-4o-mini"}
     await store.delete(session_id)
     assert await store.get(session_id) is None
+
+
+@pytest.mark.asyncio
+async def test_playground_session_store_supports_multiple_event_loops():
+    store = PlaygroundSessionStore()
+    session_id = await store.upsert(None, {"model": "base"})
+
+    async def other_loop():
+        await store.upsert(session_id, {"model": "remote"})
+        data = await store.get(session_id)
+        return data["model"]
+
+    def run_in_thread():
+        return asyncio.run(other_loop())
+
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, run_in_thread)
+    assert result == "remote"
+    final = await store.get(session_id)
+    assert final["model"] == "remote"
