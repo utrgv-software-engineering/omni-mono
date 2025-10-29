@@ -94,6 +94,10 @@ include-package-data = true
     "static/*",
     "static/assets/*",
 ]
+"omniagents.core.project" = [
+    "templates/*",
+    "templates/**/*",
+]
 
 [tool.setuptools.dynamic]
 version = {attr = "omniagents._version.__version__"}

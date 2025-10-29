@@ -4,3 +4,4 @@ recursive-include omniagents/backends/bubbletea/cmd/omni-tui/themes *
 include omniagents/backends/bubbletea/README.md
 recursive-include omniagents/backends/bubbletea/vendor *
 recursive-include omniagents/studio/server/static *
+recursive-include omniagents/core/project/templates *
