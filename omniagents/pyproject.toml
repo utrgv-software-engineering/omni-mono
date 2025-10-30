@@ -39,6 +39,29 @@ dev = [
     "pytest-asyncio",
     "bump2version",
     "black",
+    "coverage[toml]",
+    "pytest-cov",
+]
+
+[tool.pytest.ini_options]
+addopts = "--cov=omniagents --cov-report=term-missing --cov-report=xml"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["omniagents"]
+omit = [
+    "omniagents/backends/bubbletea/cmd/omni-tui/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+[tool.coverage.paths]
+source = [
+    "omniagents",
+    "*/site-packages/omniagents",
 ]
 
 [tool.black]

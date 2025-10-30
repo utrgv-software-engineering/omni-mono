@@ -1,8 +1,9 @@
-include .env
+-include .env
 export
 
 STUDIO_WEB_DIR := omniagents/studio/server/web
 STUDIO_STATIC_DIR := omniagents/studio/server/static
+BUBBLETEA_CMD_DIR := omniagents/backends/bubbletea/cmd/omni-tui
 
 clean:
 	rm -rf dist/ build/ *.egg-info
@@ -36,6 +37,20 @@ dev:
 format:
 	black .
 
+coverage-python:
+	mkdir -p coverage/python
+	pytest
+
+coverage-go:
+	mkdir -p coverage/go
+	cd $(BUBBLETEA_CMD_DIR) && go test ./... -covermode=atomic -coverprofile=$(CURDIR)/coverage/go/cover.out
+
+coverage-web:
+	mkdir -p coverage/web
+	cd $(STUDIO_WEB_DIR) && npm run test:coverage
+
+coverage-all: coverage-python coverage-web coverage-go
+
 bump-patch:
 	bump2version patch
 
@@ -45,4 +60,4 @@ bump-minor:
 bump-major:
 	bump2version major
 
-.PHONY: clean studio-assets build publish install dev format bump-patch bump-minor bump-major
+.PHONY: clean studio-assets build publish install dev format coverage-python coverage-go coverage-web coverage-all bump-patch bump-minor bump-major

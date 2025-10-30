@@ -89,3 +89,14 @@ Run the test suite with:
 pytest -q
 ```
 
+Run coverage locally with:
+
+```bash
+make coverage-all
+```
+
+Individual coverage targets:
+
+- `make coverage-python` – Python agents, FastAPI server, and backends
+- `make coverage-web` – React Studio UI via Vitest
+- `make coverage-go` – Bubble Tea TUI backend
