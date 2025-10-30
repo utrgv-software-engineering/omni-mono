@@ -413,3 +413,34 @@ def test_processor_skips_span_without_active_trace(tmp_path, monkeypatch):
     processor.on_span_end(span)
     assert processor._storages == {}
     processor.shutdown()
+
+
+def test_bulk_insert_spans_noop(storage):
+    storage.bulk_insert_spans([])
+    assert storage.get_spans_for_trace("missing") == []
+
+
+def test_set_analysis_categories_creates_record(storage):
+    storage.set_analysis_categories("proj-new", "group-new", [])
+    record = storage.get_analysis("proj-new", "group-new")
+    assert record is not None
+    assert record["categories"] is None
+
+
+def test_remove_analysis_category_slug_ignores_empty(storage):
+    storage.set_analysis_categories("proj-slug", "group-slug", ["one"])
+    storage.remove_analysis_category_slug("proj-slug", " ")
+    assert storage.get_analysis_categories("group-slug") == ["one"]
+
+
+def test_get_traces_respects_limit(storage):
+    for index in range(3):
+        storage.insert_trace(
+            {
+                "id": f"trace-{index}",
+                "workflow_name": "wf",
+                "group_id": "group",
+            }
+        )
+    traces = storage.get_traces(limit=2)
+    assert len(traces) == 2
