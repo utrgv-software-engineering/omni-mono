@@ -226,6 +226,8 @@ async def test_queued_tool_approval_replays_on_start_run(monkeypatch):
 
     try:
         result = await service.start_run("resume", session_id=session.id)
+        session_ref = service._session_manager.get_or_create(result["session_id"])
+        run_task = session_ref.current_task
 
         async def wait_for_request():
             for _ in range(50):
@@ -254,9 +256,7 @@ async def test_queued_tool_approval_replays_on_start_run(monkeypatch):
         result_tuple = await approval_task
         assert result_tuple == (True, False, None)
         assert session.pending_events == []
-
-        session_ref = service._session_manager.get_or_create(result["session_id"])
-        await asyncio.wait_for(session_ref.current_task, timeout=1)
+        await asyncio.wait_for(run_task, timeout=1)
     finally:
         if not approval_task.done():
             approval_task.cancel()
@@ -350,14 +350,17 @@ async def test_tool_approval_requests_stay_with_origin_session(monkeypatch):
 
     run1_task = asyncio.create_task(service.start_run("first", session_id=sess1.id))
     await run1_ready.wait()
+    run1_run_task = sess1.current_task
 
     run2_result = await service.start_run("second", session_id=sess2.id)
+    sess2_ref = service._session_manager.get_or_create(run2_result["session_id"])
+    run2_run_task = sess2_ref.current_task
     run1_release.set()
 
     run1_result = await run1_task
 
     sess1_ref = service._session_manager.get_or_create(run1_result["session_id"])
-    sess2_ref = service._session_manager.get_or_create(run2_result["session_id"])
+    run1_run_task = run1_run_task or sess1_ref.current_task
 
     processed: set[str] = set()
     approvals: list[tuple[str, dict]] = []
@@ -395,8 +398,8 @@ async def test_tool_approval_requests_stay_with_origin_session(monkeypatch):
 
     await asyncio.wait_for(wait_for_approvals(), timeout=1)
 
-    await asyncio.wait_for(sess1_ref.current_task, timeout=1)
-    await asyncio.wait_for(sess2_ref.current_task, timeout=1)
+    await asyncio.wait_for(run1_run_task, timeout=1)
+    await asyncio.wait_for(run2_run_task, timeout=1)
 
     total_ch1 = sum(1 for name, _ in approvals if name == "ch1")
     total_ch2 = sum(1 for name, _ in approvals if name == "ch2")
@@ -493,11 +496,13 @@ async def test_always_approve_remains_session_local(monkeypatch):
 
     first = await service.start_run("first", session_id=sess1.id)
     sess1_ref = service._session_manager.get_or_create(first["session_id"])
+    first_run_task = sess1_ref.current_task
     await wait_for_request_count(1)
-    await asyncio.wait_for(sess1_ref.current_task, timeout=1)
+    await asyncio.wait_for(first_run_task, timeout=1)
 
     second = await service.start_run("second", session_id=sess1_ref.id)
     sess1_ref = service._session_manager.get_or_create(second["session_id"])
+    second_run_task = sess1_ref.current_task
     try:
         await wait_for_request_count(2, timeout=0.2)
         second_had_request = True
@@ -507,12 +512,13 @@ async def test_always_approve_remains_session_local(monkeypatch):
     if second_had_request:
         pytest.fail("Second run should not trigger a new approval request")
 
-    await asyncio.wait_for(sess1_ref.current_task, timeout=1)
+    await asyncio.wait_for(second_run_task, timeout=1)
 
     third = await service.start_run("third", session_id=sess2.id)
     sess2_ref = service._session_manager.get_or_create(third["session_id"])
+    third_run_task = sess2_ref.current_task
     await wait_for_request_count(2)
-    await asyncio.wait_for(sess2_ref.current_task, timeout=1)
+    await asyncio.wait_for(third_run_task, timeout=1)
 
     assert recorded[0][0] == "approval"
     assert recorded[0][1] == sess1.id

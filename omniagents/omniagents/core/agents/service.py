@@ -724,6 +724,10 @@ class AgentService(RpcMethodsBase):
         sess: Session = self._session_manager.get_or_create(session_id)
         channel = getattr(self, "channel", None)
 
+        sess.cancel_requested = False
+        sess.cancel_end_reason = None
+        sess.current_stream_result = None
+
         # Store variables and/or context in session
         if variables is not None:
             sess.variables = variables
@@ -857,7 +861,7 @@ class AgentService(RpcMethodsBase):
                             include_user_message=include_user_message,
                             workflow_name=workflow_name_override,
                         )
-                        end_reason = "completed"
+                        end_reason = sess.cancel_end_reason or "completed"
                         error_info = None
                         break
                     except asyncio.CancelledError:
@@ -929,6 +933,12 @@ class AgentService(RpcMethodsBase):
                         sess.run_channels.pop(run_name, None)
                     except Exception:
                         pass
+                sess.cancel_requested = False
+                sess.cancel_end_reason = None
+                if sess.current_task is task:
+                    sess.current_task = None
+                if sess.current_stream_result is not None:
+                    sess.current_stream_result = None
                 stack = getattr(sess, "_mcp_exit_stack", None)
                 if stack:
                     try:
@@ -967,7 +977,7 @@ class AgentService(RpcMethodsBase):
 
     async def stop_run(self, run_id: str) -> bool:  # noqa: D401
         _debug_rpc("stop_run", {"run_id": run_id})
-        return self._session_manager.cancel(run_id)
+        return await self._session_manager.cancel(run_id)
 
     async def send_user_message(self, run_id: str, content: str) -> None:  # noqa: D401
         _debug_rpc("send_user_message", {"run_id": run_id, "content": content})

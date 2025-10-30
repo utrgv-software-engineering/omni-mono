@@ -38,7 +38,7 @@ async def test_bind_task_tracks_and_cancel_clears_session():
     manager.bind_task(task, session)
     assert manager.get_by_run_id("run-bind") is session
     assert session.current_task is task
-    cancelled = manager.cancel("run-bind")
+    cancelled = await manager.cancel("run-bind")
     assert cancelled is True
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -48,10 +48,10 @@ async def test_bind_task_tracks_and_cancel_clears_session():
 @pytest.mark.asyncio
 async def test_cancel_handles_missing_tasks():
     manager = make_manager()
-    assert manager.cancel("missing") is False
+    assert await manager.cancel("missing") is False
     session = manager.get_or_create()
     manager._task_map["orphaned"] = session
-    assert manager.cancel("orphaned") is False
+    assert await manager.cancel("orphaned") is False
 
 
 def test_archive_session_persists_flag():

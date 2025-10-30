@@ -20,7 +20,7 @@ async def test_stop_run_delegates_to_session_manager():
         def __init__(self):
             self.cancel_called_with = None
 
-        def cancel(self, run_id: str) -> bool:
+        async def cancel(self, run_id: str) -> bool:
             self.cancel_called_with = run_id
             return True
 
