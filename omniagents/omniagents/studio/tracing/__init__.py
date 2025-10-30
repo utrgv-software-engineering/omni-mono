@@ -405,6 +405,7 @@ def serve(
         default_project=active_project,
         dev_server_url=dev_server_url,
         playground_resources=playground_resources,
+        auth_token=auth_token,
     )
 
     if storage:

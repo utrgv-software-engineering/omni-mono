@@ -10,7 +10,7 @@ import logging
 import shutil
 import uuid
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Literal, Set
 
@@ -30,7 +30,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import URL
 
@@ -162,7 +162,10 @@ STRUCTURED_OUTPUT_LABELS: Dict[str, str] = {
 
 
 def _utc_now() -> str:
-    return datetime.utcnow().isoformat() + "Z"
+    value = datetime.now(timezone.utc).isoformat()
+    if value.endswith("+00:00"):
+        return value[:-6] + "Z"
+    return value
 
 
 def _canonical_output_type_key(output_type: Any) -> str:
@@ -595,7 +598,7 @@ class PlaygroundSessionStore:
         async with self._lock:
             key = session_id or uuid.uuid4().hex
             payload = dict(config)
-            payload["updated_at"] = datetime.utcnow().isoformat() + "Z"
+            payload["updated_at"] = _utc_now()
             self._sessions[key] = payload
             return key
 
@@ -2108,8 +2111,53 @@ def create_api_app(
     *,
     dev_server_url: Optional[str] = None,
     playground_resources: Optional[Dict[str, Any]] = None,
+    auth_token: Optional[str] = None,
 ):
     app = FastAPI()
+
+    expected_auth_token = (
+        auth_token.strip()
+        if isinstance(auth_token, str) and auth_token.strip()
+        else None
+    )
+
+    def _extract_bearer_token(value: Optional[str]) -> Optional[str]:
+        if not value:
+            return None
+        scheme, _, credentials = value.partition(" ")
+        if scheme.lower() == "bearer" and credentials.strip():
+            return credentials.strip()
+        return None
+
+    if expected_auth_token:
+
+        @app.middleware("http")
+        async def _enforce_auth(request: Request, call_next):
+            if request.method == "OPTIONS":
+                return await call_next(request)
+            path = request.url.path or ""
+            if path.startswith("/api"):
+                header_token = _extract_bearer_token(
+                    request.headers.get("authorization")
+                )
+                query_token = request.query_params.get("token")
+                supplied = header_token or query_token
+                if supplied != expected_auth_token:
+                    return JSONResponse(
+                        status_code=401,
+                        content={"detail": "Invalid or missing token"},
+                    )
+            return await call_next(request)
+
+    async def _require_ws_token(websocket: WebSocket) -> None:
+        if not expected_auth_token:
+            return
+        header_token = _extract_bearer_token(websocket.headers.get("authorization"))
+        query_token = websocket.query_params.get("token")
+        supplied = header_token or query_token
+        if supplied != expected_auth_token:
+            await websocket.close(code=4403)
+            raise WebSocketDisconnect(code=4403)
 
     storage_manager = StorageManager()
 
@@ -7133,6 +7181,7 @@ def create_api_app(
 
     @app.websocket("/api/evaluation/suite/run/{job_id}/ws")
     async def suite_run_ws(job_id: str, websocket: WebSocket):
+        await _require_ws_token(websocket)
         manager: SuiteRunManager = app.state.suite_run_manager
         accepted = await manager.add_connection(job_id, websocket)
         if not accepted:
@@ -7152,6 +7201,7 @@ def create_api_app(
 
     @app.websocket("/api/evaluation/scenarios/run/{job_id}/ws")
     async def scenario_run_ws(job_id: str, websocket: WebSocket):
+        await _require_ws_token(websocket)
         manager: ScenarioRunManager = app.state.scenario_run_manager
         accepted = await manager.add_connection(job_id, websocket)
         if not accepted:
@@ -7171,6 +7221,7 @@ def create_api_app(
 
     @app.websocket("/api/evaluation/scenarios/generate/{job_id}/ws")
     async def scenario_generation_ws(job_id: str, websocket: WebSocket):
+        await _require_ws_token(websocket)
         manager: ScenarioGenerationManager = app.state.scenario_generation_manager
         accepted = await manager.add_connection(job_id, websocket)
         if not accepted:
@@ -7190,6 +7241,7 @@ def create_api_app(
 
     @app.websocket("/api/evaluation/judges/optimize/{job_id}/ws")
     async def judge_optimize_ws(job_id: str, websocket: WebSocket):
+        await _require_ws_token(websocket)
         manager: JudgeOptimizationManager = app.state.judge_optimization_manager
         accepted = await manager.add_connection(job_id, websocket)
         if not accepted:
@@ -7209,6 +7261,7 @@ def create_api_app(
 
     @app.websocket("/api/evaluation/agents/optimize/{job_id}/ws")
     async def agent_optimize_ws(job_id: str, websocket: WebSocket):
+        await _require_ws_token(websocket)
         manager: AgentOptimizationManager = app.state.agent_optimization_manager
         accepted = await manager.add_connection(job_id, websocket)
         if not accepted:
@@ -7229,6 +7282,7 @@ def create_api_app(
     @app.websocket("/api/ws/traces")
     async def websocket_endpoint(websocket: WebSocket):
         """WebSocket for real-time trace updates"""
+        await _require_ws_token(websocket)
         await manager.connect(websocket)
         try:
             while True:
@@ -7242,6 +7296,7 @@ def create_api_app(
         logger.debug(
             "[playground] incoming websocket request %s", websocket.query_params
         )
+        await _require_ws_token(websocket)
         resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
         session_id = websocket.query_params.get("session_id")
         if not session_id:
