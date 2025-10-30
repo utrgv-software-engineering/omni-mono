@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+MODULE_PREFIXES = ("guardrails", "server_functions")
+
 import pytest
 
 from omniagents.core.project.runtime import (
@@ -12,25 +14,27 @@ from omniagents.core.project.runtime import (
 )
 
 
-def _clear_guardrail_modules():
+def _clear_namespaces():
     for name in list(sys.modules):
-        if name == "guardrails" or name.startswith("guardrails."):
-            sys.modules.pop(name, None)
+        for prefix in MODULE_PREFIXES:
+            if name == prefix or name.startswith(f"{prefix}."):
+                sys.modules.pop(name, None)
+                break
 
 
 @pytest.fixture(autouse=True)
-def guardrails_module_isolation():
+def module_isolation():
     snapshot = {
         name: sys.modules[name]
         for name in list(sys.modules)
-        if name == "guardrails" or name.startswith("guardrails.")
+        for prefix in MODULE_PREFIXES
+        if name == prefix or name.startswith(f"{prefix}.")
     }
-    for name in snapshot:
-        sys.modules.pop(name, None)
+    _clear_namespaces()
     try:
         yield
     finally:
-        _clear_guardrail_modules()
+        _clear_namespaces()
         sys.modules.update(snapshot)
 
 
@@ -40,7 +44,7 @@ def _write(path: Path, content: str) -> None:
 
 
 def _build_runtime_fixture(tmp_path: Path) -> Path:
-    _clear_guardrail_modules()
+    _clear_namespaces()
     root = tmp_path / "demo"
     root.mkdir()
     _write(
