@@ -22,6 +22,7 @@ func main() {
 		resume      bool
 		themeName   string
 		saveTheme   bool
+		initialMsg  string
 	)
 
 	// Parse command line flags
@@ -36,6 +37,7 @@ func main() {
 	flag.BoolVar(&standalone, "standalone", false, "Run in standalone mode (connect to external server)")
 	flag.StringVar(&themeName, "theme", "", "Color theme to use (e.g., tokyonight)")
 	flag.BoolVar(&saveTheme, "save-theme", false, "Save the theme choice to config")
+	flag.StringVar(&initialMsg, "initial-message", "", "Message to send immediately after connecting")
 	flag.Parse()
 
 	// Validate required parameters
@@ -98,7 +100,7 @@ func main() {
 	client := NewRPCClient(serverURL, token)
 
 	// Initialize model
-	model := NewModel(client, agentName, welcomeText, safeMode, sessionID, resume)
+	model := NewModel(client, agentName, welcomeText, safeMode, sessionID, resume, initialMsg)
 
 	// Create program with options
 	p := tea.NewProgram(

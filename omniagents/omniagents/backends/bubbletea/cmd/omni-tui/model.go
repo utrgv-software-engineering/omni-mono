@@ -137,6 +137,10 @@ type Model struct {
 	// Resume mode - whether to show session list on startup
 	resumeMode bool
 
+	// Initial prompt handling
+	initialPrompt        string
+	initialPromptPending bool
+
 	// Pulse animation state
 	pulseFrame int
 	pulseTimer int
@@ -194,7 +198,7 @@ type ToolCallInfo struct {
 }
 
 // NewModel creates a new application model
-func NewModel(client *RPCClient, agentName string, welcomeText string, safeMode bool, sessionID string, resumeMode bool) Model {
+func NewModel(client *RPCClient, agentName string, welcomeText string, safeMode bool, sessionID string, resumeMode bool, initialPrompt string) Model {
 	// Initialize custom textarea
 	ta := NewCustomTextarea()
 	ta.Placeholder = "Type your message..."
@@ -258,23 +262,28 @@ func NewModel(client *RPCClient, agentName string, welcomeText string, safeMode 
 	// Check debug mode from environment
 	debug := os.Getenv("OMNI_DEBUG") == "1"
 
+	trimmedPrompt := strings.TrimSpace(initialPrompt)
+	pending := trimmedPrompt != ""
+
 	return Model{
-		rpcClient:   client,
-		sessionID:   sessionID,
-		agentName:   agentName,
-		welcomeText: welcomeText,
-		useSafeMode: safeMode,
-		input:       ta,
-		viewport:    vp,
-		spinner:     s,
-		paginator:   p,
-		help:        h,
-		keys:        keys,
-		messages:    []Message{},
-		state:       StateConnecting,
-		msgChan:     make(chan tea.Msg, 100),
-		debugMode:   debug,
-		resumeMode:  resumeMode,
+		rpcClient:            client,
+		sessionID:            sessionID,
+		agentName:            agentName,
+		welcomeText:          welcomeText,
+		useSafeMode:          safeMode,
+		input:                ta,
+		viewport:             vp,
+		spinner:              s,
+		paginator:            p,
+		help:                 h,
+		keys:                 keys,
+		messages:             []Message{},
+		state:                StateConnecting,
+		msgChan:              make(chan tea.Msg, 100),
+		debugMode:            debug,
+		resumeMode:           resumeMode,
+		initialPrompt:        trimmedPrompt,
+		initialPromptPending: pending,
 	}
 }
 
@@ -749,6 +758,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.globalHistory) == 0 {
 			_, cmd := m.loadGlobalHistory()
 			cmds = append(cmds, cmd)
+		}
+
+		if !m.resumeMode {
+			var initialCmd tea.Cmd
+			m, initialCmd = m.maybeSendInitialPrompt()
+			if initialCmd != nil {
+				cmds = append(cmds, initialCmd)
+			}
 		}
 
 	case DisconnectedMsg:
@@ -2310,9 +2327,24 @@ func (m Model) selectSession() (Model, tea.Cmd) {
 		m.sessionID = m.availableSessions[actualIndex].ID
 		m.state = StateReady
 		m.updateViewport()
-		// TODO: Load session history
+		var cmd tea.Cmd
+		m, cmd = m.maybeSendInitialPrompt()
+		return m, cmd
 	}
 	return m, nil
+}
+
+func (m Model) maybeSendInitialPrompt() (Model, tea.Cmd) {
+	if !m.initialPromptPending {
+		return m, nil
+	}
+	m.initialPromptPending = false
+	text := strings.TrimSpace(m.initialPrompt)
+	if text == "" {
+		return m, nil
+	}
+	m.input.SetValue(text)
+	return m.sendMessage()
 }
 
 func (m *Model) updateViewport() {

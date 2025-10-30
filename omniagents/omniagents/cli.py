@@ -32,6 +32,13 @@ CODESPACES_ENV = any(
 DEFAULT_STUDIO_DEV_HOST = "0.0.0.0" if CODESPACES_ENV else "127.0.0.1"
 
 
+def _merge_prompt_words(words: Optional[List[str]] | None) -> Optional[str]:
+    if not words:
+        return None
+    text = " ".join(words).strip()
+    return text or None
+
+
 def _resolve_studio_project_value(
     value: Optional[str],
 ) -> Tuple[Optional[str], Optional[Path], bool]:
@@ -227,6 +234,11 @@ def main():
         "--reload",
         action="store_true",
         help="Auto-reload server when code changes (server mode only)",
+    )
+    run_parser.add_argument(
+        "prompt",
+        nargs="*",
+        help="Optional message to send immediately after startup.",
     )
 
     # Save command
@@ -672,6 +684,11 @@ def main():
         action="store_true",
         help="Auto-reload server when code changes (server mode only)",
     )
+    agent_run.add_argument(
+        "prompt",
+        nargs="*",
+        help="Optional message to send immediately after startup.",
+    )
 
     agent_save = agent_sub.add_parser(
         "save", help="Save an agent spec as a standalone Python module (agent-level)"
@@ -1079,6 +1096,8 @@ def main():
             print("Error: --resume is only supported in Bubble Tea TUI mode.")
             sys.exit(2)
 
+        initial_prompt = _merge_prompt_words(getattr(args, "prompt", None))
+
         # Pass all relevant args to the backend
         kwargs = {
             "config_path": resolved_config_path,
@@ -1088,6 +1107,9 @@ def main():
 
         if resume_flag:
             kwargs["resume"] = True
+
+        if initial_prompt:
+            kwargs["initial_prompt"] = initial_prompt
 
         # Add server-specific kwargs if in server mode
         if args.mode == "server":
@@ -1282,6 +1304,8 @@ def main():
             if resume_flag and args.mode not in ("bubbletea", "tui"):
                 print("Error: --resume is only supported in Bubble Tea TUI mode.")
                 sys.exit(2)
+            initial_prompt = _merge_prompt_words(getattr(args, "prompt", None))
+
             kwargs = {
                 "config_path": resolved_config_path,
                 "args": args,
@@ -1289,6 +1313,8 @@ def main():
             }
             if resume_flag:
                 kwargs["resume"] = True
+            if initial_prompt:
+                kwargs["initial_prompt"] = initial_prompt
             if args.mode == "server":
                 kwargs.update(
                     {
