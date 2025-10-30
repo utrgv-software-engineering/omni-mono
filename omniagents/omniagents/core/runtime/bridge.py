@@ -196,6 +196,7 @@ async def stream_agent(
             max_turns=max_turns,
             run_config=run_config,
         )
+        session.current_stream_result = result
 
         async for event in result.stream_events():
             # Handle raw response events to emit usage on turn completion
@@ -390,6 +391,7 @@ async def stream_agent(
         # Re-raise the original exception
         raise
     finally:
+        session.current_stream_result = None
         # Handle any pending tool calls that didn't get results
         # This covers both cancellation and unexpected termination
         if pending_tool_calls:

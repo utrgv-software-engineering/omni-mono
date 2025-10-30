@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+import inspect
 from typing import Dict, Optional, Any
 
 from .history_db import (
@@ -40,6 +41,9 @@ class Session:  # noqa: D101
             else []
         )
         self.current_task: Optional[asyncio.Task] = None
+        self.current_stream_result: Any | None = None
+        self.cancel_requested: bool = False
+        self.cancel_end_reason: str | None = None
         # Holds (method, payload) tuples that could not be delivered because
         # the WebSocket connection was already closed.  When the client
         # reconnects we replay everything that is still pending so the UI can
@@ -96,22 +100,73 @@ class SessionManager:  # noqa: D101
         return sess
 
     def bind_task(self, task: asyncio.Task, session: Session) -> None:  # noqa: D401
-        self._task_map[task.get_name()] = session
+        run_id = task.get_name()
+        self._task_map[run_id] = session
         session.current_task = task
+        session.current_stream_result = None
+        session.cancel_requested = False
+        session.cancel_end_reason = None
+        task.add_done_callback(lambda _: self._task_map.pop(run_id, None))
 
     def get_by_run_id(self, run_id: str) -> Optional[Session]:  # noqa: D401
         return self._task_map.get(run_id)
 
-    def cancel(self, run_id: str) -> bool:  # noqa: D401
+    async def cancel(self, run_id: str, *, timeout: float = 5.0) -> bool:  # noqa: D401
         sess = self._task_map.get(run_id)
-        if not sess or not sess.current_task:
+        if not sess:
             return False
         task = sess.current_task
-        # Cancel the task - this will raise CancelledError in the task
-        task.cancel()
-        # Clear the task reference so new runs can start immediately
-        # The task will still run its cleanup but won't block new runs
+        if task is None:
+            self._task_map.pop(run_id, None)
+            return False
+        if task.done():
+            self._task_map.pop(run_id, None)
+            sess.current_task = None
+            sess.current_stream_result = None
+            return False
+
+        sess.cancel_requested = True
+        if not sess.cancel_end_reason:
+            sess.cancel_end_reason = "cancelled"
+
+        stream = getattr(sess, "current_stream_result", None)
+        used_cooperative = False
+        fallback = False
+
+        if stream and hasattr(stream, "cancel"):
+            try:
+                cancel_result = stream.cancel("after_turn")
+                if inspect.isawaitable(cancel_result):
+                    await asyncio.wait_for(cancel_result, timeout)
+                used_cooperative = True
+            except asyncio.TimeoutError:
+                fallback = True
+            except Exception:
+                fallback = True
+        else:
+            fallback = True
+
+        if used_cooperative:
+            try:
+                await asyncio.wait_for(task, timeout)
+            except asyncio.TimeoutError:
+                fallback = True
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+
+        if fallback:
+            if not task.cancelled():
+                task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
         sess.current_task = None
+        sess.current_stream_result = None
+        self._task_map.pop(run_id, None)
         return True
 
     def archive_session(self, session_id: str) -> bool:  # noqa: D401
