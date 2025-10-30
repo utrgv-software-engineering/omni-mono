@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import uuid
 import inspect
+import uuid
 from typing import Dict, Optional, Any
 
 from .history_db import (
@@ -130,38 +130,38 @@ class SessionManager:  # noqa: D101
             sess.cancel_end_reason = "cancelled"
 
         stream = getattr(sess, "current_stream_result", None)
-        used_cooperative = False
-        fallback = False
+        force_cancel = False
 
         if stream and hasattr(stream, "cancel"):
             try:
-                cancel_result = stream.cancel("after_turn")
+                cancel_result = stream.cancel("immediate")
                 if inspect.isawaitable(cancel_result):
                     await asyncio.wait_for(cancel_result, timeout)
-                used_cooperative = True
-            except asyncio.TimeoutError:
-                fallback = True
             except Exception:
-                fallback = True
+                force_cancel = True
         else:
-            fallback = True
+            force_cancel = True
 
-        if used_cooperative:
+        if not force_cancel and not task.done():
             try:
                 await asyncio.wait_for(task, timeout)
             except asyncio.TimeoutError:
-                fallback = True
+                force_cancel = True
             except asyncio.CancelledError:
                 pass
             except Exception:
                 pass
 
-        if fallback:
+        if force_cancel and not task.done():
             if not task.cancelled():
                 task.cancel()
             try:
-                await task
+                await asyncio.wait_for(task, timeout)
+            except asyncio.TimeoutError:
+                pass
             except asyncio.CancelledError:
+                pass
+            except Exception:
                 pass
 
         sess.current_task = None

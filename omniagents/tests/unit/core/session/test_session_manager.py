@@ -61,7 +61,7 @@ async def test_cancel_uses_stream_handle_before_task_cancel():
     result = await manager.cancel("run-stream")
 
     assert result is True
-    assert stream.modes == ["after_turn"]
+    assert stream.modes == ["immediate"]
     assert task.done() is True
     assert task.cancelled() is False
     assert session.current_task is None
