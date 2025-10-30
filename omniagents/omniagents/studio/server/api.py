@@ -161,11 +161,20 @@ STRUCTURED_OUTPUT_LABELS: Dict[str, str] = {
 }
 
 
+def _isoformat_utc(value: datetime) -> str:
+    target = (
+        value.astimezone(timezone.utc)
+        if value.tzinfo
+        else value.replace(tzinfo=timezone.utc)
+    )
+    text = target.isoformat()
+    if text.endswith("+00:00"):
+        return text[:-6] + "Z"
+    return text
+
+
 def _utc_now() -> str:
-    value = datetime.now(timezone.utc).isoformat()
-    if value.endswith("+00:00"):
-        return value[:-6] + "Z"
-    return value
+    return _isoformat_utc(datetime.now(timezone.utc))
 
 
 def _canonical_output_type_key(output_type: Any) -> str:
@@ -2941,7 +2950,7 @@ def create_api_app(
                 continue
         if not stamps:
             return None
-        return datetime.fromtimestamp(max(stamps)).isoformat()
+        return _isoformat_utc(datetime.fromtimestamp(max(stamps), timezone.utc))
 
     def _write_text_with_backup(path: Path, content: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -3246,7 +3255,9 @@ def create_api_app(
             raw = _read_scenarios_file(file)
             scenarios = _build_scenario_entries(raw, file)
             try:
-                updated_at = datetime.fromtimestamp(file.stat().st_mtime).isoformat()
+                updated_at = _isoformat_utc(
+                    datetime.fromtimestamp(file.stat().st_mtime, timezone.utc)
+                )
             except Exception:
                 updated_at = None
             label = "Golden Scenarios" if len(files) == 1 else f"Golden ({file.name})"
@@ -3272,7 +3283,9 @@ def create_api_app(
         raw = _read_scenarios_file(file_path)
         scenarios = _build_scenario_entries(raw, file_path)
         try:
-            updated_at = datetime.fromtimestamp(file_path.stat().st_mtime).isoformat()
+            updated_at = _isoformat_utc(
+                datetime.fromtimestamp(file_path.stat().st_mtime, timezone.utc)
+            )
         except Exception:
             updated_at = None
         metadata: Dict[str, Any] = {"artifact_dir": str(base_dir)}
@@ -3453,9 +3466,11 @@ def create_api_app(
                         1 for item in raw_entries if item.get("label") is False
                     )
                     try:
-                        updated_at = datetime.fromtimestamp(
-                            split_file.stat().st_mtime
-                        ).isoformat()
+                        updated_at = _isoformat_utc(
+                            datetime.fromtimestamp(
+                                split_file.stat().st_mtime, timezone.utc
+                            )
+                        )
                     except Exception:
                         updated_at = None
                     splits.append(
@@ -4483,9 +4498,9 @@ def create_api_app(
                 if isinstance(item.get("label"), bool) and item.get("label") is False
             )
             try:
-                updated_at = datetime.fromtimestamp(
-                    target_path.stat().st_mtime
-                ).isoformat()
+                updated_at = _isoformat_utc(
+                    datetime.fromtimestamp(target_path.stat().st_mtime, timezone.utc)
+                )
             except Exception:
                 updated_at = matched_split.updated_at
             split_payload = EvaluationDatasetSplitModel(
