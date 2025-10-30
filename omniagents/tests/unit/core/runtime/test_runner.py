@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import types
 
 import pytest
@@ -95,6 +96,9 @@ def test_from_agent_configures_safe_options_and_server_functions(monkeypatch):
 
     spec.register_server_functions("service")
     assert captured["target"] == "service"
+
+    built_agent = asyncio.run(spec.build_agent({}, None, spec))
+    assert built_agent is agent
 
 
 def test_from_agent_without_build_context_uses_variables_as_context(monkeypatch):
@@ -315,3 +319,107 @@ def test_main_resume_tui_mode_sets_flag(monkeypatch):
     assert called["mode"] == "bubbletea"
     assert called["kwargs"]["resume"] is True
     assert called["kwargs"]["args"] is args
+
+
+def test_runner_requires_spec_or_config():
+    with pytest.raises(ValueError):
+        Runner()
+
+
+def test_runner_loads_spec_from_config_and_sets_tracing(monkeypatch):
+    spec = types.SimpleNamespace(tracing_config={"exporter": "noop"})
+    captured = {}
+
+    monkeypatch.setattr(
+        "omniagents.core.runtime.runner.load_agent_spec_from_yaml",
+        lambda path: spec,
+    )
+    monkeypatch.setattr(
+        "omniagents.core.tracing.setup_tracing",
+        lambda config: captured.setdefault("config", config),
+    )
+
+    runner = Runner(config_path="agent.yaml")
+
+    assert runner.spec is spec
+    assert captured["config"] == {"exporter": "noop"}
+
+
+def test_from_agent_server_functions_failure(monkeypatch):
+    monkeypatch.setattr(
+        "omniagents.core.utils.jinja_instructions.process_instructions",
+        lambda value: value,
+    )
+    captured = {}
+
+    def failing_registrar(functions):
+        captured["functions"] = functions
+        raise RuntimeError("fail")
+
+    monkeypatch.setattr(
+        "omniagents.core.server_functions.discovery.build_server_functions_registrar",
+        failing_registrar,
+    )
+
+    class DummyAgent:
+        def __init__(self):
+            self.name = "Worker"
+            self.instructions = "do"
+            self.tools = []
+            self.model = None
+
+    agent = DummyAgent()
+
+    runner = Runner.from_agent(agent, server_functions=["fn"])
+
+    assert captured["functions"] == ["fn"]
+    assert getattr(runner.spec, "register_server_functions", None) is None
+
+
+def test_from_remote_uses_direct_token(monkeypatch):
+    monkeypatch.setattr("os.getenv", lambda key: pytest.fail("should not read env"))
+
+    runner = Runner.from_remote(
+        "ws://example/ws",
+        name="Remote Agent",
+        token="direct",
+        token_env_var="REMOTE_TOKEN",
+    )
+
+    assert runner.spec.remote_ws_url == "ws://example/ws"
+    assert runner.spec.remote_auth_token_key == "REMOTE_TOKEN"
+
+
+def test_runner_main_handles_generic_exception(monkeypatch, capsys):
+    spec = make_spec()
+    runner = Runner(spec=spec)
+    args = types.SimpleNamespace(
+        mode="cli",
+        debug=False,
+        resume=False,
+        session_id=None,
+        host="0.0.0.0",
+        port=8000,
+        auth_token=None,
+        reload=False,
+        approvals=None,
+        on_reject=None,
+    )
+
+    monkeypatch.setattr(argparse.ArgumentParser, "parse_args", lambda self: args)
+    monkeypatch.setattr(
+        "omniagents.core.runtime.runner.Debug.init", lambda cli_flag: None
+    )
+
+    def failing_run(self, mode, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(Runner, "run", failing_run)
+    monkeypatch.setattr("traceback.print_exc", lambda: None)
+
+    with pytest.raises(SystemExit) as exc:
+        runner.main()
+
+    assert exc.value.code == 1
+    output = capsys.readouterr().out
+    assert "Error: boom" in output
