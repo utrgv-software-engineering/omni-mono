@@ -1,8 +1,17 @@
+import gc
 import importlib
 import sys
 import types
 
 import pytest
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "filterwarnings",
+        "ignore:unclosed database:ResourceWarning",
+    )
+
 
 # ---------------------------------------------------------------------------
 # Stub minimal 'flet' module used by config_loader and others
@@ -287,3 +296,7 @@ def temp_history_db(tmp_path, monkeypatch):
     importlib.reload(history_db)
     importlib.reload(manager)
     yield
+    for connection, _ in history_db._STORES.values():
+        connection.close()
+    history_db._STORES.clear()
+    gc.collect()
