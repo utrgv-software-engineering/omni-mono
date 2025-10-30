@@ -87,7 +87,8 @@ async def test_start_run_retries_emit_status_and_error(monkeypatch):
     monkeypatch.setattr(service_module, "stream_agent", failing_stream)
     run_info = await service.start_run("prompt")
     sess = service._session_manager.get_or_create(run_info["session_id"])
-    await asyncio.wait_for(sess.current_task, timeout=1)
+    run_task = sess.current_task
+    await asyncio.wait_for(run_task, timeout=1)
     assert attempts["count"] == 3
     assert len(delays) == 2
     assert delays[0] == pytest.approx(0.25)
@@ -105,7 +106,7 @@ async def test_start_run_retries_emit_status_and_error(monkeypatch):
     assert payload["error"]["type"] == "RuntimeError"
     assert payload["error"]["message"] == "timeout while calling provider"
     assert end_event["queue"] is True
-    assert sess.current_task.done()
+    assert run_task.done()
 
 
 @pytest.mark.asyncio
