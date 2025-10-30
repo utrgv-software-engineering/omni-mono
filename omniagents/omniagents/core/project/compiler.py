@@ -225,6 +225,59 @@ def _collect_base_eval(paths: List[Path]) -> Dict[str, Any]:
     return result
 
 
+def _validate_graph_resources(
+    scenarios: List[Dict[str, Any]],
+    metrics: List[Dict[str, Any]],
+    judges: Dict[str, Any],
+) -> Tuple[List[str], List[str], List[str]]:
+    scenario_names: List[str] = []
+    seen_scenarios: set[str] = set()
+    for idx, scenario in enumerate(scenarios):
+        if not isinstance(scenario, dict):
+            raise ValueError(f"Scenario {idx} invalid type: {type(scenario).__name__}")
+        identifier = scenario.get("name") or scenario.get("id")
+        if not isinstance(identifier, str) or not identifier.strip():
+            raise ValueError(f"Scenario {idx} missing 'name' or 'id'")
+        token = identifier.strip()
+        if token in seen_scenarios:
+            raise ValueError(f"Duplicate scenario identifier '{token}'")
+        seen_scenarios.add(token)
+        scenario_names.append(token)
+        if isinstance(scenario.get("name"), str):
+            scenario["name"] = token
+        elif isinstance(scenario.get("id"), str):
+            scenario["id"] = token
+    metric_names: List[str] = []
+    seen_metrics: set[str] = set()
+    for idx, metric in enumerate(metrics):
+        if not isinstance(metric, dict):
+            raise ValueError(f"Metric {idx} invalid type: {type(metric).__name__}")
+        identifier = metric.get("name") or metric.get("label")
+        if not isinstance(identifier, str) or not identifier.strip():
+            raise ValueError(f"Metric {idx} missing 'name' or 'label'")
+        token = identifier.strip()
+        if token in seen_metrics:
+            raise ValueError(f"Duplicate metric identifier '{token}'")
+        seen_metrics.add(token)
+        metric_names.append(token)
+        if isinstance(metric.get("name"), str):
+            metric["name"] = token
+        elif isinstance(metric.get("label"), str):
+            metric["label"] = token
+    judge_keys: List[str] = []
+    invalid_judges: List[str] = []
+    for key in judges.keys():
+        if not isinstance(key, str) or not key.strip():
+            invalid_judges.append(str(key))
+        else:
+            judge_keys.append(key)
+    if invalid_judges:
+        raise ValueError(
+            "Judge keys must be non-empty strings: " + ", ".join(invalid_judges)
+        )
+    return scenario_names, metric_names, judge_keys
+
+
 def _filter_scenarios(
     items: List[Dict[str, Any]], select: str | None, exclude: str | None
 ) -> List[Dict[str, Any]]:
@@ -357,6 +410,12 @@ def compile_project(
     if select or exclude:
         scenarios = _filter_scenarios(scenarios, select, exclude)
 
+    scenario_names, metric_names, judge_keys = _validate_graph_resources(
+        scenarios,
+        metrics,
+        judges,
+    )
+
     compiled_eval: Dict[str, Any] = {}
     compiled_eval = _merge_dict(compiled_eval, base_eval)
     if judges:
@@ -488,9 +547,9 @@ def compile_project(
         "agent_file": str(agent_path),
         "compiled_file": str(compiled_yaml),
         "resources": {
-            "scenarios": [s.get("name") or s.get("id") for s in scenarios],
-            "judges": list(judges.keys()),
-            "metrics": [m.get("name") or m.get("label") for m in metrics],
+            "scenarios": scenario_names,
+            "judges": judge_keys,
+            "metrics": metric_names,
         },
     }
     (target_dir / "graph.json").write_text(
