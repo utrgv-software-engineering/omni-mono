@@ -59,6 +59,7 @@ coverage.xml
 .env.test.local
 .env.production.local
 .omni
+.gremlin
 
 # Project specific
 data/

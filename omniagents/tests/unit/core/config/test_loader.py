@@ -74,6 +74,46 @@ def test_loader_requires_env_vars(tmp_path, monkeypatch):
     assert required_key in str(exc.value)
 
 
+def test_loader_handles_nested_env_substitution(tmp_path, monkeypatch):
+    key = "NESTED_ENV_KEY"
+    monkeypatch.setenv(key, "actual")
+    yaml_path = tmp_path / "agent.yaml"
+    write(
+        yaml_path,
+        f"""
+        name: NestedAgent
+        instructions: Inline
+        variables:
+          mapping:
+            inner: ${{{key}}}
+          sequence:
+            - first
+            - ${{UNKNOWN_KEY:-fallback}}
+        """,
+    )
+    spec = load_agent_spec_from_yaml(str(yaml_path))
+    assert spec.context == {
+        "mapping": {"inner": "actual"},
+        "sequence": ["first", "fallback"],
+    }
+
+
+def test_loader_raises_with_custom_env_error(tmp_path, monkeypatch):
+    yaml_path = tmp_path / "agent.yaml"
+    write(
+        yaml_path,
+        """
+        name: ErrorAgent
+        instructions: Inline
+        variables:
+          something: ${MISSING_KEY:?Custom message}
+        """,
+    )
+    with pytest.raises(ValueError) as exc:
+        load_agent_spec_from_yaml(str(yaml_path))
+    assert "Custom message" in str(exc.value)
+
+
 def test_loader_discovers_assets_and_applies_config(tmp_path):
     tools_dir = tmp_path / "tools"
     extra_tools_dir = tmp_path / "extra_tools"
@@ -355,6 +395,33 @@ def test_loader_skips_missing_handoff_yaml(tmp_path):
     assert spec.handoff_configs == []
 
 
+def test_loader_reports_missing_instructions_file(tmp_path):
+    yaml_path = tmp_path / "agent.yaml"
+    write(
+        yaml_path,
+        """
+        name: MissingInstrAgent
+        instructions_file: missing.txt
+        """,
+    )
+    spec = load_agent_spec_from_yaml(str(yaml_path))
+    message = spec.get_agent_instructions()
+    assert "Error: Instructions file" in message
+    assert "missing.txt" in message
+
+
+def test_loader_uses_default_instructions(tmp_path):
+    yaml_path = tmp_path / "agent.yaml"
+    write(
+        yaml_path,
+        """
+        name: DefaultInstrAgent
+        """,
+    )
+    spec = load_agent_spec_from_yaml(str(yaml_path))
+    assert spec.get_agent_instructions() == "You are a helpful assistant."
+
+
 def test_loader_detects_circular_reference(tmp_path):
     yaml_path = tmp_path / "agent.yaml"
     write(
@@ -367,3 +434,16 @@ def test_loader_detects_circular_reference(tmp_path):
     stack = {yaml_path.resolve()}
     with pytest.raises(ValueError):
         load_agent_spec_from_yaml(str(yaml_path), stack)
+
+
+def test_loader_rejects_invalid_yaml_shape(tmp_path):
+    yaml_path = tmp_path / "agent.yaml"
+    write(
+        yaml_path,
+        """
+        - unexpected_list
+        """,
+    )
+    with pytest.raises(ValueError) as exc:
+        load_agent_spec_from_yaml(str(yaml_path))
+    assert "Invalid YAML format" in str(exc.value)
