@@ -1,6 +1,8 @@
+import argparse
 import os
+import sys
 from omniagents import Runner
-from omniagents.core.agents.specs import MCPServerConfig
+from omniagents.core.debug import Debug
 from openai import AsyncAzureOpenAI, AsyncOpenAI
 from agents import (
     set_default_openai_client,
@@ -58,7 +60,7 @@ else:
     )
 
 
-def cli_main():
+def cli_main(argv=None):
     agentio.init(
         project="omni_code",
         name="omni_code",
@@ -107,7 +109,111 @@ def cli_main():
 
     runner.spec.register_server_functions = _register_with_terminal
 
-    runner.main(default_mode="tui")
+    parser = argparse.ArgumentParser(
+        prog="omni",
+        description=f"Run {runner.spec.name}" if getattr(runner, "spec", None) else "Run agent",
+    )
+    parser.add_argument(
+        "--mode",
+        "-m",
+        choices=["gui", "cli", "server", "bubbletea", "tui"],
+        default="tui",
+        help="Execution mode (default: tui)",
+    )
+    parser.add_argument(
+        "--debug",
+        "-d",
+        action="store_true",
+        help="Enable debug mode",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Show TUI session picker (Bubble Tea mode only).",
+    )
+    parser.add_argument(
+        "--approvals",
+        choices=["require", "auto", "skip"],
+        help="Approval policy: require (manual), auto (auto-approve), skip (disable SafeAgent)",
+    )
+    parser.add_argument(
+        "--on-reject",
+        dest="on_reject",
+        choices=["halt", "continue"],
+        help="Behavior when a tool call is rejected: halt or continue",
+    )
+    parser.add_argument(
+        "--session-id",
+        help="Resume a previous CLI session",
+    )
+    parser.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="Host interface to bind (default: 0.0.0.0)",
+    )
+    parser.add_argument(
+        "--port",
+        "-p",
+        type=int,
+        default=8000,
+        help="Port to listen on (default: 8000)",
+    )
+    parser.add_argument(
+        "--auth-token",
+        dest="auth_token",
+        help="Bearer token for authentication",
+    )
+    parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="Auto-reload on code changes",
+    )
+    parser.add_argument(
+        "prompt",
+        nargs="*",
+        help="Optional message to send immediately after startup.",
+    )
+
+    args = parser.parse_args(argv)
+
+    Debug.init(cli_flag=args.debug)
+
+    kwargs = {"args": args}
+
+    resume_flag = bool(getattr(args, "resume", False))
+    if resume_flag and args.mode not in ("bubbletea", "tui"):
+        print("Error: --resume is only supported in Bubble Tea TUI mode.")
+        sys.exit(2)
+    if resume_flag:
+        kwargs["resume"] = True
+
+    if args.mode == "cli":
+        kwargs["session_id"] = args.session_id
+    elif args.mode == "server":
+        kwargs.update(
+            {
+                "host": args.host,
+                "port": args.port,
+                "auth_token": args.auth_token,
+                "reload": args.reload,
+            }
+        )
+
+    prompt_text = " ".join(args.prompt).strip() if args.prompt else ""
+    if prompt_text:
+        kwargs["initial_prompt"] = prompt_text
+
+    try:
+        runner.run(mode=args.mode, **kwargs)
+    except KeyboardInterrupt:
+        print("\nExiting.")
+        sys.exit(0)
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":
