@@ -1,5 +1,7 @@
 import json
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -264,6 +266,202 @@ def test_get_projects_discovers_databases(tmp_path, monkeypatch):
     finally:
         first.close()
         second.close()
+
+
+def test_insert_trace_handles_unserializable_metadata(storage):
+    class CustomObject:
+        def __init__(self):
+            self.value = {1, 2}
+
+    metadata = {
+        "timestamp": datetime(2024, 1, 1, 12, 0, 0),
+        "paths": {Path("alpha"), Path("beta")},
+        "bytes": b"payload",
+        "custom": CustomObject(),
+    }
+    storage.insert_trace(
+        {
+            "id": "trace-meta",
+            "workflow_name": "wf",
+            "metadata": metadata,
+        }
+    )
+    row = storage.get_trace("trace-meta")
+    assert row is not None
+    parsed = json.loads(row["metadata"])
+    assert parsed["timestamp"].startswith("2024-01-01T12:00:00")
+    assert sorted(parsed["paths"]) == ["alpha", "beta"]
+    assert set(parsed["custom"]["value"]) == {1, 2}
+    assert parsed["bytes"] == "payload"
+
+
+def test_insert_span_ignores_duplicate_ids(storage):
+    storage.insert_trace({"id": "trace-dup", "workflow_name": "wf"})
+    payload = {
+        "id": "span-dup",
+        "trace_id": "trace-dup",
+        "span_data": {"type": "tool", "name": "duplicate"},
+    }
+    storage.insert_span(dict(payload))
+    storage.insert_span(dict(payload))
+    spans = storage.get_spans_for_trace("trace-dup")
+    assert len(spans) == 1
+    assert spans[0]["sequence_number"] == 0
+
+
+def test_bulk_insert_spans_handles_duplicates_without_gaps(storage):
+    storage.insert_trace({"id": "trace-bulk", "workflow_name": "wf"})
+    storage.insert_span(
+        {
+            "id": "span-0",
+            "trace_id": "trace-bulk",
+            "span_data": {"type": "generation", "name": "first"},
+        }
+    )
+    storage.bulk_insert_spans(
+        [
+            {
+                "id": "span-0",
+                "trace_id": "trace-bulk",
+                "span_data": {"type": "generation", "name": "first"},
+            },
+            {
+                "id": "span-1",
+                "trace_id": "trace-bulk",
+                "span_data": {"type": "response", "name": "second"},
+                "error": {"details": {Path("here"), "value"}},
+            },
+            {
+                "id": "span-2",
+                "trace_id": "trace-bulk",
+                "span_data": {"type": "tool", "name": "third"},
+            },
+        ]
+    )
+    spans = storage.get_spans_for_trace("trace-bulk")
+    assert [row["sequence_number"] for row in spans] == [0, 1, 2]
+    assert len(spans) == 3
+    payload = json.loads(spans[2]["data"])
+    assert payload["id"] == "span-2"
+
+
+def test_bulk_insert_spans_handles_multiple_traces(storage):
+    storage.insert_trace({"id": "trace-one", "workflow_name": "wf"})
+    storage.insert_trace({"id": "trace-two", "workflow_name": "wf"})
+    storage.bulk_insert_spans(
+        [
+            {
+                "id": "span-one-0",
+                "trace_id": "trace-one",
+                "span_data": {"type": "generation", "name": "first"},
+            },
+            {
+                "id": "span-two-0",
+                "trace_id": "trace-two",
+                "span_data": {"type": "generation", "name": "other"},
+            },
+            {
+                "id": "span-one-1",
+                "trace_id": "trace-one",
+                "span_data": {"type": "tool", "name": "second"},
+            },
+        ]
+    )
+    spans_one = storage.get_spans_for_trace("trace-one")
+    spans_two = storage.get_spans_for_trace("trace-two")
+    assert [row["sequence_number"] for row in spans_one] == [0, 1]
+    assert [row["sequence_number"] for row in spans_two] == [0]
+
+
+def test_insert_span_concurrent_sequence_numbers_are_contiguous(storage):
+    storage.insert_trace({"id": "trace-thread", "workflow_name": "wf"})
+    workers = 5
+    per_worker = 6
+
+    def worker(prefix: str) -> None:
+        for index in range(per_worker):
+            storage.insert_span(
+                {
+                    "id": f"{prefix}-{index}",
+                    "trace_id": "trace-thread",
+                    "span_data": {"type": "test", "name": f"{prefix}-{index}"},
+                }
+            )
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [executor.submit(worker, f"worker-{i}") for i in range(workers)]
+        for future in futures:
+            future.result()
+
+    spans = storage.get_spans_for_trace("trace-thread")
+    assert len(spans) == workers * per_worker
+    assert [row["sequence_number"] for row in spans] == list(range(len(spans)))
+
+
+def test_garbage_collect_vacuum_no_data(storage):
+    result = storage.garbage_collect(vacuum=True)
+    assert result == {"traces": 0, "spans": 0, "analysis": 0}
+
+
+def test_garbage_collect_prunes_old_traces_and_limits_total(storage):
+    for index in range(5):
+        trace_id = f"trace-{index}"
+        storage.insert_trace({"id": trace_id, "workflow_name": "wf"})
+        storage.insert_span(
+            {
+                "id": f"span-{index}",
+                "trace_id": trace_id,
+                "span_data": {"type": "test", "name": f"span-{index}"},
+            }
+        )
+    storage.upsert_analysis(
+        "proj",
+        "group-old",
+        {
+            "markedForAnalysis": True,
+            "judgment": "acceptable",
+            "notes": "old",
+            "analyzedAt": None,
+        },
+    )
+    storage.upsert_analysis(
+        "proj",
+        "group-new",
+        {
+            "markedForAnalysis": False,
+            "judgment": "unacceptable",
+            "notes": "new",
+            "analyzedAt": None,
+        },
+    )
+    now = datetime.now(UTC)
+    timestamps = {
+        "trace-0": now - timedelta(days=2),
+        "trace-1": now - timedelta(days=2, minutes=5),
+        "trace-2": now - timedelta(minutes=30),
+        "trace-3": now - timedelta(minutes=20),
+        "trace-4": now - timedelta(minutes=10),
+    }
+    old_mark = now - timedelta(days=2)
+    with storage.conn:
+        storage.conn.execute(
+            "UPDATE analysis SET updated_at = ? WHERE group_id = ?",
+            (old_mark.strftime("%Y-%m-%d %H:%M:%S"), "group-old"),
+        )
+        for trace_id, stamp in timestamps.items():
+            storage.conn.execute(
+                "UPDATE traces SET created_at = ? WHERE trace_id = ?",
+                (stamp.strftime("%Y-%m-%d %H:%M:%S"), trace_id),
+            )
+    result = storage.garbage_collect(max_age_hours=24, retain_last=2)
+    assert result["traces"] == 3
+    assert result["spans"] == 3
+    assert result["analysis"] == 1
+    remaining = {row["trace_id"] for row in storage.get_traces(limit=10)}
+    assert remaining == {"trace-4", "trace-3"}
+    assert storage.get_trace("trace-0") is None
+    assert storage.get_analysis("proj", "group-old") is None
+    assert storage.get_analysis("proj", "group-new") is not None
 
 
 class DummyTrace:

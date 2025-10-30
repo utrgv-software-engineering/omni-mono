@@ -1,9 +1,9 @@
 import json
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from omniagents.core.paths import get_traces_dir
 from omniagents.core.eval.annotate import _slugify
@@ -31,6 +31,59 @@ class SQLiteStorage:
             # Enable WAL mode for better concurrency
             self._local.conn.execute("PRAGMA journal_mode=WAL")
         return self._local.conn
+
+    def _safe_json_dumps(self, value: Any) -> str:
+        def normalize(item: Any) -> Any:
+            if item is None or isinstance(item, (str, int, float, bool)):
+                return item
+            if isinstance(item, bytes):
+                return item.decode("utf-8", errors="replace")
+            if isinstance(item, datetime):
+                return item.isoformat()
+            if isinstance(item, Path):
+                return str(item)
+            if isinstance(item, dict):
+                normalized_dict: Dict[str, Any] = {}
+                for key, value_item in item.items():
+                    normalized_dict[str(key)] = normalize(value_item)
+                return normalized_dict
+            if isinstance(item, (list, tuple)):
+                return [normalize(value_item) for value_item in item]
+            if isinstance(item, set):
+                ordered = sorted(item, key=lambda candidate: str(candidate))
+                return [normalize(value_item) for value_item in ordered]
+            if hasattr(item, "model_dump"):
+                try:
+                    dumped = item.model_dump()
+                    return normalize(dumped)
+                except Exception:
+                    pass
+            if hasattr(item, "__dict__"):
+                try:
+                    return normalize(
+                        {
+                            key: value_item
+                            for key, value_item in vars(item).items()
+                            if not callable(value_item)
+                        }
+                    )
+                except Exception:
+                    pass
+            if hasattr(item, "__iter__") and not isinstance(item, (str, bytes, dict)):
+                try:
+                    return [normalize(value_item) for value_item in item]
+                except Exception:
+                    pass
+            return str(item)
+
+        try:
+            return json.dumps(value)
+        except (TypeError, ValueError):
+            normalized = normalize(value)
+            try:
+                return json.dumps(normalized)
+            except (TypeError, ValueError):
+                return json.dumps(str(normalized))
 
     def _create_tables(self):
         """Create tables if they don't exist"""
@@ -156,6 +209,11 @@ class SQLiteStorage:
 
     def insert_trace(self, trace_data: Dict[str, Any]):
         """Insert a new trace"""
+        metadata = trace_data.get("metadata")
+        if metadata is None:
+            metadata_payload = self._safe_json_dumps({})
+        else:
+            metadata_payload = self._safe_json_dumps(metadata)
         with self.conn:
             self.conn.execute(
                 """
@@ -167,7 +225,7 @@ class SQLiteStorage:
                     trace_data["id"],
                     trace_data.get("workflow_name"),
                     trace_data.get("group_id"),
-                    json.dumps(trace_data.get("metadata", {})),
+                    metadata_payload,
                 ),
             )
 
@@ -180,7 +238,12 @@ class SQLiteStorage:
 
         with self._lock:  # Thread safety for sequence number
             with self.conn:
-                # Get next sequence number for this trace
+                existing = self.conn.execute(
+                    "SELECT 1 FROM spans WHERE span_id = ?",
+                    (span_data["id"],),
+                ).fetchone()
+                if existing:
+                    return
                 cursor = self.conn.execute(
                     "SELECT MAX(sequence_number) FROM spans WHERE trace_id = ?",
                     (span_data["trace_id"],),
@@ -188,9 +251,17 @@ class SQLiteStorage:
                 result = cursor.fetchone()
                 seq_num = 0 if result[0] is None else result[0] + 1
 
+                data_payload = self._safe_json_dumps(span_data)
+                error_value = span_data.get("error")
+                error_payload = (
+                    self._safe_json_dumps(error_value)
+                    if error_value is not None
+                    else None
+                )
+
                 self.conn.execute(
                     """
-                    INSERT OR IGNORE INTO spans
+                    INSERT INTO spans
                     (span_id, trace_id, parent_id, span_type, span_name, 
                      data, started_at, ended_at, error, sequence_number)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -201,14 +272,10 @@ class SQLiteStorage:
                         span_data.get("parent_id"),
                         span_type,
                         span_name,
-                        json.dumps(span_data),
+                        data_payload,
                         span_data.get("started_at"),
                         span_data.get("ended_at"),
-                        (
-                            json.dumps(span_data.get("error"))
-                            if span_data.get("error")
-                            else None
-                        ),
+                        error_payload,
                         seq_num,
                     ),
                 )
@@ -218,48 +285,68 @@ class SQLiteStorage:
         if not spans_list:
             return
 
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        order: List[str] = []
+        for span_data in spans_list:
+            trace_id = span_data["trace_id"]
+            if trace_id not in grouped:
+                grouped[trace_id] = []
+                order.append(trace_id)
+            grouped[trace_id].append(span_data)
+
         with self._lock:
             with self.conn:
-                # Get starting sequence number
-                trace_id = spans_list[0]["trace_id"]
-                cursor = self.conn.execute(
-                    "SELECT MAX(sequence_number) FROM spans WHERE trace_id = ?",
-                    (trace_id,),
-                )
-                result = cursor.fetchone()
-                seq_num = 0 if result[0] is None else result[0] + 1
-
-                data = []
-                for i, span_data in enumerate(spans_list):
-                    span_info = span_data.get("span_data", {})
-                    data.append(
-                        (
-                            span_data["id"],
-                            span_data["trace_id"],
-                            span_data.get("parent_id"),
-                            span_info.get("type", "unknown"),
-                            span_info.get("name", ""),
-                            json.dumps(span_data),
-                            span_data.get("started_at"),
-                            span_data.get("ended_at"),
-                            (
-                                json.dumps(span_data.get("error"))
-                                if span_data.get("error")
-                                else None
-                            ),
-                            seq_num + i,
-                        )
+                for trace_id in order:
+                    spans_for_trace = grouped[trace_id]
+                    span_ids = [span_data["id"] for span_data in spans_for_trace]
+                    existing_ids: Set[str] = set()
+                    if span_ids:
+                        placeholders = ",".join(["?"] * len(span_ids))
+                        rows = self.conn.execute(
+                            f"SELECT span_id FROM spans WHERE span_id IN ({placeholders})",
+                            span_ids,
+                        ).fetchall()
+                        existing_ids = {row["span_id"] for row in rows}
+                    cursor = self.conn.execute(
+                        "SELECT MAX(sequence_number) FROM spans WHERE trace_id = ?",
+                        (trace_id,),
                     )
-
-                self.conn.executemany(
-                    """
-                    INSERT OR IGNORE INTO spans
-                    (span_id, trace_id, parent_id, span_type, span_name,
-                     data, started_at, ended_at, error, sequence_number)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                    data,
-                )
+                    result = cursor.fetchone()
+                    next_seq = 0 if result[0] is None else result[0] + 1
+                    for span_data in spans_for_trace:
+                        span_id = span_data["id"]
+                        if span_id in existing_ids:
+                            continue
+                        span_info = span_data.get("span_data", {})
+                        data_payload = self._safe_json_dumps(span_data)
+                        error_value = span_data.get("error")
+                        error_payload = (
+                            self._safe_json_dumps(error_value)
+                            if error_value is not None
+                            else None
+                        )
+                        self.conn.execute(
+                            """
+                            INSERT INTO spans
+                            (span_id, trace_id, parent_id, span_type, span_name,
+                             data, started_at, ended_at, error, sequence_number)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                            (
+                                span_id,
+                                trace_id,
+                                span_data.get("parent_id"),
+                                span_info.get("type", "unknown"),
+                                span_info.get("name", ""),
+                                data_payload,
+                                span_data.get("started_at"),
+                                span_data.get("ended_at"),
+                                error_payload,
+                                next_seq,
+                            ),
+                        )
+                        existing_ids.add(span_id)
+                        next_seq += 1
 
     def get_traces(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Get recent traces from this database
@@ -536,6 +623,70 @@ class SQLiteStorage:
                     """,
                     (payload, group_id),
                 )
+
+    def garbage_collect(
+        self,
+        *,
+        max_age_hours: Optional[int] = None,
+        retain_last: Optional[int] = None,
+        vacuum: bool = False,
+    ) -> Dict[str, int]:
+        removed = {"traces": 0, "spans": 0, "analysis": 0}
+        trace_ids_to_delete: Set[str] = set()
+        should_vacuum = vacuum
+        with self._lock:
+            with self.conn:
+                if max_age_hours is not None:
+                    if max_age_hours < 0:
+                        max_age_hours = 0
+                    cutoff = datetime.now(UTC) - timedelta(hours=max_age_hours)
+                    cutoff_str = cutoff.strftime("%Y-%m-%d %H:%M:%S")
+                    stale_traces = self.conn.execute(
+                        "SELECT trace_id FROM traces WHERE datetime(created_at) < datetime(?)",
+                        (cutoff_str,),
+                    ).fetchall()
+                    if stale_traces:
+                        trace_ids_to_delete.update(
+                            row["trace_id"] for row in stale_traces
+                        )
+                    stale_analysis = self.conn.execute(
+                        "SELECT group_id FROM analysis WHERE datetime(updated_at) < datetime(?)",
+                        (cutoff_str,),
+                    ).fetchall()
+                    if stale_analysis:
+                        group_ids = [row["group_id"] for row in stale_analysis]
+                        placeholders = ",".join(["?"] * len(group_ids))
+                        cursor = self.conn.execute(
+                            f"DELETE FROM analysis WHERE group_id IN ({placeholders})",
+                            group_ids,
+                        )
+                        removed["analysis"] += cursor.rowcount or 0
+                if retain_last is not None:
+                    if retain_last < 0:
+                        retain_last = 0
+                    trace_rows = self.conn.execute(
+                        "SELECT trace_id FROM traces ORDER BY datetime(created_at) DESC, trace_id DESC",
+                    ).fetchall()
+                    if len(trace_rows) > retain_last:
+                        extra = trace_rows[retain_last:]
+                        trace_ids_to_delete.update(row["trace_id"] for row in extra)
+                if trace_ids_to_delete:
+                    ids_list = list(trace_ids_to_delete)
+                    placeholders = ",".join(["?"] * len(ids_list))
+                    spans_cursor = self.conn.execute(
+                        f"DELETE FROM spans WHERE trace_id IN ({placeholders})",
+                        ids_list,
+                    )
+                    removed["spans"] += spans_cursor.rowcount or 0
+                    traces_cursor = self.conn.execute(
+                        f"DELETE FROM traces WHERE trace_id IN ({placeholders})",
+                        ids_list,
+                    )
+                    removed["traces"] += traces_cursor.rowcount or 0
+        if should_vacuum:
+            with self._lock:
+                self.conn.execute("VACUUM")
+        return removed
 
     def close(self):
         """Close connection"""
