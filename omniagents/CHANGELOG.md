@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI `--version` flag support
 - Automated versioning workflow with bump2version
 
-## [0.3.19] - 2025-10-22
+## [## [Unreleased]] - 2025-10-22
 
 ### Fixed
 - Ensure Studio dark mode uses shared tokens so text stays legible across components.
@@ -80,8 +80,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI interface
 - Flet-based GUI
 
-[Unreleased]: https://github.com/yourusername/omniagents/compare/v0.3.19...HEAD
-[0.3.19]: https://github.com/yourusername/omniagents/compare/v## [Unreleased]...v0.3.19
+[Unreleased]: https://github.com/yourusername/omniagents/compare/v## [Unreleased]...HEAD
+[## [Unreleased]]: https://github.com/yourusername/omniagents/compare/v## [Unreleased]...v## [Unreleased]
 [## [Unreleased]]: https://github.com/yourusername/omniagents/compare/v0.3.14...v## [Unreleased]
 [0.3.14]: https://github.com/yourusername/omniagents/compare/v0.3.13...v0.3.14
 [## [Unreleased]]: https://github.com/yourusername/omniagents/compare/v0.1.2...v## [Unreleased]
