@@ -33,7 +33,9 @@ def stub_runtime(monkeypatch):
 
 def test_run_command_forwards_initial_prompt(monkeypatch, stub_runtime):
     runner = DummyRunner()
-    monkeypatch.setattr("omniagents.cli.Runner", lambda spec=None, config_path=None: runner)
+    monkeypatch.setattr(
+        "omniagents.cli.Runner", lambda spec=None, config_path=None: runner
+    )
     monkeypatch.setattr("omniagents.cli.Debug.init", lambda cli_flag: None)
 
     argv = [
@@ -59,7 +61,9 @@ def test_run_command_forwards_initial_prompt(monkeypatch, stub_runtime):
 
 def test_run_command_without_prompt_skips_initial_prompt(monkeypatch, stub_runtime):
     runner = DummyRunner()
-    monkeypatch.setattr("omniagents.cli.Runner", lambda spec=None, config_path=None: runner)
+    monkeypatch.setattr(
+        "omniagents.cli.Runner", lambda spec=None, config_path=None: runner
+    )
     monkeypatch.setattr("omniagents.cli.Debug.init", lambda cli_flag: None)
 
     argv = [
