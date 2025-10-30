@@ -6,10 +6,12 @@ import textwrap
 import uuid
 
 import pytest
+from pathlib import Path
 
 from omniagents.core.runtime.bridge import _stream_event_payload
 from omniagents.core.tools import discovery
 from omniagents.core.tools.discovery import RichToolOutput
+from omniagents.core.debug import Debug
 
 
 @pytest.fixture(autouse=True)
@@ -52,6 +54,16 @@ def test_function_tool_marks_and_invokes_sync_function():
     assert result == "hi Ada"
 
 
+def test_function_tool_client_status_str_error():
+    class FailingStr:
+        def __str__(self):
+            raise RuntimeError("no string")
+
+    tool = discovery.function_tool(client_status=FailingStr())(lambda: "ok")
+    assert getattr(tool, "_is_omniagents_core_tool", False) is True
+    assert not hasattr(tool, "_client_status_text")
+
+
 def test_rich_function_tool_sets_rich_marker():
     @discovery.rich_function_tool
     async def rich_tool():
@@ -59,6 +71,22 @@ def test_rich_function_tool_sets_rich_marker():
 
     assert getattr(rich_tool, "_is_omniagents_core_tool", False) is True
     assert getattr(rich_tool, "_is_rich_tool", False) is True
+
+
+def test_rich_function_tool_short_form_registers():
+    @discovery.rich_function_tool()
+    async def rich_tool():
+        return RichToolOutput("ok", {})
+
+    assert getattr(rich_tool, "_is_omniagents_core_tool", False) is True
+    assert getattr(rich_tool, "_is_rich_tool", False) is True
+
+
+def test_rich_tool_output_str_and_repr():
+    output = RichToolOutput("summary", {"rows": 2, "extra": "value"})
+    assert str(output) == "summary"
+    assert "RichToolOutput" in repr(output)
+    assert "metadata_keys=['rows', 'extra']" in repr(output)
 
 
 def test_discover_functions_in_dir_detects_marked_tools(tmp_path, capsys):
@@ -124,6 +152,133 @@ def test_discover_functions_in_dir_detects_marked_tools(tmp_path, capsys):
     assert "Warning: Duplicate tool name 'duplicate'" in captured.out
 
 
+def test_discover_functions_in_dir_handles_missing_dir(tmp_path):
+    missing = tmp_path / "not_there"
+    assert discovery.discover_functions_in_dir(str(missing)) == {}
+
+
+def test_discover_functions_in_dir_cleans_sys_modules(tmp_path):
+    pkg_name = f"tmp_pkg_{uuid.uuid4().hex}"
+    pkg = tmp_path / pkg_name
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "tool_a.py").write_text(
+        textwrap.dedent(
+            """
+            from omniagents.core.tools.discovery import function_tool
+
+
+            @function_tool
+            def tool_a():
+                return "a"
+            """
+        )
+    )
+    original_modules = set(sys.modules)
+    try:
+        discovery.discover_functions_in_dir(str(pkg))
+        leaked = [
+            m
+            for m in sys.modules
+            if m not in original_modules and m.startswith(pkg_name)
+        ]
+        assert not leaked
+    finally:
+        for mod in list(sys.modules):
+            if mod.startswith(pkg_name):
+                sys.modules.pop(mod, None)
+
+
+def test_discover_functions_in_dir_reports_unexpected_errors(tmp_path, capsys):
+    pkg = tmp_path / "broken"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "bad.py").write_text("raise RuntimeError('boom')\n")
+    discovery.discover_functions_in_dir(str(pkg))
+    captured = capsys.readouterr()
+    assert "ERROR: Unexpected error processing file" in captured.out
+    assert "RuntimeError: boom" in captured.out
+
+
+def test_discover_functions_in_dir_reports_import_errors(tmp_path, capsys):
+    pkg = tmp_path / "missing"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "bad_import.py").write_text("import definitely_missing_module\n")
+    discovery.discover_functions_in_dir(str(pkg))
+    captured = capsys.readouterr()
+    assert "ERROR: Could not import module" in captured.out
+
+
+def test_discover_functions_in_dir_reports_syntax_errors(tmp_path, capsys):
+    pkg = tmp_path / "syntax"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "bad_syntax.py").write_text("def broken(:\n")
+    discovery.discover_functions_in_dir(str(pkg))
+    captured = capsys.readouterr()
+    assert "ERROR: Syntax error in file" in captured.out
+
+
+def test_discover_functions_in_dir_skips_outside_files(tmp_path, capsys, monkeypatch):
+    pkg_name = f"pkg_{uuid.uuid4().hex}"
+    base = tmp_path / pkg_name
+    base.mkdir()
+    (base / "__init__.py").write_text("")
+    outside = tmp_path.parent / f"outside_{uuid.uuid4().hex}.py"
+    outside.write_text("print('ignore')\n")
+
+    original_rglob = Path.rglob
+
+    def fake_rglob(self, pattern):
+        if self == base:
+            yield outside
+        yield from original_rglob(self, pattern)
+
+    monkeypatch.setattr(Path, "rglob", fake_rglob)
+    try:
+        discovery.discover_functions_in_dir(str(base))
+        captured = capsys.readouterr()
+        assert "Warning: Skipping file" in captured.out
+    finally:
+        outside.unlink(missing_ok=True)
+
+
+def test_discover_functions_in_dir_debug_logging(tmp_path, capsys):
+    pkg_name = f"debug_pkg_{uuid.uuid4().hex}"
+    base = tmp_path / pkg_name
+    base.mkdir()
+    (base / "__init__.py").write_text("")
+    (base / "tool.py").write_text(
+        textwrap.dedent(
+            """
+            from omniagents.core.tools.discovery import function_tool
+
+
+            @function_tool
+            def sample():
+                return "value"
+            """
+        )
+    )
+    prev = Debug.enabled()
+    Debug.set_enabled(True)
+    capsys.readouterr()
+    try:
+        try:
+            discovery.discover_functions_in_dir(str(base))
+        finally:
+            for mod in list(sys.modules):
+                if mod.startswith(pkg_name):
+                    sys.modules.pop(mod, None)
+        out = capsys.readouterr().out
+        assert "Starting tool discovery" in out
+        assert "Discovered marked tool: sample" in out
+        assert "Completed tool discovery" in out
+    finally:
+        Debug.set_enabled(prev)
+
+
 def test_approval_metadata_registration_and_binding():
     @discovery.approval_metadata()
     def sample_tool_approval(path, new_text, optional="default"):
@@ -133,6 +288,14 @@ def test_approval_metadata_registration_and_binding():
         "sample_tool", {"path": "p", "new_text": "n"}
     )
     assert metadata == {"value": ("p", "n", "default")}
+
+
+def test_approval_metadata_requires_suffix():
+    with pytest.raises(ValueError):
+
+        @discovery.approval_metadata()
+        def invalid():
+            return {}
 
 
 def test_get_approval_metadata_handles_missing_and_errors():
@@ -146,6 +309,48 @@ def test_get_approval_metadata_handles_missing_and_errors():
         "value": "ok"
     }
     assert discovery.get_approval_metadata("failing_tool", {}) is None
+
+
+def test_approval_metadata_debug_logging(capsys):
+    prev = Debug.enabled()
+    Debug.set_enabled(True)
+    capsys.readouterr()
+    try:
+
+        @discovery.approval_metadata(tool="debug_tool")
+        def debug_tool():
+            return {"ok": True}
+
+        assert discovery.get_approval_metadata("debug_tool", {}) == {"ok": True}
+        out = capsys.readouterr().out
+        assert "Registered approval metadata for tool 'debug_tool'" in out
+        assert "Generated approval metadata for tool 'debug_tool'" in out
+    finally:
+        Debug.set_enabled(prev)
+
+
+def test_get_approval_metadata_debug_error(capsys):
+    prev = Debug.enabled()
+    Debug.set_enabled(True)
+    capsys.readouterr()
+    try:
+
+        @discovery.approval_metadata(tool="debug_error_tool")
+        def debug_error_tool(required):
+            raise RuntimeError("fail")
+
+        assert (
+            discovery.get_approval_metadata("debug_error_tool", {"required": "x"})
+            is None
+        )
+        captured = capsys.readouterr()
+        assert (
+            "Error generating approval metadata for tool 'debug_error_tool'"
+            in captured.out
+        )
+        assert "RuntimeError: fail" in captured.err
+    finally:
+        Debug.set_enabled(prev)
 
 
 def test_stream_event_payload_rich_tool_output_includes_metadata():
