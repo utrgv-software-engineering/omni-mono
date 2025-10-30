@@ -12,6 +12,10 @@
 7. Do **not** stage or commit `docs/TESTING_ISSUES.md` from inside a worktree. Only update it when editing the main repo root, and leave the worktree copy untouched even if diffed.
 8. When told to continue autonomously through PR creation, follow through without additional checkpoints unless new blockers appear.
 
+## Code Coverage
+- Run `make coverage-all` from the repo root to generate Python, web, and Go coverage reports.
+- The script `./scripts/run_coverage.sh` performs the same sequence if you prefer a single command.
+
 ## GitHub CLI Examples
 - Push the current branch: `git push --set-upstream origin <branch>`
 - Open a pull request: `gh pr create --title "<title>" --body "<body>"`

@@ -49,6 +49,7 @@ logs/
 .coverage
 htmlcov/
 .pytest_cache/
+coverage/
 
 # Local development
 .env
