@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 
 import pytest
 
@@ -92,3 +93,22 @@ def test_get_user_messages_filters_archived_sessions():
     assert filtered[0]["content"] == "active message"
     all_messages = manager.get_user_messages(limit=10, include_archived=True)
     assert [item["session_id"] for item in all_messages] == [archived.id, active.id]
+
+
+def test_archive_session_returns_false_for_missing_session():
+    manager = make_manager()
+    assert manager.archive_session("missing") is False
+
+
+def test_get_or_create_registers_external_session_identifier():
+    manager = make_manager()
+    external_id = str(uuid.uuid4())
+    session = manager.get_or_create(external_id)
+    assert session.id == external_id
+    sessions = manager.list_sessions()
+    assert len(sessions) == 1
+    entry = sessions[0]
+    assert entry["id"] == external_id
+    assert entry["message_count"] == 0
+    assert "first_message" not in entry
+    assert "last_message" not in entry
