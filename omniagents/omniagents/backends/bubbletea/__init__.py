@@ -74,6 +74,7 @@ class BubbleTeaBackend:
         debug = kwargs.get("debug", False)
         session_id = kwargs.get("session_id")
         resume_mode = bool(kwargs.get("resume"))
+        initial_prompt = kwargs.get("initial_prompt")
 
         # Build the FastAPI app with the agent spec
         app = build_app(config_path=config_path, spec=spec, auth_token=auth_token)
@@ -221,6 +222,9 @@ class BubbleTeaBackend:
 
         if resume_mode:
             cmd.append("--resume")
+
+        if initial_prompt:
+            cmd.extend(["--initial-message", initial_prompt])
 
         if debug:
             cmd.append("--debug")
