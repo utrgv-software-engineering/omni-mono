@@ -149,24 +149,30 @@ def annotate_scenarios(
     if not scenarios:
         return [], [], scenarios_path
     wf = _compute_workflow_name(agent_yaml, scenarios_path, workflow_name)
-    conn = _open_db(studio_project)
-    traces = _load_traces_for_workflow(conn, wf)
-    id_to_group: Dict[str, str] = {}
-    for t in traces:
-        sid = _scenario_id_from_meta(t.get("metadata") or {})
-        gid = t.get("group_id")
-        if sid and gid and sid not in id_to_group:
-            id_to_group[sid] = gid
     id_to_cats: Dict[str, List[str]] = {}
-    id_name = _category_id_to_name(conn, studio_project)
-    for sid, gid in id_to_group.items():
-        cat_ids = _group_categories(conn, studio_project, gid)
-        if cat_ids:
-            names = [id_name.get(c) for c in cat_ids if c in id_name]
-            names = [n for n in names if n]
-            if names:
-                slugs = sorted(set(_slugify(n) for n in names))
-                id_to_cats[sid] = slugs
+    conn = _open_db(studio_project)
+    try:
+        traces = _load_traces_for_workflow(conn, wf)
+        id_to_group: Dict[str, str] = {}
+        for t in traces:
+            sid = _scenario_id_from_meta(t.get("metadata") or {})
+            gid = t.get("group_id")
+            if sid and gid and sid not in id_to_group:
+                id_to_group[sid] = gid
+        id_name = _category_id_to_name(conn, studio_project)
+        for sid, gid in id_to_group.items():
+            cat_ids = _group_categories(conn, studio_project, gid)
+            if cat_ids:
+                names = [id_name.get(c) for c in cat_ids if c in id_name]
+                names = [n for n in names if n]
+                if names:
+                    slugs = sorted(set(_slugify(n) for n in names))
+                    id_to_cats[sid] = slugs
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
     annotated: List[Dict[str, Any]] = []
     for sc in scenarios:
         sid = str(sc.get("id") or "")
