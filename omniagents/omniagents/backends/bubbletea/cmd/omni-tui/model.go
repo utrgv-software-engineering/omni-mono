@@ -96,9 +96,24 @@ var keys = keyMap{
 }
 
 // Model represents the application state
+type rpcClient interface {
+	RegisterHandler(string, func(json.RawMessage))
+	SetOnReady(func())
+	ClientFunctions(int, []map[string]interface{}) error
+	SetOnDisconnect(func(error))
+	Connect() error
+	StartRun(string, *string, map[string]interface{}) (*RunResponse, error)
+	ClientResponse(string, bool, map[string]interface{}, map[string]interface{}) error
+	ListServerFunctions() ([]ServerFunctionMeta, error)
+	ServerCall(string, map[string]interface{}, *string) (map[string]interface{}, error)
+	ListSessions() ([]Session, error)
+	StopRun(string) error
+	GetUserHistory(int, bool) ([]UserHistoryItem, error)
+}
+
 type Model struct {
 	// Core components
-	rpcClient    *RPCClient
+	rpcClient    rpcClient
 	sessionID    string
 	currentRunID string
 
@@ -198,7 +213,7 @@ type ToolCallInfo struct {
 }
 
 // NewModel creates a new application model
-func NewModel(client *RPCClient, agentName string, welcomeText string, safeMode bool, sessionID string, resumeMode bool, initialPrompt string) Model {
+func NewModel(client rpcClient, agentName string, welcomeText string, safeMode bool, sessionID string, resumeMode bool, initialPrompt string) Model {
 	// Initialize custom textarea
 	ta := NewCustomTextarea()
 	ta.Placeholder = "Type your message..."
