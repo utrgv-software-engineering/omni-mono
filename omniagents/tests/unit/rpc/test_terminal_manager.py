@@ -223,3 +223,54 @@ async def test_read_output_queue(terminal_env):
         piece = await env.manager.read_output(descriptor)
         assert piece == b"hello"
         await env.manager.close_terminal("session-7", record["terminal_id"])
+
+
+@pytest.mark.asyncio
+async def test_authorize_after_close_rejected(terminal_env):
+    async with asyncio.timeout(TIMEOUT):
+        env = terminal_env
+        record = await env.manager.create_terminal("session-8")
+        terminal_id = record["terminal_id"]
+        token = record["token"]
+        await env.manager.close_terminal("session-8", terminal_id)
+        with pytest.raises(TerminalNotFoundError):
+            await env.manager.authorize("session-8", terminal_id, token)
+
+
+@pytest.mark.asyncio
+async def test_write_and_resize_ignore_closed(monkeypatch, terminal_env):
+    async with asyncio.timeout(TIMEOUT):
+        env = terminal_env
+        record = await env.manager.create_terminal("session-9")
+        descriptor = await env.manager.authorize(
+            "session-9", record["terminal_id"], record["token"]
+        )
+        writes = []
+
+        def fake_write(fd, data):
+            writes.append((fd, data))
+            return len(data)
+
+        monkeypatch.setattr("omniagents.rpc.terminal.os.write", fake_write)
+        baseline_cols = descriptor.cols
+        baseline_rows = descriptor.rows
+        baseline_winsize_calls = len(env.winsize_calls)
+        await env.manager.close_terminal("session-9", record["terminal_id"])
+        await env.manager.write_input(descriptor, b"echo\n")
+        await env.manager.resize(descriptor, 200, 80)
+        assert writes == []
+        assert descriptor.cols == baseline_cols
+        assert descriptor.rows == baseline_rows
+        assert len(env.winsize_calls) == baseline_winsize_calls
+
+
+@pytest.mark.asyncio
+async def test_cleanup_session_cancels_reader_and_signals(terminal_env):
+    async with asyncio.timeout(TIMEOUT):
+        env = terminal_env
+        record = await env.manager.create_terminal("session-10")
+        descriptor = get_descriptor(env.manager, "session-10", record["terminal_id"])
+        await env.manager.cleanup_session("session-10")
+        sentinel = await descriptor.output_queue.get()
+        assert sentinel is None
+        assert descriptor.reader_task.cancelled()
