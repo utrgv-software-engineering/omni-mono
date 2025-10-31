@@ -16,7 +16,7 @@ class ToolCallItem:
         self.type = "tool_call_item"
         self.name = name
         self.arguments = arguments
-        self.call_id = call_id
+        self.call_id = call_id or None
 
     def to_input_item(self):
         """Convert to input format for conversation history."""
@@ -39,11 +39,13 @@ class ToolCallOutputItem:
         self.name = name
         self.output = output
         # Store call_id in raw_item to match OpenAI SDK format
+        normalized_call_id = call_id or None
         self.raw_item = {
-            "call_id": call_id,
+            "call_id": normalized_call_id,
             "output": output,
             "type": "function_call_output",
         }
+        self.call_id = normalized_call_id
 
     def to_input_item(self):
         """Convert to input format for conversation history."""
@@ -53,8 +55,8 @@ class ToolCallOutputItem:
             "role": "assistant",
             "type": "tool_call_output",
         }
-        if self.raw_item.get("call_id"):
-            base["call_id"] = self.raw_item["call_id"]
+        if self.call_id:
+            base["call_id"] = self.call_id
         return base
 
 
