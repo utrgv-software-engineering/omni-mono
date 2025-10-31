@@ -102,3 +102,69 @@ def test_collect_judges_for_scenario_uses_measure_suffix():
     scenario = {"measures": ["quality_agent", "tool_hallucination"]}
     judges = pipeline._collect_judges_for_scenario(eval_cfg, scenario)
     assert judges == [("quality", {"agent": {"name": "Quality"}})]
+
+
+def test_run_judges_parses_coded_output(monkeypatch, tmp_path):
+    import sys
+    import types
+
+    agents_mod = types.ModuleType("agents")
+    prompts = []
+
+    class Runner:
+        @staticmethod
+        async def run(agent, prompt, max_turns):
+            prompts.append(prompt)
+            return types.SimpleNamespace(
+                final_output='```json\n{"answer": "Pass", "reasoning": "ok"}\n```'
+            )
+
+    agents_mod.Runner = Runner
+    monkeypatch.setitem(sys.modules, "agents", agents_mod)
+
+    built_specs = []
+
+    async def fake_build_agent(
+        settings, mcp_servers, spec, approval_callback, _loading_stack=None
+    ):
+        built_specs.append(spec)
+        return object()
+
+    monkeypatch.setattr(
+        "omniagents.core.agents.builder._default_build_agent", fake_build_agent
+    )
+
+    cfg_dir = tmp_path / "cfg"
+    cfg_dir.mkdir()
+    instructions_path = cfg_dir / "instructions.txt"
+    instructions_path.write_text("Judge instructions text", encoding="utf-8")
+    template_path = cfg_dir / "template.md"
+    template_path.write_text("Prompt: {{ text }}", encoding="utf-8")
+    cfg_path = cfg_dir / "compiled.yaml"
+    cfg_path.write_text("{}", encoding="utf-8")
+
+    eval_cfg = {
+        "judges": {
+            "quality": {
+                "agent": {
+                    "name": "Quality",
+                    "instructions_file": instructions_path.name,
+                    "output_type": "dict",
+                    "output_type_strict": True,
+                },
+                "input": {"template_file": template_path.name},
+            }
+        }
+    }
+
+    scenario = {"judges": ["quality"], "measures": ["quality_agent"]}
+    history = [{"role": "assistant", "content": "final answer"}]
+
+    result = asyncio.run(pipeline._run_judges(cfg_path, eval_cfg, scenario, history))
+
+    assert result["quality"]["answer"] == "Pass"
+    assert "final answer" in prompts[0]
+    assert (
+        built_specs
+        and built_specs[0].get_agent_instructions() == "Judge instructions text"
+    )

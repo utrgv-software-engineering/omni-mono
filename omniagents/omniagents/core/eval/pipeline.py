@@ -183,6 +183,17 @@ def _collect_judges_for_scenario(
 
     wanted = scenario.get("judges", "auto")
     selected_keys: List[str] = []
+    seen: set[str] = set()
+
+    def _add_from_iter(values) -> None:
+        for value in values:
+            if value is None:
+                continue
+            key = str(value)
+            if key and key not in seen:
+                seen.add(key)
+                selected_keys.append(key)
+
     if (
         wanted is None
         or (isinstance(wanted, str) and wanted.lower() == "none")
@@ -194,11 +205,13 @@ def _collect_judges_for_scenario(
         or (isinstance(wanted, str) and wanted.lower() == "auto")
         or wanted == ""
     ):
-        selected_keys = list(derived)
+        _add_from_iter(derived)
     elif isinstance(wanted, list):
-        selected_keys = list({*derived, *[str(x) for x in wanted]})
+        _add_from_iter(derived)
+        _add_from_iter([str(x) for x in wanted])
     else:
-        selected_keys = list({*derived, str(wanted)})
+        _add_from_iter(derived)
+        _add_from_iter([wanted])
 
     results: List[tuple[str, Dict[str, Any]]] = []
     for k in selected_keys:
