@@ -20,6 +20,7 @@ print(run_measures(ctx))
 Built‑in measures
 
 - `tool_hallucination`: flags tool calls to unknown tools and provides counts.
+- Custom measures must register with unique names. Attempting to reuse a name raises an error, and measures that return non-dict payloads or reference unknown names during execution also fail immediately.
 
 Project layout
 

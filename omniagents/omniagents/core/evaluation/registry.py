@@ -2,12 +2,39 @@ from __future__ import annotations
 
 from typing import Callable, Dict, Any, List, Optional
 
+
+class EvaluationRegistryError(Exception):
+    pass
+
+
+class DuplicateMeasureError(EvaluationRegistryError):
+    pass
+
+
+class UnknownMeasureError(EvaluationRegistryError):
+    pass
+
+
+class InvalidMeasureError(EvaluationRegistryError):
+    pass
+
+
 _MEASURES: Dict[str, Callable[[Any], Dict[str, Any]]] = {}
 
 
 def evaluation_measure(func: Callable | None = None, *, name: Optional[str] = None):
     def decorator(f: Callable[[Any], Dict[str, Any]]):
-        key = name or f.__name__
+        if not callable(f):
+            raise TypeError("evaluation_measure expects a callable")
+        key = name or getattr(f, "__name__", None)
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError("evaluation_measure requires a non-empty measure name")
+        key = key.strip()
+        existing = _MEASURES.get(key)
+        if existing and existing is not f:
+            raise DuplicateMeasureError(
+                f"evaluation measure '{key}' already registered"
+            )
         _MEASURES[key] = f
         setattr(f, "_is_omni_evaluation_measure", True)
         setattr(f, "_measure_name", key)
@@ -18,21 +45,30 @@ def evaluation_measure(func: Callable | None = None, *, name: Optional[str] = No
     return decorator(func)
 
 
-def get_measure(name: str) -> Optional[Callable[[Any], Dict[str, Any]]]:
-    return _MEASURES.get(name)
+def get_measure(name: str) -> Callable[[Any], Dict[str, Any]]:
+    if name not in _MEASURES:
+        raise UnknownMeasureError(f"evaluation measure '{name}' is not registered")
+    return _MEASURES[name]
 
 
 def run_measures(
     ctx: Any, measures: Optional[List[str]] = None
 ) -> List[Dict[str, Any]]:
-    selected = (
-        _MEASURES
-        if measures is None
-        else {k: _MEASURES[k] for k in measures if k in _MEASURES}
-    )
+    if measures is None:
+        selected_items = list(_MEASURES.items())
+    else:
+        missing = [m for m in measures if m not in _MEASURES]
+        if missing:
+            missing_str = ", ".join(sorted(missing))
+            raise UnknownMeasureError(
+                f"unknown evaluation measures requested: {missing_str}"
+            )
+        selected_items = [(k, _MEASURES[k]) for k in measures]
     results: List[Dict[str, Any]] = []
-    for key, fn in selected.items():
+    for key, fn in selected_items:
         res = fn(ctx)
+        if not isinstance(res, dict):
+            raise InvalidMeasureError(f"evaluation measure '{key}' must return a dict")
         if "name" not in res:
             res["name"] = key
         results.append(res)
