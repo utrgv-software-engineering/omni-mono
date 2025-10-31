@@ -1,10 +1,270 @@
 import builtins
+import json
 import sys
 import types
 
 import pytest
+import yaml
 
 from omniagents.core.eval import optimize
+
+
+@pytest.fixture
+def configure_optimize_env(monkeypatch):
+    def _setup(
+        compiled_path,
+        *,
+        instructions="optimized",
+        total_num_evals=3,
+        progress_state=None,
+        evaluation_scores=None,
+        apply_raises=False,
+        best_candidate=None,
+        max_stop_should_trigger=False,
+    ):
+        env = types.SimpleNamespace()
+        env.instructions = instructions
+        env.total_num_evals = total_num_evals
+        env.progress_state = progress_state or types.SimpleNamespace(total_num_evals=1)
+        env.evaluation_scores = evaluation_scores
+        env.adapter_instances = []
+        env.adapter_evaluations = []
+        env.proposer_kwargs = []
+        env.file_stoppers = []
+        env.max_stoppers = []
+        env.stopper_calls = []
+        env.composite_calls = []
+        env.apply_calls = []
+        env.apply_attempts = []
+        env.engine_kwargs = {}
+        env.apply_raises = apply_raises
+        env.best_candidate = best_candidate
+        env.max_stop_should_trigger = max_stop_should_trigger
+        env.stop_callback_result = None
+
+        def fake_compile_project(*args, **kwargs):
+            return str(compiled_path), {}
+
+        monkeypatch.setattr(
+            "omniagents.core.project.compiler.compile_project",
+            fake_compile_project,
+        )
+
+        def fake_apply(*args, **kwargs):
+            env.apply_attempts.append((args, kwargs))
+            if env.apply_raises:
+                raise RuntimeError("apply failed")
+            env.apply_calls.append((args, kwargs))
+
+        monkeypatch.setattr(
+            "omniagents.core.project.apply.apply_agent_instructions",
+            fake_apply,
+        )
+
+        class DummyAdapter:
+            def __init__(self, cfg_path, category, **kwargs):
+                self.cfg_path = cfg_path
+                self.category = category
+                self.kwargs = kwargs
+                self.evaluate_calls = []
+                env.adapter_instances.append(self)
+
+            def evaluate(self, dataset, candidate, capture_traces=False):
+                self.evaluate_calls.append((dataset, candidate))
+                env.adapter_evaluations.append((dataset, candidate))
+                if env.evaluation_scores:
+                    outputs, scores = env.evaluation_scores(dataset, candidate)
+                else:
+                    scores = [0.8 for _ in dataset]
+                    outputs = dataset
+                return types.SimpleNamespace(outputs=outputs, scores=scores)
+
+        monkeypatch.setattr(
+            "omniagents.core.eval.gepa_agent_adapter.OmniAgentsAgentAdapter",
+            DummyAdapter,
+        )
+
+        dummy_gepa = types.ModuleType("gepa")
+        dummy_gepa.__path__ = []
+        monkeypatch.setitem(sys.modules, "gepa", dummy_gepa)
+
+        core_pkg = types.ModuleType("gepa.core")
+        core_pkg.__path__ = []
+        monkeypatch.setitem(sys.modules, "gepa.core", core_pkg)
+
+        class DummyEngine:
+            def __init__(self, **kwargs):
+                env.engine_kwargs = kwargs
+
+            def run(self):
+                stop_cb = env.engine_kwargs.get("stop_callback")
+                if stop_cb:
+                    env.stop_callback_result = stop_cb(env.progress_state)
+                candidate = env.best_candidate
+                if candidate is None:
+                    candidate = {"instructions": env.instructions}
+                return types.SimpleNamespace(
+                    total_num_evals=env.total_num_evals,
+                    best_candidate=candidate,
+                )
+
+        engine_mod = types.ModuleType("gepa.core.engine")
+        engine_mod.GEPAEngine = DummyEngine
+        monkeypatch.setitem(sys.modules, "gepa.core.engine", engine_mod)
+        core_pkg.engine = engine_mod
+
+        class DummyResult:
+            @staticmethod
+            def from_state(state):
+                return types.SimpleNamespace(best_candidate=state.best_candidate)
+
+        result_mod = types.ModuleType("gepa.core.result")
+        result_mod.GEPAResult = DummyResult
+        monkeypatch.setitem(sys.modules, "gepa.core.result", result_mod)
+        core_pkg.result = result_mod
+
+        class DummyTracker:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        tracker_mod = types.ModuleType("gepa.logging.experiment_tracker")
+
+        def create_experiment_tracker(**kwargs):
+            return DummyTracker()
+
+        tracker_mod.create_experiment_tracker = create_experiment_tracker
+        logging_pkg = types.ModuleType("gepa.logging")
+        logging_pkg.__path__ = []
+        logging_pkg.experiment_tracker = tracker_mod
+        logger_mod = types.ModuleType("gepa.logging.logger")
+
+        class StdOutLogger:
+            def __init__(self, *args, **kwargs):
+                self.args = args
+                self.kwargs = kwargs
+
+            def log(self, *args, **kwargs):
+                return None
+
+        logger_mod.StdOutLogger = StdOutLogger
+        logging_pkg.logger = logger_mod
+        monkeypatch.setitem(sys.modules, "gepa.logging", logging_pkg)
+        monkeypatch.setitem(sys.modules, "gepa.logging.experiment_tracker", tracker_mod)
+        monkeypatch.setitem(sys.modules, "gepa.logging.logger", logger_mod)
+        dummy_gepa.logging = logging_pkg
+
+        strategies_pkg = types.ModuleType("gepa.strategies")
+        strategies_pkg.__path__ = []
+
+        class DummyCandidateSelector:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        selector_mod = types.ModuleType("gepa.strategies.candidate_selector")
+        selector_mod.ParetoCandidateSelector = DummyCandidateSelector
+        monkeypatch.setitem(
+            sys.modules,
+            "gepa.strategies.candidate_selector",
+            selector_mod,
+        )
+
+        class DummyComponentSelector:
+            def __init__(self, *args, **kwargs):
+                self.args = args
+                self.kwargs = kwargs
+
+        component_mod = types.ModuleType("gepa.strategies.component_selector")
+        component_mod.RoundRobinReflectionComponentSelector = DummyComponentSelector
+        monkeypatch.setitem(
+            sys.modules,
+            "gepa.strategies.component_selector",
+            component_mod,
+        )
+
+        strategies_pkg.candidate_selector = selector_mod
+        strategies_pkg.component_selector = component_mod
+        monkeypatch.setitem(sys.modules, "gepa.strategies", strategies_pkg)
+        dummy_gepa.strategies = strategies_pkg
+
+        class _Stopper:
+            def __init__(self, label, *args, **kwargs):
+                self.label = label
+                self.args = args
+                self.kwargs = kwargs
+
+            def __call__(self, state):
+                env.stopper_calls.append((self.label, state))
+                should_stop = False
+                if self.label == "max" and env.max_stop_should_trigger:
+                    should_stop = True
+                return should_stop
+
+        class _Composite:
+            def __init__(self, *stoppers):
+                self.stoppers = stoppers
+
+            def __call__(self, state):
+                env.composite_calls.append(state)
+                result = False
+                for stopper in self.stoppers:
+                    result = stopper(state) or result
+                return result
+
+        def file_stopper_factory(*args, **kwargs):
+            stopper = _Stopper("file", *args, **kwargs)
+            env.file_stoppers.append(stopper)
+            return stopper
+
+        def max_stopper_factory(*args, **kwargs):
+            stopper = _Stopper("max", *args, **kwargs)
+            env.max_stoppers.append(stopper)
+            return stopper
+
+        def composite_factory(*stoppers):
+            return _Composite(*stoppers)
+
+        utils_mod = types.ModuleType("gepa.utils")
+        utils_mod.FileStopper = file_stopper_factory
+        utils_mod.MaxMetricCallsStopper = max_stopper_factory
+        utils_mod.CompositeStopper = composite_factory
+        monkeypatch.setitem(sys.modules, "gepa.utils", utils_mod)
+        dummy_gepa.utils = utils_mod
+
+        proposer_pkg = types.ModuleType("gepa.proposer")
+        proposer_pkg.__path__ = []
+        reflective_pkg = types.ModuleType("gepa.proposer.reflective_mutation")
+        reflective_pkg.__path__ = []
+
+        class DummyProposer:
+            def __init__(self, **kwargs):
+                env.proposer_kwargs.append(kwargs)
+
+        reflective_mod = types.ModuleType(
+            "gepa.proposer.reflective_mutation.reflective_mutation"
+        )
+        reflective_mod.ReflectiveMutationProposer = DummyProposer
+        reflective_pkg.reflective_mutation = reflective_mod
+        proposer_pkg.reflective_mutation = reflective_pkg
+        monkeypatch.setitem(sys.modules, "gepa.proposer", proposer_pkg)
+        monkeypatch.setitem(
+            sys.modules,
+            "gepa.proposer.reflective_mutation",
+            reflective_pkg,
+        )
+        monkeypatch.setitem(
+            sys.modules,
+            "gepa.proposer.reflective_mutation.reflective_mutation",
+            reflective_mod,
+        )
+        dummy_gepa.proposer = proposer_pkg
+        dummy_gepa.core = core_pkg
+
+        return env
+
+    return _setup
 
 
 def test_optimize_agent_requires_gepa(monkeypatch, tmp_path):
@@ -153,183 +413,7 @@ def test_optimize_judge_requires_gepa(monkeypatch, tmp_path):
     assert "This command requires the 'gepa' package" in str(exc.value)
 
 
-def test_optimize_agent_happy_path(monkeypatch, tmp_path):
-    import yaml
-
-    adapter_instances = []
-
-    class DummyAdapter:
-        def __init__(self, cfg_path, category, **kwargs):
-            self.cfg_path = cfg_path
-            self.category = category
-            self.kwargs = kwargs
-            self.evaluate_calls = []
-            adapter_instances.append(self)
-
-        def evaluate(self, dataset, candidate, capture_traces=False):
-            self.evaluate_calls.append((dataset, candidate))
-            scores = [0.8 for _ in dataset]
-            return types.SimpleNamespace(outputs=dataset, scores=scores)
-
-    monkeypatch.setattr(
-        "omniagents.core.eval.gepa_agent_adapter.OmniAgentsAgentAdapter",
-        DummyAdapter,
-    )
-
-    def fake_compile_project(*args, **kwargs):
-        return str(compiled_path), {}
-
-    monkeypatch.setattr(
-        "omniagents.core.project.compiler.compile_project", fake_compile_project
-    )
-
-    def fake_apply(*args, **kwargs):
-        return None
-
-    monkeypatch.setattr(
-        "omniagents.core.project.apply.apply_agent_instructions", fake_apply
-    )
-
-    import sys
-
-    dummy_gepa = types.ModuleType("gepa")
-    dummy_gepa.__path__ = []
-    monkeypatch.setitem(sys.modules, "gepa", dummy_gepa)
-
-    core_pkg = types.ModuleType("gepa.core")
-    core_pkg.__path__ = []
-    monkeypatch.setitem(sys.modules, "gepa.core", core_pkg)
-
-    class DummyEngine:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def run(self):
-            return types.SimpleNamespace(
-                total_num_evals=3,
-                best_candidate={"instructions": "optimized"},
-            )
-
-    engine_mod = types.ModuleType("gepa.core.engine")
-    engine_mod.GEPAEngine = DummyEngine
-    monkeypatch.setitem(sys.modules, "gepa.core.engine", engine_mod)
-    core_pkg.engine = engine_mod
-
-    class DummyResult:
-        @staticmethod
-        def from_state(state):
-            return types.SimpleNamespace(best_candidate=state.best_candidate)
-
-    result_mod = types.ModuleType("gepa.core.result")
-    result_mod.GEPAResult = DummyResult
-    monkeypatch.setitem(sys.modules, "gepa.core.result", result_mod)
-    core_pkg.result = result_mod
-
-    class DummyTracker:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-    tracker_mod = types.ModuleType("gepa.logging.experiment_tracker")
-
-    def create_experiment_tracker(**kwargs):
-        return DummyTracker()
-
-    tracker_mod.create_experiment_tracker = create_experiment_tracker
-    logging_pkg = types.ModuleType("gepa.logging")
-    logging_pkg.__path__ = []
-    logging_pkg.experiment_tracker = tracker_mod
-    monkeypatch.setitem(sys.modules, "gepa.logging", logging_pkg)
-    monkeypatch.setitem(sys.modules, "gepa.logging.experiment_tracker", tracker_mod)
-    dummy_gepa.logging = logging_pkg
-
-    strategies_pkg = types.ModuleType("gepa.strategies")
-    strategies_pkg.__path__ = []
-    monkeypatch.setitem(sys.modules, "gepa.strategies", strategies_pkg)
-
-    selector_mod = types.ModuleType("gepa.strategies.candidate_selector")
-
-    class DummyCandidateSelector:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-    selector_mod.ParetoCandidateSelector = DummyCandidateSelector
-    monkeypatch.setitem(sys.modules, "gepa.strategies.candidate_selector", selector_mod)
-    strategies_pkg.candidate_selector = selector_mod
-
-    component_mod = types.ModuleType("gepa.strategies.component_selector")
-
-    class DummyComponentSelector:
-        def __init__(self, *args, **kwargs):
-            self.args = args
-            self.kwargs = kwargs
-
-    component_mod.RoundRobinReflectionComponentSelector = DummyComponentSelector
-    monkeypatch.setitem(
-        sys.modules,
-        "gepa.strategies.component_selector",
-        component_mod,
-    )
-    strategies_pkg.component_selector = component_mod
-
-    utils_mod = types.ModuleType("gepa.utils")
-
-    class DummyStopper:
-        def __init__(self, *args, **kwargs):
-            self.args = args
-            self.kwargs = kwargs
-
-        def __call__(self, state):
-            return False
-
-    class DummyCompositeStopper:
-        def __init__(self, *stoppers):
-            self.stoppers = stoppers
-
-        def __call__(self, state):
-            return any(stopper(state) for stopper in self.stoppers)
-
-    utils_mod.FileStopper = DummyStopper
-    utils_mod.MaxMetricCallsStopper = DummyStopper
-    utils_mod.CompositeStopper = DummyCompositeStopper
-    monkeypatch.setitem(sys.modules, "gepa.utils", utils_mod)
-    dummy_gepa.utils = utils_mod
-
-    proposer_pkg = types.ModuleType("gepa.proposer")
-    proposer_pkg.__path__ = []
-    monkeypatch.setitem(sys.modules, "gepa.proposer", proposer_pkg)
-
-    reflective_pkg = types.ModuleType("gepa.proposer.reflective_mutation")
-    reflective_pkg.__path__ = []
-    monkeypatch.setitem(
-        sys.modules,
-        "gepa.proposer.reflective_mutation",
-        reflective_pkg,
-    )
-
-    reflective_mod = types.ModuleType(
-        "gepa.proposer.reflective_mutation.reflective_mutation"
-    )
-
-    class DummyProposer:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-    reflective_mod.ReflectiveMutationProposer = DummyProposer
-    monkeypatch.setitem(
-        sys.modules,
-        "gepa.proposer.reflective_mutation.reflective_mutation",
-        reflective_mod,
-    )
-    reflective_pkg.reflective_mutation = reflective_mod
-    proposer_pkg.reflective_mutation = reflective_pkg
-
-    dummy_gepa.core = core_pkg
-    dummy_gepa.strategies = strategies_pkg
-    dummy_gepa.proposer = proposer_pkg
-
+def test_optimize_agent_happy_path(monkeypatch, tmp_path, configure_optimize_env):
     project_dir = tmp_path / "proj"
     project_dir.mkdir()
 
@@ -348,20 +432,27 @@ def test_optimize_agent_happy_path(monkeypatch, tmp_path):
         encoding="utf-8",
     )
 
+    env = configure_optimize_env(compiled_path)
+
     def write_split(path, labels):
-        data = {
-            "scenarios": [
+        path.write_text(
+            yaml.dump(
                 {
-                    "id": f"{path.stem}-{idx}",
-                    "label": lbl,
-                    "name": f"scenario-{idx}",
-                    "prompt": "prompt",
-                    "target_category": "safety",
-                }
-                for idx, lbl in enumerate(labels)
-            ]
-        }
-        path.write_text(yaml.dump(data, sort_keys=False), encoding="utf-8")
+                    "scenarios": [
+                        {
+                            "id": f"{path.stem}-{idx}",
+                            "label": lbl,
+                            "name": f"scenario-{idx}",
+                            "prompt": "prompt",
+                            "target_category": "safety",
+                        }
+                        for idx, lbl in enumerate(labels)
+                    ]
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
 
     train_path = tmp_path / "train.yml"
     dev_path = tmp_path / "dev.yml"
@@ -394,26 +485,721 @@ def test_optimize_agent_happy_path(monkeypatch, tmp_path):
     )
 
     assert result["category"] == "safety"
-    assert result["instructions"] == "optimized"
-    assert adapter_instances[0].evaluate_calls
+    assert result["instructions"] == env.instructions
+    assert env.adapter_instances[0].evaluate_calls
     assert any(msg.startswith("LOG_PATH:") for msg in logs)
 
 
-def test_optimize_judge_happy_path(monkeypatch, tmp_path):
-    import json
-    import yaml
+def test_optimize_agent_missing_named_split_path(
+    monkeypatch, tmp_path, configure_optimize_env
+):
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
 
-    adapter_instances = []
-    engine_instances = []
+    compiled_path = project_dir / "compiled.yaml"
+    compiled_path.write_text(
+        yaml.dump(
+            {
+                "evaluation": {
+                    "failure_categories": {"safety": {"measures": ["safety_agent"]}},
+                    "judges": {},
+                }
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    configure_optimize_env(compiled_path)
+
+    with pytest.raises(SystemExit) as exc:
+        optimize.optimize_agent_from_project(
+            str(project_dir),
+            None,
+            "safety",
+            None,
+            None,
+            None,
+            "scenario",
+            False,
+            1,
+            1,
+            "gpt-4o-mini",
+            "fraction",
+            None,
+            0,
+            None,
+            False,
+            False,
+        )
+
+    assert "under" in str(exc.value)
+
+
+def test_optimize_agent_missing_category_from_splits(
+    monkeypatch, tmp_path, configure_optimize_env
+):
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+
+    compiled_path = project_dir / "compiled.yaml"
+    compiled_path.write_text(
+        yaml.dump(
+            {
+                "evaluation": {
+                    "failure_categories": {"safety": {"measures": ["safety_agent"]}},
+                    "judges": {},
+                }
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    configure_optimize_env(compiled_path)
+
+    def write_split(path):
+        path.write_text(
+            yaml.dump(
+                {
+                    "scenarios": [
+                        {
+                            "id": f"{path.stem}-0",
+                            "label": True,
+                            "name": "scenario",
+                            "prompt": "prompt",
+                        }
+                    ]
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+
+    train_path = tmp_path / "train.yml"
+    dev_path = tmp_path / "dev.yml"
+    test_path = tmp_path / "test.yml"
+    write_split(train_path)
+    write_split(dev_path)
+    write_split(test_path)
+
+    with pytest.raises(SystemExit) as exc:
+        optimize.optimize_agent_from_project(
+            str(project_dir),
+            None,
+            None,
+            str(train_path),
+            str(dev_path),
+            str(test_path),
+            None,
+            False,
+            1,
+            1,
+            "gpt-4o-mini",
+            "fraction",
+            None,
+            0,
+            None,
+            False,
+            False,
+        )
+
+    assert "please provide --category" in str(exc.value)
+
+
+def test_optimize_agent_auto_resolution_resume_apply(
+    monkeypatch, tmp_path, configure_optimize_env
+):
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+
+    compiled_path = project_dir / "compiled.yaml"
+    compiled_path.write_text(
+        yaml.dump(
+            {
+                "evaluation": {
+                    "failure_categories": {"safety": {"measures": ["safety_agent"]}},
+                    "judges": {},
+                },
+                "instructions": "Seed",
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    env = configure_optimize_env(
+        compiled_path,
+        instructions="updated",
+        total_num_evals=4,
+        progress_state=types.SimpleNamespace(total_num_evals=1),
+    )
+
+    scenario_dir = project_dir / "artifacts" / "eval" / "scenario" / "splits" / "safety"
+    scenario_dir.mkdir(parents=True)
+
+    def write_split(path, labels):
+        path.write_text(
+            yaml.dump(
+                {
+                    "scenarios": [
+                        {
+                            "id": f"{path.stem}-{idx}",
+                            "label": lbl,
+                            "name": f"scenario-{idx}",
+                            "prompt": "prompt",
+                            "target_category": "safety",
+                        }
+                        for idx, lbl in enumerate(labels)
+                    ]
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+
+    write_split(scenario_dir / "train.yml", [True, False, True])
+    write_split(scenario_dir / "dev.yml", [True, False])
+    write_split(scenario_dir / "test.yml", [False, True])
+
+    logs = []
+
+    result = optimize.optimize_agent_from_project(
+        str(project_dir),
+        None,
+        "safety",
+        None,
+        None,
+        None,
+        "scenario",
+        True,
+        5,
+        4,
+        "gpt-4o-mini",
+        "fraction",
+        None,
+        7,
+        None,
+        True,
+        True,
+        log_hook=logs.append,
+    )
+
+    expected_run_dir = scenario_dir.parent.parent / "agent_optimize" / "safety"
+    assert result["run_dir"] == str(expected_run_dir)
+    assert env.apply_calls
+    apply_args, apply_kwargs = env.apply_calls[0]
+    assert apply_args[0] == str(project_dir)
+    assert apply_args[2] == "updated"
+    assert env.proposer_kwargs
+    trainset = env.proposer_kwargs[0]["trainset"]
+    assert all(item.get("label") is True for item in trainset)
+    assert len(trainset) == 2
+    assert env.composite_calls
+    assert env.stopper_calls
+    labels = {label for label, _ in env.stopper_calls}
+    assert labels == {"file", "max"}
+    progress_messages = [msg for msg in logs if msg.startswith("PROGRESS:")]
+    assert any(
+        msg.split(":")[2] not in {"", "0"}
+        for msg in progress_messages
+        if len(msg.split(":")) == 3
+    )
+    env.engine_kwargs["logger"].log("extra-log")
+    env.engine_kwargs["evaluator"](
+        [{"label": True}],
+        {"instructions": "candidate"},
+    )
+
+
+def test_optimize_agent_positives_only_filters_all_splits(
+    monkeypatch, tmp_path, configure_optimize_env
+):
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+
+    compiled_path = project_dir / "compiled.yaml"
+    compiled_path.write_text(
+        yaml.dump(
+            {
+                "evaluation": {
+                    "failure_categories": {"safety": {"measures": ["safety_agent"]}},
+                    "judges": {},
+                },
+                "instructions": "Seed",
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    env = configure_optimize_env(compiled_path)
+
+    def write_split(path, labels):
+        path.write_text(
+            yaml.dump(
+                {
+                    "scenarios": [
+                        {
+                            "id": f"{path.stem}-{idx}",
+                            "label": lbl,
+                            "name": f"scenario-{idx}",
+                            "prompt": "prompt",
+                            "target_category": "safety",
+                        }
+                        for idx, lbl in enumerate(labels)
+                    ]
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+
+    train_path = tmp_path / "train.yml"
+    dev_path = tmp_path / "dev.yml"
+    test_path = tmp_path / "test.yml"
+    write_split(train_path, [True, False, True])
+    write_split(dev_path, [False, True])
+    write_split(test_path, [True, False])
+
+    logs = []
+
+    result = optimize.optimize_agent_from_project(
+        str(project_dir),
+        None,
+        None,
+        str(train_path),
+        str(dev_path),
+        str(test_path),
+        None,
+        True,
+        4,
+        3,
+        "gpt-4o-mini",
+        "fraction",
+        None,
+        13,
+        str(tmp_path / "runs"),
+        False,
+        False,
+        log_hook=logs.append,
+    )
+
+    assert result["instructions"] == env.instructions
+    assert len(env.adapter_evaluations) >= 2
+    dev_dataset = env.adapter_evaluations[-2][0]
+    test_dataset = env.adapter_evaluations[-1][0]
+    assert all(item.get("label") is True for item in dev_dataset)
+    assert all(item.get("label") is True for item in test_dataset)
+    assert logs
+    assert logs[-1] == f"PROGRESS:{env.total_num_evals}:0"
+
+
+def test_optimize_agent_stop_callback_respects_max_stopper(
+    monkeypatch, tmp_path, configure_optimize_env
+):
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+
+    compiled_path = project_dir / "compiled.yaml"
+    compiled_path.write_text(
+        yaml.dump(
+            {
+                "evaluation": {
+                    "failure_categories": {"safety": {"measures": ["safety_agent"]}},
+                    "judges": {},
+                }
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    env = configure_optimize_env(
+        compiled_path,
+        total_num_evals=5,
+        progress_state=types.SimpleNamespace(total_num_evals=2),
+        max_stop_should_trigger=True,
+    )
+
+    def write_split(path, labels):
+        path.write_text(
+            yaml.dump(
+                {
+                    "scenarios": [
+                        {
+                            "id": f"{path.stem}-{idx}",
+                            "label": lbl,
+                            "name": f"scenario-{idx}",
+                            "prompt": "prompt",
+                            "target_category": "safety",
+                        }
+                        for idx, lbl in enumerate(labels)
+                    ]
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+
+    train_path = tmp_path / "train.yml"
+    dev_path = tmp_path / "dev.yml"
+    test_path = tmp_path / "test.yml"
+    write_split(train_path, [True, False])
+    write_split(dev_path, [True])
+    write_split(test_path, [False, True])
+
+    optimize.optimize_agent_from_project(
+        str(project_dir),
+        None,
+        None,
+        str(train_path),
+        str(dev_path),
+        str(test_path),
+        None,
+        False,
+        4,
+        2,
+        "gpt-4o-mini",
+        "fraction",
+        None,
+        17,
+        str(tmp_path / "runs"),
+        False,
+        False,
+    )
+
+    assert env.stop_callback_result is True
+    assert any(label == "max" for label, _ in env.stopper_calls)
+    assert env.composite_calls
+
+
+def test_optimize_agent_tracing_studio_init(
+    monkeypatch, tmp_path, configure_optimize_env
+):
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+
+    instructions_file = project_dir / "seed.txt"
+    instructions_file.write_text("Seed", encoding="utf-8")
+
+    compiled_path = project_dir / "compiled.yaml"
+    compiled_path.write_text(
+        yaml.dump(
+            {
+                "evaluation": {
+                    "failure_categories": {"safety": {"measures": ["safety_agent"]}},
+                    "judges": {},
+                },
+                "instructions_file": instructions_file.name,
+                "tracing": {
+                    "provider": "studio",
+                    "name": "workflow",
+                    "project": "demo",
+                    "settings": {"resume": "auto"},
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    env = configure_optimize_env(compiled_path)
+
+    tracing_calls = []
+    studio_module = types.ModuleType("omniagents.studio")
+    studio_tracing = types.ModuleType("omniagents.studio.tracing")
+
+    def tracing_init(**kwargs):
+        tracing_calls.append(kwargs)
+
+    studio_tracing.init = tracing_init
+    studio_module.tracing = studio_tracing
+    monkeypatch.setitem(sys.modules, "omniagents.studio", studio_module)
+    monkeypatch.setitem(sys.modules, "omniagents.studio.tracing", studio_tracing)
+
+    scenario_dir = project_dir / "artifacts" / "eval" / "scenario" / "splits" / "safety"
+    scenario_dir.mkdir(parents=True)
+
+    def write_split(path, labels):
+        path.write_text(
+            yaml.dump(
+                {
+                    "scenarios": [
+                        {
+                            "id": f"{path.stem}-{idx}",
+                            "label": lbl,
+                            "name": f"scenario-{idx}",
+                            "prompt": "prompt",
+                            "target_category": "safety",
+                        }
+                        for idx, lbl in enumerate(labels)
+                    ]
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+
+    write_split(scenario_dir / "train.yml", [True, False])
+    write_split(scenario_dir / "dev.yml", [True])
+    write_split(scenario_dir / "test.yml", [True])
+
+    result = optimize.optimize_agent_from_project(
+        str(project_dir),
+        None,
+        "safety",
+        None,
+        None,
+        None,
+        "scenario",
+        False,
+        4,
+        2,
+        "gpt-4o-mini",
+        "fraction",
+        None,
+        3,
+        None,
+        False,
+        False,
+    )
+
+    assert tracing_calls
+    assert tracing_calls[0]["project"] == "demo"
+    assert "studio_optimize" in env.adapter_instances[0].kwargs.get("workflow_name", "")
+    assert env.engine_kwargs.get("stop_callback") is not None
+    assert env.stopper_calls
+    assert result["instructions"] == env.instructions
+
+
+def test_optimize_agent_tracing_agentio_fallback(
+    monkeypatch, tmp_path, configure_optimize_env
+):
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+
+    instructions_file = project_dir / "seed.txt"
+    instructions_file.write_text("Seed", encoding="utf-8")
+
+    compiled_path = project_dir / "compiled.yaml"
+    compiled_path.write_text(
+        yaml.dump(
+            {
+                "evaluation": {
+                    "failure_categories": {"safety": {"measures": ["safety_agent"]}},
+                    "judges": {},
+                },
+                "instructions_file": instructions_file.name,
+                "tracing": {
+                    "provider": "studio",
+                    "name": "workflow",
+                    "project": "demo",
+                    "settings": {"resume": "auto"},
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    env = configure_optimize_env(compiled_path)
+
+    original_import = builtins.__import__
+
+    def failing_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "omniagents.studio" and fromlist and "tracing" in fromlist:
+            raise ImportError("forced")
+        if name == "omniagents.studio.tracing":
+            raise ImportError("forced")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", failing_import)
+
+    studio_module = types.ModuleType("omniagents.studio")
+    studio_module.__path__ = []
+    monkeypatch.setitem(sys.modules, "omniagents.studio", studio_module)
+    agentio_calls = []
+    agentio_module = types.ModuleType("agentio")
+
+    def agentio_init(**kwargs):
+        agentio_calls.append(kwargs)
+
+    agentio_module.init = agentio_init
+    monkeypatch.setitem(sys.modules, "agentio", agentio_module)
+
+    scenario_dir = project_dir / "artifacts" / "eval" / "scenario" / "splits" / "safety"
+    scenario_dir.mkdir(parents=True)
+
+    def write_split(path, labels):
+        path.write_text(
+            yaml.dump(
+                {
+                    "scenarios": [
+                        {
+                            "id": f"{path.stem}-{idx}",
+                            "label": lbl,
+                            "name": f"scenario-{idx}",
+                            "prompt": "prompt",
+                            "target_category": "safety",
+                        }
+                        for idx, lbl in enumerate(labels)
+                    ]
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+
+    write_split(scenario_dir / "train.yml", [True, False])
+    write_split(scenario_dir / "dev.yml", [True])
+    write_split(scenario_dir / "test.yml", [True])
+
+    optimize.optimize_agent_from_project(
+        str(project_dir),
+        None,
+        "safety",
+        None,
+        None,
+        None,
+        "scenario",
+        False,
+        4,
+        2,
+        "gpt-4o-mini",
+        "fraction",
+        None,
+        5,
+        None,
+        False,
+        False,
+    )
+
+    assert agentio_calls
+    assert env.stopper_calls
+
+
+def test_optimize_agent_apply_failure(monkeypatch, tmp_path, configure_optimize_env):
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+
+    compiled_path = project_dir / "compiled.yaml"
+    compiled_path.write_text(
+        yaml.dump(
+            {
+                "evaluation": {
+                    "failure_categories": {"safety": {"measures": ["safety_agent"]}},
+                    "judges": {},
+                },
+                "instructions": "Seed",
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    env = configure_optimize_env(compiled_path, apply_raises=True)
+
+    def write_split(path, labels):
+        path.write_text(
+            yaml.dump(
+                {
+                    "scenarios": [
+                        {
+                            "id": f"{path.stem}-{idx}",
+                            "label": lbl,
+                            "name": f"scenario-{idx}",
+                            "prompt": "prompt",
+                            "target_category": "safety",
+                        }
+                        for idx, lbl in enumerate(labels)
+                    ]
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+
+    train_path = tmp_path / "train.yml"
+    dev_path = tmp_path / "dev.yml"
+    test_path = tmp_path / "test.yml"
+    write_split(train_path, [True, False])
+    write_split(dev_path, [True])
+    write_split(test_path, [True])
+
+    result = optimize.optimize_agent_from_project(
+        str(project_dir),
+        None,
+        None,
+        str(train_path),
+        str(dev_path),
+        str(test_path),
+        None,
+        False,
+        3,
+        2,
+        "gpt-4o-mini",
+        "fraction",
+        None,
+        11,
+        str(tmp_path / "output"),
+        False,
+        True,
+    )
+
+    assert result["instructions"] == env.instructions
+    assert env.apply_attempts
+    assert not env.apply_calls
+
+
+def test_optimize_judge_happy_path(monkeypatch, tmp_path, configure_optimize_env):
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+
+    instructions_file = project_dir / "seed.txt"
+    instructions_file.write_text("Judge seed", encoding="utf-8")
+
+    compiled_path = project_dir / "compiled.yaml"
+    compiled_path.write_text(
+        yaml.dump(
+            {
+                "evaluation": {
+                    "failure_categories": {"safety": {"measures": ["safety_agent"]}},
+                    "judges": {
+                        "safety_judge": {
+                            "agent": {"instructions": "Judge base"},
+                            "input": {"template": "{{ text }}"},
+                        }
+                    },
+                },
+                "tracing": {
+                    "provider": "agentio",
+                    "name": "judgeflow",
+                    "project": "demo",
+                    "settings": {"resume": "auto"},
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    env = configure_optimize_env(
+        compiled_path,
+        best_candidate={"instructions": "judge", "template": "tmpl"},
+        total_num_evals=3,
+    )
+
+    judge_adapter_instances = []
 
     class DummyJudgeAdapter:
-        def __init__(self, cfg_path, judge_key, runs_path, **kwargs):
+        def __init__(self, cfg_path, jkey, runs_path, **kwargs):
             self.cfg_path = cfg_path
-            self.judge_key = judge_key
+            self.jkey = jkey
             self.runs_path = runs_path
             self.kwargs = kwargs
             self.evaluate_calls = []
-            adapter_instances.append(self)
+            judge_adapter_instances.append(self)
 
         def evaluate(self, dataset, candidate, capture_traces=False):
             self.evaluate_calls.append((dataset, candidate))
@@ -426,240 +1212,58 @@ def test_optimize_judge_happy_path(monkeypatch, tmp_path):
         DummyJudgeAdapter,
     )
 
-    def fake_compile_project(*args, **kwargs):
-        return str(compiled_path), {}
+    judge_apply_calls = []
 
-    monkeypatch.setattr(
-        "omniagents.core.project.compiler.compile_project", fake_compile_project
-    )
+    def fake_apply_judge_updates(*args, **kwargs):
+        judge_apply_calls.append((args, kwargs))
+
     monkeypatch.setattr(
         "omniagents.core.project.apply.apply_judge_updates",
-        lambda *args, **kwargs: None,
+        fake_apply_judge_updates,
     )
 
-    dummy_gepa = types.ModuleType("gepa")
-    dummy_gepa.__path__ = []
-    monkeypatch.setitem(sys.modules, "gepa", dummy_gepa)
+    agentio_calls = []
+    agentio_module = types.ModuleType("agentio")
 
-    core_pkg = types.ModuleType("gepa.core")
-    core_pkg.__path__ = []
-    monkeypatch.setitem(sys.modules, "gepa.core", core_pkg)
+    def agentio_init(**kwargs):
+        agentio_calls.append(kwargs)
 
-    class DummyEngine:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            engine_instances.append(self)
+    agentio_module.init = agentio_init
+    monkeypatch.setitem(sys.modules, "agentio", agentio_module)
 
-        def run(self):
-            return types.SimpleNamespace(
-                total_num_evals=5,
-                best_candidate={
-                    "instructions": "judge-optimized",
-                    "template": "judge-template",
-                },
-            )
-
-    engine_mod = types.ModuleType("gepa.core.engine")
-    engine_mod.GEPAEngine = DummyEngine
-    monkeypatch.setitem(sys.modules, "gepa.core.engine", engine_mod)
-    core_pkg.engine = engine_mod
-
-    class DummyResult:
-        @staticmethod
-        def from_state(state):
-            return types.SimpleNamespace(best_candidate=state.best_candidate)
-
-    result_mod = types.ModuleType("gepa.core.result")
-    result_mod.GEPAResult = DummyResult
-    monkeypatch.setitem(sys.modules, "gepa.core.result", result_mod)
-    core_pkg.result = result_mod
-
-    class DummyTracker:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-    tracker_mod = types.ModuleType("gepa.logging.experiment_tracker")
-
-    def create_experiment_tracker(**kwargs):
-        return DummyTracker()
-
-    tracker_mod.create_experiment_tracker = create_experiment_tracker
-    logging_pkg = types.ModuleType("gepa.logging")
-    logging_pkg.__path__ = []
-    logging_pkg.experiment_tracker = tracker_mod
-    monkeypatch.setitem(sys.modules, "gepa.logging", logging_pkg)
-    monkeypatch.setitem(sys.modules, "gepa.logging.experiment_tracker", tracker_mod)
-    dummy_gepa.logging = logging_pkg
-
-    logger_mod = types.ModuleType("gepa.logging.logger")
-
-    class DummyLogger:
-        def __init__(self, *args, **kwargs):
-            pass
-
-    logger_mod.StdOutLogger = DummyLogger
-    monkeypatch.setitem(sys.modules, "gepa.logging.logger", logger_mod)
-
-    strategies_pkg = types.ModuleType("gepa.strategies")
-    strategies_pkg.__path__ = []
-    monkeypatch.setitem(sys.modules, "gepa.strategies", strategies_pkg)
-
-    selector_mod = types.ModuleType("gepa.strategies.candidate_selector")
-
-    class DummyCandidateSelector:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-    selector_mod.ParetoCandidateSelector = DummyCandidateSelector
-    monkeypatch.setitem(sys.modules, "gepa.strategies.candidate_selector", selector_mod)
-    strategies_pkg.candidate_selector = selector_mod
-
-    component_mod = types.ModuleType("gepa.strategies.component_selector")
-
-    class DummyComponentSelector:
-        def __init__(self, *args, **kwargs):
-            self.args = args
-            self.kwargs = kwargs
-
-    component_mod.RoundRobinReflectionComponentSelector = DummyComponentSelector
-    monkeypatch.setitem(
-        sys.modules,
-        "gepa.strategies.component_selector",
-        component_mod,
-    )
-    strategies_pkg.component_selector = component_mod
-
-    utils_mod = types.ModuleType("gepa.utils")
-
-    class DummyStopper:
-        def __init__(self, *args, **kwargs):
-            self.args = args
-            self.kwargs = kwargs
-
-        def __call__(self, state):
-            return False
-
-    class DummyCompositeStopper:
-        def __init__(self, *stoppers):
-            self.stoppers = stoppers
-
-        def __call__(self, state):
-            return any(stopper(state) for stopper in self.stoppers)
-
-    utils_mod.FileStopper = DummyStopper
-    utils_mod.MaxMetricCallsStopper = DummyStopper
-    utils_mod.CompositeStopper = DummyCompositeStopper
-    monkeypatch.setitem(sys.modules, "gepa.utils", utils_mod)
-    dummy_gepa.utils = utils_mod
-
-    proposer_pkg = types.ModuleType("gepa.proposer")
-    proposer_pkg.__path__ = []
-    monkeypatch.setitem(sys.modules, "gepa.proposer", proposer_pkg)
-
-    reflective_pkg = types.ModuleType("gepa.proposer.reflective_mutation")
-    reflective_pkg.__path__ = []
-    monkeypatch.setitem(
-        sys.modules,
-        "gepa.proposer.reflective_mutation",
-        reflective_pkg,
-    )
-
-    reflective_mod = types.ModuleType(
-        "gepa.proposer.reflective_mutation.reflective_mutation"
-    )
-
-    class DummyProposer:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-    reflective_mod.ReflectiveMutationProposer = DummyProposer
-    monkeypatch.setitem(
-        sys.modules,
-        "gepa.proposer.reflective_mutation.reflective_mutation",
-        reflective_mod,
-    )
-    reflective_pkg.reflective_mutation = reflective_mod
-    proposer_pkg.reflective_mutation = reflective_pkg
-
-    dummy_gepa.core = core_pkg
-    dummy_gepa.strategies = strategies_pkg
-    dummy_gepa.proposer = proposer_pkg
-
-    project_dir = tmp_path / "proj"
-    project_dir.mkdir()
-
-    compiled_path = project_dir / "compiled.yaml"
-    compiled_path.write_text(
-        yaml.dump(
-            {
-                "evaluation": {
-                    "failure_categories": {"safety": {"measures": ["safety_agent"]}},
-                    "judges": {
-                        "safety": {
-                            "agent": {"instructions": "seed", "model": "gpt-4o-mini"},
-                            "input": {"template": "seed-template"},
-                        }
-                    },
-                },
-                "tracing": {
-                    "provider": "agentio",
-                    "name": "trace-base",
-                    "project": "trace-project",
-                    "settings": {"resume": "always"},
-                },
-            },
-            sort_keys=False,
-        ),
-        encoding="utf-8",
-    )
-
-    scenario_root = project_dir / "artifacts" / "eval" / "scenario-set"
-    splits_dir = scenario_root / "splits" / "safety"
-    splits_dir.mkdir(parents=True, exist_ok=True)
-
-    manifest_path = scenario_root / "manifest.json"
-    manifest_path.write_text(
-        json.dumps({"timestamp": "2024_01_02_03_04_05", "name": "scenario-set"}),
-        encoding="utf-8",
-    )
+    scenario_dir = project_dir / "artifacts" / "eval" / "scenario" / "splits" / "safety"
+    scenario_dir.mkdir(parents=True)
 
     def write_split(path, labels):
-        data = {
-            "scenarios": [
+        path.write_text(
+            yaml.dump(
                 {
-                    "id": f"{path.stem}-{idx}",
-                    "label": lbl,
-                    "name": f"{path.stem}-case-{idx}",
-                }
-                for idx, lbl in enumerate(labels)
-            ]
-        }
-        path.write_text(yaml.dump(data, sort_keys=False), encoding="utf-8")
+                    "scenarios": [
+                        {
+                            "id": f"{path.stem}-{idx}",
+                            "label": lbl,
+                            "name": f"scenario-{idx}",
+                            "prompt": "prompt",
+                            "target_category": "safety",
+                        }
+                        for idx, lbl in enumerate(labels)
+                    ]
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
 
-    train_path = splits_dir / "train.yml"
-    dev_path = splits_dir / "dev.yml"
-    test_path = splits_dir / "test.yml"
-    write_split(train_path, [True, False, True])
-    write_split(dev_path, [True, False])
-    write_split(test_path, [False, False, True])
+    write_split(scenario_dir / "train.yml", [True, False, True])
+    write_split(scenario_dir / "dev.yml", [True, False])
+    write_split(scenario_dir / "test.yml", [False, True])
 
-    runs_path = scenario_root / "generated_runs.json"
-    runs_path.write_text(
-        json.dumps(
-            {
-                "runs": [
-                    {"scenario_id": "dev-0", "pred": True},
-                    {"scenario_id": "dev-1", "pred": False},
-                ]
-            }
-        ),
+    manifest_dir = scenario_dir.parent.parent
+    (manifest_dir / "manifest.json").write_text(
+        json.dumps({"timestamp": "2024_01_01_00_00_00", "name": "scenario"}),
         encoding="utf-8",
     )
-
-    output_dir = tmp_path / "output"
+    (manifest_dir / "generated_runs.json").write_text("[]", encoding="utf-8")
 
     result = optimize.optimize_judge_from_project(
         str(project_dir),
@@ -668,53 +1272,36 @@ def test_optimize_judge_happy_path(monkeypatch, tmp_path):
         None,
         None,
         None,
-        "scenario-set",
-        None,
+        "scenario",
+        "safety_judge",
         None,
         "final_assistant_text",
         2,
-        10,
+        4,
         None,
         "instructions,template",
         None,
-        7,
-        str(output_dir),
+        9,
+        None,
         False,
-        False,
+        True,
     )
 
-    assert result["judge"] == "safety"
-    assert result["instructions"] == "judge-optimized"
-    assert result["template"] == "judge-template"
-    assert adapter_instances[0].kwargs["workflow_name"] == (
-        "trace-base_judge_optimize_safety_scenario-set_2024_01_02_03_04_05"
+    assert result["judge"] == "safety_judge"
+    assert result["instructions"] == "judge"
+    assert result["template"] == "tmpl"
+    assert judge_apply_calls
+    assert agentio_calls
+    assert judge_adapter_instances[0].evaluate_calls
+    env.engine_kwargs["evaluator"](
+        [{"label": True}],
+        {"instructions": "judge", "template": "tmpl"},
     )
-    assert adapter_instances[0].runs_path == runs_path
-    assert engine_instances[0].kwargs["seed_candidate"] == {
-        "instructions": "seed",
-        "template": "seed-template",
-    }
+    if env.engine_kwargs.get("stop_callback"):
+        env.engine_kwargs["stop_callback"](types.SimpleNamespace(total_num_evals=1))
 
 
-def test_optimize_judge_missing_runs_file(monkeypatch, tmp_path):
-    import yaml
-
-    dummy_gepa = types.ModuleType("gepa")
-    dummy_gepa.__path__ = []
-    monkeypatch.setitem(sys.modules, "gepa", dummy_gepa)
-
-    def fake_compile_project(*args, **kwargs):
-        return str(compiled_path), {}
-
-    monkeypatch.setattr(
-        "omniagents.core.project.compiler.compile_project", fake_compile_project
-    )
-
-    monkeypatch.setattr(
-        "omniagents.core.eval.gepa_judge_adapter.OmniAgentsJudgeAdapter",
-        lambda *args, **kwargs: None,
-    )
-
+def test_optimize_agent_missing_measures(monkeypatch, tmp_path, configure_optimize_env):
     project_dir = tmp_path / "proj"
     project_dir.mkdir()
 
@@ -723,47 +1310,59 @@ def test_optimize_judge_missing_runs_file(monkeypatch, tmp_path):
         yaml.dump(
             {
                 "evaluation": {
-                    "failure_categories": {"safety": {"measures": ["safety_agent"]}},
-                    "judges": {"safety": {"agent": {}, "input": {}}},
-                }
+                    "failure_categories": {"safety": {"measures": []}},
+                    "judges": {},
+                },
+                "instructions": "Seed",
             },
             sort_keys=False,
         ),
         encoding="utf-8",
     )
 
-    scenario_root = project_dir / "artifacts" / "eval" / "scenario-set"
-    splits_dir = scenario_root / "splits" / "safety"
-    splits_dir.mkdir(parents=True, exist_ok=True)
+    configure_optimize_env(compiled_path)
 
-    def write_split(path):
-        data = {
-            "scenarios": [
-                {"id": f"{path.stem}-0", "label": True, "name": f"{path.stem}-case"}
-            ]
-        }
-        path.write_text(yaml.dump(data, sort_keys=False), encoding="utf-8")
+    def write_split(path, labels):
+        path.write_text(
+            yaml.dump(
+                {
+                    "scenarios": [
+                        {
+                            "id": f"{path.stem}-{idx}",
+                            "label": lbl,
+                            "name": f"scenario-{idx}",
+                            "prompt": "prompt",
+                            "target_category": "safety",
+                        }
+                        for idx, lbl in enumerate(labels)
+                    ]
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
 
-    write_split(splits_dir / "train.yml")
-    write_split(splits_dir / "dev.yml")
-    write_split(splits_dir / "test.yml")
+    train_path = tmp_path / "train.yml"
+    dev_path = tmp_path / "dev.yml"
+    test_path = tmp_path / "test.yml"
+    write_split(train_path, [True])
+    write_split(dev_path, [True])
+    write_split(test_path, [True])
 
     with pytest.raises(SystemExit) as exc:
-        optimize.optimize_judge_from_project(
+        optimize.optimize_agent_from_project(
             str(project_dir),
             None,
             "safety",
+            str(train_path),
+            str(dev_path),
+            str(test_path),
             None,
-            None,
-            None,
-            "scenario-set",
-            None,
-            None,
-            "final_assistant_text",
-            2,
-            10,
-            None,
-            "instructions",
+            False,
+            5,
+            3,
+            "gpt-4o-mini",
+            "fraction",
             None,
             0,
             None,
@@ -771,85 +1370,4 @@ def test_optimize_judge_missing_runs_file(monkeypatch, tmp_path):
             False,
         )
 
-    assert "Missing generated runs fixtures" in str(exc.value)
-
-
-def test_optimize_judge_ambiguous_inferred_judge(monkeypatch, tmp_path):
-    import json
-    import yaml
-
-    dummy_gepa = types.ModuleType("gepa")
-    dummy_gepa.__path__ = []
-    monkeypatch.setitem(sys.modules, "gepa", dummy_gepa)
-
-    def fake_compile_project(*args, **kwargs):
-        return str(compiled_path), {}
-
-    monkeypatch.setattr(
-        "omniagents.core.project.compiler.compile_project", fake_compile_project
-    )
-    monkeypatch.setattr(
-        "omniagents.core.eval.gepa_judge_adapter.OmniAgentsJudgeAdapter",
-        lambda *args, **kwargs: None,
-    )
-
-    project_dir = tmp_path / "proj"
-    project_dir.mkdir()
-
-    compiled_path = project_dir / "compiled.yaml"
-    compiled_path.write_text(
-        yaml.dump(
-            {
-                "evaluation": {
-                    "failure_categories": {
-                        "safety": {"measures": ["toxicity_agent", "harassment_agent"]}
-                    },
-                    "judges": {
-                        "toxicity": {"agent": {}, "input": {}},
-                        "harassment": {"agent": {}, "input": {}},
-                    },
-                }
-            },
-            sort_keys=False,
-        ),
-        encoding="utf-8",
-    )
-
-    scenario_root = project_dir / "artifacts" / "eval" / "scenario-set"
-    splits_dir = scenario_root / "splits" / "safety"
-    splits_dir.mkdir(parents=True, exist_ok=True)
-
-    for name in ("train.yml", "dev.yml", "test.yml"):
-        path = splits_dir / name
-        data = {"scenarios": [{"id": f"{path.stem}-0", "label": True, "name": "x"}]}
-        path.write_text(yaml.dump(data, sort_keys=False), encoding="utf-8")
-
-    runs_path = scenario_root / "generated_runs.json"
-    runs_path.write_text(json.dumps({"runs": []}), encoding="utf-8")
-
-    with pytest.raises(SystemExit) as exc:
-        optimize.optimize_judge_from_project(
-            str(project_dir),
-            None,
-            "safety",
-            None,
-            None,
-            None,
-            "scenario-set",
-            None,
-            None,
-            "final_assistant_text",
-            2,
-            10,
-            None,
-            "instructions",
-            None,
-            0,
-            None,
-            False,
-            False,
-        )
-
-    assert "Multiple judges map to category 'safety': harassment, toxicity." in str(
-        exc.value
-    )
+    assert "has no measures configured" in str(exc.value)
