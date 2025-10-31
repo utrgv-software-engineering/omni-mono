@@ -1,4 +1,12 @@
-from .registry import evaluation_measure, run_measures, get_measure
+from .registry import (
+    EvaluationRegistryError,
+    DuplicateMeasureError,
+    InvalidMeasureError,
+    UnknownMeasureError,
+    evaluation_measure,
+    get_measure,
+    run_measures,
+)
 from .context import (
     EvalContext,
     JudgeResult,
@@ -30,6 +38,10 @@ __all__ = [
     "evaluation_measure",
     "run_measures",
     "get_measure",
+    "EvaluationRegistryError",
+    "DuplicateMeasureError",
+    "UnknownMeasureError",
+    "InvalidMeasureError",
     "EvalContext",
     "JudgeResult",
     "Message",
