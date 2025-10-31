@@ -51,6 +51,7 @@ htmlcov/
 .pytest_cache/
 coverage/
 coverage.xml
+.hypothesis/
 
 # Local development
 .env

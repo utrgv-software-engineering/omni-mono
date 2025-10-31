@@ -21,6 +21,9 @@ from omniagents.rpc.transport.websocket import (
 from omniagents.rpc.transport.inmemory import InMemoryTransport
 
 
+TIMEOUT = 5.0
+
+
 class TestBaseTransport:
     """Test base transport functionality."""
 
@@ -71,40 +74,133 @@ class TestClientWebSocketTransport:
     @pytest.mark.asyncio
     async def test_connect_success(self):
         """Test successful connection."""
-        mock_ws = AsyncMock()
-        mock_ws.closed = False  # WebSocket is open when closed=False
+        async with asyncio.timeout(TIMEOUT):
+            mock_ws = AsyncMock()
+            mock_ws.closed = False
 
-        with patch("websockets.connect", new_callable=AsyncMock) as mock_connect:
-            mock_connect.return_value = mock_ws
+            with patch("websockets.connect", new_callable=AsyncMock) as mock_connect:
+                mock_connect.return_value = mock_ws
 
-            transport = ClientWebSocketTransport("ws://localhost:8000")
-            await transport.connect()
+                transport = ClientWebSocketTransport("ws://localhost:8000")
+                await transport.connect()
 
-            assert transport.is_connected()
-            mock_connect.assert_called_once_with("ws://localhost:8000")
+                assert transport.is_connected()
+                mock_connect.assert_called_once_with("ws://localhost:8000")
 
     @pytest.mark.asyncio
     async def test_connect_failure(self):
         """Test connection failure."""
-        with patch("websockets.connect", new_callable=AsyncMock) as mock_connect:
-            mock_connect.side_effect = Exception("Connection failed")
+        async with asyncio.timeout(TIMEOUT):
+            with patch("websockets.connect", new_callable=AsyncMock) as mock_connect:
+                mock_connect.side_effect = Exception("Connection failed")
 
-            transport = ClientWebSocketTransport("ws://localhost:8000")
-            with pytest.raises(TransportError, match="Failed to connect"):
-                await transport.connect()
+                transport = ClientWebSocketTransport("ws://localhost:8000")
+                with pytest.raises(TransportError, match="Failed to connect"):
+                    await transport.connect()
 
-            assert not transport.is_connected()
+                assert not transport.is_connected()
 
     @pytest.mark.asyncio
     async def test_disconnect(self):
         """Test disconnection."""
-        mock_ws = AsyncMock()
-        mock_ws.open = True
+        async with asyncio.timeout(TIMEOUT):
+            mock_ws = AsyncMock()
+            mock_ws.open = True
 
-        with patch("websockets.connect", new_callable=AsyncMock) as mock_connect:
-            mock_connect.return_value = mock_ws
+            with patch("websockets.connect", new_callable=AsyncMock) as mock_connect:
+                mock_connect.return_value = mock_ws
 
+                transport = ClientWebSocketTransport("ws://localhost:8000")
+                await transport.connect()
+                await transport.disconnect()
+
+                assert not transport.is_connected()
+                mock_ws.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_send_json(self):
+        """Test sending JSON data."""
+        async with asyncio.timeout(TIMEOUT):
+            mock_ws = AsyncMock()
+            mock_ws.open = True
+
+            with patch("websockets.connect", new_callable=AsyncMock) as mock_connect:
+                mock_connect.return_value = mock_ws
+
+                transport = ClientWebSocketTransport("ws://localhost:8000")
+                await transport.connect()
+
+                data = {"method": "test", "params": {"value": 123}}
+                await transport.send_json(data)
+
+                mock_ws.send.assert_called_once_with(json.dumps(data))
+
+    @pytest.mark.asyncio
+    async def test_send_json_when_not_connected(self):
+        """Test sending when not connected."""
+        async with asyncio.timeout(TIMEOUT):
             transport = ClientWebSocketTransport("ws://localhost:8000")
+
+            with pytest.raises(TransportClosedError):
+                await transport.send_json({"test": "data"})
+
+    @pytest.mark.asyncio
+    async def test_receive_json(self):
+        """Test receiving JSON data."""
+        async with asyncio.timeout(TIMEOUT):
+            mock_ws = AsyncMock()
+            mock_ws.open = True
+            mock_ws.recv.return_value = '{"result": "success"}'
+
+            with patch("websockets.connect", new_callable=AsyncMock) as mock_connect:
+                mock_connect.return_value = mock_ws
+
+                transport = ClientWebSocketTransport("ws://localhost:8000")
+                await transport.connect()
+
+                result = await transport.receive_json()
+                assert result == {"result": "success"}
+
+    @pytest.mark.asyncio
+    async def test_receive_invalid_json(self):
+        """Test receiving invalid JSON."""
+        async with asyncio.timeout(TIMEOUT):
+            mock_ws = AsyncMock()
+            mock_ws.open = True
+            mock_ws.recv.return_value = "invalid json"
+
+            with patch("websockets.connect", new_callable=AsyncMock) as mock_connect:
+                mock_connect.return_value = mock_ws
+
+                transport = ClientWebSocketTransport("ws://localhost:8000")
+                await transport.connect()
+
+                with pytest.raises(TransportError, match="Invalid JSON received"):
+                    await transport.receive_json()
+
+
+class TestServerWebSocketTransport:
+    """Test server WebSocket transport."""
+
+    @pytest.mark.asyncio
+    async def test_connect_success(self):
+        """Test successful connection acceptance."""
+        async with asyncio.timeout(TIMEOUT):
+            mock_ws = AsyncMock(spec=WebSocket)
+
+            transport = ServerWebSocketTransport(mock_ws)
+            await transport.connect()
+
+            assert transport.is_connected()
+            mock_ws.accept.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_disconnect(self):
+        """Test disconnection."""
+        async with asyncio.timeout(TIMEOUT):
+            mock_ws = AsyncMock(spec=WebSocket)
+
+            transport = ServerWebSocketTransport(mock_ws)
             await transport.connect()
             await transport.disconnect()
 
@@ -114,127 +210,46 @@ class TestClientWebSocketTransport:
     @pytest.mark.asyncio
     async def test_send_json(self):
         """Test sending JSON data."""
-        mock_ws = AsyncMock()
-        mock_ws.open = True
+        async with asyncio.timeout(TIMEOUT):
+            mock_ws = AsyncMock(spec=WebSocket)
 
-        with patch("websockets.connect", new_callable=AsyncMock) as mock_connect:
-            mock_connect.return_value = mock_ws
-
-            transport = ClientWebSocketTransport("ws://localhost:8000")
+            transport = ServerWebSocketTransport(mock_ws)
             await transport.connect()
 
-            data = {"method": "test", "params": {"value": 123}}
+            data = {"method": "notification", "params": {"msg": "hello"}}
             await transport.send_json(data)
 
-            mock_ws.send.assert_called_once_with(json.dumps(data))
-
-    @pytest.mark.asyncio
-    async def test_send_json_when_not_connected(self):
-        """Test sending when not connected."""
-        transport = ClientWebSocketTransport("ws://localhost:8000")
-
-        with pytest.raises(TransportClosedError):
-            await transport.send_json({"test": "data"})
+            mock_ws.send_json.assert_called_once_with(data)
 
     @pytest.mark.asyncio
     async def test_receive_json(self):
         """Test receiving JSON data."""
-        mock_ws = AsyncMock()
-        mock_ws.open = True
-        mock_ws.recv.return_value = '{"result": "success"}'
+        async with asyncio.timeout(TIMEOUT):
+            mock_ws = AsyncMock(spec=WebSocket)
+            mock_ws.receive_json.return_value = {"id": 1, "method": "test"}
 
-        with patch("websockets.connect", new_callable=AsyncMock) as mock_connect:
-            mock_connect.return_value = mock_ws
-
-            transport = ClientWebSocketTransport("ws://localhost:8000")
+            transport = ServerWebSocketTransport(mock_ws)
             await transport.connect()
 
             result = await transport.receive_json()
-            assert result == {"result": "success"}
-
-    @pytest.mark.asyncio
-    async def test_receive_invalid_json(self):
-        """Test receiving invalid JSON."""
-        mock_ws = AsyncMock()
-        mock_ws.open = True
-        mock_ws.recv.return_value = "invalid json"
-
-        with patch("websockets.connect", new_callable=AsyncMock) as mock_connect:
-            mock_connect.return_value = mock_ws
-
-            transport = ClientWebSocketTransport("ws://localhost:8000")
-            await transport.connect()
-
-            with pytest.raises(TransportError, match="Invalid JSON received"):
-                await transport.receive_json()
-
-
-class TestServerWebSocketTransport:
-    """Test server WebSocket transport."""
-
-    @pytest.mark.asyncio
-    async def test_connect_success(self):
-        """Test successful connection acceptance."""
-        mock_ws = AsyncMock(spec=WebSocket)
-
-        transport = ServerWebSocketTransport(mock_ws)
-        await transport.connect()
-
-        assert transport.is_connected()
-        mock_ws.accept.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_disconnect(self):
-        """Test disconnection."""
-        mock_ws = AsyncMock(spec=WebSocket)
-
-        transport = ServerWebSocketTransport(mock_ws)
-        await transport.connect()
-        await transport.disconnect()
-
-        assert not transport.is_connected()
-        mock_ws.close.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_send_json(self):
-        """Test sending JSON data."""
-        mock_ws = AsyncMock(spec=WebSocket)
-
-        transport = ServerWebSocketTransport(mock_ws)
-        await transport.connect()
-
-        data = {"method": "notification", "params": {"msg": "hello"}}
-        await transport.send_json(data)
-
-        mock_ws.send_json.assert_called_once_with(data)
-
-    @pytest.mark.asyncio
-    async def test_receive_json(self):
-        """Test receiving JSON data."""
-        mock_ws = AsyncMock(spec=WebSocket)
-        mock_ws.receive_json.return_value = {"id": 1, "method": "test"}
-
-        transport = ServerWebSocketTransport(mock_ws)
-        await transport.connect()
-
-        result = await transport.receive_json()
-        assert result == {"id": 1, "method": "test"}
+            assert result == {"id": 1, "method": "test"}
 
     @pytest.mark.asyncio
     async def test_receive_websocket_disconnect(self):
         """Test handling WebSocket disconnect during receive."""
         from fastapi import WebSocketDisconnect
 
-        mock_ws = AsyncMock(spec=WebSocket)
-        mock_ws.receive_json.side_effect = WebSocketDisconnect()
+        async with asyncio.timeout(TIMEOUT):
+            mock_ws = AsyncMock(spec=WebSocket)
+            mock_ws.receive_json.side_effect = WebSocketDisconnect()
 
-        transport = ServerWebSocketTransport(mock_ws)
-        await transport.connect()
+            transport = ServerWebSocketTransport(mock_ws)
+            await transport.connect()
 
-        with pytest.raises(TransportClosedError, match="WebSocket disconnected"):
-            await transport.receive_json()
+            with pytest.raises(TransportClosedError, match="WebSocket disconnected"):
+                await transport.receive_json()
 
-        assert not transport.is_connected()
+            assert not transport.is_connected()
 
 
 class TestInMemoryTransport:
@@ -252,121 +267,121 @@ class TestInMemoryTransport:
     @pytest.mark.asyncio
     async def test_connect_without_pair(self):
         """Test connecting without using create_pair."""
-        transport = InMemoryTransport()
+        async with asyncio.timeout(TIMEOUT):
+            transport = InMemoryTransport()
 
-        with pytest.raises(TransportError, match="must be created with create_pair"):
-            await transport.connect()
+            with pytest.raises(
+                TransportError, match="must be created with create_pair"
+            ):
+                await transport.connect()
 
     @pytest.mark.asyncio
     async def test_bidirectional_communication(self):
         """Test bidirectional communication between paired transports."""
-        client, server = InMemoryTransport.create_pair()
+        async with asyncio.timeout(TIMEOUT):
+            client, server = InMemoryTransport.create_pair()
 
-        await client.connect()
-        await server.connect()
+            await client.connect()
+            await server.connect()
 
-        assert client.is_connected()
-        assert server.is_connected()
+            assert client.is_connected()
+            assert server.is_connected()
 
-        # Client -> Server
-        await client.send_json({"from": "client", "value": 1})
-        result = await server.receive_json()
-        assert result == {"from": "client", "value": 1}
+            await client.send_json({"from": "client", "value": 1})
+            result = await server.receive_json()
+            assert result == {"from": "client", "value": 1}
 
-        # Server -> Client
-        await server.send_json({"from": "server", "value": 2})
-        result = await client.receive_json()
-        assert result == {"from": "server", "value": 2}
+            await server.send_json({"from": "server", "value": 2})
+            result = await client.receive_json()
+            assert result == {"from": "server", "value": 2}
 
     @pytest.mark.asyncio
     async def test_disconnect_notification(self):
         """Test that disconnect notifies the paired transport."""
-        client, server = InMemoryTransport.create_pair()
+        async with asyncio.timeout(TIMEOUT):
+            client, server = InMemoryTransport.create_pair()
 
-        await client.connect()
-        await server.connect()
+            await client.connect()
+            await server.connect()
 
-        # Start a receive task on server
-        receive_task = asyncio.create_task(server.receive_json())
+            receive_task = asyncio.create_task(server.receive_json())
 
-        # Client disconnects
-        await client.disconnect()
+            await client.disconnect()
 
-        # Server should get disconnect notification
-        with pytest.raises(TransportClosedError, match="Paired transport disconnected"):
-            await receive_task
+            with pytest.raises(
+                TransportClosedError, match="Paired transport disconnected"
+            ):
+                await receive_task
 
     @pytest.mark.asyncio
     async def test_multiple_messages(self):
         """Test sending multiple messages."""
-        client, server = InMemoryTransport.create_pair()
+        async with asyncio.timeout(TIMEOUT):
+            client, server = InMemoryTransport.create_pair()
 
-        await client.connect()
-        await server.connect()
+            await client.connect()
+            await server.connect()
 
-        # Send multiple messages
-        messages = [
-            {"id": 1, "method": "test1"},
-            {"id": 2, "method": "test2"},
-            {"id": 3, "method": "test3"},
-        ]
+            messages = [
+                {"id": 1, "method": "test1"},
+                {"id": 2, "method": "test2"},
+                {"id": 3, "method": "test3"},
+            ]
 
-        for msg in messages:
-            await client.send_json(msg)
+            for msg in messages:
+                await client.send_json(msg)
 
-        # Receive all messages
-        for expected in messages:
-            result = await server.receive_json()
-            assert result == expected
+            for expected in messages:
+                result = await server.receive_json()
+                assert result == expected
 
     @pytest.mark.asyncio
     async def test_concurrent_bidirectional(self):
         """Test concurrent bidirectional communication."""
-        client, server = InMemoryTransport.create_pair()
+        async with asyncio.timeout(TIMEOUT):
+            client, server = InMemoryTransport.create_pair()
 
-        await client.connect()
-        await server.connect()
+            await client.connect()
+            await server.connect()
 
-        async def client_sender():
-            for i in range(5):
-                await client.send_json({"client": i})
-                await asyncio.sleep(0.01)
+            async def client_sender():
+                for i in range(5):
+                    await client.send_json({"client": i})
+                    await asyncio.sleep(0.01)
 
-        async def server_sender():
-            for i in range(5):
-                await server.send_json({"server": i})
-                await asyncio.sleep(0.01)
+            async def server_sender():
+                for i in range(5):
+                    await server.send_json({"server": i})
+                    await asyncio.sleep(0.01)
 
-        async def client_receiver():
-            messages = []
-            for _ in range(5):
-                msg = await client.receive_json()
-                messages.append(msg)
-            return messages
+            async def client_receiver():
+                messages = []
+                for _ in range(5):
+                    msg = await client.receive_json()
+                    messages.append(msg)
+                return messages
 
-        async def server_receiver():
-            messages = []
-            for _ in range(5):
-                msg = await server.receive_json()
-                messages.append(msg)
-            return messages
+            async def server_receiver():
+                messages = []
+                for _ in range(5):
+                    msg = await server.receive_json()
+                    messages.append(msg)
+                return messages
 
-        # Run all tasks concurrently
-        results = await asyncio.gather(
-            client_sender(),
-            server_sender(),
-            client_receiver(),
-            server_receiver(),
-        )
+            results = await asyncio.gather(
+                client_sender(),
+                server_sender(),
+                client_receiver(),
+                server_receiver(),
+            )
 
-        client_received = results[2]
-        server_received = results[3]
+            client_received = results[2]
+            server_received = results[3]
 
-        # Verify all messages were received
-        assert len(client_received) == 5
-        assert len(server_received) == 5
-        assert all("server" in msg for msg in client_received)
-        assert all("client" in msg for msg in server_received)
+            assert len(client_received) == 5
+            assert len(server_received) == 5
+            assert all("server" in msg for msg in client_received)
+            assert all("client" in msg for msg in server_received)
 
 
 class TestTransportCreation:

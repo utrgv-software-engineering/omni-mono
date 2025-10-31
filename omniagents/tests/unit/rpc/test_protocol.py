@@ -10,9 +10,14 @@ import pytest
 from fastapi import WebSocketDisconnect
 
 from omniagents.rpc import RpcMethodsBase, JsonRpcEndpoint, JsonRpcClient
+from omniagents.rpc.client import RpcError
 from omniagents.rpc.server import JsonRpcChannel
 from omniagents.rpc.transport import TransportClosedError
+from omniagents.rpc.transport.inmemory import InMemoryTransport
 from omniagents.rpc.transport.websocket import ServerWebSocketTransport
+
+
+TIMEOUT = 5.0
 
 
 class TestJsonRpcChannel:
@@ -83,6 +88,19 @@ class MockRpcMethods(RpcMethodsBase):
         raise ValueError("Test error")
 
 
+class RecorderMethods(RpcMethodsBase):
+    def __init__(self):
+        super().__init__()
+        self.sync_calls = []
+        self.async_calls = []
+
+    def notify_sync(self, **params):
+        self.sync_calls.append(params)
+
+    async def notify_async(self, **params):
+        self.async_calls.append(params)
+
+
 class TestJsonRpcEndpoint:
     """Test the JsonRpcEndpoint server implementation."""
 
@@ -129,7 +147,7 @@ class TestJsonRpcClient:
     async def test_call_creates_request(self):
         """Test that calling a method creates proper JSON-RPC request."""
         transport = AsyncMock()
-        transport.is_connected.return_value = True
+        transport.is_connected = Mock(return_value=True)
         client = JsonRpcClient(transport, None)
 
         # Start the call but don't await it
@@ -154,6 +172,17 @@ class TestJsonRpcClient:
             await call_task
         except asyncio.CancelledError:
             pass
+
+    @pytest.mark.asyncio
+    async def test_call_requires_connected_transport(self):
+        transport = AsyncMock()
+        transport.is_connected = Mock(return_value=False)
+        client = JsonRpcClient(transport, None)
+
+        with pytest.raises(RuntimeError):
+            await asyncio.wait_for(client.call("missing"), timeout=TIMEOUT)
+
+        transport.send_json.assert_not_called()
 
 
 # Additional integration tests for the full flow
@@ -298,3 +327,163 @@ class TestJsonRpcIntegration:
         ws.send_json.assert_not_called()
         assert methods.channel is None
         ws.accept.assert_awaited()
+
+
+class TestJsonRpcClientInMemory:
+    @pytest.mark.asyncio
+    async def test_notifications_dispatch(self):
+        methods = RecorderMethods()
+        client_transport, server_transport = InMemoryTransport.create_pair()
+        client = JsonRpcClient(client_transport, methods)
+        await asyncio.wait_for(server_transport.connect(), timeout=TIMEOUT)
+
+        async with asyncio.timeout(TIMEOUT):
+            async with client:
+                await asyncio.wait_for(
+                    server_transport.send_json(
+                        {
+                            "jsonrpc": "2.0",
+                            "method": "notify_sync",
+                            "params": {"value": 1},
+                        }
+                    ),
+                    timeout=TIMEOUT,
+                )
+                await asyncio.wait_for(
+                    server_transport.send_json(
+                        {
+                            "jsonrpc": "2.0",
+                            "method": "notify_async",
+                            "params": {"value": 2},
+                        }
+                    ),
+                    timeout=TIMEOUT,
+                )
+                await asyncio.sleep(0.01)
+                assert methods.sync_calls == [{"value": 1}]
+                assert methods.async_calls == [{"value": 2}]
+
+        await asyncio.wait_for(server_transport.disconnect(), timeout=TIMEOUT)
+
+    @pytest.mark.asyncio
+    async def test_success_and_error_responses(self):
+        methods = RecorderMethods()
+        client_transport, server_transport = InMemoryTransport.create_pair()
+        client = JsonRpcClient(client_transport, methods)
+        await asyncio.wait_for(server_transport.connect(), timeout=TIMEOUT)
+
+        async with asyncio.timeout(TIMEOUT):
+            async with client:
+                success_task = asyncio.create_task(client.call("ping", value=1))
+                request = await asyncio.wait_for(
+                    server_transport.receive_json(), timeout=TIMEOUT
+                )
+                assert request["method"] == "ping"
+                await asyncio.wait_for(
+                    server_transport.send_json(
+                        {"jsonrpc": "2.0", "id": request["id"], "result": {"value": 1}}
+                    ),
+                    timeout=TIMEOUT,
+                )
+                assert await asyncio.wait_for(success_task, timeout=TIMEOUT) == {
+                    "value": 1
+                }
+
+                error_task = asyncio.create_task(client.call("fail"))
+                error_request = await asyncio.wait_for(
+                    server_transport.receive_json(), timeout=TIMEOUT
+                )
+                await asyncio.wait_for(
+                    server_transport.send_json(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": error_request["id"],
+                            "error": {
+                                "code": -32001,
+                                "message": "failed",
+                                "data": {"detail": True},
+                            },
+                        }
+                    ),
+                    timeout=TIMEOUT,
+                )
+                with pytest.raises(RpcError) as exc:
+                    await asyncio.wait_for(error_task, timeout=TIMEOUT)
+                assert exc.value.code == -32001
+                assert exc.value.message == "failed"
+                assert exc.value.data == {"detail": True}
+
+        await asyncio.wait_for(server_transport.disconnect(), timeout=TIMEOUT)
+
+    @pytest.mark.asyncio
+    async def test_ignores_mismatched_responses(self):
+        methods = RecorderMethods()
+        client_transport, server_transport = InMemoryTransport.create_pair()
+        client = JsonRpcClient(client_transport, methods)
+        await asyncio.wait_for(server_transport.connect(), timeout=TIMEOUT)
+
+        async with asyncio.timeout(TIMEOUT):
+            async with client:
+                task = asyncio.create_task(client.call("compute"))
+                request = await asyncio.wait_for(
+                    server_transport.receive_json(), timeout=TIMEOUT
+                )
+                await asyncio.wait_for(
+                    server_transport.send_json(
+                        {"jsonrpc": "2.0", "id": "unmatched", "result": "ignored"}
+                    ),
+                    timeout=TIMEOUT,
+                )
+                await asyncio.sleep(0.01)
+                assert not task.done()
+                await asyncio.wait_for(
+                    server_transport.send_json(
+                        {"jsonrpc": "2.0", "id": request["id"], "result": "ok"}
+                    ),
+                    timeout=TIMEOUT,
+                )
+                assert await asyncio.wait_for(task, timeout=TIMEOUT) == "ok"
+
+        await asyncio.wait_for(server_transport.disconnect(), timeout=TIMEOUT)
+
+    @pytest.mark.asyncio
+    async def test_handles_non_dict_payload(self):
+        methods = RecorderMethods()
+        client_transport, server_transport = InMemoryTransport.create_pair()
+        client = JsonRpcClient(client_transport, methods)
+        await asyncio.wait_for(server_transport.connect(), timeout=TIMEOUT)
+
+        async with asyncio.timeout(TIMEOUT):
+            async with client:
+                task = asyncio.create_task(client.call("noop"))
+                request = await asyncio.wait_for(
+                    server_transport.receive_json(), timeout=TIMEOUT
+                )
+                await asyncio.wait_for(
+                    server_transport.send_json(["unexpected", "payload"]),
+                    timeout=TIMEOUT,
+                )
+                await asyncio.sleep(0.01)
+                await asyncio.wait_for(
+                    server_transport.send_json(
+                        {"jsonrpc": "2.0", "id": request["id"], "result": "done"}
+                    ),
+                    timeout=TIMEOUT,
+                )
+                assert await asyncio.wait_for(task, timeout=TIMEOUT) == "done"
+
+        await asyncio.wait_for(server_transport.disconnect(), timeout=TIMEOUT)
+
+    @pytest.mark.asyncio
+    async def test_recv_loop_stops_on_transport_closed(self):
+        methods = RecorderMethods()
+        client_transport, server_transport = InMemoryTransport.create_pair()
+        client = JsonRpcClient(client_transport, methods)
+        await asyncio.wait_for(server_transport.connect(), timeout=TIMEOUT)
+
+        async with asyncio.timeout(TIMEOUT):
+            async with client:
+                await asyncio.wait_for(server_transport.disconnect(), timeout=TIMEOUT)
+                await asyncio.sleep(0.01)
+                assert client._recv_task is not None
+                assert client._recv_task.done()

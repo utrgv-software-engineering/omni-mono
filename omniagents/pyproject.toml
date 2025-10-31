@@ -41,10 +41,12 @@ dev = [
     "black",
     "coverage[toml]",
     "pytest-cov",
+    "hypothesis>=6.142.4",
+    "fastapi[all]>=0.115.12",
 ]
 
 [tool.pytest.ini_options]
-addopts = "--cov=omniagents --cov-report=term-missing --cov-report=xml"
+addopts = "-ra"
 testpaths = ["tests"]
 
 [tool.coverage.run]
@@ -91,6 +93,18 @@ server = "omniagents.backends.server:ServerBackend"
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "black",
+    "bump2version",
+    "coverage[toml]",
+    "fastapi[all]>=0.115.12",
+    "hypothesis>=6.142.4",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+]
 
 [tool.setuptools.packages.find]
 include = ["omniagents*"]
