@@ -1,0 +1,20 @@
+# Requirements for realtime voice agent example
+
+# OpenAI Agents SDK with realtime support
+# Package name: openai-agents
+# Import as: agents
+openai-agents
+
+# PyAudio for microphone and speaker access
+# Note: May require system dependencies
+#   macOS: brew install portaudio
+#   Ubuntu/Debian: sudo apt-get install portaudio19-dev
+#   Windows: Usually works out of the box
+pyaudio>=0.2.13
+
+# WebSocket client (should already be installed with omniagents)
+websockets>=12.0
+
+# FastAPI and Uvicorn for server (should already be installed)
+fastapi>=0.104.0
+uvicorn>=0.24.0

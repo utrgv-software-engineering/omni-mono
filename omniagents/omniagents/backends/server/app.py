@@ -11,6 +11,7 @@ from omniagents.rpc import JsonRpcEndpoint
 from omniagents.core.config.loader import load_agent_spec_from_yaml
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.agents.service import AgentService
+from omniagents.rpc.realtime_service import RealtimeService
 
 __all__ = ["build_app"]
 
@@ -79,6 +80,31 @@ def build_app(
         )
     else:
         endpoint.register_route(app, "/ws")
+
+    # ------------------------------------------------------------------
+    # Register realtime endpoint if realtime mode is enabled
+    # ------------------------------------------------------------------
+    if spec.realtime_mode:
+        # Build settings for realtime service
+        realtime_settings = {}
+        for field in getattr(spec, "settings_fields", []) or []:
+            key = getattr(field, "key", None)
+            if not key:
+                continue
+            value = os.getenv(key.upper())
+            if value in (None, ""):
+                value = getattr(field, "default", None)
+            realtime_settings[key] = value
+
+        realtime_service = RealtimeService(spec, realtime_settings)
+        realtime_endpoint = JsonRpcEndpoint(realtime_service)
+
+        if auth_token:
+            realtime_endpoint.register_route(
+                app, "/ws/realtime", dependencies=[_token_dependency(auth_token)]
+            )
+        else:
+            realtime_endpoint.register_route(app, "/ws/realtime")
 
     if getattr(service, "terminal_manager", None) is not None:
 

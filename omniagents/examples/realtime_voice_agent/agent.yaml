@@ -1,0 +1,72 @@
+# Realtime Voice Agent Example
+# This agent demonstrates voice interaction capabilities using OpenAI's realtime API
+
+name: "Voice Weather Assistant"
+header_title: "Voice Weather Assistant"
+page_title: "Voice Weather"
+welcome_text: "Start speaking to ask about the weather!"
+client_storage_prefix: "voice_weather"
+project_slug: "examples"
+agent_slug: "voice_weather"
+
+# Model configuration
+model_name: "gpt-4o-realtime-preview"
+
+# Enable realtime mode
+realtime_mode: true
+
+# Realtime-specific settings
+realtime_settings:
+  model_name: "gpt-4o-realtime-preview"
+  voice: "alloy"  # Options: alloy, echo, fable, onyx, nova, shimmer
+  temperature: 0.8
+  max_output_tokens: 4096
+
+  # Communication modalities
+  modalities:
+    - audio
+    - text  # Allows text input alongside voice
+
+  # Audio format configuration
+  input_audio_format: "pcm16"   # 16-bit PCM, 24kHz
+  output_audio_format: "pcm16"  # 16-bit PCM, 24kHz
+
+  # Voice activity detection
+  turn_detection:
+    type: "server_vad"  # Server-side voice activity detection
+    threshold: 0.5      # Detection sensitivity (0.0-1.0)
+    prefix_padding_ms: 300     # Audio before speech starts
+    silence_duration_ms: 500   # Silence duration to end turn
+
+  # Input transcription (optional)
+  input_audio_transcription:
+    model: "whisper-1"
+
+# Agent instructions
+instructions: |
+  You are a friendly and helpful voice weather assistant.
+
+  Your role is to:
+  - Provide current weather information for requested locations
+  - Give weather forecasts when asked
+  - Suggest appropriate clothing or activities based on weather
+  - Speak in a natural, conversational tone
+
+  Guidelines:
+  - Keep responses concise and clear for voice interaction
+  - Ask clarifying questions if location is not specified
+  - Provide temperature in both Fahrenheit and Celsius
+  - Mention significant weather events (rain, snow, storms, etc.)
+  - Be friendly and personable
+
+# Tools
+tools_directory: "tools"
+
+# Optional: Settings that can be configured via environment or UI
+settings:
+  - key: "openai_api_key"
+    label: "OpenAI API Key"
+    type: "string"
+    required: true
+    secret: true
+    description: "Your OpenAI API key for accessing the realtime API"

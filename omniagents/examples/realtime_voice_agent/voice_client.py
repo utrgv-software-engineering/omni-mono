@@ -1,0 +1,343 @@
+#!/usr/bin/env python3
+"""Full-featured voice client for realtime agent.
+
+This client supports:
+- Microphone input capture
+- Real-time audio streaming to agent
+- Agent audio playback through speakers
+- Transcript display
+- Graceful interruption
+"""
+
+import asyncio
+import base64
+import sys
+import signal
+from pathlib import Path
+
+try:
+    import pyaudio
+except ImportError:
+    print("ERROR: PyAudio not installed")
+    print("Install with: pip install pyaudio")
+    print("\nOn macOS, you may need: brew install portaudio")
+    print("On Linux: sudo apt-get install portaudio19-dev")
+    sys.exit(1)
+
+# Add parent directory to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from omniagents.rpc import JsonRpcClient
+from omniagents.rpc.base import RpcMethodsBase
+
+
+# Audio configuration (must match agent config in agent.yaml)
+RATE = 24000  # Sample rate for pcm16
+CHANNELS = 1  # Mono
+FORMAT = pyaudio.paInt16  # 16-bit PCM
+CHUNK = 4800  # 200ms chunks at 24kHz (4800 frames = 200ms at 24kHz)
+INPUT_CHUNK = 2400  # 100ms input chunks for lower latency
+
+
+class ClientNotificationHandler(RpcMethodsBase):
+    """Handles notifications from the server."""
+
+    def __init__(self):
+        super().__init__()
+        self.audio_queue = asyncio.Queue()
+        self.transcripts = []
+
+    async def realtime_event(self, **params):
+        """Handle realtime event notifications."""
+        event_type = params.get("type")
+
+        if event_type == "realtime_audio":
+            # Queue audio for playback
+            audio_base64 = params.get("audio_base64", "")
+            if audio_base64:
+                await self.audio_queue.put(audio_base64)
+
+        elif event_type == "realtime_transcript":
+            # Display transcript
+            role = params.get("role", "")
+            transcript = params.get("transcript", "")
+            if transcript:
+                self.transcripts.append((role, transcript))
+                print(f"\n{role.upper()}: {transcript}")
+
+        elif event_type == "realtime_tool_called":
+            # Show tool being called
+            tool_name = params.get("tool_name", "")
+            print(f"\n[Calling tool: {tool_name}]")
+
+        elif event_type == "realtime_tool_completed":
+            # Show tool completed
+            tool_name = params.get("tool_name", "")
+            print(f"[Tool completed: {tool_name}]")
+
+        elif event_type == "realtime_error":
+            # Show errors
+            error = params.get("error", "")
+            print(f"\n✗ ERROR: {error}")
+
+
+class VoiceClient:
+    """Real-time voice client for agent interaction."""
+
+    def __init__(self, server_url: str):
+        """Initialize voice client.
+
+        Args:
+            server_url: WebSocket URL (e.g., ws://localhost:8000/ws/realtime)
+        """
+        self.server_url = server_url
+        self.p = None
+        self.input_stream = None
+        self.output_stream = None
+        self.session_id = None
+        self.running = False
+        self.client = None
+        self.handler = ClientNotificationHandler()
+
+    async def start(self):
+        """Start the voice client."""
+        print("=" * 60)
+        print("Realtime Voice Agent Client")
+        print("=" * 60)
+        print()
+
+        # Initialize PyAudio
+        print("Initializing audio...")
+        self.p = pyaudio.PyAudio()
+
+        # List available audio devices
+        print("\nAvailable audio devices:")
+        info = self.p.get_host_api_info_by_index(0)
+        num_devices = info.get("deviceCount")
+
+        default_input = self.p.get_default_input_device_info()
+        default_output = self.p.get_default_output_device_info()
+
+        print(f"  Input: {default_input['name']}")
+        print(f"  Output: {default_output['name']}")
+
+        # Open output stream (for agent audio)
+        try:
+            self.output_stream = self.p.open(
+                format=FORMAT,
+                channels=CHANNELS,
+                rate=RATE,
+                output=True,
+                frames_per_buffer=CHUNK,
+            )
+            print("\n✓ Speaker initialized")
+        except Exception as e:
+            print(f"\n✗ Failed to open speaker: {e}")
+            return False
+
+        # Open input stream (for microphone)
+        try:
+            self.input_stream = self.p.open(
+                format=FORMAT,
+                channels=CHANNELS,
+                rate=RATE,
+                input=True,
+                frames_per_buffer=INPUT_CHUNK,
+            )
+            print("✓ Microphone initialized")
+        except Exception as e:
+            print(f"✗ Failed to open microphone: {e}")
+            return False
+
+        # Connect to server with notification handler
+        print(f"\nConnecting to {self.server_url}...")
+        try:
+            from omniagents.rpc.transport.websocket import ClientWebSocketTransport
+
+            transport = ClientWebSocketTransport(self.server_url)
+            self.client = JsonRpcClient(transport, methods=self.handler)
+            await self.client.__aenter__()
+            print("✓ Connected to server")
+        except Exception as e:
+            print(f"✗ Connection failed: {e}")
+            print("\nMake sure the server is running:")
+            print("  python server.py")
+            return False
+
+        # Start session
+        print("\nStarting voice session...")
+        try:
+            result = await self.client.call("start_session")
+            self.session_id = result["session_id"]
+            print(f"✓ Session started: {self.session_id}")
+        except Exception as e:
+            print(f"✗ Failed to start session: {e}")
+            return False
+
+        print("\n" + "=" * 60)
+        print("Voice session active!")
+        print("=" * 60)
+        print("\nSpeak into your microphone to talk to the agent.")
+        print("Press Ctrl+C to end the session.\n")
+        print("=" * 60)
+
+        self.running = True
+        return True
+
+    async def play_agent_audio(self):
+        """Play audio received from agent."""
+        try:
+            while self.running:
+                try:
+                    # Get audio from queue (with timeout)
+                    audio_base64 = await asyncio.wait_for(
+                        self.handler.audio_queue.get(), timeout=0.1
+                    )
+
+                    # Decode base64 audio
+                    audio_bytes = base64.b64decode(audio_base64)
+
+                    # Play through speakers
+                    self.output_stream.write(audio_bytes)
+
+                except asyncio.TimeoutError:
+                    # No audio available, continue waiting
+                    continue
+                except Exception as e:
+                    if self.running:
+                        print(f"\n✗ Audio playback error: {e}")
+                    break
+
+        except asyncio.CancelledError:
+            pass
+
+    async def stream_microphone(self):
+        """Stream microphone audio to the agent."""
+        try:
+            while self.running:
+                try:
+                    # Read from microphone
+                    audio_data = self.input_stream.read(
+                        INPUT_CHUNK, exception_on_overflow=False
+                    )
+
+                    # Encode to base64
+                    audio_base64 = base64.b64encode(audio_data).decode()
+
+                    # Send to agent
+                    await self.client.call(
+                        "send_audio",
+                        session_id=self.session_id,
+                        audio_base64=audio_base64,
+                    )
+
+                    # Small delay to prevent overwhelming the server
+                    await asyncio.sleep(0.01)
+
+                except Exception as e:
+                    if self.running:
+                        print(f"\n✗ Microphone error: {e}")
+                    break
+
+        except asyncio.CancelledError:
+            pass
+
+    async def run(self):
+        """Run the voice client main loop."""
+        if not await self.start():
+            return
+
+        # Start background tasks
+        tasks = [
+            asyncio.create_task(self.stream_microphone()),
+            asyncio.create_task(self.play_agent_audio()),
+        ]
+
+        try:
+            # Run until interrupted
+            await asyncio.gather(*tasks)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            # Cleanup
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+
+            await self.stop()
+
+    async def stop(self):
+        """Stop the voice client and clean up resources."""
+        print("\n\nStopping voice session...")
+        self.running = False
+
+        # Stop session on server
+        if self.client and self.session_id:
+            try:
+                await self.client.call("stop_session", session_id=self.session_id)
+                print("✓ Session stopped")
+            except Exception as e:
+                print(f"✗ Error stopping session: {e}")
+
+        # Close client
+        if self.client:
+            try:
+                await self.client.__aexit__(None, None, None)
+            except Exception:
+                pass
+
+        # Close audio streams
+        if self.input_stream:
+            self.input_stream.stop_stream()
+            self.input_stream.close()
+
+        if self.output_stream:
+            self.output_stream.stop_stream()
+            self.output_stream.close()
+
+        # Terminate PyAudio
+        if self.p:
+            self.p.terminate()
+
+        print("\nGoodbye!")
+
+
+async def main():
+    """Main entry point."""
+    # Default server URL
+    server_url = "ws://localhost:8000/ws/realtime"
+
+    # Allow overriding via command line
+    if len(sys.argv) > 1:
+        server_url = sys.argv[1]
+
+    # Create and run client
+    client = VoiceClient(server_url)
+
+    # Handle Ctrl+C gracefully
+    def signal_handler(sig, frame):
+        print("\n\nInterrupt received, shutting down...")
+        client.running = False
+
+    signal.signal(signal.SIGINT, signal_handler)
+
+    try:
+        await client.run()
+    except KeyboardInterrupt:
+        print("\n\nInterrupted by user")
+    except Exception as e:
+        print(f"\n✗ Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+    finally:
+        if client.running:
+            await client.stop()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

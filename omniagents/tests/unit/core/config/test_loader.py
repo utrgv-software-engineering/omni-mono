@@ -447,3 +447,233 @@ def test_loader_rejects_invalid_yaml_shape(tmp_path):
     with pytest.raises(ValueError) as exc:
         load_agent_spec_from_yaml(str(yaml_path))
     assert "Invalid YAML format" in str(exc.value)
+
+
+# --- Realtime Agent Configuration Tests ---
+
+
+def test_load_realtime_config_from_yaml(tmp_path):
+    """Test loading basic realtime configuration from YAML."""
+    yaml_path = tmp_path / "agent.yaml"
+    write(
+        yaml_path,
+        """
+        name: VoiceAgent
+        instructions: You are a voice assistant
+        realtime_mode: true
+        realtime_settings:
+          voice: shimmer
+          modalities: ["audio"]
+          input_audio_format: pcm16
+          output_audio_format: pcm16
+        """,
+    )
+    spec = load_agent_spec_from_yaml(str(yaml_path))
+    assert spec.realtime_mode is True
+    assert spec.realtime_settings is not None
+    assert spec.realtime_settings.voice == "shimmer"
+    assert spec.realtime_settings.modalities == ["audio"]
+    assert spec.realtime_settings.input_audio_format == "pcm16"
+    assert spec.realtime_settings.output_audio_format == "pcm16"
+
+
+def test_realtime_config_with_all_settings(tmp_path):
+    """Test realtime configuration with all available settings."""
+    yaml_path = tmp_path / "agent.yaml"
+    write(
+        yaml_path,
+        """
+        name: AdvancedVoiceAgent
+        instructions: Advanced voice assistant
+        realtime_mode: true
+        realtime_settings:
+          model_name: gpt-4o-mini-realtime-preview
+          voice: alloy
+          modalities: ["text", "audio"]
+          input_audio_format: g711_ulaw
+          output_audio_format: g711_alaw
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            silence_duration_ms: 700
+            prefix_padding_ms: 300
+          input_audio_transcription:
+            model: whisper-1
+            language: en
+          temperature: 0.7
+          max_output_tokens: 1000
+        """,
+    )
+    spec = load_agent_spec_from_yaml(str(yaml_path))
+    assert spec.realtime_mode is True
+    assert spec.realtime_settings is not None
+    assert spec.realtime_settings.model_name == "gpt-4o-mini-realtime-preview"
+    assert spec.realtime_settings.voice == "alloy"
+    assert spec.realtime_settings.modalities == ["text", "audio"]
+    assert spec.realtime_settings.input_audio_format == "g711_ulaw"
+    assert spec.realtime_settings.output_audio_format == "g711_alaw"
+    assert spec.realtime_settings.turn_detection == {
+        "type": "server_vad",
+        "threshold": 0.5,
+        "silence_duration_ms": 700,
+        "prefix_padding_ms": 300,
+    }
+    assert spec.realtime_settings.input_audio_transcription == {
+        "model": "whisper-1",
+        "language": "en",
+    }
+    assert spec.realtime_settings.temperature == 0.7
+    assert spec.realtime_settings.max_output_tokens == 1000
+
+
+def test_realtime_config_with_defaults(tmp_path):
+    """Test that realtime_mode=true with no settings uses defaults."""
+    yaml_path = tmp_path / "agent.yaml"
+    write(
+        yaml_path,
+        """
+        name: DefaultVoiceAgent
+        instructions: Default settings voice agent
+        realtime_mode: true
+        """,
+    )
+    spec = load_agent_spec_from_yaml(str(yaml_path))
+    assert spec.realtime_mode is True
+    assert spec.realtime_settings is not None
+    assert spec.realtime_settings.model_name == "gpt-4o-realtime-preview"
+    assert spec.realtime_settings.voice == "alloy"
+    assert spec.realtime_settings.modalities == ["audio"]
+    assert spec.realtime_settings.input_audio_format == "pcm16"
+    assert spec.realtime_settings.output_audio_format == "pcm16"
+
+
+def test_realtime_mode_false_no_settings(tmp_path):
+    """Test that realtime_mode=false means no realtime settings."""
+    yaml_path = tmp_path / "agent.yaml"
+    write(
+        yaml_path,
+        """
+        name: TextAgent
+        instructions: Regular text agent
+        realtime_mode: false
+        """,
+    )
+    spec = load_agent_spec_from_yaml(str(yaml_path))
+    assert spec.realtime_mode is False
+    assert spec.realtime_settings is None
+
+
+def test_realtime_mode_missing_defaults_to_false(tmp_path):
+    """Test that missing realtime_mode defaults to False."""
+    yaml_path = tmp_path / "agent.yaml"
+    write(
+        yaml_path,
+        """
+        name: RegularAgent
+        instructions: No realtime specified
+        """,
+    )
+    spec = load_agent_spec_from_yaml(str(yaml_path))
+    assert spec.realtime_mode is False
+    assert spec.realtime_settings is None
+
+
+def test_realtime_config_with_env_vars(tmp_path, monkeypatch):
+    """Test that realtime settings support environment variable substitution."""
+    monkeypatch.setenv("VOICE_MODEL", "gpt-4o-realtime-preview")
+    monkeypatch.setenv("VOICE_CHOICE", "echo")
+    yaml_path = tmp_path / "agent.yaml"
+    write(
+        yaml_path,
+        """
+        name: EnvVoiceAgent
+        instructions: Voice agent with env vars
+        realtime_mode: true
+        realtime_settings:
+          model_name: ${VOICE_MODEL}
+          voice: ${VOICE_CHOICE}
+          temperature: 0.8
+        """,
+    )
+    spec = load_agent_spec_from_yaml(str(yaml_path))
+    assert spec.realtime_mode is True
+    assert spec.realtime_settings.model_name == "gpt-4o-realtime-preview"
+    assert spec.realtime_settings.voice == "echo"
+    assert spec.realtime_settings.temperature == 0.8
+
+
+def test_realtime_invalid_audio_format_uses_default(tmp_path, capsys):
+    """Test that invalid audio formats fall back to defaults with warning."""
+    yaml_path = tmp_path / "agent.yaml"
+    write(
+        yaml_path,
+        """
+        name: InvalidFormatAgent
+        instructions: Agent with invalid audio format
+        realtime_mode: true
+        realtime_settings:
+          input_audio_format: invalid_format
+          output_audio_format: also_invalid
+        """,
+    )
+    spec = load_agent_spec_from_yaml(str(yaml_path))
+    captured = capsys.readouterr()
+    assert "Invalid input_audio_format" in captured.out
+    assert "Invalid output_audio_format" in captured.out
+    assert spec.realtime_settings.input_audio_format == "pcm16"
+    assert spec.realtime_settings.output_audio_format == "pcm16"
+
+
+def test_realtime_invalid_modalities_uses_default(tmp_path, capsys):
+    """Test that invalid modalities fall back to defaults with warning."""
+    yaml_path = tmp_path / "agent.yaml"
+    write(
+        yaml_path,
+        """
+        name: InvalidModalitiesAgent
+        instructions: Agent with invalid modalities
+        realtime_mode: true
+        realtime_settings:
+          modalities: ["invalid", "modality"]
+        """,
+    )
+    spec = load_agent_spec_from_yaml(str(yaml_path))
+    captured = capsys.readouterr()
+    assert "Invalid modalities" in captured.out
+    assert spec.realtime_settings.modalities == ["audio"]
+
+
+def test_realtime_mode_invalid_type_defaults_to_false(tmp_path, capsys):
+    """Test that invalid realtime_mode type defaults to False with warning."""
+    yaml_path = tmp_path / "agent.yaml"
+    write(
+        yaml_path,
+        """
+        name: InvalidModeAgent
+        instructions: Agent with invalid mode type
+        realtime_mode: "yes"
+        """,
+    )
+    spec = load_agent_spec_from_yaml(str(yaml_path))
+    captured = capsys.readouterr()
+    assert "should be a boolean" in captured.out
+    assert spec.realtime_mode is False
+
+
+def test_realtime_settings_invalid_type_uses_defaults(tmp_path, capsys):
+    """Test that invalid realtime_settings type uses defaults with warning."""
+    yaml_path = tmp_path / "agent.yaml"
+    write(
+        yaml_path,
+        """
+        name: InvalidSettingsAgent
+        instructions: Agent with invalid settings type
+        realtime_mode: true
+        realtime_settings: "not a dict"
+        """,
+    )
+    spec = load_agent_spec_from_yaml(str(yaml_path))
+    captured = capsys.readouterr()
+    assert "should be a dictionary" in captured.out
+    assert spec.realtime_settings is not None
+    assert spec.realtime_settings.voice == "alloy"  # Default
