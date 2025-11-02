@@ -12,6 +12,9 @@ openai-agents
 #   Windows: Usually works out of the box
 pyaudio>=0.2.13
 
+# pynput for push-to-talk keyboard input
+pynput>=1.7.6
+
 # WebSocket client (should already be installed with omniagents)
 websockets>=12.0
 

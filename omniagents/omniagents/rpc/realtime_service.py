@@ -117,12 +117,15 @@ class RealtimeService(RpcMethodsBase):
                     },
                 )
 
-    async def send_audio(self, session_id: str, audio_base64: str) -> bool:
+    async def send_audio(
+        self, session_id: str, audio_base64: str, commit: bool = False
+    ) -> bool:
         """Send audio input to a realtime session.
 
         Args:
             session_id: The session ID
             audio_base64: Base64-encoded audio data
+            commit: If True, commit the audio and trigger response generation
 
         Returns:
             True on success
@@ -134,7 +137,7 @@ class RealtimeService(RpcMethodsBase):
         if not session:
             raise ValueError(f"Session {session_id} not found")
 
-        await session.send_audio(audio_base64)
+        await session.send_audio(audio_base64, commit=commit)
         return True
 
     async def send_text(self, session_id: str, text: str) -> bool:

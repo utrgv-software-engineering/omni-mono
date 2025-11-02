@@ -26,11 +26,15 @@ Now speak into your microphone to talk with the agent!
 
 ## Features
 
-- **Voice Interaction**: Speak naturally to the agent and receive spoken responses
-- **Text Support**: Can also accept text input alongside voice
+- **Push-to-Talk Voice**: Hold SPACEBAR to speak, release to send
+- **No Echo/Feedback**: Simple, reliable voice input without feedback loops
+- **Text Mode**: Can run in text-only mode for testing (see Configuration below)
 - **Tool Calling**: Agent can call weather tools during conversation
 - **Audio Transcription**: Automatic transcription of user speech
 - **Low Latency**: Streaming audio for responsive conversations
+
+> **⚠️ Important**: OpenAI's realtime API supports EITHER audio OR text mode, not both simultaneously.
+> Configure in `agent.yaml` by setting `modalities` to either `["audio"]` or `["text"]`.
 
 ## Prerequisites
 
@@ -150,18 +154,20 @@ python server.py
 
 ### Full Voice Client (Recommended)
 
-The voice client provides full duplex audio communication with microphone and speakers:
+The voice client provides push-to-talk audio communication with microphone and speakers:
 
 ```bash
 python voice_client.py
 ```
 
 **Features:**
+- **Push-to-Talk**: Hold SPACEBAR to speak, release to send
 - Real-time audio capture from microphone
 - Agent audio playback through speakers
 - Live transcript display
 - Tool execution notifications
 - Graceful interruption (Ctrl+C)
+- No echo/feedback issues
 
 **Output:**
 ```
@@ -185,15 +191,16 @@ Starting voice session...
 ✓ Session started: abc-123-def
 
 ============================================================
-Voice session active!
+Voice session active! (Push-to-Talk Mode)
 ============================================================
 
-Speak into your microphone to talk to the agent.
+📢 HOLD SPACEBAR to speak, release to stop.
 Press Ctrl+C to end the session.
 
 ============================================================
 
-USER: What's the weather in San Francisco?
+🎤 Recording... (release SPACE to stop)
+⏸  Released (hold SPACE to speak)
 
 [Calling tool: get_current_weather]
 [Tool completed: get_current_weather]
@@ -299,14 +306,29 @@ Supported formats:
 - `g711_ulaw`: G.711 μ-law at 8kHz (lower bandwidth)
 - `g711_alaw`: G.711 A-law at 8kHz (lower bandwidth)
 
-### Modalities
+### Modalities ⚠️
 
-Control communication modes:
+**IMPORTANT**: OpenAI's realtime API only supports ONE modality at a time:
+
 ```yaml
+# For voice interaction (use with voice_client.py)
 modalities:
-  - audio        # Voice only
-  - audio        # Text only
-  - text         # Both voice and text
+  - audio
+
+# For text-only testing (use with test_client.py)
+modalities:
+  - text
+
+# ❌ NOT SUPPORTED - will cause error
+# modalities:
+#   - audio
+#   - text
+```
+
+**Error if you try both:**
+```
+Invalid modalities: ['audio', 'text'].
+Supported combinations are: ['text'] and ['audio'].
 ```
 
 ### Turn Detection

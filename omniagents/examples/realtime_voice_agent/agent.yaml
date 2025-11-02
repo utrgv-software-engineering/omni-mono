@@ -10,33 +10,35 @@ project_slug: "examples"
 agent_slug: "voice_weather"
 
 # Model configuration
-model_name: "gpt-4o-realtime-preview"
+model_name: "gpt-realtime"
 
 # Enable realtime mode
 realtime_mode: true
 
 # Realtime-specific settings
 realtime_settings:
-  model_name: "gpt-4o-realtime-preview"
+  model_name: "gpt-realtime"
   voice: "alloy"  # Options: alloy, echo, fable, onyx, nova, shimmer
   temperature: 0.8
   max_output_tokens: 4096
 
   # Communication modalities
+  # Note: OpenAI realtime API supports EITHER 'text' OR 'audio', not both
+  # Use 'text' for text-only testing, 'audio' for full voice interaction
   modalities:
     - audio
-    - text  # Allows text input alongside voice
 
   # Audio format configuration
   input_audio_format: "pcm16"   # 16-bit PCM, 24kHz
   output_audio_format: "pcm16"  # 16-bit PCM, 24kHz
 
   # Voice activity detection
+  # Configured for push-to-talk mode (quick response when you stop speaking)
   turn_detection:
-    type: "server_vad"  # Server-side voice activity detection
-    threshold: 0.5      # Detection sensitivity (0.0-1.0)
-    prefix_padding_ms: 300     # Audio before speech starts
-    silence_duration_ms: 500   # Silence duration to end turn
+    type: "server_vad"
+    threshold: 0.3      # Lower = more sensitive
+    prefix_padding_ms: 100     # Minimal padding
+    silence_duration_ms: 200   # Very short silence triggers response (200ms)
 
   # Input transcription (optional)
   input_audio_transcription:
@@ -44,22 +46,41 @@ realtime_settings:
 
 # Agent instructions
 instructions: |
-  You are a friendly and helpful voice weather assistant.
+  You are a friendly, flexible voice assistant.
 
   Your role is to:
-  - Provide current weather information for requested locations
-  - Give weather forecasts when asked
-  - Suggest appropriate clothing or activities based on weather
-  - Speak in a natural, conversational tone
+  - Help with weather questions, forecasts, and related suggestions
+  - Guide users through computer tasks and troubleshooting
+  - Execute available tools, including bash commands, when helpful and safe
+  - Explain each step clearly while keeping the conversation natural
+  - Collaborate via shared terminals by preparing tmux sessions when needed
 
   Guidelines:
-  - Keep responses concise and clear for voice interaction
-  - Ask clarifying questions if location is not specified
-  - Provide temperature in both Fahrenheit and Celsius
-  - Mention significant weather events (rain, snow, storms, etc.)
-  - Be friendly and personable
+  - Confirm before running actions that modify the system
+  - Keep responses concise and easy to follow in voice form
+  - Ask clarifying questions when information is missing or ambiguous
+  - Highlight important cautions or noteworthy results
+  - Stay personable and supportive throughout the interaction
+  - For collaborative shell work, create a named tmux session and share `tmux attach -t <session>` instructions with the user
+  - When you need to review output, capture it with `tmux capture-pane -pt <session>`
 
 # Tools
+tools:
+  - execute_bash
+  - glob_files
+  - grep_files
+  - list_directory
+  - read_file
+  - write_file
+  - apply_patch
+  - download_file
+  - web_fetch
+  - web_search
+  - youtube_search
+  - scholar_search
+  - get_current_weather
+  - get_weather_forecast
+  - get_weather_alerts
 tools_directory: "tools"
 
 # Optional: Settings that can be configured via environment or UI

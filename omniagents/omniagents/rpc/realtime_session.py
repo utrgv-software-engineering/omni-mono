@@ -194,9 +194,7 @@ class RealtimeSession:
             )
 
         if realtime_settings.turn_detection:
-            initial_model_settings["turn_detection"] = (
-                realtime_settings.turn_detection
-            )
+            initial_model_settings["turn_detection"] = realtime_settings.turn_detection
 
         if realtime_settings.input_audio_transcription:
             initial_model_settings["input_audio_transcription"] = (
@@ -275,11 +273,12 @@ class RealtimeSession:
             agent_slug=self._agent_slug,
         )
 
-    async def send_audio(self, audio_base64: str) -> None:
+    async def send_audio(self, audio_base64: str, commit: bool = False) -> None:
         """Send audio input to the realtime agent.
 
         Args:
             audio_base64: Base64-encoded audio data
+            commit: If True, commit the audio and trigger response generation
 
         Raises:
             RuntimeError: If session not connected
@@ -290,8 +289,10 @@ class RealtimeSession:
         # Decode base64 audio
         audio_bytes = base64.b64decode(audio_base64)
 
-        # Send to realtime session (commit=False means streaming)
-        await self._realtime_session.send_audio(audio_bytes, commit=False)
+        # Send to realtime session
+        # commit=False means streaming (buffer audio)
+        # commit=True means commit and trigger response
+        await self._realtime_session.send_audio(audio_bytes, commit=commit)
 
     async def send_text(self, text: str) -> None:
         """Send text input to the realtime agent.

@@ -9,6 +9,7 @@ This client supports:
 - Graceful interruption
 """
 
+import audioop
 import asyncio
 import base64
 import sys
@@ -22,6 +23,13 @@ except ImportError:
     print("Install with: pip install pyaudio")
     print("\nOn macOS, you may need: brew install portaudio")
     print("On Linux: sudo apt-get install portaudio19-dev")
+    sys.exit(1)
+
+try:
+    from pynput import keyboard
+except ImportError:
+    print("ERROR: pynput not installed")
+    print("Install with: pip install pynput")
     sys.exit(1)
 
 # Add parent directory to path
@@ -38,6 +46,9 @@ FORMAT = pyaudio.paInt16  # 16-bit PCM
 CHUNK = 4800  # 200ms chunks at 24kHz (4800 frames = 200ms at 24kHz)
 INPUT_CHUNK = 2400  # 100ms input chunks for lower latency
 
+# Push-to-talk settings
+PUSH_TO_TALK_KEY = keyboard.Key.space  # Key to hold while speaking
+
 
 class ClientNotificationHandler(RpcMethodsBase):
     """Handles notifications from the server."""
@@ -46,15 +57,26 @@ class ClientNotificationHandler(RpcMethodsBase):
         super().__init__()
         self.audio_queue = asyncio.Queue()
         self.transcripts = []
+        self.is_speaking = False  # Push-to-talk state
+        self.send_silence_chunks = (
+            0  # Number of silence chunks to send after releasing key
+        )
 
     async def realtime_event(self, **params):
         """Handle realtime event notifications."""
         event_type = params.get("type")
 
+        # Debug: print all events to see what we're getting
+        if event_type not in ["realtime_raw_model_event"]:  # Skip noisy raw events
+            print(f"\n[DEBUG] Event: {event_type}")
+
         if event_type == "realtime_audio":
             # Queue audio for playback
             audio_base64 = params.get("audio_base64", "")
             if audio_base64:
+                print(
+                    f"[DEBUG] Received audio chunk: {len(audio_base64)} bytes (base64)"
+                )
                 await self.audio_queue.put(audio_base64)
 
         elif event_type == "realtime_transcript":
@@ -98,6 +120,24 @@ class VoiceClient:
         self.running = False
         self.client = None
         self.handler = ClientNotificationHandler()
+        self.keyboard_listener = None
+
+    def on_press(self, key):
+        """Handle key press."""
+        if key == PUSH_TO_TALK_KEY:
+            if not self.handler.is_speaking:
+                self.handler.is_speaking = True
+                print("\n🎤 Recording... (release SPACE to stop)", end="", flush=True)
+
+    def on_release(self, key):
+        """Handle key release."""
+        if key == PUSH_TO_TALK_KEY:
+            if self.handler.is_speaking:
+                self.handler.is_speaking = False
+                self.handler.send_silence_chunks = (
+                    10  # Send 10 chunks of silence (~200ms)
+                )
+                print("\n⏸  Released (waiting for response...)", end="", flush=True)
 
     async def start(self):
         """Start the voice client."""
@@ -174,10 +214,16 @@ class VoiceClient:
             print(f"✗ Failed to start session: {e}")
             return False
 
+        # Start keyboard listener for push-to-talk
+        self.keyboard_listener = keyboard.Listener(
+            on_press=self.on_press, on_release=self.on_release
+        )
+        self.keyboard_listener.start()
+
         print("\n" + "=" * 60)
-        print("Voice session active!")
+        print("Voice session active! (Push-to-Talk Mode)")
         print("=" * 60)
-        print("\nSpeak into your microphone to talk to the agent.")
+        print("\n📢 HOLD SPACEBAR to speak, release to stop.")
         print("Press Ctrl+C to end the session.\n")
         print("=" * 60)
 
@@ -196,9 +242,11 @@ class VoiceClient:
 
                     # Decode base64 audio
                     audio_bytes = base64.b64decode(audio_base64)
+                    print(f"[DEBUG] Playing audio: {len(audio_bytes)} bytes")
 
                     # Play through speakers
                     self.output_stream.write(audio_bytes)
+                    print(f"[DEBUG] Audio written to speaker")
 
                 except asyncio.TimeoutError:
                     # No audio available, continue waiting
@@ -212,19 +260,38 @@ class VoiceClient:
             pass
 
     async def stream_microphone(self):
-        """Stream microphone audio to the agent."""
+        """Stream microphone audio to the agent (push-to-talk)."""
         try:
             while self.running:
                 try:
-                    # Read from microphone
+                    # Read from microphone (always read to prevent buffer overflow)
                     audio_data = self.input_stream.read(
                         INPUT_CHUNK, exception_on_overflow=False
                     )
 
+                    # Check if we need to send silence chunks after releasing key
+                    if self.handler.send_silence_chunks > 0:
+                        # Send silence (zeros) to trigger server VAD
+                        silence = b"\x00" * len(audio_data)
+                        silence_base64 = base64.b64encode(silence).decode()
+                        await self.client.call(
+                            "send_audio",
+                            session_id=self.session_id,
+                            audio_base64=silence_base64,
+                        )
+                        self.handler.send_silence_chunks -= 1
+                        await asyncio.sleep(0.01)
+                        continue
+
+                    # Only send audio when spacebar is held down
+                    if not self.handler.is_speaking:
+                        await asyncio.sleep(0.01)
+                        continue
+
                     # Encode to base64
                     audio_base64 = base64.b64encode(audio_data).decode()
 
-                    # Send to agent
+                    # Send to agent (server VAD will detect when you stop)
                     await self.client.call(
                         "send_audio",
                         session_id=self.session_id,
@@ -274,6 +341,10 @@ class VoiceClient:
         """Stop the voice client and clean up resources."""
         print("\n\nStopping voice session...")
         self.running = False
+
+        # Stop keyboard listener
+        if self.keyboard_listener:
+            self.keyboard_listener.stop()
 
         # Stop session on server
         if self.client and self.session_id:
