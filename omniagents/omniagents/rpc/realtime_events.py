@@ -321,7 +321,11 @@ def map_realtime_session_event_to_rpc(
         for result in guardrail_results:
             guardrail_obj = getattr(result, "guardrail", None)
             result_dict = {
-                "guardrail_name": getattr(guardrail_obj, "name", "unknown") if guardrail_obj else "unknown",
+                "guardrail_name": (
+                    getattr(guardrail_obj, "name", "unknown")
+                    if guardrail_obj
+                    else "unknown"
+                ),
                 "agent_output": str(getattr(result, "agent_output", "")),
             }
             results_dicts.append(result_dict)

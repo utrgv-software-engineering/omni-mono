@@ -59,7 +59,9 @@ for i in range(p.get_device_count()):
     type_str = f" ({', '.join(device_type)})" if device_type else ""
 
     print(f"  {i}: {info['name']}{type_str}")
-    print(f"     Channels: in={info['maxInputChannels']}, out={info['maxOutputChannels']}")
+    print(
+        f"     Channels: in={info['maxInputChannels']}, out={info['maxOutputChannels']}"
+    )
     print(f"     Sample rate: {info['defaultSampleRate']:.0f} Hz")
     print()
 

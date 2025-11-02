@@ -32,10 +32,15 @@ try:
         RealtimeModelAudioEvent,
         RealtimeModelTranscriptDeltaEvent,
     )
-    from agents.realtime.items import RealtimeItem, UserMessageItem, AssistantMessageItem
+    from agents.realtime.items import (
+        RealtimeItem,
+        UserMessageItem,
+        AssistantMessageItem,
+    )
     from agents.run_context import RunContextWrapper
     from agents.tool import FunctionTool
     from agents.guardrail import OutputGuardrailResult, OutputGuardrail
+
     SDK_AVAILABLE = True
 except ImportError:
     SDK_AVAILABLE = False
@@ -119,6 +124,7 @@ class TestRealSDKIntegration:
         assert rpc_event.content_index == 0
         # Audio should be base64 encoded
         import base64
+
         assert base64.b64decode(rpc_event.audio_base64) == audio_data
 
     @pytest.mark.asyncio
@@ -255,7 +261,9 @@ class TestRealSDKIntegration:
 
         # Verify agent event structure
         agent = RealtimeAgent(name="Test", instructions="Test")
-        event = RealtimeAgentStartEvent(agent=agent, info=RealtimeEventInfo(context=context))
+        event = RealtimeAgentStartEvent(
+            agent=agent, info=RealtimeEventInfo(context=context)
+        )
         assert hasattr(event, "type")
         assert event.type == "agent_start"
         assert hasattr(event, "agent")

@@ -85,6 +85,7 @@ async def test_start_session(realtime_spec, settings_with_key):
     ):
         # Setup mocks
         mock_session = AsyncMock()
+
         async def mock_events():
             """Empty event generator."""
             return
@@ -456,7 +457,9 @@ async def test_event_streaming(realtime_spec, settings_with_key):
 
         # Event generator with actual events
         async def mock_events():
-            yield SimpleNamespace(type="agent_start", agent=SimpleNamespace(name="test"))
+            yield SimpleNamespace(
+                type="agent_start", agent=SimpleNamespace(name="test")
+            )
             yield SimpleNamespace(type="agent_end", agent=SimpleNamespace(name="test"))
 
         mock_session.__aiter__ = lambda self: mock_events()
