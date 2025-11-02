@@ -87,6 +87,59 @@ class MCPServerConfig:
 
 
 @dataclass
+class RealtimeSettings:
+    """Configuration for realtime voice agent sessions.
+
+    These settings map to the OpenAI Realtime API's session configuration.
+    See: https://platform.openai.com/docs/guides/realtime
+    """
+
+    model_name: str = "gpt-4o-realtime-preview"
+    """The realtime model to use (e.g., 'gpt-4o-realtime-preview', 'gpt-4o-mini-realtime-preview')."""
+
+    voice: Optional[str] = "alloy"
+    """Voice to use for audio output. Options: 'alloy', 'echo', 'shimmer', 'ash', 'ballad', 'coral', 'sage', 'verse'."""
+
+    modalities: List[str] = field(default_factory=lambda: ["audio"])
+    """Communication modalities. Options: ['text'], ['audio'], or ['text', 'audio']."""
+
+    input_audio_format: str = "pcm16"
+    """Input audio format. Options: 'pcm16', 'g711_ulaw', 'g711_alaw'."""
+
+    output_audio_format: str = "pcm16"
+    """Output audio format. Options: 'pcm16', 'g711_ulaw', 'g711_alaw'."""
+
+    turn_detection: Optional[Dict[str, Any]] = None
+    """Turn detection configuration for voice activity detection (VAD).
+
+    Example:
+        {
+            "type": "server_vad",  # or "semantic_vad"
+            "threshold": 0.5,
+            "silence_duration_ms": 700,
+            "prefix_padding_ms": 300,
+            "interrupt_response": True
+        }
+    """
+
+    input_audio_transcription: Optional[Dict[str, Any]] = None
+    """Configuration for transcribing user audio input.
+
+    Example:
+        {
+            "model": "whisper-1",
+            "language": "en"
+        }
+    """
+
+    temperature: Optional[float] = None
+    """Sampling temperature (0.0 to 2.0). Lower is more deterministic."""
+
+    max_output_tokens: Optional[int] = None
+    """Maximum tokens to generate in a single response."""
+
+
+@dataclass
 class AgentSpec:
     """Specification for configuring an AgentApp."""
 
@@ -118,6 +171,13 @@ class AgentSpec:
     model_settings: Optional[Dict[str, Any]] = (
         None  # Model-specific settings (temperature, top_p, etc.)
     )
+
+    # --- Realtime Agent Configuration ---
+    realtime_mode: bool = False  # If True, agent runs as realtime voice agent
+    realtime_settings: Optional[RealtimeSettings] = (
+        None  # Realtime-specific configuration (voice, audio formats, VAD, etc.)
+    )
+
     mcp_config: Optional[Dict[str, Any]] = None  # MCP configuration
     mcp_servers: List[MCPServerConfig] = field(default_factory=list)
     output_type: Optional[type] = None  # Output type for structured responses

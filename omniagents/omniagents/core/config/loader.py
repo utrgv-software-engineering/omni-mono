@@ -14,6 +14,7 @@ from omniagents.core.agents.specs import (
     HandoffConfig,
     MCPServerConfig,
     SettingField,
+    RealtimeSettings,
 )
 from omniagents.core.tools.discovery import discover_functions_in_dir
 from omniagents.core.guardrails.discovery import discover_guardrails_in_dir
@@ -662,6 +663,68 @@ def load_agent_spec_from_yaml(
         )
         del model_settings_config["verbosity"]
 
+    # --- Realtime Agent Configuration ---
+    realtime_mode = config.get("realtime_mode", False)
+    if not isinstance(realtime_mode, bool):
+        print(
+            f"Warning: 'realtime_mode' should be a boolean. Got {type(realtime_mode).__name__}. Using False."
+        )
+        realtime_mode = False
+
+    realtime_settings = None
+    if realtime_mode:
+        realtime_config = config.get("realtime_settings", {})
+        if not isinstance(realtime_config, dict):
+            print(
+                f"Warning: 'realtime_settings' should be a dictionary. Using defaults."
+            )
+            realtime_config = {}
+
+        # Apply environment variable substitution to realtime config
+        realtime_config = _substitute_env_vars(realtime_config)
+
+        # Extract and validate realtime settings
+        try:
+            realtime_settings = RealtimeSettings(
+                model_name=realtime_config.get("model_name", "gpt-4o-realtime-preview"),
+                voice=realtime_config.get("voice", "alloy"),
+                modalities=realtime_config.get("modalities", ["audio"]),
+                input_audio_format=realtime_config.get("input_audio_format", "pcm16"),
+                output_audio_format=realtime_config.get("output_audio_format", "pcm16"),
+                turn_detection=realtime_config.get("turn_detection"),
+                input_audio_transcription=realtime_config.get(
+                    "input_audio_transcription"
+                ),
+                temperature=realtime_config.get("temperature"),
+                max_output_tokens=realtime_config.get("max_output_tokens"),
+            )
+
+            # Validate audio formats
+            valid_audio_formats = ["pcm16", "g711_ulaw", "g711_alaw"]
+            if realtime_settings.input_audio_format not in valid_audio_formats:
+                print(
+                    f"Warning: Invalid input_audio_format '{realtime_settings.input_audio_format}'. Using 'pcm16'."
+                )
+                realtime_settings.input_audio_format = "pcm16"
+            if realtime_settings.output_audio_format not in valid_audio_formats:
+                print(
+                    f"Warning: Invalid output_audio_format '{realtime_settings.output_audio_format}'. Using 'pcm16'."
+                )
+                realtime_settings.output_audio_format = "pcm16"
+
+            # Validate modalities
+            if not isinstance(realtime_settings.modalities, list) or not all(
+                m in ["text", "audio"] for m in realtime_settings.modalities
+            ):
+                print(
+                    f"Warning: Invalid modalities. Must be a list containing 'text' and/or 'audio'. Using ['audio']."
+                )
+                realtime_settings.modalities = ["audio"]
+
+        except Exception as e:
+            print(f"Warning: Error parsing realtime settings: {e}. Using defaults.")
+            realtime_settings = RealtimeSettings()
+
     # --- Agent Instructions ---
     base_dir = config_file.parent
     if remote_ws_url:
@@ -1138,6 +1201,8 @@ def load_agent_spec_from_yaml(
         reset_tool_choice=reset_tool_choice,
         tool_use_behavior=tool_use_behavior,
         model_settings=model_settings_config if model_settings_config else None,
+        realtime_mode=realtime_mode,
+        realtime_settings=realtime_settings,
         mcp_config=mcp_config_from_yaml if mcp_config_from_yaml else None,
         mcp_servers=mcp_servers,
         output_type=output_type,

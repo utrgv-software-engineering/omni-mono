@@ -55,3 +55,24 @@ def get_sessions_db_path(
     agent_key = _normalise_slug(agent_slug, "default")
     target_dir = sessions_dir / project_key / agent_key
     return target_dir / "sessions.db"
+
+
+def get_audio_storage_path(
+    project_slug: str | None = None, agent_slug: str | None = None
+) -> Path:
+    """Get the base directory for audio file storage.
+
+    Args:
+        project_slug: Optional project identifier
+        agent_slug: Optional agent identifier
+
+    Returns:
+        Path to the audio storage directory
+    """
+    override = os.getenv("OMNIAGENTS_AUDIO_STORAGE")
+    if override:
+        return _expand_path(override)
+    sessions_dir = get_sessions_dir()
+    project_key = _normalise_slug(project_slug, "default")
+    agent_key = _normalise_slug(agent_slug, "default")
+    return sessions_dir / project_key / agent_key / "audio"

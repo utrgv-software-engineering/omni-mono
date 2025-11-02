@@ -2,7 +2,7 @@ import json
 import sqlite3
 from datetime import datetime
 from threading import Lock
-from typing import Tuple
+from typing import Optional, Tuple
 
 from omniagents.core.paths import get_sessions_db_path
 
@@ -23,6 +23,28 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         "session_id TEXT PRIMARY KEY,"  # noqa: E501
         "archived INTEGER DEFAULT 0,"  # noqa: E501
         "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS audio_metadata ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"  # noqa: E501
+        "session_id TEXT NOT NULL,"  # noqa: E501
+        "message_id INTEGER,"  # noqa: E501
+        "item_id TEXT NOT NULL,"  # noqa: E501
+        "content_index INTEGER NOT NULL,"  # noqa: E501
+        "file_path TEXT NOT NULL,"  # noqa: E501
+        "audio_format TEXT NOT NULL,"  # noqa: E501
+        "duration_ms INTEGER,"  # noqa: E501
+        "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"  # noqa: E501
+        "FOREIGN KEY (message_id) REFERENCES history(id) ON DELETE CASCADE)"
+    )
+    # Create index for faster lookups by session_id
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_audio_session " "ON audio_metadata(session_id)"
+    )
+    # Create index for faster lookups by item_id
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_audio_item "
+        "ON audio_metadata(item_id, content_index)"
     )
 
     cursor = conn.execute("PRAGMA table_info(history)")
@@ -260,3 +282,166 @@ def get_user_messages(
 
     results.reverse()
     return results
+
+
+# --- Audio Metadata Functions ---
+
+
+def save_audio_metadata(
+    session_id: str,
+    item_id: str,
+    content_index: int,
+    file_path: str,
+    audio_format: str,
+    duration_ms: Optional[int] = None,
+    message_id: Optional[int] = None,
+    *,
+    project_slug: str | None = None,
+    agent_slug: str | None = None,
+) -> int:
+    """Save audio metadata to the database.
+
+    Args:
+        session_id: The session ID
+        item_id: The realtime item ID
+        content_index: The content index within the item
+        file_path: Relative path to the audio file
+        audio_format: Audio format (e.g., 'pcm16')
+        duration_ms: Optional duration in milliseconds
+        message_id: Optional FK to history message
+        project_slug: Project identifier
+        agent_slug: Agent identifier
+
+    Returns:
+        The inserted row ID
+    """
+    conn, lock = _get_store(project_slug, agent_slug)
+    with lock:
+        cursor = conn.execute(
+            "INSERT INTO audio_metadata(session_id, message_id, item_id, content_index, "
+            "file_path, audio_format, duration_ms, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+            (
+                session_id,
+                message_id,
+                item_id,
+                content_index,
+                file_path,
+                audio_format,
+                duration_ms,
+            ),
+        )
+        row_id = cursor.lastrowid
+        conn.commit()
+    return row_id
+
+
+def get_audio_metadata(
+    session_id: str,
+    *,
+    project_slug: str | None = None,
+    agent_slug: str | None = None,
+) -> list[dict]:
+    """Get all audio metadata for a session.
+
+    Args:
+        session_id: The session ID
+        project_slug: Project identifier
+        agent_slug: Agent identifier
+
+    Returns:
+        List of audio metadata dictionaries
+    """
+    conn, lock = _get_store(project_slug, agent_slug)
+    with lock:
+        cur = conn.execute(
+            "SELECT id, message_id, item_id, content_index, file_path, audio_format, "
+            "duration_ms, created_at FROM audio_metadata WHERE session_id=? "
+            "ORDER BY id ASC",
+            (session_id,),
+        )
+        rows = cur.fetchall()
+
+    return [
+        {
+            "id": row[0],
+            "message_id": row[1],
+            "item_id": row[2],
+            "content_index": row[3],
+            "file_path": row[4],
+            "audio_format": row[5],
+            "duration_ms": row[6],
+            "created_at": row[7],
+        }
+        for row in rows
+    ]
+
+
+def get_audio_metadata_by_item(
+    item_id: str,
+    content_index: int,
+    *,
+    project_slug: str | None = None,
+    agent_slug: str | None = None,
+) -> Optional[dict]:
+    """Get audio metadata for a specific item and content index.
+
+    Args:
+        item_id: The realtime item ID
+        content_index: The content index
+        project_slug: Project identifier
+        agent_slug: Agent identifier
+
+    Returns:
+        Audio metadata dictionary or None if not found
+    """
+    conn, lock = _get_store(project_slug, agent_slug)
+    with lock:
+        cur = conn.execute(
+            "SELECT id, session_id, message_id, file_path, audio_format, "
+            "duration_ms, created_at FROM audio_metadata "
+            "WHERE item_id=? AND content_index=? LIMIT 1",
+            (item_id, content_index),
+        )
+        row = cur.fetchone()
+
+    if row is None:
+        return None
+
+    return {
+        "id": row[0],
+        "session_id": row[1],
+        "message_id": row[2],
+        "item_id": item_id,
+        "content_index": content_index,
+        "file_path": row[3],
+        "audio_format": row[4],
+        "duration_ms": row[5],
+        "created_at": row[6],
+    }
+
+
+def delete_audio_metadata(
+    session_id: str,
+    *,
+    project_slug: str | None = None,
+    agent_slug: str | None = None,
+) -> int:
+    """Delete all audio metadata for a session.
+
+    Args:
+        session_id: The session ID
+        project_slug: Project identifier
+        agent_slug: Agent identifier
+
+    Returns:
+        Number of rows deleted
+    """
+    conn, lock = _get_store(project_slug, agent_slug)
+    with lock:
+        cursor = conn.execute(
+            "DELETE FROM audio_metadata WHERE session_id=?", (session_id,)
+        )
+        deleted_count = cursor.rowcount
+        conn.commit()
+    return deleted_count
