@@ -131,10 +131,20 @@ class AgentService(RpcMethodsBase):
         stack_created = False
 
         if self.spec.mcp_servers:
-            if prev_stack and prev_active:
+            # Check if any MCP server uses stdio transport
+            # Stdio servers use AnyIO task groups that cannot be safely reused across asyncio tasks
+            has_stdio = any(
+                hasattr(cfg, "type")
+                and str(getattr(cfg, "type", "")).lower() == "stdio"
+                for cfg in self.spec.mcp_servers
+            )
+
+            # Only reuse connections if no stdio servers are present
+            if prev_stack and prev_active and not has_stdio:
                 stack = prev_stack
                 active_servers = prev_active
             else:
+                # Close existing stack if present (either first run or has stdio servers)
                 if prev_stack:
                     try:
                         await prev_stack.aclose()
@@ -145,8 +155,12 @@ class AgentService(RpcMethodsBase):
                 try:
                     servers = build_mcp_servers(self.spec, settings)
                     for server in servers:
-                        if hasattr(server, "__aenter__") and hasattr(server, "__aexit__"):
-                            active_servers.append(await stack.enter_async_context(server))
+                        if hasattr(server, "__aenter__") and hasattr(
+                            server, "__aexit__"
+                        ):
+                            active_servers.append(
+                                await stack.enter_async_context(server)
+                            )
                         else:
                             await server.connect()
                             stack.push_async_callback(server.cleanup)

@@ -135,6 +135,138 @@ async def run_cli(config_path: str | None = None, args=None, spec=None) -> None:
     else:
         approval_callback = cli_approval_callback
 
+    async def _chat_loop_stdio():
+        """
+        Chat loop for stdio MCP servers that recreates connections per message.
+
+        This is necessary because stdio servers use AnyIO task groups that must
+        be entered and exited in the same asyncio task. We rebuild the server
+        instances for each message to avoid reusing AnyIO task groups across tasks.
+        """
+        from omniagents.core.tools.artifacts import set_artifact_callback
+
+        def _cli_artifact(
+            title: str,
+            content: str,
+            mode: str = "markdown",
+            artifact_id: str | None = None,
+        ) -> None:
+            print(f"\n== {title} ==")
+            print(content)
+            print()
+
+        set_artifact_callback(_cli_artifact)
+
+        # Intro
+        print(f"\nStarting CLI chat for agent: {spec.name}")
+        print(f"{spec.welcome_text}\n(Type 'exit' to quit)\n")
+
+        session_id = getattr(args, "session_id", None) if args is not None else None
+        local_session = Session(spec.project_slug, spec.agent_slug, session_id)
+        conversation = list(local_session.history)
+        if session_id is None:
+            print(f"Session ID: {local_session.id}")
+
+        while True:
+            try:
+                user_input = input("> ").strip()
+            except (KeyboardInterrupt, EOFError):
+                print("\nExiting CLI chat.")
+                break
+            if user_input.lower() in ("exit", "quit"):
+                break
+            if not user_input:
+                continue
+            if Debug.enabled():
+                print(f"[DEBUG] User input: {user_input}")
+
+            user_msg = {"role": "user", "content": user_input}
+            conversation.append(user_msg)
+            local_session.append_message(user_msg)
+            new_input = conversation
+            run_config = RunConfig()
+
+            # Create fresh MCP servers and context for this message
+            # IMPORTANT: We must rebuild the server instances, not reuse them,
+            # because stdio servers create AnyIO task groups that are task-local
+            async with AsyncExitStack() as stack:
+                # Rebuild servers from scratch for this message
+                fresh_servers = build_mcp_servers(spec, settings)
+                active_servers = []
+                for server in fresh_servers:
+                    if hasattr(server, "__aenter__") and hasattr(server, "__aexit__"):
+                        active_servers.append(await stack.enter_async_context(server))
+                    else:
+                        await server.connect()
+                        stack.push_async_callback(server.cleanup)
+                        active_servers.append(server)
+
+                # Create agent with fresh MCP servers
+                agent = await create_unified_agent(
+                    spec=spec,
+                    settings=settings,
+                    approval_callback=approval_callback,
+                    mcp_servers=active_servers,
+                )
+
+                # Run the agent with this message
+                result = agent.run_streamed(new_input, run_config=run_config)
+
+                message_output = ""
+                final_items = []
+                async for event in result.stream_events():
+                    if event.type == "run_item_stream_event":
+                        item = event.item
+                        final_items.append(item)
+                        if not hasattr(item, "type"):
+                            if Debug.enabled():
+                                try:
+                                    it_repr = json.dumps(item)[:200]
+                                except Exception:
+                                    it_repr = str(item)[:200]
+                                print(
+                                    f"[DEBUG] Skipping non-item payload event: {event.type} item={it_repr}"
+                                )
+                            continue
+                        if item.type == "tool_call_item":
+                            inp = item.to_input_item() or {}
+                            name = inp.get("name", "<tool>")
+                            args_str = inp.get("arguments", "")
+                            try:
+                                args_dict = json.loads(args_str)
+                                formatted_args = ", ".join(
+                                    f"{k}: {repr(v)}" for k, v in args_dict.items()
+                                )
+                            except Exception:
+                                formatted_args = args_str
+                            print(
+                                f"\n\033[36m⏺\033[0m \033[1m{name}\033[0m({formatted_args})"
+                            )
+                        elif item.type == "tool_call_output_item":
+                            if Debug.enabled():
+                                print(f"[DEBUG] Tool output: {item.output}")
+                        elif item.type == "message_output_item":
+                            message_output = ItemHelpers.text_message_output(item)
+                            if Debug.enabled():
+                                print(f"[DEBUG] Message building: {message_output}")
+                        elif Debug.enabled():
+                            print(
+                                f"[DEBUG] Event: {event.type}, Item: {getattr(item, 'type', None)}"
+                            )
+
+                # Append assistant and tool items to conversation
+                for item in final_items:
+                    if hasattr(item, "to_input_item"):
+                        inp = item.to_input_item()
+                        if inp:
+                            conversation.append(inp)
+                            local_session.append_message(inp)
+
+                # Display response
+                print(f"\n⏺ {message_output}\n")
+
+            # MCP servers are automatically closed when exiting the AsyncExitStack
+
     async def _chat_loop(mcp_servers):
         # Build unified agent using factory
         mcp_list = mcp_servers if mcp_servers else None
@@ -256,18 +388,34 @@ async def run_cli(config_path: str | None = None, args=None, spec=None) -> None:
             # Display response
             print(f"\n⏺ {message_output}\n")
 
+    # Check if any MCP servers use stdio transport
+    # Stdio servers use AnyIO task groups that cannot be safely reused across asyncio tasks
+    has_stdio = False
+    if mcp_server_configs and spec.mcp_servers:
+        has_stdio = any(
+            hasattr(cfg, "type") and str(getattr(cfg, "type", "")).lower() == "stdio"
+            for cfg in spec.mcp_servers
+        )
+
     # Run chat loop within MCP context if configured
     if mcp_server_configs:
-        async with AsyncExitStack() as stack:
-            active_servers = []
-            for server in mcp_server_configs:
-                if hasattr(server, "__aenter__") and hasattr(server, "__aexit__"):
-                    active_servers.append(await stack.enter_async_context(server))
-                else:
-                    await server.connect()
-                    stack.push_async_callback(server.cleanup)
-                    active_servers.append(server)
-            await _chat_loop(active_servers)
+        if has_stdio:
+            # For stdio servers, we cannot reuse the AsyncExitStack across messages
+            # because each message may create new asyncio tasks, causing AnyIO violations.
+            # We rebuild server instances per message to avoid AnyIO task group reuse.
+            await _chat_loop_stdio()
+        else:
+            # For HTTP/SSE servers, we can safely reuse connections
+            async with AsyncExitStack() as stack:
+                active_servers = []
+                for server in mcp_server_configs:
+                    if hasattr(server, "__aenter__") and hasattr(server, "__aexit__"):
+                        active_servers.append(await stack.enter_async_context(server))
+                    else:
+                        await server.connect()
+                        stack.push_async_callback(server.cleanup)
+                        active_servers.append(server)
+                await _chat_loop(active_servers)
     else:
         # No MCP; run chat loop directly
         await _chat_loop([])
