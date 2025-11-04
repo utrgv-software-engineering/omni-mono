@@ -110,7 +110,7 @@ async def test_start_run_retries_emit_status_and_error(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_start_run_success_closes_mcp_stack(monkeypatch):
+async def test_start_run_success_keeps_mcp_stack(monkeypatch):
     server = FakeAsyncServer()
 
     def fake_build_mcp(spec_arg, settings_arg):
@@ -136,9 +136,9 @@ async def test_start_run_success_closes_mcp_stack(monkeypatch):
     sess = service._session_manager.get_or_create(run_info["session_id"])
     await asyncio.wait_for(sess.current_task, timeout=1)
     assert server.entered is True
-    assert server.exited is True
-    assert getattr(sess, "_mcp_exit_stack") is None
-    assert getattr(sess, "_mcp_servers_active") == []
+    assert server.exited is False
+    assert getattr(sess, "_mcp_exit_stack") is not None
+    assert getattr(sess, "_mcp_servers_active") == [server]
     status_events = [e for e in events if e["method"] == "run_status"]
     assert status_events == []
     end_event = next(e for e in events if e["method"] == "run_end")
@@ -153,7 +153,7 @@ async def test_start_run_success_closes_mcp_stack(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_start_run_failure_closes_mcp_stack(monkeypatch):
+async def test_start_run_failure_keeps_mcp_stack(monkeypatch):
     server = FakeAsyncServer()
 
     def fake_build_mcp(spec_arg, settings_arg):
@@ -174,9 +174,9 @@ async def test_start_run_failure_closes_mcp_stack(monkeypatch):
     sess = service._session_manager.get_or_create(run_info["session_id"])
     await asyncio.wait_for(sess.current_task, timeout=1)
     assert server.entered is True
-    assert server.exited is True
-    assert getattr(sess, "_mcp_exit_stack") is None
-    assert getattr(sess, "_mcp_servers_active") == []
+    assert server.exited is False
+    assert getattr(sess, "_mcp_exit_stack") is not None
+    assert getattr(sess, "_mcp_servers_active") == [server]
     status_events = [e for e in events if e["method"] == "run_status"]
     assert status_events == []
     end_event = next(e for e in events if e["method"] == "run_end")
@@ -188,7 +188,7 @@ async def test_start_run_failure_closes_mcp_stack(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_stop_run_closes_mcp_stack(monkeypatch):
+async def test_stop_run_keeps_mcp_stack(monkeypatch):
     server = FakeAsyncServer()
 
     def fake_build_mcp(spec_arg, settings_arg):
@@ -219,10 +219,10 @@ async def test_stop_run_closes_mcp_stack(monkeypatch):
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, timeout=1)
     assert server.entered is True
-    assert server.exited is True
+    assert server.exited is False
     sess_after = service._session_manager.get_or_create(run_info["session_id"])
-    assert getattr(sess_after, "_mcp_exit_stack") is None
-    assert getattr(sess_after, "_mcp_servers_active") == []
+    assert getattr(sess_after, "_mcp_exit_stack") is not None
+    assert getattr(sess_after, "_mcp_servers_active") == [server]
     end_event = next(e for e in events if e["method"] == "run_end")
     payload = end_event["payload"]
     assert payload["end_reason"] == "cancelled"

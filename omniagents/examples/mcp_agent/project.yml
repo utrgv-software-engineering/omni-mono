@@ -1,0 +1,14 @@
+name: mcp_agent
+paths:
+  agents: agents
+  tools: tools
+  target: target
+agents:
+  entrypoint: mcp_agent
+
+tracing:
+  provider: agentio
+  project: mcp_agent_project
+  name: mcp_agent
+  settings:
+    resume: never
