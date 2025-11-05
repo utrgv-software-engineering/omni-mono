@@ -124,37 +124,74 @@ class AgentService(RpcMethodsBase):
         settings = dict(self._default_settings)
 
         prev_stack = getattr(session, "_mcp_exit_stack", None)
-        if prev_stack:
-            try:
-                await prev_stack.aclose()
-            except Exception:
-                pass
+        prev_active = getattr(session, "_mcp_servers_active", None) or []
 
         stack: AsyncExitStack | None = None
         active_servers: list[Any] = []
+        stack_created = False
+
         if self.spec.mcp_servers:
-            stack = AsyncExitStack()
-            try:
-                servers = build_mcp_servers(self.spec, settings)
-                for server in servers:
-                    if hasattr(server, "__aenter__") and hasattr(server, "__aexit__"):
-                        active_servers.append(await stack.enter_async_context(server))
-                    else:
-                        await server.connect()
-                        stack.push_async_callback(server.cleanup)
-                        active_servers.append(server)
-            except Exception:
-                if stack:
+            # Check if any MCP server uses stdio transport
+            # Stdio servers use AnyIO task groups that cannot be safely reused across asyncio tasks
+            has_stdio = any(
+                hasattr(cfg, "type")
+                and str(getattr(cfg, "type", "")).lower() == "stdio"
+                for cfg in self.spec.mcp_servers
+            )
+
+            # Only reuse connections if no stdio servers are present
+            if prev_stack and prev_active and not has_stdio:
+                stack = prev_stack
+                active_servers = prev_active
+            else:
+                # Close existing stack if present (either first run or has stdio servers)
+                if prev_stack:
                     try:
-                        await stack.aclose()
+                        await prev_stack.aclose()
                     except Exception:
                         pass
-                setattr(session, "_mcp_exit_stack", None)
-                setattr(session, "_mcp_servers_active", [])
-                raise
+                stack = AsyncExitStack()
+                stack_created = True
+                try:
+                    servers = build_mcp_servers(self.spec, settings)
+                    for server in servers:
+                        if hasattr(server, "__aenter__") and hasattr(
+                            server, "__aexit__"
+                        ):
+                            active_servers.append(
+                                await stack.enter_async_context(server)
+                            )
+                        else:
+                            await server.connect()
+                            stack.push_async_callback(server.cleanup)
+                            active_servers.append(server)
+                except Exception:
+                    if stack:
+                        try:
+                            await stack.aclose()
+                        except Exception:
+                            pass
+                    setattr(session, "_mcp_exit_stack", None)
+                    setattr(session, "_mcp_servers_active", [])
+                    raise
+                setattr(session, "_mcp_exit_stack", stack)
+                setattr(session, "_mcp_servers_active", active_servers)
+        else:
+            if prev_stack:
+                try:
+                    await prev_stack.aclose()
+                except Exception:
+                    pass
+            stack = None
+            active_servers = []
+            setattr(session, "_mcp_exit_stack", None)
+            setattr(session, "_mcp_servers_active", [])
 
-        setattr(session, "_mcp_exit_stack", stack)
-        setattr(session, "_mcp_servers_active", active_servers)
+        reused_servers = bool(stack and not stack_created)
+        if reused_servers:
+            setattr(session, "_mcp_exit_stack", stack)
+            setattr(session, "_mcp_servers_active", active_servers)
+
         setattr(stub_app, "mcp_servers", active_servers)
 
         try:
@@ -196,13 +233,14 @@ class AgentService(RpcMethodsBase):
                     approval_callback,
                 )
         except Exception:
-            if stack:
+            if stack_created and stack:
                 try:
                     await stack.aclose()
                 except Exception:
                     pass
-            setattr(session, "_mcp_exit_stack", None)
-            setattr(session, "_mcp_servers_active", [])
+            if stack_created:
+                setattr(session, "_mcp_exit_stack", None)
+                setattr(session, "_mcp_servers_active", [])
             raise
 
         agent = self._clone_agent(agent)
@@ -221,12 +259,34 @@ class AgentService(RpcMethodsBase):
         return agent
 
     def _clone_agent(self, agent: Any) -> Any:
+        static_mcp_servers = None
+        restored_original = False
+        if hasattr(agent, "mcp_servers"):
+            try:
+                servers = getattr(agent, "mcp_servers")
+                static_mcp_servers = servers
+                setattr(agent, "mcp_servers", [])
+                restored_original = True
+            except Exception:
+                static_mcp_servers = None
         try:
-            return copy.deepcopy(agent)
+            cloned = copy.deepcopy(agent)
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(
                 "Agent builder must return deepcopy-able agent instances for per-run isolation"
             ) from exc
+        finally:
+            if restored_original:
+                try:
+                    setattr(agent, "mcp_servers", static_mcp_servers)
+                except Exception:
+                    pass
+        if static_mcp_servers is not None:
+            try:
+                setattr(cloned, "mcp_servers", static_mcp_servers)
+            except Exception:
+                pass
+        return cloned
 
     def _apply_session_tool_policy(self, session: Session, agent: Any) -> None:
         names = getattr(session, "always_allow_tools", None)
@@ -939,14 +999,6 @@ class AgentService(RpcMethodsBase):
                     sess.current_task = None
                 if sess.current_stream_result is not None:
                     sess.current_stream_result = None
-                stack = getattr(sess, "_mcp_exit_stack", None)
-                if stack:
-                    try:
-                        await stack.aclose()
-                    except Exception:
-                        pass
-                setattr(sess, "_mcp_exit_stack", None)
-                setattr(sess, "_mcp_servers_active", [])
 
         task_name = f"run_{uuid.uuid4().hex}"
         _debug_rpc(
@@ -1032,6 +1084,17 @@ class AgentService(RpcMethodsBase):
         """Archive *session_id* so clients can hide it."""
         _debug_rpc("archive_session", {"session_id": session_id})
         ok = self._session_manager.archive_session(session_id)
+        if ok:
+            sess = getattr(self._session_manager, "_by_id", {}).get(session_id)
+            if sess is not None:
+                stack = getattr(sess, "_mcp_exit_stack", None)
+                if stack:
+                    try:
+                        await stack.aclose()
+                    except Exception:
+                        pass
+                setattr(sess, "_mcp_exit_stack", None)
+                setattr(sess, "_mcp_servers_active", [])
         manager = getattr(self, "terminal_manager", None)
         if manager is not None:
             await manager.cleanup_session(session_id)

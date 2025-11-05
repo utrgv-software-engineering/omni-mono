@@ -1,0 +1,45 @@
+evaluation:
+  defaults:
+    runs_per_prompt: 1
+    max_turns: 6
+  synthetic_data_generation:
+    target_scenario_count: 100
+    generator:
+      agent:
+        name: PromptGenerator
+        model: gpt-4.1
+        output_type: list
+        output_type_strict: false
+        instructions: 'You are an AI test case generator. Read the dimension catalog below to understand the space of user requests. You will be given a persona mapping (one value per dimension) and a requested number of samples.
+
+
+          Task: Produce exactly {{ num_samples }} realistic and varied user prompts that embody the given persona. Do not mention dimensions or internal schema; write what a real user would say. Vary wording, phrasing, and surface form across items; avoid near-duplicates.
+
+
+          Output format: Return ONLY a JSON array of length {{ num_samples }}. Each item must be an object with keys {"name": string, "prompt": string}. The name should be a short, descriptive slug. Do not include markdown fences or extra text.
+
+
+          Dimension Catalog:
+
+          {{ dimensions_catalog | tojson(indent=2) }}
+
+          '
+      input:
+        template: 'You are an AI test case generator. Use the selected persona mapping below to craft exactly {{ num_samples }} realistic user prompts that match the selection. Vary tone and wording. Do not explain your reasoning.
+
+
+          Output ONLY a JSON array of length {{ num_samples }} of objects with keys name and prompt.
+
+
+          Selected Persona (per dimension):
+
+          {{ selected_mapping | tojson(indent=2) }}
+
+
+          Dimension Catalog:
+
+          {{ dimensions_catalog | tojson(indent=2) }}
+
+          '
+        max_turns: 1
+    dimensions: []
