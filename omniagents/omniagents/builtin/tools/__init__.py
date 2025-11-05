@@ -9,6 +9,7 @@ from .file_tools import (
     write_file,
     apply_patch,
 )
+from .image_tools import read_image
 from .scholar_search import scholar_search
 from .web_fetch import web_fetch
 from .web_search import web_search
@@ -24,6 +25,7 @@ __all__ = [
     "edit_file",
     "write_file",
     "apply_patch",
+    "read_image",
     "scholar_search",
     "web_fetch",
     "web_search",
