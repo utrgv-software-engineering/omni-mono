@@ -72,7 +72,7 @@ async def test_server_send_failure_marks_disconnected():
 async def test_server_receive_failure_marks_disconnected():
     async with asyncio.timeout(TIMEOUT):
         mock_ws = AsyncMock(spec=WebSocket)
-        mock_ws.receive_json.side_effect = RuntimeError("receive failure")
+        mock_ws.receive_text.side_effect = RuntimeError("receive failure")
 
         transport = ServerWebSocketTransport(mock_ws)
         await transport.connect()

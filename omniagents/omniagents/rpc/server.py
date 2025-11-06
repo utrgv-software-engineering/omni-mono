@@ -49,10 +49,13 @@ class JsonRpcChannel:
         message: str,
         data: Optional[Dict[str, Any]] = None,
     ) -> None:
+        msg_text = str(message) if message is not None else ""
+        if not msg_text:
+            msg_text = ""
         payload: Dict[str, Any] = {
             "jsonrpc": "2.0",
             "id": call_id,
-            "error": {"code": int(code), "message": message},
+            "error": {"code": int(code), "message": msg_text},
         }
         if data is not None:
             payload["error"]["data"] = data
@@ -148,10 +151,13 @@ class JsonRpcEndpoint:
         data: Dict[str, Any] = {"type": exc.__class__.__name__, "message": str(exc)}
         if method is not None:
             data["method"] = method
+        message_text = str(exc).strip()
+        if not message_text:
+            message_text = "Internal error"
         await channel.send_error(
             call_id,
             -32603,
-            "Internal error",
+            message_text,
             data,
         )
 

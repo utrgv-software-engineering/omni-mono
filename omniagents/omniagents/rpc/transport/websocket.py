@@ -133,6 +133,8 @@ class ServerWebSocketTransport(BaseTransport):
         try:
             return json.loads(msg)
         except json.JSONDecodeError as e:
+            self._connected = False
             raise TransportDecodeError(msg, e)
         except Exception as e:
+            self._connected = False
             raise TransportError(f"Failed to receive data: {e}")
