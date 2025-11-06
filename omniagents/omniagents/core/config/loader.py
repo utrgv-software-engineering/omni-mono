@@ -276,6 +276,76 @@ def _parse_inline_agent_spec(
 
     storage_prefix = agent_name.lower().replace(" ", "_") + "."
 
+    handoff_configs_list: List[HandoffConfig] = []
+    handoffs_config = config.get("handoffs", [])
+    if handoffs_config:
+        if not isinstance(handoffs_config, list):
+            print(
+                f"Warning: 'handoffs' in inline agent '{agent_name}' should be a list. Skipping."
+            )
+            handoffs_config = []
+        for handoff_item in handoffs_config:
+            if not isinstance(handoff_item, dict):
+                print(
+                    f"Warning: Invalid handoff item in inline agent '{agent_name}'. Expected dict. Skipping."
+                )
+                continue
+            if "yaml" in handoff_item:
+                yaml_path = handoff_item.get("yaml")
+                if not isinstance(yaml_path, str) or not yaml_path.strip():
+                    print(
+                        f"Warning: Inline handoff for '{agent_name}' is missing a valid 'yaml' path. Skipping."
+                    )
+                    continue
+                resolved_yaml = (base_dir / yaml_path).resolve()
+                if not resolved_yaml.is_file():
+                    try:
+                        display_path = resolved_yaml.relative_to(Path.cwd())
+                    except ValueError:
+                        display_path = resolved_yaml
+                    print(
+                        f"Warning: Handoff agent YAML file not found for inline agent '{agent_name}': {display_path}. Skipping."
+                    )
+                    continue
+                handoff_configs_list.append(
+                    HandoffConfig(
+                        yaml_path=str(resolved_yaml),
+                        tool_name_override=handoff_item.get("tool_name_override"),
+                        tool_description_override=handoff_item.get(
+                            "tool_description_override"
+                        ),
+                    )
+                )
+            elif "inline" in handoff_item:
+                inline_config = handoff_item.get("inline")
+                if not isinstance(inline_config, dict):
+                    print(
+                        f"Warning: 'inline' value in handoff for '{agent_name}' should be a dictionary. Skipping."
+                    )
+                    continue
+                try:
+                    nested_spec = _parse_inline_agent_spec(
+                        inline_config, base_dir, parent_loading_stack
+                    )
+                except Exception as e:
+                    print(
+                        f"Warning: Failed to parse nested inline agent for '{agent_name}': {e}. Skipping."
+                    )
+                    continue
+                handoff_configs_list.append(
+                    HandoffConfig(
+                        inline_spec=nested_spec,
+                        tool_name_override=handoff_item.get("tool_name_override"),
+                        tool_description_override=handoff_item.get(
+                            "tool_description_override"
+                        ),
+                    )
+                )
+            else:
+                print(
+                    f"Warning: Inline handoff item for '{agent_name}' must include 'yaml' or 'inline'. Skipping."
+                )
+
     # Create minimal AgentSpec for inline agent
     return AgentSpec(
         # Basic Info
@@ -298,7 +368,7 @@ def _parse_inline_agent_spec(
         output_type_strict=True,  # Default to strict for inline agents
         prompt=None,  # Simplified for inline agents
         # Nested handoffs for inline agents (if provided)
-        handoff_configs=[],  # Will be populated if inline agent has handoffs
+        handoff_configs=handoff_configs_list,
         # Guardrails (simplified for inline agents)
         input_guardrails=[],
         output_guardrails=[],

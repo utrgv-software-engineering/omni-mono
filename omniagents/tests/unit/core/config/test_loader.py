@@ -4,11 +4,142 @@ import textwrap
 
 import pytest
 
-from omniagents.core.config.loader import load_agent_spec_from_yaml
+from omniagents.core.config.loader import (
+    load_agent_spec_from_yaml,
+    _parse_inline_agent_spec,
+    _parse_theme_color,
+)
 
 
 def write(path, content):
     path.write_text(textwrap.dedent(content))
+
+
+def test_parse_inline_agent_spec_with_all_fields(tmp_path):
+    base_dir = tmp_path
+    tools_dir = base_dir / "tools"
+    tools_dir.mkdir()
+    write(
+        tools_dir / "calc.py",
+        """
+        from omniagents.core.tools.discovery import function_tool
+
+        @function_tool
+        async def calc():
+            return 42
+        """,
+    )
+    write(base_dir / "inline.md", "Inline instructions")
+    config = {
+        "name": "Helper",
+        "instructions_file": "inline.md",
+        "welcome_text": "Welcome",
+        "tools": ["calc"],
+        "model": "gpt-4o-mini",
+        "model_settings": {"temperature": 0.6},
+        "max_turns": 3,
+        "handoff_description": "Escalate when stuck",
+        "reset_tool_choice": False,
+        "tool_use_behavior": "stop_on_first_tool",
+        "use_safe_agent": False,
+        "safe_agent_options": {
+            "skip_approvals": True,
+            "halt_on_rejection": False,
+            "safe_tool_names": ["calc"],
+            "safe_tool_patterns": ["calc_.*"],
+        },
+    }
+    existing_modules = set(sys.modules)
+    try:
+        spec = _parse_inline_agent_spec(config, base_dir, set())
+    finally:
+        for name in list(sys.modules):
+            if name not in existing_modules and name.startswith("tools"):
+                sys.modules.pop(name, None)
+    assert spec.name == "Helper"
+    assert spec.get_agent_instructions() == "Inline instructions"
+    assert [tool.name for tool in spec.available_tools] == ["calc"]
+    assert spec.model_name == "gpt-4o-mini"
+    assert spec.model_settings == {"temperature": 0.6}
+    assert spec.max_turns == 3
+    assert spec.reset_tool_choice is False
+    assert spec.tool_use_behavior == "stop_on_first_tool"
+    assert spec.handoff_description == "Escalate when stuck"
+    assert spec.use_safe_agent is False
+    assert spec.safe_agent_options.skip_approvals is True
+    assert spec.safe_agent_options.halt_on_rejection is False
+    assert spec.safe_agent_options.safe_tool_names == ["calc"]
+    assert spec.safe_agent_options.safe_tool_patterns == ["calc_.*"]
+    assert spec.client_storage_prefix == "helper."
+
+
+def test_parse_inline_agent_spec_supports_nested_inline_handoffs(tmp_path):
+    base_dir = tmp_path
+    tools_dir = base_dir / "tools"
+    tools_dir.mkdir()
+    write(
+        tools_dir / "alpha.py",
+        """
+        from omniagents.core.tools.discovery import function_tool
+
+        @function_tool
+        async def alpha():
+            return "alpha"
+        """,
+    )
+    config = {
+        "name": "Parent",
+        "instructions": "Parent inline",
+        "tools": ["alpha"],
+        "handoffs": [
+            {
+                "inline": {
+                    "name": "Child",
+                    "instructions": "Child inline",
+                    "tools": ["alpha"],
+                },
+                "tool_description_override": "Nested inline",
+            }
+        ],
+    }
+    existing_modules = set(sys.modules)
+    try:
+        spec = _parse_inline_agent_spec(config, base_dir, set())
+    finally:
+        for name in list(sys.modules):
+            if name not in existing_modules and name.startswith("tools"):
+                sys.modules.pop(name, None)
+    assert [tool.name for tool in spec.available_tools] == ["alpha"]
+    assert len(spec.handoff_configs) == 1
+    nested = spec.handoff_configs[0]
+    assert nested.inline_spec is not None
+    assert nested.inline_spec.name == "Child"
+    assert nested.inline_spec.get_agent_instructions() == "Child inline"
+    assert nested.inline_spec.available_tools[0].name == "alpha"
+    assert nested.tool_description_override == "Nested inline"
+
+
+def test_parse_inline_agent_spec_handles_invalid_tools_list(tmp_path, capsys):
+    config = {"instructions": "Inline", "tools": "alpha"}
+    spec = _parse_inline_agent_spec(config, tmp_path, set())
+    captured = capsys.readouterr()
+    assert "should be a list" in captured.out
+    assert spec.available_tools == []
+
+
+def test_parse_theme_color_returns_default_for_none():
+    assert _parse_theme_color(None, "#112233") == "#112233"
+
+
+def test_parse_theme_color_warns_on_flet_constant(capsys):
+    result = _parse_theme_color("ft.Colors.RED", "#abcdef")
+    captured = capsys.readouterr()
+    assert "no longer supported" in captured.out
+    assert result == "#abcdef"
+
+
+def test_parse_theme_color_accepts_hex():
+    assert _parse_theme_color("#123456", "#abcdef") == "#123456"
 
 
 def test_loader_reads_instructions_file(tmp_path):
@@ -96,6 +227,40 @@ def test_loader_handles_nested_env_substitution(tmp_path, monkeypatch):
         "mapping": {"inner": "actual"},
         "sequence": ["first", "fallback"],
     }
+
+
+def test_loader_merges_settings_fields_with_project_defaults(tmp_path):
+    yaml_path = tmp_path / "agent.yaml"
+    write(
+        yaml_path,
+        """
+        name: SettingsAgent
+        instructions: Inline
+        settings:
+          - key: override_me
+            label: Agent Override
+            default: agent
+          - key: custom_setting
+            label: Agent Custom
+            secret: true
+        """,
+    )
+    project_defaults = {
+        "settings": [
+            {"key": "project_setting", "label": "Project", "default": "project"},
+            {"key": "override_me", "label": "Project Override", "default": "project"},
+        ],
+        "theme_color": "#445566",
+    }
+    spec = load_agent_spec_from_yaml(str(yaml_path), project_defaults=project_defaults)
+    fields = {field.key: field for field in spec.settings_fields}
+    assert fields["override_me"].label == "Agent Override"
+    assert fields["override_me"].default == "agent"
+    assert fields["project_setting"].label == "Project"
+    assert fields["project_setting"].default == "project"
+    assert fields["custom_setting"].secret is True
+    assert "openai_api_key" in fields
+    assert spec.theme_color == "#445566"
 
 
 def test_loader_raises_with_custom_env_error(tmp_path, monkeypatch):
@@ -355,6 +520,55 @@ def test_loader_discovers_assets_and_applies_config(tmp_path):
                 or name.startswith("extra_server_functions")
             ):
                 sys.modules.pop(name, None)
+
+
+def test_loader_warns_for_missing_tools(tmp_path, capsys):
+    yaml_path = tmp_path / "agent.yaml"
+    write(
+        yaml_path,
+        """
+        name: MissingTools
+        instructions: Inline
+        tools:
+          - not_a_tool
+        """,
+    )
+    spec = load_agent_spec_from_yaml(str(yaml_path))
+    captured = capsys.readouterr()
+    assert "were not found" in captured.out
+    assert "not_a_tool" in captured.out
+    assert spec.available_tools == []
+
+
+def test_loader_warns_for_missing_guardrails(tmp_path, capsys):
+    yaml_path = tmp_path / "agent.yaml"
+    write(
+        yaml_path,
+        """
+        name: MissingGuardrails
+        instructions: Inline
+        input_guardrails:
+          - missing_input
+        output_guardrails:
+          - missing_output
+        """,
+    )
+    spec = load_agent_spec_from_yaml(str(yaml_path))
+    captured = capsys.readouterr()
+    assert "input guardrails listed" in captured.out
+    assert "missing_input" in captured.out
+    assert "output guardrails listed" in captured.out
+    assert "missing_output" in captured.out
+    assert spec.input_guardrails == []
+    assert spec.output_guardrails == []
+
+
+def test_loader_reports_yaml_syntax_errors(tmp_path):
+    yaml_path = tmp_path / "agent.yaml"
+    yaml_path.write_text("name: [broken\n")
+    with pytest.raises(ValueError) as exc:
+        load_agent_spec_from_yaml(str(yaml_path))
+    assert "Error parsing YAML file" in str(exc.value)
 
 
 def test_loader_handles_remote_agent_config(tmp_path):
