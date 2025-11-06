@@ -227,58 +227,79 @@ class AgentService(RpcMethodsBase):
 
         setattr(stub_app, "mcp_servers", active_servers)
 
-        if self.spec.build_agent:
-            primary_server = active_servers[0] if active_servers else None
-            agent = await self.spec.build_agent(settings, primary_server, stub_app)
-            if (
-                self.spec.use_safe_agent
-                and approval_callback
-                and not isinstance(agent, SafeAgent)
-            ):
-                opts = self.spec.safe_agent_options
-                agent = SafeAgent(
-                    name=agent.name,
-                    tools=agent.tools,
-                    instructions=agent.instructions,
-                    model=agent.model,
-                    model_settings=getattr(agent, "model_settings", None),
-                    mcp_servers=getattr(agent, "mcp_servers", []) or [],
-                    handoffs=getattr(agent, "handoffs", []),
-                    handoff_description=getattr(agent, "handoff_description", None),
-                    prompt=getattr(agent, "prompt", None),
-                    approval_callback=approval_callback,
-                    safe_tool_names=opts.safe_tool_names,
-                    safe_tool_patterns=opts.safe_tool_patterns,
-                    skip_approvals=opts.skip_approvals,
-                    halt_on_rejection=opts.halt_on_rejection,
+        try:
+            if self.spec.build_agent:
+                primary_server = active_servers[0] if active_servers else None
+                agent = await self.spec.build_agent(settings, primary_server, stub_app)
+                if (
+                    self.spec.use_safe_agent
+                    and approval_callback
+                    and not isinstance(agent, SafeAgent)
+                ):
+                    opts = self.spec.safe_agent_options
+                    agent = SafeAgent(
+                        name=agent.name,
+                        tools=agent.tools,
+                        instructions=agent.instructions,
+                        model=agent.model,
+                        model_settings=getattr(agent, "model_settings", None),
+                        mcp_servers=getattr(agent, "mcp_servers", []) or [],
+                        handoffs=getattr(agent, "handoffs", []),
+                        handoff_description=getattr(agent, "handoff_description", None),
+                        prompt=getattr(agent, "prompt", None),
+                        approval_callback=approval_callback,
+                        safe_tool_names=opts.safe_tool_names,
+                        safe_tool_patterns=opts.safe_tool_patterns,
+                        skip_approvals=opts.skip_approvals,
+                        halt_on_rejection=opts.halt_on_rejection,
+                    )
+                elif isinstance(agent, SafeAgent) and approval_callback:
+                    try:
+                        agent.set_approval_callback(approval_callback)
+                    except Exception:
+                        pass
+            else:
+                agent = await _default_build_agent(
+                    settings,
+                    active_servers,
+                    self.spec,
+                    approval_callback,
                 )
-            elif isinstance(agent, SafeAgent) and approval_callback:
+
+            agent = self._clone_agent(agent)
+
+            if (
+                approval_callback
+                and hasattr(agent, "set_approval_callback")
+                and callable(getattr(agent, "set_approval_callback"))
+            ):
                 try:
                     agent.set_approval_callback(approval_callback)
                 except Exception:
                     pass
-        else:
-            agent = await _default_build_agent(
-                settings,
-                active_servers,
-                self.spec,
-                approval_callback,
-            )
 
-        agent = self._clone_agent(agent)
-
-        if (
-            approval_callback
-            and hasattr(agent, "set_approval_callback")
-            and callable(getattr(agent, "set_approval_callback"))
-        ):
-            try:
-                agent.set_approval_callback(approval_callback)
-            except Exception:
-                pass
-
-        self._apply_session_tool_policy(session, agent)
-        return agent
+            self._apply_session_tool_policy(session, agent)
+            return agent
+        except Exception:
+            # If agent building fails, cleanup MCP lifecycle if it was just created
+            lifecycle_task = getattr(session, "_mcp_lifecycle_task", None)
+            if lifecycle_task and not lifecycle_task.done():
+                # Cancel the lifecycle task
+                shutdown_event = getattr(session, "_mcp_shutdown", None)
+                if shutdown_event:
+                    shutdown_event.set()
+                lifecycle_task.cancel()
+                try:
+                    await lifecycle_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    pass
+            # Clean up session attributes
+            setattr(session, "_mcp_shutdown", None)
+            setattr(session, "_mcp_lifecycle_task", None)
+            setattr(session, "_mcp_servers_active", [])
+            raise
 
     def _clone_agent(self, agent: Any) -> Any:
         static_mcp_servers = None
