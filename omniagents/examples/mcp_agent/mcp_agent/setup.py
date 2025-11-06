@@ -48,7 +48,9 @@ def prompt_secret(label: str, existing: Optional[str], required: bool) -> Option
 def configure_provider(existing: Dict[str, str]) -> Dict[str, Optional[str]]:
     choices = {"1": "openai", "2": "azure", "3": "custom"}
     reverse = {v: k for k, v in choices.items()}
-    default_choice = reverse.get((existing.get("OPENAI_PROVIDER") or "openai").lower(), "1")
+    default_choice = reverse.get(
+        (existing.get("OPENAI_PROVIDER") or "openai").lower(), "1"
+    )
     print("Choose the API provider:")
     print("  [1] OpenAI (api.openai.com)")
     print("  [2] Azure OpenAI")
@@ -59,12 +61,18 @@ def configure_provider(existing: Dict[str, str]) -> Dict[str, Optional[str]]:
         key = prompt_secret("OpenAI API key", existing.get("OPENAI_API_KEY"), True)
         result["OPENAI_API_KEY"] = key
         if provider == "custom":
-            base_url = prompt_text("OpenAI base URL", existing.get("OPENAI_BASE_URL"), True)
+            base_url = prompt_text(
+                "OpenAI base URL", existing.get("OPENAI_BASE_URL"), True
+            )
             result["OPENAI_BASE_URL"] = base_url
         else:
             result["OPENAI_BASE_URL"] = None
-        org = prompt_text("OpenAI organization (optional)", existing.get("OPENAI_ORG"), False)
-        project = prompt_text("OpenAI project (optional)", existing.get("OPENAI_PROJECT"), False)
+        org = prompt_text(
+            "OpenAI organization (optional)", existing.get("OPENAI_ORG"), False
+        )
+        project = prompt_text(
+            "OpenAI project (optional)", existing.get("OPENAI_PROJECT"), False
+        )
         result["OPENAI_ORG"] = org
         result["OPENAI_PROJECT"] = project
         for key_name in [
@@ -77,8 +85,12 @@ def configure_provider(existing: Dict[str, str]) -> Dict[str, Optional[str]]:
     if provider == "azure":
         result["OPENAI_API_KEY"] = None
         result["OPENAI_BASE_URL"] = None
-        result["OPENAI_ORG"] = prompt_text("OpenAI organization (optional)", existing.get("OPENAI_ORG"), False)
-        result["OPENAI_PROJECT"] = prompt_text("OpenAI project (optional)", existing.get("OPENAI_PROJECT"), False)
+        result["OPENAI_ORG"] = prompt_text(
+            "OpenAI organization (optional)", existing.get("OPENAI_ORG"), False
+        )
+        result["OPENAI_PROJECT"] = prompt_text(
+            "OpenAI project (optional)", existing.get("OPENAI_PROJECT"), False
+        )
         result["AZURE_OPENAI_API_KEY"] = prompt_secret(
             "Azure OpenAI API key",
             existing.get("AZURE_OPENAI_API_KEY"),
@@ -99,7 +111,9 @@ def configure_provider(existing: Dict[str, str]) -> Dict[str, Optional[str]]:
             existing.get("AZURE_OPENAI_DEPLOYMENT"),
             True,
         )
-    serp = prompt_secret("SerpAPI key (optional)", existing.get("SERPAPI_API_KEY"), False)
+    serp = prompt_secret(
+        "SerpAPI key (optional)", existing.get("SERPAPI_API_KEY"), False
+    )
     result["SERPAPI_API_KEY"] = serp
     return result
 
