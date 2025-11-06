@@ -106,7 +106,7 @@ export interface AppProps {
   initialMessage?: string;
 }
 
-export const AppOptimized: React.FC<AppProps> = ({
+export const App: React.FC<AppProps> = ({
   serverUrl,
   agentName,
   token,

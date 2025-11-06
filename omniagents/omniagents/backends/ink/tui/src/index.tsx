@@ -5,7 +5,7 @@
 import React from 'react';
 import { render } from 'ink';
 import meow from 'meow';
-import { AppOptimized as App } from './components/AppOptimized.js';
+import { App } from './components/App.js';
 
 const cli = meow(
   `
