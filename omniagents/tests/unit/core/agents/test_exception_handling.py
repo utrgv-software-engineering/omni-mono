@@ -75,9 +75,12 @@ class TestBuildGuardrailErrorInfo:
         mock_guardrail = Mock()
         mock_guardrail.get_name = Mock(return_value="ContentFilter")
 
+        mock_output = Mock()
+        mock_output.output_info = "Inappropriate content detected"
+
         mock_result = Mock()
         mock_result.guardrail = mock_guardrail
-        mock_result.result = "Inappropriate content detected"
+        mock_result.output = mock_output
 
         exc = InputGuardrailTripwireTriggered(mock_result)
         exc.guardrail_result = mock_result
@@ -94,9 +97,12 @@ class TestBuildGuardrailErrorInfo:
         mock_guardrail = Mock()
         mock_guardrail.get_name = Mock(return_value="ResponseLengthGuard")
 
+        mock_output = Mock()
+        mock_output.output_info = "Response too long"
+
         mock_result = Mock()
         mock_result.guardrail = mock_guardrail
-        mock_result.result = "Response too long"
+        mock_result.output = mock_output
 
         exc = OutputGuardrailTripwireTriggered(mock_result)
         exc.guardrail_result = mock_result
@@ -105,17 +111,19 @@ class TestBuildGuardrailErrorInfo:
 
         assert info["type"] == "OutputGuardrailTripwireTriggered"
         assert info["guardrail"]["name"] == "ResponseLengthGuard"
+        assert info["guardrail"]["result"] == "Response too long"
 
     def test_tool_input_guardrail_exception(self):
         """Test error info from ToolInputGuardrailTripwireTriggered."""
         mock_guardrail = Mock()
-        mock_guardrail.__class__.__name__ = "ToolSafetyGuard"
+        mock_guardrail.get_name = Mock(return_value="ToolSafetyGuard")
 
         mock_output = Mock()
         mock_output.behavior = {
             "type": "raise_exception",
             "message": "Unsafe tool call",
         }
+        mock_output.output_info = {"check": "dangerous_pattern", "matched": True}
 
         exc = ToolInputGuardrailTripwireTriggered(mock_guardrail, mock_output)
         exc.guardrail = mock_guardrail
@@ -126,14 +134,16 @@ class TestBuildGuardrailErrorInfo:
         assert info["type"] == "ToolInputGuardrailTripwireTriggered"
         assert info["guardrail"]["name"] == "ToolSafetyGuard"
         assert info["guardrail"]["behavior"]["type"] == "raise_exception"
+        assert info["guardrail"]["output_info"]["check"] == "dangerous_pattern"
 
     def test_tool_output_guardrail_exception(self):
         """Test error info from ToolOutputGuardrailTripwireTriggered."""
         mock_guardrail = Mock()
-        mock_guardrail.__class__.__name__ = "ResultValidator"
+        mock_guardrail.get_name = Mock(return_value="ResultValidator")
 
         mock_output = Mock()
         mock_output.behavior = {"type": "reject_content"}
+        mock_output.output_info = {"validation": "failed", "reason": "contains_pii"}
 
         exc = ToolOutputGuardrailTripwireTriggered(mock_guardrail, mock_output)
         exc.guardrail = mock_guardrail
@@ -142,16 +152,21 @@ class TestBuildGuardrailErrorInfo:
         info = _build_guardrail_error_info(exc)
 
         assert info["type"] == "ToolOutputGuardrailTripwireTriggered"
+        assert info["guardrail"]["name"] == "ResultValidator"
         assert info["guardrail"]["behavior"]["type"] == "reject_content"
+        assert info["guardrail"]["output_info"]["validation"] == "failed"
 
     def test_guardrail_exception_with_run_data(self):
         """Test guardrail error info includes run_data when available."""
         mock_guardrail = Mock()
         mock_guardrail.get_name = Mock(return_value="TestGuard")
 
+        mock_output = Mock()
+        mock_output.output_info = "Violation"
+
         mock_result = Mock()
         mock_result.guardrail = mock_guardrail
-        mock_result.result = "Violation"
+        mock_result.output = mock_output
 
         exc = InputGuardrailTripwireTriggered(mock_result)
         exc.guardrail_result = mock_result
@@ -226,48 +241,12 @@ class TestRetryLogic:
             pytest.skip("OpenAI SDK not available for testing")
 
 
-class TestExceptionHandlingFlow:
-    """Test end-to-end exception handling in AgentService.start_run."""
-
-    @pytest.mark.asyncio
-    async def test_max_turns_creates_normal_completion(self):
-        """Test that MaxTurnsExceeded results in end_reason='max_turns', not 'error'."""
-        # This would require mocking the entire AgentService.start_run flow
-        # For now, document the expected behavior
-
-        # Expected: when MaxTurnsExceeded is raised
-        # - end_reason should be "max_turns"
-        # - error_info should be None
-        # - run_end event should NOT include an error field
-        pass
-
-    @pytest.mark.asyncio
-    async def test_guardrail_violation_has_special_end_reason(self):
-        """Test that guardrail exceptions get end_reason='guardrail_violation'."""
-        # Expected: when any guardrail exception is raised
-        # - end_reason should be "guardrail_violation"
-        # - error_info should include guardrail details
-        # - run_end event should include the error field with guardrail info
-        pass
-
-    @pytest.mark.asyncio
-    async def test_model_behavior_error_not_retried(self):
-        """Test that ModelBehaviorError immediately fails without retry."""
-        # Expected: when ModelBehaviorError is raised
-        # - No retry should occur
-        # - end_reason should be "error"
-        # - error_info should include run_data if available
-        pass
-
-    @pytest.mark.asyncio
-    async def test_user_error_not_retried(self):
-        """Test that UserError immediately fails without retry."""
-        # Expected: when UserError is raised
-        # - No retry should occur
-        # - end_reason should be "error"
-        # - error_info should preserve the user error message
-        pass
-
-
-# Integration test would go here, but requires full service mock
-# For now, the unit tests above verify the helper functions work correctly
+# TODO: Add integration tests for end-to-end exception handling in AgentService.start_run
+# These would test:
+# - MaxTurnsExceeded results in end_reason='max_turns', not 'error'
+# - Guardrail exceptions get end_reason='guardrail_violation' with details
+# - ModelBehaviorError and UserError are not retried and fail immediately
+# - Transient errors (rate limits, timeouts) trigger retry logic
+#
+# These require complex mocking of the entire AgentService and would be better
+# suited as integration tests rather than unit tests.

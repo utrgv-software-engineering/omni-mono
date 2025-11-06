@@ -126,19 +126,30 @@ def _build_guardrail_error_info(
                     if hasattr(result.guardrail, "get_name")
                     else result.guardrail.__class__.__name__
                 ),
-                "result": str(result.result) if hasattr(result, "result") else None,
+                "result": (
+                    str(result.output.output_info)
+                    if hasattr(result, "output")
+                    and hasattr(result.output, "output_info")
+                    else None
+                ),
             }
     elif isinstance(
         exc, (ToolInputGuardrailTripwireTriggered, ToolOutputGuardrailTripwireTriggered)
     ):
         if hasattr(exc, "guardrail"):
             error_info["guardrail"] = {
-                "name": exc.guardrail.__class__.__name__,
+                "name": (
+                    exc.guardrail.get_name()
+                    if hasattr(exc.guardrail, "get_name")
+                    else exc.guardrail.__class__.__name__
+                ),
             }
         if hasattr(exc, "output"):
             output = exc.output
             if hasattr(output, "behavior"):
                 error_info["guardrail"]["behavior"] = output.behavior
+            if hasattr(output, "output_info"):
+                error_info["guardrail"]["output_info"] = output.output_info
 
     # Also include run_data if this is an AgentsException
     if (
