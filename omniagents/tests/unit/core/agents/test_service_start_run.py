@@ -137,7 +137,9 @@ async def test_start_run_success_keeps_mcp_stack(monkeypatch):
     await asyncio.wait_for(sess.current_task, timeout=1)
     assert server.entered is True
     assert server.exited is False
-    assert getattr(sess, "_mcp_exit_stack") is not None
+    # Check for new lifecycle attributes
+    assert getattr(sess, "_mcp_lifecycle_task") is not None
+    assert not getattr(sess, "_mcp_lifecycle_task").done()
     assert getattr(sess, "_mcp_servers_active") == [server]
     status_events = [e for e in events if e["method"] == "run_status"]
     assert status_events == []
@@ -175,7 +177,9 @@ async def test_start_run_failure_keeps_mcp_stack(monkeypatch):
     await asyncio.wait_for(sess.current_task, timeout=1)
     assert server.entered is True
     assert server.exited is False
-    assert getattr(sess, "_mcp_exit_stack") is not None
+    # Check for new lifecycle attributes
+    assert getattr(sess, "_mcp_lifecycle_task") is not None
+    assert not getattr(sess, "_mcp_lifecycle_task").done()
     assert getattr(sess, "_mcp_servers_active") == [server]
     status_events = [e for e in events if e["method"] == "run_status"]
     assert status_events == []
@@ -221,7 +225,9 @@ async def test_stop_run_keeps_mcp_stack(monkeypatch):
     assert server.entered is True
     assert server.exited is False
     sess_after = service._session_manager.get_or_create(run_info["session_id"])
-    assert getattr(sess_after, "_mcp_exit_stack") is not None
+    # Check for new lifecycle attributes
+    assert getattr(sess_after, "_mcp_lifecycle_task") is not None
+    assert not getattr(sess_after, "_mcp_lifecycle_task").done()
     assert getattr(sess_after, "_mcp_servers_active") == [server]
     end_event = next(e for e in events if e["method"] == "run_end")
     payload = end_event["payload"]
@@ -249,7 +255,10 @@ async def test_build_agent_failure_closes_mcp_stack(monkeypatch):
     session = service._session_manager.get_or_create("session")
     with pytest.raises(RuntimeError):
         await service.start_run("prompt", session_id=session.id)
+    # Give the lifecycle task a moment to fully exit
+    await asyncio.sleep(0.05)
     assert server.entered is True
     assert server.exited is True
-    assert getattr(session, "_mcp_exit_stack") is None
+    # Check for new lifecycle attributes - should be cleaned up
+    assert getattr(session, "_mcp_lifecycle_task") is None
     assert getattr(session, "_mcp_servers_active") == []

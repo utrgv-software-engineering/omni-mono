@@ -1670,9 +1670,7 @@ def test_optimize_judge_happy_path(monkeypatch, tmp_path, configure_optimize_env
         env.engine_kwargs["stop_callback"](types.SimpleNamespace(total_num_evals=1))
 
 
-def test_optimize_agent_missing_measures(
-    monkeypatch, tmp_path, configure_optimize_env
-):
+def test_optimize_agent_missing_measures(monkeypatch, tmp_path, configure_optimize_env):
     project_dir = tmp_path / "proj"
     project_dir.mkdir()
 

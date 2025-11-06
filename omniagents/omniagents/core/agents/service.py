@@ -113,6 +113,105 @@ class AgentService(RpcMethodsBase):
                 value = getattr(field, "default", None)
             self._default_settings[key] = value
 
+    async def _ensure_session_mcp_servers(self, session: Session) -> list[Any]:
+        """Ensure MCP servers are initialized and running for this session.
+
+        Creates a dedicated asyncio task to manage the MCP lifecycle, ensuring
+        that AsyncExitStack.__aenter__ and __aexit__ are called from the same
+        task. This prevents AnyIO "cancel scope in different task" violations.
+
+        Servers are created once per session and reused across all runs until
+        the session is archived.
+
+        Args:
+            session: The session to initialize MCP servers for
+
+        Returns:
+            List of active MCP server instances
+        """
+        # Already initialized?
+        if hasattr(session, "_mcp_servers_active") and session._mcp_servers_active:
+            return session._mcp_servers_active
+
+        if not self.spec.mcp_servers:
+            return []
+
+        # Create Event to signal when servers are ready
+        servers_ready = asyncio.Event()
+        active_servers_holder = {"servers": []}
+
+        async def mcp_lifecycle_manager():
+            """Long-lived task that owns the MCP AsyncExitStack lifecycle.
+
+            This task:
+            1. Creates AsyncExitStack
+            2. Builds and enters all MCP servers
+            3. Signals that servers are ready
+            4. Stays alive until session shutdown
+            5. Cleans up all servers on exit
+
+            By keeping __aenter__ and __aexit__ in the same task, we avoid
+            AnyIO cross-task violations.
+            """
+            settings = dict(self._default_settings)
+
+            async with AsyncExitStack() as stack:
+                active_servers = []
+
+                try:
+                    # Build all MCP servers
+                    servers = build_mcp_servers(self.spec, settings)
+
+                    # Enter each server into the exit stack
+                    for server in servers:
+                        if hasattr(server, "__aenter__") and hasattr(
+                            server, "__aexit__"
+                        ):
+                            # Context manager style (stdio, sse, etc.)
+                            active = await stack.enter_async_context(server)
+                        else:
+                            # Manual connect/cleanup style
+                            await server.connect()
+                            stack.push_async_callback(server.cleanup)
+                            active = server
+                        active_servers.append(active)
+
+                    # Store active servers on session
+                    session._mcp_servers_active = active_servers
+                    active_servers_holder["servers"] = active_servers
+
+                    # Signal that servers are ready to use
+                    servers_ready.set()
+
+                    # Keep this task alive until shutdown signal
+                    shutdown_event = getattr(session, "_mcp_shutdown", None)
+                    if shutdown_event:
+                        await shutdown_event.wait()
+
+                except Exception as e:
+                    # If initialization fails, signal error state
+                    session._mcp_servers_active = []
+                    active_servers_holder["servers"] = []
+                    servers_ready.set()
+                    raise
+
+                finally:
+                    # AsyncExitStack cleanup happens here when context exits
+                    session._mcp_servers_active = []
+
+        # Create shutdown event for this session
+        session._mcp_shutdown = asyncio.Event()
+
+        # Start the lifecycle manager task
+        session._mcp_lifecycle_task = asyncio.create_task(
+            mcp_lifecycle_manager(), name=f"mcp_lifecycle_{session.id[:8]}"
+        )
+
+        # Wait for servers to be initialized
+        await servers_ready.wait()
+
+        return active_servers_holder["servers"]
+
     async def _build_agent_for_session(
         self, session: Session, approval_callback
     ) -> Any:
@@ -123,74 +222,8 @@ class AgentService(RpcMethodsBase):
 
         settings = dict(self._default_settings)
 
-        prev_stack = getattr(session, "_mcp_exit_stack", None)
-        prev_active = getattr(session, "_mcp_servers_active", None) or []
-
-        stack: AsyncExitStack | None = None
-        active_servers: list[Any] = []
-        stack_created = False
-
-        if self.spec.mcp_servers:
-            # Check if any MCP server uses stdio transport
-            # Stdio servers use AnyIO task groups that cannot be safely reused across asyncio tasks
-            has_stdio = any(
-                hasattr(cfg, "type")
-                and str(getattr(cfg, "type", "")).lower() == "stdio"
-                for cfg in self.spec.mcp_servers
-            )
-
-            # Only reuse connections if no stdio servers are present
-            if prev_stack and prev_active and not has_stdio:
-                stack = prev_stack
-                active_servers = prev_active
-            else:
-                # Close existing stack if present (either first run or has stdio servers)
-                if prev_stack:
-                    try:
-                        await prev_stack.aclose()
-                    except Exception:
-                        pass
-                stack = AsyncExitStack()
-                stack_created = True
-                try:
-                    servers = build_mcp_servers(self.spec, settings)
-                    for server in servers:
-                        if hasattr(server, "__aenter__") and hasattr(
-                            server, "__aexit__"
-                        ):
-                            active_servers.append(
-                                await stack.enter_async_context(server)
-                            )
-                        else:
-                            await server.connect()
-                            stack.push_async_callback(server.cleanup)
-                            active_servers.append(server)
-                except Exception:
-                    if stack:
-                        try:
-                            await stack.aclose()
-                        except Exception:
-                            pass
-                    setattr(session, "_mcp_exit_stack", None)
-                    setattr(session, "_mcp_servers_active", [])
-                    raise
-                setattr(session, "_mcp_exit_stack", stack)
-                setattr(session, "_mcp_servers_active", active_servers)
-        else:
-            if prev_stack:
-                try:
-                    await prev_stack.aclose()
-                except Exception:
-                    pass
-            stack = None
-            active_servers = []
-            setattr(session, "_mcp_exit_stack", None)
-            setattr(session, "_mcp_servers_active", [])
-
-        reused_servers = bool(stack and not stack_created)
-        if reused_servers:
-            setattr(session, "_mcp_exit_stack", stack)
-            setattr(session, "_mcp_servers_active", active_servers)
+        # Use session-scoped MCP servers (managed by dedicated task)
+        active_servers = await self._ensure_session_mcp_servers(session)
 
         setattr(stub_app, "mcp_servers", active_servers)
 
@@ -232,31 +265,41 @@ class AgentService(RpcMethodsBase):
                     self.spec,
                     approval_callback,
                 )
-        except Exception:
-            if stack_created and stack:
+
+            agent = self._clone_agent(agent)
+
+            if (
+                approval_callback
+                and hasattr(agent, "set_approval_callback")
+                and callable(getattr(agent, "set_approval_callback"))
+            ):
                 try:
-                    await stack.aclose()
+                    agent.set_approval_callback(approval_callback)
                 except Exception:
                     pass
-            if stack_created:
-                setattr(session, "_mcp_exit_stack", None)
-                setattr(session, "_mcp_servers_active", [])
+
+            self._apply_session_tool_policy(session, agent)
+            return agent
+        except Exception:
+            # If agent building fails, cleanup MCP lifecycle if it was just created
+            lifecycle_task = getattr(session, "_mcp_lifecycle_task", None)
+            if lifecycle_task and not lifecycle_task.done():
+                # Cancel the lifecycle task
+                shutdown_event = getattr(session, "_mcp_shutdown", None)
+                if shutdown_event:
+                    shutdown_event.set()
+                lifecycle_task.cancel()
+                try:
+                    await lifecycle_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    pass
+            # Clean up session attributes
+            setattr(session, "_mcp_shutdown", None)
+            setattr(session, "_mcp_lifecycle_task", None)
+            setattr(session, "_mcp_servers_active", [])
             raise
-
-        agent = self._clone_agent(agent)
-
-        if (
-            approval_callback
-            and hasattr(agent, "set_approval_callback")
-            and callable(getattr(agent, "set_approval_callback"))
-        ):
-            try:
-                agent.set_approval_callback(approval_callback)
-            except Exception:
-                pass
-
-        self._apply_session_tool_policy(session, agent)
-        return agent
 
     def _clone_agent(self, agent: Any) -> Any:
         static_mcp_servers = None
@@ -1087,14 +1130,33 @@ class AgentService(RpcMethodsBase):
         if ok:
             sess = getattr(self._session_manager, "_by_id", {}).get(session_id)
             if sess is not None:
-                stack = getattr(sess, "_mcp_exit_stack", None)
-                if stack:
+                # Signal MCP lifecycle task to shutdown
+                shutdown_event = getattr(sess, "_mcp_shutdown", None)
+                if shutdown_event:
+                    shutdown_event.set()
+
+                # Wait for lifecycle task to complete cleanup
+                lifecycle_task = getattr(sess, "_mcp_lifecycle_task", None)
+                if lifecycle_task and not lifecycle_task.done():
                     try:
-                        await stack.aclose()
+                        # Give it a reasonable timeout to cleanup gracefully
+                        await asyncio.wait_for(lifecycle_task, timeout=5.0)
+                    except asyncio.TimeoutError:
+                        # If cleanup takes too long, cancel the task
+                        lifecycle_task.cancel()
+                        try:
+                            await lifecycle_task
+                        except asyncio.CancelledError:
+                            pass
                     except Exception:
+                        # Log but don't fail the archive operation
                         pass
-                setattr(sess, "_mcp_exit_stack", None)
+
+                # Clean up session attributes
+                setattr(sess, "_mcp_shutdown", None)
+                setattr(sess, "_mcp_lifecycle_task", None)
                 setattr(sess, "_mcp_servers_active", [])
+
         manager = getattr(self, "terminal_manager", None)
         if manager is not None:
             await manager.cleanup_session(session_id)
