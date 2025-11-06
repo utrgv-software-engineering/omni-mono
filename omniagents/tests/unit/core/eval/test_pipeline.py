@@ -522,3 +522,43 @@ def test_run_evaluation_with_agentio_tracing(monkeypatch, tmp_path):
     assert init_calls[0]["settings"] == {"region": "us"}
     assert async_calls and async_calls[0]["workflow_name"] == workflow_name
     assert async_calls[0]["include_unmeasured"] is True
+
+
+def test_catalog_with_labels_derives_missing_entries():
+    dimensions = [
+        {
+            "name": "tone_of_voice",
+            "values": [
+                {"name": "formal_tone"},
+                {"name": "casual", "label": "Preferred Casual"},
+            ],
+        },
+        {
+            "name": "non_existent",
+            "values": [{"name": "non_existent"}],
+        },
+    ]
+
+    result = pipeline._catalog_with_labels(dimensions)
+
+    assert result[0]["label"] == "Tone of voice"
+    value_labels = [value["label"] for value in result[0]["values"]]
+    assert value_labels == ["Formal tone", "Preferred Casual"]
+    assert result[1]["label"] == "Non-existent"
+    assert result[1]["values"][0]["label"] == "Non-existent"
+
+
+def test_derive_judge_keys_from_measures_handles_mixed_values():
+    measures = [
+        "quality_agent",
+        "custom_agent",
+        "custom_agent",
+        "speed_agent",
+        "speed_agent_extra",
+        None,
+        {"name": "ignored"},
+    ]
+
+    result = pipeline._derive_judge_keys_from_measures(measures)
+
+    assert result == ["quality", "custom", "speed"]
