@@ -22,6 +22,15 @@ class TransportClosedError(TransportError):
     pass
 
 
+class TransportDecodeError(TransportError):
+    """Raised when transport payload decoding fails."""
+
+    def __init__(self, raw: Any, original: Exception):
+        super().__init__(f"Invalid JSON received: {original}")
+        self.raw = raw
+        self.original = original
+
+
 @runtime_checkable
 class Transport(Protocol):
     """

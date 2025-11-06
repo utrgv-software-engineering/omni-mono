@@ -64,6 +64,7 @@ def build_app(
     # Create AgentService instance and register RPC endpoint
     # ------------------------------------------------------------------
     service = AgentService(spec)
+    app.state.agent_service = service
     # Allow examples to register custom server functions without changing core
     try:
         registrar = getattr(spec, "register_server_functions", None)
