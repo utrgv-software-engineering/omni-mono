@@ -5,7 +5,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { TokyoNightTheme } from '../theme.js';
-import type { UsageInfo } from '../hooks/useMessages.js';
+import type { UsageInfo } from '../store/appStore.js';
 
 export interface HelpProps {
   isThinking?: boolean;

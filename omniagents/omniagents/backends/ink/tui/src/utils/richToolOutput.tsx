@@ -5,7 +5,6 @@
 
 import React from 'react';
 import { Box, Text } from 'ink';
-import chalk from 'chalk';
 import type { RichMetadata } from '../types/richMetadata.js';
 import { TokyoNightTheme } from '../theme.js';
 
