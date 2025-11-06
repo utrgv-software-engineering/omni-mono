@@ -153,6 +153,9 @@ async def stream_agent(
     pending_tool_calls = {}
     # Track tool call statuses we set so we can clear them on completion
     _status_calls: dict[str, str] = {}
+    # Track reasoning items that need to be paired with their following message
+    # Reasoning items MUST be followed by a message item per OpenAI API requirements
+    pending_reasoning_item: dict | None = None
 
     # Track usage across turns
     last_usage_totals = {
@@ -364,11 +367,55 @@ async def stream_agent(
                     session.pending_events.append((method, payload))
 
             # Persist item into session history when it reaches a finalised form
+            # CRITICAL: Reasoning items MUST be paired with their following message
+            # per OpenAI API requirements. If we persist a reasoning item without
+            # its message, subsequent API calls will fail with:
+            # "Item 'msg_X' was provided without its required 'reasoning' item: 'rs_Y'"
             if hasattr(item, "to_input_item"):
                 try:
                     inp = item.to_input_item()
                     if inp:
-                        session.append_message(inp)
+                        # Handle reasoning items - hold them until we see their message or tool call
+                        if isinstance(inp, dict) and inp.get("type") == "reasoning":
+                            pending_reasoning_item = inp
+                            # Don't persist yet - wait for the paired item (message or tool call)
+                            if Debug.enabled():
+                                print(
+                                    f"[srv]   ⏸ Holding reasoning item {inp.get('id', '?')[:12]} until message/tool call arrives"
+                                )
+                        # Handle items that can follow reasoning: messages or tool calls
+                        # Tool calls are OUTPUT items from the model (not input items like outputs/responses)
+                        # They include: function_call, computer_call, file_search_call, code_interpreter_call, etc.
+                        # But NOT: function_call_output, computer_call_output (these are tool results, not calls)
+                        elif isinstance(inp, dict) and (
+                            inp.get("type") == "message"
+                            or (
+                                isinstance(inp.get("type"), str)
+                                and inp.get("type", "").endswith("_call")
+                                and not inp.get("type", "").endswith("_call_output")
+                            )
+                        ):
+                            if pending_reasoning_item:
+                                # Persist reasoning item first (atomically with message/tool call)
+                                session.append_message(pending_reasoning_item)
+                                if Debug.enabled():
+                                    print(
+                                        f"[srv]   ✓ Persisted reasoning {pending_reasoning_item.get('id', '?')[:12]} with {inp.get('type', '?')} {inp.get('id', '?')[:12]}"
+                                    )
+                                pending_reasoning_item = None
+                            # Then persist the message or tool call
+                            session.append_message(inp)
+                        # All other items (outputs, etc.) - persist normally and clear pending reasoning
+                        else:
+                            session.append_message(inp)
+                            # If we had a pending reasoning item and see an output/other item,
+                            # the pairing is broken - discard the orphaned reasoning
+                            if pending_reasoning_item:
+                                if Debug.enabled():
+                                    print(
+                                        f"[srv]   ⚠ Discarded orphaned reasoning {pending_reasoning_item.get('id', '?')[:12]} (followed by {inp.get('type', '?')})"
+                                    )
+                                pending_reasoning_item = None
                 except Exception:
                     # Ignore malformed items but keep streaming.
                     pass
@@ -426,6 +473,16 @@ async def stream_agent(
                     print(
                         f"[srv]   → tool_result (cancelled) call_id={call_id} tool={tool_name}"
                     )
+
+        # Handle any pending reasoning item that never got its paired message
+        # This can happen if the run was interrupted/cancelled after a reasoning
+        # item but before the message arrived
+        if pending_reasoning_item:
+            if Debug.enabled():
+                print(
+                    f"[srv] ⚠ Run ended with orphaned reasoning {pending_reasoning_item.get('id', '?')[:12]} - discarded"
+                )
+            # Don't persist orphaned reasoning items - they would cause API errors
 
         if Debug.enabled():
             print(
