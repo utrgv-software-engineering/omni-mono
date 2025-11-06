@@ -54,6 +54,7 @@ branch = true
 source = ["omniagents"]
 omit = [
     "omniagents/backends/bubbletea/cmd/omni-tui/*",
+    "omniagents/backends/ink/tui/*",
 ]
 
 [tool.coverage.report]
@@ -89,6 +90,8 @@ cli = "omniagents.backends.cli:CLIBackend"
 flet = "omniagents.backends.flet:FletBackend"
 gui = "omniagents.backends.flet:FletBackend"
 server = "omniagents.backends.server:ServerBackend"
+ink = "omniagents.backends.ink:InkBackend"
+tui = "omniagents.backends.bubbletea:BubbleTeaBackend"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
@@ -122,6 +125,14 @@ include-package-data = true
     "cmd/omni-tui/themes/*",
     "vendor/*",
     "vendor/*/*",
+]
+# Ensure the Ink TUI TypeScript sources are included in wheels/sdists
+"omniagents.backends.ink" = [
+    "tui/package.json",
+    "tui/tsconfig.json",
+    "tui/src/**/*.ts",
+    "tui/src/**/*.tsx",
+    "dist/*",
 ]
 "omniagents.studio.tracing" = [
     "static/*",

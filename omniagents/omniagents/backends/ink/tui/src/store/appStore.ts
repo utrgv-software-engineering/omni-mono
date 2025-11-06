@@ -1,0 +1,195 @@
+/**
+ * Atomic state management with Zustand + Immer
+ * Single source of truth to prevent render cascades
+ */
+
+import { create } from 'zustand';
+import { immer } from 'zustand/middleware/immer';
+
+export interface ToolCallInfo {
+  tool: string;
+  input: string;
+  call_id: string;
+  output?: string;
+  metadata?: Record<string, unknown>;
+  running: boolean;
+}
+
+export interface ApprovalInfo {
+  approval_id: string;
+  request_id: string;
+  tool: string;
+  arguments: string;
+  metadata?: Record<string, unknown>;
+  session_id?: string;
+  run_id?: string;
+}
+
+export interface Message {
+  role: 'user' | 'assistant' | 'system' | 'tool_call' | 'approval_request';
+  content: string;
+  timestamp?: Date;
+  toolCall?: ToolCallInfo;
+  approval?: ApprovalInfo;
+}
+
+export interface UsageInfo {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  model?: string;
+  contextWindow?: number;
+}
+
+interface AppState {
+  // Data
+  messages: Message[];
+  usage: UsageInfo | null;
+  sessionId: string | undefined;
+
+  // UI State
+  thinking: boolean;
+  status: string | null;
+  approval: ApprovalInfo | null;
+  currentRunId: string | null;
+
+  // Actions (ONLY way to update state)
+  actions: {
+    addMessage: (msg: Message) => void;
+    setMessages: (msgs: Message[]) => void;
+    updateToolResult: (callId: string, output: string, metadata?: Record<string, unknown>) => void;
+    setThinking: (thinking: boolean, status?: string | null) => void;
+    setApproval: (approval: ApprovalInfo | null) => void;
+    setUsage: (usage: UsageInfo) => void;
+    setSessionId: (sessionId: string | undefined) => void;
+    setCurrentRunId: (runId: string | null) => void;
+    cancelRun: (runId: string) => void;
+    removeApprovalMessage: () => void;
+    clearMessages: () => void;
+  };
+}
+
+export const useAppStore = create<AppState>()(
+  immer((set, get) => ({
+    // Initial state
+    messages: [],
+    usage: null,
+    sessionId: undefined,
+    thinking: false,
+    status: null,
+    approval: null,
+    currentRunId: null,
+
+    actions: {
+      addMessage: (msg) => set((state) => {
+        state.messages.push(msg);
+
+        // Update related state atomically
+        if (msg.role === 'user') {
+          state.thinking = true;
+          state.status = null;
+        }
+      }),
+
+      setMessages: (msgs) => set((state) => {
+        state.messages = msgs;
+      }),
+
+      updateToolResult: (callId, output, metadata) => set((state) => {
+        // Immer makes this mutation safe and efficient
+        const msg = state.messages.find(m => m.toolCall?.call_id === callId);
+        if (msg?.toolCall) {
+          msg.toolCall.output = output;
+          msg.toolCall.metadata = metadata;
+          msg.toolCall.running = false;
+        }
+      }),
+
+      setThinking: (thinking, status) => set((state) => {
+        // Only update if actually changing to prevent unnecessary renders
+        const currentThinking = state.thinking;
+        const currentStatus = state.status;
+
+        if (currentThinking !== thinking) {
+          state.thinking = thinking;
+        }
+
+        if (status !== undefined && currentStatus !== status) {
+          state.status = status;
+        }
+      }),
+
+      setApproval: (approval) => set((state) => {
+        state.approval = approval;
+        // When approval appears, pause thinking indicator to prevent flicker
+        if (approval) {
+          state.thinking = false;
+          state.status = null;
+        }
+      }),
+
+      setUsage: (usage) => set((state) => {
+        // Only update if values actually changed
+        const current = state.usage;
+        if (!current ||
+            current.totalTokens !== usage.totalTokens ||
+            current.model !== usage.model ||
+            current.contextWindow !== usage.contextWindow) {
+          state.usage = usage;
+        }
+      }),
+
+      setSessionId: (sessionId) => set((state) => {
+        state.sessionId = sessionId;
+      }),
+
+      setCurrentRunId: (runId) => set((state) => {
+        if (state.currentRunId !== runId) {
+          state.currentRunId = runId;
+        }
+      }),
+
+      cancelRun: (runId) => set((state) => {
+        // Mark running tools as cancelled
+        state.messages.forEach(msg => {
+          if (msg.toolCall?.running) {
+            msg.toolCall.output = '[Cancelled]';
+            msg.toolCall.running = false;
+          }
+        });
+
+        state.thinking = false;
+        state.status = null;
+        state.currentRunId = null;
+
+        // Add cancellation message
+        state.messages.push({
+          role: 'assistant',
+          content: '[Run cancelled by user]',
+          timestamp: new Date(),
+        });
+      }),
+
+      removeApprovalMessage: () => set((state) => {
+        state.messages = state.messages.filter(msg => msg.role !== 'approval_request');
+      }),
+
+      clearMessages: () => set((state) => {
+        state.messages = [];
+        state.thinking = false;
+        state.status = null;
+        state.approval = null;
+      }),
+    },
+  }))
+);
+
+// Selectors to prevent unnecessary re-renders
+export const useMessages = () => useAppStore(s => s.messages);
+export const useThinking = () => useAppStore(s => s.thinking);
+export const useStatus = () => useAppStore(s => s.status);
+export const useApproval = () => useAppStore(s => s.approval);
+export const useUsage = () => useAppStore(s => s.usage);
+export const useSessionId = () => useAppStore(s => s.sessionId);
+export const useCurrentRunId = () => useAppStore(s => s.currentRunId);
+export const useActions = () => useAppStore(s => s.actions);
