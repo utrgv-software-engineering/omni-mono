@@ -264,3 +264,47 @@ def test_build_generator_agent_uses_default_instructions(monkeypatch, tmp_path):
     default_text = captured_specs[0].get_agent_instructions()
     assert "You generate realistic user prompts" in default_text
     assert agent is not None
+
+
+def test_enumerate_combos_applies_filters_and_preserves_dimension_names():
+    dims = [
+        {
+            "name": "Persona",
+            "values": [{"name": "Expert"}, {"name": "Novice"}],
+        },
+        {
+            "name": "Topic",
+            "values": [{"name": "Quality"}, {"name": "Security"}],
+        },
+    ]
+    combos = scenarios._enumerate_combos(
+        dims,
+        {
+            "Persona": ["Expert"],
+            "Topic": ["Security"],
+        },
+    )
+    assert combos == [{"Persona": "Expert", "Topic": "Security"}]
+
+
+def test_enumerate_combos_returns_empty_when_filters_remove_all_options():
+    dims = [
+        {
+            "name": "Persona",
+            "values": [{"name": "Expert"}],
+        }
+    ]
+    combos = scenarios._enumerate_combos(dims, {"Persona": ["Generalist"]})
+    assert combos == []
+
+
+def test_compute_scenario_id_is_deterministic_and_sensitive_to_dimensions():
+    prompt = "Evaluate response"
+    mapping_one = {"topic": "security", "difficulty": "hard"}
+    mapping_two = {"difficulty": "hard", "topic": "security"}
+    mapping_three = {"topic": "quality", "difficulty": "hard"}
+    first = scenarios._compute_scenario_id(prompt, mapping_one)
+    second = scenarios._compute_scenario_id(prompt, mapping_two)
+    third = scenarios._compute_scenario_id(prompt, mapping_three)
+    assert first == second
+    assert third != first

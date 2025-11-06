@@ -609,6 +609,21 @@ async def run_scenarios_against_agent(
         except Exception:
             pass
     tracing_initialized = False
+    failed_count = 0
+
+    def _normalize_error(err: Any) -> Dict[str, Any]:
+        if isinstance(err, dict):
+            return err
+        message = "" if err is None else str(err)
+        if isinstance(err, BaseException):
+            return {
+                "message": message,
+                "type": err.__class__.__name__,
+            }
+        if message:
+            return {"message": message}
+        return {"message": "unknown_error"}
+
     for idx, sc in enumerate(scenarios):
         scenario_path_value: Optional[str] = None
         try:
@@ -637,93 +652,145 @@ async def run_scenarios_against_agent(
                 spec.max_turns = int(defaults.get("max_turns", spec.max_turns))
         except Exception:
             pass
-        agent = await create_unified_agent(spec)
         prompt = sc.get("prompt", "")
         msgs = [{"role": "user", "content": prompt}]
-        if workflow_name:
+        agent = None
+        error_info: Dict[str, Any] | None = None
+        agent_error_payload: Dict[str, Any] | None = None
+
+        try:
+            agent = await create_unified_agent(spec)
+        except Exception as exc:
+            error_info = _normalize_error(exc)
+
+        if agent is not None and error_info is None:
             try:
-                from agentio import trace as agentio_trace
+                if workflow_name:
+                    try:
+                        from agentio import trace as agentio_trace
 
-                try:
-                    import omniagents as _oa
+                        try:
+                            import omniagents as _oa
 
-                    _oa_version = getattr(_oa, "__version__", None)
-                except Exception:
-                    _oa_version = None
-                import uuid as _uuid
+                            _oa_version = getattr(_oa, "__version__", None)
+                        except Exception:
+                            _oa_version = None
+                        import uuid as _uuid
 
-                try:
-                    _sid = sc.get("id") or sc.get("name") or "scenario"
-                    run_uid = f"{_sid}-{_uuid.uuid4().hex[:8]}"
-                except Exception:
-                    run_uid = _uuid.uuid4().hex[:8]
-                scenario_meta = {"id": sc.get("id"), "name": sc.get("name")}
-                if scenario_path_value:
-                    scenario_meta["path"] = scenario_path_value
-                meta = {
-                    "omniagents": {
-                        "run_type": "synthetic_generation",
-                        "scenario": scenario_meta,
-                        "run": {"id": run_uid},
-                        "synthetic": {
-                            "catalog_id": catalog_id,
-                            "catalog": {"dimensions": dims_catalog},
-                            "selection": {"mapping": sc.get("dimensions", {})},
-                        },
-                        "config": {"agent_yaml": str(agent_yaml)},
-                        **({"omniagents_version": _oa_version} if _oa_version else {}),
-                    }
-                }
-                gid = run_uid
-                with agentio_trace(workflow_name, group_id=gid, metadata=meta):
+                        try:
+                            _sid = sc.get("id") or sc.get("name") or "scenario"
+                            run_uid = f"{_sid}-{_uuid.uuid4().hex[:8]}"
+                        except Exception:
+                            run_uid = _uuid.uuid4().hex[:8]
+                        scenario_meta = {
+                            "id": sc.get("id"),
+                            "name": sc.get("name"),
+                        }
+                        if scenario_path_value:
+                            scenario_meta["path"] = scenario_path_value
+                        meta = {
+                            "omniagents": {
+                                "run_type": "synthetic_generation",
+                                "scenario": scenario_meta,
+                                "run": {"id": run_uid},
+                                "synthetic": {
+                                    "catalog_id": catalog_id,
+                                    "catalog": {"dimensions": dims_catalog},
+                                    "selection": {"mapping": sc.get("dimensions", {})},
+                                },
+                                "config": {"agent_yaml": str(agent_yaml)},
+                                **(
+                                    {"omniagents_version": _oa_version}
+                                    if _oa_version
+                                    else {}
+                                ),
+                            }
+                        }
+                        gid = run_uid
+                        with agentio_trace(workflow_name, group_id=gid, metadata=meta):
+                            run = agent.run_streamed(msgs)
+                            async for _ in run.stream_events():
+                                pass
+                    except Exception:
+                        run = agent.run_streamed(msgs)
+                        async for _ in run.stream_events():
+                            pass
+                else:
                     run = agent.run_streamed(msgs)
                     async for _ in run.stream_events():
                         pass
-            except Exception:
-                run = agent.run_streamed(msgs)
-                async for _ in run.stream_events():
-                    pass
-        else:
-            run = agent.run_streamed(msgs)
-            async for _ in run.stream_events():
-                pass
-        session_id = getattr(agent, "_session_id", None)
-        history = (
-            load_history(
+            except Exception as exc:
+                error_info = _normalize_error(exc)
+
+        session_id = getattr(agent, "_session_id", None) if agent else None
+
+        if agent is not None:
+            get_last_run_end = getattr(agent, "get_last_run_end", None)
+            if callable(get_last_run_end):
+                try:
+                    candidate = get_last_run_end()
+                except Exception:
+                    candidate = None
+                if isinstance(candidate, dict) and candidate.get("error"):
+                    agent_error_payload = candidate
+                    if error_info is None:
+                        error_info = _normalize_error(candidate.get("error"))
+
+        history: List[Dict[str, Any]] = []
+        final_text = ""
+        if error_info is None and session_id:
+            history = load_history(
                 session_id,
                 project_slug=spec.project_slug,
                 agent_slug=spec.agent_slug,
             )
-            if session_id
-            else []
-        )
+            try:
+                final_text = final_assistant_text(history)
+            except Exception:
+                final_text = ""
+        else:
+            if error_info is None and agent is None:
+                error_info = _normalize_error("failed_to_create_agent")
+        if error_info is not None:
+            failed_count += 1
+            history = []
+            final_text = ""
+
         payload = {
             "scenario_id": sc.get("id"),
             "scenario_name": sc.get("name"),
             "prompt": prompt,
             "session_id": session_id,
-            "final_assistant_text": final_assistant_text(history),
+            "final_assistant_text": final_text,
             "history_len": len(history),
             **({"history": history} if include_history else {}),
         }
         if scenario_path_value:
             payload["scenario_path"] = scenario_path_value
+        if error_info is not None:
+            payload["error"] = error_info
+        if agent_error_payload is not None:
+            payload["agent_error"] = agent_error_payload
         results.append(payload)
         if progress_cb:
             try:
-                progress_cb(
-                    {
-                        "event": "progress",
-                        "current": idx + 1,
-                        "total": total,
-                        "scenario_id": sc.get("id"),
-                    }
-                )
+                ev = {
+                    "event": "progress",
+                    "current": idx + 1,
+                    "total": total,
+                    "scenario_id": sc.get("id"),
+                }
+                if failed_count:
+                    ev["failed"] = failed_count
+                progress_cb(ev)
             except Exception:
                 pass
     if progress_cb:
         try:
-            progress_cb({"event": "done", "count": len(results)})
+            done_payload = {"event": "done", "count": len(results)}
+            if failed_count:
+                done_payload["failed"] = failed_count
+            progress_cb(done_payload)
         except Exception:
             pass
     return results
