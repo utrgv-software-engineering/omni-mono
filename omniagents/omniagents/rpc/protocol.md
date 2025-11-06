@@ -282,6 +282,39 @@ The server sends notifications during agent runs:
     }
   }
 }
+```
+
+**end_reason values:**
+- `"completed"` - Run finished successfully
+- `"cancelled"` - Run was cancelled by user
+- `"max_turns"` - Agent reached maximum turn limit (not an error)
+- `"guardrail_violation"` - A guardrail tripwire was triggered
+- `"error"` - Run failed with an error (see error field below)
+
+**error field (optional, present when end_reason is "error" or "guardrail_violation"):**
+```json
+{
+  "error": {
+    "message": "Model called tool that doesn't exist",
+    "type": "ModelBehaviorError",
+    "run_data": {
+      "turn_count": 3,
+      "agent_name": "assistant"
+    }
+  }
+}
+```
+
+**error object fields:**
+- `message` (string): Human-readable error message
+- `type` (string): Exception class name (e.g., "ModelBehaviorError", "UserError", "InputGuardrailTripwireTriggered")
+- `run_data` (object, optional): Context about the run when the error occurred
+  - `turn_count` (number): Number of turns completed before the error
+  - `agent_name` (string): Name of the agent that was executing
+- `guardrail` (object, optional): Present for guardrail violations
+  - `name` (string): Name of the guardrail that triggered
+  - `result` (string, optional): Details about what violated the guardrail
+  - `behavior` (object, optional): Guardrail behavior configuration
 
 ### run_status (optional)
 Servers may emit transient status updates during a run, for example when automatically retrying after a temporary failure (timeouts, rate limiting, service unavailable). This allows clients to present friendly, non-blocking status lines like "Error: Request timed out. (Retrying 1/3)" while the run remains active.
@@ -546,8 +579,16 @@ Standard JSON-RPC 2.0 error responses:
 
 Error classes and where they appear:
 
-- Class A (pre-run errors): Errors that occur before a run can start (e.g., bad credentials, invalid spec). These are returned as JSON-RPC errors on the `start_run` call and there will be no `run_end` event for that attempt. Clients should surface the error and keep the UI interactive.
-- Class B (in-run errors): Errors that occur during execution (timeouts, rate limits, network flakiness). The server MAY internally retry and will emit `run_status` notifications while doing so. If the run ultimately fails, the server emits `run_end` with `end_reason: "error"` and an `error` object `{ "message", "type" }`. Clients should filter by `run_id` and show a non-blocking status.
+- **Class A (pre-run errors)**: Errors that occur before a run can start (e.g., bad credentials, invalid spec). These are returned as JSON-RPC errors on the `start_run` call and there will be no `run_end` event for that attempt. Clients should surface the error and keep the UI interactive.
+
+- **Class B (transient errors)**: Temporary failures (timeouts, rate limits, network issues). The server MAY internally retry and will emit `run_status` notifications while doing so. If the run ultimately fails after exhausting retries, the server emits `run_end` with `end_reason: "error"` and an `error` object.
+
+- **Class C (agent errors)**: Permanent failures from the agents SDK (model behavior errors, SDK usage errors, guardrail violations). These are NOT retried. The server emits `run_end` with:
+  - `end_reason: "error"` for `ModelBehaviorError`, `UserError`, or other `AgentsException` types
+  - `end_reason: "guardrail_violation"` for guardrail tripwire exceptions
+  - `end_reason: "max_turns"` when the agent reaches its turn limit (not an error condition)
+
+  The `error` object includes the exception type, message, and additional context like `run_data` (turn count, agent name) and `guardrail` details (for guardrail violations).
 
 Run lifecycle notifications:
 

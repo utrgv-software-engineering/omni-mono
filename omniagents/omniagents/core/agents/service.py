@@ -14,6 +14,26 @@ from types import SimpleNamespace
 from typing import Optional, Dict, Any
 import inspect
 
+from agents import (
+    AgentsException,
+    MaxTurnsExceeded,
+    ModelBehaviorError,
+    UserError,
+    InputGuardrailTripwireTriggered,
+    OutputGuardrailTripwireTriggered,
+    ToolInputGuardrailTripwireTriggered,
+    ToolOutputGuardrailTripwireTriggered,
+)
+
+try:
+    from openai import APIError, RateLimitError, APIConnectionError, APITimeoutError
+except ImportError:
+    # Fallback if openai library structure changes
+    APIError = None
+    RateLimitError = None
+    APIConnectionError = None
+    APITimeoutError = None
+
 from omniagents.rpc import RpcMethodsBase
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.agents.safe import SafeAgent
@@ -54,6 +74,91 @@ def _safe_slug(value: str | None, fallback: str) -> str:
             out.append("_")
     slug = "".join(out).strip("_")
     return slug or fallback
+
+
+def _build_agent_error_info(exc: AgentsException) -> dict:
+    """Build error information from an AgentsException with run_data preservation."""
+    error_info = {
+        "message": str(exc),
+        "type": exc.__class__.__name__,
+    }
+
+    # Preserve run_data if available
+    if hasattr(exc, "run_data") and exc.run_data is not None:
+        run_data = exc.run_data
+        error_info["run_data"] = {
+            "turn_count": (
+                len(run_data.new_items) if hasattr(run_data, "new_items") else 0
+            ),
+            "agent_name": (
+                run_data.last_agent.name
+                if hasattr(run_data, "last_agent") and run_data.last_agent
+                else None
+            ),
+        }
+
+    return error_info
+
+
+def _build_guardrail_error_info(
+    exc: (
+        InputGuardrailTripwireTriggered
+        | OutputGuardrailTripwireTriggered
+        | ToolInputGuardrailTripwireTriggered
+        | ToolOutputGuardrailTripwireTriggered
+    ),
+) -> dict:
+    """Build error information from a guardrail exception with guardrail details."""
+    error_info = {
+        "message": str(exc),
+        "type": exc.__class__.__name__,
+    }
+
+    # Add guardrail-specific information
+    if isinstance(
+        exc, (InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered)
+    ):
+        if hasattr(exc, "guardrail_result"):
+            result = exc.guardrail_result
+            error_info["guardrail"] = {
+                "name": (
+                    result.guardrail.get_name()
+                    if hasattr(result.guardrail, "get_name")
+                    else result.guardrail.__class__.__name__
+                ),
+                "result": str(result.result) if hasattr(result, "result") else None,
+            }
+    elif isinstance(
+        exc, (ToolInputGuardrailTripwireTriggered, ToolOutputGuardrailTripwireTriggered)
+    ):
+        if hasattr(exc, "guardrail"):
+            error_info["guardrail"] = {
+                "name": exc.guardrail.__class__.__name__,
+            }
+        if hasattr(exc, "output"):
+            output = exc.output
+            if hasattr(output, "behavior"):
+                error_info["guardrail"]["behavior"] = output.behavior
+
+    # Also include run_data if this is an AgentsException
+    if (
+        isinstance(exc, AgentsException)
+        and hasattr(exc, "run_data")
+        and exc.run_data is not None
+    ):
+        run_data = exc.run_data
+        error_info["run_data"] = {
+            "turn_count": (
+                len(run_data.new_items) if hasattr(run_data, "new_items") else 0
+            ),
+            "agent_name": (
+                run_data.last_agent.name
+                if hasattr(run_data, "last_agent") and run_data.last_agent
+                else None
+            ),
+        }
+
+    return error_info
 
 
 class AgentService(RpcMethodsBase):
@@ -919,27 +1024,55 @@ class AgentService(RpcMethodsBase):
             base_delay = float(os.getenv("OMNIAGENTS_RETRY_BASE", "1.5"))
 
             def _is_retryable(ex: Exception) -> bool:
+                """Check if an exception is transient and worth retrying.
+
+                Uses exception types first (reliable), falls back to string matching
+                for unknown errors.
+                """
+                # Never retry AgentsException types - these are permanent failures
+                if isinstance(ex, AgentsException):
+                    return False
+
+                # Check OpenAI SDK exception types (most reliable)
+                if RateLimitError is not None and isinstance(ex, RateLimitError):
+                    return True
+                if APIConnectionError is not None and isinstance(
+                    ex, APIConnectionError
+                ):
+                    return True
+                if APITimeoutError is not None and isinstance(ex, APITimeoutError):
+                    return True
+                if APIError is not None and isinstance(ex, APIError):
+                    # Check HTTP status code if available
+                    if hasattr(ex, "status_code") and ex.status_code in (
+                        429,
+                        502,
+                        503,
+                        504,
+                    ):
+                        return True
+
+                # Check standard Python timeout/connection errors
+                if isinstance(
+                    ex, (asyncio.TimeoutError, TimeoutError, ConnectionError)
+                ):
+                    return True
+
+                # Fall back to string matching for unknown transient errors
+                # (kept minimal to avoid false positives)
                 msg = str(ex).lower()
                 retry_keywords = (
-                    "timeout",
-                    "timed out",
-                    "time out",
                     "rate limit",
                     "429",
                     "503",
                     "502",
+                    "504",
                     "service unavailable",
                     "overloaded",
-                    "temporarily",
                     "connection reset",
                     "connection refused",
-                    "read error",
-                    "broken pipe",
-                    "network",
-                    "dns",
-                    "name resolution",
-                    "ssl",
-                    "tls",
+                    "timed out",  # "timed out" is more specific than "timeout"
+                    "timeout while",  # "timeout while X" is a common error pattern
                 )
                 return any(k in msg for k in retry_keywords)
 
@@ -970,12 +1103,49 @@ class AgentService(RpcMethodsBase):
                     except asyncio.CancelledError:
                         end_reason = "cancelled"
                         raise
+                    except MaxTurnsExceeded as e:
+                        # MaxTurnsExceeded is a normal completion condition, not an error
+                        end_reason = "max_turns"
+                        error_info = None
+                        if Debug.enabled():
+                            print(f"[srv] Agent reached max turns: {e}")
+                        break
+                    except (
+                        InputGuardrailTripwireTriggered,
+                        OutputGuardrailTripwireTriggered,
+                        ToolInputGuardrailTripwireTriggered,
+                        ToolOutputGuardrailTripwireTriggered,
+                    ) as e:
+                        # Guardrail violations - include detailed guardrail information
+                        end_reason = "guardrail_violation"
+                        error_info = _build_guardrail_error_info(e)
+                        if Debug.enabled():
+                            print(f"[srv] Guardrail triggered: {e}")
+                        break
+                    except (ModelBehaviorError, UserError) as e:
+                        # Permanent failures - don't retry
+                        end_reason = "error"
+                        error_info = _build_agent_error_info(e)
+                        if Debug.enabled():
+                            print(f"[srv] Permanent error: {e}")
+                        break
+                    except AgentsException as e:
+                        # Other agent exceptions - preserve run_data, don't retry
+                        end_reason = "error"
+                        error_info = _build_agent_error_info(e)
+                        if Debug.enabled():
+                            print(f"[srv] Agent exception: {e}")
+                        break
                     except Exception as e:
+                        # Transient errors (network, rate limit, etc.) - may retry
                         attempt += 1
-                        # Decide to retry
                         if attempt <= max_retries and _is_retryable(e):
                             # Exponential backoff with jitter
                             delay = base_delay * (2 ** (attempt - 1))
+                            if Debug.enabled():
+                                print(
+                                    f"[srv] Retryable error (attempt {attempt}/{max_retries}): {e}"
+                                )
                             # Announce retry status to client
                             try:
                                 await self._broadcast_session(
@@ -1000,8 +1170,11 @@ class AgentService(RpcMethodsBase):
                             # On retries, don't re-append the user message to history
                             include_user_message = False
                             continue
-                        # Exhausted or not retryable
+                        # Exhausted retries or non-retryable unknown error
+                        end_reason = "error"
                         error_info = {"message": str(e), "type": e.__class__.__name__}
+                        if Debug.enabled():
+                            print(f"[srv] Non-retryable error: {e}")
                         break
             finally:
                 # Inform client the run finished
