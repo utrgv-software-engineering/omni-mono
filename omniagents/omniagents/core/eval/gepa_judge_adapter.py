@@ -133,18 +133,103 @@ class OmniAgentsJudgeAdapter:
 
     @staticmethod
     def _predict_label_from_judge_output(val: Any) -> Optional[bool]:
-        try:
-            if isinstance(val, dict):
-                ans = val.get("answer")
-                if isinstance(ans, str):
-                    a = ans.strip().lower()
-                    if a in ("pass", "fail"):
-                        return True if a == "fail" else False
-            if isinstance(val, dict) and "should_decline" in val:
-                return not bool(val.get("should_decline"))
-        except Exception:
-            pass
-        return None
+        truthy = {
+            "true",
+            "t",
+            "yes",
+            "y",
+            "1",
+            "fail",
+            "failed",
+            "violation",
+            "flag",
+            "unsafe",
+            "reject",
+            "rejected",
+            "incorrect",
+        }
+        falsy = {
+            "false",
+            "f",
+            "no",
+            "n",
+            "0",
+            "pass",
+            "passed",
+            "ok",
+            "correct",
+            "compliant",
+            "safe",
+            "approve",
+            "approved",
+        }
+
+        def parse(value: Any) -> Optional[bool]:
+            try:
+                if isinstance(value, bool):
+                    return value
+                if isinstance(value, (int, float)):
+                    if value == 1:
+                        return True
+                    if value == 0:
+                        return False
+                    return None
+                if isinstance(value, str):
+                    trimmed = OmniAgentsJudgeAdapter._extract_fenced(value).strip()
+                    if not trimmed:
+                        return None
+                    lowered = trimmed.lower()
+                    if lowered in truthy:
+                        return True
+                    if lowered in falsy:
+                        return False
+                    if lowered.startswith("{") or lowered.startswith("["):
+                        try:
+                            loaded = json.loads(trimmed)
+                        except Exception:
+                            return None
+                        return parse(loaded)
+                    return None
+                if isinstance(value, dict):
+                    if "answer" in value:
+                        ans = parse(value.get("answer"))
+                        if ans is not None:
+                            return ans
+                    for key in (
+                        "correct",
+                        "is_correct",
+                        "passed",
+                        "success",
+                        "label",
+                        "result",
+                        "verdict",
+                        "prediction",
+                    ):
+                        if key in value:
+                            res = parse(value.get(key))
+                            if res is not None:
+                                return res
+                    if "should_decline" in value:
+                        decline = parse(value.get("should_decline"))
+                        if decline is not None:
+                            return not decline
+                        return not bool(value.get("should_decline"))
+                    for nested in value.values():
+                        res = parse(nested)
+                        if res is not None:
+                            return res
+                    return None
+                if isinstance(value, list):
+                    for item in value:
+                        res = parse(item)
+                        if res is not None:
+                            return res
+                    return None
+                return None
+            except Exception:
+                return None
+
+        return parse(val)
 
     def _locate_manifest(self) -> Optional[Path]:
         current = self.compiled_yaml.parent
@@ -762,7 +847,8 @@ class OmniAgentsJudgeAdapter:
         self._optimizer_agent = agent
         return agent
 
-    def _extract_fenced(self, s: str) -> str:
+    @staticmethod
+    def _extract_fenced(s: str) -> str:
         try:
             t = str(s)
             if t.count("```") >= 2:
