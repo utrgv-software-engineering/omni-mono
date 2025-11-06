@@ -226,13 +226,17 @@ class TestServerWebSocketTransport:
         """Test receiving JSON data."""
         async with asyncio.timeout(TIMEOUT):
             mock_ws = AsyncMock(spec=WebSocket)
-            mock_ws.receive_json.return_value = {"id": 1, "method": "test"}
+            mock_ws.receive_text = AsyncMock(
+                return_value=json.dumps({"id": 1, "method": "test"})
+            )
 
             transport = ServerWebSocketTransport(mock_ws)
             await transport.connect()
 
             result = await transport.receive_json()
             assert result == {"id": 1, "method": "test"}
+
+            mock_ws.receive_text.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_receive_websocket_disconnect(self):
@@ -241,7 +245,7 @@ class TestServerWebSocketTransport:
 
         async with asyncio.timeout(TIMEOUT):
             mock_ws = AsyncMock(spec=WebSocket)
-            mock_ws.receive_json.side_effect = WebSocketDisconnect()
+            mock_ws.receive_text = AsyncMock(side_effect=WebSocketDisconnect())
 
             transport = ServerWebSocketTransport(mock_ws)
             await transport.connect()

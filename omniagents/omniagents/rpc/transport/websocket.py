@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from . import BaseTransport, TransportError, TransportClosedError
+from . import BaseTransport, TransportError, TransportClosedError, TransportDecodeError
 
 
 class ClientWebSocketTransport(BaseTransport):
@@ -58,7 +58,7 @@ class ClientWebSocketTransport(BaseTransport):
             msg = await self._ws.recv()
             return json.loads(msg)
         except json.JSONDecodeError as e:
-            raise TransportError(f"Invalid JSON received: {e}")
+            raise TransportDecodeError(msg, e)
         except Exception as e:
             self._connected = False
             raise TransportError(f"Failed to receive data: {e}")
@@ -122,10 +122,19 @@ class ServerWebSocketTransport(BaseTransport):
         self._ensure_connected()
 
         try:
-            return await self.websocket.receive_json()
+            msg = await self.websocket.receive_text()
         except WebSocketDisconnect:
             self._connected = False
             raise TransportClosedError("WebSocket disconnected")
+        except Exception as e:
+            self._connected = False
+            raise TransportError(f"Failed to receive data: {e}")
+
+        try:
+            return json.loads(msg)
+        except json.JSONDecodeError as e:
+            self._connected = False
+            raise TransportDecodeError(msg, e)
         except Exception as e:
             self._connected = False
             raise TransportError(f"Failed to receive data: {e}")

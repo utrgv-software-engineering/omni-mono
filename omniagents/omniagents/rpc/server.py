@@ -5,6 +5,7 @@ is set or omniagents.core.debug.Debug is enabled.
 """
 
 from typing import Any, Dict, Optional
+import inspect
 import os
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -41,6 +42,32 @@ class JsonRpcChannel:
                 pass
         await self.transport.send_json(payload)
 
+    async def send_error(
+        self,
+        call_id: Any,
+        code: int,
+        message: str,
+        data: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        msg_text = str(message) if message is not None else ""
+        if not msg_text:
+            msg_text = ""
+        payload: Dict[str, Any] = {
+            "jsonrpc": "2.0",
+            "id": call_id,
+            "error": {"code": int(code), "message": msg_text},
+        }
+        if data is not None:
+            payload["error"]["data"] = data
+        if DEBUG_SERVER or Debug.enabled():
+            try:
+                print(
+                    f"[srv]   ← error id={call_id} code={code} message={message} data={data}"
+                )
+            except Exception:
+                pass
+        await self.transport.send_json(payload)
+
     # Backward compatibility property
     @property
     def websocket(self) -> Any:
@@ -62,7 +89,11 @@ class JsonRpcEndpoint:
 
         async def handler(websocket: WebSocket):
             from .transport.websocket import ServerWebSocketTransport
-            from .transport import TransportClosedError
+            from .transport import (
+                TransportClosedError,
+                TransportDecodeError,
+                TransportError,
+            )
 
             transport = ServerWebSocketTransport(websocket)
             await transport.connect()
@@ -78,60 +109,16 @@ class JsonRpcEndpoint:
                         break
                     except WebSocketDisconnect:
                         break
-                    except Exception:
+                    except TransportDecodeError as exc:
+                        await self._handle_parse_error(channel, exc)
+                        continue
+                    except TransportError:
+                        break
+                    except Exception as exc:
+                        await self._handle_internal_error(channel, None, exc)
                         continue
 
-                    if not isinstance(data, dict):
-                        continue
-
-                    call_id = data.get("id")
-                    method = data.get("method")
-                    params = data.get("params") or data.get("args") or {}
-                    if DEBUG_SERVER or Debug.enabled():
-                        try:
-                            if method:
-                                print(
-                                    f"[srv] ⇐ call id={call_id} method={method} params={params}"
-                                )
-                            else:
-                                print(f"[srv] ⇐ message id={call_id} data={data}")
-                        except Exception:
-                            pass
-                    if method:
-                        # Ensure the RPC methods see the channel for this connection
-                        try:
-                            self.methods.channel = channel
-                        except AttributeError:
-                            pass
-                        try:
-                            func = getattr(self.methods, method)
-                            result = await func(**params)
-                            if call_id is not None:
-                                await channel.send_result(call_id, result)
-                        except Exception as e:
-                            # Return JSON-RPC error response for method failures
-                            if call_id is not None:
-                                error_payload = {
-                                    "jsonrpc": "2.0",
-                                    "id": call_id,
-                                    "error": {
-                                        "code": -32603,  # Internal error
-                                        "message": str(e),
-                                        "data": {
-                                            "type": e.__class__.__name__,
-                                            "method": method,
-                                        },
-                                    },
-                                }
-                                if DEBUG_SERVER or Debug.enabled():
-                                    try:
-                                        print(
-                                            f"[srv]   ← error id={call_id} error={error_payload['error']}"
-                                        )
-                                    except Exception:
-                                        pass
-                                await transport.send_json(error_payload)
-                            # On notifications (no id), just swallow the error
+                    await self._process_message(channel, data)
             finally:
                 try:
                     if getattr(self.methods, "channel", None) is channel:
@@ -141,3 +128,126 @@ class JsonRpcEndpoint:
                 await transport.disconnect()
 
         app.add_api_websocket_route(path, handler, dependencies=dependencies)
+
+    async def _handle_parse_error(
+        self, channel: JsonRpcChannel, exc: Exception
+    ) -> None:
+        await channel.send_error(
+            None,
+            -32700,
+            "Parse error",
+            {"message": str(exc)},
+        )
+
+    async def _handle_internal_error(
+        self,
+        channel: JsonRpcChannel,
+        call_id: Any,
+        exc: Exception,
+        method: Optional[str] = None,
+    ) -> None:
+        if call_id is None:
+            return
+        data: Dict[str, Any] = {"type": exc.__class__.__name__, "message": str(exc)}
+        if method is not None:
+            data["method"] = method
+        message_text = str(exc).strip()
+        if not message_text:
+            message_text = "Internal error"
+        await channel.send_error(
+            call_id,
+            -32603,
+            message_text,
+            data,
+        )
+
+    async def _process_message(self, channel: JsonRpcChannel, data: Any) -> None:
+        if not isinstance(data, dict):
+            await channel.send_error(
+                None,
+                -32600,
+                "Invalid Request",
+                {"message": "Request must be an object"},
+            )
+            return
+
+        call_id = data.get("id")
+        version = data.get("jsonrpc")
+        method = data.get("method")
+        params = data.get("params") if "params" in data else data.get("args")
+
+        if DEBUG_SERVER or Debug.enabled():
+            try:
+                if method:
+                    print(f"[srv] ⇐ call id={call_id} method={method} params={params}")
+                else:
+                    print(f"[srv] ⇐ message id={call_id} data={data}")
+            except Exception:
+                pass
+
+        if version != "2.0":
+            await channel.send_error(
+                call_id, -32600, "Invalid Request", {"message": "jsonrpc must be '2.0'"}
+            )
+            return
+
+        if not isinstance(method, str) or not method:
+            await channel.send_error(
+                call_id,
+                -32600,
+                "Invalid Request",
+                {"message": "method must be a string"},
+            )
+            return
+
+        if params is None:
+            params = {}
+
+        if not isinstance(params, dict):
+            if call_id is not None:
+                await channel.send_error(
+                    call_id,
+                    -32602,
+                    "Invalid params",
+                    {"message": "params must be an object"},
+                )
+            return
+
+        func = getattr(self.methods, method, None)
+        if not callable(func):
+            if call_id is not None:
+                await channel.send_error(
+                    call_id,
+                    -32601,
+                    "Method not found",
+                    {"method": method},
+                )
+            return
+
+        try:
+            signature = inspect.signature(func)
+            signature.bind(**params)
+        except (TypeError, ValueError) as exc:
+            if call_id is not None:
+                await channel.send_error(
+                    call_id,
+                    -32602,
+                    "Invalid params",
+                    {"message": str(exc), "method": method},
+                )
+            return
+
+        try:
+            try:
+                self.methods.channel = channel
+            except AttributeError:
+                pass
+            result = func(**params)
+            if inspect.isawaitable(result):
+                result = await result
+        except Exception as exc:
+            await self._handle_internal_error(channel, call_id, exc, method)
+            return
+
+        if call_id is not None:
+            await channel.send_result(call_id, result)

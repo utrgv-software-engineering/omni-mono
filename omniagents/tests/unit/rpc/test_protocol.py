@@ -197,26 +197,27 @@ class TestJsonRpcIntegration:
 
         # Create a mock WebSocket
         ws = AsyncMock()
-        received_messages = []
-
-        async def mock_receive_json():
-            # First call returns a request
-            if len(received_messages) == 0:
-                received_messages.append(1)
-                return {
+        responses = [
+            json.dumps(
+                {
                     "jsonrpc": "2.0",
                     "id": 1,
                     "method": "echo",
                     "params": {"message": "hello"},
                 }
-            # Second call raises disconnect
-            else:
-                from fastapi import WebSocketDisconnect
+            ),
+            WebSocketDisconnect(),
+        ]
 
-                raise WebSocketDisconnect()
+        async def mock_receive_text():
+            item = responses.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return item
 
-        ws.receive_json = mock_receive_json
+        ws.receive_text = AsyncMock(side_effect=mock_receive_text)
         ws.send_json = AsyncMock()
+        ws.accept = AsyncMock()
 
         # Register and get the handler
         app = Mock()
@@ -227,8 +228,8 @@ class TestJsonRpcIntegration:
         await handler(ws)
 
         # Check WebSocket interactions
-        ws.accept.assert_called_once()
-        ws.send_json.assert_called_once()
+        ws.accept.assert_awaited_once()
+        assert len(ws.send_json.await_args_list) == 1
 
         # Check the response
         response = ws.send_json.call_args[0][0]
@@ -243,9 +244,9 @@ class TestJsonRpcIntegration:
         endpoint = JsonRpcEndpoint(methods)
 
         ws = AsyncMock()
-        ws.receive_json = AsyncMock(
+        ws.receive_text = AsyncMock(
             side_effect=[
-                {"jsonrpc": "2.0", "id": 2, "method": "error_method"},
+                json.dumps({"jsonrpc": "2.0", "id": 2, "method": "error_method"}),
                 WebSocketDisconnect(),
             ]
         )
@@ -259,9 +260,9 @@ class TestJsonRpcIntegration:
 
         await handler(ws)
 
-        ws.accept.assert_awaited()
-        ws.send_json.assert_called_once()
-        payload = ws.send_json.call_args[0][0]
+        ws.accept.assert_awaited_once()
+        assert len(ws.send_json.await_args_list) == 1
+        payload = ws.send_json.await_args_list[0][0][0]
         assert payload["jsonrpc"] == "2.0"
         assert payload["id"] == 2
         assert payload["error"]["code"] == -32603
@@ -274,15 +275,17 @@ class TestJsonRpcIntegration:
         endpoint = JsonRpcEndpoint(methods)
 
         ws = AsyncMock()
-        ws.receive_json = AsyncMock(
+        ws.receive_text = AsyncMock(
             side_effect=[
-                ["bad", "payload"],
-                {
-                    "jsonrpc": "2.0",
-                    "id": 3,
-                    "method": "echo",
-                    "params": {"message": "after"},
-                },
+                json.dumps(["bad", "payload"]),
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 3,
+                        "method": "echo",
+                        "params": {"message": "after"},
+                    }
+                ),
                 WebSocketDisconnect(),
             ]
         )
@@ -296,11 +299,16 @@ class TestJsonRpcIntegration:
 
         await handler(ws)
 
-        ws.accept.assert_awaited()
-        ws.send_json.assert_called_once()
-        payload = ws.send_json.call_args[0][0]
-        assert payload["id"] == 3
-        assert payload["result"] == "Echo: after"
+        ws.accept.assert_awaited_once()
+        assert len(ws.send_json.await_args_list) == 2
+
+        error_payload = ws.send_json.await_args_list[0][0][0]
+        assert error_payload["error"]["code"] == -32600
+        assert error_payload["id"] is None
+
+        result_payload = ws.send_json.await_args_list[1][0][0]
+        assert result_payload["id"] == 3
+        assert result_payload["result"] == "Echo: after"
         assert methods.channel is None
 
     @pytest.mark.asyncio
