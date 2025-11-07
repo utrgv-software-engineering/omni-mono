@@ -155,6 +155,42 @@ export const App: React.FC<AppProps> = ({
     }
   }, [initialSessionId, actions]);
 
+  // Load global user history from server when connected
+  useEffect(() => {
+    if (!client || !connected) {
+      return;
+    }
+
+    // Fetch global history (last 200 user messages across all sessions)
+    const loadHistory = async () => {
+      try {
+        const items = await client.getUserHistory(200, true);
+
+        // Extract content and deduplicate
+        const historyItems: string[] = [];
+        const seen = new Set<string>();
+
+        for (const item of items) {
+          const content = item.content.trim();
+          if (content && !seen.has(content)) {
+            seen.add(content);
+            historyItems.push(content);
+          }
+        }
+
+        // Set as initial history
+        setMessageHistory(historyItems);
+      } catch (err) {
+        if (debug) {
+          console.error('Failed to load global history:', err);
+        }
+        // Don't fail - just continue without global history
+      }
+    };
+
+    loadHistory();
+  }, [client, connected, debug]);
+
   // Handle approval
   const handleApproval = useCallback(
     (value: 'yes' | 'always' | 'no') => {
