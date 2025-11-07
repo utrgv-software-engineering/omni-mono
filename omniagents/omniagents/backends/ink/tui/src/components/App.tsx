@@ -176,11 +176,119 @@ export const App: React.FC<AppProps> = ({
     }
   }, [approval, thinking, currentRunId, handleApproval, cancelRun]);
 
+  // Handle slash commands
+  const handleSlashCommand = useCallback(
+    async (cmd: string): Promise<{ sendToLLM: boolean; result?: string }> => {
+      const parts = cmd.trim().split(/\s+/);
+      if (parts.length === 0) {
+        return { sendToLLM: false };
+      }
+
+      const name = parts[0].toLowerCase();
+      const argText = cmd.slice(parts[0].length).trim();
+
+      // Built-in: /exit
+      if (name === '/exit') {
+        exit();
+        return { sendToLLM: false };
+      }
+
+      // Built-in: /help
+      if (name === '/help') {
+        try {
+          const funcs = await client!.listServerFunctions();
+          let helpText = 'Available commands:\n\n';
+          helpText += '- /exit – Quit\n';
+
+          for (const f of funcs) {
+            const alias = '/' + f.name;
+            let argHint = '';
+            if (f.params_schema?.properties && 'text' in f.params_schema.properties) {
+              argHint = ' <text>';
+            }
+            const desc = f.description || `Invoke server function '${f.name}'`;
+            helpText += `- ${alias}${argHint} – ${desc}\n`;
+          }
+
+          return { sendToLLM: false, result: helpText.trimEnd() };
+        } catch (err) {
+          return { sendToLLM: false, result: `Error listing server functions: ${err}` };
+        }
+      }
+
+      // Server function invocation
+      try {
+        const fn = name.slice(1); // Remove leading /
+
+        // Check if this server function exists
+        const funcs = await client!.listServerFunctions();
+        const found = funcs.find(f => f.name.toLowerCase() === fn.toLowerCase());
+
+        if (!found) {
+          // Not a server function - fall back to LLM
+          return { sendToLLM: true };
+        }
+
+        // Parse arguments
+        let args: Record<string, unknown> = {};
+        if (argText) {
+          try {
+            const parsed = JSON.parse(argText);
+            if (typeof parsed === 'object' && !Array.isArray(parsed)) {
+              args = parsed;
+            } else if (Array.isArray(parsed)) {
+              args = { args: parsed };
+            } else if (typeof parsed === 'string') {
+              args = { text: parsed };
+            } else {
+              args = { value: parsed };
+            }
+          } catch {
+            // Not JSON - treat as text argument
+            args = { text: argText };
+          }
+        }
+
+        // Call server function
+        const result = await client!.serverCall(fn, args, sessionId || undefined);
+
+        // Format result
+        if (result.message && typeof result.message === 'string') {
+          return { sendToLLM: false, result: result.message };
+        }
+
+        const formatted = JSON.stringify(result, null, 2);
+        return { sendToLLM: false, result: formatted === 'null' || !formatted.trim() ? 'Done.' : formatted };
+      } catch (err) {
+        return { sendToLLM: false, result: `Error: ${err}` };
+      }
+    },
+    [client, sessionId, exit]
+  );
+
   // Handle user input
   const handleSubmit = useCallback(
     async (message: string) => {
       if (!client || !connected) {
         return;
+      }
+
+      // Check for slash command
+      if (message.startsWith('/')) {
+        const { sendToLLM, result } = await handleSlashCommand(message);
+
+        if (!sendToLLM) {
+          // Show result as assistant message (if any)
+          if (result) {
+            actions.addMessage({
+              role: 'assistant',
+              content: result,
+              timestamp: new Date(),
+            });
+          }
+          return;
+        }
+        // Fall through to send to LLM if not handled
       }
 
       // Add user message to UI immediately
@@ -208,7 +316,7 @@ export const App: React.FC<AppProps> = ({
         console.error('Failed to send message:', err);
       }
     },
-    [client, connected, sendMessage, sessionId, actions]
+    [client, connected, sendMessage, sessionId, actions, handleSlashCommand]
   );
 
   // Handle Ctrl+C - double tap to quit (like bubbletea)
