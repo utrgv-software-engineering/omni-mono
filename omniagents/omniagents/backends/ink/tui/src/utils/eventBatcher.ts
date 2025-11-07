@@ -39,7 +39,7 @@ export class EventBatcher {
     this.scheduled = false;
 
     // Execute all updates - Zustand will batch these internally
-    fns.forEach(fn => fn());
+    fns.forEach((fn) => fn());
   }
 
   /**

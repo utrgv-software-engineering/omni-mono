@@ -4,43 +4,43 @@
  */
 
 const ASCII_CHARS: Record<string, [string, string, string]> = {
-  ' ': ['   ', '   ', '   '],
-  '0': ['█▀█ ', '█ █ ', '▀▀▀ '],
-  '1': ['▄█ ', ' █ ', ' ▀ '],
-  '2': ['▀▀█ ', '█▀▀ ', '▀▀▀ '],
-  '3': ['▀▀█ ', '▀▀█ ', '▀▀▀ '],
-  '4': ['█ █ ', '▀▀█ ', '  ▀ '],
-  '5': ['█▀▀ ', '▀▀█ ', '▀▀▀ '],
-  '6': ['█   ', '█▀█ ', '▀▀▀ '],
-  '7': ['▀▀█ ', ' █▀ ', ' ▀  '],
-  '8': ['█▀█ ', '█▀█ ', '▀▀▀ '],
-  '9': ['█▀█ ', '▀▀█ ', '▀▀▀ '],
-  'A': ['█▀█ ', '█▀█ ', '▀ ▀ '],
-  'B': ['█▀▄ ', '█▀▄ ', '▀▀  '],
-  'C': ['█▀▀ ', '█   ', '▀▀▀ '],
-  'D': ['█▀▄ ', '█ █ ', '▀▀  '],
-  'E': ['█▀▀ ', '█▀▀ ', '▀▀▀ '],
-  'F': ['█▀▀ ', '█▀  ', '▀   '],
-  'G': ['█▀▀ ', '█ █ ', '▀▀▀ '],
-  'H': ['█ █ ', '█▀█ ', '▀ ▀ '],
-  'I': ['█ ', '█ ', '▀ '],
-  'J': ['  █ ', '▄ █ ', '▀▀▀ '],
-  'K': ['█ █ ', '█▀▄ ', '▀ ▀ '],
-  'L': ['█   ', '█   ', '▀▀▀ '],
-  'M': ['█▀▄▀█ ', '█ ▀ █ ', '▀   ▀ '],
-  'N': ['█▄ █ ', '█ ▀█ ', '▀  ▀ '],
-  'O': ['█▀█ ', '█ █ ', '▀▀▀ '],
-  'P': ['█▀█ ', '█▀▀ ', '▀   '],
-  'Q': ['█▀█ ', '█ █ ', '▀▀█ '],
-  'R': ['█▀█ ', '██▄ ', '▀ ▀ '],
-  'S': ['█▀▀ ', '▀▀█ ', '▀▀▀ '],
-  'T': ['▀█▀ ', ' █  ', ' ▀  '],
-  'U': ['█ █ ', '█ █ ', '▀▀▀ '],
-  'V': ['█ █ ', '█ █ ', ' ▀  '],
-  'W': ['█ █ █ ', '█ █ █ ', '▀▀▀▀▀ '],
-  'X': ['█ █ ', '▄▀▄ ', '▀ ▀ '],
-  'Y': ['█ █ ', '▀█▀ ', ' ▀  '],
-  'Z': ['▀▀█ ', '▄▀  ', '▀▀▀ '],
+  " ": ["   ", "   ", "   "],
+  "0": ["█▀█ ", "█ █ ", "▀▀▀ "],
+  "1": ["▄█ ", " █ ", " ▀ "],
+  "2": ["▀▀█ ", "█▀▀ ", "▀▀▀ "],
+  "3": ["▀▀█ ", "▀▀█ ", "▀▀▀ "],
+  "4": ["█ █ ", "▀▀█ ", "  ▀ "],
+  "5": ["█▀▀ ", "▀▀█ ", "▀▀▀ "],
+  "6": ["█   ", "█▀█ ", "▀▀▀ "],
+  "7": ["▀▀█ ", " █▀ ", " ▀  "],
+  "8": ["█▀█ ", "█▀█ ", "▀▀▀ "],
+  "9": ["█▀█ ", "▀▀█ ", "▀▀▀ "],
+  A: ["█▀█ ", "█▀█ ", "▀ ▀ "],
+  B: ["█▀▄ ", "█▀▄ ", "▀▀  "],
+  C: ["█▀▀ ", "█   ", "▀▀▀ "],
+  D: ["█▀▄ ", "█ █ ", "▀▀  "],
+  E: ["█▀▀ ", "█▀▀ ", "▀▀▀ "],
+  F: ["█▀▀ ", "█▀  ", "▀   "],
+  G: ["█▀▀ ", "█ █ ", "▀▀▀ "],
+  H: ["█ █ ", "█▀█ ", "▀ ▀ "],
+  I: ["█ ", "█ ", "▀ "],
+  J: ["  █ ", "▄ █ ", "▀▀▀ "],
+  K: ["█ █ ", "█▀▄ ", "▀ ▀ "],
+  L: ["█   ", "█   ", "▀▀▀ "],
+  M: ["█▀▄▀█ ", "█ ▀ █ ", "▀   ▀ "],
+  N: ["█▄ █ ", "█ ▀█ ", "▀  ▀ "],
+  O: ["█▀█ ", "█ █ ", "▀▀▀ "],
+  P: ["█▀█ ", "█▀▀ ", "▀   "],
+  Q: ["█▀█ ", "█ █ ", "▀▀█ "],
+  R: ["█▀█ ", "██▄ ", "▀ ▀ "],
+  S: ["█▀▀ ", "▀▀█ ", "▀▀▀ "],
+  T: ["▀█▀ ", " █  ", " ▀  "],
+  U: ["█ █ ", "█ █ ", "▀▀▀ "],
+  V: ["█ █ ", "█ █ ", " ▀  "],
+  W: ["█ █ █ ", "█ █ █ ", "▀▀▀▀▀ "],
+  X: ["█ █ ", "▄▀▄ ", "▀ ▀ "],
+  Y: ["█ █ ", "▀█▀ ", " ▀  "],
+  Z: ["▀▀█ ", "▄▀  ", "▀▀▀ "],
 };
 
 /**
@@ -48,9 +48,9 @@ const ASCII_CHARS: Record<string, [string, string, string]> = {
  */
 export function createASCIIArt(text: string): string[] {
   const upper = text.toUpperCase();
-  let line1 = '';
-  let line2 = '';
-  let line3 = '';
+  let line1 = "";
+  let line2 = "";
+  let line3 = "";
 
   for (const char of upper) {
     const pattern = ASCII_CHARS[char];
@@ -60,17 +60,13 @@ export function createASCIIArt(text: string): string[] {
       line3 += pattern[2];
     } else {
       // For any other character, use the character itself
-      line1 += char + '  ';
-      line2 += '   ';
-      line3 += '   ';
+      line1 += char + "  ";
+      line2 += "   ";
+      line3 += "   ";
     }
   }
 
-  return [
-    line1.trimEnd(),
-    line2.trimEnd(),
-    line3.trimEnd(),
-  ];
+  return [line1.trimEnd(), line2.trimEnd(), line3.trimEnd()];
 }
 
 /**
@@ -79,7 +75,11 @@ export function createASCIIArt(text: string): string[] {
 function hexToRgb(hex: string): [number, number, number] {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
   return result
-    ? [parseInt(result[1], 16), parseInt(result[2], 16), parseInt(result[3], 16)]
+    ? [
+        parseInt(result[1], 16),
+        parseInt(result[2], 16),
+        parseInt(result[3], 16),
+      ]
     : [0, 0, 0];
 }
 
@@ -87,16 +87,25 @@ function hexToRgb(hex: string): [number, number, number] {
  * RGB to hex converter
  */
 function rgbToHex(r: number, g: number, b: number): string {
-  return '#' + [r, g, b].map(x => {
-    const hex = Math.round(x).toString(16);
-    return hex.length === 1 ? '0' + hex : hex;
-  }).join('');
+  return (
+    "#" +
+    [r, g, b]
+      .map((x) => {
+        const hex = Math.round(x).toString(16);
+        return hex.length === 1 ? "0" + hex : hex;
+      })
+      .join("")
+  );
 }
 
 /**
  * Linear interpolation between two colors
  */
-function interpolateColor(color1: string, color2: string, factor: number): string {
+function interpolateColor(
+  color1: string,
+  color2: string,
+  factor: number,
+): string {
   const [r1, g1, b1] = hexToRgb(color1);
   const [r2, g2, b2] = hexToRgb(color2);
 
@@ -113,18 +122,18 @@ function interpolateColor(color1: string, color2: string, factor: number): strin
  */
 export function applyGradient(
   lines: string[],
-  startColor: string = '#bb9af7',
-  endColor: string = '#7aa2f7'
+  startColor: string = "#bb9af7",
+  endColor: string = "#7aa2f7",
 ): string[] {
-  return lines.map(line => {
-    let result = '';
+  return lines.map((line) => {
+    let result = "";
     const chars = Array.from(line);
 
     for (let i = 0; i < chars.length; i++) {
       const char = chars[i];
 
       // Skip spaces - don't color them
-      if (char === ' ') {
+      if (char === " ") {
         result += char;
         continue;
       }
@@ -134,7 +143,7 @@ export function applyGradient(
       const color = interpolateColor(startColor, endColor, position);
 
       // Use ANSI escape codes for coloring
-      result += `\x1b[38;2;${hexToRgb(color).join(';')}m${char}\x1b[0m`;
+      result += `\x1b[38;2;${hexToRgb(color).join(";")}m${char}\x1b[0m`;
     }
 
     return result;

@@ -2,8 +2,8 @@
  * React hook for managing RPC client connection and state
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { RPCClient } from '../rpc/client.js';
+import { useState, useEffect, useCallback, useRef } from "react";
+import { RPCClient } from "../rpc/client.js";
 
 export interface UseRPCOptions {
   url: string;
@@ -17,7 +17,10 @@ export interface UseRPCResult {
   rpcReady: boolean;
   connecting: boolean;
   error: Error | null;
-  sendMessage: (content: string, sessionId?: string) => Promise<{ run_id: string; session_id: string }>;
+  sendMessage: (
+    content: string,
+    sessionId?: string,
+  ) => Promise<{ run_id: string; session_id: string }>;
 }
 
 /**
@@ -42,32 +45,32 @@ export function useRPC(options: UseRPCOptions): UseRPCResult {
     clientRef.current = rpcClient;
 
     // Set up event listeners
-    rpcClient.on('connected', () => {
+    rpcClient.on("connected", () => {
       setConnected(true);
       setConnecting(false);
       setError(null);
     });
 
-    rpcClient.on('rpc_ready', () => {
+    rpcClient.on("rpc_ready", () => {
       setRpcReady(true);
     });
 
-    rpcClient.on('disconnected', () => {
+    rpcClient.on("disconnected", () => {
       setConnected(false);
       setRpcReady(false);
     });
 
-    rpcClient.on('error', (err: Error) => {
+    rpcClient.on("error", (err: Error) => {
       setError(err);
       setConnecting(false);
     });
 
-    rpcClient.on('reconnecting', () => {
+    rpcClient.on("reconnecting", () => {
       setConnecting(true);
     });
 
-    rpcClient.on('reconnect_failed', () => {
-      setError(new Error('Failed to reconnect to server'));
+    rpcClient.on("reconnect_failed", () => {
+      setError(new Error("Failed to reconnect to server"));
       setConnecting(false);
     });
 
@@ -87,13 +90,16 @@ export function useRPC(options: UseRPCOptions): UseRPCResult {
   }, [options.url, options.token, options.debug]);
 
   const sendMessage = useCallback(
-    async (content: string, sessionId?: string): Promise<{ run_id: string; session_id: string }> => {
+    async (
+      content: string,
+      sessionId?: string,
+    ): Promise<{ run_id: string; session_id: string }> => {
       if (!clientRef.current) {
-        throw new Error('RPC client not initialized');
+        throw new Error("RPC client not initialized");
       }
       return clientRef.current.startRun(content, sessionId);
     },
-    []
+    [],
   );
 
   return {

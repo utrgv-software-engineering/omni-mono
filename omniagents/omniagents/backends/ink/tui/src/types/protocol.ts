@@ -9,14 +9,14 @@
 // ============================================================================
 
 export interface JSONRPCRequest {
-  jsonrpc: '2.0';
+  jsonrpc: "2.0";
   id: string | number;
   method: string;
   params?: unknown;
 }
 
 export interface JSONRPCResponse {
-  jsonrpc: '2.0';
+  jsonrpc: "2.0";
   id: string | number;
   result?: unknown;
   error?: JSONRPCError;
@@ -29,7 +29,7 @@ export interface JSONRPCError {
 }
 
 export interface JSONRPCNotification {
-  jsonrpc: '2.0';
+  jsonrpc: "2.0";
   method: string;
   params?: unknown;
 }
@@ -48,8 +48,8 @@ export type ServerEvent =
   | RunStatusEvent;
 
 export interface ToolCalledEvent {
-  jsonrpc: '2.0';
-  method: 'tool_called';
+  jsonrpc: "2.0";
+  method: "tool_called";
   params: {
     tool: string;
     input: string; // JSON string of arguments
@@ -58,8 +58,8 @@ export interface ToolCalledEvent {
 }
 
 export interface ToolResultEvent {
-  jsonrpc: '2.0';
-  method: 'tool_result';
+  jsonrpc: "2.0";
+  method: "tool_result";
   params: {
     tool: string;
     output: string;
@@ -69,16 +69,16 @@ export interface ToolResultEvent {
 }
 
 export interface MessageOutputEvent {
-  jsonrpc: '2.0';
-  method: 'message_output';
+  jsonrpc: "2.0";
+  method: "message_output";
   params: {
     content: string; // Note: No role field in actual protocol!
   };
 }
 
 export interface RunStartedEvent {
-  jsonrpc: '2.0';
-  method: 'run_started';
+  jsonrpc: "2.0";
+  method: "run_started";
   params: {
     run_id: string;
     session_id: string;
@@ -86,8 +86,8 @@ export interface RunStartedEvent {
 }
 
 export interface RunEndEvent {
-  jsonrpc: '2.0';
-  method: 'run_end';
+  jsonrpc: "2.0";
+  method: "run_end";
   params: {
     run_id: string;
     end_reason: string;
@@ -109,8 +109,8 @@ export interface RunEndEvent {
 }
 
 export interface TokenEvent {
-  jsonrpc: '2.0';
-  method: 'token';
+  jsonrpc: "2.0";
+  method: "token";
   params: {
     run_id: string;
     turn: number;
@@ -133,8 +133,8 @@ export interface TokenEvent {
 }
 
 export interface RunStatusEvent {
-  jsonrpc: '2.0';
-  method: 'run_status';
+  jsonrpc: "2.0";
+  method: "run_status";
   params: {
     run_id: string;
     status: string;
@@ -150,9 +150,9 @@ export interface RunStatusEvent {
 // ============================================================================
 
 export interface ClientRequest {
-  jsonrpc: '2.0';
+  jsonrpc: "2.0";
   id: string | number;
-  method: 'client_request';
+  method: "client_request";
   params: {
     request_id: string;
     function: string;
@@ -162,7 +162,7 @@ export interface ClientRequest {
 }
 
 export interface ToolApprovalRequest {
-  function: 'ui.request_tool_approval';
+  function: "ui.request_tool_approval";
   arguments: {
     tool_name: string;
     tool_arguments: Record<string, unknown>;
@@ -186,7 +186,7 @@ export interface ToolApprovalResponse {
 }
 
 export interface AddArtifactRequest {
-  function: 'ui.add_artifact';
+  function: "ui.add_artifact";
   arguments: {
     type: string;
     title?: string;
@@ -202,9 +202,9 @@ export interface AddArtifactRequest {
 // ============================================================================
 
 export interface StartRunRequest {
-  jsonrpc: '2.0';
+  jsonrpc: "2.0";
   id: string | number;
-  method: 'start_run';
+  method: "start_run";
   params: {
     prompt: string;
     session_id?: string;
@@ -218,18 +218,18 @@ export interface StartRunResponse {
 }
 
 export interface StopRunRequest {
-  jsonrpc: '2.0';
+  jsonrpc: "2.0";
   id: string | number;
-  method: 'stop_run';
+  method: "stop_run";
   params: {
     run_id: string;
   };
 }
 
 export interface GetSessionHistoryRequest {
-  jsonrpc: '2.0';
+  jsonrpc: "2.0";
   id: string | number;
-  method: 'get_session_history';
+  method: "get_session_history";
   params: {
     session_id: string;
   };
@@ -244,9 +244,9 @@ export interface SessionMessage {
 export interface GetSessionHistoryResponse extends Array<SessionMessage> {}
 
 export interface GetUserHistoryRequest {
-  jsonrpc: '2.0';
+  jsonrpc: "2.0";
   id: string | number;
-  method: 'get_user_history';
+  method: "get_user_history";
   params: {
     limit: number;
     include_archived: boolean;
@@ -262,9 +262,9 @@ export interface UserHistoryItem {
 export interface GetUserHistoryResponse extends Array<UserHistoryItem> {}
 
 export interface ListSessionsRequest {
-  jsonrpc: '2.0';
+  jsonrpc: "2.0";
   id: string | number;
-  method: 'list_sessions';
+  method: "list_sessions";
   params?: Record<string, never>;
 }
 
@@ -280,18 +280,18 @@ export interface Session {
 export interface ListSessionsResponse extends Array<Session> {}
 
 export interface ArchiveSessionRequest {
-  jsonrpc: '2.0';
+  jsonrpc: "2.0";
   id: string | number;
-  method: 'archive_session';
+  method: "archive_session";
   params: {
     session_id: string;
   };
 }
 
 export interface ClientFunctionsRequest {
-  jsonrpc: '2.0';
+  jsonrpc: "2.0";
   id: string | number;
-  method: 'client_functions';
+  method: "client_functions";
   params: {
     version: number;
     functions: Array<{
@@ -302,9 +302,9 @@ export interface ClientFunctionsRequest {
 }
 
 export interface ClientResponseRequest {
-  jsonrpc: '2.0';
+  jsonrpc: "2.0";
   id: string | number;
-  method: 'client_response';
+  method: "client_response";
   params: {
     request_id: string;
     ok: boolean;
@@ -314,9 +314,9 @@ export interface ClientResponseRequest {
 }
 
 export interface ListServerFunctionsRequest {
-  jsonrpc: '2.0';
+  jsonrpc: "2.0";
   id: string | number;
-  method: 'list_server_functions';
+  method: "list_server_functions";
   params?: Record<string, never>;
 }
 
@@ -327,12 +327,13 @@ export interface ServerFunctionMeta {
   result_schema?: Record<string, unknown>;
 }
 
-export interface ListServerFunctionsResponse extends Array<ServerFunctionMeta> {}
+export interface ListServerFunctionsResponse
+  extends Array<ServerFunctionMeta> {}
 
 export interface ServerCallRequest {
-  jsonrpc: '2.0';
+  jsonrpc: "2.0";
   id: string | number;
-  method: 'server_call';
+  method: "server_call";
   params: {
     function: string;
     args?: Record<string, unknown>;

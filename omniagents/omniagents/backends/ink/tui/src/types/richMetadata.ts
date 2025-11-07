@@ -18,42 +18,44 @@ export interface RichMetadata {
  * Parse rich metadata from tool result metadata
  * Matches Bubbletea's parseRichMetadata function
  */
-export function parseRichMetadata(metadata?: Record<string, unknown>): RichMetadata | null {
+export function parseRichMetadata(
+  metadata?: Record<string, unknown>,
+): RichMetadata | null {
   if (!metadata) {
     return null;
   }
 
   const rich: RichMetadata = {};
 
-  if (typeof metadata.display_type === 'string') {
+  if (typeof metadata.display_type === "string") {
     rich.display_type = metadata.display_type;
   }
 
-  if (typeof metadata.summary === 'string') {
+  if (typeof metadata.summary === "string") {
     rich.summary = metadata.summary;
   }
 
-  if (typeof metadata.preview === 'string') {
+  if (typeof metadata.preview === "string") {
     rich.preview = metadata.preview;
   }
 
-  if (typeof metadata.truncated === 'boolean') {
+  if (typeof metadata.truncated === "boolean") {
     rich.truncated = metadata.truncated;
   }
 
-  if (metadata.metadata && typeof metadata.metadata === 'object') {
+  if (metadata.metadata && typeof metadata.metadata === "object") {
     rich.metadata = metadata.metadata as Record<string, unknown>;
   }
 
-  if (metadata.chart && typeof metadata.chart === 'object') {
+  if (metadata.chart && typeof metadata.chart === "object") {
     rich.chart = metadata.chart as Record<string, unknown>;
   }
 
-  if (metadata.table && typeof metadata.table === 'object') {
+  if (metadata.table && typeof metadata.table === "object") {
     rich.table = metadata.table as Record<string, unknown>;
   }
 
-  if (metadata.value && typeof metadata.value === 'object') {
+  if (metadata.value && typeof metadata.value === "object") {
     rich.value = metadata.value as Record<string, unknown>;
   }
 

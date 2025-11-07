@@ -2,10 +2,10 @@
  * Entry point for omni-ink-tui
  */
 
-import React from 'react';
-import { render } from 'ink';
-import meow from 'meow';
-import { App } from './components/App.js';
+import React from "react";
+import { render } from "ink";
+import meow from "meow";
+import { App } from "./components/App.js";
 
 const cli = meow(
   `
@@ -33,50 +33,51 @@ const cli = meow(
     importMeta: import.meta,
     flags: {
       server: {
-        type: 'string',
-        shortFlag: 's',
+        type: "string",
+        shortFlag: "s",
         isRequired: true,
       },
       name: {
-        type: 'string',
-        shortFlag: 'n',
-        default: 'OmniAgent',
+        type: "string",
+        shortFlag: "n",
+        default: "OmniAgent",
       },
       token: {
-        type: 'string',
-        shortFlag: 't',
+        type: "string",
+        shortFlag: "t",
       },
       session: {
-        type: 'string',
+        type: "string",
       },
       resume: {
-        type: 'boolean',
+        type: "boolean",
         default: false,
       },
       welcome: {
-        type: 'string',
-        shortFlag: 'w',
+        type: "string",
+        shortFlag: "w",
       },
       initialMessage: {
-        type: 'string',
+        type: "string",
       },
       safeMode: {
-        type: 'boolean',
+        type: "boolean",
         default: false,
       },
       debug: {
-        type: 'boolean',
+        type: "boolean",
         default: false,
       },
     },
-  }
+  },
 );
 
-const { server, name, token, session, resume, welcome, initialMessage, debug } = cli.flags;
+const { server, name, token, session, resume, welcome, initialMessage, debug } =
+  cli.flags;
 
 // Disable terminal line wrapping - let Ink handle all wrapping
 // This reduces rendering artifacts and flickering
-process.stdout.write('\x1b[?7l');
+process.stdout.write("\x1b[?7l");
 
 // Note: Mouse tracking disabled - we don't currently use mouse events
 // and enabling them without proper parsing causes scroll events to leak into text input
@@ -106,13 +107,13 @@ const app = render(
         console.error(`[DEBUG] Slow render: ${renderTime}ms`);
       }
     },
-  }
+  },
 );
 
 // Cleanup function to restore terminal state
 const cleanup = () => {
   // Re-enable terminal line wrapping
-  process.stdout.write('\x1b[?7h');
+  process.stdout.write("\x1b[?7h");
   // Mouse events were never enabled, so no cleanup needed
 };
 
@@ -123,13 +124,13 @@ app.waitUntilExit().then(() => {
 });
 
 // Handle interrupts
-process.on('SIGINT', () => {
+process.on("SIGINT", () => {
   cleanup();
   app.unmount();
   process.exit(0);
 });
 
-process.on('SIGTERM', () => {
+process.on("SIGTERM", () => {
   cleanup();
   app.unmount();
   process.exit(0);

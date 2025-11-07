@@ -3,7 +3,7 @@
  * Prevents re-rendering the same markdown content multiple times
  */
 
-import { renderMarkdown } from './markdown.js';
+import { renderMarkdown } from "./markdown.js";
 
 const cache = new Map<string, string>();
 const MAX_CACHE_SIZE = 100;

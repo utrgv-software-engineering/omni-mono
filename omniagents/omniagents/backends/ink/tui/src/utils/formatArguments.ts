@@ -3,19 +3,28 @@
  * Formats as: key1: "value1", key2: 42, key3: true
  */
 
-export function formatToolArgumentsSmart(argsStr: string, availableWidth: number = 50): string {
+export function formatToolArgumentsSmart(
+  argsStr: string,
+  availableWidth: number = 50,
+): string {
   // Minimum width to show anything useful
   if (availableWidth < 10) {
-    return '...';
+    return "...";
   }
 
   try {
     // Try to parse as JSON object
     const argsObj = JSON.parse(argsStr);
 
-    if (typeof argsObj !== 'object' || argsObj === null || Array.isArray(argsObj)) {
+    if (
+      typeof argsObj !== "object" ||
+      argsObj === null ||
+      Array.isArray(argsObj)
+    ) {
       // Not a plain object, use simple truncation
-      return argsStr.length <= availableWidth ? argsStr : argsStr.slice(0, availableWidth - 3) + '...';
+      return argsStr.length <= availableWidth
+        ? argsStr
+        : argsStr.slice(0, availableWidth - 3) + "...";
     }
 
     const parts: string[] = [];
@@ -30,16 +39,18 @@ export function formatToolArgumentsSmart(argsStr: string, availableWidth: number
 
       // Format value based on type
       let valueStr: string;
-      if (typeof value === 'string') {
+      if (typeof value === "string") {
         // Quote strings
         valueStr = JSON.stringify(value);
-      } else if (typeof value === 'number') {
+      } else if (typeof value === "number") {
         // Format numbers
-        valueStr = Number.isInteger(value) ? value.toString() : value.toString();
-      } else if (typeof value === 'boolean') {
+        valueStr = Number.isInteger(value)
+          ? value.toString()
+          : value.toString();
+      } else if (typeof value === "boolean") {
         valueStr = value.toString();
       } else if (value === null) {
-        valueStr = 'null';
+        valueStr = "null";
       } else {
         // Complex types (arrays, objects) - serialize as JSON
         valueStr = JSON.stringify(value);
@@ -54,7 +65,8 @@ export function formatToolArgumentsSmart(argsStr: string, availableWidth: number
         currentLen += argLen;
       } else {
         // Can't fit completely
-        const remainingSpace = availableWidth - currentLen - (i > 0 ? commaSpaceLen : 0);
+        const remainingSpace =
+          availableWidth - currentLen - (i > 0 ? commaSpaceLen : 0);
         const minArgLen = key.length + 2 + 4 + ellipsisLen; // "key: X..."
 
         if (i === 0 && remainingSpace >= minArgLen) {
@@ -70,32 +82,34 @@ export function formatToolArgumentsSmart(argsStr: string, availableWidth: number
                   truncatedValue = `"${innerContent.slice(0, maxValueLen - 5)}..."`;
                 }
               } else {
-                truncatedValue = valueStr.slice(0, maxValueLen) + '...';
+                truncatedValue = valueStr.slice(0, maxValueLen) + "...";
               }
             }
             parts.push(`${key}: ${truncatedValue}`);
           } else {
-            parts.push('...');
+            parts.push("...");
           }
         } else if (parts.length > 0) {
           // We have some args already, add ellipsis
           if (currentLen + commaSpaceLen + ellipsisLen <= availableWidth) {
-            parts.push('...');
+            parts.push("...");
           }
         } else if (remainingSpace >= key.length + 6) {
           // Try to show "key: ..."
           parts.push(`${key}: ...`);
         } else {
           // Nothing fits
-          parts.push('...');
+          parts.push("...");
         }
         break;
       }
     }
 
-    return parts.join(', ');
+    return parts.join(", ");
   } catch (e) {
     // Not valid JSON, use simple truncation
-    return argsStr.length <= availableWidth ? argsStr : argsStr.slice(0, availableWidth - 3) + '...';
+    return argsStr.length <= availableWidth
+      ? argsStr
+      : argsStr.slice(0, availableWidth - 3) + "...";
   }
 }

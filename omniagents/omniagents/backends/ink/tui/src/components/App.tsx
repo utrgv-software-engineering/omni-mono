@@ -3,57 +3,91 @@
  * Uses atomic state management and optimized components
  */
 
-import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Box, Text, useInput, useApp } from 'ink';
-import { useRPC } from '../hooks/useRPC.js';
-import { useMessagesOptimized } from '../hooks/useMessagesNew.js';
-import { useMessages, useThinking, useApproval, useUsage, useSessionId, useCurrentRunId, useActions } from '../store/appStore.js';
-import type { ApprovalInfo } from '../store/appStore.js';
-import { StatusBar } from './StatusBar.js';
-import { MessageListOptimized } from './MessageListOptimized.js';
-import { ToolActivityOptimized } from './ToolActivityOptimized.js';
-import { MultiLineInputOptimized } from './MultiLineInputOptimized.js';
-import { ApprovalDialog } from './ApprovalDialog.js';
-import { Help } from './Help.js';
-import { SessionList } from './SessionList.js';
+import React, { useState, useCallback, useEffect, useRef } from "react";
+import { Box, Text, useInput, useApp, useStdout } from "ink";
+import { useRPC } from "../hooks/useRPC.js";
+import { useMessagesOptimized } from "../hooks/useMessagesNew.js";
+import {
+  useMessages,
+  useThinking,
+  useApproval,
+  useUsage,
+  useSessionId,
+  useCurrentRunId,
+  useActions,
+} from "../store/appStore.js";
+import type { ApprovalInfo, Message } from "../store/appStore.js";
+import { StatusBar } from "./StatusBar.js";
+import { MessageListOptimized } from "./MessageListOptimized.js";
+import { ToolActivityOptimized } from "./ToolActivityOptimized.js";
+import { MultiLineInputOptimized } from "./MultiLineInputOptimized.js";
+import { ApprovalDialog } from "./ApprovalDialog.js";
+import { Help } from "./Help.js";
+import { SessionList } from "./SessionList.js";
+import { Scrollable } from "./Scrollable.js";
+import { MouseProvider } from "../contexts/MouseContext.js";
+import { ScrollProvider } from "../contexts/ScrollProvider.js";
 
 /**
  * Wrapper to keep ApprovalDialog mounted to prevent flicker
  */
 const ApprovalDialogWrapper = React.memo<{
   approval: ApprovalInfo | null;
-  onApprove: (value: 'yes' | 'always' | 'no') => void;
-}>(({ approval, onApprove }) => {
-  if (!approval) {
-    // Render empty placeholder to keep component mounted
-    return null;
-  }
+  onApprove: (value: "yes" | "always" | "no") => void;
+}>(
+  ({ approval, onApprove }) => {
+    if (!approval) {
+      // Render empty placeholder to keep component mounted
+      return null;
+    }
 
-  return (
-    <ApprovalDialog
-      tool={approval.tool}
-      arguments={approval.arguments}
-      metadata={approval.metadata}
-      onApprove={onApprove}
-    />
-  );
-}, (prev, next) => {
-  // Only re-render if approval actually changed
-  if (prev.approval === next.approval) return true;
-  if (!prev.approval || !next.approval) return false;
-  return prev.approval.request_id === next.approval.request_id;
-});
+    return (
+      <ApprovalDialog
+        tool={approval.tool}
+        arguments={approval.arguments}
+        metadata={approval.metadata}
+        onApprove={onApprove}
+      />
+    );
+  },
+  (prev, next) => {
+    // Only re-render if approval actually changed
+    if (prev.approval === next.approval) return true;
+    if (!prev.approval || !next.approval) return false;
+    return prev.approval.request_id === next.approval.request_id;
+  },
+);
 
 /**
- * Isolate MessageList subscription to prevent parent re-renders
+ * Scrollable message list with keyboard and mouse support
  */
-const MessageListWrapper = React.memo(() => {
-  return (
-    <Box flexGrow={1} flexDirection="column" paddingX={1}>
-      <MessageListOptimized />
-    </Box>
-  );
-});
+const ScrollableMessageList = React.memo<{ terminalHeight: number }>(
+  ({ terminalHeight }) => {
+    // Calculate available height for messages
+    // Reserve space for:
+    // - StatusBar (1 line)
+    // - ToolActivity/Approval (3 lines max)
+    // - Input prompt (3 lines)
+    // - Help text (2 lines)
+    // - Margins and spacing (3 lines)
+    const reservedLines = 12;
+    const maxHeight = Math.max(5, terminalHeight - reservedLines);
+
+    return (
+      <Scrollable
+        hasFocus={true}
+        scrollToBottom={true}
+        maxHeight={maxHeight}
+        flexGrow={1}
+      >
+        <Box flexDirection="column">
+          <MessageListOptimized />
+        </Box>
+      </Scrollable>
+    );
+  },
+  (prev, next) => prev.terminalHeight === next.terminalHeight,
+);
 
 /**
  * Isolate ToolActivity subscription to prevent parent re-renders
@@ -61,15 +95,18 @@ const MessageListWrapper = React.memo(() => {
 const ToolActivityWrapper = React.memo<{
   approval: ApprovalInfo | null;
   thinking: boolean;
-}>(({ approval, thinking }) => {
-  return (
-    <Box paddingX={1} display={!approval && thinking ? 'flex' : 'none'}>
-      <ToolActivityOptimized />
-    </Box>
-  );
-}, (prev, next) => {
-  return prev.approval === next.approval && prev.thinking === next.thinking;
-});
+}>(
+  ({ approval, thinking }) => {
+    return (
+      <Box paddingX={1} display={!approval && thinking ? "flex" : "none"}>
+        <ToolActivityOptimized />
+      </Box>
+    );
+  },
+  (prev, next) => {
+    return prev.approval === next.approval && prev.thinking === next.thinking;
+  },
+);
 
 /**
  * Isolate Help subscription to prevent parent re-renders
@@ -80,25 +117,30 @@ const HelpWrapper = React.memo<{
   approval: ApprovalInfo | null;
   usage: ReturnType<typeof useUsage>;
   waitingForSecondCtrlC: boolean;
-}>(({ connected, thinking, approval, usage, waitingForSecondCtrlC }) => {
-  return (
-    <Box paddingX={1} paddingBottom={1}>
-      <Help
-        isThinking={thinking}
-        isPendingApproval={!!approval}
-        connected={connected}
-        usage={usage}
-        waitingForSecondCtrlC={waitingForSecondCtrlC}
-      />
-    </Box>
-  );
-}, (prev, next) => {
-  return prev.connected === next.connected &&
-         prev.thinking === next.thinking &&
-         prev.approval === next.approval &&
-         prev.usage === next.usage &&
-         prev.waitingForSecondCtrlC === next.waitingForSecondCtrlC;
-});
+}>(
+  ({ connected, thinking, approval, usage, waitingForSecondCtrlC }) => {
+    return (
+      <Box paddingX={1} paddingBottom={1}>
+        <Help
+          isThinking={thinking}
+          isPendingApproval={!!approval}
+          connected={connected}
+          usage={usage}
+          waitingForSecondCtrlC={waitingForSecondCtrlC}
+        />
+      </Box>
+    );
+  },
+  (prev, next) => {
+    return (
+      prev.connected === next.connected &&
+      prev.thinking === next.thinking &&
+      prev.approval === next.approval &&
+      prev.usage === next.usage &&
+      prev.waitingForSecondCtrlC === next.waitingForSecondCtrlC
+    );
+  },
+);
 
 export interface AppProps {
   serverUrl: string;
@@ -112,7 +154,7 @@ export interface AppProps {
 }
 
 // UI state machine for proper flow control
-type UIState = 'connecting' | 'session_select' | 'chat' | 'error';
+type UIState = "connecting" | "session_select" | "chat" | "error";
 
 export const App: React.FC<AppProps> = ({
   serverUrl,
@@ -125,23 +167,30 @@ export const App: React.FC<AppProps> = ({
   initialMessage,
 }) => {
   const [messageHistory, setMessageHistory] = useState<string[]>([]);
-  const [uiState, setUIState] = useState<UIState>('connecting');
-  const [availableSessions, setAvailableSessions] = useState<Array<{
-    id: string;
-    created_at: string;
-    archived: boolean;
-    message_count: number;
-    first_message?: unknown;
-    last_message?: unknown;
-  }>>([]);
+  const [uiState, setUIState] = useState<UIState>("connecting");
+  const [availableSessions, setAvailableSessions] = useState<
+    Array<{
+      id: string;
+      created_at: string;
+      archived: boolean;
+      message_count: number;
+      first_message?: unknown;
+      last_message?: unknown;
+    }>
+  >([]);
   const [selectedSessionIndex, setSelectedSessionIndex] = useState(0);
 
+  // Get terminal dimensions for scrolling calculations
+  const { stdout } = useStdout();
+  const terminalHeight = stdout?.rows || 24;
+
   // RPC connection
-  const { client, connected, rpcReady, connecting, error, sendMessage } = useRPC({
-    url: serverUrl,
-    token,
-    debug,
-  });
+  const { client, connected, rpcReady, connecting, error, sendMessage } =
+    useRPC({
+      url: serverUrl,
+      token,
+      debug,
+    });
 
   // Get state from atomic store
   const messages = useMessages();
@@ -171,6 +220,83 @@ export const App: React.FC<AppProps> = ({
     }
   }, [initialSessionId, actions]);
 
+  // Load session history when sessionId changes (for resumed sessions)
+  useEffect(() => {
+    if (!client || !sessionId || !rpcReady) {
+      return;
+    }
+
+    const loadSessionHistory = async () => {
+      try {
+        if (debug) {
+          console.error(`[DEBUG] Loading history for session: ${sessionId}`);
+        }
+        const history = await client.getSessionHistory(sessionId);
+
+        if (debug) {
+          console.error(`[DEBUG] Loaded ${history.length} messages`);
+        }
+
+        // Parse and validate all history messages
+        const validMessages: Message[] = [];
+
+        for (const msg of history) {
+          // Skip messages without a valid role
+          if (!msg.role) {
+            if (debug) {
+              console.error("[DEBUG] Skipping message with no role:", msg);
+            }
+            continue;
+          }
+
+          // Parse message content
+          let content = "";
+          if (typeof msg.content === "string") {
+            content = msg.content;
+          } else if (Array.isArray(msg.content)) {
+            // Handle array content (OpenAI format)
+            for (const part of msg.content) {
+              if (typeof part === "string") {
+                content = part;
+                break;
+              } else if (part && typeof part === "object" && "text" in part) {
+                content = String(part.text);
+                break;
+              }
+            }
+          }
+
+          // Skip messages with empty content
+          if (!content || content.trim() === "") {
+            if (debug) {
+              console.error(
+                "[DEBUG] Skipping message with empty content:",
+                msg,
+              );
+            }
+            continue;
+          }
+
+          validMessages.push({
+            role: msg.role as "user" | "assistant",
+            content,
+            timestamp: msg.timestamp ? new Date(msg.timestamp) : new Date(),
+          });
+        }
+
+        // Load all messages at once using setMessages (doesn't trigger thinking state)
+        actions.setMessages(validMessages);
+
+        // Ensure thinking state is cleared after loading history
+        actions.setThinking(false);
+      } catch (err) {
+        console.error("Failed to load session history:", err);
+      }
+    };
+
+    loadSessionHistory();
+  }, [client, sessionId, rpcReady, actions, debug]);
+
   // Load global user history from server when RPC is ready
   useEffect(() => {
     if (!client || !rpcReady) {
@@ -198,7 +324,7 @@ export const App: React.FC<AppProps> = ({
         setMessageHistory(historyItems);
       } catch (err) {
         if (debug) {
-          console.error('Failed to load global history:', err);
+          console.error("Failed to load global history:", err);
         }
         // Don't fail - just continue without global history
       }
@@ -218,7 +344,7 @@ export const App: React.FC<AppProps> = ({
       const loadSessions = async () => {
         try {
           if (debug) {
-            console.error('[DEBUG] Fetching sessions for resume mode...');
+            console.error("[DEBUG] Fetching sessions for resume mode...");
           }
           const sessions = await client.listSessions();
           if (debug) {
@@ -226,90 +352,98 @@ export const App: React.FC<AppProps> = ({
           }
           if (sessions && sessions.length > 0) {
             setAvailableSessions(sessions);
-            setUIState('session_select');
+            setUIState("session_select");
             if (debug) {
-              console.error('[DEBUG] UI state: session_select');
+              console.error("[DEBUG] UI state: session_select");
             }
           } else {
             // No sessions - go directly to chat
-            setUIState('chat');
+            setUIState("chat");
             if (debug) {
-              console.error('[DEBUG] No sessions found, UI state: chat');
+              console.error("[DEBUG] No sessions found, UI state: chat");
             }
           }
         } catch (err) {
-          console.error('Failed to load sessions:', err);
+          console.error("Failed to load sessions:", err);
           // On error, just start fresh chat
-          setUIState('chat');
+          setUIState("chat");
         }
       };
 
       loadSessions();
     } else if (rpcReady && !resumeMode) {
       // Not in resume mode, go straight to chat
-      setUIState('chat');
+      setUIState("chat");
       if (debug) {
-        console.error('[DEBUG] Not resume mode, UI state: chat');
+        console.error("[DEBUG] Not resume mode, UI state: chat");
       }
     } else if (rpcReady && initialSessionId) {
       // Have a specific session ID, go straight to chat
-      setUIState('chat');
+      setUIState("chat");
       if (debug) {
-        console.error('[DEBUG] Have session ID, UI state: chat');
+        console.error("[DEBUG] Have session ID, UI state: chat");
       }
     }
   }, [client, rpcReady, resumeMode, initialSessionId, debug]);
 
   // Handle session list navigation
-  const handleSessionListInput = useCallback((input: string, key: any) => {
-    if (debug) {
-      console.error('[DEBUG] Session list input:', { input, key: Object.keys(key).filter(k => key[k]) });
-    }
+  const handleSessionListInput = useCallback(
+    (input: string, key: any) => {
+      if (debug) {
+        console.error("[DEBUG] Session list input:", {
+          input,
+          key: Object.keys(key).filter((k) => key[k]),
+        });
+      }
 
-    if (key.upArrow) {
-      setSelectedSessionIndex(prev => Math.max(0, prev - 1));
-    } else if (key.downArrow) {
-      setSelectedSessionIndex(prev => Math.min(availableSessions.length - 1, prev + 1));
-    } else if (key.return) {
-      // Select session and transition to chat
-      const selected = availableSessions[selectedSessionIndex];
-      if (selected) {
-        if (debug) {
-          console.error('[DEBUG] Selected session:', selected.id);
+      if (key.upArrow) {
+        setSelectedSessionIndex((prev) => Math.max(0, prev - 1));
+      } else if (key.downArrow) {
+        setSelectedSessionIndex((prev) =>
+          Math.min(availableSessions.length - 1, prev + 1),
+        );
+      } else if (key.return) {
+        // Select session and transition to chat
+        const selected = availableSessions[selectedSessionIndex];
+        if (selected) {
+          if (debug) {
+            console.error("[DEBUG] Selected session:", selected.id);
+          }
+          actions.setSessionId(selected.id);
+          setUIState("chat");
+          if (debug) {
+            console.error("[DEBUG] UI state: chat (session selected)");
+          }
         }
-        actions.setSessionId(selected.id);
-        setUIState('chat');
+      } else if (key.tab) {
+        // Create new session and transition to chat
         if (debug) {
-          console.error('[DEBUG] UI state: chat (session selected)');
+          console.error("[DEBUG] Creating new session (Tab pressed)");
+        }
+        setUIState("chat");
+        if (debug) {
+          console.error("[DEBUG] UI state: chat (new session)");
         }
       }
-    } else if (key.tab) {
-      // Create new session and transition to chat
-      if (debug) {
-        console.error('[DEBUG] Creating new session (Tab pressed)');
-      }
-      setUIState('chat');
-      if (debug) {
-        console.error('[DEBUG] UI state: chat (new session)');
-      }
-    }
-  }, [availableSessions, selectedSessionIndex, actions, debug]);
+    },
+    [availableSessions, selectedSessionIndex, actions, debug],
+  );
 
   // Handle approval
   const handleApproval = useCallback(
-    (value: 'yes' | 'always' | 'no') => {
-      const approved = value !== 'no';
-      const alwaysApprove = value === 'always';
+    (value: "yes" | "always" | "no") => {
+      const approved = value !== "no";
+      const alwaysApprove = value === "always";
       approveToolCall(approved, alwaysApprove);
     },
-    [approveToolCall]
+    [approveToolCall],
   );
 
   // Handle Escape key for cancellation (passed to child components to avoid parent re-renders)
   const handleEscape = useCallback(() => {
     if (approval) {
       // During approval: Deny
-      handleApproval('no');
+      handleApproval("no");
     } else if (thinking && currentRunId) {
       // During execution: Cancel
       cancelRun(currentRunId);
@@ -328,23 +462,26 @@ export const App: React.FC<AppProps> = ({
       const argText = cmd.slice(parts[0].length).trim();
 
       // Built-in: /exit
-      if (name === '/exit') {
+      if (name === "/exit") {
         exit();
         return { sendToLLM: false };
       }
 
       // Built-in: /help
-      if (name === '/help') {
+      if (name === "/help") {
         try {
           const funcs = await client!.listServerFunctions();
-          let helpText = 'Available commands:\n\n';
-          helpText += '- /exit – Quit\n';
+          let helpText = "Available commands:\n\n";
+          helpText += "- /exit – Quit\n";
 
           for (const f of funcs) {
-            const alias = '/' + f.name;
-            let argHint = '';
-            if (f.params_schema?.properties && 'text' in f.params_schema.properties) {
-              argHint = ' <text>';
+            const alias = "/" + f.name;
+            let argHint = "";
+            if (
+              f.params_schema?.properties &&
+              "text" in f.params_schema.properties
+            ) {
+              argHint = " <text>";
             }
             const desc = f.description || `Invoke server function '${f.name}'`;
             helpText += `- ${alias}${argHint} – ${desc}\n`;
@@ -352,7 +489,10 @@ export const App: React.FC<AppProps> = ({
 
           return { sendToLLM: false, result: helpText.trimEnd() };
         } catch (err) {
-          return { sendToLLM: false, result: `Error listing server functions: ${err}` };
+          return {
+            sendToLLM: false,
+            result: `Error listing server functions: ${err}`,
+          };
         }
       }
 
@@ -362,7 +502,9 @@ export const App: React.FC<AppProps> = ({
 
         // Check if this server function exists
         const funcs = await client!.listServerFunctions();
-        const found = funcs.find(f => f.name.toLowerCase() === fn.toLowerCase());
+        const found = funcs.find(
+          (f) => f.name.toLowerCase() === fn.toLowerCase(),
+        );
 
         if (!found) {
           // Not a server function - fall back to LLM
@@ -374,11 +516,11 @@ export const App: React.FC<AppProps> = ({
         if (argText) {
           try {
             const parsed = JSON.parse(argText);
-            if (typeof parsed === 'object' && !Array.isArray(parsed)) {
+            if (typeof parsed === "object" && !Array.isArray(parsed)) {
               args = parsed;
             } else if (Array.isArray(parsed)) {
               args = { args: parsed };
-            } else if (typeof parsed === 'string') {
+            } else if (typeof parsed === "string") {
               args = { text: parsed };
             } else {
               args = { value: parsed };
@@ -390,20 +532,28 @@ export const App: React.FC<AppProps> = ({
         }
 
         // Call server function
-        const result = await client!.serverCall(fn, args, sessionId || undefined);
+        const result = await client!.serverCall(
+          fn,
+          args,
+          sessionId || undefined,
+        );
 
         // Format result
-        if (result.message && typeof result.message === 'string') {
+        if (result.message && typeof result.message === "string") {
           return { sendToLLM: false, result: result.message };
         }
 
         const formatted = JSON.stringify(result, null, 2);
-        return { sendToLLM: false, result: formatted === 'null' || !formatted.trim() ? 'Done.' : formatted };
+        return {
+          sendToLLM: false,
+          result:
+            formatted === "null" || !formatted.trim() ? "Done." : formatted,
+        };
       } catch (err) {
         return { sendToLLM: false, result: `Error: ${err}` };
       }
     },
-    [client, sessionId, exit]
+    [client, sessionId, exit],
   );
 
   // Handle user input
@@ -414,14 +564,14 @@ export const App: React.FC<AppProps> = ({
       }
 
       // Check for slash command
-      if (message.startsWith('/')) {
+      if (message.startsWith("/")) {
         const { sendToLLM, result } = await handleSlashCommand(message);
 
         if (!sendToLLM) {
           // Show result as assistant message (if any)
           if (result) {
             actions.addMessage({
-              role: 'assistant',
+              role: "assistant",
               content: result,
               timestamp: new Date(),
             });
@@ -433,13 +583,13 @@ export const App: React.FC<AppProps> = ({
 
       // Add user message to UI immediately
       actions.addMessage({
-        role: 'user',
+        role: "user",
         content: message,
         timestamp: new Date(),
       });
 
       // Add to history (avoid duplicates)
-      setMessageHistory(prev => {
+      setMessageHistory((prev) => {
         if (prev.length === 0 || prev[prev.length - 1] !== message) {
           return [...prev, message];
         }
@@ -453,28 +603,28 @@ export const App: React.FC<AppProps> = ({
           actions.setSessionId(response.session_id);
         }
       } catch (err) {
-        console.error('Failed to send message:', err);
+        console.error("Failed to send message:", err);
       }
     },
-    [client, connected, sendMessage, sessionId, actions, handleSlashCommand]
+    [client, connected, sendMessage, sessionId, actions, handleSlashCommand],
   );
 
   // Handle session list input (only when in session_select state)
   useInput(
     (input, key) => {
       if (debug) {
-        console.error('[DEBUG] useInput triggered:', {
+        console.error("[DEBUG] useInput triggered:", {
           input,
-          key: Object.keys(key).filter(k => key[k]),
+          key: Object.keys(key).filter((k) => key[k]),
           uiState,
-          isActive: uiState === 'session_select'
+          isActive: uiState === "session_select",
         });
       }
-      if (uiState === 'session_select') {
+      if (uiState === "session_select") {
         handleSessionListInput(input, key);
       }
     },
-    { isActive: uiState === 'session_select' }
+    { isActive: uiState === "session_select" },
   );
 
   // Handle Ctrl+C - double tap to quit (like bubbletea)
@@ -482,7 +632,7 @@ export const App: React.FC<AppProps> = ({
   useInput(
     useCallback(
       (input, key) => {
-        if (key.ctrl && input === 'c') {
+        if (key.ctrl && input === "c") {
           ctrlCCount.current++;
 
           // Clear existing timer
@@ -495,7 +645,7 @@ export const App: React.FC<AppProps> = ({
             if (thinking && currentRunId) {
               cancelRun(currentRunId);
             } else if (approval) {
-              handleApproval('no');
+              handleApproval("no");
             }
 
             // Show warning message
@@ -513,9 +663,9 @@ export const App: React.FC<AppProps> = ({
           }
         }
       },
-      [thinking, currentRunId, approval, cancelRun, handleApproval, exit]
+      [thinking, currentRunId, approval, cancelRun, handleApproval, exit],
     ),
-    { isActive: true } // Always active for emergency exit
+    { isActive: true }, // Always active for emergency exit
   );
 
   // Cleanup timer on unmount
@@ -529,13 +679,13 @@ export const App: React.FC<AppProps> = ({
 
   // Send initial message if provided (only in chat state)
   useEffect(() => {
-    if (initialMessage && uiState === 'chat' && messages.length === 0) {
+    if (initialMessage && uiState === "chat" && messages.length === 0) {
       handleSubmit(initialMessage);
     }
   }, [initialMessage, uiState, messages.length, handleSubmit]);
 
   // Render based on UI state
-  if (uiState === 'connecting') {
+  if (uiState === "connecting") {
     return (
       <Box flexDirection="column">
         <Text>Connecting to {agentName}...</Text>
@@ -543,30 +693,42 @@ export const App: React.FC<AppProps> = ({
     );
   }
 
-  if (uiState === 'error' || (error && !connected)) {
+  if (uiState === "error" || (error && !connected)) {
     return (
       <Box flexDirection="column">
         <Text color="red">Failed to connect to server:</Text>
-        <Text>{error?.message || 'Unknown error'}</Text>
+        <Text>{error?.message || "Unknown error"}</Text>
       </Box>
     );
   }
 
-  if (uiState === 'session_select') {
+  if (uiState === "session_select") {
     if (debug) {
-      console.error(`[DEBUG] Rendering session_select state with ${availableSessions.length} sessions, selectedIndex=${selectedSessionIndex}`);
+      console.error(
+        `[DEBUG] Rendering session_select state with ${availableSessions.length} sessions, selectedIndex=${selectedSessionIndex}`,
+      );
     }
     return (
       <Box flexDirection="column">
         <Box paddingX={1}>
-          <StatusBar agentName={agentName} connected={connected} sessionId={sessionId} />
+          <StatusBar
+            agentName={agentName}
+            connected={connected}
+            sessionId={sessionId}
+          />
         </Box>
         <Box marginTop={1}>
-          <SessionList sessions={availableSessions} selectedIndex={selectedSessionIndex} />
+          <SessionList
+            sessions={availableSessions}
+            selectedIndex={selectedSessionIndex}
+          />
         </Box>
         {debug && (
           <Box paddingX={1} marginTop={1}>
-            <Text dimColor>DEBUG: State={uiState}, Selected={selectedSessionIndex}/{availableSessions.length}</Text>
+            <Text dimColor>
+              DEBUG: State={uiState}, Selected={selectedSessionIndex}/
+              {availableSessions.length}
+            </Text>
           </Box>
         )}
       </Box>
@@ -575,51 +737,66 @@ export const App: React.FC<AppProps> = ({
 
   // Chat UI (uiState === 'chat')
   return (
-    <Box flexDirection="column">
-      {/* Status bar - always visible */}
-      <Box paddingX={1}>
-        <StatusBar agentName={agentName} connected={connected} sessionId={sessionId} />
-      </Box>
+    <MouseProvider>
+      <ScrollProvider>
+        <Box flexDirection="column">
+          {/* Status bar - always visible */}
+          <Box paddingX={1}>
+            <StatusBar
+              agentName={agentName}
+              connected={connected}
+              sessionId={sessionId}
+            />
+          </Box>
 
-      {/* Welcome message - keep in DOM, control visibility */}
-      {welcomeText && (
-        <Box paddingY={1} marginTop={1} paddingX={1} display={messages.length === 0 ? 'flex' : 'none'}>
-          <Text>{welcomeText}</Text>
+          {/* Welcome message - keep in DOM, control visibility */}
+          {welcomeText && (
+            <Box
+              paddingY={1}
+              marginTop={1}
+              paddingX={1}
+              display={messages.length === 0 ? "flex" : "none"}
+            >
+              <Text>{welcomeText}</Text>
+            </Box>
+          )}
+
+          {/* Message history - scrollable with keyboard/mouse support */}
+          <Box paddingX={1} flexGrow={1}>
+            <ScrollableMessageList terminalHeight={terminalHeight} />
+          </Box>
+
+          {/* Tool activity - ALWAYS in DOM, just hidden - isolated subscription */}
+          <ToolActivityWrapper approval={approval} thinking={thinking} />
+
+          {/* Approval dialog - ALWAYS in DOM with placeholder to prevent mount/unmount */}
+          <Box marginTop={1} paddingX={1} display={approval ? "flex" : "none"}>
+            <ApprovalDialogWrapper
+              approval={approval}
+              onApprove={handleApproval}
+            />
+          </Box>
+
+          {/* Input prompt - always rendered, disabled during approval/thinking */}
+          <Box marginTop={1}>
+            <MultiLineInputOptimized
+              onSubmit={handleSubmit}
+              onEscape={handleEscape}
+              disabled={!connected || thinking || !!approval}
+              history={messageHistory}
+            />
+          </Box>
+
+          {/* Help text below input - isolated subscription */}
+          <HelpWrapper
+            connected={connected}
+            thinking={thinking}
+            approval={approval}
+            usage={usage}
+            waitingForSecondCtrlC={waitingForSecondCtrlC}
+          />
         </Box>
-      )}
-
-      {/* Message history - dynamic height - isolated subscription */}
-      <MessageListWrapper />
-
-      {/* Tool activity - ALWAYS in DOM, just hidden - isolated subscription */}
-      <ToolActivityWrapper approval={approval} thinking={thinking} />
-
-      {/* Approval dialog - ALWAYS in DOM with placeholder to prevent mount/unmount */}
-      <Box marginTop={1} paddingX={1} display={approval ? 'flex' : 'none'}>
-        <ApprovalDialogWrapper
-          approval={approval}
-          onApprove={handleApproval}
-        />
-      </Box>
-
-      {/* Input prompt - always rendered, disabled during approval/thinking */}
-      <Box marginTop={1}>
-        <MultiLineInputOptimized
-          onSubmit={handleSubmit}
-          onEscape={handleEscape}
-          disabled={!connected || thinking || !!approval}
-          history={messageHistory}
-        />
-      </Box>
-
-      {/* Help text below input - isolated subscription */}
-      <HelpWrapper
-        connected={connected}
-        thinking={thinking}
-        approval={approval}
-        usage={usage}
-        waitingForSecondCtrlC={waitingForSecondCtrlC}
-      />
-    </Box>
+      </ScrollProvider>
+    </MouseProvider>
   );
 };

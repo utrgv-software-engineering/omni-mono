@@ -4,7 +4,7 @@
  * Uses ANSI escape codes to style text with Tokyo Night theme colors
  */
 
-import chalk from 'chalk';
+import chalk from "chalk";
 
 /**
  * Render markdown text to terminal-formatted string
@@ -24,17 +24,17 @@ export function renderMarkdown(markdown: string): string {
     let output = markdown;
 
     // Process line by line to handle code blocks and lists
-    const lines = output.split('\n');
+    const lines = output.split("\n");
     const processedLines: string[] = [];
     let inCodeBlock = false;
     let codeBlockContent: string[] = [];
-    let codeBlockLanguage = '';
+    let codeBlockLanguage = "";
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
       // Handle code blocks
-      if (line.trim().startsWith('```')) {
+      if (line.trim().startsWith("```")) {
         if (!inCodeBlock) {
           // Start of code block
           inCodeBlock = true;
@@ -45,7 +45,9 @@ export function renderMarkdown(markdown: string): string {
           inCodeBlock = false;
           // Render code block with purple color (matching Tokyo Night)
           if (codeBlockContent.length > 0) {
-            processedLines.push(chalk.hex('#bb9af7')(codeBlockContent.join('\n')));
+            processedLines.push(
+              chalk.hex("#bb9af7")(codeBlockContent.join("\n")),
+            );
           }
           codeBlockContent = [];
         }
@@ -63,7 +65,7 @@ export function renderMarkdown(markdown: string): string {
         const level = headerMatch[1].length;
         const text = headerMatch[2];
         // Bold blue for headers (matching Glamour)
-        processedLines.push(chalk.bold.hex('#7aa2f7')(text));
+        processedLines.push(chalk.bold.hex("#7aa2f7")(text));
         continue;
       }
 
@@ -83,10 +85,10 @@ export function renderMarkdown(markdown: string): string {
       processedLines.push(processInlineMarkdown(line));
     }
 
-    return processedLines.join('\n');
+    return processedLines.join("\n");
   } catch (error) {
     // Fallback to plain text if markdown rendering fails
-    console.error('Markdown rendering failed:', error);
+    console.error("Markdown rendering failed:", error);
     return markdown;
   }
 }
@@ -99,7 +101,7 @@ function processInlineMarkdown(text: string): string {
 
   // Inline code (`) - light green
   processed = processed.replace(/`([^`]+)`/g, (_, code) => {
-    return chalk.hex('#9ece6a')(code);
+    return chalk.hex("#9ece6a")(code);
   });
 
   // Bold (**text** or __text__) - bold
@@ -120,7 +122,7 @@ function processInlineMarkdown(text: string): string {
 
   // Links [text](url) - cyan
   processed = processed.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => {
-    return chalk.hex('#7dcfff')(text);
+    return chalk.hex("#7dcfff")(text);
   });
 
   return processed;

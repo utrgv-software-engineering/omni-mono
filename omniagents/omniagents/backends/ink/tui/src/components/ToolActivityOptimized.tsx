@@ -1,8 +1,8 @@
-import React from 'react';
-import { Box, Text } from 'ink';
-import Spinner from 'ink-spinner';
-import { useThinking, useStatus } from '../store/appStore.js';
-import { TokyoNightTheme } from '../theme.js';
+import React from "react";
+import { Box, Text } from "ink";
+import Spinner from "ink-spinner";
+import { useThinking, useStatus } from "../store/appStore.js";
+import { TokyoNightTheme } from "../theme.js";
 
 // Animated spinner using ink-spinner
 export const ToolActivityOptimized = React.memo(() => {
@@ -19,7 +19,7 @@ export const ToolActivityOptimized = React.memo(() => {
         <Spinner type="dots" />
       </Text>
       <Text> </Text>
-      <Text dimColor>{status || 'Thinking...'}</Text>
+      <Text dimColor>{status || "Thinking..."}</Text>
     </Box>
   );
 });
