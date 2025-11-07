@@ -74,6 +74,16 @@ const cli = meow(
 
 const { server, name, token, session, welcome, initialMessage, debug } = cli.flags;
 
+// Disable terminal line wrapping - let Ink handle all wrapping
+// This reduces rendering artifacts and flickering
+process.stdout.write('\x1b[?7l');
+
+// Note: Mouse tracking disabled - we don't currently use mouse events
+// and enabling them without proper parsing causes scroll events to leak into text input
+// If needed in future, implement proper mouse event parsing like gemini-cli
+// process.stdout.write('\x1b[?1002h'); // Button events + scroll
+// process.stdout.write('\x1b[?1006h'); // SGR extended mode
+
 // Render the app
 const app = render(
   <App
@@ -84,21 +94,42 @@ const app = render(
     welcomeText={welcome}
     initialMessage={initialMessage}
     debug={debug}
-  />
+  />,
+  {
+    exitOnCtrlC: false,
+    // Enable alternate buffer to eliminate flickering
+    alternateBuffer: true,
+    // Monitor slow renders in debug mode
+    onRender: ({ renderTime }: { renderTime: number }) => {
+      if (debug && renderTime > 200) {
+        console.error(`[DEBUG] Slow render: ${renderTime}ms`);
+      }
+    },
+  }
 );
+
+// Cleanup function to restore terminal state
+const cleanup = () => {
+  // Re-enable terminal line wrapping
+  process.stdout.write('\x1b[?7h');
+  // Mouse events were never enabled, so no cleanup needed
+};
 
 // Handle exit
 app.waitUntilExit().then(() => {
+  cleanup();
   process.exit(0);
 });
 
 // Handle interrupts
 process.on('SIGINT', () => {
+  cleanup();
   app.unmount();
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
+  cleanup();
   app.unmount();
   process.exit(0);
 });

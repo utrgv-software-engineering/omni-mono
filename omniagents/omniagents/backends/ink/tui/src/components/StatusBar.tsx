@@ -26,15 +26,6 @@ export const StatusBar = React.memo<StatusBarProps>(({ agentName, connected, ses
       {gradientLines.map((line, index) => (
         <Text key={index}>{line}</Text>
       ))}
-
-      {/* Session ID */}
-      {sessionId && (
-        <Box marginTop={1}>
-          <Text color={TokyoNightTheme.sessionSubtitle} italic>
-            Session: {sessionId.slice(0, 8)}
-          </Text>
-        </Box>
-      )}
     </Box>
   );
 });

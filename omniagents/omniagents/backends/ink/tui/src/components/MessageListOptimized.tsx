@@ -1,6 +1,6 @@
 /**
  * Optimized message list with virtual scrolling
- * Only renders last N messages to prevent performance degradation
+ * Alternate buffer eliminates need for Static component
  */
 
 import React, { useMemo } from 'react';
@@ -19,7 +19,7 @@ const VISIBLE_MESSAGE_LIMIT = 50;
 export const MessageListOptimized = React.memo(() => {
   const allMessages = useMessages();
 
-  // Only render last N messages (virtual scrolling)
+  // Only show last N messages for performance
   const visibleMessages = useMemo(() => {
     const startIdx = Math.max(0, allMessages.length - VISIBLE_MESSAGE_LIMIT);
     return allMessages.slice(startIdx);
@@ -30,12 +30,11 @@ export const MessageListOptimized = React.memo(() => {
   }
 
   return (
-    <Box flexDirection="column" paddingY={1}>
-      {visibleMessages.map((message) => {
-        // Stable keys using call_id or timestamp
+    <Box flexDirection="column">
+      {visibleMessages.map((message, index) => {
         const key = message.toolCall?.call_id
           || (message.timestamp ? `${message.role}-${message.timestamp.getTime()}` : undefined)
-          || `${message.role}-${message.content.slice(0, 20)}`;
+          || `${message.role}-${message.content.slice(0, 20)}-${index}`;
 
         return <MessageItem key={key} message={message} />;
       })}

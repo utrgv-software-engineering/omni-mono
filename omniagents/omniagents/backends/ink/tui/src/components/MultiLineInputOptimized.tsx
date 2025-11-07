@@ -5,6 +5,7 @@
 
 import React, { useReducer, useCallback, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
+import chalk from 'chalk';
 import { TokyoNightTheme } from '../theme.js';
 
 interface InputState {
@@ -28,6 +29,7 @@ type InputAction =
   | { type: 'CLEAR' }
   | { type: 'SET_VALUE'; value: string }
   | { type: 'SET_HISTORY_INDEX'; index: number; value: string }
+  | { type: 'UPDATE_HISTORY_INDEX'; index: number }
   | { type: 'SAVE_DRAFT'; draft: string };
 
 interface MultiLineInputProps {
@@ -222,6 +224,13 @@ function inputReducer(state: InputState, action: InputAction): InputState {
         cursorCol: 0,
       };
 
+    case 'UPDATE_HISTORY_INDEX':
+      // Update index only, don't touch cursor or content
+      return {
+        ...state,
+        historyIndex: action.index,
+      };
+
     case 'SAVE_DRAFT':
       return {
         ...state,
@@ -251,9 +260,21 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(({
   });
 
   // Update history index when history changes
+  // But DON'T reset cursor/content - that's only for arrow key navigation
+  const prevHistoryLengthRef = React.useRef(history.length);
+
   useEffect(() => {
-    dispatch({ type: 'SET_HISTORY_INDEX', index: history.length, value: state.lines.join('\n') });
-  }, [history.length]); // Only depend on length, not full array
+    // Only update historyIndex, don't touch lines or cursor
+    // This prevents cursor reset when new messages are added
+    const prev = prevHistoryLengthRef.current;
+    prevHistoryLengthRef.current = history.length;
+
+    // When history grows (new message submitted), just update the index
+    // Don't reset cursor position or content!
+    if (history.length > prev) {
+      dispatch({ type: 'UPDATE_HISTORY_INDEX', index: history.length });
+    }
+  }, [history.length]);
 
   const getValue = () => state.lines.join('\n');
 
@@ -328,7 +349,18 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(({
     } else if (key.rightArrow) {
       dispatch({ type: 'MOVE_RIGHT' });
     } else if (input && !key.ctrl && !key.meta) {
-      dispatch({ type: 'INSERT_CHAR', char: input });
+      // Filter out mouse tracking escape sequences
+      // SGR mouse format: <row;col;buttonM or <row;col;buttonm
+      // CSI sequences: ESC [ or just [ with special chars
+      const isMouseEvent = (
+        /^<\d+;\d+;\d+[Mm]$/.test(input) || // SGR mouse tracking
+        /^\x1b/.test(input) ||               // ESC character
+        (input.startsWith('[') && input.length > 1 && /[<M]/.test(input)) // CSI sequences
+      );
+
+      if (!isMouseEvent) {
+        dispatch({ type: 'INSERT_CHAR', char: input });
+      }
     }
   });
 
@@ -363,30 +395,35 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(({
         const isCurrentRow = actualIdx === state.cursorRow;
         const showPrompt = actualIdx === 0;
 
+        const prompt = showPrompt ? '> ' : '  ';
+
+        let lineDisplay: string;
+        if (isCurrentRow) {
+          // Build line with cursor as single string using chalk
+          lineDisplay =
+            line.slice(0, state.cursorCol) +
+            chalk.inverse(line[state.cursorCol] || ' ') +
+            line.slice(state.cursorCol + 1);
+        } else {
+          lineDisplay = line || (actualIdx === 0 && !line ? placeholder : '');
+        }
+
         return (
           <Box key={actualIdx}>
-            {showPrompt ? (
-              <Text color={TokyoNightTheme.inputPrompt}>{'> '}</Text>
-            ) : (
-              <Text>{'  '}</Text>
-            )}
-            {isCurrentRow ? (
-              <Text color={TokyoNightTheme.inputText}>
-                {line.slice(0, state.cursorCol)}
-                <Text inverse>{line[state.cursorCol] || ' '}</Text>
-                {line.slice(state.cursorCol + 1)}
-              </Text>
-            ) : (
-              <Text color={TokyoNightTheme.inputText}>{line || (actualIdx === 0 && !line ? placeholder : '')}</Text>
-            )}
+            <Text color={TokyoNightTheme.inputPrompt}>{prompt}</Text>
+            <Text color={TokyoNightTheme.inputText}>{lineDisplay}</Text>
           </Box>
         );
       })}
     </Box>
   );
 }, (prevProps, nextProps) => {
-  return prevProps.disabled === nextProps.disabled &&
-         (prevProps.history?.length ?? 0) === (nextProps.history?.length ?? 0) &&
+  // Re-render if any props that are used in the useInput closure change
+  // This prevents stale closures when callbacks are recreated with new dependencies
+  return (prevProps.history?.length ?? 0) === (nextProps.history?.length ?? 0) &&
          prevProps.placeholder === nextProps.placeholder &&
-         prevProps.maxHeight === nextProps.maxHeight;
+         prevProps.maxHeight === nextProps.maxHeight &&
+         prevProps.disabled === nextProps.disabled &&
+         prevProps.onSubmit === nextProps.onSubmit &&
+         prevProps.onEscape === nextProps.onEscape;
 });

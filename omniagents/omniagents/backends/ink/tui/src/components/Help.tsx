@@ -7,11 +7,23 @@ import { Box, Text } from 'ink';
 import { TokyoNightTheme } from '../theme.js';
 import type { UsageInfo } from '../store/appStore.js';
 
+// Helper function to format usage info
+function formatUsage(usage: UsageInfo): string {
+  const modelName = usage.model || 'unknown';
+  if (usage.contextWindow && usage.contextWindow > 0) {
+    const remaining = usage.contextWindow - usage.totalTokens;
+    const percentage = Math.round((remaining / usage.contextWindow) * 100);
+    return `context remaining: ${percentage}% • ${modelName}`;
+  }
+  return `tokens: ${usage.totalTokens} • ${modelName}`;
+}
+
 export interface HelpProps {
   isThinking?: boolean;
   isPendingApproval?: boolean;
   connected?: boolean;
   usage?: UsageInfo | null;
+  waitingForSecondCtrlC?: boolean;
 }
 
 export const Help = React.memo<HelpProps>(({
@@ -19,8 +31,22 @@ export const Help = React.memo<HelpProps>(({
   isPendingApproval = false,
   connected = true,
   usage = null,
+  waitingForSecondCtrlC = false,
 }) => {
   let helpText = '';
+
+  // Special warning when waiting for second Ctrl+C
+  if (waitingForSecondCtrlC) {
+    return (
+      <Box justifyContent="space-between" width="100%">
+        <Box>
+          <Text bold color={TokyoNightTheme.warning}>Press Ctrl+C again to quit</Text>
+          <Text color={TokyoNightTheme.help}> • or wait to continue</Text>
+        </Box>
+        {usage && <Text color={TokyoNightTheme.help}>{formatUsage(usage)}</Text>}
+      </Box>
+    );
+  }
 
   if (isPendingApproval) {
     helpText = '↑/↓ navigate • enter select • esc deny';
@@ -32,32 +58,18 @@ export const Help = React.memo<HelpProps>(({
     helpText = 'ctrl+c quit';
   }
 
-  // Format usage info
-  let usageText = '';
-  if (usage) {
-    const modelName = usage.model || 'unknown';
-    if (usage.contextWindow && usage.contextWindow > 0) {
-      // Show percentage if context window is known
-      const remaining = usage.contextWindow - usage.totalTokens;
-      const percentage = Math.round((remaining / usage.contextWindow) * 100);
-      usageText = `context remaining: ${percentage}% • ${modelName}`;
-    } else {
-      // Show token counts if context window is unknown
-      usageText = `tokens: ${usage.totalTokens} • ${modelName}`;
-    }
-  }
-
   return (
     <Box justifyContent="space-between" width="100%">
       <Text color={TokyoNightTheme.help}>{helpText}</Text>
-      {usageText && <Text color={TokyoNightTheme.help}>{usageText}</Text>}
+      {usage && <Text color={TokyoNightTheme.help}>{formatUsage(usage)}</Text>}
     </Box>
   );
 }, (prev, next) => {
   // Custom comparison to prevent re-renders when usage object reference changes but values are the same
   if (prev.isThinking !== next.isThinking ||
       prev.isPendingApproval !== next.isPendingApproval ||
-      prev.connected !== next.connected) {
+      prev.connected !== next.connected ||
+      prev.waitingForSecondCtrlC !== next.waitingForSecondCtrlC) {
     return false;
   }
 

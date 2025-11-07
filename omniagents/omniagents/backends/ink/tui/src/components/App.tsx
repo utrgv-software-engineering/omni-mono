@@ -3,8 +3,8 @@
  * Uses atomic state management and optimized components
  */
 
-import React, { useState, useCallback, useEffect } from 'react';
-import { Box, Text } from 'ink';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { Box, Text, useInput, useApp } from 'ink';
 import { useRPC } from '../hooks/useRPC.js';
 import { useMessagesOptimized } from '../hooks/useMessagesNew.js';
 import { useMessages, useThinking, useApproval, useUsage, useSessionId, useCurrentRunId, useActions } from '../store/appStore.js';
@@ -78,7 +78,8 @@ const HelpWrapper = React.memo<{
   thinking: boolean;
   approval: ApprovalInfo | null;
   usage: ReturnType<typeof useUsage>;
-}>(({ connected, thinking, approval, usage }) => {
+  waitingForSecondCtrlC: boolean;
+}>(({ connected, thinking, approval, usage, waitingForSecondCtrlC }) => {
   return (
     <Box paddingX={1} paddingBottom={1}>
       <Help
@@ -86,6 +87,7 @@ const HelpWrapper = React.memo<{
         isPendingApproval={!!approval}
         connected={connected}
         usage={usage}
+        waitingForSecondCtrlC={waitingForSecondCtrlC}
       />
     </Box>
   );
@@ -93,7 +95,8 @@ const HelpWrapper = React.memo<{
   return prev.connected === next.connected &&
          prev.thinking === next.thinking &&
          prev.approval === next.approval &&
-         prev.usage === next.usage;
+         prev.usage === next.usage &&
+         prev.waitingForSecondCtrlC === next.waitingForSecondCtrlC;
 });
 
 export interface AppProps {
@@ -132,6 +135,12 @@ export const App: React.FC<AppProps> = ({
   const sessionId = useSessionId();
   const currentRunId = useCurrentRunId();
   const actions = useActions();
+
+  // Ctrl+C handling - require double tap to quit
+  const { exit } = useApp();
+  const ctrlCCount = useRef(0);
+  const ctrlCTimer = useRef<NodeJS.Timeout | null>(null);
+  const [waitingForSecondCtrlC, setWaitingForSecondCtrlC] = useState(false);
 
   // Setup message handlers with batching
   const { approveToolCall, cancelRun } = useMessagesOptimized({
@@ -202,6 +211,54 @@ export const App: React.FC<AppProps> = ({
     [client, connected, sendMessage, sessionId, actions]
   );
 
+  // Handle Ctrl+C - double tap to quit (like bubbletea)
+  useInput(
+    useCallback(
+      (input, key) => {
+        if (key.ctrl && input === 'c') {
+          ctrlCCount.current++;
+
+          // Clear existing timer
+          if (ctrlCTimer.current) {
+            clearTimeout(ctrlCTimer.current);
+          }
+
+          if (ctrlCCount.current === 1) {
+            // First Ctrl+C: Cancel current run if active
+            if (thinking && currentRunId) {
+              cancelRun(currentRunId);
+            } else if (approval) {
+              handleApproval('no');
+            }
+
+            // Show warning message
+            setWaitingForSecondCtrlC(true);
+
+            // Reset counter and hide warning after 1 second
+            ctrlCTimer.current = setTimeout(() => {
+              ctrlCCount.current = 0;
+              setWaitingForSecondCtrlC(false);
+            }, 1000);
+          } else if (ctrlCCount.current >= 2) {
+            // Second Ctrl+C within 1 second: Exit
+            setWaitingForSecondCtrlC(false);
+            exit();
+          }
+        }
+      },
+      [thinking, currentRunId, approval, cancelRun, handleApproval, exit]
+    )
+  );
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (ctrlCTimer.current) {
+        clearTimeout(ctrlCTimer.current);
+      }
+    };
+  }, []);
+
   // Send initial message if provided
   useEffect(() => {
     if (initialMessage && connected && messages.length === 0) {
@@ -230,8 +287,8 @@ export const App: React.FC<AppProps> = ({
 
   return (
     <Box flexDirection="column">
-      {/* Status bar - keep in DOM, control visibility with display */}
-      <Box paddingX={1} display={messages.length === 0 ? 'flex' : 'none'}>
+      {/* Status bar - always visible */}
+      <Box paddingX={1}>
         <StatusBar agentName={agentName} connected={connected} sessionId={sessionId} />
       </Box>
 
@@ -267,7 +324,13 @@ export const App: React.FC<AppProps> = ({
       </Box>
 
       {/* Help text below input - isolated subscription */}
-      <HelpWrapper connected={connected} thinking={thinking} approval={approval} usage={usage} />
+      <HelpWrapper
+        connected={connected}
+        thinking={thinking}
+        approval={approval}
+        usage={usage}
+        waitingForSecondCtrlC={waitingForSecondCtrlC}
+      />
     </Box>
   );
 };
