@@ -1,0 +1,60 @@
+{
+  "name": "omni-ink-tui",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "React Ink-based TUI for OmniAgents",
+  "main": "src/index.tsx",
+  "bin": {
+    "omni-ink-tui": "src/index.tsx"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.tsx",
+    "build": "tsx src/build.ts",
+    "start": "node dist/index.js",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint src --ext .ts,.tsx",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\""
+  },
+  "keywords": [
+    "ink",
+    "cli",
+    "react",
+    "tui",
+    "terminal",
+    "omniagents"
+  ],
+  "author": "OmniAgents",
+  "license": "MIT",
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "figures": "^6.1.0",
+    "immer": "^10.2.0",
+    "ink": "npm:@jrichman/ink@6.4.0",
+    "ink-select-input": "^6.0.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
+    "meow": "^13.2.0",
+    "react": "^19.0.0",
+    "ws": "^8.18.0",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.19",
+    "@types/react": "^19.0.0",
+    "@types/ws": "^8.5.10",
+    "@typescript-eslint/eslint-plugin": "^6.21.0",
+    "@typescript-eslint/parser": "^6.21.0",
+    "esbuild": "^0.20.1",
+    "eslint": "^8.56.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.2.5",
+    "tsx": "^4.7.1",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "optionalDependencies": {
+    "react-devtools-core": "^6.1.2"
+  }
+}
