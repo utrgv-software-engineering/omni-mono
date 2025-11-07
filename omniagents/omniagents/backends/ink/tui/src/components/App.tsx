@@ -16,7 +16,7 @@ import {
   useCurrentRunId,
   useActions,
 } from "../store/appStore.js";
-import type { ApprovalInfo, Message } from "../store/appStore.js";
+import type { ApprovalInfo } from "../store/appStore.js";
 import { StatusBar } from "./StatusBar.js";
 import { MessageListOptimized } from "./MessageListOptimized.js";
 import { ToolActivityOptimized } from "./ToolActivityOptimized.js";
@@ -219,83 +219,6 @@ export const App: React.FC<AppProps> = ({
       actions.setSessionId(initialSessionId);
     }
   }, [initialSessionId, actions]);
-
-  // Load session history when sessionId changes (for resumed sessions)
-  useEffect(() => {
-    if (!client || !sessionId || !rpcReady) {
-      return;
-    }
-
-    const loadSessionHistory = async () => {
-      try {
-        if (debug) {
-          console.error(`[DEBUG] Loading history for session: ${sessionId}`);
-        }
-        const history = await client.getSessionHistory(sessionId);
-
-        if (debug) {
-          console.error(`[DEBUG] Loaded ${history.length} messages`);
-        }
-
-        // Parse and validate all history messages
-        const validMessages: Message[] = [];
-
-        for (const msg of history) {
-          // Skip messages without a valid role
-          if (!msg.role) {
-            if (debug) {
-              console.error("[DEBUG] Skipping message with no role:", msg);
-            }
-            continue;
-          }
-
-          // Parse message content
-          let content = "";
-          if (typeof msg.content === "string") {
-            content = msg.content;
-          } else if (Array.isArray(msg.content)) {
-            // Handle array content (OpenAI format)
-            for (const part of msg.content) {
-              if (typeof part === "string") {
-                content = part;
-                break;
-              } else if (part && typeof part === "object" && "text" in part) {
-                content = String(part.text);
-                break;
-              }
-            }
-          }
-
-          // Skip messages with empty content
-          if (!content || content.trim() === "") {
-            if (debug) {
-              console.error(
-                "[DEBUG] Skipping message with empty content:",
-                msg,
-              );
-            }
-            continue;
-          }
-
-          validMessages.push({
-            role: msg.role as "user" | "assistant",
-            content,
-            timestamp: msg.timestamp ? new Date(msg.timestamp) : new Date(),
-          });
-        }
-
-        // Load all messages at once using setMessages (doesn't trigger thinking state)
-        actions.setMessages(validMessages);
-
-        // Ensure thinking state is cleared after loading history
-        actions.setThinking(false);
-      } catch (err) {
-        console.error("Failed to load session history:", err);
-      }
-    };
-
-    loadSessionHistory();
-  }, [client, sessionId, rpcReady, actions, debug]);
 
   // Load global user history from server when RPC is ready
   useEffect(() => {

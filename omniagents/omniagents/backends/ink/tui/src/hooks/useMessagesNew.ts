@@ -114,6 +114,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
           }
 
           actions.setMessages(msgs);
+          actions.setThinking(false);
         })
         .catch(console.error);
     }
