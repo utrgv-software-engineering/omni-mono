@@ -67,56 +67,14 @@ def cli_main(argv=None):
         resume="never",
     )
 
-    agent = create_agent()
-
-    terminal_available = terminal_supported()
-
-    fs_functions = [
-        fs_get_cwd,
-        fs_get_home,
-        fs_list_dir,
-        fs_get_workspace_root,
-        session_ensure,
-    ]
-
-    server_functions_list = [
-        good,
-        bad,
-        note,
-        notes,
-        *fs_functions,
-    ]
-
-    if terminal_available:
-        server_functions_list.extend(TERMINAL_SERVER_FUNCTIONS)
-
-    runner = Runner.from_agent(
-        agent,
-        welcome_text="Welcome to Omni Code! I'm here to help you with your coding needs.",
-        max_turns=1000,
-        context_window=400000,
-        server_functions=server_functions_list,
-    )
-
-    previous_registrar = getattr(runner.spec, "register_server_functions", None)
-
-    def _register_with_terminal(service):
-        if callable(previous_registrar):
-            previous_registrar(service)
-        if terminal_available:
-            if not attach_terminal_manager(service):
-                print("Warning: Terminal support unavailable on this platform.")
-
-    runner.spec.register_server_functions = _register_with_terminal
-
     parser = argparse.ArgumentParser(
         prog="omni",
-        description=f"Run {runner.spec.name}" if getattr(runner, "spec", None) else "Run agent",
+        description="Run Omni Code",
     )
     parser.add_argument(
         "--mode",
         "-m",
-        choices=["gui", "cli", "server", "bubbletea", "tui"],
+        choices=["gui", "cli", "server", "bubbletea", "tui", "ink"],
         default="tui",
         help="Execution mode (default: tui)",
     )
@@ -129,7 +87,7 @@ def cli_main(argv=None):
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Show TUI session picker (Bubble Tea mode only).",
+        help="Show TUI session picker (TUI modes: bubbletea, tui, ink).",
     )
     parser.add_argument(
         "--approvals",
@@ -178,11 +136,64 @@ def cli_main(argv=None):
 
     Debug.init(cli_flag=args.debug)
 
+    approvals_mode = args.approvals
+    skip_approvals = approvals_mode in {"skip", "auto"}
+    safe_mode = approvals_mode != "skip"
+    halt_on_rejection = args.on_reject != "continue" if args.on_reject else True
+
+    agent = create_agent(
+        skip_approvals=skip_approvals,
+        halt_on_rejection=halt_on_rejection,
+    )
+
+    terminal_available = terminal_supported()
+
+    fs_functions = [
+        fs_get_cwd,
+        fs_get_home,
+        fs_list_dir,
+        fs_get_workspace_root,
+        session_ensure,
+    ]
+
+    server_functions_list = [
+        good,
+        bad,
+        note,
+        notes,
+        *fs_functions,
+    ]
+
+    if terminal_available:
+        server_functions_list.extend(TERMINAL_SERVER_FUNCTIONS)
+
+    runner = Runner.from_agent(
+        agent,
+        welcome_text="Welcome to Omni Code! I'm here to help you with your coding needs.",
+        max_turns=1000,
+        context_window=400000,
+        server_functions=server_functions_list,
+        safe=safe_mode,
+        skip_approvals=skip_approvals,
+        halt_on_rejection=halt_on_rejection,
+    )
+
+    previous_registrar = getattr(runner.spec, "register_server_functions", None)
+
+    def _register_with_terminal(service):
+        if callable(previous_registrar):
+            previous_registrar(service)
+        if terminal_available:
+            if not attach_terminal_manager(service):
+                print("Warning: Terminal support unavailable on this platform.")
+
+    runner.spec.register_server_functions = _register_with_terminal
+
     kwargs = {"args": args}
 
     resume_flag = bool(getattr(args, "resume", False))
-    if resume_flag and args.mode not in ("bubbletea", "tui"):
-        print("Error: --resume is only supported in Bubble Tea TUI mode.")
+    if resume_flag and args.mode not in ("bubbletea", "tui", "ink"):
+        print("Error: --resume is only supported in TUI modes (bubbletea, tui, ink).")
         sys.exit(2)
     if resume_flag:
         kwargs["resume"] = True

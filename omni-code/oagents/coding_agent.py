@@ -92,7 +92,7 @@ def get_instructions(run_context=None, agent=None) -> str:
     return "".join(parts)
 
 
-def create_agent() -> SafeAgent:
+def create_agent(*, skip_approvals: bool = False, halt_on_rejection: bool = True) -> SafeAgent:
     return SafeAgent(
         name="Omni Code",
         instructions=get_instructions,
@@ -128,6 +128,6 @@ def create_agent() -> SafeAgent:
             "scholar_search",
             "convert_to_markdown",
         ],
-        halt_on_rejection=True,
-        skip_approvals=False,
+        halt_on_rejection=halt_on_rejection,
+        skip_approvals=skip_approvals,
     )
