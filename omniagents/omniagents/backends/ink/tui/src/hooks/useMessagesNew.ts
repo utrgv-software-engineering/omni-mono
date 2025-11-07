@@ -7,6 +7,7 @@ import { useEffect, useRef } from "react";
 import { RPCClient } from "../rpc/client.js";
 import { useActions } from "../store/appStore.js";
 import { EventBatcher } from "../utils/eventBatcher.js";
+import { debugLog } from "../utils/debugLog.js";
 import type { ApprovalInfo, Message } from "../store/appStore.js";
 
 export interface UseMessagesOptions {
@@ -114,20 +115,26 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
           }
 
           actions.setMessages(msgs);
-          actions.setThinking(false);
+          // Don't turn off thinking here - there might be an active run
+          // Let the run_end event control the thinking state
+          debugLog(`Session history loaded (not changing thinking state)`);
         })
         .catch(console.error);
     }
 
     // MESSAGE OUTPUT - batched
     const handleMessageOutput = (params: { content: string }) => {
+      const timestamp = Date.now();
+      debugLog(`message_output received at ${timestamp}, keeping thinking=true`);
       batcher.add(() => {
+        debugLog(`message_output batch executing at ${Date.now()}, delay: ${Date.now() - timestamp}ms`);
         actions.addMessage({
           role: "assistant",
           content: params.content,
           timestamp: new Date(),
         });
-        actions.setThinking(false, null);
+        // Don't turn off thinking here - run might not be done yet
+        // Thinking indicator stays on until handleRunEnd is called
       });
     };
 
@@ -174,7 +181,10 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       run_id: string;
       session_id: string;
     }) => {
+      const timestamp = Date.now();
+      debugLog(`run_started received at ${timestamp}, setting thinking=true`);
       batcher.add(() => {
+        debugLog(`run_started batch executing at ${Date.now()}, delay: ${Date.now() - timestamp}ms`);
         actions.setCurrentRunId(params.run_id);
         actions.setThinking(true);
       });
@@ -182,7 +192,10 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
 
     // RUN END - batched
     const handleRunEnd = () => {
+      const timestamp = Date.now();
+      debugLog(`run_end received at ${timestamp}, setting thinking=false`);
       batcher.add(() => {
+        debugLog(`run_end batch executing at ${Date.now()}, delay: ${Date.now() - timestamp}ms`);
         actions.setThinking(false, null);
         actions.setCurrentRunId(null);
       });

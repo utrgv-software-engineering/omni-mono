@@ -6,6 +6,7 @@ import React from "react";
 import { render } from "ink";
 import meow from "meow";
 import { App } from "./components/App.js";
+import { enableDebugLog, getDebugLogPath } from "./utils/debugLog.js";
 
 const cli = meow(
   `
@@ -74,6 +75,12 @@ const cli = meow(
 
 const { server, name, token, session, resume, welcome, initialMessage, debug } =
   cli.flags;
+
+// Enable debug logging to file if requested
+if (debug) {
+  enableDebugLog();
+  console.error(`Debug logging enabled: ${getDebugLogPath()}`);
+}
 
 // Disable terminal line wrapping - let Ink handle all wrapping
 // This reduces rendering artifacts and flickering

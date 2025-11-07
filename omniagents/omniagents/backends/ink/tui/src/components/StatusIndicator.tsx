@@ -4,8 +4,8 @@ import Spinner from "ink-spinner";
 import { useThinking, useStatus } from "../store/appStore.js";
 import { TokyoNightTheme } from "../theme.js";
 
-// Animated spinner using ink-spinner
-export const ToolActivityOptimized = React.memo(() => {
+// Animated spinner with status text
+export const StatusIndicator = React.memo(() => {
   const thinking = useThinking();
   const status = useStatus();
 
@@ -15,11 +15,12 @@ export const ToolActivityOptimized = React.memo(() => {
 
   return (
     <Box>
-      <Text color={TokyoNightTheme.info}>
-        <Spinner type="dots" />
+      <Text>
+        <Text color={TokyoNightTheme.info}>
+          <Spinner type="dots" />
+        </Text>{" "}
+        <Text dimColor>{status || "Thinking..."}</Text>
       </Text>
-      <Text> </Text>
-      <Text dimColor>{status || "Thinking..."}</Text>
     </Box>
   );
 });

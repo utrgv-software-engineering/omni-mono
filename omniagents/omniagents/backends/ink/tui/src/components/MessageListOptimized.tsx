@@ -81,31 +81,57 @@ const MessageItem = React.memo<{ message: Message }>(
 );
 
 const UserMessage = React.memo<{ message: Message }>(
-  ({ message }) => (
-    <Box flexDirection="column" marginBottom={1}>
-      <Box>
-        <Text color={TokyoNightTheme.messagePrompt}>{"> "}</Text>
-        <Text color={TokyoNightTheme.userMessage}>{message.content}</Text>
+  ({ message }) => {
+    const prefix = "> ";
+    const prefixWidth = prefix.length;
+
+    return (
+      <Box flexDirection="column" marginBottom={1}>
+        <Box flexDirection="row">
+          <Box width={prefixWidth}>
+            <Text color={TokyoNightTheme.messagePrompt}>{prefix}</Text>
+          </Box>
+          <Box flexGrow={1}>
+            <Text color={TokyoNightTheme.userMessage}>{message.content}</Text>
+          </Box>
+        </Box>
       </Box>
-    </Box>
-  ),
+    );
+  },
   (prev, next) => prev.message.content === next.message.content,
 );
 
 const AssistantMessage = React.memo<{ message: Message }>(
   ({ message }) => {
+    const prefix = "● ";
+    const prefixWidth = prefix.length;
+
     // Use cached markdown renderer
     const renderedContent = useMemo(
       () => renderMarkdownCached(message.content),
       [message.content],
     );
 
+    // Split by newlines to preserve line breaks in Ink
+    const lines = useMemo(
+      () => renderedContent.split("\n"),
+      [renderedContent],
+    );
+
     return (
       <Box flexDirection="column" marginBottom={1}>
-        <Box>
-          <Text color={TokyoNightTheme.assistantMessage}>{"● "}</Text>
-          <Text>{renderedContent}</Text>
-        </Box>
+        {lines.map((line, index) => (
+          <Box key={index} flexDirection="row">
+            <Box width={prefixWidth}>
+              {index === 0 && (
+                <Text color={TokyoNightTheme.assistantMessage}>{prefix}</Text>
+              )}
+            </Box>
+            <Box flexGrow={1}>
+              <Text>{line}</Text>
+            </Box>
+          </Box>
+        ))}
       </Box>
     );
   },
@@ -117,6 +143,8 @@ const ToolCallMessage = React.memo<{ message: Message }>(
     if (!message.toolCall) return null;
 
     const { tool, input, output, metadata } = message.toolCall;
+    const prefix = "● ";
+    const prefixWidth = prefix.length;
 
     // Memoize expensive operations
     const argsPreview = useMemo(
@@ -133,17 +161,20 @@ const ToolCallMessage = React.memo<{ message: Message }>(
     if (output === "[Cancelled]") {
       return (
         <Box flexDirection="column" marginBottom={1}>
-          <Box>
-            <Text color={TokyoNightTheme.toolName}>{"● "}</Text>
-            <Text bold color={TokyoNightTheme.toolName}>
-              {tool}
-            </Text>
-            <Text dimColor>({argsPreview})</Text>
+          <Box flexDirection="row">
+            <Box width={prefixWidth}>
+              <Text color={TokyoNightTheme.toolName}>{prefix}</Text>
+            </Box>
+            <Box flexGrow={1}>
+              <Text bold color={TokyoNightTheme.toolName}>
+                {tool}
+              </Text>
+              <Text dimColor> ({argsPreview})</Text>
+            </Box>
           </Box>
           <Box>
             <Text color={TokyoNightTheme.warning} italic>
-              {" "}
-              └─ Cancelled by user
+              {"  └─ Cancelled by user"}
             </Text>
           </Box>
         </Box>
@@ -152,12 +183,16 @@ const ToolCallMessage = React.memo<{ message: Message }>(
 
     return (
       <Box flexDirection="column" marginBottom={1}>
-        <Box>
-          <Text color={TokyoNightTheme.toolName}>{"● "}</Text>
-          <Text bold color={TokyoNightTheme.toolName}>
-            {tool}
-          </Text>
-          <Text dimColor>({argsPreview})</Text>
+        <Box flexDirection="row">
+          <Box width={prefixWidth}>
+            <Text color={TokyoNightTheme.toolName}>{prefix}</Text>
+          </Box>
+          <Box flexGrow={1}>
+            <Text bold color={TokyoNightTheme.toolName}>
+              {tool}
+            </Text>
+            <Text dimColor> ({argsPreview})</Text>
+          </Box>
         </Box>
         {output && (
           <Box>

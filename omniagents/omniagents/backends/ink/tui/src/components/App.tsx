@@ -3,8 +3,14 @@
  * Uses atomic state management and optimized components
  */
 
-import React, { useState, useCallback, useEffect, useRef } from "react";
-import { Box, Text, useInput, useApp, useStdout } from "ink";
+import React, {
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+  useLayoutEffect,
+} from "react";
+import { Box, Text, useInput, useApp, useStdout, measureElement } from "ink";
 import { useRPC } from "../hooks/useRPC.js";
 import { useMessagesOptimized } from "../hooks/useMessagesNew.js";
 import {
@@ -17,9 +23,10 @@ import {
   useActions,
 } from "../store/appStore.js";
 import type { ApprovalInfo } from "../store/appStore.js";
-import { StatusBar } from "./StatusBar.js";
+import { Header } from "./Header.js";
+import { Logo } from "./Logo.js";
 import { MessageListOptimized } from "./MessageListOptimized.js";
-import { ToolActivityOptimized } from "./ToolActivityOptimized.js";
+import { StatusIndicator } from "./StatusIndicator.js";
 import { MultiLineInputOptimized } from "./MultiLineInputOptimized.js";
 import { ApprovalDialog } from "./ApprovalDialog.js";
 import { Help } from "./Help.js";
@@ -61,23 +68,13 @@ const ApprovalDialogWrapper = React.memo<{
 /**
  * Scrollable message list with keyboard and mouse support
  */
-const ScrollableMessageList = React.memo<{ terminalHeight: number }>(
-  ({ terminalHeight }) => {
-    // Calculate available height for messages
-    // Reserve space for:
-    // - StatusBar (1 line)
-    // - ToolActivity/Approval (3 lines max)
-    // - Input prompt (3 lines)
-    // - Help text (2 lines)
-    // - Margins and spacing (3 lines)
-    const reservedLines = 12;
-    const maxHeight = Math.max(5, terminalHeight - reservedLines);
-
+const ScrollableMessageList = React.memo<{ availableHeight: number }>(
+  ({ availableHeight }) => {
     return (
       <Scrollable
         hasFocus={true}
         scrollToBottom={true}
-        maxHeight={maxHeight}
+        maxHeight={availableHeight}
         flexGrow={1}
       >
         <Box flexDirection="column">
@@ -86,20 +83,20 @@ const ScrollableMessageList = React.memo<{ terminalHeight: number }>(
       </Scrollable>
     );
   },
-  (prev, next) => prev.terminalHeight === next.terminalHeight,
+  (prev, next) => prev.availableHeight === next.availableHeight,
 );
 
 /**
- * Isolate ToolActivity subscription to prevent parent re-renders
+ * Isolate StatusIndicator subscription to prevent parent re-renders
  */
-const ToolActivityWrapper = React.memo<{
+const StatusIndicatorWrapper = React.memo<{
   approval: ApprovalInfo | null;
   thinking: boolean;
 }>(
   ({ approval, thinking }) => {
     return (
       <Box paddingX={1} display={!approval && thinking ? "flex" : "none"}>
-        <ToolActivityOptimized />
+        <StatusIndicator />
       </Box>
     );
   },
@@ -185,12 +182,11 @@ export const App: React.FC<AppProps> = ({
   const terminalHeight = stdout?.rows || 24;
 
   // RPC connection
-  const { client, connected, rpcReady, connecting, error, sendMessage } =
-    useRPC({
-      url: serverUrl,
-      token,
-      debug,
-    });
+  const { client, connected, rpcReady, error, sendMessage } = useRPC({
+    url: serverUrl,
+    token,
+    debug,
+  });
 
   // Get state from atomic store
   const messages = useMessages();
@@ -200,6 +196,25 @@ export const App: React.FC<AppProps> = ({
   const sessionId = useSessionId();
   const currentRunId = useCurrentRunId();
   const actions = useActions();
+
+  // Measure controls/footer height dynamically (like gemini-cli)
+  const controlsRef = useRef<any>(null);
+  const [controlsHeight, setControlsHeight] = useState(0);
+
+  useLayoutEffect(() => {
+    if (controlsRef.current) {
+      const measurement = measureElement(controlsRef.current);
+      if (measurement.height > 0) {
+        setControlsHeight(measurement.height);
+      }
+    }
+  }, [terminalHeight, approval, thinking]);
+
+  // Calculate available height for messages (gemini-cli approach)
+  const availableTerminalHeight = Math.max(
+    5,
+    terminalHeight - controlsHeight - 2,
+  );
 
   // Ctrl+C handling - require double tap to quit
   const { exit } = useApp();
@@ -634,11 +649,7 @@ export const App: React.FC<AppProps> = ({
     return (
       <Box flexDirection="column">
         <Box paddingX={1}>
-          <StatusBar
-            agentName={agentName}
-            connected={connected}
-            sessionId={sessionId}
-          />
+          <Logo agentName={agentName} />
         </Box>
         <Box marginTop={1}>
           <SessionList
@@ -663,61 +674,54 @@ export const App: React.FC<AppProps> = ({
     <MouseProvider>
       <ScrollProvider>
         <Box flexDirection="column">
-          {/* Status bar - always visible */}
-          <Box paddingX={1}>
-            <StatusBar
-              agentName={agentName}
-              connected={connected}
-              sessionId={sessionId}
-            />
-          </Box>
-
-          {/* Welcome message - keep in DOM, control visibility */}
-          {welcomeText && (
-            <Box
-              paddingY={1}
-              marginTop={1}
-              paddingX={1}
-              display={messages.length === 0 ? "flex" : "none"}
-            >
-              <Text>{welcomeText}</Text>
-            </Box>
-          )}
+          {/* Header with logo and welcome message - visible only before first message */}
+          <Header
+            agentName={agentName}
+            welcomeText={welcomeText}
+            visible={messages.length === 0}
+          />
 
           {/* Message history - scrollable with keyboard/mouse support */}
-          <Box paddingX={1} flexGrow={1}>
-            <ScrollableMessageList terminalHeight={terminalHeight} />
+          <Box paddingX={1} marginTop={1} flexGrow={1}>
+            <ScrollableMessageList availableHeight={availableTerminalHeight} />
           </Box>
 
-          {/* Tool activity - ALWAYS in DOM, just hidden - isolated subscription */}
-          <ToolActivityWrapper approval={approval} thinking={thinking} />
+          {/* Controls/footer section - measured for dynamic height calculation */}
+          <Box ref={controlsRef} flexDirection="column">
+            {/* Status indicator - ALWAYS in DOM, just hidden - isolated subscription */}
+            <StatusIndicatorWrapper approval={approval} thinking={thinking} />
 
-          {/* Approval dialog - ALWAYS in DOM with placeholder to prevent mount/unmount */}
-          <Box marginTop={1} paddingX={1} display={approval ? "flex" : "none"}>
-            <ApprovalDialogWrapper
+            {/* Approval dialog - ALWAYS in DOM with placeholder to prevent mount/unmount */}
+            <Box
+              marginTop={1}
+              paddingX={1}
+              display={approval ? "flex" : "none"}
+            >
+              <ApprovalDialogWrapper
+                approval={approval}
+                onApprove={handleApproval}
+              />
+            </Box>
+
+            {/* Input prompt - always rendered, disabled during approval/thinking */}
+            <Box marginTop={1}>
+              <MultiLineInputOptimized
+                onSubmit={handleSubmit}
+                onEscape={handleEscape}
+                disabled={!connected || thinking || !!approval}
+                history={messageHistory}
+              />
+            </Box>
+
+            {/* Help text below input - isolated subscription */}
+            <HelpWrapper
+              connected={connected}
+              thinking={thinking}
               approval={approval}
-              onApprove={handleApproval}
+              usage={usage}
+              waitingForSecondCtrlC={waitingForSecondCtrlC}
             />
           </Box>
-
-          {/* Input prompt - always rendered, disabled during approval/thinking */}
-          <Box marginTop={1}>
-            <MultiLineInputOptimized
-              onSubmit={handleSubmit}
-              onEscape={handleEscape}
-              disabled={!connected || thinking || !!approval}
-              history={messageHistory}
-            />
-          </Box>
-
-          {/* Help text below input - isolated subscription */}
-          <HelpWrapper
-            connected={connected}
-            thinking={thinking}
-            approval={approval}
-            usage={usage}
-            waitingForSecondCtrlC={waitingForSecondCtrlC}
-          />
         </Box>
       </ScrollProvider>
     </MouseProvider>

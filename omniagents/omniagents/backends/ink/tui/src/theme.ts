@@ -4,7 +4,7 @@
 
 export const TokyoNightTheme = {
   // Message roles
-  userMessage: "#9099b2", // Muted blue-gray
+  userMessage: "#bb9af7", // Purple (matching prompt indicator)
   assistantMessage: "#7aa2f7", // Soft blue
 
   // Tool colors

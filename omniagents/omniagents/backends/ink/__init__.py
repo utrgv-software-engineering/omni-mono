@@ -67,7 +67,10 @@ class InkBackend:
         # Extract configuration from kwargs
         config_path = kwargs.get("config_path")
         auth_token = kwargs.get("auth_token")
+        # Get debug from kwargs or from args object
         debug = kwargs.get("debug", False)
+        if not debug and args and hasattr(args, "debug"):
+            debug = args.debug
         session_id = kwargs.get("session_id")
         resume_mode = bool(kwargs.get("resume"))
         initial_prompt = kwargs.get("initial_prompt")

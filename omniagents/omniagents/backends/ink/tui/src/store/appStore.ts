@@ -5,6 +5,7 @@
 
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
+import { debugLog } from "../utils/debugLog.js";
 
 export interface ToolCallInfo {
   tool: string;
@@ -121,6 +122,7 @@ export const useAppStore = create<AppState>()(
           const currentStatus = state.status;
 
           if (currentThinking !== thinking) {
+            debugLog(`setThinking: ${currentThinking} -> ${thinking}, status: ${status ?? "null"}`);
             state.thinking = thinking;
           }
 
@@ -134,6 +136,7 @@ export const useAppStore = create<AppState>()(
           state.approval = approval;
           // When approval appears, pause thinking indicator to prevent flicker
           if (approval) {
+            debugLog(`setApproval: turning thinking OFF (approval shown)`);
             state.thinking = false;
             state.status = null;
           }
@@ -175,6 +178,7 @@ export const useAppStore = create<AppState>()(
             }
           });
 
+          debugLog(`cancelRun: turning thinking OFF (run cancelled)`);
           state.thinking = false;
           state.status = null;
           state.currentRunId = null;
@@ -196,6 +200,7 @@ export const useAppStore = create<AppState>()(
 
       clearMessages: () =>
         set((state) => {
+          debugLog(`clearMessages: turning thinking OFF (messages cleared)`);
           state.messages = [];
           state.thinking = false;
           state.status = null;
