@@ -44,6 +44,7 @@ export class RPCClient extends EventEmitter {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
+  private rpcReady = false;
 
   constructor(options: RPCClientOptions) {
     super();
@@ -82,6 +83,16 @@ export class RPCClient extends EventEmitter {
           this.log('Connected to server');
           this.reconnectAttempts = 0;
           this.emit('connected');
+
+          // Wait a brief moment to ensure server-side RPC handlers are ready
+          // This matches the bubbletea backend's approach which delays before
+          // signaling RPC readiness to avoid race conditions
+          setTimeout(() => {
+            this.rpcReady = true;
+            this.emit('rpc_ready');
+            this.log('RPC ready');
+          }, 50);
+
           resolve();
         });
 
@@ -96,6 +107,7 @@ export class RPCClient extends EventEmitter {
 
         this.ws.on('close', () => {
           this.log('Disconnected from server');
+          this.rpcReady = false;
           this.emit('disconnected');
           this.attemptReconnect();
         });
@@ -116,6 +128,7 @@ export class RPCClient extends EventEmitter {
    */
   disconnect(): void {
     if (this.ws) {
+      this.rpcReady = false;
       this.ws.close();
       this.ws = null;
     }

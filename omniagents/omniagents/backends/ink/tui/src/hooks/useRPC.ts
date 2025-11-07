@@ -14,6 +14,7 @@ export interface UseRPCOptions {
 export interface UseRPCResult {
   client: RPCClient | null;
   connected: boolean;
+  rpcReady: boolean;
   connecting: boolean;
   error: Error | null;
   sendMessage: (content: string, sessionId?: string) => Promise<{ run_id: string; session_id: string }>;
@@ -25,6 +26,7 @@ export interface UseRPCResult {
 export function useRPC(options: UseRPCOptions): UseRPCResult {
   const [client, setClient] = useState<RPCClient | null>(null);
   const [connected, setConnected] = useState(false);
+  const [rpcReady, setRpcReady] = useState(false);
   const [connecting, setConnecting] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
@@ -46,8 +48,13 @@ export function useRPC(options: UseRPCOptions): UseRPCResult {
       setError(null);
     });
 
+    rpcClient.on('rpc_ready', () => {
+      setRpcReady(true);
+    });
+
     rpcClient.on('disconnected', () => {
       setConnected(false);
+      setRpcReady(false);
     });
 
     rpcClient.on('error', (err: Error) => {
@@ -92,6 +99,7 @@ export function useRPC(options: UseRPCOptions): UseRPCResult {
   return {
     client,
     connected,
+    rpcReady,
     connecting,
     error,
     sendMessage,

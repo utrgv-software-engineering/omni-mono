@@ -72,7 +72,7 @@ const cli = meow(
   }
 );
 
-const { server, name, token, session, welcome, initialMessage, debug } = cli.flags;
+const { server, name, token, session, resume, welcome, initialMessage, debug } = cli.flags;
 
 // Disable terminal line wrapping - let Ink handle all wrapping
 // This reduces rendering artifacts and flickering
@@ -91,6 +91,7 @@ const app = render(
     agentName={name}
     token={token}
     sessionId={session}
+    resumeMode={resume}
     welcomeText={welcome}
     initialMessage={initialMessage}
     debug={debug}

@@ -15,6 +15,7 @@ import { ToolActivityOptimized } from './ToolActivityOptimized.js';
 import { MultiLineInputOptimized } from './MultiLineInputOptimized.js';
 import { ApprovalDialog } from './ApprovalDialog.js';
 import { Help } from './Help.js';
+import { SessionList } from './SessionList.js';
 
 /**
  * Wrapper to keep ApprovalDialog mounted to prevent flicker
@@ -105,9 +106,13 @@ export interface AppProps {
   token?: string;
   debug?: boolean;
   sessionId?: string;
+  resumeMode?: boolean;
   welcomeText?: string;
   initialMessage?: string;
 }
+
+// UI state machine for proper flow control
+type UIState = 'connecting' | 'session_select' | 'chat' | 'error';
 
 export const App: React.FC<AppProps> = ({
   serverUrl,
@@ -115,13 +120,24 @@ export const App: React.FC<AppProps> = ({
   token,
   debug,
   sessionId: initialSessionId,
+  resumeMode = false,
   welcomeText,
   initialMessage,
 }) => {
   const [messageHistory, setMessageHistory] = useState<string[]>([]);
+  const [uiState, setUIState] = useState<UIState>('connecting');
+  const [availableSessions, setAvailableSessions] = useState<Array<{
+    id: string;
+    created_at: string;
+    archived: boolean;
+    message_count: number;
+    first_message?: unknown;
+    last_message?: unknown;
+  }>>([]);
+  const [selectedSessionIndex, setSelectedSessionIndex] = useState(0);
 
   // RPC connection
-  const { client, connected, connecting, error, sendMessage } = useRPC({
+  const { client, connected, rpcReady, connecting, error, sendMessage } = useRPC({
     url: serverUrl,
     token,
     debug,
@@ -145,7 +161,7 @@ export const App: React.FC<AppProps> = ({
   // Setup message handlers with batching
   const { approveToolCall, cancelRun } = useMessagesOptimized({
     client,
-    sessionId: initialSessionId,
+    sessionId: sessionId ?? initialSessionId,
   });
 
   // Set initial session ID
@@ -155,9 +171,9 @@ export const App: React.FC<AppProps> = ({
     }
   }, [initialSessionId, actions]);
 
-  // Load global user history from server when connected
+  // Load global user history from server when RPC is ready
   useEffect(() => {
-    if (!client || !connected) {
+    if (!client || !rpcReady) {
       return;
     }
 
@@ -189,7 +205,95 @@ export const App: React.FC<AppProps> = ({
     };
 
     loadHistory();
-  }, [client, connected, debug]);
+  }, [client, rpcReady, debug]);
+
+  // Load sessions for resume mode (wait for RPC ready to avoid race condition)
+  useEffect(() => {
+    if (!client || !rpcReady) {
+      return;
+    }
+
+    // If resume mode and no specific session ID, show session list
+    if (resumeMode && !initialSessionId) {
+      const loadSessions = async () => {
+        try {
+          if (debug) {
+            console.error('[DEBUG] Fetching sessions for resume mode...');
+          }
+          const sessions = await client.listSessions();
+          if (debug) {
+            console.error(`[DEBUG] Fetched ${sessions?.length || 0} sessions`);
+          }
+          if (sessions && sessions.length > 0) {
+            setAvailableSessions(sessions);
+            setUIState('session_select');
+            if (debug) {
+              console.error('[DEBUG] UI state: session_select');
+            }
+          } else {
+            // No sessions - go directly to chat
+            setUIState('chat');
+            if (debug) {
+              console.error('[DEBUG] No sessions found, UI state: chat');
+            }
+          }
+        } catch (err) {
+          console.error('Failed to load sessions:', err);
+          // On error, just start fresh chat
+          setUIState('chat');
+        }
+      };
+
+      loadSessions();
+    } else if (rpcReady && !resumeMode) {
+      // Not in resume mode, go straight to chat
+      setUIState('chat');
+      if (debug) {
+        console.error('[DEBUG] Not resume mode, UI state: chat');
+      }
+    } else if (rpcReady && initialSessionId) {
+      // Have a specific session ID, go straight to chat
+      setUIState('chat');
+      if (debug) {
+        console.error('[DEBUG] Have session ID, UI state: chat');
+      }
+    }
+  }, [client, rpcReady, resumeMode, initialSessionId, debug]);
+
+  // Handle session list navigation
+  const handleSessionListInput = useCallback((input: string, key: any) => {
+    if (debug) {
+      console.error('[DEBUG] Session list input:', { input, key: Object.keys(key).filter(k => key[k]) });
+    }
+
+    if (key.upArrow) {
+      setSelectedSessionIndex(prev => Math.max(0, prev - 1));
+    } else if (key.downArrow) {
+      setSelectedSessionIndex(prev => Math.min(availableSessions.length - 1, prev + 1));
+    } else if (key.return) {
+      // Select session and transition to chat
+      const selected = availableSessions[selectedSessionIndex];
+      if (selected) {
+        if (debug) {
+          console.error('[DEBUG] Selected session:', selected.id);
+        }
+        actions.setSessionId(selected.id);
+        setUIState('chat');
+        if (debug) {
+          console.error('[DEBUG] UI state: chat (session selected)');
+        }
+      }
+    } else if (key.tab) {
+      // Create new session and transition to chat
+      if (debug) {
+        console.error('[DEBUG] Creating new session (Tab pressed)');
+      }
+      setUIState('chat');
+      if (debug) {
+        console.error('[DEBUG] UI state: chat (new session)');
+      }
+    }
+  }, [availableSessions, selectedSessionIndex, actions, debug]);
 
   // Handle approval
   const handleApproval = useCallback(
@@ -355,7 +459,26 @@ export const App: React.FC<AppProps> = ({
     [client, connected, sendMessage, sessionId, actions, handleSlashCommand]
   );
 
+  // Handle session list input (only when in session_select state)
+  useInput(
+    (input, key) => {
+      if (debug) {
+        console.error('[DEBUG] useInput triggered:', {
+          input,
+          key: Object.keys(key).filter(k => key[k]),
+          uiState,
+          isActive: uiState === 'session_select'
+        });
+      }
+      if (uiState === 'session_select') {
+        handleSessionListInput(input, key);
+      }
+    },
+    { isActive: uiState === 'session_select' }
+  );
+
   // Handle Ctrl+C - double tap to quit (like bubbletea)
+  // Only active in chat mode to avoid conflicts with session selection
   useInput(
     useCallback(
       (input, key) => {
@@ -391,7 +514,8 @@ export const App: React.FC<AppProps> = ({
         }
       },
       [thinking, currentRunId, approval, cancelRun, handleApproval, exit]
-    )
+    ),
+    { isActive: true } // Always active for emergency exit
   );
 
   // Cleanup timer on unmount
@@ -403,15 +527,15 @@ export const App: React.FC<AppProps> = ({
     };
   }, []);
 
-  // Send initial message if provided
+  // Send initial message if provided (only in chat state)
   useEffect(() => {
-    if (initialMessage && connected && messages.length === 0) {
+    if (initialMessage && uiState === 'chat' && messages.length === 0) {
       handleSubmit(initialMessage);
     }
-  }, [initialMessage, connected, messages.length, handleSubmit]);
+  }, [initialMessage, uiState, messages.length, handleSubmit]);
 
-  // Show loading state
-  if (connecting && !connected) {
+  // Render based on UI state
+  if (uiState === 'connecting') {
     return (
       <Box flexDirection="column">
         <Text>Connecting to {agentName}...</Text>
@@ -419,16 +543,37 @@ export const App: React.FC<AppProps> = ({
     );
   }
 
-  // Show error state
-  if (error && !connected) {
+  if (uiState === 'error' || (error && !connected)) {
     return (
       <Box flexDirection="column">
         <Text color="red">Failed to connect to server:</Text>
-        <Text>{error.message}</Text>
+        <Text>{error?.message || 'Unknown error'}</Text>
       </Box>
     );
   }
 
+  if (uiState === 'session_select') {
+    if (debug) {
+      console.error(`[DEBUG] Rendering session_select state with ${availableSessions.length} sessions, selectedIndex=${selectedSessionIndex}`);
+    }
+    return (
+      <Box flexDirection="column">
+        <Box paddingX={1}>
+          <StatusBar agentName={agentName} connected={connected} sessionId={sessionId} />
+        </Box>
+        <Box marginTop={1}>
+          <SessionList sessions={availableSessions} selectedIndex={selectedSessionIndex} />
+        </Box>
+        {debug && (
+          <Box paddingX={1} marginTop={1}>
+            <Text dimColor>DEBUG: State={uiState}, Selected={selectedSessionIndex}/{availableSessions.length}</Text>
+          </Box>
+        )}
+      </Box>
+    );
+  }
+
+  // Chat UI (uiState === 'chat')
   return (
     <Box flexDirection="column">
       {/* Status bar - always visible */}
