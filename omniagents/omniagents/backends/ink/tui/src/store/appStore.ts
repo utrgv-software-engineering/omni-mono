@@ -4,6 +4,7 @@
  */
 
 import { create } from "zustand";
+import { useShallow } from "zustand/react/shallow";
 import { immer } from "zustand/middleware/immer";
 import { debugLog } from "../utils/debugLog.js";
 
@@ -251,7 +252,9 @@ export const useAppStore = create<AppState>()(
 export const useMessages = () => useAppStore((s) => s.messages);
 export const useThinking = () => useAppStore((s) => s.thinking);
 export const useStatus = () =>
-  useAppStore((s) => ({ status: s.status, statusType: s.statusType, statusSpinner: s.statusSpinner }));
+  useAppStore(
+    useShallow((s) => ({ status: s.status, statusType: s.statusType, statusSpinner: s.statusSpinner }))
+  );
 export const useApproval = () => useAppStore((s) => s.approval);
 export const useUsage = () => useAppStore((s) => s.usage);
 export const useSessionId = () => useAppStore((s) => s.sessionId);

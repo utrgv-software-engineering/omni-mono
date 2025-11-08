@@ -346,13 +346,21 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
       } else if (key.delete || key.backspace) {
         dispatch({ type: "DELETE_CHAR" });
       } else if (key.upArrow) {
-        if (state.cursorRow === 0) {
+        if (key.shift) {
+          if (state.cursorRow > 0) {
+            dispatch({ type: "MOVE_UP" });
+          }
+        } else if (state.cursorRow === 0) {
           handleHistoryUp();
         } else {
           dispatch({ type: "MOVE_UP" });
         }
       } else if (key.downArrow) {
-        if (state.cursorRow === state.lines.length - 1) {
+        if (key.shift) {
+          if (state.cursorRow < state.lines.length - 1) {
+            dispatch({ type: "MOVE_DOWN" });
+          }
+        } else if (state.cursorRow === state.lines.length - 1) {
           handleHistoryDown();
         } else {
           dispatch({ type: "MOVE_DOWN" });

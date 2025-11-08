@@ -345,7 +345,8 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       client.unregisterClientFunction("ui.request_tool_approval");
       client.unregisterClientFunction("ui.set_status");
     };
-  }, [client, sessionId, actions, batcher]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, sessionId, batcher]);
 
   // Return approval handler function
   const approveToolCall = async (approved: boolean, alwaysApprove: boolean) => {

@@ -50,9 +50,11 @@ export const Scrollable: React.FC<ScrollableProps> = ({
   const previousSizeRef = useRef({ innerHeight: 0, scrollHeight: 0 });
   const pinToBottomRef = useRef(true);
 
-  const BOTTOM_THRESHOLD = 2;
   const isNearBottom = useCallback(
-    (st: number, sh: number, ih: number) => st >= Math.max(0, sh - ih - BOTTOM_THRESHOLD),
+    (st: number, sh: number, ih: number) => {
+      const thresholdLines = Math.max(10, ih);
+      return st >= Math.max(0, sh - ih - thresholdLines);
+    },
     [],
   );
 
@@ -66,6 +68,7 @@ export const Scrollable: React.FC<ScrollableProps> = ({
     const innerHeight = Math.round(getInnerHeight(ref.current));
     const scrollHeight = Math.round(getScrollHeight(ref.current));
 
+    // Only update if dimensions actually changed
     const dimsChanged =
       previousSizeRef.current.innerHeight !== innerHeight ||
       previousSizeRef.current.scrollHeight !== scrollHeight;
@@ -82,7 +85,7 @@ export const Scrollable: React.FC<ScrollableProps> = ({
       previousSizeRef.current = { innerHeight, scrollHeight };
       setSize({ innerHeight, scrollHeight });
 
-      if ((contentGrew && (pinToBottomRef.current || wasNearBottom)) || wasNearBottom) {
+      if (contentGrew && (pinToBottomRef.current || wasNearBottom)) {
         setScrollTop(Math.max(0, scrollHeight - innerHeight));
         pinToBottomRef.current = true;
       }

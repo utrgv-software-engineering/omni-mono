@@ -95,7 +95,11 @@ const StatusIndicatorWrapper = React.memo<{
 }>(
   ({ approval, thinking }) => {
     return (
-      <Box paddingX={1} display={!approval && thinking ? "flex" : "none"}>
+      <Box
+        paddingX={1}
+        marginTop={1}
+        display={!approval && thinking ? "flex" : "none"}
+      >
         <StatusIndicator />
       </Box>
     );
@@ -233,7 +237,8 @@ export const App: React.FC<AppProps> = ({
     if (initialSessionId) {
       actions.setSessionId(initialSessionId);
     }
-  }, [initialSessionId, actions]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSessionId]);
 
   // Load global user history from server when RPC is ready
   useEffect(() => {
@@ -330,7 +335,8 @@ export const App: React.FC<AppProps> = ({
     if (!connected) {
       actions.setStatus("Disconnected from server", "error", false);
     }
-  }, [connected, uiState, actions]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, uiState]);
 
   // Handle session list navigation
   const handleSessionListInput = useCallback(
@@ -372,7 +378,8 @@ export const App: React.FC<AppProps> = ({
         }
       }
     },
-    [availableSessions, selectedSessionIndex, actions, debug],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [availableSessions, selectedSessionIndex, debug],
   );
 
   // Handle approval
@@ -555,7 +562,8 @@ export const App: React.FC<AppProps> = ({
         actions.setThinking(false, `Error: ${errorMessage}`);
       }
     },
-    [client, connected, sendMessage, sessionId, actions, handleSlashCommand],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [client, connected, sendMessage, sessionId, handleSlashCommand],
   );
 
   // Handle session list input (only when in session_select state)

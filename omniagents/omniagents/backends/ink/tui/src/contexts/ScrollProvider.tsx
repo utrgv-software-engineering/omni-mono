@@ -159,10 +159,11 @@ export const useScrollable = (
   const [id] = useState(() => `scrollable-${nextId++}`);
   const entryRef = useRef(entry);
 
-  // Keep entry ref up to date
+  // Keep entry ref up to date (runs on every render to keep ref synchronized)
+  // This doesn't cause re-renders since it only updates a ref
   useEffect(() => {
     entryRef.current = entry;
-  });
+  }, [entry]);
 
   useEffect(() => {
     if (isActive) {
