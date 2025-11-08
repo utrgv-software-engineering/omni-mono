@@ -5,7 +5,7 @@
 
 import { useEffect, useRef } from "react";
 import { RPCClient } from "../rpc/client.js";
-import { useActions } from "../store/appStore.js";
+import { useActions, useAppStore } from "../store/appStore.js";
 import { EventBatcher } from "../utils/eventBatcher.js";
 import { debugLog } from "../utils/debugLog.js";
 import type { ApprovalInfo, Message } from "../store/appStore.js";
@@ -133,8 +133,9 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
           content: params.content,
           timestamp: new Date(),
         });
-        // Don't turn off thinking here - run might not be done yet
-        // Thinking indicator stays on until handleRunEnd is called
+        // Clear any retry/error status once we see forward progress
+        // Don't turn off thinking - run might not be done yet
+        actions.setThinking(true, null);
       });
     };
 
@@ -156,7 +157,8 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
             running: true,
           },
         });
-        actions.setThinking(true);
+        // Clear any retry/error status once we see forward progress
+        actions.setThinking(true, null);
       });
     };
 
@@ -186,26 +188,71 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       batcher.add(() => {
         debugLog(`run_started batch executing at ${Date.now()}, delay: ${Date.now() - timestamp}ms`);
         actions.setCurrentRunId(params.run_id);
-        actions.setThinking(true);
+        actions.setThinking(true, null);
       });
     };
 
     // RUN END - batched
-    const handleRunEnd = () => {
+    const handleRunEnd = (params: {
+      run_id: string;
+      end_reason: string;
+      error?: {
+        message: string;
+        code?: string;
+        details?: unknown;
+      };
+    }) => {
       const timestamp = Date.now();
-      debugLog(`run_end received at ${timestamp}, setting thinking=false`);
+      debugLog(`run_end received at ${timestamp}, end_reason=${params.end_reason}`);
       batcher.add(() => {
         debugLog(`run_end batch executing at ${Date.now()}, delay: ${Date.now() - timestamp}ms`);
-        actions.setThinking(false, null);
+
+        const current = useAppStore.getState().currentRunId;
+        if (current && params.run_id && params.run_id !== current) {
+          debugLog(`Ignoring run_end for unrelated run_id=${params.run_id} (current=${current})`);
+          return;
+        }
+
+        // Check if run ended with an error
+        if (params.end_reason.toLowerCase() === "error" && params.error) {
+          // Show error as status, but keep UI interactive (don't stop thinking state yet)
+          actions.setThinking(false, `Error: ${params.error.message}`);
+        } else {
+          // Normal completion - clear everything
+          actions.setThinking(false, null);
+        }
+
         actions.setCurrentRunId(null);
       });
     };
 
-    // RUN STATUS - not batched (rare event)
-    const handleRunStatus = (params: { status: string; message?: string }) => {
-      if (params.message) {
-        console.error("[Status]", params.status, params.message);
+    // RUN STATUS - not batched (rare event, needs immediate UI update)
+    const handleRunStatus = (params: {
+      run_id: string;
+      status: string;
+      message: string;
+      attempt: number;
+      total: number;
+      next_delay?: number;
+      type?: "info" | "warning" | "error" | "success" | "progress";
+    }) => {
+      const current = useAppStore.getState().currentRunId;
+      if (current && params.run_id && params.run_id !== current) {
+        debugLog(`Ignoring run_status for unrelated run_id=${params.run_id} (current=${current})`);
+        return;
       }
+      // Build retry status message like bubbletea does
+      let statusMessage: string;
+      if (params.total > 0 && params.attempt > 0) {
+        statusMessage = `Retrying ${params.attempt}/${params.total}: ${params.message}`;
+      } else {
+        statusMessage = `Retrying: ${params.message}`;
+      }
+
+      debugLog(`run_status: ${statusMessage}`);
+
+      const t = params.type ?? "progress";
+      actions.setStatus(statusMessage, t, true);
     };
 
     // TOKEN USAGE - batched
@@ -258,7 +305,16 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     const handleSetStatus = async (args: Record<string, unknown>) => {
       const text = args.text as string;
       const newStatus = text && text.trim() !== "" ? text : null;
-      actions.setThinking(true, newStatus);
+      const type = (args as { type?: string }).type as
+        | "info"
+        | "warning"
+        | "error"
+        | "success"
+        | "progress"
+        | undefined;
+      const showSpinnerArg = (args as { show_spinner?: boolean }).show_spinner;
+      const showSpinner = typeof showSpinnerArg === "boolean" ? showSpinnerArg : true;
+      actions.setStatus(newStatus, type ?? null, showSpinner);
       return { ack: true };
     };
 
@@ -324,7 +380,8 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     try {
       await client.stopRun(runId);
     } catch (error) {
-      console.error("Failed to cancel run:", error);
+      const msg = error instanceof Error ? error.message : "Failed to cancel run";
+      actions.setThinking(false, `Error: ${msg}`);
     }
   };
 

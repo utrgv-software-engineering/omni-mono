@@ -324,6 +324,14 @@ export const App: React.FC<AppProps> = ({
     }
   }, [client, rpcReady, resumeMode, initialSessionId, debug]);
 
+  // Reflect connection status into status indicator like bubbletea
+  useEffect(() => {
+    if (uiState !== "chat") return;
+    if (!connected) {
+      actions.setStatus("Disconnected from server", "error", false);
+    }
+  }, [connected, uiState, actions]);
+
   // Handle session list navigation
   const handleSessionListInput = useCallback(
     (input: string, key: any) => {
@@ -541,7 +549,10 @@ export const App: React.FC<AppProps> = ({
           actions.setSessionId(response.session_id);
         }
       } catch (err) {
-        console.error("Failed to send message:", err);
+        // Show error in status indicator instead of just logging
+        const errorMessage =
+          err instanceof Error ? err.message : "Failed to send message";
+        actions.setThinking(false, `Error: ${errorMessage}`);
       }
     },
     [client, connected, sendMessage, sessionId, actions, handleSlashCommand],

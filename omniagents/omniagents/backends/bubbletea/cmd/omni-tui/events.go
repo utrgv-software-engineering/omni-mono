@@ -74,12 +74,13 @@ type RunEndMsg struct {
 // This lets the UI show a friendly status like
 // "Error: Request timed out. (Retrying 1/3)" while keeping the run alive.
 type RunStatusEvent struct {
-	RunID     string  `json:"run_id"`
-	Status    string  `json:"status"`               // e.g., "retrying"
-	Message   string  `json:"message"`              // human-readable error
-	Attempt   int     `json:"attempt"`              // 1-based attempt number being retried
-	Total     int     `json:"total"`                // total retry attempts
-	NextDelay float64 `json:"next_delay,omitempty"` // backoff seconds
+    RunID     string  `json:"run_id"`
+    Status    string  `json:"status"`               // e.g., "retrying"
+    Message   string  `json:"message"`              // human-readable error
+    Attempt   int     `json:"attempt"`              // 1-based attempt number being retried
+    Total     int     `json:"total"`                // total retry attempts
+    NextDelay float64 `json:"next_delay,omitempty"` // backoff seconds
+    Type      string  `json:"type,omitempty"`       // optional: info|warning|error|success|progress
 }
 
 type RunStatusMsg struct {

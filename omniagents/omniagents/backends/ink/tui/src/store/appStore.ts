@@ -51,6 +51,8 @@ interface AppState {
   // UI State
   thinking: boolean;
   status: string | null;
+  statusType: "info" | "warning" | "error" | "success" | "progress" | null;
+  statusSpinner: boolean;
   approval: ApprovalInfo | null;
   currentRunId: string | null;
 
@@ -64,6 +66,11 @@ interface AppState {
       metadata?: Record<string, unknown>,
     ) => void;
     setThinking: (thinking: boolean, status?: string | null) => void;
+    setStatus: (
+      status: string | null,
+      type?: "info" | "warning" | "error" | "success" | "progress" | null,
+      showSpinner?: boolean,
+    ) => void;
     setApproval: (approval: ApprovalInfo | null) => void;
     setUsage: (usage: UsageInfo) => void;
     setSessionId: (sessionId: string | undefined) => void;
@@ -82,6 +89,8 @@ export const useAppStore = create<AppState>()(
     sessionId: undefined,
     thinking: false,
     status: null,
+    statusType: null,
+    statusSpinner: false,
     approval: null,
     currentRunId: null,
 
@@ -128,6 +137,28 @@ export const useAppStore = create<AppState>()(
 
           if (status !== undefined && currentStatus !== status) {
             state.status = status;
+            if (status) {
+              const s = status.toLowerCase();
+              if (s.startsWith("error:")) {
+                state.statusType = "error";
+              } else if (s.startsWith("retrying")) {
+                state.statusType = "progress";
+              } else {
+                state.statusType = null;
+              }
+            } else {
+              state.statusType = null;
+            }
+            state.statusSpinner = thinking;
+          }
+        }),
+
+      setStatus: (status, type, showSpinner) =>
+        set((state) => {
+          state.status = status ?? null;
+          state.statusType = type ?? null;
+          if (typeof showSpinner === "boolean") {
+            state.statusSpinner = showSpinner;
           }
         }),
 
@@ -139,6 +170,8 @@ export const useAppStore = create<AppState>()(
             debugLog(`setApproval: turning thinking OFF (approval shown)`);
             state.thinking = false;
             state.status = null;
+            state.statusType = null;
+            state.statusSpinner = false;
           }
         }),
 
@@ -181,6 +214,8 @@ export const useAppStore = create<AppState>()(
           debugLog(`cancelRun: turning thinking OFF (run cancelled)`);
           state.thinking = false;
           state.status = null;
+          state.statusType = null;
+          state.statusSpinner = false;
           state.currentRunId = null;
 
           // Add cancellation message
@@ -204,6 +239,8 @@ export const useAppStore = create<AppState>()(
           state.messages = [];
           state.thinking = false;
           state.status = null;
+          state.statusType = null;
+          state.statusSpinner = false;
           state.approval = null;
         }),
     },
@@ -213,7 +250,8 @@ export const useAppStore = create<AppState>()(
 // Selectors to prevent unnecessary re-renders
 export const useMessages = () => useAppStore((s) => s.messages);
 export const useThinking = () => useAppStore((s) => s.thinking);
-export const useStatus = () => useAppStore((s) => s.status);
+export const useStatus = () =>
+  useAppStore((s) => ({ status: s.status, statusType: s.statusType, statusSpinner: s.statusSpinner }));
 export const useApproval = () => useAppStore((s) => s.approval);
 export const useUsage = () => useAppStore((s) => s.usage);
 export const useSessionId = () => useAppStore((s) => s.sessionId);

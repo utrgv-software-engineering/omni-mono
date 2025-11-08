@@ -47,8 +47,14 @@ export const Scrollable: React.FC<ScrollableProps> = ({
     sizeRef.current = size;
   }, [size]);
 
-  const childrenCountRef = useRef(0);
   const previousSizeRef = useRef({ innerHeight: 0, scrollHeight: 0 });
+  const pinToBottomRef = useRef(true);
+
+  const BOTTOM_THRESHOLD = 2;
+  const isNearBottom = useCallback(
+    (st: number, sh: number, ih: number) => st >= Math.max(0, sh - ih - BOTTOM_THRESHOLD),
+    [],
+  );
 
   // This effect needs to run on every render to correctly measure the container
   // and scroll to the bottom if new children are added. The if conditions
@@ -60,39 +66,46 @@ export const Scrollable: React.FC<ScrollableProps> = ({
     const innerHeight = Math.round(getInnerHeight(ref.current));
     const scrollHeight = Math.round(getScrollHeight(ref.current));
 
-    // Only update if dimensions actually changed
-    if (
+    const dimsChanged =
       previousSizeRef.current.innerHeight !== innerHeight ||
-      previousSizeRef.current.scrollHeight !== scrollHeight
-    ) {
-      const isAtBottom = scrollTop >= size.scrollHeight - size.innerHeight - 1;
+      previousSizeRef.current.scrollHeight !== scrollHeight;
+
+    if (dimsChanged) {
+      const wasNearBottom = isNearBottom(
+        scrollTop,
+        size.scrollHeight,
+        size.innerHeight,
+      );
+
+      const contentGrew = scrollHeight > previousSizeRef.current.scrollHeight;
 
       previousSizeRef.current = { innerHeight, scrollHeight };
       setSize({ innerHeight, scrollHeight });
 
-      if (isAtBottom) {
+      if ((contentGrew && (pinToBottomRef.current || wasNearBottom)) || wasNearBottom) {
         setScrollTop(Math.max(0, scrollHeight - innerHeight));
+        pinToBottomRef.current = true;
       }
-    }
-
-    const childCountCurrent = React.Children.count(children);
-    if (scrollToBottom && childrenCountRef.current !== childCountCurrent) {
-      setScrollTop(Math.max(0, scrollHeight - innerHeight));
-      childrenCountRef.current = childCountCurrent;
     }
   });
 
   const scrollBy = useCallback(
     (delta: number) => {
       const { scrollHeight, innerHeight } = sizeRef.current;
-      setScrollTop((prev: number) =>
-        Math.min(
-          Math.max(0, prev + delta),
-          Math.max(0, scrollHeight - innerHeight),
-        ),
-      );
+      setScrollTop((prev: number) => {
+        const bottom = Math.max(0, scrollHeight - innerHeight);
+        const next = Math.min(Math.max(0, prev + delta), bottom);
+
+        if (delta < 0) {
+          pinToBottomRef.current = false;
+        } else {
+          pinToBottomRef.current = isNearBottom(next, scrollHeight, innerHeight);
+        }
+
+        return next;
+      });
     },
-    [sizeRef],
+    [sizeRef, isNearBottom],
   );
 
   const { scrollbarColor, flashScrollbar, scrollByWithAnimation } =

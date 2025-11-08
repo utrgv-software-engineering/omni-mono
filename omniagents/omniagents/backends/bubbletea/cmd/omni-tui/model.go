@@ -176,6 +176,7 @@ type Model struct {
 	// Status and retry display
 	statusOverride    string // when non-empty, overrides default status line
 	statusShowSpinner bool   // show spinner with override status
+	statusType        string // optional: info|warning|error|success|progress
 	retryAttempt      int    // current retry attempt (1-based)
 	retryTotal        int    // total retry attempts planned
 	lastErrorMessage  string // last transient error message
@@ -788,6 +789,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = StateReady
 		m.statusOverride = "Disconnected from server"
 		m.statusShowSpinner = false
+		m.statusType = "error"
 		m.updateViewport()
 
 	case ErrorMsg:
@@ -795,6 +797,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastErrorMessage = msg.Error.Error()
 		m.statusOverride = fmt.Sprintf("Error: %s", m.lastErrorMessage)
 		m.statusShowSpinner = false
+		m.statusType = "error"
 		// Return to ready so user can retry or continue
 		m.state = StateReady
 		m.updateViewport()
@@ -804,6 +807,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == StateWaitingForResponse && m.statusOverride != "" {
 			m.statusOverride = ""
 			m.statusShowSpinner = false
+			m.statusType = ""
 		}
 		// Don't clear approval state - let user handle it
 		m.messages = append(m.messages, Message{
@@ -822,6 +826,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == StateWaitingForResponse && m.statusOverride != "" {
 			m.statusOverride = ""
 			m.statusShowSpinner = false
+			m.statusType = ""
 		}
 		// Find the corresponding tool call and update it
 		for i := len(m.messages) - 1; i >= 0; i-- {
@@ -842,6 +847,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == StateWaitingForResponse && m.statusOverride != "" {
 			m.statusOverride = ""
 			m.statusShowSpinner = false
+			m.statusType = ""
 		}
 		// Don't clear approval state - let user handle it
 		// Update or create assistant message
@@ -898,6 +904,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Clear any previous transient status at the start of a run
 		m.statusOverride = ""
 		m.statusShowSpinner = false
+		m.statusType = ""
 		// Reset usage totals at the start of a run
 		m.usageTotals = nil
 
@@ -916,11 +923,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Show minimal, non-judgmental status; do not block UI
 				m.statusOverride = fmt.Sprintf("Error: %s", m.lastErrorMessage)
 				m.statusShowSpinner = false
+				m.statusType = "error"
 			} else {
 				m.state = StateReady
 				// Clear any transient retry/progress status on successful completion
 				m.statusOverride = ""
 				m.statusShowSpinner = false
+				m.statusType = ""
 			}
 		}
 		m.currentRunID = ""
@@ -973,6 +982,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusOverride = fmt.Sprintf("Retrying: %s", m.lastErrorMessage)
 		}
 		m.statusShowSpinner = true
+		m.statusType = "progress"
 		// Ensure we stay in waiting state so spinner/status are visible
 		if m.state != StateApprovalRequired {
 			m.state = StateWaitingForResponse
@@ -992,24 +1002,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		fn := strings.ToLower(msg.Function)
 		handled := false
 		var handleErr error
-		if fn == "ui.set_status" {
-			// Expect args: text (string), show_spinner (bool, optional)
-			// Do not change m.state; simply override the status line
-			if text, ok := msg.Args["text"].(string); ok {
-				m.statusOverride = text
-			} else {
-				m.statusOverride = ""
-			}
-			show := true
-			if v, ok := msg.Args["show_spinner"]; ok {
-				if b, okb := v.(bool); okb {
-					show = b
-				}
-			}
-			m.statusShowSpinner = show
-			m.updateViewportContent()
-			handled = true
+	if fn == "ui.set_status" {
+		// Expect args: text (string), show_spinner (bool, optional), type (string, optional)
+		// Do not change m.state; simply override the status line
+		if text, ok := msg.Args["text"].(string); ok {
+			m.statusOverride = text
+		} else {
+			m.statusOverride = ""
 		}
+		show := true
+		if v, ok := msg.Args["show_spinner"]; ok {
+			if b, okb := v.(bool); okb {
+				show = b
+			}
+		}
+		if t, ok := msg.Args["type"].(string); ok {
+			m.statusType = strings.ToLower(t)
+		} else {
+			m.statusType = ""
+		}
+		m.statusShowSpinner = show
+		m.updateViewportContent()
+		handled = true
+	}
 
 		// Reply with client_response (best-effort)
 		go func() {
@@ -1639,7 +1654,7 @@ func (m Model) renderStatusLine() string {
 
 	// Choose color: semantic error color when the status looks like an error; otherwise spinner color
 	var statusStyle lipgloss.Style
-	if strings.HasPrefix(strings.ToLower(status), "error:") {
+	if strings.EqualFold(m.statusType, "error") || strings.HasPrefix(strings.ToLower(status), "error:") {
 		statusStyle = lipgloss.NewStyle().
 			Foreground(Styles.Error.GetForeground()).
 			Italic(true)

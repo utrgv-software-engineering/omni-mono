@@ -7,19 +7,36 @@ import { TokyoNightTheme } from "../theme.js";
 // Animated spinner with status text
 export const StatusIndicator = React.memo(() => {
   const thinking = useThinking();
-  const status = useStatus();
+  const statusObj = useStatus() as unknown as {
+    status: string | null;
+    statusType: "info" | "warning" | "error" | "success" | "progress" | null;
+    statusSpinner: boolean;
+  };
+  const status = statusObj?.status || null;
 
   if (!thinking && !status) {
     return null;
   }
 
+  // Determine color based on status content (like bubbletea does)
+  const isError = statusObj?.statusType === "error";
+  const statusColor = isError ? TokyoNightTheme.error : TokyoNightTheme.info;
+
+  const showSpinner = !!thinking || !!statusObj?.statusSpinner;
+
   return (
     <Box>
       <Text>
-        <Text color={TokyoNightTheme.info}>
-          <Spinner type="dots" />
-        </Text>{" "}
-        <Text dimColor>{status || "Thinking..."}</Text>
+        {showSpinner ? (
+          <Text color={statusColor}>
+            <Spinner type="dots" />
+          </Text>
+        ) : (
+          <Text>{"  "}</Text>
+        )}{" "}
+        <Text color={statusColor} italic>
+          {status || "Thinking..."}
+        </Text>
       </Text>
     </Box>
   );
