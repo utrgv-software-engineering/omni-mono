@@ -1228,7 +1228,10 @@ class AgentService(RpcMethodsBase):
                             continue
                         # Exhausted retries or non-retryable unknown error
                         end_reason = "error"
-                        error_info = {"message": str(e), "type": e.__class__.__name__}
+                        _msg = str(e).strip()
+                        if not _msg:
+                            _msg = e.__class__.__name__
+                        error_info = {"message": _msg, "type": e.__class__.__name__}
                         logger.error(f"Non-retryable error: {e}")
                         break
             finally:

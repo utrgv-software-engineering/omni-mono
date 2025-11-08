@@ -96,7 +96,7 @@ export const DiffApproval = React.memo<
         <Box marginBottom={1} flexDirection="column">
           <Text dimColor>Changes:</Text>
           <Box flexDirection="column">
-            {diffLines.slice(0, 10).map((line, idx) => {
+            {diffLines.map((line, idx) => {
               const lineStr = line.replace(/\n$/, "");
 
               // Skip file headers
@@ -138,11 +138,6 @@ export const DiffApproval = React.memo<
                 </Text>
               );
             })}
-            {diffLines.length > 10 && (
-              <Text dimColor italic>
-                ... {diffLines.length - 10} more lines
-              </Text>
-            )}
           </Box>
         </Box>
       )}

@@ -101,7 +101,7 @@ const StatusIndicatorWrapper = React.memo<{
       <Box
         paddingX={1}
         marginTop={1}
-        display={!approval && thinking ? "flex" : "none"}
+        display={!approval ? "flex" : "none"}
       >
         <StatusIndicator />
       </Box>
@@ -423,34 +423,7 @@ export const App: React.FC<AppProps> = ({
         return { sendToLLM: false };
       }
 
-      // Built-in: /help
-      if (name === "/help") {
-        try {
-          const funcs = await client!.listServerFunctions();
-          let helpText = "Available commands:\n\n";
-          helpText += "- /exit – Quit\n";
-
-          for (const f of funcs) {
-            const alias = "/" + f.name;
-            let argHint = "";
-            if (
-              f.params_schema?.properties &&
-              "text" in f.params_schema.properties
-            ) {
-              argHint = " <text>";
-            }
-            const desc = f.description || `Invoke server function '${f.name}'`;
-            helpText += `- ${alias}${argHint} – ${desc}\n`;
-          }
-
-          return { sendToLLM: false, result: helpText.trimEnd() };
-        } catch (err) {
-          return {
-            sendToLLM: false,
-            result: `Error listing server functions: ${err}`,
-          };
-        }
-      }
+      // Built-in /help removed; allow server function 'help' or fallback
 
       // Server function invocation
       try {

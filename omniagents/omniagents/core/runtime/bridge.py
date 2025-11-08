@@ -135,14 +135,15 @@ def _filter_history_for_api(history: list[dict]) -> list[dict]:
     """Reorder history items to match OpenAI API requirements.
 
     During streaming, items arrive in this order:
-      reasoning → function_call → message → function_call_output
+      reasoning → function_call(s) → message → function_call_output(s)
 
     But OpenAI expects:
-      reasoning → message → function_call → function_call_output
+      reasoning → message → function_call(s) → function_call_output(s)
 
     This reordering ensures:
     - reasoning items are immediately followed by messages (not function_calls)
-    - function_call items are immediately followed by their outputs
+    - parallel function_calls are grouped together after the message
+    - function_call items are properly paired with their outputs
 
     This prevents errors like:
     "Item 'rs_xxx' of type 'reasoning' was provided without its required following item."
@@ -154,45 +155,104 @@ def _filter_history_for_api(history: list[dict]) -> list[dict]:
         item = history[i]
         item_type = item.get("type", "message")
 
-        # Check if this is a function_call followed by message then output
-        if (
-            isinstance(item_type, str)
-            and item_type.endswith("_call")
-            and not item_type.endswith("_call_output")
-        ):
-            call_id = item.get("call_id")
-            function_call = item
-
-            # Look ahead for the message and output
-            message = None
-            output = None
+        # Handle reasoning items - they need special treatment for parallel calls
+        if item_type == "reasoning":
+            reasoning = item
             j = i + 1
 
-            # Find the message that comes after this call
+            # Collect all parallel function calls that follow the reasoning
+            function_calls = []
+            while j < len(history):
+                next_item = history[j]
+                next_type = next_item.get("type", "")
+                if (
+                    isinstance(next_type, str)
+                    and next_type.endswith("_call")
+                    and not next_type.endswith("_call_output")
+                ):
+                    function_calls.append(next_item)
+                    j += 1
+                else:
+                    break
+
+            # Find the message that pairs with this reasoning
+            message = None
             if j < len(history) and history[j].get("type") == "message":
                 message = history[j]
                 j += 1
 
-            # Find the output that matches this call_id
-            if j < len(history):
+            # Collect outputs for the function calls
+            outputs = []
+            call_ids = {fc.get("call_id") for fc in function_calls if fc.get("call_id")}
+            while j < len(history) and call_ids:
                 next_item = history[j]
-                if (
-                    next_item.get("type", "").endswith("_call_output")
-                    and next_item.get("call_id") == call_id
-                ):
-                    output = next_item
-                    j += 1
+                next_type = next_item.get("type", "")
+                if next_type.endswith("_call_output"):
+                    output_call_id = next_item.get("call_id")
+                    if output_call_id in call_ids:
+                        outputs.append(next_item)
+                        call_ids.remove(output_call_id)
+                        j += 1
+                    else:
+                        # Output for a different call, stop collecting
+                        break
+                else:
+                    # Not an output, stop collecting
+                    break
 
-            # Reorder: message → function_call → output
+            # Reorder: reasoning → message → function_calls → outputs
+            reordered.append(reasoning)
             if message:
                 reordered.append(message)
-            reordered.append(function_call)
-            if output:
-                reordered.append(output)
+            reordered.extend(function_calls)
+            reordered.extend(outputs)
 
-            i = j  # Skip past the items we just processed
+            i = j  # Skip past all processed items
+        # Check if this is a function_call NOT preceded by reasoning
+        elif (
+            isinstance(item_type, str)
+            and item_type.endswith("_call")
+            and not item_type.endswith("_call_output")
+        ):
+            # Only process if we didn't already handle it as part of a reasoning group
+            # Check if previous item was reasoning (would have been handled above)
+            if i > 0 and reordered and reordered[-1].get("type") != "reasoning":
+                call_id = item.get("call_id")
+                function_call = item
+
+                # Look ahead for the message and output
+                message = None
+                output = None
+                j = i + 1
+
+                # Find the message that comes after this call
+                if j < len(history) and history[j].get("type") == "message":
+                    message = history[j]
+                    j += 1
+
+                # Find the output that matches this call_id
+                if j < len(history):
+                    next_item = history[j]
+                    if (
+                        next_item.get("type", "").endswith("_call_output")
+                        and next_item.get("call_id") == call_id
+                    ):
+                        output = next_item
+                        j += 1
+
+                # Reorder: message → function_call → output
+                if message:
+                    reordered.append(message)
+                reordered.append(function_call)
+                if output:
+                    reordered.append(output)
+
+                i = j  # Skip past the items we just processed
+            else:
+                # Already handled as part of reasoning group, skip
+                i += 1
         else:
-            # Not a function_call, keep as-is
+            # Not a reasoning or function_call, keep as-is
             reordered.append(item)
             i += 1
 

@@ -246,31 +246,42 @@ func TestParseEventHandlersRoutesEvents(t *testing.T) {
 	}
 }
 
-func TestHandleSlashCommandHelp(t *testing.T) {
-	ensureTheme()
-	rpc := &stubRPC{
-		listFuncs: []ServerFunctionMeta{
-			{
-				Name:        "ping",
-				Description: "Ping",
-				ParamsSchema: map[string]interface{}{
-					"properties": map[string]interface{}{
-						"text": map[string]interface{}{},
-					},
-				},
-			},
-		},
-	}
-	model := NewModel(nil, "Agent", "Welcome", false, "", false, "")
-	model.rpcClient = rpc
-	msg := model.handleSlashCommand("/help")()
-	res, ok := msg.(CommandResultMsg)
-	if !ok {
-		t.Fatalf("expected CommandResultMsg, got %T", msg)
-	}
-	if !strings.Contains(res.Content, "/ping <text>") {
-		t.Fatalf("expected help content, got %q", res.Content)
-	}
+func TestHandleSlashCommandHelpFallbackWhenNoServerHelp(t *testing.T) {
+    ensureTheme()
+    rpc := &stubRPC{listFuncs: []ServerFunctionMeta{{Name: "ping"}}}
+    model := NewModel(nil, "Agent", "Welcome", false, "", false, "")
+    model.rpcClient = rpc
+    msg := model.handleSlashCommand("/help")()
+    res, ok := msg.(FallbackToLLMMsg)
+    if !ok {
+        t.Fatalf("expected FallbackToLLMMsg, got %T", msg)
+    }
+    if res.Text != "/help" {
+        t.Fatalf("unexpected fallback text %q", res.Text)
+    }
+}
+
+func TestHandleSlashCommandHelpServerFunction(t *testing.T) {
+    ensureTheme()
+    rpc := &stubRPC{
+        listFuncs: []ServerFunctionMeta{{Name: "help"}},
+        serverCallFn: func(name string, args map[string]interface{}, sessionID *string) (map[string]interface{}, error) {
+            if name != "help" {
+                t.Fatalf("unexpected function %s", name)
+            }
+            return map[string]interface{}{"message": "custom help"}, nil
+        },
+    }
+    model := NewModel(nil, "Agent", "Welcome", false, "", false, "")
+    model.rpcClient = rpc
+    msg := model.handleSlashCommand("/help")()
+    res, ok := msg.(CommandResultMsg)
+    if !ok {
+        t.Fatalf("expected CommandResultMsg, got %T", msg)
+    }
+    if res.Content != "custom help" {
+        t.Fatalf("unexpected help content %q", res.Content)
+    }
 }
 
 func TestHandleSlashCommandFallback(t *testing.T) {

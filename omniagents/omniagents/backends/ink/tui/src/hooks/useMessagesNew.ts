@@ -215,8 +215,11 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
 
         // Check if run ended with an error
         if (params.end_reason.toLowerCase() === "error" && params.error) {
-          // Show error as status, but keep UI interactive (don't stop thinking state yet)
-          actions.setThinking(false, `Error: ${params.error.message}`);
+          // Show error as status with fallback text
+          const raw = (params.error.message || "").trim();
+          const fallbackType = (params as any).error?.type as string | undefined;
+          const msg = raw || (fallbackType || "Unknown error");
+          actions.setThinking(false, `Error: ${msg}`);
         } else {
           // Normal completion - clear everything
           actions.setThinking(false, null);

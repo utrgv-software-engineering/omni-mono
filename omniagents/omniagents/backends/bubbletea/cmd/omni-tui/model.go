@@ -2123,38 +2123,6 @@ func (m Model) handleSlashCommand(cmd string) tea.Cmd {
 		switch name {
 		case "/exit":
 			return tea.Quit()
-		case "/help":
-			// Build dynamic help from server functions only (no static fallback)
-			funcs, err := m.rpcClient.ListServerFunctions()
-			if err != nil {
-				return ErrorMsg{Error: err}
-			}
-			var b strings.Builder
-			b.WriteString("Available commands:\n\n")
-			// Include built-in exit
-			b.WriteString("- /exit – Quit\n")
-			// Map server function names to slash commands as a Markdown list (no code fences)
-			for _, f := range funcs {
-				// Show the exact server function name so the user can call it directly
-				alias := "/" + f.Name
-				// Simple arg hint when a 'text' property exists
-				argHint := ""
-				if f.ParamsSchema != nil {
-					if props, ok := f.ParamsSchema["properties"].(map[string]interface{}); ok {
-						if _, hasText := props["text"]; hasText {
-							argHint = " <text>"
-						}
-					}
-				}
-				desc := f.Description
-				if desc == "" {
-					desc = "Invoke server function '" + f.Name + "'"
-				}
-				// Markdown bullet item without code fences (Glamour will wrap nicely)
-				b.WriteString(fmt.Sprintf("- %s%s – %s\n", alias, argHint, desc))
-			}
-			helpBody := strings.TrimRight(b.String(), "\n")
-			return CommandResultMsg{Content: helpBody}
 		default:
 			// Try server function first; if not available, fallback to LLM
 			fn := strings.TrimPrefix(name, "/")

@@ -58,3 +58,8 @@ __all__ = [
     "output_guardrail",
     "GuardrailFunctionOutput",
 ]
+
+try:
+    from .patches import agents_stream_resume as _stream_resume_patch  # noqa: F401
+except Exception:
+    pass
