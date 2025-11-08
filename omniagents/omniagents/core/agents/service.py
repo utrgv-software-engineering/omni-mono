@@ -28,10 +28,16 @@ from agents import (
 )
 
 try:
-    from openai import APIError, RateLimitError, APIConnectionError, APITimeoutError
+    from openai import (
+        APIError,
+        APIStatusError,
+        RateLimitError,
+        APIConnectionError,
+        APITimeoutError,
+    )
 except ImportError:
-    # Fallback if openai library structure changes
     APIError = None
+    APIStatusError = None
     RateLimitError = None
     APIConnectionError = None
     APITimeoutError = None
@@ -1080,10 +1086,22 @@ class AgentService(RpcMethodsBase):
                     return True
                 if APITimeoutError is not None and isinstance(ex, APITimeoutError):
                     return True
+                if APIStatusError is not None and isinstance(ex, APIStatusError):
+                    if hasattr(ex, "status_code") and ex.status_code in (
+                        408,
+                        429,
+                        500,
+                        502,
+                        503,
+                        504,
+                    ):
+                        return True
                 if APIError is not None and isinstance(ex, APIError):
                     # Check HTTP status code if available
                     if hasattr(ex, "status_code") and ex.status_code in (
+                        408,
                         429,
+                        500,
                         502,
                         503,
                         504,
@@ -1102,15 +1120,20 @@ class AgentService(RpcMethodsBase):
                 retry_keywords = (
                     "rate limit",
                     "429",
-                    "503",
+                    "500",
                     "502",
+                    "503",
                     "504",
                     "service unavailable",
+                    "internal server error",
+                    "bad gateway",
+                    "gateway timeout",
+                    "request timeout",
                     "overloaded",
                     "connection reset",
                     "connection refused",
-                    "timed out",  # "timed out" is more specific than "timeout"
-                    "timeout while",  # "timeout while X" is a common error pattern
+                    "timed out",
+                    "timeout while",
                 )
                 return any(k in msg for k in retry_keywords)
 

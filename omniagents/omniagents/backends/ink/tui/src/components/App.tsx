@@ -70,12 +70,15 @@ const ApprovalDialogWrapper = React.memo<{
  */
 const ScrollableMessageList = React.memo<{ availableHeight: number }>(
   ({ availableHeight }) => {
+    const messages = useMessages();
+    const contentVersion = messages.length;
     return (
       <Scrollable
         hasFocus={true}
         scrollToBottom={true}
         maxHeight={availableHeight}
         flexGrow={1}
+        contentVersion={contentVersion}
       >
         <Box flexDirection="column">
           <MessageListOptimized />

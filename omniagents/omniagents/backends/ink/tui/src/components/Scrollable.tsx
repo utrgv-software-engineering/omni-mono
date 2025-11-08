@@ -24,6 +24,7 @@ interface ScrollableProps {
   hasFocus: boolean;
   scrollToBottom?: boolean;
   flexGrow?: number;
+  contentVersion?: number;
 }
 
 export const Scrollable: React.FC<ScrollableProps> = ({
@@ -35,6 +36,7 @@ export const Scrollable: React.FC<ScrollableProps> = ({
   hasFocus,
   scrollToBottom,
   flexGrow,
+  contentVersion,
 }) => {
   const [scrollTop, setScrollTop] = useState(0);
   const ref = useRef<DOMElement>(null);
@@ -60,21 +62,24 @@ export const Scrollable: React.FC<ScrollableProps> = ({
     const innerHeight = getInnerHeight(ref.current);
     const scrollHeight = getScrollHeight(ref.current);
 
-    // Only update if dimensions actually changed
+    const EPS = 0.001;
+    const prev = previousSizeRef.current;
     const dimsChanged =
-      previousSizeRef.current.innerHeight !== innerHeight ||
-      previousSizeRef.current.scrollHeight !== scrollHeight;
+      Math.abs(prev.innerHeight - innerHeight) > EPS ||
+      Math.abs(prev.scrollHeight - scrollHeight) > EPS;
+
+    const contentGrew = scrollHeight - prev.scrollHeight > EPS;
+    const containerShrank = prev.innerHeight - innerHeight > EPS;
 
     if (dimsChanged) {
-      const contentGrew = scrollHeight > previousSizeRef.current.scrollHeight;
-
       previousSizeRef.current = { innerHeight, scrollHeight };
       setSize({ innerHeight, scrollHeight });
+    }
 
-      if (contentGrew) {
-        setScrollTop(Math.max(0, scrollHeight - innerHeight));
-        pinToBottomRef.current = true;
-      }
+    if (contentGrew || containerShrank) {
+      const bottom = Math.max(0, scrollHeight - innerHeight);
+      setScrollTop(bottom);
+      pinToBottomRef.current = true;
     }
   });
 
