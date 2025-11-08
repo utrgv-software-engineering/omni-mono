@@ -109,10 +109,15 @@ def rich_function_tool(func: Callable = None, **kwargs) -> Callable:
 
     def decorator(f):
         wrapped_func, _ = _wrap_sync_function(f)
+        client_status = kwargs.pop("client_status", None)
         decorated_func = original_function_tool(wrapped_func, **kwargs)
-        # Add our marker attributes
         setattr(decorated_func, "_is_omniagents_core_tool", True)
         setattr(decorated_func, "_is_rich_tool", True)
+        if client_status:
+            try:
+                setattr(decorated_func, "_client_status_text", str(client_status))
+            except Exception:
+                pass
         return decorated_func
 
     # Handle both @rich_function_tool and @rich_function_tool(...) usage

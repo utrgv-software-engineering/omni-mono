@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional
 from omniagents.core.tools import rich_function_tool, RichToolOutput
 
 
-@rich_function_tool
+@rich_function_tool(client_status="Downloading file...")
 def download_file(url: str, output_path: Optional[str] = None) -> RichToolOutput:
     """
     Downloads a file from a given URL and saves it locally to a temporary location.

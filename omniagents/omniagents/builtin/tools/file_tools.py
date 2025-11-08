@@ -153,7 +153,7 @@ def _resolve_path(ctx: RunContextWrapper[Any] | None, path: Optional[str]) -> st
     return p
 
 
-@rich_function_tool
+@rich_function_tool(client_status="Finding matching files...")
 def glob_files(
     ctx: RunContextWrapper[Any],
     pattern: str,
@@ -374,7 +374,7 @@ def glob_files(
         return RichToolOutput(llm_output, ui_metadata)
 
 
-@rich_function_tool
+@rich_function_tool(client_status="Searching file contents...")
 def grep_files(
     ctx: RunContextWrapper[Any],
     pattern: str,
@@ -632,7 +632,7 @@ def grep_files(
         return RichToolOutput(llm_output, ui_metadata)
 
 
-@rich_function_tool
+@rich_function_tool(client_status="Listing directory...")
 def list_directory(
     ctx: RunContextWrapper[Any],
     path: str,
@@ -808,7 +808,7 @@ def list_directory(
         return RichToolOutput(llm_output, ui_metadata)
 
 
-@rich_function_tool
+@rich_function_tool(client_status="Reading file...")
 def read_file(
     ctx: RunContextWrapper[Any],
     file_path: str,
@@ -939,7 +939,7 @@ def read_file(
         return RichToolOutput(llm_output, ui_metadata)
 
 
-@rich_function_tool
+@rich_function_tool(client_status="Applying edits...")
 def edit_file(
     ctx: RunContextWrapper[Any],
     file_path: str,
@@ -1182,7 +1182,7 @@ def edit_file(
         return RichToolOutput(llm_output, ui_metadata)
 
 
-@rich_function_tool
+@rich_function_tool(client_status="Writing file...")
 def write_file(
     ctx: RunContextWrapper[Any], file_path: str, content: str, append: Optional[bool]
 ) -> RichToolOutput:
@@ -2071,7 +2071,7 @@ def apply_patch_approval(
         }
 
 
-@rich_function_tool
+@rich_function_tool(client_status="Applying patch...")
 def apply_patch(
     ctx: RunContextWrapper[Any],
     patch: str,

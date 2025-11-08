@@ -4,7 +4,7 @@ from agents.run_context import RunContextWrapper
 from omniagents.core.tools import rich_function_tool, RichToolOutput, approval_metadata
 
 
-@rich_function_tool
+@rich_function_tool(client_status="Running shell command...")
 def execute_bash(
     ctx: RunContextWrapper[Any],
     command: str,

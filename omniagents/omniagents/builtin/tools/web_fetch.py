@@ -5,7 +5,7 @@ from omniagents.core.tools import rich_function_tool, RichToolOutput
 from agents.run_context import RunContextWrapper
 
 
-@rich_function_tool
+@rich_function_tool(client_status="Fetching URL...")
 def web_fetch(
     ctx: RunContextWrapper[Any],
     url: str,

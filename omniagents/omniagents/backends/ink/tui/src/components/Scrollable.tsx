@@ -50,14 +50,6 @@ export const Scrollable: React.FC<ScrollableProps> = ({
   const previousSizeRef = useRef({ innerHeight: 0, scrollHeight: 0 });
   const pinToBottomRef = useRef(true);
 
-  const isNearBottom = useCallback(
-    (st: number, sh: number, ih: number) => {
-      const thresholdLines = Math.max(10, ih);
-      return st >= Math.max(0, sh - ih - thresholdLines);
-    },
-    [],
-  );
-
   // This effect needs to run on every render to correctly measure the container
   // and scroll to the bottom if new children are added. The if conditions
   // prevent infinite loops.
@@ -65,8 +57,8 @@ export const Scrollable: React.FC<ScrollableProps> = ({
     if (!ref.current) {
       return;
     }
-    const innerHeight = Math.round(getInnerHeight(ref.current));
-    const scrollHeight = Math.round(getScrollHeight(ref.current));
+    const innerHeight = getInnerHeight(ref.current);
+    const scrollHeight = getScrollHeight(ref.current);
 
     // Only update if dimensions actually changed
     const dimsChanged =
@@ -74,18 +66,12 @@ export const Scrollable: React.FC<ScrollableProps> = ({
       previousSizeRef.current.scrollHeight !== scrollHeight;
 
     if (dimsChanged) {
-      const wasNearBottom = isNearBottom(
-        scrollTop,
-        size.scrollHeight,
-        size.innerHeight,
-      );
-
       const contentGrew = scrollHeight > previousSizeRef.current.scrollHeight;
 
       previousSizeRef.current = { innerHeight, scrollHeight };
       setSize({ innerHeight, scrollHeight });
 
-      if (contentGrew && (pinToBottomRef.current || wasNearBottom)) {
+      if (contentGrew) {
         setScrollTop(Math.max(0, scrollHeight - innerHeight));
         pinToBottomRef.current = true;
       }
@@ -98,17 +84,10 @@ export const Scrollable: React.FC<ScrollableProps> = ({
       setScrollTop((prev: number) => {
         const bottom = Math.max(0, scrollHeight - innerHeight);
         const next = Math.min(Math.max(0, prev + delta), bottom);
-
-        if (delta < 0) {
-          pinToBottomRef.current = false;
-        } else {
-          pinToBottomRef.current = isNearBottom(next, scrollHeight, innerHeight);
-        }
-
         return next;
       });
     },
-    [sizeRef, isNearBottom],
+    [sizeRef],
   );
 
   const { scrollbarColor, flashScrollbar, scrollByWithAnimation } =

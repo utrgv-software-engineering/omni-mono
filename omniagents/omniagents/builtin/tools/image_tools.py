@@ -39,7 +39,7 @@ def _resolve_path(ctx: RunContextWrapper[Any] | None, path: Optional[str]) -> st
     return p
 
 
-@function_tool
+@function_tool(client_status="Loading image...")
 def read_image(
     ctx: RunContextWrapper[Any],
     image_path: str,
