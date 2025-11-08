@@ -9,9 +9,11 @@ import os
 import asyncio
 import uuid
 import copy
+import logging
 from contextlib import AsyncExitStack
 from types import SimpleNamespace
 from typing import Optional, Dict, Any
+from pathlib import Path
 import inspect
 
 from agents import (
@@ -45,20 +47,45 @@ from omniagents.core.agents.mcp import build_mcp_servers
 from omniagents.core.debug import Debug
 
 
-# Optional verbose logging controlled by env var or global Debug
+# Setup logging
+logger = logging.getLogger("omniagents.service")
+
+# Configure file logging if requested
 DEBUG_SERVER = os.getenv("OMNIAGENTS_SERVER_DEBUG", "0").lower() in ("1", "true")
+LOG_FILE = os.getenv("OMNIAGENTS_SERVER_LOG_FILE")
+
+if LOG_FILE or DEBUG_SERVER:
+    logger.setLevel(logging.DEBUG)
+
+    # Console handler (always for debug mode)
+    if DEBUG_SERVER:
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.DEBUG)
+        console_handler.setFormatter(logging.Formatter("[srv] %(message)s"))
+        logger.addHandler(console_handler)
+
+    # File handler (if log file specified)
+    if LOG_FILE:
+        log_path = Path(os.path.expanduser(LOG_FILE))
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(log_path, mode="a")
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(
+            logging.Formatter("[%(asctime)s] [srv] %(levelname)s: %(message)s")
+        )
+        logger.addHandler(file_handler)
 
 
 def _debug_rpc(method: str, payload: dict | None = None) -> None:
-    """Print *method* and *payload* when debug is enabled.
+    """Log RPC method calls when debug is enabled.
 
     Enabled when either OMNIAGENTS_SERVER_DEBUG=1 or Debug.enabled().
     """
     if DEBUG_SERVER or Debug.enabled():
         if payload is not None:
-            print(f"[srv] ★ {method} payload={payload!r}")
+            logger.debug(f"★ {method} payload={payload!r}")
         else:
-            print(f"[srv] ★ {method}")
+            logger.debug(f"★ {method}")
 
 
 def _safe_slug(value: str | None, fallback: str) -> str:
@@ -829,13 +856,13 @@ class AgentService(RpcMethodsBase):
             payload["metadata"] = metadata
 
         if Debug.enabled():
-            print(
-                f"[srv]   → tool_approval_request approval_id={approval_id}"
+            logger.debug(
+                f"  → tool_approval_request approval_id={approval_id}"
                 f" session={_sess.id}"
                 f" run_id={run_id}"
             )
-            print(
-                f"[srv]   → tool_approval_request approval_id={approval_id} details={payload}"
+            logger.debug(
+                f"  → tool_approval_request approval_id={approval_id} details={payload}"
             )
 
         request_args = dict(payload)
@@ -967,8 +994,8 @@ class AgentService(RpcMethodsBase):
 
         if sess.pending_events:
             if DEBUG_SERVER:
-                print(
-                    f"[srv]  ↻ replay {len(sess.pending_events)} queued events for {sess.id[:8]}"
+                logger.debug(
+                    f" ↻ replay {len(sess.pending_events)} queued events for {sess.id[:8]}"
                 )
             still_pending: list[tuple[str, dict]] = []
             for meth, payl in list(sess.pending_events):
@@ -1118,8 +1145,7 @@ class AgentService(RpcMethodsBase):
                         # MaxTurnsExceeded is a normal completion condition, not an error
                         end_reason = "max_turns"
                         error_info = None
-                        if Debug.enabled():
-                            print(f"[srv] Agent reached max turns: {e}")
+                        logger.info(f"Agent reached max turns: {e}")
                         break
                     except (
                         InputGuardrailTripwireTriggered,
@@ -1130,22 +1156,19 @@ class AgentService(RpcMethodsBase):
                         # Guardrail violations - include detailed guardrail information
                         end_reason = "guardrail_violation"
                         error_info = _build_guardrail_error_info(e)
-                        if Debug.enabled():
-                            print(f"[srv] Guardrail triggered: {e}")
+                        logger.warning(f"Guardrail triggered: {e}")
                         break
                     except (ModelBehaviorError, UserError) as e:
                         # Permanent failures - don't retry
                         end_reason = "error"
                         error_info = _build_agent_error_info(e)
-                        if Debug.enabled():
-                            print(f"[srv] Permanent error: {e}")
+                        logger.error(f"Permanent error: {e}")
                         break
                     except AgentsException as e:
                         # Other agent exceptions - preserve run_data, don't retry
                         end_reason = "error"
                         error_info = _build_agent_error_info(e)
-                        if Debug.enabled():
-                            print(f"[srv] Agent exception: {e}")
+                        logger.error(f"Agent exception: {e}")
                         break
                     except Exception as e:
                         # Transient errors (network, rate limit, etc.) - may retry
@@ -1153,10 +1176,9 @@ class AgentService(RpcMethodsBase):
                         if attempt <= max_retries and _is_retryable(e):
                             # Exponential backoff with jitter
                             delay = base_delay * (2 ** (attempt - 1))
-                            if Debug.enabled():
-                                print(
-                                    f"[srv] Retryable error (attempt {attempt}/{max_retries}): {e}"
-                                )
+                            logger.warning(
+                                f"Retryable error (attempt {attempt}/{max_retries}): {e}"
+                            )
                             # Announce retry status to client
                             try:
                                 await self._broadcast_session(
@@ -1184,8 +1206,7 @@ class AgentService(RpcMethodsBase):
                         # Exhausted retries or non-retryable unknown error
                         end_reason = "error"
                         error_info = {"message": str(e), "type": e.__class__.__name__}
-                        if Debug.enabled():
-                            print(f"[srv] Non-retryable error: {e}")
+                        logger.error(f"Non-retryable error: {e}")
                         break
             finally:
                 # Inform client the run finished

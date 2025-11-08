@@ -2,11 +2,30 @@ from __future__ import annotations
 
 import os
 import asyncio
+import logging
 from typing import AsyncGenerator, Optional, Any
 
 from agents import RunConfig, ItemHelpers
 from openai.types.responses import ResponseCompletedEvent
 from omniagents.core.debug import Debug
+
+# Setup logging
+logger = logging.getLogger("omniagents.runtime")
+
+# Configure file logging if requested (same as service.py)
+LOG_FILE = os.getenv("OMNIAGENTS_SERVER_LOG_FILE")
+if LOG_FILE:
+    from pathlib import Path
+
+    logger.setLevel(logging.DEBUG)
+    log_path = Path(os.path.expanduser(LOG_FILE))
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    file_handler = logging.FileHandler(log_path, mode="a")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(
+        logging.Formatter("[%(asctime)s] [runtime] %(levelname)s: %(message)s")
+    )
+    logger.addHandler(file_handler)
 
 # ---------------------------------------------------------------------
 # Helper: best-effort notify that swallows disconnect errors so the
@@ -112,6 +131,74 @@ def _stream_event_payload(item, run_id: str):
     return None, None
 
 
+def _filter_history_for_api(history: list[dict]) -> list[dict]:
+    """Reorder history items to match OpenAI API requirements.
+
+    During streaming, items arrive in this order:
+      reasoning → function_call → message → function_call_output
+
+    But OpenAI expects:
+      reasoning → message → function_call → function_call_output
+
+    This reordering ensures:
+    - reasoning items are immediately followed by messages (not function_calls)
+    - function_call items are immediately followed by their outputs
+
+    This prevents errors like:
+    "Item 'rs_xxx' of type 'reasoning' was provided without its required following item."
+    "No tool call found for function call output with call_id xxx"
+    """
+    reordered = []
+    i = 0
+    while i < len(history):
+        item = history[i]
+        item_type = item.get("type", "message")
+
+        # Check if this is a function_call followed by message then output
+        if (
+            isinstance(item_type, str)
+            and item_type.endswith("_call")
+            and not item_type.endswith("_call_output")
+        ):
+            call_id = item.get("call_id")
+            function_call = item
+
+            # Look ahead for the message and output
+            message = None
+            output = None
+            j = i + 1
+
+            # Find the message that comes after this call
+            if j < len(history) and history[j].get("type") == "message":
+                message = history[j]
+                j += 1
+
+            # Find the output that matches this call_id
+            if j < len(history):
+                next_item = history[j]
+                if (
+                    next_item.get("type", "").endswith("_call_output")
+                    and next_item.get("call_id") == call_id
+                ):
+                    output = next_item
+                    j += 1
+
+            # Reorder: message → function_call → output
+            if message:
+                reordered.append(message)
+            reordered.append(function_call)
+            if output:
+                reordered.append(output)
+
+            i = j  # Skip past the items we just processed
+        else:
+            # Not a function_call, keep as-is
+            reordered.append(item)
+            i += 1
+
+    return reordered
+
+
 async def stream_agent(
     agent,
     prompt: str,
@@ -136,18 +223,52 @@ async def stream_agent(
     # future runs see it as part of the context as well.
     # ------------------------------------------------------------------
     if include_user_message:
+        # Filter history to remove tool call items before passing to API
+        clean_history = _filter_history_for_api(session.history)
         # Include prompt at end and persist to session history on first attempt
-        agent_input = session.history + [{"role": "user", "content": prompt}]
+        agent_input = clean_history + [{"role": "user", "content": prompt}]
         user_msg = {"role": "user", "content": prompt}
         session.append_message(user_msg)
     else:
         # For retries, avoid re-adding the user message; keep context identical
-        agent_input = list(session.history)
+        # Still need to filter history
+        agent_input = _filter_history_for_api(list(session.history))
 
     if Debug.enabled():
         print(
             f"[srv] ▶ start_run  session={session.id[:8]} prompt={prompt[:80]!r} (hist={len(session.history)})"
         )
+
+    # Log the input structure for debugging
+    history_from_db = len(session.history)
+    items_this_turn = len(agent_input) - history_from_db
+    logger.debug(
+        f"API request starting - Session: {session.id}, "
+        f"Total items: {len(agent_input)}, "
+        f"From DB: {history_from_db}, "
+        f"Added this turn: {items_this_turn}, "
+        f"Include user message: {include_user_message}"
+    )
+
+    # Log item sequence (all fields, truncate content for readability)
+    if logger.isEnabledFor(logging.DEBUG):
+        import json
+
+        item_sequence = []
+        for idx, item in enumerate(agent_input):
+            # Truncate content fields to keep log readable
+            item_copy = dict(item)
+            if "content" in item_copy and isinstance(item_copy["content"], str):
+                if len(item_copy["content"]) > 100:
+                    item_copy["content"] = (
+                        item_copy["content"][:100] + "... (truncated)"
+                    )
+
+            # Show all fields as JSON
+            item_json = json.dumps(item_copy, default=str)
+            item_sequence.append(f"  [{idx}]: {item_json}")
+
+        logger.debug(f"Item sequence:\n" + "\n".join(item_sequence))
 
     # Track pending tool calls that need results
     pending_tool_calls = {}
@@ -435,6 +556,38 @@ async def stream_agent(
         # Any other exception - the finally block will handle pending tool calls
         if Debug.enabled():
             print(f"[srv] ✗ Error during run: {e}")
+
+        # Log detailed error context for debugging
+        logger.error(f"API request failed: {e}")
+        logger.error(
+            f"Error context - Session: {session.id}, "
+            f"Turn: {turn_counter}, "
+            f"Total items sent: {len(agent_input)}, "
+            f"From DB: {history_from_db}, "
+            f"Added this turn: {items_this_turn}, "
+            f"Pending reasoning item: {pending_reasoning_item.get('id') if pending_reasoning_item else None}"
+        )
+
+        # Log full item sequence on error (all fields, not just known ones)
+        if logger.isEnabledFor(logging.ERROR):
+            import json
+
+            error_sequence = []
+            for idx, item in enumerate(agent_input):
+                # Truncate content fields to keep log readable
+                item_copy = dict(item)
+                if "content" in item_copy and isinstance(item_copy["content"], str):
+                    if len(item_copy["content"]) > 200:
+                        item_copy["content"] = (
+                            item_copy["content"][:200] + "... (truncated)"
+                        )
+
+                # Dump the entire item as JSON to see all fields
+                item_json = json.dumps(item_copy, indent=4, default=str)
+                error_sequence.append(f"  [{idx}]:\n{item_json}")
+
+            logger.error(f"Full item sequence at error:\n" + "\n".join(error_sequence))
+
         # Re-raise the original exception
         raise
     finally:
