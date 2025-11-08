@@ -188,6 +188,124 @@ class TestReasoningToolCallPairing:
     """Test reasoning items paired with tool call items."""
 
     @pytest.mark.asyncio
+    async def test_reasoning_followed_by_parallel_function_calls_persists_all(
+        self, monkeypatch
+    ):
+        """Reasoning + multiple parallel function_calls should persist all in correct order."""
+        monkeypatch.setattr(bridge.Debug, "enabled", classmethod(lambda cls: False))
+        monkeypatch.setattr(
+            bridge,
+            "ItemHelpers",
+            types.SimpleNamespace(text_message_output=lambda item: "text"),
+        )
+
+        class FakeRunConfig:
+            def __init__(self, **kwargs):
+                pass
+
+        monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
+        monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
+
+        reasoning_item = types.SimpleNamespace(
+            type="reasoning_item",
+            to_input_item=lambda: {
+                "type": "reasoning",
+                "id": "rs_parallel",
+                "summary": [
+                    {"text": "deciding to call multiple tools", "type": "summary_text"}
+                ],
+                "status": "completed",
+            },
+        )
+
+        # Create 6 parallel function calls
+        function_calls = []
+        for i in range(6):
+            function_calls.append(
+                types.SimpleNamespace(
+                    type="tool_call_item",
+                    to_input_item=lambda i=i: {
+                        "type": "function_call",
+                        "id": f"fc_{i}",
+                        "call_id": f"fc_{i}",
+                        "name": f"tool_{i}",
+                        "arguments": f'{{"arg": {i}}}',
+                        "status": "completed",
+                    },
+                )
+            )
+
+        message_item = types.SimpleNamespace(
+            type="message_output_item",
+            to_input_item=lambda: {
+                "type": "message",
+                "id": "msg_parallel",
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "Scanning the repo to find tools"}
+                ],
+                "status": "completed",
+            },
+        )
+
+        events = [
+            types.SimpleNamespace(type="run_item_stream_event", item=reasoning_item)
+        ]
+        events.extend(
+            [
+                types.SimpleNamespace(type="run_item_stream_event", item=fc)
+                for fc in function_calls
+            ]
+        )
+        events.append(
+            types.SimpleNamespace(type="run_item_stream_event", item=message_item)
+        )
+
+        class FakeRunResult:
+            async def stream_events(self):
+                for event in events:
+                    yield event
+
+        class FakeRunner:
+            @classmethod
+            def run_streamed(cls, *args, **kwargs):
+                return FakeRunResult()
+
+        monkeypatch.setattr("agents.Runner", FakeRunner)
+
+        session = DummySession(channels=[], session_id="parallel-test")
+
+        class DummyAgent:
+            def __init__(self):
+                self.name = "Agent"
+                self.instructions = "inst"
+                self.tools = []
+                self.model = None
+                self.model_settings = None
+
+        agent = DummyAgent()
+
+        await bridge.stream_agent(agent, "prompt", session, rpc_channel=None)
+
+        # Should have: user, reasoning, fc_0...fc_5, message, 6 cancelled outputs
+        assert (
+            len(session.history) == 15
+        )  # 1 user + 1 reasoning + 6 calls + 1 message + 6 outputs
+        assert session.history[0]["role"] == "user"
+        assert session.history[1]["type"] == "reasoning"
+        assert session.history[1]["id"] == "rs_parallel"
+        # Next 6 should be function calls
+        for i in range(6):
+            assert session.history[2 + i]["type"] == "function_call"
+            assert session.history[2 + i]["id"] == f"fc_{i}"
+        # Then the message
+        assert session.history[8]["type"] == "message"
+        assert session.history[8]["id"] == "msg_parallel"
+        # Then 6 cancelled outputs added in finally block
+        for i in range(6):
+            assert session.history[9 + i]["type"] == "function_call_output"
+
+    @pytest.mark.asyncio
     async def test_reasoning_followed_by_function_call_persists_both(self, monkeypatch):
         """Reasoning + function_call should persist both in correct order."""
         monkeypatch.setattr(bridge.Debug, "enabled", classmethod(lambda cls: False))

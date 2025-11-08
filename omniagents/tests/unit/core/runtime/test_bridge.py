@@ -654,3 +654,118 @@ async def test_stream_agent_handles_status_clear_failure(monkeypatch):
     assert calls[0][0] == "client_request"
     assert calls[-1][0] == "tool_result"
     assert result["usage"]["total_tokens"] == 0
+
+
+def test_filter_history_for_api_handles_parallel_function_calls_after_reasoning():
+    """Test that reasoning followed by multiple parallel function calls is reordered correctly."""
+    history = [
+        {"role": "user", "content": "investigate codebase"},
+        {"type": "reasoning", "id": "rs_123", "summary": []},
+        {"type": "function_call", "id": "fc_1", "call_id": "fc_1", "name": "list_dir"},
+        {"type": "function_call", "id": "fc_2", "call_id": "fc_2", "name": "glob"},
+        {"type": "function_call", "id": "fc_3", "call_id": "fc_3", "name": "grep"},
+        {
+            "type": "message",
+            "id": "msg_1",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Scanning repo"}],
+        },
+        {"type": "function_call_output", "call_id": "fc_1", "output": "result1"},
+        {"type": "function_call_output", "call_id": "fc_2", "output": "result2"},
+        {"type": "function_call_output", "call_id": "fc_3", "output": "result3"},
+    ]
+
+    result = bridge._filter_history_for_api(history)
+
+    # Expected order: user, reasoning, message, fc_1, fc_2, fc_3, output1, output2, output3
+    assert len(result) == 9
+    assert result[0]["role"] == "user"
+    assert result[1]["type"] == "reasoning"
+    assert result[1]["id"] == "rs_123"
+    assert result[2]["type"] == "message"
+    assert result[2]["id"] == "msg_1"
+    assert result[3]["type"] == "function_call"
+    assert result[3]["id"] == "fc_1"
+    assert result[4]["type"] == "function_call"
+    assert result[4]["id"] == "fc_2"
+    assert result[5]["type"] == "function_call"
+    assert result[5]["id"] == "fc_3"
+    assert result[6]["type"] == "function_call_output"
+    assert result[6]["call_id"] == "fc_1"
+    assert result[7]["type"] == "function_call_output"
+    assert result[7]["call_id"] == "fc_2"
+    assert result[8]["type"] == "function_call_output"
+    assert result[8]["call_id"] == "fc_3"
+
+
+def test_filter_history_for_api_handles_reasoning_with_single_function_call():
+    """Test that reasoning followed by a single function call is reordered correctly."""
+    history = [
+        {"type": "reasoning", "id": "rs_456", "summary": []},
+        {"type": "function_call", "id": "fc_1", "call_id": "fc_1", "name": "search"},
+        {"type": "message", "id": "msg_1", "role": "assistant", "content": []},
+        {"type": "function_call_output", "call_id": "fc_1", "output": "result"},
+    ]
+
+    result = bridge._filter_history_for_api(history)
+
+    # Expected order: reasoning, message, fc_1, output
+    assert len(result) == 4
+    assert result[0]["type"] == "reasoning"
+    assert result[1]["type"] == "message"
+    assert result[2]["type"] == "function_call"
+    assert result[3]["type"] == "function_call_output"
+
+
+def test_filter_history_for_api_handles_reasoning_without_function_calls():
+    """Test that reasoning followed by just a message (no function calls) works."""
+    history = [
+        {"type": "reasoning", "id": "rs_789", "summary": []},
+        {"type": "message", "id": "msg_1", "role": "assistant", "content": []},
+    ]
+
+    result = bridge._filter_history_for_api(history)
+
+    # Expected order: reasoning, message
+    assert len(result) == 2
+    assert result[0]["type"] == "reasoning"
+    assert result[1]["type"] == "message"
+
+
+def test_filter_history_for_api_preserves_non_reasoning_items():
+    """Test that items without reasoning are preserved as-is."""
+    history = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi"},
+        {"type": "function_call_output", "call_id": "fc_x", "output": "old result"},
+    ]
+
+    result = bridge._filter_history_for_api(history)
+
+    # Should be unchanged
+    assert result == history
+
+
+def test_filter_history_for_api_handles_multiple_reasoning_groups():
+    """Test multiple reasoning items in sequence are handled correctly."""
+    history = [
+        {"type": "reasoning", "id": "rs_1", "summary": []},
+        {"type": "function_call", "id": "fc_1", "call_id": "fc_1", "name": "tool1"},
+        {"type": "message", "id": "msg_1", "role": "assistant", "content": []},
+        {"type": "function_call_output", "call_id": "fc_1", "output": "r1"},
+        {"type": "reasoning", "id": "rs_2", "summary": []},
+        {"type": "function_call", "id": "fc_2", "call_id": "fc_2", "name": "tool2"},
+        {"type": "function_call_output", "call_id": "fc_2", "output": "r2"},
+    ]
+
+    result = bridge._filter_history_for_api(history)
+
+    # Expected: rs_1, msg_1, fc_1, out_1, rs_2, fc_2, out_2
+    assert len(result) == 7
+    assert result[0]["id"] == "rs_1"
+    assert result[1]["id"] == "msg_1"
+    assert result[2]["id"] == "fc_1"
+    assert result[3]["call_id"] == "fc_1"
+    assert result[4]["id"] == "rs_2"
+    assert result[5]["id"] == "fc_2"
+    assert result[6]["call_id"] == "fc_2"
