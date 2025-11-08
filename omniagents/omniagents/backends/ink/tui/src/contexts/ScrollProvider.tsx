@@ -106,6 +106,7 @@ export const ScrollProvider: React.FC<{ children: React.ReactNode }> = ({
         return;
       }
     }
+
   };
 
   const handleClick = (mouseEvent: MouseEvent) => {

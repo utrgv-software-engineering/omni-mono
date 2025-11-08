@@ -68,9 +68,13 @@ const ApprovalDialogWrapper = React.memo<{
 /**
  * Scrollable message list with keyboard and mouse support
  */
-const ScrollableMessageList = React.memo<{ availableHeight: number }>(
-  ({ availableHeight }) => {
+const ScrollableMessageList = React.memo<{
+  availableHeight: number;
+  onApprove: (value: "yes" | "always" | "no") => void;
+}>(
+  ({ availableHeight, onApprove }) => {
     const messages = useMessages();
+    const approval = useApproval();
     const contentVersion = messages.length;
     return (
       <Scrollable
@@ -82,6 +86,11 @@ const ScrollableMessageList = React.memo<{ availableHeight: number }>(
       >
         <Box flexDirection="column">
           <MessageListOptimized />
+          {approval && (
+            <Box marginTop={1}>
+              <ApprovalDialogWrapper approval={approval} onApprove={onApprove} />
+            </Box>
+          )}
         </Box>
       </Scrollable>
     );
@@ -678,7 +687,10 @@ export const App: React.FC<AppProps> = ({
 
           {/* Message history - scrollable with keyboard/mouse support */}
           <Box paddingX={1} marginTop={1} flexGrow={1}>
-            <ScrollableMessageList availableHeight={availableTerminalHeight} />
+            <ScrollableMessageList
+              availableHeight={availableTerminalHeight}
+              onApprove={handleApproval}
+            />
           </Box>
 
           {/* Controls/footer section - measured for dynamic height calculation */}
@@ -686,17 +698,6 @@ export const App: React.FC<AppProps> = ({
             {/* Status indicator - ALWAYS in DOM, just hidden - isolated subscription */}
             <StatusIndicatorWrapper approval={approval} thinking={thinking} />
 
-            {/* Approval dialog - ALWAYS in DOM with placeholder to prevent mount/unmount */}
-            <Box
-              marginTop={1}
-              paddingX={1}
-              display={approval ? "flex" : "none"}
-            >
-              <ApprovalDialogWrapper
-                approval={approval}
-                onApprove={handleApproval}
-              />
-            </Box>
 
             {/* Input prompt - always rendered, disabled during approval/thinking */}
             <Box marginTop={1}>

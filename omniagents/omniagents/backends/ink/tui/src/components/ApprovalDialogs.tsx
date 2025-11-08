@@ -46,6 +46,9 @@ export const DiffApproval = React.memo<
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   useInput((input, key) => {
+    if (key.shift && (key.upArrow || key.downArrow)) {
+      return;
+    }
     if (key.upArrow) {
       setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
     } else if (key.downArrow) {
@@ -175,6 +178,9 @@ export const FileWriteApproval = React.memo<
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   useInput((input, key) => {
+    if (key.shift && (key.upArrow || key.downArrow)) {
+      return;
+    }
     if (key.upArrow) {
       setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
     } else if (key.downArrow) {
@@ -267,6 +273,9 @@ export const CommandApproval = React.memo<
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   useInput((input, key) => {
+    if (key.shift && (key.upArrow || key.downArrow)) {
+      return;
+    }
     if (key.upArrow) {
       setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
     } else if (key.downArrow) {

@@ -87,6 +87,9 @@ export const ApprovalDialog = React.memo<ApprovalDialogProps>(
     const [selectedIndex, setSelectedIndex] = useState(0);
 
     useInput((input, key) => {
+      if (key.shift && (key.upArrow || key.downArrow)) {
+        return;
+      }
       if (key.upArrow) {
         setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
       } else if (key.downArrow) {
