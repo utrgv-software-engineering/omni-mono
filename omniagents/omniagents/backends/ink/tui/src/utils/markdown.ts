@@ -97,33 +97,30 @@ export function renderMarkdown(markdown: string): string {
  * Process inline markdown elements (bold, italic, code, links)
  */
 function processInlineMarkdown(text: string): string {
-  let processed = text;
+  const segments = text.split(/(`[^`]+`)/g);
 
-  // Inline code (`) - light green
-  processed = processed.replace(/`([^`]+)`/g, (_, code) => {
-    return chalk.hex("#9ece6a")(code);
-  });
+  const processed = segments
+    .map((segment) => {
+      if (segment.startsWith("`") && segment.endsWith("`")) {
+        const code = segment.slice(1, -1);
+        return chalk.hex("#9ece6a")(code);
+      }
 
-  // Bold (**text** or __text__) - bold
-  processed = processed.replace(/\*\*([^*]+)\*\*/g, (_, text) => {
-    return chalk.bold(text);
-  });
-  processed = processed.replace(/__([^_]+)__/g, (_, text) => {
-    return chalk.bold(text);
-  });
+      let s = segment;
 
-  // Italic (*text* or _text_) - italic
-  processed = processed.replace(/\*([^*]+)\*/g, (_, text) => {
-    return chalk.italic(text);
-  });
-  processed = processed.replace(/_([^_]+)_/g, (_, text) => {
-    return chalk.italic(text);
-  });
+      s = s.replace(/\*\*([^*]+)\*\*/g, (_, t) => chalk.bold(t));
+      s = s.replace(/__([^_]+)__/g, (_, t) => chalk.bold(t));
 
-  // Links [text](url) - cyan
-  processed = processed.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => {
-    return chalk.hex("#7dcfff")(text);
-  });
+      s = s.replace(/\*([^*]+)\*/g, (_, t) => chalk.italic(t));
+      s = s.replace(/_([^_]+)_/g, (_, t) => chalk.italic(t));
+
+      s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, t) =>
+        chalk.hex("#7dcfff")(t),
+      );
+
+      return s;
+    })
+    .join("");
 
   return processed;
 }
