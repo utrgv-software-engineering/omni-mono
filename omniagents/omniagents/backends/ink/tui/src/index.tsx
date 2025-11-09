@@ -69,11 +69,15 @@ const cli = meow(
         type: "boolean",
         default: false,
       },
+      mouse: {
+        type: "boolean",
+        default: true,
+      },
     },
   },
 );
 
-const { server, name, token, session, resume, welcome, initialMessage, debug } =
+const { server, name, token, session, resume, welcome, initialMessage, debug, mouse } =
   cli.flags;
 
 // Enable debug logging to file if requested
@@ -86,11 +90,7 @@ if (debug) {
 // This reduces rendering artifacts and flickering
 process.stdout.write("\x1b[?7l");
 
-// Note: Mouse tracking disabled - we don't currently use mouse events
-// and enabling them without proper parsing causes scroll events to leak into text input
-// If needed in future, implement proper mouse event parsing like gemini-cli
-// process.stdout.write('\x1b[?1002h'); // Button events + scroll
-// process.stdout.write('\x1b[?1006h'); // SGR extended mode
+// Mouse tracking is controlled by MouseProvider; no direct enable here
 
 // Render the app
 const app = render(
@@ -103,6 +103,7 @@ const app = render(
     welcomeText={welcome}
     initialMessage={initialMessage}
     debug={debug}
+    enableMouse={mouse}
   />,
   {
     exitOnCtrlC: false,
@@ -121,7 +122,6 @@ const app = render(
 const cleanup = () => {
   // Re-enable terminal line wrapping
   process.stdout.write("\x1b[?7h");
-  // Mouse events were never enabled, so no cleanup needed
 };
 
 // Handle exit

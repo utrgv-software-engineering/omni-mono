@@ -102,4 +102,5 @@ The Ink backend uses the same JSON-RPC 2.0 WebSocket protocol as all other OmniA
 
 - Auto-build runs in a per-user cache directory (e.g., `~/.cache/omniagents/ink/tui` on Linux) to avoid write-permission issues with system installs and pipx.
 - If a lockfile (`package-lock.json`) is present, `npm ci` is used; otherwise `npm install`.
+- Commit `omniagents/backends/ink/tui/package-lock.json` and keep it updated to ensure deterministic builds.
 - Set `OMNI_INK_TUI_PATH` to point to a prebuilt `dist/index.js` to bypass local builds entirely.

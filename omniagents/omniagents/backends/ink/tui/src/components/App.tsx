@@ -164,6 +164,7 @@ export interface AppProps {
   resumeMode?: boolean;
   welcomeText?: string;
   initialMessage?: string;
+  enableMouse?: boolean;
 }
 
 // UI state machine for proper flow control
@@ -178,6 +179,7 @@ export const App: React.FC<AppProps> = ({
   resumeMode = false,
   welcomeText,
   initialMessage,
+  enableMouse = true,
 }) => {
   const [messageHistory, setMessageHistory] = useState<string[]>([]);
   const [uiState, setUIState] = useState<UIState>("connecting");
@@ -675,7 +677,7 @@ export const App: React.FC<AppProps> = ({
 
   // Chat UI (uiState === 'chat')
   return (
-    <MouseProvider>
+    <MouseProvider mouseEventsEnabled={!!enableMouse}>
       <ScrollProvider>
         <Box flexDirection="column">
           {/* Header with logo and welcome message - visible only before first message */}

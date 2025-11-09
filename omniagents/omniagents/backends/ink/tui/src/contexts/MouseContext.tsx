@@ -2,14 +2,7 @@
  * Mouse event context for handling mouse wheel scrolling
  */
 
-import React, {
-  createContext,
-  useContext,
-  useEffect,
-  useRef,
-  useCallback,
-  useMemo,
-} from "react";
+import React, { createContext, useContext, useEffect, useRef, useCallback, useMemo } from "react";
 import { useStdin } from "ink";
 
 export interface MouseEvent {
@@ -27,10 +20,11 @@ interface MouseContextType {
 
 const MouseContext = createContext<MouseContextType | null>(null);
 
-export const MouseProvider: React.FC<{ children: React.ReactNode }> = ({
+export const MouseProvider: React.FC<{ children: React.ReactNode; mouseEventsEnabled?: boolean }> = ({
   children,
+  mouseEventsEnabled = false,
 }) => {
-  const { stdin, setRawMode } = useStdin();
+  const { stdin } = useStdin();
   const handlersRef = useRef<Set<MouseHandler>>(new Set());
 
   const subscribe = useCallback((handler: MouseHandler) => {
@@ -42,41 +36,56 @@ export const MouseProvider: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   useEffect(() => {
-    if (!stdin || !setRawMode) {
+    if (!mouseEventsEnabled || !stdin) {
       return;
     }
 
-    // Enable mouse tracking
-    stdin.write("\x1b[?1000h"); // Enable mouse button events
-    stdin.write("\x1b[?1006h"); // Enable SGR extended mouse mode
+    process.stdout.write("\x1b[?1002h\x1b[?1006h");
+
+    let buffer = "";
+
+    const flushOne = (): boolean => {
+      const match = buffer.match(/^\x1b\[<(\d+);(\d+);(\d+)([Mm])/);
+      if (!match) return false;
+      const button = parseInt(match[1], 10);
+      const col = parseInt(match[2], 10) - 1;
+      const row = parseInt(match[3], 10) - 1;
+      const pressed = match[4] === "M";
+
+      let name: MouseEvent["name"] | null = null;
+      if (button === 64) name = "scroll-up";
+      else if (button === 65) name = "scroll-down";
+      else if (button === 0 && pressed) name = "left-press";
+      else if (button === 0 && !pressed) name = "left-release";
+
+      if (name) {
+        const evt: MouseEvent = { name, col, row };
+        handlersRef.current.forEach((h) => h(evt));
+      }
+      buffer = buffer.slice(match[0].length);
+      return true;
+    };
 
     const handleData = (data: Buffer) => {
-      const str = data.toString();
+      buffer += data.toString("utf-8");
 
-      // Parse SGR mouse events: \x1b[<b;x;y(M|m)
-      const sgrMatch = str.match(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/);
-      if (sgrMatch) {
-        const button = parseInt(sgrMatch[1], 10);
-        const col = parseInt(sgrMatch[2], 10) - 1; // Convert to 0-indexed
-        const row = parseInt(sgrMatch[3], 10) - 1; // Convert to 0-indexed
-        const pressed = sgrMatch[4] === "M";
+      if (buffer.length > 4096) buffer = buffer.slice(-4096);
 
-        let eventName: MouseEvent["name"] | null = null;
+      for (;;) {
+        if (flushOne()) continue;
 
-        if (button === 64) {
-          eventName = "scroll-up";
-        } else if (button === 65) {
-          eventName = "scroll-down";
-        } else if (button === 0 && pressed) {
-          eventName = "left-press";
-        } else if (button === 0 && !pressed) {
-          eventName = "left-release";
+        if (/^\x1b\[</.test(buffer) && !/[Mm]/.test(buffer)) {
+          break;
         }
 
-        if (eventName) {
-          const event: MouseEvent = { name: eventName, col, row };
-          handlersRef.current.forEach((handler) => handler(event));
+        const idx = buffer.indexOf("\x1b");
+        if (idx > 0) {
+          buffer = buffer.slice(idx);
+          continue;
         }
+        if (idx === 0) break;
+        buffer = "";
+        break;
       }
     };
 
@@ -84,11 +93,9 @@ export const MouseProvider: React.FC<{ children: React.ReactNode }> = ({
 
     return () => {
       stdin.off("data", handleData);
-      // Disable mouse tracking
-      stdin.write("\x1b[?1000l");
-      stdin.write("\x1b[?1006l");
+      process.stdout.write("\x1b[?1006l\x1b[?1002l");
     };
-  }, [stdin, setRawMode]);
+  }, [stdin, mouseEventsEnabled]);
 
   const contextValue = useMemo(
     () => ({ subscribe, unsubscribe }),
