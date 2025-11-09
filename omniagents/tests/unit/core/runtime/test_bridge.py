@@ -750,22 +750,496 @@ def test_filter_history_for_api_handles_multiple_reasoning_groups():
     """Test multiple reasoning items in sequence are handled correctly."""
     history = [
         {"type": "reasoning", "id": "rs_1", "summary": []},
-        {"type": "function_call", "id": "fc_1", "call_id": "fc_1", "name": "tool1"},
+        {"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": "tool1"},
         {"type": "message", "id": "msg_1", "role": "assistant", "content": []},
-        {"type": "function_call_output", "call_id": "fc_1", "output": "r1"},
+        {"type": "function_call_output", "call_id": "call_1", "output": "r1"},
         {"type": "reasoning", "id": "rs_2", "summary": []},
-        {"type": "function_call", "id": "fc_2", "call_id": "fc_2", "name": "tool2"},
-        {"type": "function_call_output", "call_id": "fc_2", "output": "r2"},
+        {"type": "function_call", "id": "fc_2", "call_id": "call_2", "name": "tool2"},
+        {"type": "function_call_output", "call_id": "call_2", "output": "r2"},
     ]
 
     result = bridge._filter_history_for_api(history)
 
-    # Expected: rs_1, msg_1, fc_1, out_1, rs_2, fc_2, out_2
-    assert len(result) == 7
+    # Expected: rs_1, msg_1, fc_1, out_1, synth_fc_2, synth_out_2
+    # rs_2 is dropped (no message) but fc_2 and out_2 are preserved as synthetic with new IDs
+    assert len(result) == 6
     assert result[0]["id"] == "rs_1"
     assert result[1]["id"] == "msg_1"
     assert result[2]["id"] == "fc_1"
-    assert result[3]["call_id"] == "fc_1"
-    assert result[4]["id"] == "rs_2"
-    assert result[5]["id"] == "fc_2"
-    assert result[6]["call_id"] == "fc_2"
+    assert result[3]["call_id"] == "call_1"
+    # Synthetic function_call and output
+    assert result[4]["type"] == "function_call"
+    assert result[4]["id"].startswith("fc_synth_")
+    assert result[4]["name"] == "tool2"
+    assert result[5]["type"] == "function_call_output"
+    assert result[5]["call_id"].startswith("call_synth_")
+    assert result[5]["output"] == "r2"
+
+
+@pytest.mark.asyncio
+async def test_buffering_orders_message_before_tool_calls(monkeypatch):
+    monkeypatch.setattr(bridge.Debug, "enabled", classmethod(lambda cls: False))
+    monkeypatch.setattr(
+        bridge,
+        "ItemHelpers",
+        types.SimpleNamespace(
+            text_message_output=lambda item: getattr(item, "text", "")
+        ),
+    )
+
+    class FakeRunConfig:
+        def __init__(self, **kwargs):
+            pass
+
+    monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
+    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
+
+    broadcasts = []
+
+    async def capture_broadcast(session_arg, method, payload):
+        broadcasts.append((method, payload))
+        return True
+
+    monkeypatch.setattr(bridge, "_broadcast", capture_broadcast)
+
+    reasoning_item = types.SimpleNamespace(
+        type="reasoning_item",
+        to_input_item=lambda: {
+            "type": "reasoning",
+            "id": "rs_buf",
+            "summary": [{"text": "planning", "type": "summary_text"}],
+            "status": "completed",
+        },
+    )
+
+    tool_call_item = types.SimpleNamespace(
+        type="tool_call_item",
+        to_input_item=lambda: {
+            "name": "alpha",
+            "arguments": "{}",
+            "call_id": "cbuf",
+        },
+    )
+
+    message_item = types.SimpleNamespace(
+        type="message_output_item",
+        text="preamble",
+        to_input_item=lambda: {"role": "assistant", "content": "preamble"},
+    )
+
+    events = [
+        types.SimpleNamespace(type="run_item_stream_event", item=reasoning_item),
+        types.SimpleNamespace(type="run_item_stream_event", item=tool_call_item),
+        types.SimpleNamespace(type="run_item_stream_event", item=message_item),
+    ]
+
+    class FakeRunResult:
+        def __init__(self, evts):
+            self._events = evts
+
+        async def stream_events(self):
+            for e in self._events:
+                yield e
+
+    class FakeRunner:
+        @classmethod
+        def run_streamed(cls, *args, **kwargs):
+            return FakeRunResult(events)
+
+    monkeypatch.setattr("agents.Runner", FakeRunner)
+
+    session = DummySession(channels=[], session_id="buf-1")
+
+    class DummyTool:
+        def __init__(self):
+            self.name = "alpha"
+            self._client_status_text = "Running"
+
+    class DummyAgent:
+        def __init__(self):
+            self.name = "Agent"
+            self.instructions = "inst"
+            self.tools = [DummyTool()]
+            self.model = None
+            self.model_settings = None
+
+    agent = DummyAgent()
+
+    await bridge.stream_agent(agent, "ask", session, rpc_channel=None)
+
+    assert broadcasts[0][0] == "message_output"
+    assert any(m == "tool_called" for m, _ in broadcasts[1:])
+
+
+@pytest.mark.asyncio
+async def test_buffering_orders_message_before_tool_result(monkeypatch):
+    monkeypatch.setattr(bridge.Debug, "enabled", classmethod(lambda cls: False))
+    monkeypatch.setattr(
+        bridge,
+        "ItemHelpers",
+        types.SimpleNamespace(
+            text_message_output=lambda item: getattr(item, "text", "")
+        ),
+    )
+
+    class FakeRunConfig:
+        def __init__(self, **kwargs):
+            pass
+
+    monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
+    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
+
+    calls = []
+
+    async def capture_broadcast(session_arg, method, payload):
+        calls.append((method, payload))
+        return True
+
+    monkeypatch.setattr(bridge, "_broadcast", capture_broadcast)
+
+    reasoning_item = types.SimpleNamespace(
+        type="reasoning_item",
+        to_input_item=lambda: {
+            "type": "reasoning",
+            "id": "rs_buf2",
+            "summary": [{"text": "thinking", "type": "summary_text"}],
+            "status": "completed",
+        },
+    )
+
+    tool_call_item = types.SimpleNamespace(
+        type="tool_call_item",
+        to_input_item=lambda: {
+            "name": "alpha",
+            "arguments": "{}",
+            "call_id": "cbuf2",
+        },
+    )
+
+    tool_result_item = types.SimpleNamespace(
+        type="tool_call_output_item",
+        name="alpha",
+        output="done",
+        to_input_item=lambda: {"call_id": "cbuf2"},
+    )
+
+    message_item = types.SimpleNamespace(
+        type="message_output_item",
+        text="preamble2",
+        to_input_item=lambda: {"role": "assistant", "content": "preamble2"},
+    )
+
+    events = [
+        types.SimpleNamespace(type="run_item_stream_event", item=reasoning_item),
+        types.SimpleNamespace(type="run_item_stream_event", item=tool_call_item),
+        types.SimpleNamespace(type="run_item_stream_event", item=tool_result_item),
+        types.SimpleNamespace(type="run_item_stream_event", item=message_item),
+    ]
+
+    class FakeRunResult:
+        def __init__(self, evts):
+            self._events = evts
+
+        async def stream_events(self):
+            for e in self._events:
+                yield e
+
+    class FakeRunner:
+        @classmethod
+        def run_streamed(cls, *args, **kwargs):
+            return FakeRunResult(events)
+
+    monkeypatch.setattr("agents.Runner", FakeRunner)
+
+    session = DummySession(channels=[], session_id="buf-2")
+
+    class DummyAgent:
+        def __init__(self):
+            self.name = "Agent"
+            self.instructions = "inst"
+            self.tools = []
+            self.model = None
+            self.model_settings = None
+
+    agent = DummyAgent()
+
+    await bridge.stream_agent(agent, "ask", session, rpc_channel=None)
+
+    assert calls[0][0] == "message_output"
+    assert any(m == "tool_result" for m, _ in calls[1:])
+
+
+@pytest.mark.asyncio
+async def test_buffering_synth_preamble_on_cancel(monkeypatch):
+    monkeypatch.setattr(bridge.Debug, "enabled", classmethod(lambda cls: False))
+    monkeypatch.setattr(
+        bridge,
+        "ItemHelpers",
+        types.SimpleNamespace(
+            text_message_output=lambda item: getattr(item, "text", "")
+        ),
+    )
+
+    class FakeRunConfig:
+        def __init__(self, **kwargs):
+            pass
+
+    monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
+    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
+
+    seen = []
+
+    async def capture_broadcast(session_arg, method, payload):
+        seen.append((method, payload))
+        return True
+
+    monkeypatch.setattr(bridge, "_broadcast", capture_broadcast)
+
+    reasoning_item = types.SimpleNamespace(
+        type="reasoning_item",
+        to_input_item=lambda: {
+            "type": "reasoning",
+            "id": "rs_cancel",
+            "summary": [{"text": "planning tools", "type": "summary_text"}],
+            "status": "completed",
+        },
+    )
+
+    tool_call_item = types.SimpleNamespace(
+        type="tool_call_item",
+        to_input_item=lambda: {
+            "name": "alpha",
+            "arguments": "{}",
+            "call_id": "ccancel",
+        },
+    )
+
+    events = [
+        types.SimpleNamespace(type="run_item_stream_event", item=reasoning_item),
+        types.SimpleNamespace(type="run_item_stream_event", item=tool_call_item),
+    ]
+
+    class FakeRunResult:
+        def __init__(self, evts):
+            self._events = evts
+
+        async def stream_events(self):
+            for e in self._events:
+                yield e
+            raise asyncio.CancelledError()
+
+    class FakeRunner:
+        @classmethod
+        def run_streamed(cls, *args, **kwargs):
+            return FakeRunResult(events)
+
+    monkeypatch.setattr("agents.Runner", FakeRunner)
+
+    session = DummySession(channels=[], session_id="buf-3")
+
+    class DummyAgent:
+        def __init__(self):
+            self.name = "Agent"
+            self.instructions = "inst"
+            self.tools = []
+            self.model = None
+            self.model_settings = None
+
+    agent = DummyAgent()
+
+    with pytest.raises(asyncio.CancelledError):
+        await bridge.stream_agent(agent, "ask", session, rpc_channel=None)
+
+    assert seen[0][0] == "message_output"
+    assert any(m == "tool_called" for m, _ in seen[1:])
+    assert any(
+        m == "tool_result" and p["output"] == "[Cancelled by user]" for m, p in seen
+    )
+    assert session.history[0]["role"] == "user"
+    assert any(it.get("type") == "function_call_output" for it in session.history)
+
+
+@pytest.mark.asyncio
+async def test_no_buffering_without_reasoning(monkeypatch):
+    monkeypatch.setattr(bridge.Debug, "enabled", classmethod(lambda cls: False))
+    monkeypatch.setattr(
+        bridge,
+        "ItemHelpers",
+        types.SimpleNamespace(
+            text_message_output=lambda item: getattr(item, "text", "")
+        ),
+    )
+
+    class FakeRunConfig:
+        def __init__(self, **kwargs):
+            pass
+
+    monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
+    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
+
+    calls = []
+
+    async def capture_broadcast(session_arg, method, payload):
+        calls.append((method, payload))
+        return True
+
+    monkeypatch.setattr(bridge, "_broadcast", capture_broadcast)
+
+    tool_call_item = types.SimpleNamespace(
+        type="tool_call_item",
+        to_input_item=lambda: {
+            "name": "alpha",
+            "arguments": "{}",
+            "call_id": "norb",
+        },
+    )
+
+    tool_result_item = types.SimpleNamespace(
+        type="tool_call_output_item",
+        name="alpha",
+        output="done",
+        to_input_item=lambda: {"call_id": "norb"},
+    )
+
+    message_item = types.SimpleNamespace(
+        type="message_output_item",
+        text="msg",
+        to_input_item=lambda: {"role": "assistant", "content": "msg"},
+    )
+
+    events = [
+        types.SimpleNamespace(type="run_item_stream_event", item=tool_call_item),
+        types.SimpleNamespace(type="run_item_stream_event", item=tool_result_item),
+        types.SimpleNamespace(type="run_item_stream_event", item=message_item),
+    ]
+
+    class FakeRunResult:
+        def __init__(self, evts):
+            self._events = evts
+
+        async def stream_events(self):
+            for e in self._events:
+                yield e
+
+    class FakeRunner:
+        @classmethod
+        def run_streamed(cls, *args, **kwargs):
+            return FakeRunResult(events)
+
+    monkeypatch.setattr("agents.Runner", FakeRunner)
+
+    session = DummySession(channels=[], session_id="buf-4")
+
+    class DummyAgent:
+        def __init__(self):
+            self.name = "Agent"
+            self.instructions = "inst"
+            self.tools = []
+            self.model = None
+            self.model_settings = None
+
+    agent = DummyAgent()
+
+    await bridge.stream_agent(agent, "ask", session, rpc_channel=None)
+
+    assert calls[0][0] == "tool_called"
+    assert calls[1][0] == "tool_result"
+    assert calls[2][0] == "message_output"
+
+
+@pytest.mark.asyncio
+async def test_buffers_client_status_events_until_preamble(monkeypatch):
+    monkeypatch.setattr(bridge.Debug, "enabled", classmethod(lambda cls: False))
+    monkeypatch.setattr(
+        bridge,
+        "ItemHelpers",
+        types.SimpleNamespace(
+            text_message_output=lambda item: getattr(item, "text", "")
+        ),
+    )
+
+    class FakeRunConfig:
+        def __init__(self, **kwargs):
+            pass
+
+    monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
+    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
+
+    calls = []
+
+    async def capture_broadcast(session_arg, method, payload):
+        calls.append((method, payload))
+        return True
+
+    monkeypatch.setattr(bridge, "_broadcast", capture_broadcast)
+
+    reasoning_item = types.SimpleNamespace(
+        type="reasoning_item",
+        to_input_item=lambda: {
+            "type": "reasoning",
+            "id": "rs_stat",
+            "summary": [{"text": "deciding", "type": "summary_text"}],
+            "status": "completed",
+        },
+    )
+
+    tool_call_item = types.SimpleNamespace(
+        type="tool_call_item",
+        to_input_item=lambda: {
+            "name": "alpha",
+            "arguments": "{}",
+            "call_id": "cstat",
+        },
+    )
+
+    message_item = types.SimpleNamespace(
+        type="message_output_item",
+        text="preamble",
+        to_input_item=lambda: {"role": "assistant", "content": "preamble"},
+    )
+
+    events = [
+        types.SimpleNamespace(type="run_item_stream_event", item=reasoning_item),
+        types.SimpleNamespace(type="run_item_stream_event", item=tool_call_item),
+        types.SimpleNamespace(type="run_item_stream_event", item=message_item),
+    ]
+
+    class FakeRunResult:
+        def __init__(self, evts):
+            self._events = evts
+
+        async def stream_events(self):
+            for e in self._events:
+                yield e
+
+    class FakeRunner:
+        @classmethod
+        def run_streamed(cls, *args, **kwargs):
+            return FakeRunResult(events)
+
+    monkeypatch.setattr("agents.Runner", FakeRunner)
+
+    session = DummySession(channels=[], session_id="buf-5")
+
+    class DummyTool:
+        def __init__(self):
+            self.name = "alpha"
+            self._client_status_text = "Busy"
+
+    class DummyAgent:
+        def __init__(self):
+            self.name = "Agent"
+            self.instructions = "inst"
+            self.tools = [DummyTool()]
+            self.model = None
+            self.model_settings = None
+
+    agent = DummyAgent()
+
+    await bridge.stream_agent(agent, "ask", session, rpc_channel=None)
+
+    assert calls[0][0] == "message_output"
+    assert any(
+        m == "client_request" and p.get("request_id", "").startswith("status_")
+        for m, p in calls[1:]
+    )

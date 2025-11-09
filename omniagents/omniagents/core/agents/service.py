@@ -1342,9 +1342,8 @@ class AgentService(RpcMethodsBase):
                     still_pending.append((meth, payl))
             sess.pending_events = still_pending
 
-        # Return the raw history list; the WebSocket RPC layer will
-        # serialise this to JSON for the client.
-        result = sess.history
+        from omniagents.core.runtime.bridge import _filter_history_for_api
+        result = _filter_history_for_api(sess.history)
         _debug_rpc("get_session_history result", {"history": result})
         return result
 

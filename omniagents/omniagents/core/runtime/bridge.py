@@ -200,12 +200,50 @@ def _filter_history_for_api(history: list[dict]) -> list[dict]:
                     # Not an output, stop collecting
                     break
 
-            # Reorder: reasoning → message → function_calls → outputs
-            reordered.append(reasoning)
             if message:
+                # Valid reasoning group: reorder to reasoning → message → function_calls → outputs
+                reordered.append(reasoning)
                 reordered.append(message)
-            reordered.extend(function_calls)
-            reordered.extend(outputs)
+                reordered.extend(function_calls)
+                reordered.extend(outputs)
+            elif function_calls:
+                # Orphaned reasoning (no message): drop reasoning but preserve tool calls
+                # Azure rejects reasoning without messages AND rejects synthetic messages,
+                # but accepts function_calls without reasoning if they have new IDs.
+                # Create synthetic function_calls with new IDs to preserve the tool call history.
+                for fc in function_calls:
+                    # Find corresponding output
+                    fc_output = None
+                    for output in outputs:
+                        if output.get("call_id") == fc.get("call_id"):
+                            fc_output = output
+                            break
+
+                    # Create synthetic IDs (not referencing dropped reasoning)
+                    original_id = fc.get("id", "unknown")
+                    synth_call_id = f"call_synth_{original_id[3:] if original_id.startswith('fc_') else original_id}"
+                    synth_fc_id = f"fc_synth_{original_id[3:] if original_id.startswith('fc_') else original_id}"
+
+                    # Synthetic function call
+                    synth_fc = {
+                        "type": "function_call",
+                        "id": synth_fc_id,
+                        "call_id": synth_call_id,
+                        "name": fc.get("name"),
+                        "arguments": fc.get("arguments"),
+                        "status": fc.get("status", "completed"),
+                    }
+                    reordered.append(synth_fc)
+
+                    # Synthetic output
+                    if fc_output:
+                        synth_output = {
+                            "type": "function_call_output",
+                            "call_id": synth_call_id,
+                            "output": fc_output.get("output"),
+                        }
+                        reordered.append(synth_output)
+            # else: Orphaned reasoning with no function calls - just drop it
 
             i = j  # Skip past all processed items
         # Check if this is a function_call NOT preceded by reasoning
@@ -361,6 +399,10 @@ async def stream_agent(
         ),
     }
 
+    buffered_events: list[tuple[str, dict]] = []
+    awaiting_preamble = False
+    last_preamble_content: str | None = None
+
     try:
         # Use Runner to run the agent
         from agents import RunConfig
@@ -483,6 +525,29 @@ async def stream_agent(
                 continue
 
             item = event.item
+            try:
+                if getattr(item, "type", "") == "reasoning_item":
+                    awaiting_preamble = True
+                    try:
+                        if hasattr(item, "to_input_item"):
+                            ri = item.to_input_item()
+                            if isinstance(ri, dict):
+                                parts = ri.get("summary") or []
+                                if isinstance(parts, list):
+                                    texts = [
+                                        p.get("text")
+                                        for p in parts
+                                        if isinstance(p, dict)
+                                        and p.get("type")
+                                        in ("summary_text", "output_text")
+                                        and isinstance(p.get("text"), str)
+                                    ]
+                                    if texts:
+                                        last_preamble_content = " ".join(texts)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             method, payload = _stream_event_payload(
                 item, run_id=asyncio.current_task().get_name()
             )
@@ -500,17 +565,23 @@ async def stream_agent(
                         if name == tool_name and hasattr(t, "_client_status_text"):
                             text = str(getattr(t, "_client_status_text"))
                             if text:
-                                await _broadcast(
-                                    session,
-                                    "client_request",
-                                    {
-                                        "request_id": f"status_{call_id}",
-                                        "function": "ui.set_status",
-                                        "args": {"text": text, "show_spinner": True},
-                                        "run_id": asyncio.current_task().get_name(),
-                                        "session_id": session.id,
-                                    },
-                                )
+                                status_payload = {
+                                    "request_id": f"status_{call_id}",
+                                    "function": "ui.set_status",
+                                    "args": {"text": text, "show_spinner": True},
+                                    "run_id": asyncio.current_task().get_name(),
+                                    "session_id": session.id,
+                                }
+                                if awaiting_preamble:
+                                    buffered_events.append(
+                                        ("client_request", status_payload)
+                                    )
+                                else:
+                                    await _broadcast(
+                                        session,
+                                        "client_request",
+                                        status_payload,
+                                    )
                                 _status_calls[call_id] = text
                             break
                 except Exception:
@@ -523,29 +594,46 @@ async def stream_agent(
                 # Clear any status override we set for this call
                 if call_id in _status_calls:
                     try:
-                        await _broadcast(
-                            session,
-                            "client_request",
-                            {
-                                "request_id": f"status_clear_{call_id}",
-                                "function": "ui.set_status",
-                                "args": {"text": "", "show_spinner": False},
-                                "run_id": asyncio.current_task().get_name(),
-                                "session_id": session.id,
-                            },
-                        )
+                        clear_payload = {
+                            "request_id": f"status_clear_{call_id}",
+                            "function": "ui.set_status",
+                            "args": {"text": "", "show_spinner": False},
+                            "run_id": asyncio.current_task().get_name(),
+                            "session_id": session.id,
+                        }
+                        if awaiting_preamble:
+                            buffered_events.append(("client_request", clear_payload))
+                        else:
+                            await _broadcast(
+                                session,
+                                "client_request",
+                                clear_payload,
+                            )
                     except Exception:
                         pass
                     finally:
                         _status_calls.pop(call_id, None)
 
             if method:
-                # Push event to client; if the WebSocket is already closed we
-                # remember the payload so it can be replayed when the user
-                # reconnects.
-                delivered = await _broadcast(session, method, payload)
-                if not delivered:
-                    session.pending_events.append((method, payload))
+                if awaiting_preamble and method in ("tool_called", "tool_result"):
+                    buffered_events.append((method, payload))
+                elif awaiting_preamble and method == "message_output":
+                    delivered = await _broadcast(session, method, payload)
+                    if not delivered:
+                        session.pending_events.append((method, payload))
+                    for m, p in buffered_events:
+                        try:
+                            d2 = await _broadcast(session, m, p)
+                            if not d2:
+                                session.pending_events.append((m, p))
+                        except Exception:
+                            pass
+                    buffered_events.clear()
+                    awaiting_preamble = False
+                else:
+                    delivered = await _broadcast(session, method, payload)
+                    if not delivered:
+                        session.pending_events.append((method, payload))
 
             # Persist item into session history when it reaches a finalised form
             # CRITICAL: Reasoning items MUST be paired with their following message
@@ -654,6 +742,32 @@ async def stream_agent(
         session.current_stream_result = None
         # Handle any pending tool calls that didn't get results
         # This covers both cancellation and unexpected termination
+        if awaiting_preamble and buffered_events:
+            synth = last_preamble_content or ""
+            try:
+                payload = {
+                    "run_id": (
+                        asyncio.current_task().get_name()
+                        if asyncio.current_task()
+                        else ""
+                    ),
+                    "content": synth,
+                    "is_final": False,
+                }
+                d0 = await _broadcast(session, "message_output", payload)
+                if not d0:
+                    session.pending_events.append(("message_output", payload))
+                for m, p in buffered_events:
+                    try:
+                        d1 = await _broadcast(session, m, p)
+                        if not d1:
+                            session.pending_events.append((m, p))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            buffered_events.clear()
+            awaiting_preamble = False
         if pending_tool_calls:
             if Debug.enabled():
                 print(

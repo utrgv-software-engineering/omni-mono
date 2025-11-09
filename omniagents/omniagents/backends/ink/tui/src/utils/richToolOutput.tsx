@@ -36,7 +36,7 @@ export const RichToolOutput = React.memo<{
       case "diff":
         return (
           <Box flexDirection="column">
-            <Text> └─ {summaryText}</Text>
+            <Text>  └─ {summaryText}</Text>
             {value && <RenderDiffPreview value={value} />}
           </Box>
         );
@@ -44,7 +44,7 @@ export const RichToolOutput = React.memo<{
       case "table":
         return (
           <Box flexDirection="column">
-            <Text> └─ {summaryText}</Text>
+            <Text>  └─ {summaryText}</Text>
             {metadata.table && (
               <RenderTable table={metadata.table} truncated={truncated} />
             )}
@@ -54,7 +54,7 @@ export const RichToolOutput = React.memo<{
       case "search_results":
         return (
           <Box flexDirection="column">
-            <Text> └─ {summaryText}</Text>
+            <Text>  └─ {summaryText}</Text>
             {preview && (
               <RenderSearchResults preview={preview} truncated={truncated} />
             )}
@@ -64,7 +64,7 @@ export const RichToolOutput = React.memo<{
       case "directory_listing":
         return (
           <Box flexDirection="column">
-            <Text> └─ {summaryText}</Text>
+            <Text>  └─ {summaryText}</Text>
             {preview && (
               <RenderDirectoryListing
                 preview={preview}
@@ -78,10 +78,7 @@ export const RichToolOutput = React.memo<{
       case "error":
         return (
           <Box flexDirection="column">
-            <Text>
-              {" "}
-              └─ <Text color={TokyoNightTheme.error}>{summaryText}</Text>
-            </Text>
+            <Text>  └─ <Text color={TokyoNightTheme.error}>{summaryText}</Text></Text>
             {preview && (
               <RenderErrorPreview preview={preview} truncated={truncated} />
             )}
@@ -92,7 +89,7 @@ export const RichToolOutput = React.memo<{
         // Default: plain text rendering
         return (
           <Box flexDirection="column">
-            <Text> └─ {summaryText}</Text>
+            <Text>  └─ {summaryText}</Text>
             {preview && (
               <RenderPlainPreview preview={preview} truncated={truncated} />
             )}
