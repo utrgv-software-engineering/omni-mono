@@ -70,6 +70,7 @@ omniagents/backends/ink/
 
 - `OMNI_INK_AUTO_BUILD`: Set to "0" or "false" to disable auto-build
 - `OMNI_DEBUG`: Enable debug logging
+- `OMNI_INK_TUI_PATH`: Full path to a prebuilt `dist/index.js` to skip build
 
 ## Comparison with Bubble Tea Backend
 
@@ -96,3 +97,9 @@ When making changes to the Ink TUI:
 ## Protocol
 
 The Ink backend uses the same JSON-RPC 2.0 WebSocket protocol as all other OmniAgents backends. See `/omniagents/rpc/protocol.md` for details.
+
+## Build Details
+
+- Auto-build runs in a per-user cache directory (e.g., `~/.cache/omniagents/ink/tui` on Linux) to avoid write-permission issues with system installs and pipx.
+- If a lockfile (`package-lock.json`) is present, `npm ci` is used; otherwise `npm install`.
+- Set `OMNI_INK_TUI_PATH` to point to a prebuilt `dist/index.js` to bypass local builds entirely.

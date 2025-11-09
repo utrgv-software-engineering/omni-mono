@@ -132,8 +132,8 @@ class InkBackend:
                         f"[DEBUG] Waiting for server to start... attempt {i+1}/{max_retries}"
                     )
 
-        # Find or build the Ink TUI
-        binary_path = self._find_binary()
+        env_override = os.environ.get("OMNI_INK_TUI_PATH")
+        binary_path = self._find_binary(env_override=env_override)
         if not binary_path:
             # Attempt auto-build if allowed
             auto_build = os.environ.get("OMNI_INK_AUTO_BUILD", "1").lower() not in {
@@ -176,7 +176,6 @@ class InkBackend:
             print(f"[DEBUG] Binary path: {binary_path}")
             print(f"[DEBUG] Agent name: {spec.name}")
 
-        # Run the built TUI with node
         cmd = ["node", str(binary_path), "--server", server_url, "--name", spec.name or "OmniAgent"]
 
         # Add optional parameters
@@ -227,12 +226,16 @@ class InkBackend:
             print(f"Error: omni-ink-tui exited with code {exit_code}")
             sys.exit(exit_code)
 
-    def _find_binary(self) -> Optional[Path]:
-        """Find the built omni-ink-tui binary.
-
-        Returns:
-            Path to dist/index.js if found, None otherwise
-        """
+    def _find_binary(self, env_override: Optional[str] = None) -> Optional[Path]:
+        if env_override:
+            p = Path(env_override).expanduser()
+            if p.exists() and p.is_file():
+                return p
+        cache_dir = self._cache_dir()
+        if cache_dir is not None:
+            dist_path = cache_dir / "dist" / "index.js"
+            if dist_path.exists() and dist_path.is_file():
+                return dist_path
         base = Path(__file__).parent
         dist_path = base / "tui" / "dist" / "index.js"
         if dist_path.exists() and dist_path.is_file():
@@ -240,68 +243,178 @@ class InkBackend:
         return None
 
     def _build_binary(self, debug: bool = False) -> Path:
-        """Build the omni-ink-tui using npm.
-
-        Returns:
-            Path to the built binary
-        Raises:
-            SystemExit if Node.js/npm is not installed or build fails
-        """
-        if shutil.which("npm") is None:
-            print(
-                "Error: npm not found. Install Node.js from https://nodejs.org/ and retry."
-            )
+        if shutil.which("npm") is None or shutil.which("node") is None:
+            print("Error: Node.js/npm not found. Install Node.js from https://nodejs.org/ and retry.")
             raise SystemExit(1)
+        try:
+            v = subprocess.check_output(["node", "-v"], text=True).strip()
+            if v.startswith("v"):
+                v = v[1:]
+            parts = v.split(".")
+            major = int(parts[0]) if parts and parts[0].isdigit() else 0
+            if major < 18:
+                print("Error: Node.js >= 18 is required. Please upgrade.")
+                raise SystemExit(1)
+        except Exception:
+            pass
 
-        base = Path(__file__).parent
-        workdir = base / "tui"
-        if not workdir.exists():
+        src_base = Path(__file__).parent / "tui"
+        if not src_base.exists():
             print("Error: Source directory for omni-ink-tui not found.")
             raise SystemExit(1)
 
-        env = os.environ.copy()
-        if debug:
-            print(f"[DEBUG] Building omni-ink-tui in {workdir}")
+        cache_dir = self._cache_dir()
+        if cache_dir is None:
+            cache_dir = src_base
 
-        # Install dependencies
+        src_hash = self._compute_source_hash(src_base)
+        stamp = self._stamp_path(cache_dir)
+        need_sync = True
+        try:
+            if stamp.exists():
+                prev = stamp.read_text(encoding="utf-8").strip()
+                if src_hash and prev and prev == src_hash:
+                    need_sync = False
+        except Exception:
+            need_sync = True
+
+        if need_sync and cache_dir != src_base:
+            if cache_dir.exists():
+                try:
+                    shutil.rmtree(cache_dir)
+                except Exception:
+                    pass
+            try:
+                shutil.copytree(src_base, cache_dir)
+            except Exception as e:
+                print(f"Error: Failed to prepare cache directory: {e}")
+                raise SystemExit(1)
+
+        env = os.environ.copy()
+        env.setdefault("NPM_CONFIG_AUDIT", "false")
+        env.setdefault("NPM_CONFIG_FUND", "false")
+        if debug:
+            print(f"[DEBUG] Building omni-ink-tui in {cache_dir}")
+
+        install_cmd = ["npm", "install"]
+        lockfile = cache_dir / "package-lock.json"
+        if lockfile.exists():
+            install_cmd = ["npm", "ci"]
+
         try:
             if debug:
-                print("[DEBUG] Running npm install...")
-            subprocess.run(
-                ["npm", "install"],
-                cwd=str(workdir),
+                print("[DEBUG] Running " + " ".join(install_cmd))
+            proc = subprocess.run(
+                install_cmd,
+                cwd=str(cache_dir),
                 check=True,
                 env=env,
-                stdout=subprocess.PIPE if not debug else None,
-                stderr=subprocess.PIPE if not debug else None,
+                stdout=None if debug else subprocess.PIPE,
+                stderr=None if debug else subprocess.PIPE,
+                text=True,
             )
         except subprocess.CalledProcessError as e:
-            print(f"Error: npm install failed with exit code {e.returncode}")
+            msg = f"Error: {' '.join(install_cmd)} failed with exit code {e.returncode}"
+            try:
+                out = e.stdout or ""
+                err = e.stderr or ""
+                tail = (out + "\n" + err).splitlines()[-50:]
+                if tail:
+                    print(msg)
+                    print("\n".join(tail))
+                else:
+                    print(msg)
+            except Exception:
+                print(msg)
             raise SystemExit(e.returncode)
 
-        # Build the project
         try:
             if debug:
                 print("[DEBUG] Running npm run build...")
-            subprocess.run(
+            proc2 = subprocess.run(
                 ["npm", "run", "build"],
-                cwd=str(workdir),
+                cwd=str(cache_dir),
                 check=True,
                 env=env,
-                stdout=subprocess.PIPE if not debug else None,
-                stderr=subprocess.PIPE if not debug else None,
+                stdout=None if debug else subprocess.PIPE,
+                stderr=None if debug else subprocess.PIPE,
+                text=True,
             )
         except subprocess.CalledProcessError as e:
-            print(f"Error: npm run build failed with exit code {e.returncode}")
+            msg = f"Error: npm run build failed with exit code {e.returncode}"
+            try:
+                out = e.stdout or ""
+                err = e.stderr or ""
+                tail = (out + "\n" + err).splitlines()[-50:]
+                if tail:
+                    print(msg)
+                    print("\n".join(tail))
+                else:
+                    print(msg)
+            except Exception:
+                print(msg)
             raise SystemExit(e.returncode)
 
-        # Check that the output exists
-        out_path = workdir / "dist" / "index.js"
+        out_path = cache_dir / "dist" / "index.js"
         if not out_path.exists():
             print("Error: Build succeeded but output file not found.")
             raise SystemExit(1)
-
+        try:
+            if src_hash:
+                stamp.write_text(src_hash + "\n", encoding="utf-8")
+        except Exception:
+            pass
         return out_path
+
+    def _cache_dir(self) -> Optional[Path]:
+        base = self._user_cache_dir()
+        if base is None:
+            return None
+        dest = base / "ink" / "tui"
+        dest.mkdir(parents=True, exist_ok=True)
+        return dest
+
+    def _user_cache_dir(self) -> Optional[Path]:
+        home = Path.home()
+        system = platform.system().lower()
+        if system == "windows":
+            base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+            if not base:
+                return None
+            return Path(base) / "OmniAgents"
+        elif system == "darwin":
+            return home / "Library" / "Caches" / "OmniAgents"
+        else:
+            xdg = os.environ.get("XDG_CACHE_HOME")
+            if xdg:
+                return Path(xdg) / "omniagents"
+            return home / ".cache" / "omniagents"
+
+    def _stamp_path(self, cache_dir: Path) -> Path:
+        return cache_dir / "omni-ink-tui.hash"
+
+    def _compute_source_hash(self, src_base: Path) -> Optional[str]:
+        try:
+            files = []
+            for root, _dirs, names in os.walk(src_base / "src"):
+                for n in names:
+                    if n.endswith(".ts") or n.endswith(".tsx"):
+                        files.append(str(Path(root) / n))
+            files.append(str(src_base / "package.json"))
+            files.append(str(src_base / "tsconfig.json"))
+            tsx_cfg = src_base / "tsconfig.tsx.json"
+            if tsx_cfg.exists():
+                files.append(str(tsx_cfg))
+            files = [f for f in files if os.path.isfile(f)]
+            files.sort()
+            import hashlib as _hashlib
+            digest = _hashlib.sha256()
+            for f in files:
+                with open(f, "rb") as fh:
+                    digest.update(fh.read())
+            return digest.hexdigest()
+        except Exception:
+            return None
 
 
 __all__ = ["InkBackend"]
