@@ -615,7 +615,7 @@ async def stream_agent(
                         _status_calls.pop(call_id, None)
 
             if method:
-                if awaiting_preamble and method in ("tool_called", "tool_result"):
+                if awaiting_preamble and method == "tool_called":
                     buffered_events.append((method, payload))
                 elif awaiting_preamble and method == "message_output":
                     delivered = await _broadcast(session, method, payload)

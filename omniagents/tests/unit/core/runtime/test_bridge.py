@@ -965,8 +965,11 @@ async def test_buffering_orders_message_before_tool_result(monkeypatch):
 
     await bridge.stream_agent(agent, "ask", session, rpc_channel=None)
 
-    assert calls[0][0] == "message_output"
-    assert any(m == "tool_result" for m, _ in calls[1:])
+    # With fixed buffering: tool_result streams immediately (not buffered),
+    # then message, then tool_called flushes from buffer
+    assert calls[0][0] == "tool_result"  # Sent immediately when it arrives
+    assert calls[1][0] == "message_output"  # Message sent next
+    assert calls[2][0] == "tool_called"  # Tool call flushed from buffer
 
 
 @pytest.mark.asyncio
