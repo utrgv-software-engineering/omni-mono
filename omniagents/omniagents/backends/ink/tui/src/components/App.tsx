@@ -584,6 +584,14 @@ export const App: React.FC<AppProps> = ({
   useInput(
     useCallback(
       (input, key) => {
+        if (key.escape || input === "\x1b") {
+          if (approval) {
+            handleApproval("no");
+          } else if (thinking && currentRunId) {
+            cancelRun(currentRunId);
+          }
+          return;
+        }
         if (key.ctrl && input === "c") {
           ctrlCCount.current++;
 
@@ -710,14 +718,15 @@ export const App: React.FC<AppProps> = ({
 
 
             {/* Input prompt - always rendered, disabled during approval/thinking */}
-            <Box marginTop={1}>
-              <MultiLineInputOptimized
-                onSubmit={handleSubmit}
-                onEscape={handleEscape}
-                disabled={!connected || thinking || !!approval}
-                history={messageHistory}
-              />
-            </Box>
+          <Box marginTop={1}>
+            <MultiLineInputOptimized
+              onSubmit={handleSubmit}
+              onEscape={handleEscape}
+              disabled={!connected || !!approval}
+              disableSubmit={thinking}
+              history={messageHistory}
+            />
+          </Box>
 
             {/* Help text below input - isolated subscription */}
             <HelpWrapper

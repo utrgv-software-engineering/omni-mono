@@ -39,6 +39,7 @@ interface MultiLineInputProps {
   placeholder?: string;
   maxHeight?: number;
   history?: string[];
+  disableSubmit?: boolean;
 }
 
 /**
@@ -250,6 +251,7 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
     placeholder = "Type your message...",
     maxHeight = 20,
     history = [],
+    disableSubmit = false,
   }) => {
     const [state, dispatch] = useReducer(inputReducer, {
       lines: [""],
@@ -341,7 +343,9 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
         if (key.meta || key.ctrl) {
           dispatch({ type: "INSERT_NEWLINE" });
         } else {
-          handleSubmit();
+          if (!disableSubmit) {
+            handleSubmit();
+          }
         }
       } else if (key.delete || key.backspace) {
         dispatch({ type: "DELETE_CHAR" });
@@ -446,6 +450,7 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
       prevProps.placeholder === nextProps.placeholder &&
       prevProps.maxHeight === nextProps.maxHeight &&
       prevProps.disabled === nextProps.disabled &&
+      prevProps.disableSubmit === nextProps.disableSubmit &&
       prevProps.onSubmit === nextProps.onSubmit &&
       prevProps.onEscape === nextProps.onEscape
     );
