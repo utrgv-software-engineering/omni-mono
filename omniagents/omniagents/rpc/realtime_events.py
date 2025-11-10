@@ -208,18 +208,21 @@ class RealtimeRawModelEvent(RealtimeEventBase):
 
 
 def map_realtime_session_event_to_rpc(
-    event: Any, run_id: str
+    event: Any, run_id: str, tool_call_cache: Optional[Dict[tuple, str]] = None
 ) -> Optional[RealtimeEventBase]:
     """Map OpenAI SDK RealtimeSessionEvent to RPC event.
 
     Args:
         event: RealtimeSessionEvent from OpenAI SDK
         run_id: The current run ID
+        tool_call_cache: Optional dict mapping (tool_name, call_id) to arguments string.
+                        Used to enrich tool_start events with arguments from raw model events.
 
     Returns:
         RPC event object or None if event type is not mapped
     """
     event_type = getattr(event, "type", None)
+    tool_call_cache = tool_call_cache or {}
 
     if event_type == "audio":
         # Extract audio data from RealtimeAudio.audio (RealtimeModelAudioEvent)
@@ -284,13 +287,59 @@ def map_realtime_session_event_to_rpc(
         )
 
     elif event_type == "tool_start":
-        # RealtimeToolStart has tool (Tool object) and agent
+        # RealtimeToolStart has tool (Tool object), agent, and info (context)
         tool_obj = getattr(event, "tool", None)
+        tool_name = getattr(tool_obj, "name", "unknown") if tool_obj else "unknown"
+
+        # Extract call_id from the tool execution context
+        # The SDK may provide this in different places depending on version
+        tool_call_id = ""
+        info = getattr(event, "info", None)
+
+        # Try to get call_id from various possible locations in the event
+        # Note: The context doesn't have current_tool_call, but we try anyway for future compatibility
+        if info:
+            ctx = getattr(info, "context", None)
+            if ctx:
+                # Check if context has call_id directly
+                if hasattr(ctx, "call_id"):
+                    tool_call_id = str(getattr(ctx, "call_id", ""))
+                # Or if there's a current_tool_call object (future-proofing)
+                elif hasattr(ctx, "current_tool_call"):
+                    current_tool_call = getattr(ctx, "current_tool_call", None)
+                    if current_tool_call:
+                        tool_call_id = str(getattr(current_tool_call, "call_id", ""))
+
+        # Look up arguments from the cache populated by raw model events
+        # This mimics how non-realtime extracts arguments from tool_call_item.to_input_item()
+        arguments = ""
+
+        if tool_call_id:
+            # Try exact match first: (tool_name, call_id)
+            cache_key = (tool_name, tool_call_id)
+            arguments = tool_call_cache.get(cache_key, "")
+
+        if not arguments:
+            # Fallback: try to find by tool name alone (most recent call)
+            # This handles cases where call_id matching fails or isn't available
+            for (cached_name, cached_id), cached_args in tool_call_cache.items():
+                if cached_name == tool_name:
+                    arguments = cached_args
+                    tool_call_id = cached_id  # Use the call_id from cache
+                    break
+
+        # Arguments from raw model events are already JSON strings
+        # Just ensure they're strings if we got them from another source
+        if arguments and not isinstance(arguments, str):
+            import json
+
+            arguments = json.dumps(arguments)
+
         return RealtimeToolStartEvent(
             run_id=run_id,
-            tool_name=getattr(tool_obj, "name", "unknown") if tool_obj else "unknown",
-            tool_call_id="",  # Not provided in this event
-            arguments="",  # Not provided in this event
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            arguments=arguments,
         )
 
     elif event_type == "tool_end":

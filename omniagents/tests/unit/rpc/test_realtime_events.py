@@ -314,15 +314,41 @@ def test_map_tool_start_event():
     sdk_event = SimpleNamespace(
         type="tool_start",
         tool=SimpleNamespace(name="get_weather"),
+        info=None,
     )
 
+    # Without cache, arguments should be empty
     rpc_event = map_realtime_session_event_to_rpc(sdk_event, "run_456")
 
     assert isinstance(rpc_event, RealtimeToolStartEvent)
     assert rpc_event.tool_name == "get_weather"
-    # SDK doesn't provide call_id and arguments in tool_start
+    # SDK doesn't provide call_id and arguments in tool_start event itself
     assert rpc_event.tool_call_id == ""
     assert rpc_event.arguments == ""
+
+
+def test_map_tool_start_event_with_cache():
+    """Test mapping tool_start event with cached arguments from raw model events."""
+    sdk_event = SimpleNamespace(
+        type="tool_start",
+        tool=SimpleNamespace(name="get_weather"),
+        info=None,
+    )
+
+    # Simulate cache populated from raw model event
+    tool_call_cache = {
+        ("get_weather", "call_123"): '{"location": "San Francisco"}',
+    }
+
+    rpc_event = map_realtime_session_event_to_rpc(
+        sdk_event, "run_456", tool_call_cache=tool_call_cache
+    )
+
+    assert isinstance(rpc_event, RealtimeToolStartEvent)
+    assert rpc_event.tool_name == "get_weather"
+    # Should get call_id and arguments from cache
+    assert rpc_event.tool_call_id == "call_123"
+    assert rpc_event.arguments == '{"location": "San Francisco"}'
 
 
 def test_map_tool_end_event():

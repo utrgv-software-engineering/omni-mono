@@ -87,15 +87,32 @@ class ClientNotificationHandler(RpcMethodsBase):
                 self.transcripts.append((role, transcript))
                 print(f"\n{role.upper()}: {transcript}")
 
-        elif event_type == "realtime_tool_called":
-            # Show tool being called
+        elif event_type == "realtime_tool_start":
+            # Show tool being called with arguments
             tool_name = params.get("tool_name", "")
-            print(f"\n[Calling tool: {tool_name}]")
+            arguments = params.get("arguments", "")
+            print(f"\n🔧 [Calling tool: {tool_name}]")
+            if arguments:
+                # Pretty print arguments (try to parse as JSON for better formatting)
+                try:
+                    import json
 
-        elif event_type == "realtime_tool_completed":
+                    args_dict = json.loads(arguments)
+                    args_str = json.dumps(args_dict, indent=2)
+                    print(f"   Arguments: {args_str}")
+                except:
+                    # Not valid JSON, just print as-is
+                    print(f"   Arguments: {arguments}")
+
+        elif event_type == "realtime_tool_end":
             # Show tool completed
             tool_name = params.get("tool_name", "")
-            print(f"[Tool completed: {tool_name}]")
+            output = params.get("output", "")
+            # Show first 100 chars of output
+            output_preview = output[:100] + "..." if len(output) > 100 else output
+            print(f"✓ [Tool completed: {tool_name}]")
+            if output_preview:
+                print(f"  Result: {output_preview}")
 
         elif event_type == "realtime_error":
             # Show errors

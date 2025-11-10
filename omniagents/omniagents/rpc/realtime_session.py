@@ -228,15 +228,39 @@ class RealtimeSession:
         if not self._realtime_session:
             raise RuntimeError("Session not connected. Call connect() first.")
 
+        # Cache tool call arguments from raw model events
+        # Key: (tool_name, call_id) -> arguments string
+        # Raw model events arrive before tool_start events and contain the arguments
+        tool_call_cache = {}
+
         # Stream events from the realtime session (it's an async iterator)
         async for event in self._realtime_session:
-            # Convert SDK event to RPC event
-            rpc_event = map_realtime_session_event_to_rpc(event, self._run_id)
+            # Check for raw model events first to cache tool call arguments
+            # This mimics how non-realtime mode extracts arguments from tool_call_item
+            if event.type == "raw_model_event":
+                data = getattr(event, "data", None)
+                # RealtimeModelToolCallEvent has name, call_id, arguments
+                if data and getattr(data, "type", None) == "function_call":
+                    tool_name = getattr(data, "name", None)
+                    call_id = getattr(data, "call_id", None)
+                    arguments = getattr(data, "arguments", "")
+                    if tool_name and call_id:
+                        tool_call_cache[(tool_name, call_id)] = arguments
+
+            # Convert SDK event to RPC event (pass cache for tool_start events)
+            rpc_event = map_realtime_session_event_to_rpc(
+                event, self._run_id, tool_call_cache=tool_call_cache
+            )
 
             if rpc_event:
                 # Handle audio storage for audio events
                 if rpc_event.type == "realtime_audio":
                     await self._store_audio_chunk(rpc_event)
+
+                # Clean up cache after tool completes to prevent memory leak
+                if rpc_event.type == "realtime_tool_end":
+                    cache_key = (rpc_event.tool_name, rpc_event.tool_call_id)
+                    tool_call_cache.pop(cache_key, None)
 
                 yield rpc_event
 

@@ -166,9 +166,9 @@ def main():
     run_parser.add_argument(
         "--mode",
         "-m",
-        choices=["gui", "cli", "server", "bubbletea", "tui", "ink"],
+        choices=["gui", "cli", "server", "bubbletea", "tui", "ink", "voice"],
         default="tui",
-        help="Run mode: 'tui' (default) for Bubble Tea TUI, 'ink' for React Ink TUI, 'gui' for graphical UI, 'cli' for command-line interface, 'server' for JSON-RPC server",
+        help="Run mode: 'tui' (default) for Bubble Tea TUI, 'ink' for React Ink TUI, 'gui' for graphical UI, 'cli' for command-line interface, 'server' for JSON-RPC server, 'voice' for push-to-talk voice interaction",
     )
     run_parser.add_argument(
         "--project", "-P", type=str, help="Path to project.yml (dbt-style)."

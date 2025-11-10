@@ -24,14 +24,51 @@ python voice_client.py
 
 Now speak into your microphone to talk with the agent!
 
+## Using with Voice Backend
+
+You can also use the new integrated voice backend with the `omniagents run` command:
+
+```bash
+# 1. Install voice backend dependencies
+pip install omniagents[voice]
+
+# 2. Set API key
+export OPENAI_API_KEY="sk-your-key-here"
+
+# 3. Run with voice mode
+omniagents run -P examples/realtime_voice_agent --mode voice
+
+# Or specify the project path directly
+python -m omniagents.cli run -P examples/realtime_voice_agent/project.yml --mode voice
+```
+
+This method automatically starts the server and voice client in one command. Hold SPACEBAR to speak!
+
 ## Features
 
 - **Push-to-Talk Voice**: Hold SPACEBAR to speak, release to send
 - **No Echo/Feedback**: Simple, reliable voice input without feedback loops
 - **Text Mode**: Can run in text-only mode for testing (see Configuration below)
-- **Tool Calling**: Agent can call weather tools during conversation
+- **Tool Calling**: Agent can call weather tools during conversation with visible arguments and results
 - **Audio Transcription**: Automatic transcription of user speech
 - **Low Latency**: Streaming audio for responsive conversations
+
+### Example Tool Call Output
+
+When you ask "What's the weather in San Francisco?", you'll see:
+
+```
+USER: What's the weather in San Francisco?
+
+🔧 [Calling tool: get_current_weather]
+   Arguments: {
+     "location": "San Francisco"
+   }
+✓ [Tool completed: get_current_weather]
+  Result: San Francisco: Temperature: 68°F, Conditions: Partly cloudy, Humidity: 75%, Wind: 10 mph NW
+
+ASSISTANT: The current weather in San Francisco is 68 degrees Fahrenheit with partly cloudy skies...
+```
 
 > **⚠️ Important**: OpenAI's realtime API supports EITHER audio OR text mode, not both simultaneously.
 > Configure in `agent.yaml` by setting `modalities` to either `["audio"]` or `["text"]`.
