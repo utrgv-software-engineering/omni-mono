@@ -1,0 +1,57 @@
+name: computer_use
+label: Computer Use
+description: "A helpful AI agent. Customize this description."
+model: gpt-4.1
+instructions_file: instructions.md
+welcome_text: "Hello from computer_use."
+
+tools:
+  - move_mouse
+  - move_mouse_rel
+  - click
+  - double_click
+  - right_click
+  - middle_click
+  - mouse_down
+  - mouse_up
+  - drag_to
+  - drag_rel
+  - scroll
+  - hscroll
+  - vscroll
+  - type_text
+  - press_key
+  - press_keys
+  - hotkey
+  - key_down
+  - key_up
+  - get_position
+  - get_screen_size
+  - on_screen
+  - pixel_at
+  - pixel_matches_color
+  - take_screenshot
+  - locate_on_screen
+  - locate_center_on_screen
+  - locate_all_on_screen
+  - wait_for_image
+  - click_image
+  - set_pause
+  - set_failsafe
+  - sleep
+  - get_info
+  - list_directory
+  - glob_files
+  - grep_files
+  - read_file
+  - write_file
+  - edit_file
+  - apply_patch
+  - execute_bash
+  - download_file
+  - web_fetch
+  - web_search
+  - read_image
+  - youtube_search
+  - scholar_search
+  - convert_to_markdown

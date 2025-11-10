@@ -14,4 +14,12 @@ mcp_servers:
       name: MCP Fetch Server
       cache_tools_list: true
 
+  - name: mcp-pyautogui-server
+    type: stdio
+    params:
+      command: demo_pyautogui_server
+    options:
+      name: MCP PyAutoGUI Server
+      cache_tools_list: true
+
 tools: [echo, word_count]

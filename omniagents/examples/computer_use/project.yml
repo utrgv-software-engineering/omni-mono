@@ -1,0 +1,14 @@
+name: computer_use
+paths:
+  agents: agents
+  tools: tools
+  target: target
+agents:
+  entrypoint: computer_use
+
+tracing:
+  provider: agentio
+  project: computer_use_project
+  name: computer_use
+  settings:
+    resume: never
