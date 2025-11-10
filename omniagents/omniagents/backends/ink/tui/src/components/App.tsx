@@ -90,15 +90,14 @@ const ScrollableMessageList = React.memo<{
         <Box flexDirection="column">
           <MessageListOptimized />
 
-          {/* Preamble appears after messages but before approval */}
-          {preamble && (
-            <Preamble content={preamble} />
-          )}
-
           {approval && (
             <Box marginTop={1}>
               <ApprovalDialogWrapper approval={approval} onApprove={onApprove} />
             </Box>
+          )}
+
+          {preamble && (
+            <Preamble content={preamble} />
           )}
         </Box>
       </Scrollable>
