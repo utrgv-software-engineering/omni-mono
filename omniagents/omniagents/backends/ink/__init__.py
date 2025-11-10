@@ -176,7 +176,14 @@ class InkBackend:
             print(f"[DEBUG] Binary path: {binary_path}")
             print(f"[DEBUG] Agent name: {spec.name}")
 
-        cmd = ["node", str(binary_path), "--server", server_url, "--name", spec.name or "OmniAgent"]
+        cmd = [
+            "node",
+            str(binary_path),
+            "--server",
+            server_url,
+            "--name",
+            spec.name or "OmniAgent",
+        ]
 
         # Add optional parameters
         if auth_token:
@@ -244,7 +251,9 @@ class InkBackend:
 
     def _build_binary(self, debug: bool = False) -> Path:
         if shutil.which("npm") is None or shutil.which("node") is None:
-            print("Error: Node.js/npm not found. Install Node.js from https://nodejs.org/ and retry.")
+            print(
+                "Error: Node.js/npm not found. Install Node.js from https://nodejs.org/ and retry."
+            )
             raise SystemExit(1)
         try:
             v = subprocess.check_output(["node", "-v"], text=True).strip()
@@ -408,6 +417,7 @@ class InkBackend:
             files = [f for f in files if os.path.isfile(f)]
             files.sort()
             import hashlib as _hashlib
+
             digest = _hashlib.sha256()
             for f in files:
                 with open(f, "rb") as fh:

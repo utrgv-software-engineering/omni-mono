@@ -53,7 +53,11 @@ def convert_to_markdown(file_path: str) -> RichToolOutput:
                     "summary": "File not found",
                     "preview": msg,
                     "truncated": False,
-                    "metadata": {"error_type": "file_not_found", "file_path": file_path, "success": False},
+                    "metadata": {
+                        "error_type": "file_not_found",
+                        "file_path": file_path,
+                        "success": False,
+                    },
                 }
                 return RichToolOutput(msg, ui)
 
@@ -63,7 +67,11 @@ def convert_to_markdown(file_path: str) -> RichToolOutput:
         preview = content[:500] if content else "No content extracted"
         truncated = bool(content and len(content) > 500)
         if file_path.startswith("http"):
-            source = "youtube" if ("youtube.com" in file_path or "youtu.be" in file_path) else "web"
+            source = (
+                "youtube"
+                if ("youtube.com" in file_path or "youtu.be" in file_path)
+                else "web"
+            )
         else:
             ext = os.path.splitext(file_path)[1].lower()
             source = ext[1:] if ext else "unknown"
@@ -89,7 +97,12 @@ def convert_to_markdown(file_path: str) -> RichToolOutput:
             "summary": "Conversion error",
             "preview": str(e),
             "truncated": False,
-            "metadata": {"error_type": "missing_dependency", "file_path": file_path, "error": str(e), "success": False},
+            "metadata": {
+                "error_type": "missing_dependency",
+                "file_path": file_path,
+                "error": str(e),
+                "success": False,
+            },
         }
         return RichToolOutput(msg, ui)
     except Exception as e:
@@ -100,6 +113,11 @@ def convert_to_markdown(file_path: str) -> RichToolOutput:
             "summary": "Conversion error",
             "preview": str(e),
             "truncated": False,
-            "metadata": {"error_type": "conversion_error", "file_path": file_path, "error": str(e), "success": False},
+            "metadata": {
+                "error_type": "conversion_error",
+                "file_path": file_path,
+                "error": str(e),
+                "success": False,
+            },
         }
         return RichToolOutput(msg, ui)

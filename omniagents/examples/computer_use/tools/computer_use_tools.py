@@ -91,12 +91,19 @@ def double_click(
     Returns:
         "double_clicked" status string.
     """
-    pyautogui.doubleClick(x=x, y=y, button=button, interval=interval, duration=duration or 0)
+    pyautogui.doubleClick(
+        x=x, y=y, button=button, interval=interval, duration=duration or 0
+    )
     return "double_clicked"
 
 
 @function_tool
-def right_click(x: int | None = None, y: int | None = None, interval: float = 0.0, duration: float | None = None) -> str:
+def right_click(
+    x: int | None = None,
+    y: int | None = None,
+    interval: float = 0.0,
+    duration: float | None = None,
+) -> str:
     """Right-click at the current or specified position.
 
     Args:
@@ -113,7 +120,12 @@ def right_click(x: int | None = None, y: int | None = None, interval: float = 0.
 
 
 @function_tool
-def middle_click(x: int | None = None, y: int | None = None, interval: float = 0.0, duration: float | None = None) -> str:
+def middle_click(
+    x: int | None = None,
+    y: int | None = None,
+    interval: float = 0.0,
+    duration: float | None = None,
+) -> str:
     """Middle-click at the current or specified position.
 
     Args:
@@ -185,7 +197,9 @@ def drag_to(x: int, y: int, duration: float | None = None, button: str = "left")
 
 
 @function_tool
-def drag_rel(dx: int, dy: int, duration: float | None = None, button: str = "left") -> str:
+def drag_rel(
+    dx: int, dy: int, duration: float | None = None, button: str = "left"
+) -> str:
     """Drag the mouse by a relative offset from current position.
 
     Args:
@@ -406,7 +420,9 @@ def pixel_at(x: int, y: int) -> dict:
 
 
 @function_tool
-def pixel_matches_color(x: int, y: int, r: int, g: int, b: int, tolerance: int | None = 0) -> dict:
+def pixel_matches_color(
+    x: int, y: int, r: int, g: int, b: int, tolerance: int | None = 0
+) -> dict:
     """Check if a pixel color approximately matches an RGB value.
 
     Args:
@@ -420,7 +436,9 @@ def pixel_matches_color(x: int, y: int, r: int, g: int, b: int, tolerance: int |
     Returns:
         {"matches": bool}
     """
-    ok = pyautogui.pixelMatchesColor(x, y, (int(r), int(g), int(b)), tolerance=int(tolerance or 0))
+    ok = pyautogui.pixelMatchesColor(
+        x, y, (int(r), int(g), int(b)), tolerance=int(tolerance or 0)
+    )
     return {"matches": bool(ok)}
 
 
@@ -452,7 +470,9 @@ def take_screenshot(
         region = (x, y, width, height)
     buf = BytesIO()
     pyautogui.screenshot(region=region).save(buf, format="PNG")
-    data_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    data_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(
+        "ascii"
+    )
     return {"type": "image", "image_url": data_uri, "detail": detail}
 
 
@@ -490,7 +510,13 @@ def locate_on_screen(
     box = pyautogui.locateOnScreen(image_path, region=_region_tuple(region), **kwargs)
     if box is None:
         return {"found": False}
-    return {"found": True, "left": int(box.left), "top": int(box.top), "width": int(box.width), "height": int(box.height)}
+    return {
+        "found": True,
+        "left": int(box.left),
+        "top": int(box.top),
+        "width": int(box.width),
+        "height": int(box.height),
+    }
 
 
 @function_tool
@@ -516,7 +542,9 @@ def locate_center_on_screen(
         kwargs["confidence"] = float(confidence)
     if grayscale is not None:
         kwargs["grayscale"] = bool(grayscale)
-    pt = pyautogui.locateCenterOnScreen(image_path, region=_region_tuple(region), **kwargs)
+    pt = pyautogui.locateCenterOnScreen(
+        image_path, region=_region_tuple(region), **kwargs
+    )
     if pt is None:
         return {"found": False}
     return {"found": True, "x": int(pt.x), "y": int(pt.y)}
@@ -548,8 +576,17 @@ def locate_all_on_screen(
     if grayscale is not None:
         kwargs["grayscale"] = bool(grayscale)
     results = []
-    for box in pyautogui.locateAllOnScreen(image_path, region=_region_tuple(region), **kwargs):
-        results.append({"left": int(box.left), "top": int(box.top), "width": int(box.width), "height": int(box.height)})
+    for box in pyautogui.locateAllOnScreen(
+        image_path, region=_region_tuple(region), **kwargs
+    ):
+        results.append(
+            {
+                "left": int(box.left),
+                "top": int(box.top),
+                "width": int(box.width),
+                "height": int(box.height),
+            }
+        )
         if max_results is not None and len(results) >= int(max_results):
             break
     return {"results": results, "count": len(results)}
@@ -585,7 +622,9 @@ def wait_for_image(
     if grayscale is not None:
         kwargs["grayscale"] = bool(grayscale)
     while True:
-        box = pyautogui.locateOnScreen(image_path, region=_region_tuple(region), **kwargs)
+        box = pyautogui.locateOnScreen(
+            image_path, region=_region_tuple(region), **kwargs
+        )
         if box is not None:
             cx = int(box.left + box.width // 2)
             cy = int(box.top + box.height // 2)
@@ -625,11 +664,25 @@ def click_image(
     Returns:
         {"clicked": True, "x": int, "y": int} on success; {"clicked": False} otherwise.
     """
-    found = wait_for_image(image_path, timeout=timeout, interval=0.25, confidence=confidence, grayscale=grayscale)
+    found = wait_for_image(
+        image_path,
+        timeout=timeout,
+        interval=0.25,
+        confidence=confidence,
+        grayscale=grayscale,
+    )
     if not found.get("found"):
         return {"clicked": False}
-    x = int(found["x"]) if "x" in found else int(found["left"]) + int(found["width"]) // 2
-    y = int(found["y"]) if "y" in found else int(found["top"]) + int(found["height"]) // 2
+    x = (
+        int(found["x"])
+        if "x" in found
+        else int(found["left"]) + int(found["width"]) // 2
+    )
+    y = (
+        int(found["y"])
+        if "y" in found
+        else int(found["top"]) + int(found["height"]) // 2
+    )
     pyautogui.click(x=x, y=y, clicks=int(clicks or 1), button=button or "left")
     return {"clicked": True, "x": x, "y": y}
 
@@ -693,7 +746,9 @@ def get_info() -> dict:
           "timestamp": str,
         }
     """
-    platform, python_version, pyautogui_version, executable, size, ts = pyautogui.getInfo()
+    platform, python_version, pyautogui_version, executable, size, ts = (
+        pyautogui.getInfo()
+    )
     return {
         "platform": str(platform),
         "python_version": str(python_version),

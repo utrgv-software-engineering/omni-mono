@@ -1343,6 +1343,7 @@ class AgentService(RpcMethodsBase):
             sess.pending_events = still_pending
 
         from omniagents.core.runtime.bridge import _filter_history_for_api
+
         result = _filter_history_for_api(sess.history)
         _debug_rpc("get_session_history result", {"history": result})
         return result

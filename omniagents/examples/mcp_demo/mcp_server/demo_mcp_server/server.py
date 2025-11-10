@@ -19,4 +19,3 @@ async def fetch(url: str) -> str:
         response = await client.get(url)
         response.raise_for_status()
         return response.text
-
