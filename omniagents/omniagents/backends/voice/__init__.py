@@ -49,6 +49,8 @@ class VoiceBackend:
         # Ensure realtime mode and sensible defaults for voice
         if not spec.realtime_mode:
             spec.realtime_mode = True
+        if not spec.model_name:
+            spec.model_name = "gpt-realtime"
         if not spec.realtime_settings:
             spec.realtime_settings = RealtimeSettings()
         rs = spec.realtime_settings
@@ -65,10 +67,16 @@ class VoiceBackend:
         if not rs.turn_detection:
             rs.turn_detection = {
                 "type": "server_vad",
-                "threshold": 0.5,
-                "prefix_padding_ms": 300,
-                "silence_duration_ms": 500,
+                "threshold": 0.3,
+                "prefix_padding_ms": 100,
+                "silence_duration_ms": 200,
             }
+        if rs.temperature is None:
+            rs.temperature = 0.8
+        if rs.max_output_tokens is None:
+            rs.max_output_tokens = 4096
+        if not rs.input_audio_transcription:
+            rs.input_audio_transcription = {"model": "whisper-1"}
 
         # Import server dependencies
         try:
