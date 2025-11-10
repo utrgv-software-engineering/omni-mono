@@ -22,7 +22,7 @@ from threading import Thread
 from typing import Optional
 import logging
 
-from omniagents.core.agents.specs import AgentSpec
+from omniagents.core.agents.specs import AgentSpec, RealtimeSettings
 from omniagents.core.runtime.overrides import apply_cli_overrides
 
 
@@ -46,27 +46,29 @@ class VoiceBackend:
                 - debug: Enable debug mode
                 - session_id: Resume a specific session
         """
-        # Validate realtime mode
+        # Ensure realtime mode and sensible defaults for voice
         if not spec.realtime_mode:
-            print(
-                "Error: Voice backend requires realtime_mode: true in agent configuration"
-            )
-            print("Please add 'realtime_mode: true' to your agent.yaml file")
-            sys.exit(1)
-
-        # Check for audio modality
-        if spec.realtime_settings:
-            modalities = spec.realtime_settings.modalities or []
-            if "audio" not in modalities:
-                print("Error: Voice backend requires audio modality")
-                print(
-                    "Please ensure realtime_settings.modalities includes 'audio' in your agent.yaml"
-                )
-                sys.exit(1)
-        else:
-            print("Error: Voice backend requires realtime_settings configuration")
-            print("Please add realtime_settings to your agent.yaml")
-            sys.exit(1)
+            spec.realtime_mode = True
+        if not spec.realtime_settings:
+            spec.realtime_settings = RealtimeSettings()
+        rs = spec.realtime_settings
+        if not rs.modalities or ("audio" not in rs.modalities):
+            rs.modalities = ["audio"]
+        if not rs.model_name:
+            rs.model_name = "gpt-realtime"
+        if not rs.voice:
+            rs.voice = "alloy"
+        if not rs.input_audio_format:
+            rs.input_audio_format = "pcm16"
+        if not rs.output_audio_format:
+            rs.output_audio_format = "pcm16"
+        if not rs.turn_detection:
+            rs.turn_detection = {
+                "type": "server_vad",
+                "threshold": 0.5,
+                "prefix_padding_ms": 300,
+                "silence_duration_ms": 500,
+            }
 
         # Import server dependencies
         try:
