@@ -28,6 +28,13 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     | null
   >(null);
 
+  // Buffer for messages with superseded tracking
+  const messageBufferRef = useRef<Array<{
+    content: string;
+    timestamp: Date;
+    superseded: boolean;
+  }>>([]);
+
   useEffect(() => {
     if (!client) return;
 
@@ -122,30 +129,50 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
         .catch(console.error);
     }
 
-    // MESSAGE OUTPUT - batched
+    // Helper to mark buffered messages as superseded (don't add to conversation)
+    const markBufferAsSuperseded = () => {
+      for (const msg of messageBufferRef.current) {
+        msg.superseded = true;
+      }
+      if (messageBufferRef.current.length > 0) {
+        debugLog(`Marked ${messageBufferRef.current.length} buffered messages as superseded`);
+      }
+    };
+
+    // MESSAGE OUTPUT - buffer and show in preamble
     const handleMessageOutput = (params: { content: string }) => {
       const timestamp = Date.now();
-      debugLog(`message_output received at ${timestamp}, keeping thinking=true`);
+      debugLog(`message_output received at ${timestamp}, updating preamble`);
       batcher.add(() => {
         debugLog(`message_output batch executing at ${Date.now()}, delay: ${Date.now() - timestamp}ms`);
-        actions.addMessage({
-          role: "assistant",
+
+        // Buffer this message as "not superseded yet"
+        messageBufferRef.current.push({
           content: params.content,
           timestamp: new Date(),
+          superseded: false,
         });
+
+        // Show/update preamble
+        actions.setPreamble(params.content);
+
         // Clear any retry/error status once we see forward progress
-        // Don't turn off thinking - run might not be done yet
         actions.setThinking(true, null);
+
+        debugLog(`Preamble updated, ${messageBufferRef.current.length} messages buffered`);
       });
     };
 
-    // TOOL CALLED - batched
+    // TOOL CALLED - marks buffer as superseded but KEEPS preamble visible
     const handleToolCalled = (params: {
       tool: string;
       input: string;
       call_id: string;
     }) => {
       batcher.add(() => {
+        // Previous message(s) were intermediate thinking - mark as superseded
+        markBufferAsSuperseded();
+
         actions.addMessage({
           role: "tool_call",
           content: "",
@@ -157,12 +184,14 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
             running: true,
           },
         });
+
+        // Preamble stays visible! Don't call setPreamble(null)
         // Clear any retry/error status once we see forward progress
         actions.setThinking(true, null);
       });
     };
 
-    // TOOL RESULT - batched
+    // TOOL RESULT - marks buffer as superseded but keeps preamble
     const handleToolResult = (params: {
       tool: string;
       output: string;
@@ -170,29 +199,38 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       metadata?: Record<string, unknown>;
     }) => {
       batcher.add(() => {
+        // Mark previous messages as superseded
+        markBufferAsSuperseded();
+
         actions.updateToolResult(
           params.call_id,
           params.output,
           params.metadata,
         );
+
+        // Preamble stays visible!
       });
     };
 
-    // RUN STARTED - batched
+    // RUN STARTED - clear buffer and preamble
     const handleRunStarted = (params: {
       run_id: string;
       session_id: string;
     }) => {
       const timestamp = Date.now();
-      debugLog(`run_started received at ${timestamp}, setting thinking=true`);
+      debugLog(`run_started received at ${timestamp}, clearing preamble and buffer`);
       batcher.add(() => {
         debugLog(`run_started batch executing at ${Date.now()}, delay: ${Date.now() - timestamp}ms`);
+
+        // Clear buffer and preamble for new run
+        messageBufferRef.current = [];
+        actions.setPreamble(null);
         actions.setCurrentRunId(params.run_id);
         actions.setThinking(true, null);
       });
     };
 
-    // RUN END - batched
+    // RUN END - flush non-superseded messages and hide preamble
     const handleRunEnd = (params: {
       run_id: string;
       end_reason: string;
@@ -203,7 +241,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       };
     }) => {
       const timestamp = Date.now();
-      debugLog(`run_end received at ${timestamp}, end_reason=${params.end_reason}`);
+      debugLog(`run_end received at ${timestamp}, end_reason=${params.end_reason}, processing ${messageBufferRef.current.length} buffered messages`);
       batcher.add(() => {
         debugLog(`run_end batch executing at ${Date.now()}, delay: ${Date.now() - timestamp}ms`);
 
@@ -212,6 +250,22 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
           debugLog(`Ignoring run_end for unrelated run_id=${params.run_id} (current=${current})`);
           return;
         }
+
+        // Only add non-superseded messages to conversation
+        const nonSuperseded = messageBufferRef.current.filter(msg => !msg.superseded);
+        debugLog(`Adding ${nonSuperseded.length} non-superseded messages to conversation (${messageBufferRef.current.length - nonSuperseded.length} were superseded)`);
+
+        for (const bufferedMsg of nonSuperseded) {
+          actions.addMessage({
+            role: "assistant",
+            content: bufferedMsg.content,
+            timestamp: bufferedMsg.timestamp,
+          });
+        }
+
+        // Clear buffer and hide preamble
+        messageBufferRef.current = [];
+        actions.setPreamble(null);
 
         // Check if run ended with an error
         if (params.end_reason.toLowerCase() === "error" && params.error) {

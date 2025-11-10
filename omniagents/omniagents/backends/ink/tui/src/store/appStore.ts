@@ -56,6 +56,7 @@ interface AppState {
   statusSpinner: boolean;
   approval: ApprovalInfo | null;
   currentRunId: string | null;
+  preamble: string | null;
 
   // Actions (ONLY way to update state)
   actions: {
@@ -76,6 +77,7 @@ interface AppState {
     setUsage: (usage: UsageInfo) => void;
     setSessionId: (sessionId: string | undefined) => void;
     setCurrentRunId: (runId: string | null) => void;
+    setPreamble: (preamble: string | null) => void;
     cancelRun: (runId: string) => void;
     removeApprovalMessage: () => void;
     clearMessages: () => void;
@@ -94,6 +96,7 @@ export const useAppStore = create<AppState>()(
     statusSpinner: false,
     approval: null,
     currentRunId: null,
+    preamble: null,
 
     actions: {
       addMessage: (msg) =>
@@ -218,6 +221,7 @@ export const useAppStore = create<AppState>()(
           state.statusType = null;
           state.statusSpinner = false;
           state.currentRunId = null;
+          state.preamble = null;
 
           // Add cancellation message
           state.messages.push({
@@ -234,6 +238,18 @@ export const useAppStore = create<AppState>()(
           );
         }),
 
+      setPreamble: (preamble) =>
+        set((state) => {
+          if (state.preamble !== preamble) {
+            state.preamble = preamble;
+            if (preamble) {
+              debugLog(`setPreamble: updated with content (${preamble.length} chars)`);
+            } else {
+              debugLog(`setPreamble: cleared`);
+            }
+          }
+        }),
+
       clearMessages: () =>
         set((state) => {
           debugLog(`clearMessages: turning thinking OFF (messages cleared)`);
@@ -243,6 +259,7 @@ export const useAppStore = create<AppState>()(
           state.statusType = null;
           state.statusSpinner = false;
           state.approval = null;
+          state.preamble = null;
         }),
     },
   })),
@@ -259,4 +276,5 @@ export const useApproval = () => useAppStore((s) => s.approval);
 export const useUsage = () => useAppStore((s) => s.usage);
 export const useSessionId = () => useAppStore((s) => s.sessionId);
 export const useCurrentRunId = () => useAppStore((s) => s.currentRunId);
+export const usePreamble = () => useAppStore((s) => s.preamble);
 export const useActions = () => useAppStore((s) => s.actions);

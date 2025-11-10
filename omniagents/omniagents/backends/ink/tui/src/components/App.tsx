@@ -20,6 +20,7 @@ import {
   useUsage,
   useSessionId,
   useCurrentRunId,
+  usePreamble,
   useActions,
 } from "../store/appStore.js";
 import type { ApprovalInfo } from "../store/appStore.js";
@@ -29,6 +30,7 @@ import { MessageListOptimized } from "./MessageListOptimized.js";
 import { StatusIndicator } from "./StatusIndicator.js";
 import { MultiLineInputOptimized } from "./MultiLineInputOptimized.js";
 import { ApprovalDialog } from "./ApprovalDialog.js";
+import { Preamble } from "./Preamble.js";
 import { Help } from "./Help.js";
 import { SessionList } from "./SessionList.js";
 import { Scrollable } from "./Scrollable.js";
@@ -75,6 +77,7 @@ const ScrollableMessageList = React.memo<{
   ({ availableHeight, onApprove }) => {
     const messages = useMessages();
     const approval = useApproval();
+    const preamble = usePreamble();
     const contentVersion = messages.length;
     return (
       <Scrollable
@@ -86,6 +89,12 @@ const ScrollableMessageList = React.memo<{
       >
         <Box flexDirection="column">
           <MessageListOptimized />
+
+          {/* Preamble appears after messages but before approval */}
+          {preamble && (
+            <Preamble content={preamble} />
+          )}
+
           {approval && (
             <Box marginTop={1}>
               <ApprovalDialogWrapper approval={approval} onApprove={onApprove} />

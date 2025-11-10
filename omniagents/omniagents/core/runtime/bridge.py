@@ -399,10 +399,6 @@ async def stream_agent(
         ),
     }
 
-    buffered_events: list[tuple[str, dict]] = []
-    awaiting_preamble = False
-    last_preamble_content: str | None = None
-
     try:
         # Use Runner to run the agent
         from agents import RunConfig
@@ -525,29 +521,6 @@ async def stream_agent(
                 continue
 
             item = event.item
-            try:
-                if getattr(item, "type", "") == "reasoning_item":
-                    awaiting_preamble = True
-                    try:
-                        if hasattr(item, "to_input_item"):
-                            ri = item.to_input_item()
-                            if isinstance(ri, dict):
-                                parts = ri.get("summary") or []
-                                if isinstance(parts, list):
-                                    texts = [
-                                        p.get("text")
-                                        for p in parts
-                                        if isinstance(p, dict)
-                                        and p.get("type")
-                                        in ("summary_text", "output_text")
-                                        and isinstance(p.get("text"), str)
-                                    ]
-                                    if texts:
-                                        last_preamble_content = " ".join(texts)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
             method, payload = _stream_event_payload(
                 item, run_id=asyncio.current_task().get_name()
             )
@@ -572,16 +545,11 @@ async def stream_agent(
                                     "run_id": asyncio.current_task().get_name(),
                                     "session_id": session.id,
                                 }
-                                if awaiting_preamble:
-                                    buffered_events.append(
-                                        ("client_request", status_payload)
-                                    )
-                                else:
-                                    await _broadcast(
-                                        session,
-                                        "client_request",
-                                        status_payload,
-                                    )
+                                await _broadcast(
+                                    session,
+                                    "client_request",
+                                    status_payload,
+                                )
                                 _status_calls[call_id] = text
                             break
                 except Exception:
@@ -601,39 +569,20 @@ async def stream_agent(
                             "run_id": asyncio.current_task().get_name(),
                             "session_id": session.id,
                         }
-                        if awaiting_preamble:
-                            buffered_events.append(("client_request", clear_payload))
-                        else:
-                            await _broadcast(
-                                session,
-                                "client_request",
-                                clear_payload,
-                            )
+                        await _broadcast(
+                            session,
+                            "client_request",
+                            clear_payload,
+                        )
                     except Exception:
                         pass
                     finally:
                         _status_calls.pop(call_id, None)
 
             if method:
-                if awaiting_preamble and method == "tool_called":
-                    buffered_events.append((method, payload))
-                elif awaiting_preamble and method == "message_output":
-                    delivered = await _broadcast(session, method, payload)
-                    if not delivered:
-                        session.pending_events.append((method, payload))
-                    for m, p in buffered_events:
-                        try:
-                            d2 = await _broadcast(session, m, p)
-                            if not d2:
-                                session.pending_events.append((m, p))
-                        except Exception:
-                            pass
-                    buffered_events.clear()
-                    awaiting_preamble = False
-                else:
-                    delivered = await _broadcast(session, method, payload)
-                    if not delivered:
-                        session.pending_events.append((method, payload))
+                delivered = await _broadcast(session, method, payload)
+                if not delivered:
+                    session.pending_events.append((method, payload))
 
             # Persist item into session history when it reaches a finalised form
             # CRITICAL: Reasoning items MUST be paired with their following message
@@ -742,32 +691,6 @@ async def stream_agent(
         session.current_stream_result = None
         # Handle any pending tool calls that didn't get results
         # This covers both cancellation and unexpected termination
-        if awaiting_preamble and buffered_events:
-            synth = last_preamble_content or ""
-            try:
-                payload = {
-                    "run_id": (
-                        asyncio.current_task().get_name()
-                        if asyncio.current_task()
-                        else ""
-                    ),
-                    "content": synth,
-                    "is_final": False,
-                }
-                d0 = await _broadcast(session, "message_output", payload)
-                if not d0:
-                    session.pending_events.append(("message_output", payload))
-                for m, p in buffered_events:
-                    try:
-                        d1 = await _broadcast(session, m, p)
-                        if not d1:
-                            session.pending_events.append((m, p))
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-            buffered_events.clear()
-            awaiting_preamble = False
         if pending_tool_calls:
             if Debug.enabled():
                 print(
