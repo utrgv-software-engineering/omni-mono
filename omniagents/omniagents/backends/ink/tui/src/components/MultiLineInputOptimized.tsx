@@ -327,19 +327,10 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
 
     useInput((input, key) => {
       if (disabled) {
-        // When disabled, still handle Escape for cancellation
-        if (key.escape && onEscape) {
-          onEscape();
-        }
         return;
       }
 
-      if (key.escape) {
-        // When enabled, Escape triggers callback (for cancellation during thinking)
-        if (onEscape) {
-          onEscape();
-        }
-      } else if (key.return) {
+      if (key.return) {
         if (key.meta || key.ctrl) {
           dispatch({ type: "INSERT_NEWLINE" });
         } else {

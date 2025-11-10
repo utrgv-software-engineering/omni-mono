@@ -414,16 +414,7 @@ export const App: React.FC<AppProps> = ({
     [approveToolCall],
   );
 
-  // Handle Escape key for cancellation (passed to child components to avoid parent re-renders)
-  const handleEscape = useCallback(() => {
-    if (approval) {
-      // During approval: Deny
-      handleApproval("no");
-    } else if (thinking && currentRunId) {
-      // During execution: Cancel
-      cancelRun(currentRunId);
-    }
-  }, [approval, thinking, currentRunId, handleApproval, cancelRun]);
+  
 
   // Handle slash commands
   const handleSlashCommand = useCallback(
@@ -584,7 +575,7 @@ export const App: React.FC<AppProps> = ({
   useInput(
     useCallback(
       (input, key) => {
-        if (key.escape || input === "\x1b") {
+        if (key.escape) {
           if (approval) {
             handleApproval("no");
           } else if (thinking && currentRunId) {
@@ -625,7 +616,7 @@ export const App: React.FC<AppProps> = ({
       },
       [thinking, currentRunId, approval, cancelRun, handleApproval, exit],
     ),
-    { isActive: true }, // Always active for emergency exit
+    { isActive: uiState === "chat" || !!approval },
   );
 
   // Cleanup timer on unmount
@@ -721,7 +712,6 @@ export const App: React.FC<AppProps> = ({
           <Box marginTop={1}>
             <MultiLineInputOptimized
               onSubmit={handleSubmit}
-              onEscape={handleEscape}
               disabled={!connected || !!approval}
               disableSubmit={thinking}
               history={messageHistory}

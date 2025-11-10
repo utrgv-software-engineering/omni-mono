@@ -83,10 +83,23 @@ export const ScrollProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const handleScroll = (direction: "up" | "down", mouseEvent: MouseEvent) => {
     const delta = direction === "up" ? -1 : 1;
-    const candidates = findScrollableCandidates(
+    let candidates = findScrollableCandidates(
       mouseEvent,
       scrollablesRef.current,
     );
+
+    if (candidates.length === 0) {
+      const fallback: Array<ScrollableEntry & { area: number }> = [];
+      for (const entry of scrollablesRef.current.values()) {
+        if (!entry.ref.current || !entry.hasFocus()) continue;
+        const bbox = getBoundingBox(entry.ref.current);
+        if (!bbox) continue;
+        const area = bbox.width * bbox.height;
+        fallback.push({ ...entry, area });
+      }
+      fallback.sort((a, b) => b.area - a.area);
+      candidates = fallback;
+    }
 
     for (const candidate of candidates) {
       const { scrollTop, scrollHeight, innerHeight } =

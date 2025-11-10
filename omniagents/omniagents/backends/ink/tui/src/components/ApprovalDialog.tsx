@@ -99,9 +99,6 @@ export const ApprovalDialog = React.memo<ApprovalDialogProps>(
       } else if (key.return) {
         // Enter key - select current option
         onApprove(DEFAULT_OPTIONS[selectedIndex].value);
-      } else if (key.escape) {
-        // ESC key - deny
-        onApprove("no");
       } else if (input === "1") {
         onApprove("yes");
       } else if (input === "2") {

@@ -57,8 +57,6 @@ export const DiffApproval = React.memo<
       );
     } else if (key.return) {
       onApprove(DEFAULT_OPTIONS[selectedIndex].value);
-    } else if (key.escape) {
-      onApprove("no");
     } else if (input === "1") {
       onApprove("yes");
     } else if (input === "2") {
@@ -189,8 +187,6 @@ export const FileWriteApproval = React.memo<
       );
     } else if (key.return) {
       onApprove(DEFAULT_OPTIONS[selectedIndex].value);
-    } else if (key.escape) {
-      onApprove("no");
     } else if (input === "1") {
       onApprove("yes");
     } else if (input === "2") {
@@ -284,8 +280,6 @@ export const CommandApproval = React.memo<
       );
     } else if (key.return) {
       onApprove(DEFAULT_OPTIONS[selectedIndex].value);
-    } else if (key.escape) {
-      onApprove("no");
     } else if (input === "1") {
       onApprove("yes");
     } else if (input === "2") {
