@@ -4,6 +4,7 @@ export
 STUDIO_WEB_DIR := omniagents/studio/server/web
 STUDIO_STATIC_DIR := omniagents/studio/server/static
 BUBBLETEA_CMD_DIR := omniagents/backends/bubbletea/cmd/omni-tui
+INK_TUI_DIR := omniagents/backends/ink/tui
 
 clean:
 	rm -rf dist/ build/ *.egg-info
@@ -18,7 +19,16 @@ studio-assets:
 build: studio-assets
 	python -m build
 
-publish: clean build
+ink-assets:
+	cd $(INK_TUI_DIR) && npm ci
+	cd $(INK_TUI_DIR) && npm run build
+	@test -f $(INK_TUI_DIR)/dist/index.js || (echo "Ink TUI build failed: dist/index.js not found" && exit 1)
+
+# Build everything needed for packaging (Studio static + Ink TUI dist)
+package-build: studio-assets ink-assets
+	python -m build
+
+publish: clean package-build
 	@echo "Uploading distributions to Fury.io..."
 	@set -e; \
 	for file in dist/*; do \

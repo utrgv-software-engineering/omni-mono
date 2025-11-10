@@ -11,6 +11,7 @@ The Ink backend provides a full-featured terminal interface using React componen
 - **React Components**: Built with familiar React patterns (components, hooks, state management)
 - **TypeScript**: Full type safety and IDE support
 - **Auto-build**: Automatically builds on first run if Node.js is installed
+- **Prebuilt in Wheels**: Official release wheels include the built Ink bundle
 - **Same Protocol**: Uses the same JSON-RPC WebSocket protocol as other backends
 - **Feature Parity**: Supports all features of the Bubble Tea backend
 
@@ -19,11 +20,14 @@ The Ink backend provides a full-featured terminal interface using React componen
 ### Via CLI
 
 ```bash
-# Using the ink backend directly
-python -m omniagents.cli run -c path/to/agent.yaml --mode ink
+# From a project directory that contains project.yml
+omniagents run --mode ink
 
-# Using the tui alias (still uses Bubble Tea by default)
-python -m omniagents.cli run -c path/to/agent.yaml --mode tui
+# Or explicitly
+omniagents run -P path/to/project.yml --mode ink
+
+# Bubble Tea alias (Go TUI)
+omniagents run -P path/to/project.yml --mode tui
 ```
 
 ### Development
@@ -44,10 +48,12 @@ npm run dev
 
 ## Requirements
 
-- Node.js >= 18.0.0
-- npm (comes with Node.js)
+- For development: Node.js >= 18 and npm
+- For end users: No Node.js required when installing official wheels (the built Ink bundle is packaged)
 
-If Node.js is not installed, the backend will display installation instructions.
+When running from source or editable installs, if the built bundle is missing,
+the backend will attempt an auto-build. If Node.js is not installed, it will
+display installation instructions.
 
 ## Architecture
 
@@ -71,6 +77,13 @@ omniagents/backends/ink/
 - `OMNI_INK_AUTO_BUILD`: Set to "0" or "false" to disable auto-build
 - `OMNI_DEBUG`: Enable debug logging
 - `OMNI_INK_TUI_PATH`: Full path to a prebuilt `dist/index.js` to skip build
+
+## Packaging
+
+- Release pipelines build the Ink TUI (`npm ci && npm run build`) and include
+  `omniagents/backends/ink/tui/dist/index.js` in published wheels.
+- On install from PyPI, the backend will prefer the packaged bundle and will
+  not require Node/npm.
 
 ## Comparison with Bubble Tea Backend
 
