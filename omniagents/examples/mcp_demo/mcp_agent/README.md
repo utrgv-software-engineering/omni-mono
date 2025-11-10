@@ -15,11 +15,15 @@ mcp_agent-setup  # configure OpenAI credentials
 ```bash
 mcp_agent                       # launch the GUI
 omniagents run -P project.yml   # run from source
+
+# also install the demo MCP server CLI
+pip install -e ../mcp_server
 ```
 
-The agent automatically starts `python -m mcp_agent.mcp_server` using the stdio transport.
+The agent automatically starts `demo_mcp_server` using the stdio transport.
+The MCP server implementation lives in the `../mcp_server` package as `demo_mcp_server`.
 
-To experiment with the HTTP transport, modify `mcp_agent/mcp_server.py` to use:
+To experiment with the HTTP transport, change the server package `demo_mcp_server/server.py` to use:
 
 ```python
 if __name__ == "__main__":

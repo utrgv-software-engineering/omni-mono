@@ -9,10 +9,7 @@ mcp_servers:
   - name: mcp-fetch-server
     type: stdio
     params:
-      command: python
-      args:
-        - -m
-        - mcp_agent.mcp_server
+      command: demo_mcp_server
     options:
       name: MCP Fetch Server
       cache_tools_list: true

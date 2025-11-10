@@ -20,6 +20,3 @@ async def fetch(url: str) -> str:
         response.raise_for_status()
         return response.text
 
-
-if __name__ == "__main__":
-    mcp.run()  # stdio is default
