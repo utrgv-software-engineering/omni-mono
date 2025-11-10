@@ -2,7 +2,7 @@
 --extra-index-url https://pypi.fury.io/ericmichael/
 
 openai>=2.2
-omniagents[all]==0.3.22
+omniagents[all]==0.3.24
 markitdown[all,docx,pdf]>=0.1.1
 requests>=2.31.0
 beautifulsoup4>=4.12.0
