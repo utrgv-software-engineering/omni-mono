@@ -6,7 +6,7 @@ from omniagents.core.tools import function_tool
 
 
 @function_tool(client_status="Running command...")
-async def invoke_slash_command(command: str, arg: Optional[str] = None) -> str:
+async def dispatch(command: str, arg: Optional[str] = None) -> str:
     """Invoke a slash command with optional args.
 
     Called when the user's input starts with "/". Runs inside the agent's

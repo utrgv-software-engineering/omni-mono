@@ -12,7 +12,7 @@ from omni_code.tools_bootstrap import ensure_tools_importable
 ensure_tools_importable()
 
 from tools import (
-    invoke_slash_command,
+    dispatch,
     list_directory,
     glob_files,
     grep_files,
@@ -97,7 +97,7 @@ def create_agent(*, skip_approvals: bool = False, halt_on_rejection: bool = True
         name="Omni Code",
         instructions=get_instructions,
         tools=[
-            invoke_slash_command,
+            dispatch,
             list_directory,
             glob_files,
             grep_files,
@@ -121,7 +121,7 @@ def create_agent(*, skip_approvals: bool = False, halt_on_rejection: bool = True
             "glob_files",
             "grep_files",
             "read_file",
-            "invoke_slash_command",
+            "dispatch",
             "web_fetch",
             "web_search",
             "youtube_search",

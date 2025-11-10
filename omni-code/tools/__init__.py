@@ -1,12 +1,20 @@
-from .web_fetch import web_fetch
-from .youtube_search import youtube_search
-from .web_search import web_search
+from omniagents.builtin.tools import (
+    web_fetch,
+    youtube_search,
+    web_search,
+    scholar_search,
+    download_file,
+    execute_bash,
+    glob_files,
+    grep_files,
+    list_directory,
+    read_file,
+    edit_file,
+    write_file,
+    apply_patch,
+)
 from .conversion_tools import convert_to_markdown
-from .scholar_search import scholar_search
-from .download_file import download_file
-from .bash_tool import execute_bash
-from .file_tools import glob_files, grep_files, list_directory, read_file, edit_file, write_file, apply_patch
-from .slash_command import invoke_slash_command
+from .slash_command import dispatch
 
 __all__ = [
     'web_fetch',
@@ -22,6 +30,6 @@ __all__ = [
     'read_file',
     'edit_file',
     'write_file',
-    'apply_patch'
-    , 'invoke_slash_command'
+    'apply_patch',
+    'dispatch',
 ]

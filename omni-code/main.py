@@ -17,6 +17,7 @@ from tools import *
 from omni_code.config import load_config
 from oagents.coding_agent import create_agent
 from server_functions.agentio_functions import good, bad, note, notes
+from server_functions.help import help_function
 from server_functions.filesystem import (
     fs_get_cwd,
     fs_get_home,
@@ -75,8 +76,8 @@ def cli_main(argv=None):
         "--mode",
         "-m",
         choices=["gui", "cli", "server", "bubbletea", "tui", "ink"],
-        default="tui",
-        help="Execution mode (default: tui)",
+        default="ink",
+        help="Execution mode (default: ink)",
     )
     parser.add_argument(
         "--debug",
@@ -161,6 +162,7 @@ def cli_main(argv=None):
         bad,
         note,
         notes,
+        help_function,
         *fs_functions,
     ]
 
@@ -171,7 +173,7 @@ def cli_main(argv=None):
         agent,
         welcome_text="Welcome to Omni Code! I'm here to help you with your coding needs.",
         max_turns=1000,
-        context_window=400000,
+        context_window=272000,
         server_functions=server_functions_list,
         safe=safe_mode,
         skip_approvals=skip_approvals,

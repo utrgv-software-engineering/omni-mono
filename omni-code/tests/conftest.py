@@ -12,7 +12,13 @@ def invoke_tool():
         context_data = {}
         if workspace_root is not None:
             context_data['workspace_root'] = workspace_root
-        ctx = ToolContext(context=context_data, usage=Usage(), tool_name=tool.name, tool_call_id='test-call')
+        ctx = ToolContext(
+            context=context_data,
+            usage=Usage(),
+            tool_name=tool.name,
+            tool_call_id='test-call',
+            tool_arguments=payload,
+        )
         return asyncio.run(tool.on_invoke_tool(ctx, json.dumps(payload)))
 
     return _invoke

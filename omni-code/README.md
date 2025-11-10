@@ -6,7 +6,7 @@ A standalone coding agent built with OmniAgents. It gives an AI assistant safe a
 - Rich workspace tools: list, search, read, edit, and patch files; run shell commands
 - Web and docs tools: fetch web pages, Google/YouTube/Scholar via SerpAPI, download files, convert many formats to Markdown
 - Optional safe-guarded execution with approvals
-- Simple CLI-based runner
+- Simple CLI-based runner (default mode: `ink`)
 
 ## End-User Install
 - Python 3.10+, Go 1.20+, and libgit2 must be available on your PATH.
@@ -54,7 +54,7 @@ The setup wizard guides you through choosing your provider (OpenAI, Azure, or cu
 - macOS/Linux: `~/.config/omni-code/config.env`
 - Windows: `%APPDATA%\OmniCode\config.env`
 
-You can rerun `omni-setup` anytime to update credentials. After setup, run `omni` from any directory to start the assistant.
+You can rerun `omni-setup` anytime to update credentials. After setup, run `omni` from any directory to start the assistant. By default it launches in the `ink` TUI; use `--mode` to switch (`cli`, `server`, `tui`, or `bubbletea`).
 
 > When the wizard prompts for API keys it uses hidden input, so you will not see characters or `***` while typing.
 

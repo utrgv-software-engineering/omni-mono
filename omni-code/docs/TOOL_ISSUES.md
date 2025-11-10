@@ -3,7 +3,7 @@
 ## Problem
 - `main.py` and several agents import the project toolset with `from tools import *`.
 - To make that work after packaging, we previously declared the `tools/` directory as a top-level package.
-- OmniAgents projects also require their own `tools/` folder. When `omni` runs inside a scaffolded project, Python resolves that local package first, so Omni Code loses access to its tool implementations (e.g., `invoke_slash_command`).
+ - OmniAgents projects also require their own `tools/` folder. When `omni` runs inside a scaffolded project, Python resolves that local package first, so Omni Code loses access to its tool implementations (e.g., `dispatch`).
 
 ## Proposed Fix
 - Stop exporting the Omni Code tool suite as a package. Keep the directory named exactly `tools/`, but treat it as project-local data.
