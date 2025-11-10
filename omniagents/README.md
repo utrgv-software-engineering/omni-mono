@@ -1,10 +1,11 @@
 # OmniAgents
 
-OmniAgents provides a lightweight wrapper around the [OpenAI Agents](https://github.com/openai/openai-agents-python) library.  
-It offers three ways to run your assistant:
+OmniAgents provides a lightweight wrapper around the [OpenAI Agents](https://github.com/openai/openai-agents-python) library.
+It offers several ways to run your assistant:
 
-- **CLI** – text based chat in the terminal
-- **GUI** – a desktop style interface built with [Flet](https://flet.dev)
+- **CLI** – text chat in the terminal
+- **TUI** – terminal UI (Bubble Tea or React Ink)
+- **GUI** – desktop-style interface built with [Flet](https://flet.dev)
 - **Server** – expose an agent through a JSON‑RPC WebSocket API
 
 Agents are described using a small YAML file which lists available tools and where to load them from.  You can also build an agent directly in Python and run it with the same interface.
@@ -20,10 +21,13 @@ pip install -r requirements.txt
 
 After publication to PyPI you will also be able to `pip install omniagents` directly.
 
-Binary wheels published to PyPI include the Bubble Tea TUI executable for macOS,
-Linux, and Windows so no Go toolchain is required for end users. When running
-from source, the backend will fall back to building the client locally if a
-matched prebuilt archive is not available.
+Release wheels include prebuilt TUI assets, so end users do not need Go or Node:
+- Bubble Tea: a native `omni-tui` executable for macOS, Linux, and Windows.
+- Ink: a prebuilt `dist/index.js` bundle.
+
+When running from source or editable installs, the backends can auto-build the
+missing client if the respective toolchain is available, and otherwise provide
+instructions.
 
 ## Configuration
 
@@ -53,7 +57,7 @@ Each tool is a Python function decorated with `@function_tool` from `omniagents.
 Run an agent entirely in the terminal:
 
 ```bash
-python -m omniagents.cli run -c path/to/agent.yaml --mode cli
+omniagents run -P path/to/project.yml --mode cli
 ```
 
 Use `--session-id <id>` to resume a previous conversation stored in `sessions.db`.
@@ -61,7 +65,7 @@ Use `--session-id <id>` to resume a previous conversation stored in `sessions.db
 ### GUI mode
 
 ```bash
-python -m omniagents.cli run -c path/to/agent.yaml
+omniagents run -P path/to/project.yml --mode gui
 ```
 
 The GUI persists settings such as API keys in the browser local storage.
@@ -69,8 +73,38 @@ The GUI persists settings such as API keys in the browser local storage.
 ### Server mode
 
 ```bash
-python -m omniagents.cli run -c path/to/agent.yaml --mode server --host 0.0.0.0 --port 8000
+omniagents run -P path/to/project.yml --mode server --host 0.0.0.0 --port 8000
 ```
+### TUI modes
+
+- Bubble Tea (Go):
+
+```bash
+omniagents run -P path/to/project.yml --mode tui
+```
+
+`--resume` opens a session picker. Official wheels include prebuilt binaries; from
+source, the backend can auto-build if Go is available or use a vendored binary.
+
+- React Ink (Node):
+
+```bash
+omniagents run -P path/to/project.yml --mode ink
+```
+
+Official wheels include a prebuilt bundle; from source, the backend can auto-build
+if Node/npm are available.
+
+### Studio
+
+Serve the Studio web UI for viewing and managing traces:
+
+```bash
+omniagents studio serve --project <name>
+```
+
+Production builds serve packaged static assets; use `--dev` to run the web dev
+server (requires Node/npm).
 
 This launches a FastAPI app exposing a WebSocket endpoint at `/ws`.  The protocol is described in [`docs/remote_agent_protocol.md`](docs/remote_agent_protocol.md).  A client can connect using `RemoteAgentProxy` from this package or any JSON‑RPC library.
 
