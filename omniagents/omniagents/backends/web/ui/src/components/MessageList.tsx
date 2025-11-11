@@ -38,8 +38,8 @@ export type ApprovalItem = {
 
 export type MessageItem = ChatMessage | ToolItem | ApprovalItem
 
-export function MessageList({ items, statusText, thinking, statusSpinner, preambleText, welcomeText, onApprovalDecision }:
-  { items: MessageItem[]; statusText?: string; thinking?: boolean; statusSpinner?: boolean; preambleText?: string; welcomeText?: string; onApprovalDecision?: (request_id: string, value: 'yes' | 'always' | 'no') => void }) {
+export function MessageList({ items, statusText, thinking, statusSpinner, preambleText, welcomeText, onApprovalDecision, statusItalic }:
+  { items: MessageItem[]; statusText?: string; thinking?: boolean; statusSpinner?: boolean; preambleText?: string; welcomeText?: string; onApprovalDecision?: (request_id: string, value: 'yes' | 'always' | 'no') => void; statusItalic?: boolean }) {
   const handleCopy = React.useCallback((text: string) => {
     try { navigator.clipboard.writeText(text) } catch {}
   }, [])
@@ -67,7 +67,7 @@ export function MessageList({ items, statusText, thinking, statusSpinner, preamb
         )}
         {preambleText ? <PreambleRow text={preambleText} /> : null}
         {(thinking || statusText) ? (
-          <StatusRow text={statusText || (thinking ? 'Thinking…' : '')} spinner={!!statusSpinner || !!thinking} />
+          <StatusRow text={statusText || (thinking ? 'Thinking…' : '')} spinner={!!statusSpinner || !!thinking} italic={!!statusItalic && !thinking} />
         ) : null}
       </div>
     </div>
@@ -207,11 +207,11 @@ function PreambleRow({ text }: { text?: string }) {
   )
 }
 
-function StatusRow({ text, spinner }: { text?: string; spinner?: boolean }) {
+function StatusRow({ text, spinner, italic }: { text?: string; spinner?: boolean; italic?: boolean }) {
   if (!text) return null
   return (
     <div className="text-xs text-textSubtle">
-      <span className={spinner ? 'text-shimmer italic' : ''}>{text}</span>
+      <span className={spinner ? 'text-shimmer italic' : 'italic'}>{text}</span>
     </div>
   )
 }

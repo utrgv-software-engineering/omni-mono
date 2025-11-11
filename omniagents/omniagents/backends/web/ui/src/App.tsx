@@ -23,6 +23,7 @@ export function App() {
   const [thinking, setThinking] = useState(false)
   const [status, setStatus] = useState<string | undefined>(undefined)
   const [statusSpinner, setStatusSpinner] = useState<boolean>(false)
+  const [statusItalic, setStatusItalic] = useState<boolean>(false)
   const [preamble, setPreamble] = useState<string | undefined>(undefined)
   const [runId, setRunId] = useState<string | undefined>(undefined)
   const [sessionId, setSessionId] = useState<string | undefined>(undefined)
@@ -84,6 +85,7 @@ export function App() {
       preambleBufferRef.current.push({ content, timestamp: new Date(), superseded: false })
       setPreamble(content)
       setStatus(undefined)
+      setStatusItalic(false)
     })
     const offRunStarted = client.on('run_started', (p: any) => {
       setRunId(String(p?.run_id ?? ''))
@@ -93,6 +95,7 @@ export function App() {
       setPreamble(undefined)
       setStatus(undefined)
       setStatusSpinner(false)
+      setStatusItalic(false)
     })
     const offRunEnd = client.on('run_end', (p: any) => {
       setThinking(false)
@@ -116,11 +119,13 @@ export function App() {
         setUsageTotals(usage)
       } catch {}
       setStatusSpinner(false)
+      setStatusItalic(false)
     })
     const offRunStatus = client.on('run_status', (p: any) => {
       const msg = [p?.status, p?.message].filter(Boolean).join(': ')
       setStatus(msg)
       setStatusSpinner(true)
+      setStatusItalic(false)
     })
     const offToken = client.on('token', (p: any) => {
       try {
@@ -172,6 +177,7 @@ export function App() {
         const showSpinner = typeof args?.show_spinner === 'boolean' ? !!args.show_spinner : true
         setStatus(text)
         setStatusSpinner(showSpinner)
+        setStatusItalic(false)
         if (request_id) {
           client.clientResponse(request_id, true, { ack: true }).catch(() => {})
         }
@@ -273,8 +279,22 @@ export function App() {
       await client.startRun(text, sessionId, undefined, content)
     } catch (e) {
       setStatus(String((e as Error)?.message || 'Failed to start run'))
+      setStatusItalic(false)
     }
   }, [client, sessionId])
+
+  const handleStop = useCallback(() => {
+    if (!runId) return
+    try {
+      preambleBufferRef.current.forEach(m => { m.superseded = true })
+    } catch {}
+    setThinking(false)
+    setStatusSpinner(false)
+    setStatusItalic(true)
+    setStatus('Cancelled by user')
+    setPreamble(undefined)
+    client.stopRun(runId).catch(() => {})
+  }, [client, runId])
 
   useEffect(() => {
     if (!connected) return
@@ -342,8 +362,8 @@ export function App() {
   return (
     <div className="app">
       <Header agentName={agentName} connected={connected} />
-      <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} />
-      <Input disabled={!connected} thinking={thinking} onStop={() => { if (runId) client.stopRun(runId).catch(() => {}) }} onSubmit={handleSubmit} />
+      <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} statusItalic={statusItalic} />
+      <Input disabled={!connected} thinking={thinking} onStop={handleStop} onSubmit={handleSubmit} />
     </div>
   )
 }

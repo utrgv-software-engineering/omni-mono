@@ -38,6 +38,13 @@ export function Input({ disabled, thinking, onStop, onSubmit }:
   }, [text, files, onSubmit])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      if (thinking && onStop) {
+        onStop()
+      }
+      return
+    }
     if (e.key === 'Enter') {
       if (e.shiftKey || e.altKey) {
         e.preventDefault()
@@ -76,7 +83,7 @@ export function Input({ disabled, thinking, onStop, onSubmit }:
         })
       }
     }
-  }, [text, history, historyIndex, historyDraft, handleSubmit, insertNewlineAtCursor])
+  }, [text, history, historyIndex, historyDraft, handleSubmit, insertNewlineAtCursor, thinking, onStop])
 
   const openFilePicker = useCallback(() => {
     fileInputRef.current?.click()
