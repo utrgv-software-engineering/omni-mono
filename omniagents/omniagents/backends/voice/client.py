@@ -7,6 +7,10 @@ This client supports:
 - Transcript display
 - Push-to-talk interaction (hold SPACEBAR)
 - Graceful interruption
+
+Requirements:
+- PyAudio: pip install pyaudio (requires PortAudio on macOS/Linux)
+- pynput: pip install pynput
 """
 
 import asyncio
@@ -19,9 +23,15 @@ try:
     import pyaudio
 except ImportError:
     print("ERROR: PyAudio not installed")
-    print("Install with: pip install pyaudio")
-    print("\nOn macOS, you may need: brew install portaudio")
-    print("On Linux: sudo apt-get install portaudio19-dev")
+    print("\nInstall dependencies:")
+    print("  On macOS:")
+    print("    brew install portaudio")
+    print("    pip install pyaudio")
+    print("  On Linux:")
+    print("    sudo apt-get install portaudio19-dev")
+    print("    pip install pyaudio")
+    print("  On Windows:")
+    print("    pip install pyaudio")
     sys.exit(1)
 
 try:

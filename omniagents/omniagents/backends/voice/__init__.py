@@ -2,8 +2,9 @@
 
 This backend provides push-to-talk voice interaction with AI agents using
 OpenAI's Realtime API. It requires:
-- PyAudio for audio I/O
-- pynput for keyboard input (push-to-talk with SPACEBAR)
+- PyAudio for audio I/O (install: pip install pyaudio)
+  - On macOS/Linux, PortAudio must be installed first (system dependency)
+- pynput for keyboard input (install: pip install pynput)
 - An agent configured with realtime_mode: true
 
 Environment variables:
@@ -93,16 +94,22 @@ class VoiceBackend:
             import pyaudio
         except ImportError:
             print("Error: PyAudio not installed")
-            print("Install with: pip install omniagents[voice]")
-            print("\nOn macOS, you may need: brew install portaudio")
-            print("On Linux: sudo apt-get install portaudio19-dev")
+            print("\nInstall dependencies:")
+            print("  On macOS:")
+            print("    brew install portaudio")
+            print("    pip install pyaudio")
+            print("  On Linux:")
+            print("    sudo apt-get install portaudio19-dev")
+            print("    pip install pyaudio")
+            print("  On Windows:")
+            print("    pip install pyaudio")
             sys.exit(1)
 
         try:
             from pynput import keyboard
         except ImportError:
             print("Error: pynput not installed")
-            print("Install with: pip install omniagents[voice]")
+            print("Install with: pip install pynput")
             sys.exit(1)
 
         # Find an available port

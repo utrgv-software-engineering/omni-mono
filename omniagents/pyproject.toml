@@ -30,8 +30,10 @@ server = [
     "uvicorn>=0.34.1",
 ]
 voice = [
-    "pyaudio>=0.2.11",
-    "pynput>=1.7.6",
+    "fastapi[all]>=0.115.12",
+    "uvicorn>=0.34.1",
+]
+web = [
     "fastapi[all]>=0.115.12",
     "uvicorn>=0.34.1",
 ]
@@ -39,7 +41,7 @@ studio-server = [
     "fastapi[all]>=0.115.12",
     "uvicorn>=0.34.1",
 ]
-all = ["omniagents[cli,flet,server,voice,studio,studio-server]"]
+all = ["omniagents[cli,flet,server,voice,web,studio,studio-server]"]
 dev = [
     "pytest",
     "pytest-asyncio",
@@ -99,6 +101,7 @@ server = "omniagents.backends.server:ServerBackend"
 ink = "omniagents.backends.ink:InkBackend"
 tui = "omniagents.backends.bubbletea:BubbleTeaBackend"
 voice = "omniagents.backends.voice:VoiceBackend"
+web = "omniagents.backends.web:WebBackend"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
@@ -140,6 +143,10 @@ include-package-data = true
     "tui/src/**/*.ts",
     "tui/src/**/*.tsx",
     "dist/*",
+]
+"omniagents.backends.web" = [
+    "ui/dist/*",
+    "ui/dist/**/*",
 ]
 "omniagents.studio.tracing" = [
     "static/*",

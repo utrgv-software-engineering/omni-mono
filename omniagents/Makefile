@@ -3,6 +3,7 @@ export
 
 STUDIO_WEB_DIR := omniagents/studio/server/web
 STUDIO_STATIC_DIR := omniagents/studio/server/static
+WEB_UI_DIR := omniagents/backends/web/ui
 BUBBLETEA_CMD_DIR := omniagents/backends/bubbletea/cmd/omni-tui
 INK_TUI_DIR := omniagents/backends/ink/tui
 
@@ -24,8 +25,13 @@ ink-assets:
 	cd $(INK_TUI_DIR) && npm run build
 	@test -f $(INK_TUI_DIR)/dist/index.js || (echo "Ink TUI build failed: dist/index.js not found" && exit 1)
 
-# Build everything needed for packaging (Studio static + Ink TUI dist)
-package-build: studio-assets ink-assets
+web-assets:
+	cd $(WEB_UI_DIR) && npm ci
+	cd $(WEB_UI_DIR) && npm run build
+	@test -f $(WEB_UI_DIR)/dist/index.html || (echo "Web UI build failed: dist/index.html not found" && exit 1)
+
+# Build everything needed for packaging (Studio static + Ink TUI dist + Web UI dist)
+package-build: studio-assets ink-assets web-assets
 	python -m build
 
 publish: clean package-build
@@ -70,4 +76,4 @@ bump-minor:
 bump-major:
 	bump2version major
 
-.PHONY: clean studio-assets build publish install dev format coverage-python coverage-go coverage-web coverage-all bump-patch bump-minor bump-major
+.PHONY: clean studio-assets ink-assets web-assets build publish install dev format coverage-python coverage-go coverage-web coverage-all bump-patch bump-minor bump-major
