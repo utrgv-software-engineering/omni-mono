@@ -11,6 +11,9 @@ dependencies = [
     "pydantic==2.12.3",
     "PyYAML",
     "Jinja2",
+    "requests",
+    "beautifulsoup4",
+    "pygit2",
 ]
 
 [project.scripts]
@@ -41,6 +44,10 @@ studio-server = [
     "fastapi[all]>=0.115.12",
     "uvicorn>=0.34.1",
 ]
+docs = [
+    "mkdocs-material>=9.5.0",
+    "mkdocstrings[python]>=0.24.0",
+]
 all = ["omniagents[cli,flet,server,voice,web,studio,studio-server]"]
 dev = [
     "pytest",
@@ -51,6 +58,8 @@ dev = [
     "pytest-cov",
     "hypothesis>=6.142.4",
     "fastapi[all]>=0.115.12",
+    "mkdocs-material>=9.5.0",
+    "mkdocstrings[python]>=0.24.0",
 ]
 
 [tool.pytest.ini_options]

@@ -4,6 +4,9 @@ pydantic==2.12.3
 openai-agents==0.4.2
 python-dotenv
 PyYAML
+requests
+beautifulsoup4
+pygit2
 fastapi[all]>=0.115.12
 uvicorn>=0.34.1
 pytest

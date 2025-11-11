@@ -92,3 +92,7 @@ omniagents/backends/bubbletea/vendor/*/omni-tui.zip
 omniagents/backends/bubbletea/vendor/*/omni-tui.sha256
 omniagents/backends/bubbletea/vendor/*/omni-tui.tar.gz.sha256
 omniagents/backends/bubbletea/vendor/*/omni-tui.zip.sha256
+
+# MkDocs documentation
+site/
+.cache/
