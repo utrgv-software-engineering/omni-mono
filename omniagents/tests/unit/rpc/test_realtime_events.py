@@ -10,6 +10,8 @@ from omniagents.rpc.realtime_events import (
     RealtimeAudioEndEvent,
     RealtimeAudioInterruptedEvent,
     RealtimeTranscriptDeltaEvent,
+    RealtimeTranscriptEvent,
+    RealtimeResponseStartEvent,
     RealtimeTurnStartedEvent,
     RealtimeTurnEndedEvent,
     RealtimeToolStartEvent,
@@ -513,9 +515,8 @@ def test_map_audio_event_with_no_audio_data():
     assert rpc_event is None
 
 
-def test_map_raw_model_event():
-    """Test mapping raw_model_event."""
-    # Create a model event (transcript_delta as example)
+def test_map_raw_model_event_transcript_delta_as_transcript():
+    """Test mapping transcript_delta raw model event to high-level transcript event."""
     model_event = SimpleNamespace(
         type="transcript_delta",
         item_id="item_123",
@@ -528,11 +529,10 @@ def test_map_raw_model_event():
 
     rpc_event = map_realtime_session_event_to_rpc(sdk_event, "run_456")
 
-    assert isinstance(rpc_event, RealtimeRawModelEvent)
-    assert rpc_event.model_event["type"] == "transcript_delta"
-    assert rpc_event.model_event["item_id"] == "item_123"
-    assert rpc_event.model_event["delta"] == "Hello"
-    assert rpc_event.model_event["response_id"] == "resp_456"
+    assert isinstance(rpc_event, RealtimeTranscriptEvent)
+    assert rpc_event.type == "realtime_transcript"
+    assert rpc_event.role == "assistant"
+    assert rpc_event.transcript == "Hello"
 
 
 def test_map_raw_model_event_with_error():
@@ -546,3 +546,26 @@ def test_map_raw_model_event_with_error():
     assert isinstance(rpc_event, RealtimeRawModelEvent)
     assert rpc_event.model_event["type"] == "error"
     assert "Connection failed" in rpc_event.model_event["error"]
+
+
+def test_realtime_response_start_event_creation():
+    """Test creating RealtimeResponseStartEvent."""
+    event = RealtimeResponseStartEvent(run_id="run_123", response_id="resp_456")
+
+    assert event.run_id == "run_123"
+    assert event.type == "realtime_response_start"
+    assert event.response_id == "resp_456"
+
+
+def test_map_response_created_event():
+    """Test mapping response.created raw model event to RealtimeResponseStartEvent."""
+    model_event = SimpleNamespace(type="response.created", response_id="resp_789")
+
+    sdk_event = SimpleNamespace(type="raw_model_event", data=model_event)
+
+    rpc_event = map_realtime_session_event_to_rpc(sdk_event, "run_123")
+
+    assert isinstance(rpc_event, RealtimeResponseStartEvent)
+    assert rpc_event.type == "realtime_response_start"
+    assert rpc_event.run_id == "run_123"
+    assert rpc_event.response_id == "resp_789"

@@ -59,6 +59,25 @@ class ClientNotificationHandler(RpcMethodsBase):
             0  # Number of silence chunks to send after releasing key
         )
         self.debug = debug
+        self._assistant_line_active = False
+        self._assistant_line_text = ""
+        self._assistant_last_print_len = 0
+
+    def _render_assistant_line(self, finalize: bool = False):
+        prefix = "\rASSISTANT: "
+        line = prefix + self._assistant_line_text
+        pad = 0
+        if self._assistant_last_print_len > len(line):
+            pad = self._assistant_last_print_len - len(line)
+        if finalize:
+            print(prefix + self._assistant_line_text + (" " * pad))
+            self._assistant_line_active = False
+            self._assistant_line_text = ""
+            self._assistant_last_print_len = 0
+        else:
+            print(line + (" " * pad), end="", flush=True)
+            self._assistant_line_active = True
+            self._assistant_last_print_len = len(line)
 
     async def realtime_event(self, **params):
         """Handle realtime event notifications."""
@@ -78,11 +97,22 @@ class ClientNotificationHandler(RpcMethodsBase):
                     )
                 await self.audio_queue.put(audio_base64)
 
+        elif event_type == "realtime_response_start":
+            # New response starting - finalize any previous response
+            if self._assistant_line_active:
+                self._render_assistant_line(finalize=True)
+
         elif event_type == "realtime_transcript":
-            # Display transcript
             role = params.get("role", "")
             transcript = params.get("transcript", "")
-            if transcript:
+            if not transcript:
+                return
+            if role == "assistant":
+                if not self._assistant_line_active:
+                    print()
+                self._assistant_line_text += transcript
+                self._render_assistant_line(finalize=False)
+            else:
                 self.transcripts.append((role, transcript))
                 print(f"\n{role.upper()}: {transcript}")
 
@@ -112,6 +142,14 @@ class ClientNotificationHandler(RpcMethodsBase):
             print(f"✓ [Tool completed: {tool_name}]")
             if output_preview:
                 print(f"  Result: {output_preview}")
+
+        elif event_type == "realtime_audio_end":
+            if self._assistant_line_active:
+                self._render_assistant_line(finalize=True)
+
+        elif event_type == "realtime_audio_interrupted":
+            if self._assistant_line_active:
+                self._render_assistant_line(finalize=True)
 
         elif event_type == "realtime_error":
             # Show errors

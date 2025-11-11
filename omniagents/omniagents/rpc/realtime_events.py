@@ -73,6 +73,28 @@ class RealtimeTranscriptDeltaEvent(RealtimeEventBase):
 
 
 @dataclass
+class RealtimeTranscriptEvent(RealtimeEventBase):
+    """High-level transcript event for client display."""
+
+    role: str
+    transcript: str
+
+    def __post_init__(self):
+        self.type = "realtime_transcript"
+
+
+@dataclass
+class RealtimeResponseStartEvent(RealtimeEventBase):
+    """Response generation started event."""
+
+    response_id: str
+
+    def __post_init__(self):
+        """Ensure type is set correctly."""
+        self.type = "realtime_response_start"
+
+
+@dataclass
 class RealtimeTurnStartedEvent(RealtimeEventBase):
     """Agent turn started event."""
 
@@ -432,15 +454,36 @@ def map_realtime_session_event_to_rpc(
             return RealtimeHistoryAddedEvent(run_id=run_id, item=item_dict)
 
     elif event_type == "raw_model_event":
-        # RealtimeRawModelEvent contains a data field with the model event
         data = getattr(event, "data", None)
         if data:
-            # Convert model event to dict
-            model_event_dict = {
-                "type": getattr(data, "type", "unknown"),
-            }
+            data_type = getattr(data, "type", "unknown")
 
-            # Add type-specific fields
+            # Map response.created to response start event for client
+            if data_type == "response.created":
+                response_id = getattr(data, "response_id", "")
+                return RealtimeResponseStartEvent(
+                    run_id=run_id,
+                    response_id=response_id,
+                )
+
+            # Synthesize high-level transcript events for the voice client
+            if data_type == "transcript_delta":
+                return RealtimeTranscriptEvent(
+                    run_id=run_id,
+                    role="assistant",
+                    transcript=str(getattr(data, "delta", "")),
+                )
+            if data_type == "input_audio_transcription_completed":
+                return RealtimeTranscriptEvent(
+                    run_id=run_id,
+                    role="user",
+                    transcript=str(getattr(data, "transcript", "")),
+                )
+
+            # Fallback: forward as raw model event for debugging/advanced UIs
+            model_event_dict = {
+                "type": data_type,
+            }
             if hasattr(data, "item_id"):
                 model_event_dict["item_id"] = data.item_id
             if hasattr(data, "content_index"):

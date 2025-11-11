@@ -94,8 +94,8 @@ class RealtimeSettings:
     See: https://platform.openai.com/docs/guides/realtime
     """
 
-    model_name: str = "gpt-4o-realtime-preview"
-    """The realtime model to use (e.g., 'gpt-4o-realtime-preview', 'gpt-4o-mini-realtime-preview')."""
+    model_name: str = "gpt-realtime"
+    """The realtime model to use (default: 'gpt-realtime')."""
 
     voice: Optional[str] = "alloy"
     """Voice to use for audio output. Options: 'alloy', 'echo', 'shimmer', 'ash', 'ballad', 'coral', 'sage', 'verse'."""
@@ -109,7 +109,14 @@ class RealtimeSettings:
     output_audio_format: str = "pcm16"
     """Output audio format. Options: 'pcm16', 'g711_ulaw', 'g711_alaw'."""
 
-    turn_detection: Optional[Dict[str, Any]] = None
+    turn_detection: Optional[Dict[str, Any]] = field(
+        default_factory=lambda: {
+            "type": "server_vad",
+            "threshold": 0.3,
+            "silence_duration_ms": 200,
+            "prefix_padding_ms": 100,
+        }
+    )
     """Turn detection configuration for voice activity detection (VAD).
 
     Example:
@@ -122,7 +129,9 @@ class RealtimeSettings:
         }
     """
 
-    input_audio_transcription: Optional[Dict[str, Any]] = None
+    input_audio_transcription: Optional[Dict[str, Any]] = field(
+        default_factory=lambda: {"model": "whisper-1"}
+    )
     """Configuration for transcribing user audio input.
 
     Example:
@@ -132,10 +141,10 @@ class RealtimeSettings:
         }
     """
 
-    temperature: Optional[float] = None
+    temperature: Optional[float] = 0.8
     """Sampling temperature (0.0 to 2.0). Lower is more deterministic."""
 
-    max_output_tokens: Optional[int] = None
+    max_output_tokens: Optional[int] = 4096
     """Maximum tokens to generate in a single response."""
 
 

@@ -53,7 +53,7 @@ from omniagents.rpc.realtime_events import (
     RealtimeAgentStartEvent as RpcAgentStartEvent,
     RealtimeAgentEndEvent as RpcAgentEndEvent,
     RealtimeGuardrailTrippedEvent as RpcGuardrailTrippedEvent,
-    RealtimeRawModelEvent as RpcRawModelEvent,
+    RealtimeTranscriptEvent as RpcTranscriptEvent,
 )
 
 
@@ -182,8 +182,8 @@ class TestRealSDKIntegration:
         assert rpc_event.content_index == 1
 
     @pytest.mark.asyncio
-    async def test_real_sdk_raw_model_event_mapping(self, spec, settings):
-        """Test mapping real SDK raw_model_event with transcript_delta."""
+    async def test_real_sdk_transcript_event_mapping(self, spec, settings):
+        """Test mapping transcript_delta to high-level transcript event."""
         context = RunContextWrapper(None)
 
         # Create a REAL model event
@@ -203,11 +203,10 @@ class TestRealSDKIntegration:
 
         rpc_event = map_realtime_session_event_to_rpc(sdk_event, "run_123")
 
-        assert isinstance(rpc_event, RpcRawModelEvent)
-        assert rpc_event.model_event["type"] == "transcript_delta"
-        assert rpc_event.model_event["item_id"] == "item_abc"
-        assert rpc_event.model_event["delta"] == "Hello "
-        assert rpc_event.model_event["response_id"] == "resp_xyz"
+        assert isinstance(rpc_event, RpcTranscriptEvent)
+        assert rpc_event.type == "realtime_transcript"
+        assert rpc_event.role == "assistant"
+        assert rpc_event.transcript == "Hello "
 
     @pytest.mark.asyncio
     async def test_real_sdk_guardrail_event_mapping(self, spec, settings):

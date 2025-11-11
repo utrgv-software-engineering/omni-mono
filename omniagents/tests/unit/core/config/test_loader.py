@@ -754,7 +754,7 @@ def test_realtime_config_with_defaults(tmp_path):
     spec = load_agent_spec_from_yaml(str(yaml_path))
     assert spec.realtime_mode is True
     assert spec.realtime_settings is not None
-    assert spec.realtime_settings.model_name == "gpt-4o-realtime-preview"
+    assert spec.realtime_settings.model_name == "gpt-realtime"
     assert spec.realtime_settings.voice == "alloy"
     assert spec.realtime_settings.modalities == ["audio"]
     assert spec.realtime_settings.input_audio_format == "pcm16"

@@ -756,17 +756,25 @@ def load_agent_spec_from_yaml(
         # Extract and validate realtime settings
         try:
             realtime_settings = RealtimeSettings(
-                model_name=realtime_config.get("model_name", "gpt-4o-realtime-preview"),
+                model_name=realtime_config.get("model_name", "gpt-realtime"),
                 voice=realtime_config.get("voice", "alloy"),
                 modalities=realtime_config.get("modalities", ["audio"]),
                 input_audio_format=realtime_config.get("input_audio_format", "pcm16"),
                 output_audio_format=realtime_config.get("output_audio_format", "pcm16"),
-                turn_detection=realtime_config.get("turn_detection"),
-                input_audio_transcription=realtime_config.get(
-                    "input_audio_transcription"
+                turn_detection=realtime_config.get(
+                    "turn_detection",
+                    {
+                        "type": "server_vad",
+                        "threshold": 0.3,
+                        "prefix_padding_ms": 100,
+                        "silence_duration_ms": 200,
+                    },
                 ),
-                temperature=realtime_config.get("temperature"),
-                max_output_tokens=realtime_config.get("max_output_tokens"),
+                input_audio_transcription=realtime_config.get(
+                    "input_audio_transcription", {"model": "whisper-1"}
+                ),
+                temperature=realtime_config.get("temperature", 0.8),
+                max_output_tokens=realtime_config.get("max_output_tokens", 4096),
             )
 
             # Validate audio formats

@@ -14,7 +14,7 @@ Push-to-talk voice interaction backend for OmniAgents using OpenAI's Realtime AP
 ## Requirements
 
 - Python 3.11+
-- OpenAI API key with access to `gpt-4o-realtime-preview`
+- OpenAI API key with access to `gpt-realtime`
 - PyAudio (requires system audio libraries)
 - Working microphone and speakers
 
