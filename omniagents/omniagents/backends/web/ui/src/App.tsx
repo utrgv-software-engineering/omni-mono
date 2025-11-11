@@ -1,11 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Header } from './components/Header'
-import { MessageList, type ChatMessage } from './components/MessageList'
+import { MessageList, type MessageItem } from './components/MessageList'
 import { Input } from './components/Input'
-import { StatusIndicator } from './components/StatusIndicator'
-import { Usage } from './components/Usage'
-import { ToolEvents } from './components/ToolEvents'
-import { ApprovalDialog } from './components/ApprovalDialog'
 import { SessionList, type SessionItem } from './components/SessionList'
 import { RPCClient } from './rpc/client'
 
@@ -23,17 +19,15 @@ function wsUrlFromLocation(): string {
 export function App() {
   const [ui, setUI] = useState<UIState>('connecting')
   const [connected, setConnected] = useState(false)
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [items, setItems] = useState<MessageItem[]>([])
   const [thinking, setThinking] = useState(false)
   const [status, setStatus] = useState<string | undefined>(undefined)
   const [runId, setRunId] = useState<string | undefined>(undefined)
   const [sessionId, setSessionId] = useState<string | undefined>(undefined)
   const [sessions, setSessions] = useState<SessionItem[]>([])
-  const [approval, setApproval] = useState<{ request_id: string; tool: string; arguments?: string } | null>(null)
-  const [usageTotals, setUsageTotals] = useState<any | undefined>(undefined)
-  const [usageDelta, setUsageDelta] = useState<any | undefined>(undefined)
-  const [modelInfo, setModelInfo] = useState<{ model?: string; context_window?: number; max_output_tokens?: number } | undefined>(undefined)
-  const [toolEvents, setToolEvents] = useState<Array<{ call_id?: string; tool: string; input?: string; output?: string; status: 'called' | 'result' }>>([])
+  const [_usageTotals, setUsageTotals] = useState<any | undefined>(undefined)
+  const [_usageDelta, setUsageDelta] = useState<any | undefined>(undefined)
+  const [_modelInfo, setModelInfo] = useState<{ model?: string; context_window?: number; max_output_tokens?: number } | undefined>(undefined)
 
   const client = useMemo(() => new RPCClient(wsUrlFromLocation()), [])
   const [initialSent, setInitialSent] = useState(false)
@@ -63,7 +57,7 @@ export function App() {
 
     const offMessageOutput = client.on('message_output', (p: any) => {
       const content = String(p?.content ?? '')
-      if (content) setMessages(prev => [...prev, { role: 'assistant', content }])
+      if (content) setItems(prev => [...prev, { type: 'chat', role: 'assistant', content }])
     })
     const offRunStarted = client.on('run_started', (p: any) => {
       setRunId(String(p?.run_id ?? ''))
@@ -96,22 +90,35 @@ export function App() {
     })
     const offToolCalled = client.on('tool_called', (p: any) => {
       const tool = String(p?.tool ?? '')
-      const input = String(p?.input ?? '')
+      const input = typeof p?.input === 'string' ? p?.input : JSON.stringify(p?.input)
       const call_id = String(p?.call_id ?? '')
-      setToolEvents(prev => [...prev, { tool, input, call_id, status: 'called' }])
+      setItems(prev => [...prev, { type: 'tool', tool, input, call_id, status: 'called' }])
     })
     const offToolResult = client.on('tool_result', (p: any) => {
       const tool = String(p?.tool ?? '')
       const output = typeof p?.output === 'string' ? p?.output : JSON.stringify(p?.output)
       const call_id = String(p?.call_id ?? '')
       const metadata = p?.metadata
-      setToolEvents(prev => [...prev, { tool, output, call_id, status: 'result', metadata }])
+      setItems(prev => {
+        const idx = prev.findIndex(it => it.type === 'tool' && (it as any).call_id === call_id)
+        if (idx >= 0) {
+          const next = prev.slice()
+          const it = next[idx] as any
+          next[idx] = { ...it, output, status: 'result', metadata }
+          return next
+        }
+        return [...prev, { type: 'tool', tool, output, call_id, status: 'result', metadata }]
+      })
     })
     const offClientRequest = client.on('client_request', (p: any) => {
       const fn = String(p?.function ?? '')
       if (fn === 'ui.request_tool_approval') {
         const args = p?.args || {}
-        setApproval({ request_id: String(p?.request_id ?? ''), tool: String(args?.tool ?? ''), arguments: String(args?.arguments ?? '') })
+        const request_id = String(p?.request_id ?? '')
+        const tool = String(args?.tool ?? '')
+        const argumentsText = String(args?.arguments ?? '')
+        const metadata = args?.metadata
+        setItems(prev => [...prev, { type: 'approval', request_id, tool, argumentsText, metadata }])
       }
     })
 
@@ -124,7 +131,7 @@ export function App() {
   // moved below handleSubmit
 
   const handleSubmit = useCallback(async (text: string) => {
-    setMessages(prev => [...prev, { role: 'user', content: text }])
+    setItems(prev => [...prev, { type: 'chat', role: 'user', content: text }])
     // Slash commands
     if (text.startsWith('/')) {
       const parts = text.trim().split(/\s+/)
@@ -152,10 +159,10 @@ export function App() {
         }
         const result = await client.serverCall(name, args, sessionId)
         const formatted = JSON.stringify(result, null, 2)
-        setMessages(prev => [...prev, { role: 'assistant', content: formatted === 'null' ? 'Done.' : formatted }])
+        setItems(prev => [...prev, { type: 'chat', role: 'assistant', content: formatted === 'null' ? 'Done.' : formatted }])
         return
       } catch (e) {
-        setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${String((e as Error)?.message || e)}` }])
+        setItems(prev => [...prev, { type: 'chat', role: 'assistant', content: `Error: ${String((e as Error)?.message || e)}` }])
         return
       }
     }
@@ -172,40 +179,39 @@ export function App() {
     if (initialSent) return
     const url = new URL(window.location.href)
     const initial = url.searchParams.get('initial')
-    if (initial && messages.length === 0) {
+    if (initial && items.length === 0) {
       handleSubmit(initial)
       setInitialSent(true)
     }
-  }, [connected, ui, initialSent, messages.length, handleSubmit])
+  }, [connected, ui, initialSent, items.length, handleSubmit])
 
-  const handleApprovalDecision = useCallback(async (value: 'yes' | 'always' | 'no') => {
-    if (!approval) return
+  const handleApprovalDecision = useCallback(async (request_id: string, value: 'yes' | 'always' | 'no') => {
     try {
       const approved = value !== 'no'
       const always_approve = value === 'always'
-      await client.clientResponse(approval.request_id, true, { approved, always_approve })
-      setApproval(null)
+      await client.clientResponse(request_id, true, { approved, always_approve })
+      setItems(prev => prev.filter(it => !(it.type === 'approval' && (it as any).request_id === request_id)))
     } catch (e) {
-      await client.clientResponse(approval.request_id, false, undefined, { message: String((e as Error)?.message || 'failed') })
-      setApproval(null)
+      await client.clientResponse(request_id, false, undefined, { message: String((e as Error)?.message || 'failed') })
+      setItems(prev => prev.filter(it => !(it.type === 'approval' && (it as any).request_id === request_id)))
     }
-  }, [client, approval])
+  }, [client])
 
   const handleSelectSession = useCallback(async (id?: string) => {
     setSessionId(id)
     if (id) {
       try {
         const history = await client.getSessionHistory(id)
-        const msgs: ChatMessage[] = []
+        const msgs: MessageItem[] = []
         for (const item of history) {
-          const role = String(item.role) as ChatMessage['role']
+          const role = String(item.role) as any
           const content = typeof item.content === 'string' ? item.content : JSON.stringify(item.content)
-          msgs.push({ role, content, timestamp: item.timestamp })
+          msgs.push({ type: 'chat', role, content, timestamp: item.timestamp })
         }
-        setMessages(msgs)
+        setItems(msgs)
       } catch {}
     } else {
-      setMessages([])
+      setItems([])
     }
     setUI('chat')
   }, [client])
@@ -213,30 +219,26 @@ export function App() {
   const agentName = 'OmniAgent'
 
   if (ui === 'connecting') {
-    return <div className="app"><Header agentName={agentName} connected={false} /><div className="p-4 text-sm text-textSubtle">Connecting…</div></div>
+    return <div className="app"><Header agentName={agentName} connected={false} /><div className="container-chat px-4 py-3 text-sm text-textSubtle">Connecting…</div></div>
   }
   if (ui === 'error') {
-    return <div className="app"><Header agentName={agentName} connected={false} /><div className="p-4 text-sm text-errorRed">Failed to connect.</div></div>
+    return <div className="app"><Header agentName={agentName} connected={false} /><div className="container-chat px-4 py-3 text-sm text-errorRed">Failed to connect.</div></div>
   }
   if (ui === 'resume') {
     return (
       <div className="app">
         <Header agentName={agentName} connected={connected} />
-        <SessionList sessions={sessions} onSelect={handleSelectSession} />
+        <div className="container-chat">
+          <SessionList sessions={sessions} onSelect={handleSelectSession} />
+        </div>
       </div>
     )
   }
   return (
     <div className="app">
       <Header agentName={agentName} connected={connected} />
-      <StatusIndicator connected={connected} thinking={thinking} status={status} />
-      <ToolEvents events={toolEvents} />
-      <MessageList messages={messages} />
-      {approval ? (
-        <ApprovalDialog tool={approval.tool} argumentsText={approval.arguments} onDecision={handleApprovalDecision} />
-      ) : null}
-      <Usage model={modelInfo?.model} contextWindow={modelInfo?.context_window} maxOutputTokens={modelInfo?.max_output_tokens} delta={usageDelta} totals={usageTotals} />
-      <Input disabled={!connected || !!approval} onSubmit={handleSubmit} />
+      <MessageList items={items} statusText={status} thinking={thinking} onApprovalDecision={handleApprovalDecision} />
+      <Input disabled={!connected} thinking={thinking} onStop={() => { if (runId) client.stopRun(runId).catch(() => {}) }} onSubmit={handleSubmit} />
     </div>
   )
 }
