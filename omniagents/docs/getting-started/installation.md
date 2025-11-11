@@ -1,44 +1,69 @@
 # Installation
 
-## Requirements
+## Quick Start (Recommended)
+
+### Requirements
 
 - Python 3.11 or higher
-- pip package manager
+- Go 1.19+ (for Bubble Tea TUI backend)
+- Node.js and npm (for Ink TUI backend)
 
-## Install from Source
-
-Currently, OmniAgents is available via source installation:
+### Install OmniAgents
 
 ```bash
-git clone https://github.com/yourusername/omniagents.git
+pip install --upgrade --index-url https://pypi.fury.io/ericmichael/ --extra-index-url https://pypi.org/simple "omniagents[all]"
+```
+
+This installs OmniAgents with all features including GUI, Server, and TUI backends.
+
+### Install Go
+
+If you don't have Go installed and want to use the Bubble Tea TUI:
+
+- **macOS**: `brew install go`
+- **Linux**: Download from [go.dev/dl](https://go.dev/dl/)
+- **Windows**: Download installer from [go.dev/dl](https://go.dev/dl/)
+
+### Install Node.js
+
+If you don't have Node.js installed and want to use the Ink TUI:
+
+- **macOS**: `brew install node`
+- **Linux**: Use your package manager or download from [nodejs.org](https://nodejs.org/)
+- **Windows**: Download installer from [nodejs.org](https://nodejs.org/)
+
+That's it! You can now run OmniAgents. See the [Quick Start](quickstart.md) guide to create your first agent.
+
+---
+
+## Advanced Installation
+
+### Install Specific Features Only
+
+If you only need certain features, you can install just what you need:
+
+```bash
+# GUI/Flet interface only
+pip install --index-url https://pypi.fury.io/ericmichael/ --extra-index-url https://pypi.org/simple "omniagents[flet]"
+
+# Server mode only
+pip install --index-url https://pypi.fury.io/ericmichael/ --extra-index-url https://pypi.org/simple "omniagents[server]"
+
+# CLI only (no TUI dependencies)
+pip install --index-url https://pypi.fury.io/ericmichael/ --extra-index-url https://pypi.org/simple "omniagents[cli]"
+
+# Studio only
+pip install --index-url https://pypi.fury.io/ericmichael/ --extra-index-url https://pypi.org/simple "omniagents[studio]"
+```
+
+### Install from Source
+
+For development or if you want the latest unreleased features:
+
+```bash
+git clone https://github.com/utrgv-software-engineering/omniagents.git
 cd omniagents
-pip install -r requirements.txt
-```
-
-## Install with Optional Dependencies
-
-OmniAgents has several optional dependency groups for different features:
-
-### All Features
-
-```bash
 pip install -e ".[all]"
-```
-
-### Specific Features
-
-```bash
-# GUI/Flet interface
-pip install -e ".[flet]"
-
-# Server mode
-pip install -e ".[server]"
-
-# Documentation tools
-pip install -e ".[docs]"
-
-# Development dependencies
-pip install -e ".[dev]"
 ```
 
 ### Development Installation
@@ -55,14 +80,15 @@ Or manually:
 pip install -e ".[dev]"
 ```
 
-## Prebuilt Assets
+### Available Feature Groups
 
-Release wheels include prebuilt TUI assets, so end users do not need Go or Node:
-
-- **Bubble Tea TUI**: Native `omni-tui` executable for macOS, Linux, and Windows
-- **Ink TUI**: Prebuilt `dist/index.js` bundle
-
-When running from source or editable installs, the backends can auto-build missing clients if the respective toolchain (Go or Node) is available.
+- `[all]` - All features (GUI, Server, TUI, Studio)
+- `[flet]` or `[gui]` - GUI/Flet interface
+- `[server]` - Server mode with FastAPI
+- `[cli]` - CLI mode (no extra dependencies)
+- `[studio]` - Studio web UI
+- `[docs]` - Documentation tools (MkDocs)
+- `[dev]` - Development dependencies (tests, linting, etc.)
 
 ## Verify Installation
 

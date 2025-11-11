@@ -3,8 +3,8 @@ site_description: A lightweight wrapper around OpenAI Agents with multiple inter
 site_author: Eric Martinez
 site_url: https://ericmartinez.github.io/omniagents/
 
-repo_name: omniagents
-repo_url: https://github.com/ericmartinez/omniagents
+repo_name: utrgv-software-engineering/omniagents
+repo_url: https://github.com/utrgv-software-engineering/omniagents
 edit_uri: edit/main/docs/
 
 theme:
@@ -87,4 +87,4 @@ nav:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/ericmartinez/omniagents
+      link: https://github.com/utrgv-software-engineering/omniagents

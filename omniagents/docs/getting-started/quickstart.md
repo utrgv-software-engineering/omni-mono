@@ -1,58 +1,115 @@
 # Quick Start
 
-This guide will help you create and run your first OmniAgents agent.
+This guide will help you create and run your first OmniAgents agent in under 5 minutes.
 
-## Step 1: Set Up API Key
+## Step 1: Create a New Project
 
-OmniAgents uses the OpenAI API. Set your API key as an environment variable:
+Create a new OmniAgents project with the scaffolding command:
 
 ```bash
-export OPENAI_API_KEY="your-api-key-here"
+omniagents new my-first-agent
 ```
 
-Or create a `.env` file in your project directory:
+This creates a complete project structure with:
+- A default agent configuration
+- Sample tools (`echo` and `word_count`)
+- Instructions template
+- Environment configuration
+- Project manifest (`project.yml`)
+
+## Step 2: Navigate to Your Project
+
+```bash
+cd my-first-agent
+```
+
+## Step 3: Set Up API Key
+
+OmniAgents uses the OpenAI API. Create a `.env` file in your project directory:
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` and add your API key:
 
 ```
 OPENAI_API_KEY=your-api-key-here
 ```
 
-## Step 2: Create a Project Directory
+**Using a custom OpenAI provider?** If you're using Azure OpenAI, a local LLM, or another OpenAI-compatible API, also configure the base URL:
+
+```
+OPENAI_API_KEY=your-api-key-here
+OPENAI_BASE_URL=https://your-custom-endpoint.com/v1
+```
+
+Alternatively, export as environment variables:
 
 ```bash
-mkdir my-first-agent
-cd my-first-agent
+export OPENAI_API_KEY="your-api-key-here"
+export OPENAI_BASE_URL="https://your-custom-endpoint.com/v1"
 ```
 
-## Step 3: Define Your Agent
+## Step 4: Run Your Agent
 
-Create an `agent.yml` file:
+The simplest way to run your agent is with the default TUI mode:
 
-```yaml
-name: MyFirstAgent
-instructions_file: instructions.md
-tools: [get_current_time]
-use_safe_agent: false
+```bash
+omniagents run
 ```
 
-Create an `instructions.md` file:
+This automatically detects the `project.yml` in your current directory and launches the Bubble Tea terminal UI.
+
+### Other Run Modes
+
+You can also specify different modes:
+
+```bash
+# GUI mode (desktop interface)
+omniagents run --mode gui
+
+# CLI mode (simple terminal chat)
+omniagents run --mode cli
+
+# Ink TUI mode (React-based terminal UI)
+omniagents run --mode ink
+
+# Web mode (browser-based interface)
+omniagents run --mode web
+```
+
+## Step 5: Try the Sample Tools
+
+Your agent comes with two sample tools you can try:
+
+```
+You: Echo "Hello, OmniAgents!"
+Agent: [Uses echo tool]
+Agent: Hello, OmniAgents!
+
+You: Count the words in "The quick brown fox jumps"
+Agent: [Uses word_count tool]
+Agent: There are 5 words.
+```
+
+## Customizing Your Agent
+
+### Edit Instructions
+
+Customize your agent's behavior by editing `agents/my_first_agent/instructions.md`:
 
 ```markdown
-You are a helpful assistant that can tell the current time.
+You are a helpful assistant that can echo messages and count words.
 Be friendly and concise in your responses.
 ```
 
-## Step 4: Create a Tool
+### Add More Tools
 
-Create a `tools` directory with a Python file:
-
-```bash
-mkdir tools
-```
-
-Create `tools/time_tool.py`:
+Create new tool files in the `tools/` directory:
 
 ```python
-from omniagents.core import function_tool
+from omniagents import function_tool
 from datetime import datetime
 
 @function_tool
@@ -61,39 +118,18 @@ def get_current_time() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 ```
 
-## Step 5: Run Your Agent
+Then add your tool to `agents/my_first_agent/agent.yml`:
 
-### CLI Mode
-
-Run in the terminal:
-
-```bash
-omniagents run -P agent.yml --mode cli
+```yaml
+tools: [echo, word_count, get_current_time]
 ```
 
-### GUI Mode
+### Enable Safe Mode
 
-Launch the desktop interface:
+To require approval before executing tools, edit `agents/my_first_agent/agent.yml`:
 
-```bash
-omniagents run -P agent.yml --mode gui
-```
-
-### TUI Mode
-
-Launch the Bubble Tea terminal UI:
-
-```bash
-omniagents run -P agent.yml --mode tui
-```
-
-## Example Conversation
-
-```
-You: What time is it?
-Agent: Let me check the current time for you.
-[Tool: get_current_time]
-Agent: The current time is 2025-11-11 14:30:45.
+```yaml
+use_safe_agent: true
 ```
 
 ## Next Steps

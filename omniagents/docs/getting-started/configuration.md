@@ -18,6 +18,44 @@ Or in a `.env` file:
 OPENAI_API_KEY=sk-...
 ```
 
+### Custom OpenAI Providers
+
+If you're using a custom OpenAI-compatible provider (Azure OpenAI, local LLMs, or other compatible APIs), configure the base URL:
+
+```bash
+export OPENAI_API_KEY="your-api-key"
+export OPENAI_BASE_URL="https://your-custom-endpoint.com/v1"
+```
+
+Or in your `.env` file:
+
+```
+OPENAI_API_KEY=your-api-key
+OPENAI_BASE_URL=https://your-custom-endpoint.com/v1
+```
+
+**Common Custom Providers:**
+
+- **Azure OpenAI**: Use Azure-specific environment variables:
+  ```
+  AZURE_OPENAI_API_KEY=your-azure-key
+  AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
+  AZURE_OPENAI_API_VERSION=2024-02-01
+  AZURE_OPENAI_DEPLOYMENT=your-deployment-name
+  ```
+
+- **Local LLMs** (LM Studio, Ollama, etc.):
+  ```
+  OPENAI_API_KEY=not-needed
+  OPENAI_BASE_URL=http://localhost:1234/v1
+  ```
+
+- **Other Providers** (OpenRouter, Together AI, etc.):
+  ```
+  OPENAI_API_KEY=your-provider-key
+  OPENAI_BASE_URL=https://api.provider.com/v1
+  ```
+
 ### GUI Settings
 
 When using GUI mode, you can enter API keys in the settings screen. These are persisted in browser local storage.
@@ -74,8 +112,23 @@ Tools must be decorated with `@function_tool` or `@rich_function_tool` from `omn
 
 Common environment variables:
 
-- `OPENAI_API_KEY`: Your OpenAI API key
+**OpenAI Configuration:**
+- `OPENAI_API_KEY`: Your OpenAI API key (required)
+- `OPENAI_BASE_URL`: Custom OpenAI-compatible API endpoint (optional)
+- `OPENAI_ORG`: OpenAI organization ID (optional)
+- `OPENAI_PROJECT`: OpenAI project ID (optional)
+
+**Azure OpenAI Configuration:**
+- `AZURE_OPENAI_API_KEY`: Azure OpenAI API key
+- `AZURE_OPENAI_ENDPOINT`: Azure OpenAI endpoint URL
+- `AZURE_OPENAI_API_VERSION`: Azure API version
+- `AZURE_OPENAI_DEPLOYMENT`: Azure deployment name
+
+**OmniAgents Configuration:**
 - `OMNIAGENTS_DB_PATH`: Path to session database (default: `./sessions.db`)
+
+**Other API Keys:**
+- `SERPAPI_API_KEY`: SerpAPI key for web search tools (optional)
 
 ## Server Configuration
 

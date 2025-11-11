@@ -13,21 +13,18 @@ Agents are described using a small YAML file which lists available tools and whe
 
 ## Installation
 
-1. Clone this repository and install dependencies:
+**Quick Install:**
 
 ```bash
-pip install -r requirements.txt
+pip install --upgrade --index-url https://pypi.fury.io/ericmichael/ --extra-index-url https://pypi.org/simple "omniagents[all]"
 ```
 
-After publication to PyPI you will also be able to `pip install omniagents` directly.
+**Requirements:**
+- Python 3.11+
+- Go 1.19+ (for Bubble Tea TUI backend)
+- Node.js and npm (for Ink TUI backend)
 
-Release wheels include prebuilt TUI assets, so end users do not need Go or Node:
-- Bubble Tea: a native `omni-tui` executable for macOS, Linux, and Windows.
-- Ink: a prebuilt `dist/index.js` bundle.
-
-When running from source or editable installs, the backends can auto-build the
-missing client if the respective toolchain is available, and otherwise provide
-instructions.
+See the [installation guide](https://ericmartinez.github.io/omniagents/getting-started/installation/) for detailed instructions, including how to install Go and Node.js.
 
 ## Configuration
 
