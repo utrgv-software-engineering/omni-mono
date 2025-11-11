@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Header } from './components/Header'
 import { MessageList, type MessageItem } from './components/MessageList'
 import { Input } from './components/Input'
@@ -22,6 +22,8 @@ export function App() {
   const [items, setItems] = useState<MessageItem[]>([])
   const [thinking, setThinking] = useState(false)
   const [status, setStatus] = useState<string | undefined>(undefined)
+  const [statusSpinner, setStatusSpinner] = useState<boolean>(false)
+  const [preamble, setPreamble] = useState<string | undefined>(undefined)
   const [runId, setRunId] = useState<string | undefined>(undefined)
   const [sessionId, setSessionId] = useState<string | undefined>(undefined)
   const [sessions, setSessions] = useState<SessionItem[]>([])
@@ -40,12 +42,13 @@ export function App() {
 
   const client = useMemo(() => new RPCClient(wsUrlFromLocation()), [])
   const [initialSent, setInitialSent] = useState(false)
+  const preambleBufferRef = useRef<Array<{ content: string; timestamp: Date; superseded: boolean }>>([])
 
   useEffect(() => {
     client.connect()
       .then(async () => {
         setConnected(true)
-        try { await client.clientFunctions(1, [{ name: 'ui.request_tool_approval' }]) } catch {}
+        try { await client.clientFunctions(1, [{ name: 'ui.request_tool_approval' }, { name: 'ui.set_status' }]) } catch {}
         try {
           const info = await client.getAgentInfo()
           const headerRaw = String(info?.header_title || info?.name || 'OmniAgent')
@@ -77,15 +80,31 @@ export function App() {
 
     const offMessageOutput = client.on('message_output', (p: any) => {
       const content = String(p?.content ?? '')
-      if (content) setItems(prev => [...prev, { type: 'chat', role: 'assistant', content }])
+      if (!content) return
+      preambleBufferRef.current.push({ content, timestamp: new Date(), superseded: false })
+      setPreamble(content)
+      setStatus(undefined)
     })
     const offRunStarted = client.on('run_started', (p: any) => {
       setRunId(String(p?.run_id ?? ''))
       setSessionId(String(p?.session_id ?? ''))
       setThinking(true)
+      preambleBufferRef.current = []
+      setPreamble(undefined)
+      setStatus(undefined)
+      setStatusSpinner(false)
     })
     const offRunEnd = client.on('run_end', (p: any) => {
       setThinking(false)
+      const nonSuperseded = preambleBufferRef.current.filter(m => !m.superseded)
+      if (nonSuperseded.length) {
+        setItems(prev => [
+          ...prev,
+          ...nonSuperseded.map(m => ({ type: 'chat', role: 'assistant', content: m.content } as MessageItem)),
+        ])
+      }
+      preambleBufferRef.current = []
+      setPreamble(undefined)
       try {
         const usage = p?.usage || {}
         const info = {
@@ -96,10 +115,12 @@ export function App() {
         setModelInfo(info)
         setUsageTotals(usage)
       } catch {}
+      setStatusSpinner(false)
     })
     const offRunStatus = client.on('run_status', (p: any) => {
       const msg = [p?.status, p?.message].filter(Boolean).join(': ')
       setStatus(msg)
+      setStatusSpinner(true)
     })
     const offToken = client.on('token', (p: any) => {
       try {
@@ -112,6 +133,7 @@ export function App() {
       const tool = String(p?.tool ?? '')
       const input = typeof p?.input === 'string' ? p?.input : JSON.stringify(p?.input)
       const call_id = String(p?.call_id ?? '')
+      preambleBufferRef.current.forEach(m => { m.superseded = true })
       setItems(prev => [...prev, { type: 'tool', tool, input, call_id, status: 'called' }])
     })
     const offToolResult = client.on('tool_result', (p: any) => {
@@ -119,6 +141,7 @@ export function App() {
       const output = typeof p?.output === 'string' ? p?.output : JSON.stringify(p?.output)
       const call_id = String(p?.call_id ?? '')
       const metadata = p?.metadata
+      preambleBufferRef.current.forEach(m => { m.superseded = true })
       setItems(prev => {
         const idx = prev.findIndex(it => it.type === 'tool' && (it as any).call_id === call_id)
         if (idx >= 0) {
@@ -138,7 +161,21 @@ export function App() {
         const tool = String(args?.tool ?? '')
         const argumentsText = String(args?.arguments ?? '')
         const metadata = args?.metadata
+        setThinking(false)
         setItems(prev => [...prev, { type: 'approval', request_id, tool, argumentsText, metadata }])
+        return
+      }
+      if (fn === 'ui.set_status') {
+        const request_id = String(p?.request_id ?? '')
+        const args = p?.args || {}
+        const text = typeof args?.text === 'string' ? args.text : undefined
+        const showSpinner = typeof args?.show_spinner === 'boolean' ? !!args.show_spinner : true
+        setStatus(text)
+        setStatusSpinner(showSpinner)
+        if (request_id) {
+          client.clientResponse(request_id, true, { ack: true }).catch(() => {})
+        }
+        return
       }
     })
 
@@ -257,14 +294,18 @@ export function App() {
       const always_approve = value === 'always'
       await client.clientResponse(request_id, true, { approved, always_approve })
       setItems(prev => prev.filter(it => !(it.type === 'approval' && (it as any).request_id === request_id)))
+      setThinking(true)
     } catch (e) {
       await client.clientResponse(request_id, false, undefined, { message: String((e as Error)?.message || 'failed') })
       setItems(prev => prev.filter(it => !(it.type === 'approval' && (it as any).request_id === request_id)))
+      setThinking(true)
     }
   }, [client])
 
   const handleSelectSession = useCallback(async (id?: string) => {
     setSessionId(id)
+    setPreamble(undefined)
+    preambleBufferRef.current = []
     if (id) {
       try {
         const history = await client.getSessionHistory(id)
@@ -301,7 +342,7 @@ export function App() {
   return (
     <div className="app">
       <Header agentName={agentName} connected={connected} />
-      <MessageList items={items} statusText={status} thinking={thinking} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} />
+      <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} />
       <Input disabled={!connected} thinking={thinking} onStop={() => { if (runId) client.stopRun(runId).catch(() => {}) }} onSubmit={handleSubmit} />
     </div>
   )

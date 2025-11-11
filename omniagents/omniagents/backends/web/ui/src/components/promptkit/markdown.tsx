@@ -9,12 +9,17 @@ import 'katex/dist/katex.min.css'
 type Props = {
   className?: string
   children: string
+  highlight?: boolean
+  inheritTextColor?: boolean
 }
 
-export function Markdown({ className, children }: Props) {
+export function Markdown({ className, children, highlight = true, inheritTextColor = false }: Props) {
+  const rehypePlugins: any[] = [[rehypeKatex, { strict: false }]]
+  if (highlight) rehypePlugins.push(rehypeHighlight)
+  const colorClass = inheritTextColor ? '' : 'text-gray-100'
   return (
-    <div className={['prose prose-invert prose-sm max-w-none', 'prose-p:whitespace-pre-wrap prose-p:break-words', 'prose-code:font-mono prose-pre:bg-bgColumn prose-pre:border prose-pre:border-bgCardAlt', 'text-gray-100', className].filter(Boolean).join(' ')}>
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[[rehypeKatex, { strict: false }], rehypeHighlight]}>
+    <div className={['prose prose-invert prose-sm max-w-none', 'prose-p:whitespace-pre-wrap prose-p:break-words', 'prose-code:font-mono prose-pre:bg-bgColumn prose-pre:border prose-pre:border-bgCardAlt', colorClass, className].filter(Boolean).join(' ')}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={rehypePlugins}>
         {children}
       </ReactMarkdown>
     </div>

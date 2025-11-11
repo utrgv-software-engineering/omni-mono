@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react'
+import { Markdown } from './promptkit/markdown'
 import { Message, MessageContent, MessageActions, MessageAction } from './promptkit/Message'
 
 export type ChatMessage = {
@@ -37,8 +38,8 @@ export type ApprovalItem = {
 
 export type MessageItem = ChatMessage | ToolItem | ApprovalItem
 
-export function MessageList({ items, statusText, thinking, welcomeText, onApprovalDecision }:
-  { items: MessageItem[]; statusText?: string; thinking?: boolean; welcomeText?: string; onApprovalDecision?: (request_id: string, value: 'yes' | 'always' | 'no') => void }) {
+export function MessageList({ items, statusText, thinking, statusSpinner, preambleText, welcomeText, onApprovalDecision }:
+  { items: MessageItem[]; statusText?: string; thinking?: boolean; statusSpinner?: boolean; preambleText?: string; welcomeText?: string; onApprovalDecision?: (request_id: string, value: 'yes' | 'always' | 'no') => void }) {
   const handleCopy = React.useCallback((text: string) => {
     try { navigator.clipboard.writeText(text) } catch {}
   }, [])
@@ -64,8 +65,9 @@ export function MessageList({ items, statusText, thinking, welcomeText, onApprov
             return null
           })
         )}
+        {preambleText ? <PreambleRow text={preambleText} /> : null}
         {(thinking || statusText) ? (
-          <StatusRow text={statusText || (thinking ? 'Thinking…' : '')} spinner={!!thinking} />
+          <StatusRow text={statusText || (thinking ? 'Thinking…' : '')} spinner={!!statusSpinner || !!thinking} />
         ) : null}
       </div>
     </div>
@@ -191,6 +193,16 @@ function AttachmentChip({ attachment }: { attachment: Attachment }) {
       <span className="max-w-[180px] truncate text-white" title={attachment.filename || 'file'}>
         {attachment.filename || 'file'}
       </span>
+    </div>
+  )
+}
+
+function PreambleRow({ text }: { text?: string }) {
+  if (!text) return null
+  return (
+    <div className="flex items-start gap-2">
+      <span className="text-warningOrange animate-pulse mt-[2px]">✶</span>
+      <Markdown className="prose-sm prose-warning" highlight={false} inheritTextColor>{text}</Markdown>
     </div>
   )
 }
