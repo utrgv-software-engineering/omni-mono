@@ -48,8 +48,8 @@ export function MessageList({ items, statusText, thinking, statusSpinner, preamb
     setReactions(prev => ({ ...prev, [index]: prev[index] === type ? undefined : type }))
   }, [])
   return (
-    <div className="flex-1 overflow-y-auto py-3">
-      <div className="container-chat px-3 space-y-3 md:space-y-4">
+    <div className="flex-1 overflow-y-auto">
+      <div className="container-chat px-3 py-3 space-y-3 md:space-y-4">
         {items.length === 0 ? (
           <div className="py-8">
             <div className="mx-auto max-w-xl text-center rounded-xl border border-bgCardAlt bg-bgCard px-4 py-6 shadow-sm">
