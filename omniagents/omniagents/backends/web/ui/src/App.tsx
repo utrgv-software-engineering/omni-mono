@@ -219,10 +219,10 @@ export function App() {
   const agentName = 'OmniAgent'
 
   if (ui === 'connecting') {
-    return <div className="app"><Header agentName={agentName} connected={false} /><div className="container-chat px-4 py-3 text-sm text-textSubtle">Connecting…</div></div>
+    return <div className="app"><Header agentName={agentName} connected={false} /><div className="container-chat px-3 py-3 text-sm text-textSubtle">Connecting…</div></div>
   }
   if (ui === 'error') {
-    return <div className="app"><Header agentName={agentName} connected={false} /><div className="container-chat px-4 py-3 text-sm text-errorRed">Failed to connect.</div></div>
+    return <div className="app"><Header agentName={agentName} connected={false} /><div className="container-chat px-3 py-3 text-sm text-errorRed">Failed to connect.</div></div>
   }
   if (ui === 'resume') {
     return (

@@ -81,7 +81,7 @@ export function Input({ disabled, thinking, onStop, onSubmit }:
 
   return (
     <div className="border-t border-bgCardAlt bg-bgColumn">
-      <div className="container-chat px-4 py-3">
+      <div className="container-chat px-3 py-3">
         <form onSubmit={(e) => { e.preventDefault(); handleSubmit() }}>
           <div className="relative">
             <textarea

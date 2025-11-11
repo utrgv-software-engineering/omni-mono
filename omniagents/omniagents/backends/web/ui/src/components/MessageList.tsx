@@ -31,8 +31,8 @@ export type MessageItem = ChatMessage | ToolItem | ApprovalItem
 export function MessageList({ items, statusText, thinking, onApprovalDecision }:
   { items: MessageItem[]; statusText?: string; thinking?: boolean; onApprovalDecision?: (request_id: string, value: 'yes' | 'always' | 'no') => void }) {
   return (
-    <div className="flex-1 overflow-y-auto py-3">
-      <div className="container-chat px-4 space-y-2">
+    <div className="flex-1 overflow-y-auto py-2">
+      <div className="container-chat px-3 space-y-2">
         {items.length === 0 ? (
           <div className="text-sm text-textSubtle">Start by typing a message below.</div>
         ) : (
@@ -93,7 +93,12 @@ function ToolCard({ item }: { item: ToolItem }) {
   const [open, setOpen] = useState(false)
   const hasResult = !!item.output && item.output.trim().length > 0
   const iconBorder = hasResult ? 'border-successGreen' : 'border-warningOrange'
-  const header = useMemo(() => buildToolHeader(item.tool, item.input), [item.tool, item.input])
+  const header = useMemo(() => {
+    const meta = item.metadata
+    const sum = meta && typeof meta === 'object' ? String(meta.summary || '') : ''
+    if (sum && sum.trim().length > 0) return sum.trim()
+    return buildToolHeader(item.tool, item.input)
+  }, [item.tool, item.input, item.metadata])
   const title = hasResult ? header : `${header} • running…`
   return (
     <div className="rounded-md border border-bgCardAlt bg-bgCardAlt p-3">
@@ -107,7 +112,15 @@ function ToolCard({ item }: { item: ToolItem }) {
             </div>
           ) : null}
         </div>
-        <button className="text-xs text-textSubtle hover:text-gray-200" onClick={() => setOpen(v => !v)}>{open ? 'Hide' : 'Show'}</button>
+        <button
+          className="w-6 h-6 flex items-center justify-center rounded hover:bg-bgColumn text-textSubtle hover:text-gray-200"
+          aria-label="Toggle details"
+          onClick={() => setOpen(v => !v)}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={[open ? 'rotate-180' : '', 'transition-transform'].join(' ')}>
+            <path d="M7 10l5 5 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
       </div>
     </div>
   )

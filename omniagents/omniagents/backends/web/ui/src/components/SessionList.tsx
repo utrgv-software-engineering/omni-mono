@@ -4,7 +4,7 @@ export type SessionItem = { id: string; created_at: string; archived: boolean; m
 
 export function SessionList({ sessions, onSelect }: { sessions: SessionItem[]; onSelect: (id?: string) => void }) {
   return (
-    <div className="px-4 py-3">
+    <div className="px-3 py-3">
       <div className="text-sm text-textSubtle mb-2">Resume a previous session or start a new one.</div>
       <div className="space-y-2">
         {sessions.map(s => (

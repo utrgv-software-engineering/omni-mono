@@ -30,7 +30,7 @@ export function MarkdownMessage({ content, variant = 'assistant', className }: P
       : 'prose-invert'
 
   return (
-    <div className={['prose prose-sm max-w-none', 'prose-p:whitespace-pre-wrap prose-p:break-words', variantClass, className].filter(Boolean).join(' ')}>
+    <div className={['prose prose-sm max-w-none', 'prose-p:whitespace-pre-wrap prose-p:break-words', 'prose-code:font-mono prose-pre:bg-bgColumn prose-pre:border prose-pre:border-bgCardAlt', 'text-gray-100', variantClass, className].filter(Boolean).join(' ')}>
       <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[[rehypeKatex, { strict: false }], rehypeHighlight]}>
         {normalized}
       </ReactMarkdown>

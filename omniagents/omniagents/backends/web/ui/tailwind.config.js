@@ -1,4 +1,3 @@
-/** @type {import('tailwindcss').Config} */
 import typography from '@tailwindcss/typography'
 
 export default {
@@ -15,7 +14,6 @@ export default {
         bgCard: '#1E2732',
         bgCardAlt: '#253341',
         textSubtle: '#8899A6',
-        divider: '#38444D',
         successGreen: '#17BF63',
         warningOrange: '#FFA534',
         errorRed: '#E0245E',
