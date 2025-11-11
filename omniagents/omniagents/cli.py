@@ -166,9 +166,9 @@ def main():
     run_parser.add_argument(
         "--mode",
         "-m",
-        choices=["gui", "cli", "server", "bubbletea", "tui", "ink", "voice"],
+        choices=["gui", "cli", "server", "bubbletea", "tui", "ink", "voice", "web"],
         default="tui",
-        help="Run mode: 'tui' (default) for Bubble Tea TUI, 'ink' for React Ink TUI, 'gui' for graphical UI, 'cli' for command-line interface, 'server' for JSON-RPC server, 'voice' for push-to-talk voice interaction",
+        help="Run mode: 'tui' (default) for Bubble Tea TUI, 'ink' for React Ink TUI, 'web' for React web UI, 'gui' for graphical UI, 'cli' for command-line interface, 'server' for JSON-RPC server, 'voice' for push-to-talk voice interaction",
     )
     run_parser.add_argument(
         "--project", "-P", type=str, help="Path to project.yml (dbt-style)."
@@ -234,6 +234,23 @@ def main():
         "--reload",
         action="store_true",
         help="Auto-reload server when code changes (server mode only)",
+    )
+    # Web dev options
+    run_parser.add_argument(
+        "--dev",
+        action="store_true",
+        help="Run web UI in dev mode (Vite) with hot reload (web mode)",
+    )
+    run_parser.add_argument(
+        "--dev-host",
+        default=None,
+        help="Host for the web dev server (default: match server host)",
+    )
+    run_parser.add_argument(
+        "--dev-port",
+        type=int,
+        default=5173,
+        help="Port for the web dev server (default: 5173)",
     )
     run_parser.add_argument(
         "prompt",
@@ -617,9 +634,9 @@ def main():
     agent_run.add_argument(
         "--mode",
         "-m",
-        choices=["gui", "cli", "server", "bubbletea", "tui"],
+        choices=["gui", "cli", "server", "bubbletea", "tui", "web"],
         default="tui",
-        help="Run mode: 'tui' (default) for Bubble Tea TUI, 'gui' for graphical UI, 'cli' for command-line interface, 'server' for JSON-RPC server",
+        help="Run mode: 'tui' (default) for Bubble Tea TUI, 'web' for React web UI, 'gui' for graphical UI, 'cli' for command-line interface, 'server' for JSON-RPC server",
     )
     agent_run.add_argument(
         "--project", "-P", type=str, help="Path to project.yml (dbt-style)."

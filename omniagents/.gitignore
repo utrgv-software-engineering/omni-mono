@@ -77,6 +77,8 @@ results/
 secret.key
 tmp_logs/
 
+node_modules/
+
 # Bubble Tea TUI build artifacts (prevent committing local binaries)
 omniagents/backends/bubbletea/bin/omni-tui
 omniagents/backends/bubbletea/bin/omni-tui.exe

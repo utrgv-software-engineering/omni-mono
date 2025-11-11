@@ -40,6 +40,7 @@ def load_backend(backend_name: str) -> Optional[Any]:
         "tui": "omniagents.backends.bubbletea:BubbleTeaBackend",  # Alias for bubbletea
         "ink": "omniagents.backends.ink:InkBackend",
         "voice": "omniagents.backends.voice:VoiceBackend",
+        "web": "omniagents.backends.web:WebBackend",
     }
 
     if backend_name in backend_modules:
