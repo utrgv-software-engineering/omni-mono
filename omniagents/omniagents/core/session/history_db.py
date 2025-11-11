@@ -445,3 +445,46 @@ def delete_audio_metadata(
         deleted_count = cursor.rowcount
         conn.commit()
     return deleted_count
+
+
+def delete_session(
+    session_id: str,
+    *,
+    project_slug: str | None = None,
+    agent_slug: str | None = None,
+) -> bool:
+    """Delete a session and all its associated data.
+
+    This deletes:
+    - The session record from the sessions table
+    - All history messages from the history table
+    - All audio metadata from the audio_metadata table
+
+    Args:
+        session_id: The session ID to delete
+        project_slug: Project identifier
+        agent_slug: Agent identifier
+
+    Returns:
+        True if the session was deleted, False if it didn't exist
+    """
+    conn, lock = _get_store(project_slug, agent_slug)
+    with lock:
+        # Check if session exists
+        cur = conn.execute(
+            "SELECT session_id FROM sessions WHERE session_id=?", (session_id,)
+        )
+        if cur.fetchone() is None:
+            return False
+
+        # Delete audio metadata (if any)
+        conn.execute("DELETE FROM audio_metadata WHERE session_id=?", (session_id,))
+
+        # Delete history messages
+        conn.execute("DELETE FROM history WHERE session_id=?", (session_id,))
+
+        # Delete session record
+        conn.execute("DELETE FROM sessions WHERE session_id=?", (session_id,))
+
+        conn.commit()
+    return True

@@ -1414,6 +1414,66 @@ class AgentService(RpcMethodsBase):
             await manager.cleanup_session(session_id)
         return ok
 
+    async def delete_session(self, session_id: str) -> bool:  # noqa: D401
+        """Permanently delete a session and all its data.
+
+        This deletes:
+        - The session record
+        - All message history
+        - All audio metadata
+        - Cleans up any active MCP servers and terminal sessions
+
+        Args:
+            session_id: The session ID to delete
+
+        Returns:
+            True if the session was deleted, False if it didn't exist
+        """
+        _debug_rpc("delete_session", {"session_id": session_id})
+
+        # First, cleanup any active resources (similar to archive)
+        sess = getattr(self._session_manager, "_by_id", {}).get(session_id)
+        if sess is not None:
+            # Signal MCP lifecycle task to shutdown
+            shutdown_event = getattr(sess, "_mcp_shutdown", None)
+            if shutdown_event:
+                shutdown_event.set()
+
+            # Wait for lifecycle task to complete cleanup
+            lifecycle_task = getattr(sess, "_mcp_lifecycle_task", None)
+            if lifecycle_task and not lifecycle_task.done():
+                try:
+                    await asyncio.wait_for(lifecycle_task, timeout=5.0)
+                except asyncio.TimeoutError:
+                    lifecycle_task.cancel()
+                    try:
+                        await lifecycle_task
+                    except asyncio.CancelledError:
+                        pass
+                except Exception:
+                    pass
+
+        # Cleanup terminal session if any
+        manager = getattr(self, "terminal_manager", None)
+        if manager is not None:
+            await manager.cleanup_session(session_id)
+
+        # Delete from database
+        from omniagents.core.session import history_db
+
+        project_slug = getattr(self._session_manager, "_project_slug", None)
+        agent_slug = getattr(self._session_manager, "_agent_slug", None)
+
+        deleted = history_db.delete_session(
+            session_id, project_slug=project_slug, agent_slug=agent_slug
+        )
+
+        # Remove from in-memory session manager
+        if sess is not None and hasattr(self._session_manager, "_by_id"):
+            self._session_manager._by_id.pop(session_id, None)
+
+        return deleted
+
     # (Removed) get_model_info: model metadata is now sent inline with usage events
 
     async def get_user_history(

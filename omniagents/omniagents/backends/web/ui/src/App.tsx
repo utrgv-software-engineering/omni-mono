@@ -337,14 +337,89 @@ export function App() {
     setSessionId(id)
     setPreamble(undefined)
     preambleBufferRef.current = []
+    // Reset UI state to prevent stale state from previous conversation
+    setThinking(false)
+    setStatus(undefined)
+    setStatusSpinner(false)
+    setStatusItalic(false)
+    setRunId(undefined)
     if (id) {
       try {
         const history = await client.getSessionHistory(id)
         const msgs: MessageItem[] = []
-        for (const item of history) {
-          const role = String(item.role) as any
-          const content = typeof item.content === 'string' ? item.content : JSON.stringify(item.content)
-          msgs.push({ type: 'chat', role, content, timestamp: item.timestamp })
+        const callIndex: Record<string, number> = {}
+        for (const item of history as any[]) {
+          const t = String((item && item.type) || '')
+
+          if (t && t.endsWith('_call') && !t.endsWith('_call_output')) {
+            const tool = String(item.name || '')
+            let input = ''
+            try {
+              if (typeof item.arguments === 'string') input = item.arguments
+              else if (item.arguments != null) input = JSON.stringify(item.arguments)
+            } catch { input = String(item.arguments || '') }
+            const call_id = String(item.call_id || '')
+            const idx = msgs.length
+            msgs.push({ type: 'tool', tool, input, call_id, status: 'called' })
+            if (call_id) callIndex[call_id] = idx
+            continue
+          }
+
+          if (t && t.endsWith('_call_output')) {
+            const call_id = String(item.call_id || '')
+            const tool = String(item.name || '')
+            let output = ''
+            try { output = typeof item.output === 'string' ? item.output : JSON.stringify(item.output) }
+            catch { output = String(item.output || '') }
+            const metadata = item.metadata
+            const existing = (call_id && callIndex[call_id] != null) ? callIndex[call_id] : -1
+            if (existing >= 0) {
+              const prev = msgs[existing] as any
+              msgs[existing] = { ...prev, output, status: 'result', metadata }
+            } else {
+              msgs.push({ type: 'tool', tool, output, call_id, status: 'result', metadata })
+            }
+            continue
+          }
+
+          if (item && item.role) {
+            const role = String(item.role) as any
+            let content = ''
+            let attachments: Array<{ type: 'image' | 'file'; url?: string; filename?: string; mime?: string; size?: number }> = []
+
+            if (typeof item.content === 'string') {
+              content = item.content
+            } else if (Array.isArray(item.content)) {
+              const parts = item.content as any[]
+              if (role === 'assistant') {
+                const textParts = parts
+                  .filter(p => p && (p.type === 'output_text' || p.type === 'text'))
+                  .map(p => String(p.text || ''))
+                content = textParts.join('\n')
+              } else {
+                const textParts = parts
+                  .filter(p => p && (p.type === 'input_text' || p.type === 'text'))
+                  .map(p => String(p.text || p.input_text || ''))
+                content = textParts.join('\n')
+                for (const p of parts) {
+                  if (p && p.type === 'input_image' && p.image_url) {
+                    attachments.push({ type: 'image', url: String(p.image_url), filename: p.filename })
+                  } else if (p && p.type === 'input_file') {
+                    attachments.push({ type: 'file', filename: p.filename })
+                  }
+                }
+              }
+            } else if (item.content && typeof item.content === 'object') {
+              const obj = item.content as any
+              content = String(obj.text || obj.input_text || '')
+              if (!content) {
+                try { content = JSON.stringify(item.content) } catch { content = String(item.content) }
+              }
+            }
+
+            msgs.push({ type: 'chat', role, content, timestamp: item.timestamp, attachments })
+            continue
+          }
         }
         setItems(msgs)
       } catch {}
@@ -362,6 +437,18 @@ export function App() {
   const onNewChat = useCallback(() => {
     handleSelectSession(undefined)
   }, [handleSelectSession])
+
+  const handleDeleteSession = useCallback(async (id: string) => {
+    try {
+      await client.serverCall('delete_session', { session_id: id })
+      setSessions(prev => prev.filter(s => s.id !== id))
+      if (sessionId === id) {
+        handleSelectSession(undefined)
+      }
+    } catch (e) {
+      console.error('Failed to delete session:', e)
+    }
+  }, [client, sessionId, handleSelectSession])
 
   if (ui === 'connecting') {
     return <div className="app flex-col"><Header agentName={agentName} connected={false} /><div className="container-chat px-3 py-3 text-sm text-textSubtle">Connecting…</div></div>
@@ -388,6 +475,7 @@ export function App() {
         onClose={() => setSidebarOpen(false)}
         onNewChat={onNewChat}
         onSelect={(id) => handleSelectSession(id)}
+        onDelete={handleDeleteSession}
       />
       <div className="flex-1 flex flex-col min-h-0">
         <Header agentName={agentName} connected={connected} onMenu={() => setSidebarOpen(v => !v)} />
