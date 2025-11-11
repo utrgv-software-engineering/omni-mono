@@ -1,25 +1,28 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react'
+import { PromptInput, PromptInputTextarea, PromptInputActions } from './promptkit/PromptInput'
 
 export function Input({ disabled, thinking, onStop, onSubmit }:
   { disabled?: boolean; thinking?: boolean; onStop?: () => void; onSubmit: (text: string) => void }) {
   const [text, setText] = useState('')
+  const [files, setFiles] = useState<File[]>([])
   const [history, setHistory] = useState<string[]>([])
   const [historyIndex, setHistoryIndex] = useState(0)
   const [historyDraft, setHistoryDraft] = useState('')
   const taRef = useRef<HTMLTextAreaElement | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const canSend = useMemo(() => !disabled && text.trim().length > 0, [disabled, text])
 
-  const insertNewlineAtCursor = useCallback(() => {
-    const el = taRef.current
-    if (!el) return
-    const start = el.selectionStart ?? text.length
-    const end = el.selectionEnd ?? text.length
+  const insertNewlineAtCursor = useCallback((el?: HTMLTextAreaElement) => {
+    const target = el ?? taRef.current
+    if (!target) return
+    const start = target.selectionStart ?? text.length
+    const end = target.selectionEnd ?? text.length
     const next = text.slice(0, start) + '\n' + text.slice(end)
     setText(next)
     const pos = start + 1
     requestAnimationFrame(() => {
-      try { el.setSelectionRange(pos, pos) } catch {}
+      try { target.setSelectionRange(pos, pos) } catch {}
     })
   }, [text])
 
@@ -37,18 +40,13 @@ export function Input({ disabled, thinking, onStop, onSubmit }:
     if (e.key === 'Enter') {
       if (e.shiftKey || e.altKey) {
         e.preventDefault()
-        insertNewlineAtCursor()
-        return
-      }
-      if (!e.ctrlKey && !e.metaKey) {
-        e.preventDefault()
-        handleSubmit()
+        insertNewlineAtCursor(e.currentTarget)
         return
       }
     }
     if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'j')) {
       e.preventDefault()
-      insertNewlineAtCursor()
+      insertNewlineAtCursor(e.currentTarget)
       return
     }
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
@@ -79,47 +77,102 @@ export function Input({ disabled, thinking, onStop, onSubmit }:
     }
   }, [text, history, historyIndex, historyDraft, handleSubmit, insertNewlineAtCursor])
 
+  const openFilePicker = useCallback(() => {
+    fileInputRef.current?.click()
+  }, [])
+
+  const handleFilesSelected = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const list = e.target.files ? Array.from(e.target.files) : []
+    setFiles(list)
+  }, [])
+
   return (
     <div className="border-t border-bgCardAlt bg-bgColumn">
       <div className="container-chat px-3 py-3">
-        <form onSubmit={(e) => { e.preventDefault(); handleSubmit() }}>
-          <div className="relative">
-            <textarea
-              ref={taRef}
-              className="w-full min-h-[44px] max-h-[50vh] resize-none rounded-[24px] bg-bgCardAlt border-0 pr-16 pl-4 py-3 text-sm focus:outline-none focus:ring-0 placeholder:text-textSubtle text-white"
-              placeholder="Type a message…"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={handleKeyDown}
-              disabled={disabled}
-            />
+        <PromptInput
+          isLoading={!!thinking}
+          value={text}
+          onValueChange={setText}
+          onSubmit={handleSubmit}
+          disabled={disabled}
+          className=""
+        >
+          {files.length > 0 && (
+            <div className="flex flex-wrap gap-2 pb-2 px-2" onClick={(e) => e.stopPropagation()}>
+              {files.map((f, i) => (
+                <div key={i} className="bg-bgCard flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
+                  <svg width="16" height="16" viewBox="0 0 24 24" className="text-white" aria-hidden="true">
+                    <path d="M21.44 11.05l-8.49 8.49a5.5 5.5 0 11-7.78-7.78l8.49-8.49a3.5 3.5 0 114.95 4.95l-8.49 8.49a1.5 1.5 0 11-2.12-2.12l8.49-8.49" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  <span className="max-w-[120px] truncate text-white" title={f.name}>{f.name}</span>
+                  <button onClick={() => {
+                    setFiles(prev => prev.filter((_, idx) => idx !== i))
+                    if (fileInputRef.current) fileInputRef.current.value = ''
+                  }} className="hover:bg-bgCardAlt rounded-full p-1">
+                    <svg width="16" height="16" viewBox="0 0 24 24" className="text-white" aria-hidden="true">
+                      <path d="M18 6L6 18M6 6l12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <PromptInputTextarea
+            placeholder="Type a message…"
+            onKeyDown={handleKeyDown}
+            className="max-h-[50vh]"
+            disabled={disabled}
+          />
+
+          <PromptInputActions className="flex items-center justify-between gap-2 pt-2 px-2">
+            <label
+              htmlFor="file-upload"
+              onClick={(e) => e.stopPropagation()}
+              className="hover:bg-bgCardAlt/50 flex h-8 w-8 cursor-pointer items-center justify-center rounded-2xl"
+              aria-label="Attach files"
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                onChange={handleFilesSelected}
+                className="hidden"
+                id="file-upload"
+              />
+              <svg width="20" height="20" viewBox="0 0 24 24" className="text-white" aria-hidden="true">
+                <path d="M21.44 11.05l-8.49 8.49a5.5 5.5 0 11-7.78-7.78l8.49-8.49a3.5 3.5 0 114.95 4.95l-8.49 8.49a1.5 1.5 0 11-2.12-2.12l8.49-8.49" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </label>
+
             {!thinking ? (
               <button
-                type="submit"
+                type="button"
                 disabled={!canSend}
-                className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-tweetBlue text-white flex items-center justify-center disabled:bg-bgCardAlt disabled:text-textSubtle hover:brightness-110 focus:outline-none shadow-sm"
+                onClick={handleSubmit}
+                className="h-8 w-8 rounded-full bg-tweetBlue text-white flex items-center justify-center disabled:bg-bgCardAlt disabled:text-textSubtle hover:brightness-110 focus:outline-none shadow-sm"
                 aria-label="Send"
                 title="Send (Enter)"
               >
-                <svg width="18" height="18" viewBox="0 0 24 24" className="pointer-events-none" aria-hidden="true">
-                  <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" fill="currentColor" />
+                <svg width="20" height="20" viewBox="0 0 24 24" className="pointer-events-none" aria-hidden="true">
+                  <path d="M12 19V5M5 12l7-7 7 7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </button>
             ) : (
               <button
                 type="button"
                 onClick={onStop}
-                className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-errorRed text-white flex items-center justify-center hover:brightness-110 focus:outline-none shadow-sm"
+                className="h-8 w-8 rounded-full bg-errorRed text-white flex items-center justify-center hover:brightness-110 focus:outline-none shadow-sm"
                 aria-label="Stop"
                 title="Stop"
               >
-                <svg width="18" height="18" viewBox="0 0 24 24" className="pointer-events-none" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" className="pointer-events-none" aria-hidden="true">
                   <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
                 </svg>
               </button>
             )}
-          </div>
-        </form>
+          </PromptInputActions>
+        </PromptInput>
       </div>
     </div>
   )

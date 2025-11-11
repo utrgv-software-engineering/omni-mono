@@ -9,3 +9,17 @@ html, body, #root { height: 100%; }
 .container-chat { width: 100%; margin-left: auto; margin-right: auto; }
 
 .prose pre code { background: transparent; }
+
+@keyframes shimmer-text {
+  0% { background-position: 200% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.text-shimmer {
+  background: linear-gradient(90deg, #8899A6 0%, #cbd5e1 50%, #8899A6 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer-text 3s ease-in-out infinite;
+}
