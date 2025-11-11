@@ -3,6 +3,7 @@ import { Header } from './components/Header'
 import { MessageList, type MessageItem } from './components/MessageList'
 import { Input } from './components/Input'
 import { SessionList, type SessionItem } from './components/SessionList'
+import { Sidebar } from './components/Sidebar'
 import { RPCClient } from './rpc/client'
 
 type UIState = 'connecting' | 'resume' | 'chat' | 'error'
@@ -44,6 +45,14 @@ export function App() {
   const client = useMemo(() => new RPCClient(wsUrlFromLocation()), [])
   const [initialSent, setInitialSent] = useState(false)
   const preambleBufferRef = useRef<Array<{ content: string; timestamp: Date; superseded: boolean }>>([])
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+
+  const refreshSessions = useCallback(async () => {
+    try {
+      const list = await client.listSessions()
+      setSessions(list)
+    } catch {}
+  }, [client])
 
   useEffect(() => {
     client.connect()
@@ -96,6 +105,7 @@ export function App() {
       setStatus(undefined)
       setStatusSpinner(false)
       setStatusItalic(false)
+      refreshSessions()
     })
     const offRunEnd = client.on('run_end', (p: any) => {
       setThinking(false)
@@ -120,6 +130,7 @@ export function App() {
       } catch {}
       setStatusSpinner(false)
       setStatusItalic(false)
+      refreshSessions()
     })
     const offRunStatus = client.on('run_status', (p: any) => {
       const msg = [p?.status, p?.message].filter(Boolean).join(': ')
@@ -189,7 +200,7 @@ export function App() {
       offMessageOutput(); offRunStarted(); offRunEnd(); offRunStatus(); offClientRequest(); offToken(); offToolCalled(); offToolResult()
       client.disconnect()
     }
-  }, [client, normalizeAgentName])
+  }, [client, normalizeAgentName, refreshSessions])
 
   // moved below handleSubmit
 
@@ -343,15 +354,24 @@ export function App() {
     setUI('chat')
   }, [client])
 
+  useEffect(() => {
+    if (!connected) return
+    refreshSessions()
+  }, [connected, refreshSessions])
+
+  const onNewChat = useCallback(() => {
+    handleSelectSession(undefined)
+  }, [handleSelectSession])
+
   if (ui === 'connecting') {
-    return <div className="app"><Header agentName={agentName} connected={false} /><div className="container-chat px-3 py-3 text-sm text-textSubtle">Connecting…</div></div>
+    return <div className="app flex-col"><Header agentName={agentName} connected={false} /><div className="container-chat px-3 py-3 text-sm text-textSubtle">Connecting…</div></div>
   }
   if (ui === 'error') {
-    return <div className="app"><Header agentName={agentName} connected={false} /><div className="container-chat px-3 py-3 text-sm text-errorRed">Failed to connect.</div></div>
+    return <div className="app flex-col"><Header agentName={agentName} connected={false} /><div className="container-chat px-3 py-3 text-sm text-errorRed">Failed to connect.</div></div>
   }
   if (ui === 'resume') {
     return (
-      <div className="app">
+      <div className="app flex-col">
         <Header agentName={agentName} connected={connected} />
         <div className="container-chat">
           <SessionList sessions={sessions} onSelect={handleSelectSession} />
@@ -360,10 +380,22 @@ export function App() {
     )
   }
   return (
-    <div className="app">
-      <Header agentName={agentName} connected={connected} />
-      <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} statusItalic={statusItalic} />
-      <Input disabled={!connected} thinking={thinking} onStop={handleStop} onSubmit={handleSubmit} />
+    <div className="app h-full flex flex-row">
+      <Sidebar
+        open={sidebarOpen}
+        sessions={sessions}
+        selectedId={sessionId}
+        onClose={() => setSidebarOpen(false)}
+        onNewChat={onNewChat}
+        onSelect={(id) => handleSelectSession(id)}
+      />
+      <div className="flex-1 flex flex-col min-h-0">
+        <Header agentName={agentName} connected={connected} onMenu={() => setSidebarOpen(v => !v)} />
+        <div className="flex-1 flex flex-col min-h-0">
+          <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} statusItalic={statusItalic} />
+          <Input disabled={!connected} thinking={thinking} onStop={handleStop} onSubmit={handleSubmit} />
+        </div>
+      </div>
     </div>
   )
 }
