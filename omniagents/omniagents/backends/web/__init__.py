@@ -26,11 +26,36 @@ class WebBackend:
             print(f"Details: {e}")
             sys.exit(1)
 
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("", 0))
-            port = s.getsockname()[1]
-
         args = kwargs.get("args")
+        host_arg = None
+        port_arg = None
+        try:
+            host_arg = getattr(args, "host", None)
+            port_arg = getattr(args, "port", None)
+        except Exception:
+            host_arg = None
+            port_arg = None
+        codespaces_env = any(
+            os.environ.get(k)
+            for k in (
+                "CODESPACES",
+                "CODESPACE_NAME",
+                "GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN",
+            )
+        )
+        host = host_arg or ("0.0.0.0" if codespaces_env else "127.0.0.1")
+        if port_arg is not None:
+            try:
+                port = int(port_arg)
+            except Exception:
+                port = None
+        else:
+            port = None
+        if port is None:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("", 0))
+                port = s.getsockname()[1]
+
         apply_cli_overrides(spec, args)
 
         config_path = kwargs.get("config_path")
@@ -41,10 +66,9 @@ class WebBackend:
 
         app = build_app(config_path=config_path, spec=spec, auth_token=auth_token)
 
-        args = kwargs.get("args")
         dev_flag_env = os.environ.get("OMNI_WEB_DEV", "0").lower() not in {"0", "false", "no"}
         dev_flag = bool(getattr(args, "dev", False)) or dev_flag_env
-        dev_host = getattr(args, "dev_host", None) or "127.0.0.1"
+        dev_host = getattr(args, "dev_host", None) or host
         dev_port = int(getattr(args, "dev_port", 5173) or 5173)
 
         if not dev_flag:
@@ -68,7 +92,15 @@ class WebBackend:
                     lg.propagate = False
                 except Exception:
                     pass
-            uvicorn.run(app, host="127.0.0.1", port=port, log_level="error", access_log=False)
+            uvicorn.run(
+                app,
+                host=host,
+                port=port,
+                log_level="error",
+                access_log=False,
+                proxy_headers=True,
+                forwarded_allow_ips="*",
+            )
 
         server_thread = Thread(target=run_server, daemon=True)
         server_thread.start()
@@ -105,17 +137,18 @@ class WebBackend:
         open_url = None
         if dev_flag:
             try:
-                open_url = self._start_dev_server(ws_host="127.0.0.1", ws_port=port, dev_host=dev_host, dev_port=dev_port)
+                open_url = self._start_dev_server(ws_host=host, ws_port=port, dev_host=dev_host, dev_port=dev_port)
             except Exception as e:
                 print(f"Error: Failed to start dev server: {e}")
                 open_url = None
         if open_url is None:
-            base = f"http://127.0.0.1:{port}/"
+            base = f"http://{host}:{port}/"
             if qp:
                 from urllib.parse import urlencode
+                qp.append(("ts", str(int(time.time()))))
                 open_url = base + "?" + urlencode(qp)
             else:
-                open_url = base
+                open_url = base + f"?ts={int(time.time())}"
         try:
             webbrowser.open(open_url)
         except Exception:
@@ -158,14 +191,14 @@ class WebBackend:
             p = Path(override).expanduser()
             if p.is_dir() and (p / "index.html").exists():
                 return p
+        packaged = Path(__file__).parent / "ui" / "dist"
+        if packaged.is_dir() and (packaged / "index.html").exists():
+            return packaged
         cache_dir = self._cache_dir()
         if cache_dir is not None:
             candidate = cache_dir / "dist"
             if candidate.is_dir() and (candidate / "index.html").exists():
                 return candidate
-        packaged = Path(__file__).parent / "ui" / "dist"
-        if packaged.is_dir() and (packaged / "index.html").exists():
-            return packaged
         auto_build = os.environ.get("OMNI_WEB_AUTO_BUILD", "1").lower() not in {"0", "false", "no"}
         if auto_build:
             try:

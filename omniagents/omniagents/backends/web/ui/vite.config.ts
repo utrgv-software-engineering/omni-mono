@@ -8,6 +8,7 @@ export default defineConfig({
   plugins: [react()],
   build: {
     sourcemap: true,
+    minify: false,
     chunkSizeWarningLimit: 1200,
   },
   server: {
