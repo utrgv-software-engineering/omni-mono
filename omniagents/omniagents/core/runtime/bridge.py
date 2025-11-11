@@ -308,6 +308,7 @@ async def stream_agent(
     context_window: Optional[int] = None,
     include_user_message: bool = True,
     workflow_name: Optional[str] = None,
+    user_content: Optional[Any] = None,
 ) -> dict | None:  # noqa: D401
     """Drive agent.run_streamed and forward events to *rpc_channel*.
 
@@ -324,8 +325,12 @@ async def stream_agent(
         # Filter history to remove tool call items before passing to API
         clean_history = _filter_history_for_api(session.history)
         # Include prompt at end and persist to session history on first attempt
-        agent_input = clean_history + [{"role": "user", "content": prompt}]
-        user_msg = {"role": "user", "content": prompt}
+        if user_content is not None:
+            agent_input = clean_history + [{"role": "user", "content": user_content}]
+            user_msg = {"role": "user", "content": user_content}
+        else:
+            agent_input = clean_history + [{"role": "user", "content": prompt}]
+            user_msg = {"role": "user", "content": prompt}
         session.append_message(user_msg)
     else:
         # For retries, avoid re-adding the user message; keep context identical

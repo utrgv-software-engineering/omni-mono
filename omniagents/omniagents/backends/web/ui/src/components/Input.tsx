@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useRef, useState } from 'react'
 import { PromptInput, PromptInputTextarea, PromptInputActions } from './promptkit/PromptInput'
 
 export function Input({ disabled, thinking, onStop, onSubmit }:
-  { disabled?: boolean; thinking?: boolean; onStop?: () => void; onSubmit: (text: string) => void }) {
+  { disabled?: boolean; thinking?: boolean; onStop?: () => void; onSubmit: (text: string, files?: File[]) => void }) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [history, setHistory] = useState<string[]>([])
@@ -11,7 +11,7 @@ export function Input({ disabled, thinking, onStop, onSubmit }:
   const taRef = useRef<HTMLTextAreaElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
-  const canSend = useMemo(() => !disabled && text.trim().length > 0, [disabled, text])
+  const canSend = useMemo(() => !disabled && (text.trim().length > 0 || files.length > 0), [disabled, text, files])
 
   const insertNewlineAtCursor = useCallback((el?: HTMLTextAreaElement) => {
     const target = el ?? taRef.current
@@ -28,13 +28,14 @@ export function Input({ disabled, thinking, onStop, onSubmit }:
 
   const handleSubmit = useCallback(() => {
     const t = text.trim()
-    if (!t) return
-    onSubmit(t)
+    if (!t && files.length === 0) return
+    onSubmit(t, files)
     setHistory(h => h.length && h[h.length - 1] === t ? h : [...h, t])
     setHistoryIndex(0)
     setHistoryDraft('')
     setText('')
-  }, [text, onSubmit])
+    setFiles([])
+  }, [text, files, onSubmit])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter') {
@@ -87,7 +88,7 @@ export function Input({ disabled, thinking, onStop, onSubmit }:
   }, [])
 
   return (
-    <div className="border-t border-bgCardAlt bg-bgColumn">
+    <div>
       <div className="container-chat px-3 py-3">
         <PromptInput
           isLoading={!!thinking}

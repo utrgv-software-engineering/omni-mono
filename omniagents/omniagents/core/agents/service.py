@@ -972,6 +972,7 @@ class AgentService(RpcMethodsBase):
         session_id: str | None = None,
         variables: dict | None = None,
         context: Any | None = None,
+        content: Any | None = None,
     ) -> dict:  # noqa: D401
         sess: Session = self._session_manager.get_or_create(session_id)
         channel = getattr(self, "channel", None)
@@ -1157,6 +1158,7 @@ class AgentService(RpcMethodsBase):
                             context_window=getattr(self.spec, "context_window", None),
                             include_user_message=include_user_message,
                             workflow_name=workflow_name_override,
+                            user_content=content,
                         )
                         end_reason = sess.cancel_end_reason or "completed"
                         error_info = None
@@ -1353,6 +1355,25 @@ class AgentService(RpcMethodsBase):
         result = self._session_manager.list_sessions()
         _debug_rpc("list_sessions", {"result": result})
         return result
+
+    async def get_agent_info(self) -> dict:  # noqa: D401
+        info = {}
+        spec = self.spec
+        try:
+            info["name"] = getattr(spec, "name", None)
+            info["header_title"] = getattr(spec, "header_title", None) or getattr(
+                spec, "name", None
+            )
+            info["page_title"] = getattr(spec, "page_title", None) or getattr(
+                spec, "name", None
+            )
+            info["welcome_text"] = getattr(spec, "welcome_text", None)
+            info["page_title_suffix"] = getattr(spec, "page_title_suffix", None)
+            info["theme_color"] = getattr(spec, "theme_color", None)
+        except Exception:
+            pass
+        _debug_rpc("get_agent_info", info)
+        return info
 
     async def archive_session(self, session_id: str) -> bool:  # noqa: D401
         """Archive *session_id* so clients can hide it."""

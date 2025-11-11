@@ -103,10 +103,11 @@ export class RPCClient {
   }
 
   // RPC methods
-  async startRun(prompt: string, sessionId?: string, variables?: Record<string, unknown>): Promise<{ run_id: string; session_id: string }> {
+  async startRun(prompt: string, sessionId?: string, variables?: Record<string, unknown>, content?: unknown): Promise<{ run_id: string; session_id: string }> {
     const params: Record<string, unknown> = { prompt }
     if (sessionId) params.session_id = sessionId
     if (variables) params.variables = variables
+    if (content != null) params.content = content
     return this.call('start_run', params)
   }
 
@@ -142,5 +143,9 @@ export class RPCClient {
 
   async clientFunctions(version: number, functions: Array<{ name: string; description?: string }>): Promise<void> {
     await this.call('client_functions', { version, functions })
+  }
+
+  async getAgentInfo(): Promise<{ name?: string; header_title?: string; page_title?: string; welcome_text?: string; page_title_suffix?: string; theme_color?: string }> {
+    return this.call('get_agent_info', {})
   }
 }

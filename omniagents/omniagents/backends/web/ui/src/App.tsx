@@ -28,6 +28,15 @@ export function App() {
   const [_usageTotals, setUsageTotals] = useState<any | undefined>(undefined)
   const [_usageDelta, setUsageDelta] = useState<any | undefined>(undefined)
   const [_modelInfo, setModelInfo] = useState<{ model?: string; context_window?: number; max_output_tokens?: number } | undefined>(undefined)
+  const [agentName, setAgentName] = useState<string>('OmniAgent')
+  const [welcomeText, setWelcomeText] = useState<string | undefined>(undefined)
+  const normalizeAgentName = useCallback((name: string) => {
+    let s = String(name || '').trim()
+    s = s.replace(/[_-]+/g, ' ')
+    s = s.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    s = s.replace(/\s+/g, ' ')
+    return s.split(' ').map(w => w ? (w[0].toUpperCase() + w.slice(1).toLowerCase()) : '').join(' ').trim()
+  }, [])
 
   const client = useMemo(() => new RPCClient(wsUrlFromLocation()), [])
   const [initialSent, setInitialSent] = useState(false)
@@ -37,6 +46,17 @@ export function App() {
       .then(async () => {
         setConnected(true)
         try { await client.clientFunctions(1, [{ name: 'ui.request_tool_approval' }]) } catch {}
+        try {
+          const info = await client.getAgentInfo()
+          const headerRaw = String(info?.header_title || info?.name || 'OmniAgent')
+          const header = normalizeAgentName(headerRaw)
+          setAgentName(header)
+          const wt = info?.welcome_text ? String(info.welcome_text) : undefined
+          setWelcomeText(wt)
+          const titleBase = String(info?.page_title || header)
+          const suffix = info?.page_title_suffix ? String(info.page_title_suffix) : ''
+          document.title = suffix ? `${titleBase} ${suffix}` : titleBase
+        } catch {}
         const url = new URL(window.location.href)
         const resume = url.searchParams.get('resume') === 'true'
         const sid = url.searchParams.get('session') || undefined
@@ -126,12 +146,11 @@ export function App() {
       offMessageOutput(); offRunStarted(); offRunEnd(); offRunStatus(); offClientRequest(); offToken(); offToolCalled(); offToolResult()
       client.disconnect()
     }
-  }, [client])
+  }, [client, normalizeAgentName])
 
   // moved below handleSubmit
 
-  const handleSubmit = useCallback(async (text: string) => {
-    setItems(prev => [...prev, { type: 'chat', role: 'user', content: text }])
+  const handleSubmit = useCallback(async (text: string, files?: File[]) => {
     // Slash commands
     if (text.startsWith('/')) {
       const parts = text.trim().split(/\s+/)
@@ -167,7 +186,54 @@ export function App() {
       }
     }
     try {
-      await client.startRun(text, sessionId)
+      let content: any | undefined = undefined
+      let attachments: Array<{ type: 'image' | 'file'; url?: string; filename?: string; mime?: string; size?: number }> = []
+      if (files && files.length > 0) {
+        const parts: any[] = []
+        if (text.trim().length > 0) parts.push({ type: 'input_text', text })
+        const processed = await Promise.all(files.map(async (f) => {
+          if (f.type && f.type.startsWith('image/')) {
+            const dataUrl = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader()
+              reader.onload = () => resolve(String(reader.result || ''))
+              reader.onerror = () => reject(new Error('Failed to read image'))
+              reader.readAsDataURL(f)
+            })
+            return {
+              filePart: { type: 'input_image', image_url: dataUrl, detail: 'auto' },
+              attachment: { type: 'image', url: dataUrl, filename: f.name, mime: f.type, size: f.size },
+            }
+          } else {
+            const base64 = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader()
+              reader.onload = () => {
+                try {
+                  const buf = reader.result as ArrayBuffer
+                  const bytes = new Uint8Array(buf)
+                  let binary = ''
+                  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+                  resolve(btoa(binary))
+                } catch {
+                  reject(new Error('Failed to encode file'))
+                }
+              }
+              reader.onerror = () => reject(new Error('Failed to read file'))
+              reader.readAsArrayBuffer(f)
+            })
+            const param: any = { type: 'input_file', file_data: base64 }
+            if (f.name) param.filename = f.name
+            return {
+              filePart: param,
+              attachment: { type: 'file', filename: f.name, mime: f.type, size: f.size },
+            }
+          }
+        }))
+        parts.push(...processed.map(p => p.filePart))
+        attachments = processed.map(p => p.attachment)
+        content = parts
+      }
+      setItems(prev => [...prev, { type: 'chat', role: 'user', content: text, attachments }])
+      await client.startRun(text, sessionId, undefined, content)
     } catch (e) {
       setStatus(String((e as Error)?.message || 'Failed to start run'))
     }
@@ -216,8 +282,6 @@ export function App() {
     setUI('chat')
   }, [client])
 
-  const agentName = 'OmniAgent'
-
   if (ui === 'connecting') {
     return <div className="app"><Header agentName={agentName} connected={false} /><div className="container-chat px-3 py-3 text-sm text-textSubtle">Connecting…</div></div>
   }
@@ -237,7 +301,7 @@ export function App() {
   return (
     <div className="app">
       <Header agentName={agentName} connected={connected} />
-      <MessageList items={items} statusText={status} thinking={thinking} onApprovalDecision={handleApprovalDecision} />
+      <MessageList items={items} statusText={status} thinking={thinking} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} />
       <Input disabled={!connected} thinking={thinking} onStop={() => { if (runId) client.stopRun(runId).catch(() => {}) }} onSubmit={handleSubmit} />
     </div>
   )
