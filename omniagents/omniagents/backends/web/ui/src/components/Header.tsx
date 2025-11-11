@@ -1,13 +1,15 @@
 import React from 'react'
 
-export function Header({ agentName, welcomeText }: { agentName: string; welcomeText?: string }) {
+export function Header({ agentName, welcomeText, connected }: { agentName: string; welcomeText?: string; connected?: boolean }) {
   return (
-    <div className="px-4 py-3 border-b border-gray-800 bg-gray-900/60">
-      <div className="text-lg font-semibold">{agentName || 'OmniAgent'}</div>
+    <div className="px-4 h-12 border-b border-bgCardAlt bg-bgColumn flex items-center">
+      <div className="flex items-center gap-2">
+        <span className={['inline-block w-2 h-2 rounded-full', connected ? 'bg-successGreen' : 'bg-errorRed'].join(' ')} />
+        <div className="text-base font-semibold text-white">{agentName || 'OmniAgent'}</div>
+      </div>
       {welcomeText ? (
-        <div className="text-sm text-gray-400 mt-1">{welcomeText}</div>
+        <div className="ml-3 text-sm text-textSubtle">{welcomeText}</div>
       ) : null}
     </div>
   )
 }
-

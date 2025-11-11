@@ -213,22 +213,22 @@ export function App() {
   const agentName = 'OmniAgent'
 
   if (ui === 'connecting') {
-    return <div className="app"><Header agentName={agentName} /><div className="p-4 text-sm text-gray-400">Connecting…</div></div>
+    return <div className="app"><Header agentName={agentName} connected={false} /><div className="p-4 text-sm text-textSubtle">Connecting…</div></div>
   }
   if (ui === 'error') {
-    return <div className="app"><Header agentName={agentName} /><div className="p-4 text-sm text-red-400">Failed to connect.</div></div>
+    return <div className="app"><Header agentName={agentName} connected={false} /><div className="p-4 text-sm text-errorRed">Failed to connect.</div></div>
   }
   if (ui === 'resume') {
     return (
       <div className="app">
-        <Header agentName={agentName} />
+        <Header agentName={agentName} connected={connected} />
         <SessionList sessions={sessions} onSelect={handleSelectSession} />
       </div>
     )
   }
   return (
     <div className="app">
-      <Header agentName={agentName} />
+      <Header agentName={agentName} connected={connected} />
       <StatusIndicator connected={connected} thinking={thinking} status={status} />
       <ToolEvents events={toolEvents} />
       <MessageList messages={messages} />

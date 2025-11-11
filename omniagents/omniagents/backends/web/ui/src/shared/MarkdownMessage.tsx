@@ -26,8 +26,8 @@ export function MarkdownMessage({ content, variant = 'assistant', className }: P
   const variantClass = variant === 'user'
     ? 'prose-invert'
     : variant === 'system'
-      ? 'dark:prose-invert'
-      : 'dark:prose-invert'
+      ? 'prose-invert'
+      : 'prose-invert'
 
   return (
     <div className={['prose prose-sm max-w-none', 'prose-p:whitespace-pre-wrap prose-p:break-words', variantClass, className].filter(Boolean).join(' ')}>
@@ -37,4 +37,3 @@ export function MarkdownMessage({ content, variant = 'assistant', className }: P
     </div>
   )
 }
-
