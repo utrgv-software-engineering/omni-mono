@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react'
 import { PromptInput, PromptInputTextarea, PromptInputActions } from './promptkit/PromptInput'
+import { VoiceModal } from './VoiceModal'
 
 export function Input({ disabled, thinking, onStop, onSubmit }:
   { disabled?: boolean; thinking?: boolean; onStop?: () => void; onSubmit: (text: string, files?: File[]) => void }) {
@@ -8,6 +9,7 @@ export function Input({ disabled, thinking, onStop, onSubmit }:
   const [history, setHistory] = useState<string[]>([])
   const [historyIndex, setHistoryIndex] = useState(0)
   const [historyDraft, setHistoryDraft] = useState('')
+  const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false)
   const taRef = useRef<HTMLTextAreaElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -153,7 +155,20 @@ export function Input({ disabled, thinking, onStop, onSubmit }:
               </svg>
             </label>
 
-            {!thinking ? (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsVoiceModalOpen(true)}
+                className="hover:bg-bgCardAlt/50 flex h-8 w-8 items-center justify-center rounded-2xl"
+                aria-label="Voice mode"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" className="text-white" aria-hidden="true">
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" fill="currentColor"/>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none"/>
+                </svg>
+              </button>
+
+              {!thinking ? (
               <button
                 type="button"
                 disabled={!canSend}
@@ -178,10 +193,13 @@ export function Input({ disabled, thinking, onStop, onSubmit }:
                   <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
                 </svg>
               </button>
-            )}
+              )}
+            </div>
           </PromptInputActions>
         </PromptInput>
       </div>
+
+      <VoiceModal isOpen={isVoiceModalOpen} onClose={() => setIsVoiceModalOpen(false)} />
     </div>
   )
 }
