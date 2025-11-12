@@ -16,6 +16,8 @@ export function VoiceModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
   const sessionIdRef = useRef<string | null>(null)
   const scheduledTimeRef = useRef<number>(0)
   const isMutedRef = useRef<boolean>(true)
+  const duplexHoldRef = useRef<boolean>(false)
+  const micDisabledByPlaybackRef = useRef<boolean>(false)
   const debugEnabled = /^(1|true|yes)$/i.test(String(new URL(window.location.href).searchParams.get('debug') || ''))
   const workletUrlRef = useRef<string | null>(null)
 
@@ -32,7 +34,14 @@ export function VoiceModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
     }
 
     // Request microphone access
-    navigator.mediaDevices.getUserMedia({ audio: true })
+    navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+      } as any,
+    })
       .then(async stream => {
         if (!mounted) {
           stream.getTracks().forEach(track => track.stop())
@@ -85,6 +94,7 @@ export function VoiceModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
           const onAudioFloats = (inFloats: Float32Array) => {
             if (!mounted) return
             if (isMutedRef.current) return
+            if (duplexHoldRef.current) return
             const res = resampleTo24k(inFloats, audioContext.sampleRate)
             const q = bufferQueueRef.current
             q.chunks.push(res)
@@ -125,6 +135,7 @@ export function VoiceModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
           proc.onaudioprocess = (ev: AudioProcessingEvent) => {
             if (!mounted) return
             if (isMutedRef.current) return
+            if (duplexHoldRef.current) return
             const inBuf = ev.inputBuffer.getChannelData(0)
             const res = resampleTo24k(inBuf, audioContext.sampleRate)
             const q = bufferQueueRef.current
@@ -260,6 +271,13 @@ export function VoiceModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
     const onEvent = client.on('realtime_event', (p: any) => {
       const t = String(p?.type || '')
       if (debugEnabled) console.log('[ui] event', t, p)
+      if (t === 'realtime_response_start' || t === 'realtime_audio') {
+        duplexHoldRef.current = true
+        try {
+          const tracks = streamRef.current?.getAudioTracks() || []
+          tracks.forEach(tr => { if (tr.enabled) { tr.enabled = false; micDisabledByPlaybackRef.current = true } })
+        } catch {}
+      }
       if (t === 'realtime_audio') {
         const b64 = String(p?.audio_base64 || '')
         if (!b64) return
@@ -286,6 +304,18 @@ export function VoiceModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
           scheduledTimeRef.current = startAt + buffer.duration
           if (debugEnabled) console.log('[ui] play audio', { bytes: bytes.length, samples: samples.length, startAt })
         } catch {}
+      }
+      if (t === 'realtime_audio_end') {
+        setTimeout(() => {
+          duplexHoldRef.current = false
+          try {
+            const tracks = streamRef.current?.getAudioTracks() || []
+            if (micDisabledByPlaybackRef.current) {
+              tracks.forEach(tr => { tr.enabled = true })
+              micDisabledByPlaybackRef.current = false
+            }
+          } catch {}
+        }, 150)
       }
     })
     client.connect()
@@ -350,58 +380,7 @@ export function VoiceModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
               try { await audioContextRef.current?.resume() } catch {}
             }
             if (next) {
-              const q = bufferQueueRef.current
-              const remainingLen = q.length
-              const sid = sessionIdRef.current
-              const client = clientRef.current
-              if (sid && client) {
-                if (remainingLen > 0) {
-                  const finalFloats = new Float32Array(remainingLen)
-                  let offset = 0
-                  while (offset < remainingLen && q.chunks.length) {
-                    const head = q.chunks.shift()!
-                    finalFloats.set(head, offset)
-                    offset += head.length
-                  }
-                  q.length = 0
-                  try {
-                    const int16 = new Int16Array(finalFloats.length)
-                    for (let i = 0; i < finalFloats.length; i++) {
-                      let s = finalFloats[i]
-                      if (s < -1) s = -1
-                      if (s > 1) s = 1
-                      int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff
-                    }
-                    const bytes = new Uint8Array(int16.buffer)
-                    const chunkSize = 8192
-                    let binary = ''
-                    for (let i = 0; i < bytes.length; i += chunkSize) {
-                      const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length))
-                      binary += String.fromCharCode.apply(null, Array.from(chunk))
-                    }
-                    if (debugEnabled) console.log('[ui] commit final audio', { samples: finalFloats.length })
-                    await client.sendAudio(sid, btoa(binary), true)
-                  } catch (error) {
-                    console.error('Failed to commit audio buffer:', error)
-                  }
-                } else {
-                  try {
-                    // commit short silence
-                    const int16 = new Int16Array(240)
-                    const bytes = new Uint8Array(int16.buffer)
-                    const chunkSize = 8192
-                    let binary = ''
-                    for (let i = 0; i < bytes.length; i += chunkSize) {
-                      const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length))
-                      binary += String.fromCharCode.apply(null, Array.from(chunk))
-                    }
-                    if (debugEnabled) console.log('[ui] commit short silence')
-                    await client.sendAudio(sid, btoa(binary), true)
-                  } catch (error) {
-                    console.error('Failed to commit silence buffer:', error)
-                  }
-                }
-              }
+              // No manual commit; rely on server VAD. Just mute capture.
             }
           }}
           className="h-16 w-16 rounded-full bg-tweetBlue hover:brightness-110 flex items-center justify-center shadow-lg"
