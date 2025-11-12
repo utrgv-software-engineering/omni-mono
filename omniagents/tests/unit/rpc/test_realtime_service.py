@@ -15,10 +15,7 @@ def realtime_spec():
     """Create a test agent spec with realtime mode enabled."""
     return AgentSpec(
         name="TestRealtimeAgent",
-        header_title="Test Realtime Agent",
-        page_title="Test",
         welcome_text="Welcome",
-        client_storage_prefix="test",
         get_agent_instructions=lambda: "Test instructions",
         build_agent=None,
         model_name="gpt-4o-realtime-preview",
@@ -58,10 +55,7 @@ def test_realtime_service_requires_realtime_mode():
     """Test that non-realtime spec raises error."""
     spec = AgentSpec(
         name="TextAgent",
-        header_title="Text Agent",
-        page_title="Test",
         welcome_text="Welcome",
-        client_storage_prefix="test",
         get_agent_instructions=lambda: "Test",
         build_agent=None,
         model_name="gpt-4",

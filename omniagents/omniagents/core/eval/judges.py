@@ -201,10 +201,7 @@ async def evaluate_split(
         lbl = agent_cfg.get("label") or nm
         spec = AgentSpec(
             name=nm,
-            header_title=lbl,
-            page_title=lbl,
             welcome_text="",
-            client_storage_prefix="judge.",
             get_agent_instructions=_get_instr,
             build_agent=None,
             available_tools=tools_list,

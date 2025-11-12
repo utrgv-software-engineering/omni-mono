@@ -101,10 +101,7 @@ async def _run_server(app, port):
 async def _integration_flow():
     spec = AgentSpec(
         name="A",
-        header_title="A",
-        page_title="A",
         welcome_text="hi",
-        client_storage_prefix="a.",
         get_agent_instructions=lambda: "instr",
         build_agent=dummy_build_agent,
     )

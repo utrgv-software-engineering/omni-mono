@@ -24,10 +24,7 @@ def make_spec(**overrides):
     """Create a test AgentSpec with optional overrides."""
     base = {
         "name": "agent",
-        "header_title": "header",
-        "page_title": "page",
         "welcome_text": "welcome",
-        "client_storage_prefix": "client",
         "get_agent_instructions": lambda: "",
         "build_agent": None,
         "mcp_servers": overrides.pop("mcp_servers", []),

@@ -25,10 +25,7 @@ from omniagents.core.agents.specs import (
 def make_spec(**overrides):
     base = {
         "name": overrides.pop("name", "Base"),
-        "header_title": "Header",
-        "page_title": "Page",
         "welcome_text": "Welcome",
-        "client_storage_prefix": "client",
         "get_agent_instructions": overrides.pop("get_agent_instructions", lambda: ""),
         "build_agent": overrides.pop("build_agent", None),
     }

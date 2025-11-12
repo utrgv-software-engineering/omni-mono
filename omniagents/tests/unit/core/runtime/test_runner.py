@@ -11,10 +11,7 @@ from omniagents.core.runtime.runner import Runner
 def make_spec(**overrides):
     base = {
         "name": overrides.pop("name", "Agent"),
-        "header_title": "Header",
-        "page_title": "Page",
         "welcome_text": "Welcome",
-        "client_storage_prefix": "client",
         "get_agent_instructions": overrides.pop("get_agent_instructions", lambda: ""),
         "build_agent": overrides.pop("build_agent", None),
     }
@@ -89,7 +86,6 @@ def test_from_agent_configures_safe_options_and_server_functions(monkeypatch):
     assert spec.variables is variables
     assert spec.build_context is build_context
     assert spec.max_turns == 5
-    assert spec.client_storage_prefix == "helper_bot."
     assert spec.agent_slug == "helper_bot"
     assert captured["functions"] == ["fn"]
     assert spec.register_server_functions is not None
@@ -141,7 +137,7 @@ def test_from_remote_uses_env_token(monkeypatch):
     spec = runner.spec
     assert spec.remote_ws_url == "ws://example/ws"
     assert spec.remote_auth_token_key == "REMOTE_TOKEN"
-    assert spec.client_storage_prefix == "remote_agent."
+    assert spec.agent_slug == "remote_agent"
     assert spec.context == {"existing": 1}
     assert spec.variables == {"v": 2}
 

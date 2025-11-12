@@ -319,10 +319,7 @@ async def _run_judges(
             get_instr = lambda: instructions
             spec = AgentSpec(
                 name=agent_cfg.get("name") or f"Judge:{key}",
-                header_title=agent_cfg.get("name") or f"Judge:{key}",
-                page_title=agent_cfg.get("name") or f"Judge:{key}",
                 welcome_text="",
-                client_storage_prefix=f"judge_{key}.",
                 get_agent_instructions=get_instr,
                 build_agent=None,
                 available_tools=[],

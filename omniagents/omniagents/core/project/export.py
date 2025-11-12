@@ -73,10 +73,7 @@ def save_agent_as_py(
         _desc = None
     lines.append(f"    label={_lbl!r},")
     lines.append(f"    description={_desc!r},")
-    lines.append(f"    header_title={spec.header_title!r},")
-    lines.append(f"    page_title={spec.page_title!r},")
     lines.append(f"    welcome_text={spec.welcome_text!r},")
-    lines.append(f"    client_storage_prefix={spec.client_storage_prefix!r},")
     lines.append("    get_agent_instructions=get_agent_instructions,")
     lines.append("    build_agent=None,  # use default internal builder\n")
     tool_names = [t.name for t in tool_funcs]
@@ -103,26 +100,15 @@ def save_agent_as_py(
         )
     lines.append("    ],")
     _proj_slug = getattr(spec, "project_slug", None)
-    _agent_slug = getattr(
-        spec, "agent_slug", None
-    ) or spec.client_storage_prefix.rstrip(".")
+    _agent_slug = getattr(spec, "agent_slug", None)
     lines.append(f"    project_slug={_proj_slug!r},")
     lines.append(f"    agent_slug={_agent_slug!r},")
-    lines.append("    icon_map={")
-    for k, v in raw_cfg.get("icon_map", {}).items():
-        lines.append(f"        {k!r}: {v},")
-    lines.append("    },")
     lines.append("    settings_fields=[")
     for field in spec.settings_fields:
         lines.append(
             f"        SettingField(key={field.key!r}, label={field.label!r}, group={field.group!r}, default={field.default!r}, secret={field.secret}, hint={field.hint!r}),"
         )
     lines.append("    ],")
-    lines.append(f"    page_title_suffix={spec.page_title_suffix!r},")
-    if "theme_color" in raw_cfg:
-        lines.append(f"    theme_color={raw_cfg['theme_color']},")
-    else:
-        lines.append(f"    theme_color={spec.theme_color!r},")
     lines.append(")\n")
     lines.append("if __name__ == '__main__':")
     lines.append("    runner = Runner(spec=spec)")

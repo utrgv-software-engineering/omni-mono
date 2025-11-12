@@ -2,7 +2,6 @@ import yaml
 import os
 import re
 
-# import flet as ft # For theme colors if specified as strings - moved to Flet backend
 from pathlib import Path
 from typing import Dict, Any, List, Callable, Optional, Set
 
@@ -207,20 +206,6 @@ def _load_instructions(config: Dict[str, Any], base_dir: Path) -> Callable[[], s
         return lambda: "You are a helpful assistant."
 
 
-def _parse_theme_color(color_str: Optional[str], default: str) -> str:
-    """Parses a theme color string."""
-    if not color_str:
-        return default
-    # For now, just return the color string as-is (hex codes, color names)
-    # Flet-specific color parsing should be handled by the Flet backend
-    if color_str.startswith("ft.Colors."):
-        print(
-            f"Warning: Flet color constants like '{color_str}' are no longer supported in YAML. Please use hex codes (e.g., '#2196F3') instead."
-        )
-        return default
-    return color_str
-
-
 def _parse_inline_agent_spec(
     config: Dict[str, Any], base_dir: Path, parent_loading_stack: Set[Path]
 ) -> "AgentSpec":
@@ -274,7 +259,8 @@ def _parse_inline_agent_spec(
         safe_tool_patterns=safe_options_config.get("safe_tool_patterns", []),
     )
 
-    storage_prefix = agent_name.lower().replace(" ", "_") + "."
+    # Derive agent_slug from agent name for inline agents
+    inline_agent_slug = agent_name.lower().replace(" ", "_").replace("-", "_")
 
     handoff_configs_list: List[HandoffConfig] = []
     handoffs_config = config.get("handoffs", [])
@@ -350,10 +336,7 @@ def _parse_inline_agent_spec(
     return AgentSpec(
         # Basic Info
         name=agent_name,
-        header_title=agent_name,
-        page_title=agent_name,
         welcome_text=config.get("welcome_text", f"Hello from {agent_name}"),
-        client_storage_prefix=storage_prefix,
         # Agent Config
         get_agent_instructions=instructions_func,
         build_agent=None,
@@ -378,9 +361,7 @@ def _parse_inline_agent_spec(
         # MCP (not supported for inline agents)
         # UI/UX (minimal for inline agents)
         settings_fields=[],
-        theme_color="#2196F3",
-        layout="classic",
-        agent_slug=storage_prefix.rstrip("."),
+        agent_slug=inline_agent_slug,
     )
 
 
@@ -481,8 +462,6 @@ def load_agent_spec_from_yaml(
 
     # --- Extract and Derive Basic Info ---
     agent_name = config.get("name", "Unnamed Agent")
-    header_title = config.get("header_title", agent_name)
-    page_title = config.get("page_title", agent_name)
     max_turns_cfg = config.get("max_turns", 20)
     label_from_yaml = (
         config.get("label") if isinstance(config.get("label"), str) else None
@@ -492,15 +471,12 @@ def load_agent_spec_from_yaml(
         if isinstance(config.get("description"), str)
         else None
     )
-    # Derive default storage prefix if not provided
-    default_storage_prefix = (
-        agent_name.lower().replace(" ", "_").replace("-", "_") + "."
-    )
-    storage_prefix = config.get("client_storage_prefix", default_storage_prefix)
+    # Derive agent_slug from agent name if not provided
+    default_agent_slug = agent_name.lower().replace(" ", "_").replace("-", "_")
+    agent_slug = config.get("agent_slug", default_agent_slug)
     welcome_text = config.get(
         "welcome_text", f"Hello! I'm {agent_name}. How can I help you?"
     )
-    page_title_suffix = config.get("page_title_suffix", "")
     model_name_from_config = config.get("model")  # Get model name from YAML
 
     # --- New Agent Parameters ---
@@ -1223,38 +1199,6 @@ def load_agent_spec_from_yaml(
         # No variables provided, context will be None
         context_config = None
 
-    # --- UI/UX ---
-    icon_map_config = config.get("icon_map", {})
-    processed_icon_map = {}  # Create a new dict for processed icons
-    if not isinstance(icon_map_config, dict):
-        print(
-            f"Warning: 'icon_map' key in {config_path} should be a dictionary. Using empty map."
-        )
-    else:
-        # Icon strings should now be simple string names, not Flet constants
-        for tool_name, icon_str in icon_map_config.items():
-            if isinstance(icon_str, str):
-                if icon_str.startswith("ft.Icons."):
-                    print(
-                        f"Warning: Flet icon constants like '{icon_str}' are no longer supported in YAML. Please use icon names (e.g., 'map', 'search') instead."
-                    )
-                else:
-                    # Store the icon name as a string
-                    processed_icon_map[tool_name] = icon_str
-            else:
-                print(
-                    f"Warning: Icon for tool '{tool_name}' should be a string. Skipping."
-                )
-        # ---------------------------------------------- #
-
-    theme_color_default = "#2196F3"
-    if project_defaults and isinstance(project_defaults.get("theme_color"), str):
-        theme_color_default = project_defaults.get("theme_color")
-    theme_color = _parse_theme_color(config.get("theme_color"), theme_color_default)
-    layout_default = "classic"
-    if project_defaults and isinstance(project_defaults.get("layout"), str):
-        layout_default = project_defaults.get("layout")
-
     # --- Build Agent (Placeholder/Default) ---
     # The actual Agent/SafeAgent creation is deferred to AgentApp using a default builder.
     # We pass None here; AgentApp will use its internal builder.
@@ -1264,10 +1208,7 @@ def load_agent_spec_from_yaml(
     spec = AgentSpec(
         # Basic Info
         name=agent_name,
-        header_title=header_title,
-        page_title=page_title,
         welcome_text=welcome_text,
-        client_storage_prefix=storage_prefix,
         # Agent Config
         get_agent_instructions=get_instructions_func,
         build_agent=build_agent_func,  # Defer to internal builder
@@ -1300,21 +1241,15 @@ def load_agent_spec_from_yaml(
         tracing_config=tracing_config,
         # MCP Config
         # UI/UX Config
-        icon_map=processed_icon_map,  # Pass the processed map
         settings_fields=final_settings_fields,
-        page_title_suffix=page_title_suffix,
-        theme_color=theme_color,
-        layout=config.get("layout", layout_default),
         label=label_from_yaml,
         description=description_from_yaml,
         # Remote agent metadata
         remote_ws_url=remote_ws_url,
         remote_auth_token_key=remote_token_env,
-        # Optional Customizations (Not typically set via simple YAML)
-        header_controls_builder=None,
-        cleanup_handler=None,
+        # Storage Metadata
         project_slug=None,
-        agent_slug=storage_prefix.rstrip("."),
+        agent_slug=agent_slug,
     )
 
     if server_functions_registrar:

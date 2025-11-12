@@ -191,9 +191,6 @@ def load_project(project_path: str) -> ProjectContext:
         proj.get("settings") if isinstance(proj.get("settings"), list) else []
     )
     ui_defaults = {}
-    for k in ("theme_color", "layout", "icon_map"):
-        if k in proj:
-            ui_defaults[k] = proj.get(k)
 
     tool_registry: Dict[str, Any] = {}
 

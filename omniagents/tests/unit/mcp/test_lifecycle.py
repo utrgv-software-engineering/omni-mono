@@ -130,10 +130,7 @@ async def test_stdio_mcp_server_preserves_state_across_runs(monkeypatch):
     # Create agent with stdio MCP server (like Playwright)
     spec = AgentSpec(
         name="test_agent",
-        header_title="Test",
-        page_title="Test",
         welcome_text="Test",
-        client_storage_prefix="test",
         get_agent_instructions=lambda: "You are a helpful assistant with browser access.",
         build_agent=None,
         mcp_servers=[
@@ -250,10 +247,7 @@ async def test_stdio_mcp_different_sessions_get_isolated_instances(monkeypatch):
 
     spec = AgentSpec(
         name="test",
-        header_title="Test",
-        page_title="Test",
         welcome_text="Test",
-        client_storage_prefix="test",
         get_agent_instructions=lambda: "Test",
         build_agent=None,
         mcp_servers=[
@@ -462,10 +456,7 @@ async def default_build_agent(settings, primary_server, stub_app):
 def make_spec(**overrides):
     base = {
         "name": "Agent",
-        "header_title": "Header",
-        "page_title": "Page",
         "welcome_text": "Welcome",
-        "client_storage_prefix": "agent",
         "get_agent_instructions": overrides.pop("get_agent_instructions", lambda: ""),
         "build_agent": overrides.pop("build_agent", default_build_agent),
     }

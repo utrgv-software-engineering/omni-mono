@@ -81,10 +81,7 @@ def auth_context(monkeypatch):
 
     spec = AgentSpec(
         name="AuthAgent",
-        header_title="AuthAgent",
-        page_title="AuthAgent",
         welcome_text="Auth",
-        client_storage_prefix="auth.",
         get_agent_instructions=lambda: "Auth",
         build_agent=mock_build_agent,
     )

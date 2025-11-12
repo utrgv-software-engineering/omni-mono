@@ -17,10 +17,7 @@ def make_agent_spec(**overrides):
 
     spec = AgentSpec(
         name="Test Agent",
-        header_title="Header",
-        page_title="Page",
         welcome_text="Welcome",
-        client_storage_prefix="prefix",
         get_agent_instructions=lambda: "instructions",
         build_agent=overrides.get("build_agent", default_builder),
     )

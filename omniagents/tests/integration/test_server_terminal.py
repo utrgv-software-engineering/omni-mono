@@ -87,10 +87,7 @@ def terminal_context(monkeypatch):
 
     spec = AgentSpec(
         name="TerminalAgent",
-        header_title="TerminalAgent",
-        page_title="TerminalAgent",
         welcome_text="Terminal",
-        client_storage_prefix="terminal.",
         get_agent_instructions=lambda: "Terminal",
         build_agent=mock_build_agent,
     )

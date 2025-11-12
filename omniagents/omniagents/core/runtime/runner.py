@@ -61,8 +61,8 @@ class Runner:
         # This ensures instructions are re-rendered on every run, not just at creation
         agent.instructions = process_instructions(agent.instructions)
 
-        # Generate storage prefix from agent name
-        storage_prefix = name.lower().replace(" ", "_") + "."
+        # Generate agent_slug from agent name
+        agent_slug_value = name.lower().replace(" ", "_").replace("-", "_")
 
         # Build agent function - always store the original agent
         async def _builder(settings: Dict[str, Any], mcp, spec) -> Any:
@@ -83,10 +83,7 @@ class Runner:
         # Create spec from agent
         spec = AgentSpec(
             name=name,
-            header_title=name,
-            page_title=name,
             welcome_text=welcome_text,
-            client_storage_prefix=storage_prefix,
             get_agent_instructions=lambda: agent.instructions,
             build_agent=_builder,  # Always use custom builder
             available_tools=getattr(agent, "tools", []),
@@ -105,7 +102,7 @@ class Runner:
             build_context=build_context,  # Keep factory for server mode
             max_turns=max_turns,  # Pass through max_turns parameter
             project_slug=None,
-            agent_slug=storage_prefix.rstrip("."),
+            agent_slug=agent_slug_value,
         )
         # Optional: attach server functions registrar from callables
         if server_functions:
@@ -162,16 +159,13 @@ class Runner:
         if not auth_token and token_env_var:
             auth_token = os.getenv(token_env_var)
 
-        # Generate storage prefix from agent name
-        storage_prefix = name.lower().replace(" ", "_") + "."
+        # Generate agent_slug from agent name
+        agent_slug_value = name.lower().replace(" ", "_").replace("-", "_")
 
         # Create spec for remote agent with both context and variables
         spec = AgentSpec(
             name=name,
-            header_title=name,
-            page_title=name,
             welcome_text=welcome_text or f"Connected to {name}. Type your message:",
-            client_storage_prefix=storage_prefix,
             get_agent_instructions=lambda: "",  # Not used for remote agents
             build_agent=None,  # Not needed for remote agents
             remote_ws_url=url,
@@ -180,7 +174,7 @@ class Runner:
             variables=variables,
             settings_fields=list(DEFAULT_SETTINGS_FIELDS),
             project_slug=None,
-            agent_slug=storage_prefix.rstrip("."),
+            agent_slug=agent_slug_value,
         )
 
         return cls(spec=spec)

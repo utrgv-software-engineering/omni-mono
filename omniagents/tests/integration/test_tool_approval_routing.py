@@ -33,10 +33,7 @@ class DummyAgent:
 async def test_tool_approval_stays_with_run_channel():
     spec = AgentSpec(
         name="Test",
-        header_title="Test",
-        page_title="Test",
         welcome_text="hi",
-        client_storage_prefix="test",
         get_agent_instructions=lambda: "",
         build_agent=None,
     )
@@ -89,10 +86,7 @@ async def test_tool_approval_stays_with_run_channel():
 async def test_tool_approval_does_not_fall_back_to_unrelated_channel():
     spec = AgentSpec(
         name="Test",
-        header_title="Test",
-        page_title="Test",
         welcome_text="hi",
-        client_storage_prefix="test",
         get_agent_instructions=lambda: "",
         build_agent=None,
     )
@@ -142,10 +136,7 @@ async def test_tool_approval_does_not_fall_back_to_unrelated_channel():
 async def test_tool_approval_requires_session_context():
     spec = AgentSpec(
         name="Test",
-        header_title="Test",
-        page_title="Test",
         welcome_text="hi",
-        client_storage_prefix="test",
         get_agent_instructions=lambda: "",
         build_agent=None,
     )
@@ -160,10 +151,7 @@ async def test_tool_approval_requires_session_context():
 async def test_tool_approval_queues_when_no_channels():
     spec = AgentSpec(
         name="Test",
-        header_title="Test",
-        page_title="Test",
         welcome_text="hi",
-        client_storage_prefix="test",
         get_agent_instructions=lambda: "",
         build_agent=None,
     )
@@ -196,10 +184,7 @@ async def test_tool_approval_queues_when_no_channels():
 async def test_queued_tool_approval_replays_on_start_run(monkeypatch):
     spec = AgentSpec(
         name="Test",
-        header_title="Test",
-        page_title="Test",
         welcome_text="hi",
-        client_storage_prefix="test",
         get_agent_instructions=lambda: "",
         build_agent=None,
     )
@@ -283,10 +268,7 @@ async def test_agent_service_rebuilds_agent_every_run(monkeypatch):
 
     spec = AgentSpec(
         name="Test",
-        header_title="Test",
-        page_title="Test",
         welcome_text="hi",
-        client_storage_prefix="test",
         get_agent_instructions=lambda: "",
         build_agent=builder,
     )
@@ -331,10 +313,7 @@ async def test_tool_approval_requests_stay_with_origin_session(monkeypatch):
 
     spec = AgentSpec(
         name="Test",
-        header_title="Test",
-        page_title="Test",
         welcome_text="hi",
-        client_storage_prefix="test",
         get_agent_instructions=lambda: "",
         build_agent=builder,
     )
@@ -431,10 +410,7 @@ async def test_always_approve_remains_session_local(monkeypatch):
 
     spec = AgentSpec(
         name="Test",
-        header_title="Test",
-        page_title="Test",
         welcome_text="hi",
-        client_storage_prefix="test",
         get_agent_instructions=lambda: "",
         build_agent=builder,
     )

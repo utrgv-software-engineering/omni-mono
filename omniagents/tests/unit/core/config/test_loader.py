@@ -7,7 +7,6 @@ import pytest
 from omniagents.core.config.loader import (
     load_agent_spec_from_yaml,
     _parse_inline_agent_spec,
-    _parse_theme_color,
 )
 
 
@@ -70,7 +69,7 @@ def test_parse_inline_agent_spec_with_all_fields(tmp_path):
     assert spec.safe_agent_options.halt_on_rejection is False
     assert spec.safe_agent_options.safe_tool_names == ["calc"]
     assert spec.safe_agent_options.safe_tool_patterns == ["calc_.*"]
-    assert spec.client_storage_prefix == "helper."
+    assert spec.agent_slug == "helper"
 
 
 def test_parse_inline_agent_spec_supports_nested_inline_handoffs(tmp_path):
@@ -127,21 +126,6 @@ def test_parse_inline_agent_spec_handles_invalid_tools_list(tmp_path, capsys):
     assert spec.available_tools == []
 
 
-def test_parse_theme_color_returns_default_for_none():
-    assert _parse_theme_color(None, "#112233") == "#112233"
-
-
-def test_parse_theme_color_warns_on_flet_constant(capsys):
-    result = _parse_theme_color("ft.Colors.RED", "#abcdef")
-    captured = capsys.readouterr()
-    assert "no longer supported" in captured.out
-    assert result == "#abcdef"
-
-
-def test_parse_theme_color_accepts_hex():
-    assert _parse_theme_color("#123456", "#abcdef") == "#123456"
-
-
 def test_loader_reads_instructions_file(tmp_path):
     yaml_path = tmp_path / "agent.yaml"
     instr_path = tmp_path / "instr.txt"
@@ -162,7 +146,7 @@ def test_loader_reads_instructions_file(tmp_path):
     assert spec.welcome_text == "hi"
     assert spec.model_name == "gpt-4o-mini"
     assert spec.get_agent_instructions() == "Do things"
-    assert spec.client_storage_prefix.startswith("testagent")
+    assert spec.agent_slug.startswith("testagent")
 
 
 def test_loader_substitutes_env_vars_using_dotenv(tmp_path, monkeypatch):
@@ -250,7 +234,6 @@ def test_loader_merges_settings_fields_with_project_defaults(tmp_path):
             {"key": "project_setting", "label": "Project", "default": "project"},
             {"key": "override_me", "label": "Project Override", "default": "project"},
         ],
-        "theme_color": "#445566",
     }
     spec = load_agent_spec_from_yaml(str(yaml_path), project_defaults=project_defaults)
     fields = {field.key: field for field in spec.settings_fields}
@@ -260,7 +243,6 @@ def test_loader_merges_settings_fields_with_project_defaults(tmp_path):
     assert fields["project_setting"].default == "project"
     assert fields["custom_setting"].secret is True
     assert "openai_api_key" in fields
-    assert spec.theme_color == "#445566"
 
 
 def test_loader_raises_with_custom_env_error(tmp_path, monkeypatch):
@@ -365,7 +347,6 @@ def test_loader_discovers_assets_and_applies_config(tmp_path):
         label: Label
         description: Something
         use_safe_agent: false
-        page_title_suffix: Beta
         context_window: 1234
         tools:
           - alpha_tool
@@ -426,15 +407,10 @@ def test_loader_discovers_assets_and_applies_config(tmp_path):
           version: "1"
           variables:
             foo: 1
-        icon_map:
-          alpha_tool: pin
-        theme_color: "#FF0000"
         """,
     )
     project_defaults = {
         "settings": [{"key": "project_setting", "label": "Project"}],
-        "theme_color": "#00FF00",
-        "layout": "tabs",
         "tracing": {"enabled": True},
     }
     existing_modules = set(sys.modules)
@@ -462,10 +438,6 @@ def test_loader_discovers_assets_and_applies_config(tmp_path):
             "version": "1",
             "variables": {"foo": 1},
         }
-        assert spec.icon_map == {"alpha_tool": "pin"}
-        assert spec.theme_color == "#FF0000"
-        assert spec.layout == "tabs"
-        assert spec.page_title_suffix == "Beta"
         assert spec.context_window == 1234
         assert spec.tracing_config == {"enabled": True}
         assert spec.mcp_config == {"endpoint": "http://mcp"}
@@ -479,8 +451,7 @@ def test_loader_discovers_assets_and_applies_config(tmp_path):
         assert spec.get_agent_instructions() == "Inline instructions"
         assert spec.description == "Something"
         assert spec.label == "Label"
-        assert spec.client_storage_prefix.startswith("complexagent")
-        assert spec.agent_slug == "complexagent"
+        assert spec.agent_slug.startswith("complexagent")
         keys = {field.key for field in spec.settings_fields}
         assert {
             "openai_base_url",

@@ -327,10 +327,7 @@ class OmniAgentsJudgeAdapter:
             pass
         spec = AgentSpec(
             name=nm,
-            header_title=lbl,
-            page_title=lbl,
             welcome_text="",
-            client_storage_prefix=f"judge_{self.judge_key}.",
             get_agent_instructions=_get_instr,
             build_agent=None,
             available_tools=tools_list,
@@ -830,10 +827,7 @@ class OmniAgentsJudgeAdapter:
 
         spec = AgentSpec(
             name=agent_cfg.get("name") or f"Optimizer:{self.optimizer_key}",
-            header_title=agent_cfg.get("name") or f"Optimizer:{self.optimizer_key}",
-            page_title=agent_cfg.get("name") or f"Optimizer:{self.optimizer_key}",
             welcome_text="",
-            client_storage_prefix=f"optimizer_{self.optimizer_key}.",
             get_agent_instructions=_get_instr,
             build_agent=None,
             available_tools=[],

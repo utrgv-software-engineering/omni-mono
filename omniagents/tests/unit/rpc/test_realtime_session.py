@@ -25,10 +25,7 @@ def realtime_spec():
     """Create a test agent spec with realtime mode enabled."""
     return AgentSpec(
         name="TestRealtimeAgent",
-        header_title="Test Realtime Agent",
-        page_title="Test",
         welcome_text="Welcome",
-        client_storage_prefix="test",
         get_agent_instructions=lambda: "Test instructions",
         build_agent=None,
         model_name="gpt-4o-realtime-preview",
@@ -90,10 +87,7 @@ def test_realtime_session_requires_realtime_mode():
     """Test that non-realtime spec raises error."""
     spec = AgentSpec(
         name="TextAgent",
-        header_title="Text Agent",
-        page_title="Test",
         welcome_text="Welcome",
-        client_storage_prefix="test",
         get_agent_instructions=lambda: "Test",
         build_agent=None,
         model_name="gpt-4",
@@ -500,10 +494,7 @@ async def test_start_session_with_handoffs(settings_with_key):
     # Create handoff agent spec
     handoff_spec = AgentSpec(
         name="HandoffAgent",
-        header_title="Handoff Agent",
-        page_title="Test",
         welcome_text="Welcome",
-        client_storage_prefix="test_handoff",
         get_agent_instructions=lambda: "Handoff agent instructions",
         build_agent=None,
         model_name="gpt-4o",
@@ -513,10 +504,7 @@ async def test_start_session_with_handoffs(settings_with_key):
     # Create main spec with handoff config
     main_spec = AgentSpec(
         name="MainRealtimeAgent",
-        header_title="Main Realtime Agent",
-        page_title="Test",
         welcome_text="Welcome",
-        client_storage_prefix="test_main",
         get_agent_instructions=lambda: "Main agent instructions",
         build_agent=None,
         model_name="gpt-4o-realtime-preview",
@@ -561,10 +549,7 @@ async def test_stream_handoff_events(settings_with_key):
     # Create simple spec
     spec = AgentSpec(
         name="TestAgent",
-        header_title="Test",
-        page_title="Test",
         welcome_text="Welcome",
-        client_storage_prefix="test",
         get_agent_instructions=lambda: "Test",
         build_agent=None,
         model_name="gpt-4o-realtime-preview",
@@ -628,10 +613,7 @@ async def test_start_session_with_tools_and_handoffs(settings_with_key):
 
     handoff_spec = AgentSpec(
         name="HandoffAgent",
-        header_title="Handoff Agent",
-        page_title="Test",
         welcome_text="Welcome",
-        client_storage_prefix="test_handoff",
         get_agent_instructions=lambda: "Handoff agent",
         build_agent=None,
         model_name="gpt-4o",
@@ -640,10 +622,7 @@ async def test_start_session_with_tools_and_handoffs(settings_with_key):
 
     main_spec = AgentSpec(
         name="MainAgent",
-        header_title="Main Agent",
-        page_title="Test",
         welcome_text="Welcome",
-        client_storage_prefix="test_main",
         get_agent_instructions=lambda: "Main agent",
         build_agent=None,
         model_name="gpt-4o-realtime-preview",
@@ -693,10 +672,7 @@ async def test_start_session_with_guardrails(settings_with_key):
     # Create spec with guardrails
     spec = AgentSpec(
         name="GuardrailAgent",
-        header_title="Guardrail Agent",
-        page_title="Test",
         welcome_text="Welcome",
-        client_storage_prefix="test_guardrail",
         get_agent_instructions=lambda: "Agent with guardrails",
         build_agent=None,
         model_name="gpt-4o-realtime-preview",
@@ -730,10 +706,7 @@ async def test_stream_guardrail_tripped_event(settings_with_key):
     """Test streaming guardrail_tripped events."""
     spec = AgentSpec(
         name="TestAgent",
-        header_title="Test",
-        page_title="Test",
         welcome_text="Welcome",
-        client_storage_prefix="test",
         get_agent_instructions=lambda: "Test",
         build_agent=None,
         model_name="gpt-4o-realtime-preview",
@@ -797,10 +770,7 @@ async def test_start_session_with_tools_handoffs_and_guardrails(settings_with_ke
 
     handoff_spec = AgentSpec(
         name="HandoffAgent",
-        header_title="Handoff Agent",
-        page_title="Test",
         welcome_text="Welcome",
-        client_storage_prefix="test_handoff",
         get_agent_instructions=lambda: "Handoff agent",
         build_agent=None,
         model_name="gpt-4o",
@@ -809,10 +779,7 @@ async def test_start_session_with_tools_handoffs_and_guardrails(settings_with_ke
 
     main_spec = AgentSpec(
         name="MainAgent",
-        header_title="Main Agent",
-        page_title="Test",
         welcome_text="Welcome",
-        client_storage_prefix="test_main",
         get_agent_instructions=lambda: "Main agent",
         build_agent=None,
         model_name="gpt-4o-realtime-preview",

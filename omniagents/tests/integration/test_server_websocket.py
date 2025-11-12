@@ -42,10 +42,7 @@ class TestServerIntegration:
         """Create a test app with mocked agent."""
         spec = AgentSpec(
             name="TestAgent",
-            header_title="Test Agent",
-            page_title="Test Agent",
             welcome_text="Welcome to Test Agent",
-            client_storage_prefix="test.",
             get_agent_instructions=lambda: "Test instructions",
             build_agent=mock_build_agent,
         )

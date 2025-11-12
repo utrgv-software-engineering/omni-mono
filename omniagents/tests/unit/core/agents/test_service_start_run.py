@@ -29,10 +29,7 @@ async def default_build_agent(settings, primary_server, stub_app):
 def make_spec(**overrides):
     base = {
         "name": "Agent",
-        "header_title": "Header",
-        "page_title": "Page",
         "welcome_text": "Welcome",
-        "client_storage_prefix": "agent",
         "get_agent_instructions": overrides.pop("get_agent_instructions", lambda: ""),
         "build_agent": overrides.pop("build_agent", default_build_agent),
     }

@@ -10,10 +10,7 @@ from omniagents.core.agents.specs import AgentSpec
 async def test_archive_session_triggers_terminal_cleanup(temp_history_db):
     spec = AgentSpec(
         name="name",
-        header_title="header",
-        page_title="page",
         welcome_text="welcome",
-        client_storage_prefix="client",
         get_agent_instructions=lambda: "",
         build_agent=None,
     )
@@ -50,10 +47,7 @@ def test_safe_slug_variants(value, fallback, expected):
 def make_spec():
     return AgentSpec(
         name="name",
-        header_title="header",
-        page_title="page",
         welcome_text="welcome",
-        client_storage_prefix="client",
         get_agent_instructions=lambda: "",
         build_agent=None,
     )

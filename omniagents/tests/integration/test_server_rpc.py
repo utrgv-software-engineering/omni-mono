@@ -24,10 +24,7 @@ async def fake_stream_agent(agent, prompt, sess, channel, max_turns=20):
 def test_rpc_methods(monkeypatch):
     spec = AgentSpec(
         name="A",
-        header_title="A",
-        page_title="A",
         welcome_text="hi",
-        client_storage_prefix="a.",
         get_agent_instructions=lambda: "instr",
         build_agent=dummy_build_agent,
     )
@@ -119,10 +116,7 @@ def _wait_for_result(ws, target_id):
 def test_concurrent_websocket_connections(monkeypatch):
     spec = AgentSpec(
         name="B",
-        header_title="B",
-        page_title="B",
         welcome_text="hi",
-        client_storage_prefix="b.",
         get_agent_instructions=lambda: "instr",
         build_agent=dummy_build_agent,
     )
@@ -184,10 +178,7 @@ def test_concurrent_websocket_connections(monkeypatch):
 def test_connection_cleanup_resets_channel(monkeypatch):
     spec = AgentSpec(
         name="C",
-        header_title="C",
-        page_title="C",
         welcome_text="hi",
-        client_storage_prefix="c.",
         get_agent_instructions=lambda: "instr",
         build_agent=dummy_build_agent,
     )

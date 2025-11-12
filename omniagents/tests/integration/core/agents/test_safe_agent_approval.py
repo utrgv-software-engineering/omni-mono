@@ -90,10 +90,7 @@ def build_spec(
 
     return AgentSpec(
         name="safe",
-        header_title="safe",
-        page_title="safe",
         welcome_text="",
-        client_storage_prefix="safe",
         get_agent_instructions=lambda: "assist",
         build_agent=build_agent,
     )

@@ -542,10 +542,7 @@ class OmniAgentsAgentAdapter:
 
         spec = AgentSpec(
             name=agent_cfg.get("name") or f"Optimizer:{self.optimizer_key}",
-            header_title=agent_cfg.get("name") or f"Optimizer:{self.optimizer_key}",
-            page_title=agent_cfg.get("name") or f"Optimizer:{self.optimizer_key}",
             welcome_text="",
-            client_storage_prefix=f"optimizer_{self.optimizer_key}.",
             get_agent_instructions=_get_instr,
             build_agent=None,
             available_tools=[],

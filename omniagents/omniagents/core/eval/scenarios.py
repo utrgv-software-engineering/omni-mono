@@ -200,10 +200,7 @@ async def _build_generator_agent(
 
     spec = AgentSpec(
         name=agent_cfg.get("name") or "PromptGenerator",
-        header_title=agent_cfg.get("name") or "PromptGenerator",
-        page_title=agent_cfg.get("name") or "PromptGenerator",
         welcome_text="",
-        client_storage_prefix="generator.",
         get_agent_instructions=_get_instr,
         build_agent=None,
         available_tools=[],

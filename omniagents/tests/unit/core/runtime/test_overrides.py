@@ -7,10 +7,7 @@ from omniagents.core.runtime.overrides import apply_cli_overrides
 def make_spec():
     return AgentSpec(
         name="Agent",
-        header_title="Header",
-        page_title="Page",
         welcome_text="Welcome",
-        client_storage_prefix="client",
         get_agent_instructions=lambda: "",
         build_agent=None,
     )

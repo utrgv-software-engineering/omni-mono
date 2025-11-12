@@ -42,10 +42,7 @@ def realtime_spec():
     """Create a test realtime agent spec."""
     return AgentSpec(
         name="TestRealtimeAgent",
-        header_title="Test Realtime Agent",
-        page_title="Test",
         welcome_text="Welcome",
-        client_storage_prefix="test",
         get_agent_instructions=lambda: "Test instructions",
         build_agent=None,
         model_name="gpt-4o-realtime-preview",

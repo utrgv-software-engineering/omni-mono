@@ -61,14 +61,11 @@ export function App() {
         try { await client.clientFunctions(1, [{ name: 'ui.request_tool_approval' }, { name: 'ui.set_status' }]) } catch {}
         try {
           const info = await client.getAgentInfo()
-          const headerRaw = String(info?.header_title || info?.name || 'OmniAgent')
-          const header = normalizeAgentName(headerRaw)
-          setAgentName(header)
+          const agentName = normalizeAgentName(String(info?.name || 'OmniAgent'))
+          setAgentName(agentName)
           const wt = info?.welcome_text ? String(info.welcome_text) : undefined
           setWelcomeText(wt)
-          const titleBase = String(info?.page_title || header)
-          const suffix = info?.page_title_suffix ? String(info.page_title_suffix) : ''
-          document.title = suffix ? `${titleBase} ${suffix}` : titleBase
+          document.title = agentName
         } catch {}
         const url = new URL(window.location.href)
         const resume = url.searchParams.get('resume') === 'true'

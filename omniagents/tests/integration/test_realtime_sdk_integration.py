@@ -66,10 +66,7 @@ class TestRealSDKIntegration:
         """Create a test agent spec."""
         return AgentSpec(
             name="TestAgent",
-            header_title="Test",
-            page_title="Test",
             welcome_text="Welcome",
-            client_storage_prefix="test",
             get_agent_instructions=lambda: "You are a test agent",
             build_agent=None,
             model_name="gpt-4o-realtime-preview",

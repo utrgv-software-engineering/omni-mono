@@ -2093,11 +2093,9 @@ def build_playground_spec(
     spec = replace(
         base_spec,
         name=f"{base_spec.name}_playground" if base_spec.name else "playground_agent",
-        header_title="OmniAgents Playground",
-        page_title="OmniAgents Playground",
         welcome_text=base_spec.welcome_text,
-        client_storage_prefix="playground.",
         get_agent_instructions=_instructions_supplier,
+        agent_slug="playground",
         available_tools=selected_tools,
         model_name=config.get("model") or base_spec.model_name,
         model_settings=model_settings or None,

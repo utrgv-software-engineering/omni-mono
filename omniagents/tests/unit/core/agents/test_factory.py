@@ -11,10 +11,7 @@ from omniagents.core.agents.specs import AgentSpec, SettingField
 def make_spec(**overrides):
     base = {
         "name": "agent",
-        "header_title": "header",
-        "page_title": "page",
         "welcome_text": "welcome",
-        "client_storage_prefix": "client",
         "get_agent_instructions": lambda: "",
         "build_agent": None,
         "settings_fields": overrides.pop("settings_fields", []),

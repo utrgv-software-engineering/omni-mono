@@ -1361,15 +1361,7 @@ class AgentService(RpcMethodsBase):
         spec = self.spec
         try:
             info["name"] = getattr(spec, "name", None)
-            info["header_title"] = getattr(spec, "header_title", None) or getattr(
-                spec, "name", None
-            )
-            info["page_title"] = getattr(spec, "page_title", None) or getattr(
-                spec, "name", None
-            )
             info["welcome_text"] = getattr(spec, "welcome_text", None)
-            info["page_title_suffix"] = getattr(spec, "page_title_suffix", None)
-            info["theme_color"] = getattr(spec, "theme_color", None)
         except Exception:
             pass
         _debug_rpc("get_agent_info", info)

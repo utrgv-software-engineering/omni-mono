@@ -25,10 +25,7 @@ def test_register_server_functions_failure(capsys):
 
     spec = AgentSpec(
         name="UnitAgent",
-        header_title="UnitAgent",
-        page_title="UnitAgent",
         welcome_text="Unit",
-        client_storage_prefix="unit.",
         get_agent_instructions=lambda: "Unit",
         build_agent=stub_build_agent,
         register_server_functions=failing_registrar,

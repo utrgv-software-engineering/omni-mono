@@ -154,10 +154,7 @@ class AgentSpec:
 
     # --- Basic App Info ---
     name: str
-    header_title: str
-    page_title: str
     welcome_text: str
-    client_storage_prefix: str
 
     # --- Agent Configuration ---
     get_agent_instructions: Callable[[], str]
@@ -225,13 +222,7 @@ class AgentSpec:
     # --- MCP Configuration ---
 
     # --- UI/UX Configuration ---
-    icon_map: Dict[str, str] = field(default_factory=dict)
     settings_fields: List[SettingField] = field(default_factory=list)
-    page_title_suffix: str = ""
-    theme_color: str = "#2196F3"  # Material Blue color
-    # Layout mode for GUI. 'classic' shows all events in a single list,
-    # 'tabs' splits conversation and logs into separate tabs.
-    layout: str = "classic"
 
     # --- Remote Agent (optional) --- #
     remote_ws_url: str | None = (
@@ -246,10 +237,6 @@ class AgentSpec:
     # server functions (via AgentService.register_server_function). This allows
     # examples to inject custom functions without modifying core server code.
     register_server_functions: Optional[Callable[[Any], None]] = None
-
-    # --- Optional App-Specific Customization ---
-    header_controls_builder: Optional[Callable[["AgentApp"], List[ft.Control]]] = None
-    cleanup_handler: Optional[Callable[[], Awaitable[None]]] = None
 
     # --- Optional Metadata ---
     label: Optional[str] = None
