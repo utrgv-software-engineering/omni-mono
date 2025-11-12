@@ -7,9 +7,9 @@ Only two tools are exposed to encourage chaining: `geocode` then `get_weather`.
 ## Usage (Python)
 
 ```bash
-python examples/weather_agent/agent.py --mode cli
-# or GUI
-python examples/weather_agent/agent.py --mode gui
+python examples/weather_agent/agent.py
+# or terminal interface
+python examples/weather_agent/agent.py --mode ink
 # or JSON‑RPC server
 python examples/weather_agent/agent.py --mode server -p 8000
 ```
@@ -17,7 +17,7 @@ python examples/weather_agent/agent.py --mode server -p 8000
 ## Usage (YAML)
 
 ```bash
-python -m omniagents.cli run -P examples/weather_agent/project.yml --mode cli
+python -m omniagents.cli run -P examples/weather_agent/project.yml
 ```
 
 Ask things like: "Weather in Paris" or "What’s the weather in New York?"

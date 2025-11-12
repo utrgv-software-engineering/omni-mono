@@ -2,61 +2,60 @@
 
 OmniAgents supports multiple interface modes to suit different use cases.
 
-## CLI Mode
+## Web Mode (Default)
 
-Text-based chat in the terminal:
+Browser-based interface:
 
 ```bash
-omniagents run -P agent.yml --mode cli
+omniagents run -P agent.yml --mode web
 ```
 
 **Features:**
-- Simple text interface
-- Session persistence in SQLite
-- Resume with `--session-id <id>`
-
-**Use Cases:**
-- Remote servers
-- Automation scripts
-- Quick testing
-
-## TUI Mode (Bubble Tea)
-
-Rich terminal UI built with Go:
-
-```bash
-omniagents run -P agent.yml --mode tui
-```
-
-**Features:**
-- Interactive TUI with keyboard navigation
-- Session picker with `--resume` flag
+- Modern web interface
+- Visual tool approval dialogs
+- Session management
 - Real-time message streaming
-- Native performance
 
 **Use Cases:**
 - Local development
-- Terminal enthusiasts
-- SSH sessions
+- End-user interfaces
+- Visual feedback and interaction
 
-## GUI Mode (Flet)
+## Ink Mode
 
-Cross-platform desktop interface:
+Terminal UI built with React:
 
 ```bash
-omniagents run -P agent.yml --mode gui
+omniagents run -P agent.yml --mode ink
 ```
 
 **Features:**
-- Visual interface with tabs and panels
-- Settings management
-- Local storage persistence
-- Browser-based rendering
+- React-based terminal rendering
+- Modern component architecture
+- Interactive terminal UI
 
 **Use Cases:**
-- Desktop applications
-- End-user interfaces
-- Visual tool approval
+- Node.js environments
+- Terminal-based workflows
+- React developers
+
+## Voice Mode
+
+Voice-based interaction:
+
+```bash
+omniagents run -P agent.yml --mode voice
+```
+
+**Features:**
+- Voice input and output
+- Real-time audio processing
+- Natural conversation flow
+
+**Use Cases:**
+- Hands-free operation
+- Voice assistants
+- Accessibility
 
 ## Server Mode
 
@@ -79,29 +78,13 @@ omniagents run -P agent.yml --mode server --host 0.0.0.0 --port 8000
 
 See [RPC Protocol](../api/rpc-protocol.md) for protocol details.
 
-## Ink Mode (React)
-
-Terminal UI built with React:
-
-```bash
-omniagents run -P agent.yml --mode ink
-```
-
-**Features:**
-- React-based terminal rendering
-- Modern component architecture
-
-**Use Cases:**
-- Node.js environments
-- React developers
-
 ## Choosing a Mode
 
 | Mode | Use Case | Pros | Cons |
 |------|----------|------|------|
-| CLI | Automation, scripts | Simple, lightweight | Basic interface |
-| TUI | Local development | Rich UI, fast | Terminal only |
-| GUI | End users | Visual, friendly | Heavier |
+| Web | Local development, end users | Visual, feature-rich | Browser required |
+| Ink | Terminal workflows | Lightweight, modern UI | Terminal only |
+| Voice | Hands-free, accessibility | Natural interaction | Requires audio setup |
 | Server | Web apps, remote | Flexible, remote | Requires client |
 
 ## Session Management

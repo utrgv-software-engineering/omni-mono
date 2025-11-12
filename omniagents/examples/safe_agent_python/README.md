@@ -10,7 +10,7 @@ This example is similar to the basic Python demo but runs the agent with the Saf
 ## Usage
 
 ```bash
-python agent.py --mode cli       # command line interface with approval prompts
-python agent.py --mode gui       # Flet GUI with approval cards
+python agent.py                  # web interface with approval dialogs (default)
 python agent.py --mode server    # JSON-RPC server requiring approvals
+python agent.py --mode ink       # terminal interface with approval prompts
 ```

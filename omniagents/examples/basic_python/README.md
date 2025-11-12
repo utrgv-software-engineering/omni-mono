@@ -10,7 +10,7 @@ This example shows how to create an OmniAgents app directly in Python with custo
 ## Usage
 
 ```bash
-python agent.py --mode cli       # command line interface
-python agent.py --mode gui       # Flet GUI
+python agent.py                  # web interface (default)
 python agent.py --mode server    # JSON‑RPC server
+python agent.py --mode ink       # terminal interface
 ```

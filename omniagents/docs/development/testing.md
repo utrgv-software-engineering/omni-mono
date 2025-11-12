@@ -1,6 +1,6 @@
 # Testing
 
-OmniAgents uses pytest for testing with comprehensive coverage across Python, Go, and JavaScript components.
+OmniAgents uses pytest for testing with comprehensive coverage across Python and JavaScript components.
 
 ## Running Tests
 
@@ -126,7 +126,6 @@ make coverage-all
 
 This runs:
 - Python coverage (pytest)
-- Go coverage (Bubble Tea TUI)
 - Web coverage (Vitest)
 
 ### Python Coverage
@@ -142,21 +141,13 @@ View HTML report:
 open htmlcov/index.html
 ```
 
-### Go Coverage (Bubble Tea TUI)
-
-```bash
-make coverage-go
-```
-
-Coverage for the Go-based TUI backend.
-
 ### Web Coverage (React/Vitest)
 
 ```bash
 make coverage-web
 ```
 
-Coverage for Studio web UIs.
+Coverage for Studio web UIs and Ink TUI.
 
 ## Test Categories
 
@@ -255,7 +246,6 @@ testpaths = ["tests"]
 branch = true
 source = ["omniagents"]
 omit = [
-    "omniagents/backends/bubbletea/cmd/omni-tui/*",
     "omniagents/backends/ink/tui/*",
 ]
 ```

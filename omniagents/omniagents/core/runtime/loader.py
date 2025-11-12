@@ -32,12 +32,7 @@ def load_backend(backend_name: str) -> Optional[Any]:
 
     # Fallback to direct import for backward compatibility
     backend_modules = {
-        "cli": "omniagents.backends.cli:CLIBackend",
-        "flet": "omniagents.backends.flet:FletBackend",
-        "gui": "omniagents.backends.flet:FletBackend",  # Alias for flet
         "server": "omniagents.backends.server:ServerBackend",
-        "bubbletea": "omniagents.backends.bubbletea:BubbleTeaBackend",
-        "tui": "omniagents.backends.bubbletea:BubbleTeaBackend",  # Alias for bubbletea
         "ink": "omniagents.backends.ink:InkBackend",
         "voice": "omniagents.backends.voice:VoiceBackend",
         "web": "omniagents.backends.web:WebBackend",

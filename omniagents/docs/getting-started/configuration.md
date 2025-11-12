@@ -56,9 +56,9 @@ OPENAI_BASE_URL=https://your-custom-endpoint.com/v1
   OPENAI_BASE_URL=https://api.provider.com/v1
   ```
 
-### GUI Settings
+### Web Settings
 
-When using GUI mode, you can enter API keys in the settings screen. These are persisted in browser local storage.
+When using web mode, you can enter API keys in the settings screen. These are persisted in browser local storage.
 
 ## Project Configuration
 
@@ -173,21 +173,13 @@ Resume a previous conversation using the session ID:
 
 ```bash
 # From within project directory
-omniagents run --mode cli --session-id <session-id>
+omniagents run --session-id <session-id>
 
 # Or from outside project directory
-omniagents run -P /path/to/myproject --mode cli --session-id <session-id>
+omniagents run -P /path/to/myproject --session-id <session-id>
 ```
 
-In TUI mode, use the `--resume` flag to open a session picker:
-
-```bash
-# From within project directory
-omniagents run --mode tui --resume
-
-# Or from outside project directory
-omniagents run -P /path/to/myproject --mode tui --resume
-```
+In web mode, use the session management UI to browse and resume sessions.
 
 ## Tracing Configuration
 
@@ -297,14 +289,14 @@ OmniAgents runs projects, not individual agent files. When you're inside a proje
 # Navigate to your project directory
 cd /path/to/myproject
 
-# Run the default agent in TUI mode (default)
+# Run the default agent in web mode (default)
 omniagents run
 
-# Run in CLI mode
-omniagents run --mode cli
+# Run in ink mode
+omniagents run --mode ink
 
-# Run in GUI mode
-omniagents run --mode gui
+# Run in voice mode
+omniagents run --mode voice
 
 # Run in server mode
 omniagents run --mode server

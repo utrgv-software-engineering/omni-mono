@@ -20,11 +20,6 @@ dependencies = [
 omniagents = "omniagents.cli:main"
 
 [project.optional-dependencies]
-cli = []  # CLI has no extra dependencies
-flet = [
-    "flet[all]==0.27.6",
-]
-gui = ["omniagents[flet]"]  # Alias for flet
 studio = [
     "httpx>=0.27.0",
 ]
@@ -47,7 +42,7 @@ studio-server = [
 docs = [
     "mkdocs-material>=9.5.0",
 ]
-all = ["omniagents[cli,flet,server,voice,web,studio,studio-server]"]
+all = ["omniagents[server,voice,web,studio,studio-server]"]
 dev = [
     "pytest",
     "pytest-asyncio",
@@ -68,7 +63,6 @@ testpaths = ["tests"]
 branch = true
 source = ["omniagents"]
 omit = [
-    "omniagents/backends/bubbletea/cmd/omni-tui/*",
     "omniagents/backends/ink/tui/*",
 ]
 
@@ -101,12 +95,8 @@ exclude = '''
 '''
 
 [project.entry-points."omniagents.backends"]
-cli = "omniagents.backends.cli:CLIBackend"
-flet = "omniagents.backends.flet:FletBackend"
-gui = "omniagents.backends.flet:FletBackend"
 server = "omniagents.backends.server:ServerBackend"
 ink = "omniagents.backends.ink:InkBackend"
-tui = "omniagents.backends.bubbletea:BubbleTeaBackend"
 voice = "omniagents.backends.voice:VoiceBackend"
 web = "omniagents.backends.web:WebBackend"
 
@@ -134,16 +124,6 @@ include = ["omniagents*"]
 include-package-data = true
 
 [tool.setuptools.package-data]
-# Ensure the Bubble Tea TUI Go sources and auxiliary files are included in wheels/sdists
-"omniagents.backends.bubbletea" = [
-    "README.md",
-    "cmd/omni-tui/*.go",
-    "cmd/omni-tui/go.mod",
-    "cmd/omni-tui/go.sum",
-    "cmd/omni-tui/themes/*",
-    "vendor/*",
-    "vendor/*/*",
-]
 # Ensure the Ink TUI TypeScript sources are included in wheels/sdists
 "omniagents.backends.ink" = [
     "tui/package.json",

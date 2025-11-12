@@ -166,9 +166,9 @@ def main():
     run_parser.add_argument(
         "--mode",
         "-m",
-        choices=["gui", "cli", "server", "bubbletea", "tui", "ink", "voice", "web"],
-        default="tui",
-        help="Run mode: 'tui' (default) for Bubble Tea TUI, 'ink' for React Ink TUI, 'web' for React web UI, 'gui' for graphical UI, 'cli' for command-line interface, 'server' for JSON-RPC server, 'voice' for push-to-talk voice interaction",
+        choices=["server", "ink", "voice", "web"],
+        default="web",
+        help="Run mode: 'web' (default) for React web UI, 'ink' for React Ink TUI, 'server' for JSON-RPC server, 'voice' for push-to-talk voice interaction",
     )
     run_parser.add_argument(
         "--project", "-P", type=str, help="Path to project.yml (dbt-style)."
@@ -634,9 +634,9 @@ def main():
     agent_run.add_argument(
         "--mode",
         "-m",
-        choices=["gui", "cli", "server", "bubbletea", "tui", "web"],
-        default="tui",
-        help="Run mode: 'tui' (default) for Bubble Tea TUI, 'web' for React web UI, 'gui' for graphical UI, 'cli' for command-line interface, 'server' for JSON-RPC server",
+        choices=["server", "ink", "voice", "web"],
+        default="web",
+        help="Run mode: 'web' (default) for React web UI, 'ink' for React Ink TUI, 'server' for JSON-RPC server, 'voice' for push-to-talk voice interaction",
     )
     agent_run.add_argument(
         "--project", "-P", type=str, help="Path to project.yml (dbt-style)."
@@ -1109,9 +1109,6 @@ def main():
         Debug.init(cli_flag=args.debug)
 
         resume_flag = bool(getattr(args, "resume", False))
-        if resume_flag and args.mode not in ("bubbletea", "tui"):
-            print("Error: --resume is only supported in Bubble Tea TUI mode.")
-            sys.exit(2)
 
         initial_prompt = _merge_prompt_words(getattr(args, "prompt", None))
 
@@ -1318,9 +1315,6 @@ def main():
                     sys.exit(2)
             Debug.init(cli_flag=args.debug)
             resume_flag = bool(getattr(args, "resume", False))
-            if resume_flag and args.mode not in ("bubbletea", "tui"):
-                print("Error: --resume is only supported in Bubble Tea TUI mode.")
-                sys.exit(2)
             initial_prompt = _merge_prompt_words(getattr(args, "prompt", None))
 
             kwargs = {

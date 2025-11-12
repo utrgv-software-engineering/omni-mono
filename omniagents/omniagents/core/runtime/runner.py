@@ -227,7 +227,7 @@ class Runner:
         common_group.add_argument(
             "--mode",
             "-m",
-            choices=["gui", "cli", "server", "bubbletea", "tui"],
+            choices=["server", "ink", "voice", "web"],
             default=default_mode,
             help=f"Execution mode (default: {default_mode})",
         )
@@ -237,7 +237,7 @@ class Runner:
         common_group.add_argument(
             "--resume",
             action="store_true",
-            help="Show TUI session picker (Bubble Tea mode only).",
+            help="Resume previous session.",
         )
 
         # SafeAgent control arguments (strict)
@@ -292,20 +292,11 @@ class Runner:
         }
 
         resume_flag = bool(getattr(args, "resume", False))
-        if resume_flag and args.mode not in ("bubbletea", "tui"):
-            print("Error: --resume is only supported in Bubble Tea TUI mode.")
-            sys.exit(2)
         if resume_flag:
             kwargs["resume"] = True
 
         # Add mode-specific kwargs
-        if args.mode == "cli":
-            kwargs.update(
-                {
-                    "session_id": args.session_id,
-                }
-            )
-        elif args.mode == "server":
+        if args.mode == "server":
             kwargs.update(
                 {
                     "host": args.host,

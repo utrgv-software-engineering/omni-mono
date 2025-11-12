@@ -8,8 +8,7 @@ Thank you for your interest in contributing to OmniAgents!
 
 - Python 3.11 or higher
 - Git
-- Go 1.21+ (for Bubble Tea TUI development)
-- Node.js/npm (for web UI development)
+- Node.js/npm (for web UI and Ink development)
 
 ### Installation
 
@@ -70,7 +69,7 @@ mypy omniagents
 ### Coverage
 
 ```bash
-# All coverage (Python, Web, Go)
+# All coverage (Python, Web)
 make coverage-all
 
 # Python only
@@ -78,9 +77,6 @@ make coverage-python
 
 # Web only
 make coverage-web
-
-# Go (Bubble Tea TUI) only
-make coverage-go
 ```
 
 ## Project Structure
@@ -209,24 +205,9 @@ Visit `http://127.0.0.1:8000` to view local documentation.
 
 ## Multi-Language Components
 
-### Go (Bubble Tea TUI)
+### JavaScript/React (Web UI)
 
-Located in `omniagents/backends/bubbletea/cmd/omni-tui/`
-
-Build:
-```bash
-cd omniagents/backends/bubbletea/cmd/omni-tui
-go build
-```
-
-Run:
-```bash
-./omni-tui --help
-```
-
-### JavaScript/React (Studio)
-
-Located in `omniagents/studio/server/web/`
+Located in `omniagents/studio/server/web/` and `omniagents/backends/ink/`
 
 Build:
 ```bash

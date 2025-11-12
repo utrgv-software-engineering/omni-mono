@@ -10,31 +10,27 @@ Backends are dynamically loaded via entry points defined in `pyproject.toml`. Ea
 
 | Backend | Mode Flag | Description | Built With |
 |---------|-----------|-------------|------------|
-| CLI | `--mode cli` | Text-based terminal chat | Python |
-| TUI (Bubble Tea) | `--mode tui` | Rich terminal UI | Go |
-| TUI (Ink) | `--mode ink` | React terminal UI | TypeScript/React |
-| GUI | `--mode gui` | Desktop interface | Python/Flet |
+| Web | `--mode web` | Browser-based interface | TypeScript/React |
+| Ink | `--mode ink` | React terminal UI | TypeScript/React |
+| Voice | `--mode voice` | Voice interface | Python |
 | Server | `--mode server` | JSON-RPC WebSocket API | Python/FastAPI |
 
 ## Backend Architecture
 
 ```
 omniagents/backends/
-├── cli/          # Terminal text interface
-├── bubbletea/    # Go TUI backend
+├── web/          # Browser-based web interface
 ├── ink/          # React Ink TUI backend
-├── flet/         # Flet GUI backend
-├── server/       # FastAPI server backend
-├── voice/        # Voice interface (experimental)
-└── web/          # Web interface (experimental)
+├── voice/        # Voice interface
+└── server/       # FastAPI server backend
 ```
 
 ## Choosing a Backend
 
 Consider:
 
-1. **User Experience**: CLI for simple, GUI for visual
-2. **Environment**: TUI for SSH, Server for remote
+1. **User Experience**: Web for visual interface, Ink for terminal
+2. **Environment**: Web/Voice for local, Server for remote
 3. **Dependencies**: Some backends require optional dependencies
 4. **Platform**: All backends are cross-platform
 
@@ -50,20 +46,24 @@ All backends support:
 
 ### Backend-Specific Features
 
-- **GUI/TUI**: Visual approval dialogs
-- **Server**: Remote client connections
-- **CLI**: Scriptable, automatable
+- **Web**: Visual approval dialogs, rich UI components
+- **Ink**: Terminal-based interaction with React components
+- **Voice**: Audio input/output, natural conversation
+- **Server**: Remote client connections, JSON-RPC API
 
 ## Installation
 
 Backends have optional dependencies:
 
 ```bash
-# GUI backend
-pip install -e ".[flet]"
+# Web backend
+pip install -e ".[web]"
 
 # Server backend
 pip install -e ".[server]"
+
+# Voice backend
+pip install -e ".[voice]"
 
 # All backends
 pip install -e ".[all]"
@@ -75,15 +75,14 @@ Backends are registered in `pyproject.toml`:
 
 ```toml
 [project.entry-points."omniagents.backends"]
-cli = "omniagents.backends.cli:CLIBackend"
-tui = "omniagents.backends.bubbletea:BubbleTeaBackend"
-gui = "omniagents.backends.flet:FletBackend"
+web = "omniagents.backends.web:WebBackend"
+ink = "omniagents.backends.ink:InkBackend"
+voice = "omniagents.backends.voice:VoiceBackend"
 server = "omniagents.backends.server:ServerBackend"
 ```
 
 ## Next Steps
 
-- [CLI Backend](cli.md)
-- [GUI Backend](gui.md)
-- [TUI Backend](tui.md)
+- [Web Backend](web.md)
+- [Ink Backend](ink.md)
 - [Server Backend](server.md)

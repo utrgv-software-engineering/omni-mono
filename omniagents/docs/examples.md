@@ -31,7 +31,7 @@ agent = create_agent(
 **Run:**
 ```bash
 cd examples/basic_python
-omniagents run -P agent.yml --mode gui
+omniagents run -P agent.yml
 ```
 
 ### Basic YAML Agent
@@ -49,7 +49,7 @@ layout: tabs
 
 **Run:**
 ```bash
-omniagents run -P examples/basic_yaml/agent.yml --mode cli
+omniagents run -P examples/basic_yaml/agent.yml
 ```
 
 ## Safe Agent Examples
@@ -74,7 +74,7 @@ Tools require user approval before execution.
 **Run:**
 ```bash
 cd examples/safe_agent_python
-omniagents run -P agent.yml --mode gui
+omniagents run -P agent.yml
 ```
 
 ### Safe Agent (YAML)
@@ -92,7 +92,7 @@ use_safe_agent: true
 
 **Run:**
 ```bash
-omniagents run -P examples/safe_agent_yaml/agent.yml --mode gui
+omniagents run -P examples/safe_agent_yaml/agent.yml
 ```
 
 ## Remote Agent Example
@@ -196,22 +196,22 @@ def analyze_csv(file_path: str) -> RichToolOutput:
 
 ## Running Examples
 
-### CLI Mode
+### Web Mode (Default)
 
 ```bash
-omniagents run -P examples/basic_yaml/agent.yml --mode cli
+omniagents run -P examples/basic_yaml/agent.yml
 ```
 
-### GUI Mode
+### Ink Mode
 
 ```bash
-omniagents run -P examples/basic_yaml/agent.yml --mode gui
+omniagents run -P examples/basic_yaml/agent.yml --mode ink
 ```
 
-### TUI Mode
+### Voice Mode
 
 ```bash
-omniagents run -P examples/basic_yaml/agent.yml --mode tui
+omniagents run -P examples/basic_yaml/agent.yml --mode voice
 ```
 
 ### Server Mode
@@ -252,7 +252,7 @@ omniagents run -P examples/basic_yaml/agent.yml --mode server
 
 5. **Run**:
    ```bash
-   omniagents run -P agent.yml --mode gui
+   omniagents run -P agent.yml
    ```
 
 ## Next Steps

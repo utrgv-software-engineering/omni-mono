@@ -72,9 +72,6 @@ nav:
     - Session Management: guide/sessions.md
   - Backends:
     - Overview: backends/overview.md
-    - CLI: backends/cli.md
-    - GUI (Flet): backends/gui.md
-    - TUI (Bubble Tea): backends/tui.md
     - Server: backends/server.md
   - API Reference:
     - Core: api/core.md

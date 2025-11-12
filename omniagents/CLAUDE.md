@@ -30,24 +30,26 @@ black path/to/file.py
 
 ### Coverage
 ```bash
-make coverage-all          # All coverage (Python, web, Go)
+make coverage-all          # All coverage (Python, web)
 make coverage-python       # Python agents, FastAPI server, backends
 make coverage-web          # React Studio UI via Vitest
-make coverage-go           # Bubble Tea TUI backend
 ```
 
 ### Running the Application
 
-**CLI Mode:**
+**Web Mode (default):**
 ```bash
-python -m omniagents.cli run -c path/to/agent.yaml --mode cli
-# Resume previous session:
-python -m omniagents.cli run -c path/to/agent.yaml --mode cli --session-id <id>
+python -m omniagents.cli run -c path/to/agent.yaml --mode web
 ```
 
-**GUI Mode (default):**
+**Ink TUI Mode:**
 ```bash
-python -m omniagents.cli run -c path/to/agent.yaml
+python -m omniagents.cli run -c path/to/agent.yaml --mode ink
+```
+
+**Voice Mode:**
+```bash
+python -m omniagents.cli run -c path/to/agent.yaml --mode voice
 ```
 
 **Server Mode:**
@@ -73,8 +75,9 @@ OmniAgents is a wrapper around OpenAI's agents library (`openai-agents==0.4.2`) 
    - Python code using the `@function_tool` decorator (see `examples/basic_python/`)
 
 2. **Backend Modes** (selected via `--mode` flag or entry point):
-   - **CLI**: Terminal-based chat interface using Bubble Tea TUI (Go)
-   - **GUI/Flet**: Cross-platform desktop app built with Flet (Flutter-based)
+   - **Web**: React-based web UI (default)
+   - **Ink**: React Ink terminal UI
+   - **Voice**: Push-to-talk voice interaction
    - **Server**: FastAPI server exposing agents via WebSocket JSON-RPC protocol
    - Backends are dynamically loaded via entry points defined in `pyproject.toml` (`[project.entry-points."omniagents.backends"]`)
 
@@ -89,7 +92,7 @@ OmniAgents is a wrapper around OpenAI's agents library (`openai-agents==0.4.2`) 
      - `server_functions/`: Server-side functions exposed to RPC clients
      - `evaluation/`: Agent evaluation framework
      - `project/`: Project scaffolding templates
-   - `/omniagents/backends/`: UI/interface implementations (cli, flet, server, bubbletea)
+   - `/omniagents/backends/`: UI/interface implementations (server, web, ink, voice)
    - `/omniagents/rpc/`: JSON-RPC protocol implementation for remote agent communication
    - `/omniagents/studio/`: Web-based UIs:
      - `tracing/`: Trace visualization UI
@@ -120,24 +123,20 @@ OmniAgents is a wrapper around OpenAI's agents library (`openai-agents==0.4.2`) 
 
 4. **Storage**:
    - Conversation history stored in SQLite (`sessions.db` at repo root or specified path)
-   - GUI settings (API keys, etc.) persisted in browser local storage (Flet)
    - Sessions can be resumed via `--session-id` flag
 
 5. **Configuration**:
    - API keys via environment variables (e.g., `OPENAI_API_KEY`)
    - Agent-specific settings in YAML files (name, instructions_file, tools, use_safe_agent, layout)
-   - Runtime settings can be modified in GUI mode
-   - Optional dependencies controlled via `pyproject.toml` extras: `[cli]`, `[flet]`, `[gui]`, `[server]`, `[studio]`, `[studio-server]`, `[all]`, `[dev]`
+   - Optional dependencies controlled via `pyproject.toml` extras: `[server]`, `[voice]`, `[web]`, `[studio]`, `[studio-server]`, `[all]`, `[dev]`
 
 6. **Multi-Language Components**:
    - **Python**: Core framework, backends, RPC implementation
-   - **Go**: Bubble Tea TUI in `omniagents/backends/bubbletea/cmd/omni-tui/`
-   - **JavaScript/React**: Studio web UIs in `omniagents/studio/server/web/`
-   - Binary wheels include prebuilt Bubble Tea TUI for macOS, Linux, Windows
+   - **JavaScript/React**: Web UIs in `omniagents/backends/web/`, `omniagents/backends/ink/`, and `omniagents/studio/server/web/`
 
 ### Testing
 
-Tests use pytest with fixtures defined in `tests/conftest.py`. The test suite mocks the Flet UI framework (via a minimal stub module) and uses temporary databases to ensure isolation. Coverage is collected for Python, Go (Bubble Tea), and web (Vitest) components separately.
+Tests use pytest with fixtures defined in `tests/conftest.py`. The test suite uses temporary databases to ensure isolation. Coverage is collected for Python and web (Vitest) components separately.
 
 ### Git Workflow Notes
 

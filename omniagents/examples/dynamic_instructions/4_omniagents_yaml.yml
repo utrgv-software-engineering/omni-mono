@@ -1,15 +1,15 @@
 # Example: YAML configuration with environment variable substitution
-# 
+#
 # Run with default values:
-#   python -m omniagents.cli run -c examples/dynamic_instructions/4_omniagents_yaml.yaml --mode cli
+#   python -m omniagents.cli run -c examples/dynamic_instructions/4_omniagents_yaml.yaml
 #
 # Run with custom environment variables:
-#   USER_NAME="Bob" USER_LOCATION="New York" python -m omniagents.cli run -c examples/dynamic_instructions/4_omniagents_yaml.yaml --mode cli
+#   USER_NAME="Bob" USER_LOCATION="New York" python -m omniagents.cli run -c examples/dynamic_instructions/4_omniagents_yaml.yaml
 #
 # Or export them first:
 #   export USER_NAME="Bob Smith"
 #   export APP_ENV="production"
-#   python -m omniagents.cli run -c examples/dynamic_instructions/4_omniagents_yaml.yaml --mode cli
+#   python -m omniagents.cli run -c examples/dynamic_instructions/4_omniagents_yaml.yaml
 
 name: Personal Assistant
 model: gpt-4o-mini

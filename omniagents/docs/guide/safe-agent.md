@@ -117,7 +117,7 @@ When safe mode is enabled, the following flow occurs:
 
 The approval interface adapts to each backend mode:
 
-### GUI Mode (Flet)
+### Web Mode
 
 Visual dialog displaying:
 - Tool name and description
@@ -125,26 +125,6 @@ Visual dialog displaying:
 - Approval metadata (if provided)
 - **Approve** / **Reject** buttons
 - Option to always approve this tool (adds to safe list)
-
-### TUI Mode (Bubble Tea)
-
-Interactive terminal prompt:
-```
-┌─────────────────────────────────────────────────────┐
-│ Tool Approval Required                              │
-├─────────────────────────────────────────────────────┤
-│ Tool: delete_file                                   │
-│                                                     │
-│ Parameters:                                         │
-│   path: /important/document.txt                     │
-│   force: true                                       │
-│                                                     │
-│ Description:                                        │
-│   Delete a file from the filesystem                 │
-│                                                     │
-│ [A]pprove  [R]eject  [S]kip Future                 │
-└─────────────────────────────────────────────────────┘
-```
 
 ### Server Mode (RPC)
 

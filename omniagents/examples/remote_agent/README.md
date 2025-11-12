@@ -18,5 +18,5 @@ python server.py
 Then in another terminal run the client:
 
 ```bash
-python -m omniagents.cli run -c client.yml --mode cli
+python -m omniagents.cli run -c client.yml
 ```

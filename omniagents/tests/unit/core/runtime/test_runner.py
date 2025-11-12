@@ -161,7 +161,7 @@ def test_run_invokes_backend_with_spec(monkeypatch):
         lambda mode: DummyBackend,
     )
 
-    runner.run("cli", extra=True)
+    runner.run("server", extra=True)
 
     assert captured["spec"] is spec
     assert captured["kwargs"] == {"extra": True}
@@ -179,11 +179,11 @@ def test_run_unknown_backend_raises(monkeypatch):
         runner.run("missing")
 
 
-def test_main_cli_mode_invokes_run_and_debug(monkeypatch):
+def test_main_server_mode_invokes_run_and_debug(monkeypatch):
     spec = make_spec()
     runner = Runner(spec=spec)
     args = types.SimpleNamespace(
-        mode="cli",
+        mode="server",
         debug=True,
         resume=False,
         session_id="sess",
@@ -212,8 +212,8 @@ def test_main_cli_mode_invokes_run_and_debug(monkeypatch):
 
     runner.main()
 
-    assert called["mode"] == "cli"
-    assert called["kwargs"]["session_id"] == "sess"
+    assert called["mode"] == "server"
+    # Check that args are passed through
     assert called["kwargs"]["args"] is args
     assert called["debug"] is True
 
@@ -258,43 +258,14 @@ def test_main_server_mode_adds_server_kwargs(monkeypatch):
     }
 
 
-def test_main_resume_invalid_mode_exits(monkeypatch, capsys):
+def test_main_resume_with_web_mode_works(monkeypatch):
     spec = make_spec()
     runner = Runner(spec=spec)
     args = types.SimpleNamespace(
-        mode="cli",
+        mode="web",
         debug=False,
         resume=True,
-        session_id=None,
-        host="0.0.0.0",
-        port=8000,
-        auth_token=None,
-        reload=False,
-        approvals=None,
-        on_reject=None,
-    )
-
-    monkeypatch.setattr(argparse.ArgumentParser, "parse_args", lambda self: args)
-    monkeypatch.setattr(
-        "omniagents.core.runtime.runner.Debug.init", lambda cli_flag: None
-    )
-
-    with pytest.raises(SystemExit) as exc:
-        runner.main()
-
-    assert exc.value.code == 2
-    output = capsys.readouterr().out
-    assert "--resume is only supported" in output
-
-
-def test_main_resume_tui_mode_sets_flag(monkeypatch):
-    spec = make_spec()
-    runner = Runner(spec=spec)
-    args = types.SimpleNamespace(
-        mode="bubbletea",
-        debug=False,
-        resume=True,
-        session_id=None,
+        session_id="sess123",
         host="0.0.0.0",
         port=8000,
         auth_token=None,
@@ -316,7 +287,41 @@ def test_main_resume_tui_mode_sets_flag(monkeypatch):
 
     runner.main()
 
-    assert called["mode"] == "bubbletea"
+    assert called["mode"] == "web"
+    assert called["kwargs"]["resume"] is True
+    assert called["kwargs"]["args"] is args
+
+
+def test_main_resume_with_ink_mode_sets_flag(monkeypatch):
+    spec = make_spec()
+    runner = Runner(spec=spec)
+    args = types.SimpleNamespace(
+        mode="ink",
+        debug=False,
+        resume=True,
+        session_id="ink_sess",
+        host="0.0.0.0",
+        port=8000,
+        auth_token=None,
+        reload=False,
+        approvals=None,
+        on_reject=None,
+    )
+    called = {}
+
+    def fake_run(self, mode, **kwargs):
+        called["mode"] = mode
+        called["kwargs"] = kwargs
+
+    monkeypatch.setattr(argparse.ArgumentParser, "parse_args", lambda self: args)
+    monkeypatch.setattr(Runner, "run", fake_run)
+    monkeypatch.setattr(
+        "omniagents.core.runtime.runner.Debug.init", lambda cli_flag: None
+    )
+
+    runner.main()
+
+    assert called["mode"] == "ink"
     assert called["kwargs"]["resume"] is True
     assert called["kwargs"]["args"] is args
 
@@ -394,7 +399,7 @@ def test_runner_main_handles_generic_exception(monkeypatch, capsys):
     spec = make_spec()
     runner = Runner(spec=spec)
     args = types.SimpleNamespace(
-        mode="cli",
+        mode="server",
         debug=False,
         resume=False,
         session_id=None,

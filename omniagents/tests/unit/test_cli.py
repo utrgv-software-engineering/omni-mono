@@ -51,7 +51,7 @@ def test_run_command_forwards_initial_prompt(monkeypatch, stub_runtime):
         "--project",
         "proj.yml",
         "--mode",
-        "tui",
+        "web",
         "hello",
         "world",
     ]
@@ -61,7 +61,7 @@ def test_run_command_forwards_initial_prompt(monkeypatch, stub_runtime):
 
     assert runner.calls
     mode, kwargs = runner.calls[0]
-    assert mode == "tui"
+    assert mode == "web"
     assert kwargs["initial_prompt"] == "hello world"
     assert kwargs["args"].prompt == ["hello", "world"]
 
@@ -79,7 +79,7 @@ def test_run_command_without_prompt_skips_initial_prompt(monkeypatch, stub_runti
         "--project",
         "proj.yml",
         "--mode",
-        "tui",
+        "web",
     ]
     monkeypatch.setattr(sys, "argv", argv)
 
@@ -87,7 +87,7 @@ def test_run_command_without_prompt_skips_initial_prompt(monkeypatch, stub_runti
 
     assert runner.calls
     mode, kwargs = runner.calls[0]
-    assert mode == "tui"
+    assert mode == "web"
     assert "initial_prompt" not in kwargs
 
 
@@ -139,17 +139,18 @@ def test_run_command_resume_invalid_mode_exits(monkeypatch, stub_runtime, capsys
         "--project",
         "proj.yml",
         "--mode",
-        "cli",
+        "web",
         "--resume",
     ]
     monkeypatch.setattr(sys, "argv", argv)
 
-    with pytest.raises(SystemExit) as exc:
-        cli_main()
+    # Resume should work with web mode now
+    cli_main()
 
-    assert exc.value.code == 2
-    stdout = capsys.readouterr().out
-    assert "--resume is only supported" in stdout
+    assert runner.calls
+    mode, kwargs = runner.calls[0]
+    assert mode == "web"
+    assert kwargs.get("resume") is True
 
 
 def test_save_command_invokes_save_agent(monkeypatch, stub_runtime, tmp_path, capsys):

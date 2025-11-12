@@ -20,7 +20,7 @@ def test_load_backend_returns_entry_point(monkeypatch):
     class DummyEntryPoints:
         def select(self, group):
             assert group == "omniagents.backends"
-            return [DummyEntryPoint("cli", backend)]
+            return [DummyEntryPoint("server", backend)]
 
     monkeypatch.setattr(
         loader.importlib.metadata, "entry_points", lambda: DummyEntryPoints()
@@ -31,11 +31,11 @@ def test_load_backend_returns_entry_point(monkeypatch):
         lambda name: pytest.fail("should not import"),
     )
 
-    result = load_backend("cli")
+    result = load_backend("server")
     assert result is backend
 
 
-def test_load_backend_imports_alias(monkeypatch):
+def test_load_backend_imports_fallback(monkeypatch):
     class DummyEntryPoints:
         def select(self, group):
             return []
@@ -43,15 +43,15 @@ def test_load_backend_imports_alias(monkeypatch):
     backend = object()
 
     def fake_import_module(name):
-        assert name == "omniagents.backends.flet"
-        return types.SimpleNamespace(FletBackend=backend)
+        assert name == "omniagents.backends.server"
+        return types.SimpleNamespace(ServerBackend=backend)
 
     monkeypatch.setattr(
         loader.importlib.metadata, "entry_points", lambda: DummyEntryPoints()
     )
     monkeypatch.setattr(loader.importlib, "import_module", fake_import_module)
 
-    result = load_backend("gui")
+    result = load_backend("server")
     assert result is backend
 
 
@@ -68,7 +68,7 @@ def test_load_backend_returns_none_when_missing(monkeypatch):
     )
     monkeypatch.setattr(loader.importlib, "import_module", fail_import)
 
-    assert load_backend("cli") is None
+    assert load_backend("nonexistent") is None
 
 
 def test_load_backend_legacy_entry_points(monkeypatch):
@@ -97,7 +97,7 @@ def test_is_backend_available(monkeypatch):
     monkeypatch.setattr(
         "omniagents.core.runtime.loader.load_backend", lambda name: object()
     )
-    assert is_backend_available("cli") is True
+    assert is_backend_available("server") is True
 
     monkeypatch.setattr(
         "omniagents.core.runtime.loader.load_backend", lambda name: None

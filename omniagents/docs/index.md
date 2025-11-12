@@ -5,9 +5,9 @@ OmniAgents provides a lightweight wrapper around the [OpenAI Agents](https://git
 ## Features
 
 - **Multiple Interface Modes**: Choose the interface that best suits your needs
-    - CLI - text chat in the terminal
-    - TUI - terminal UI built with Bubble Tea (Go) or React Ink
-    - GUI - desktop-style interface built with Flet
+    - Web - browser-based interface (default)
+    - Ink - terminal UI built with React
+    - Voice - voice-based interaction
     - Server - expose agents through a JSON-RPC WebSocket API
 
 - **Simple Configuration**: Define agents using YAML files or Python code
@@ -18,7 +18,7 @@ OmniAgents provides a lightweight wrapper around the [OpenAI Agents](https://git
 
 - **Session Management**: Persist and resume conversation history
 
-- **Multi-Language**: Core Python framework with Go (Bubble Tea TUI) and React/TypeScript (Studio UI) components
+- **Multi-Language**: Core Python framework with React/TypeScript components for web UI and terminal
 
 ## Quick Example
 
@@ -47,7 +47,7 @@ def get_current_time() -> str:
 Run your agent:
 
 ```bash
-omniagents run -P path/to/project.yml --mode gui
+omniagents run -P path/to/project.yml
 ```
 
 ## Getting Started

@@ -79,20 +79,6 @@ tmp_logs/
 
 node_modules/
 
-# Bubble Tea TUI build artifacts (prevent committing local binaries)
-omniagents/backends/bubbletea/bin/omni-tui
-omniagents/backends/bubbletea/bin/omni-tui.exe
-omniagents/backends/bubbletea/cmd/omni-tui/omni-tui
-omniagents/backends/bubbletea/cmd/omni-tui/omni-tui.exe
-omniagents/backends/bubbletea/cmd/omni-tui/test-binary
-omniagents/backends/bubbletea/vendor/*/omni-tui
-omniagents/backends/bubbletea/vendor/*/omni-tui.exe
-omniagents/backends/bubbletea/vendor/*/omni-tui.tar.gz
-omniagents/backends/bubbletea/vendor/*/omni-tui.zip
-omniagents/backends/bubbletea/vendor/*/omni-tui.sha256
-omniagents/backends/bubbletea/vendor/*/omni-tui.tar.gz.sha256
-omniagents/backends/bubbletea/vendor/*/omni-tui.zip.sha256
-
 # MkDocs documentation
 site/
 .cache/

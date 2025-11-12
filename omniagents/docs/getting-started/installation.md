@@ -5,8 +5,7 @@
 ### Requirements
 
 - Python 3.11 or higher
-- Go 1.19+ (for Bubble Tea TUI backend)
-- Node.js and npm (for Ink TUI backend)
+- Node.js and npm (for Ink TUI backend and web interface)
 
 ### Install OmniAgents
 
@@ -14,19 +13,11 @@
 pip install --upgrade --index-url https://pypi.fury.io/ericmichael/ --extra-index-url https://pypi.org/simple "omniagents[all]"
 ```
 
-This installs OmniAgents with all features including GUI, Server, and TUI backends.
-
-### Install Go
-
-If you don't have Go installed and want to use the Bubble Tea TUI:
-
-- **macOS**: `brew install go`
-- **Linux**: Download from [go.dev/dl](https://go.dev/dl/)
-- **Windows**: Download installer from [go.dev/dl](https://go.dev/dl/)
+This installs OmniAgents with all features including web, voice, server, and Ink backends.
 
 ### Install Node.js
 
-If you don't have Node.js installed and want to use the Ink TUI:
+If you don't have Node.js installed:
 
 - **macOS**: `brew install node`
 - **Linux**: Use your package manager or download from [nodejs.org](https://nodejs.org/)
@@ -43,17 +34,14 @@ That's it! You can now run OmniAgents. See the [Quick Start](quickstart.md) guid
 If you only need certain features, you can install just what you need:
 
 ```bash
-# GUI/Flet interface only
-pip install --index-url https://pypi.fury.io/ericmichael/ --extra-index-url https://pypi.org/simple "omniagents[flet]"
-
 # Server mode only
 pip install --index-url https://pypi.fury.io/ericmichael/ --extra-index-url https://pypi.org/simple "omniagents[server]"
 
-# CLI only (no TUI dependencies)
-pip install --index-url https://pypi.fury.io/ericmichael/ --extra-index-url https://pypi.org/simple "omniagents[cli]"
-
 # Studio only
 pip install --index-url https://pypi.fury.io/ericmichael/ --extra-index-url https://pypi.org/simple "omniagents[studio]"
+
+# Web mode only
+pip install --index-url https://pypi.fury.io/ericmichael/ --extra-index-url https://pypi.org/simple "omniagents[web]"
 ```
 
 ### Install from Source
@@ -82,10 +70,11 @@ pip install -e ".[dev]"
 
 ### Available Feature Groups
 
-- `[all]` - All features (GUI, Server, TUI, Studio)
-- `[flet]` or `[gui]` - GUI/Flet interface
+- `[all]` - All features (web, server, ink, voice, studio)
+- `[web]` - Web interface
 - `[server]` - Server mode with FastAPI
-- `[cli]` - CLI mode (no extra dependencies)
+- `[ink]` - Ink TUI mode
+- `[voice]` - Voice mode
 - `[studio]` - Studio web UI
 - `[docs]` - Documentation tools (MkDocs)
 - `[dev]` - Development dependencies (tests, linting, etc.)

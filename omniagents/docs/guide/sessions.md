@@ -70,10 +70,10 @@ When inside a project directory, sessions are auto-discovered:
 cd /path/to/myproject
 
 # Resume with specific session ID
-omniagents run --mode cli --session-id abc123
+omniagents run --session-id abc123
 
-# TUI mode with session picker
-omniagents run --mode tui --resume
+# Web mode with session management UI
+omniagents run --mode web
 ```
 
 ### From Outside Project
@@ -82,42 +82,15 @@ Specify the project path:
 
 ```bash
 # With session ID
-omniagents run -P /path/to/myproject --mode cli --session-id abc123
-
-# With session picker
-omniagents run -P /path/to/myproject --mode tui --resume
+omniagents run -P /path/to/myproject --session-id abc123
 ```
 
-### Session Picker (TUI Mode)
+### Web Mode
 
-The `--resume` flag opens an interactive session picker displaying:
-
-```
-┌─ Session History ────────────────────────────────┐
-│  Session ID                      Created   Msgs  │
-│  ──────────────────────────────────────────────  │
-│  analysis-2025-11-11             Nov 11     45   │
-│  └─ "Analyze Q1 sales data..."                   │
-│                                                   │
-│  abc123                          Nov 10     12   │
-│  └─ "Help me debug this issue..."                │
-│                                                   │
-│  [↑↓] Navigate  [Enter] Select  [q] Quit         │
-└──────────────────────────────────────────────────┘
-```
-
-For each session:
-- Session ID (user-specified or UUID)
-- Creation timestamp
-- Message count
-- Preview of first or last message
-
-### GUI Mode (Flet)
-
-The GUI automatically manages sessions:
+The web interface provides session management:
 - New session created on startup (or resumes if session ID provided)
-- Session persists across page reloads
 - Session history accessible via UI controls
+- Visual session picker and management
 
 ### Server Mode (RPC)
 

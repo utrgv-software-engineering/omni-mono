@@ -53,30 +53,30 @@ export OPENAI_BASE_URL="https://your-custom-endpoint.com/v1"
 
 ## Step 4: Run Your Agent
 
-The simplest way to run your agent is with the default TUI mode:
+The simplest way to run your agent is with the default web mode:
 
 ```bash
 omniagents run
 ```
 
-This automatically detects the `project.yml` in your current directory and launches the Bubble Tea terminal UI.
+This automatically detects the `project.yml` in your current directory and launches the web interface.
 
 ### Other Run Modes
 
 You can also specify different modes:
 
 ```bash
-# GUI mode (desktop interface)
-omniagents run --mode gui
+# Web mode (browser-based interface, default)
+omniagents run --mode web
 
-# CLI mode (simple terminal chat)
-omniagents run --mode cli
-
-# Ink TUI mode (React-based terminal UI)
+# Ink mode (React-based terminal UI)
 omniagents run --mode ink
 
-# Web mode (browser-based interface)
-omniagents run --mode web
+# Voice mode (voice-based interaction)
+omniagents run --mode voice
+
+# Server mode (JSON-RPC API)
+omniagents run --mode server
 ```
 
 ## Step 5: Try the Sample Tools
