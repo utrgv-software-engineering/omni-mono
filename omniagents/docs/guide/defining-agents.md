@@ -1,44 +1,158 @@
 # Defining Agents
 
-OmniAgents supports two ways to define agents: YAML configuration files and Python code.
+OmniAgents uses YAML configuration files to define agents. This approach separates agent configuration from code, making it easy to version control and modify agent behavior without changing code.
 
-## YAML-Based Agents
+## Basic Structure
 
-YAML-based agents are the simplest way to get started. They separate configuration from code.
-
-### Basic Structure
+A minimal agent configuration requires only a name and instructions:
 
 ```yaml
-name: MyAgent
+name: my_agent
 instructions_file: instructions.md
-tools: [tool1, tool2]
-use_safe_agent: false
+```
+
+A more complete example with commonly used fields:
+
+```yaml
+name: data_analyst
+label: Data Analysis Agent
+description: "Analyzes data and generates insights"
+
+model: gpt-4o-mini
+instructions_file: instructions.md
+
+tools:
+  - read_csv
+  - calculate_statistics
+  - generate_chart
+
+use_safe_agent: true
 layout: tabs
+welcome_text: "Hello! I can help you analyze your data."
+
+model_settings:
+  temperature: 0.3
+  max_tokens: 2000
 ```
 
 ### Instructions File
 
-The `instructions_file` should be a markdown file containing the agent's system instructions:
+The `instructions_file` should be a markdown file (relative to `agent.yml`) containing the agent's system instructions:
 
+**instructions.md:**
 ```markdown
-# MyAgent Instructions
+# Data Analyst
 
-You are a helpful assistant specialized in data analysis.
+You are a data analysis specialist with expertise in statistics and visualization.
 
-## Capabilities
-- Analyze CSV files
-- Generate reports
-- Answer questions about data
+## Your Capabilities
+- Read and parse CSV files
+- Calculate statistical measures (mean, median, mode, standard deviation)
+- Generate charts and visualizations
+- Identify trends and patterns in data
 
 ## Guidelines
-- Always explain your reasoning
-- Ask clarifying questions when needed
-- Be concise but thorough
+1. Always validate data before analysis
+2. Explain your methodology clearly
+3. Provide context for statistical findings
+4. Suggest visualizations when appropriate
+5. Ask for clarification if data format is unclear
 ```
 
-### Tool Specification
+### Tool Organization
 
-List the names of functions decorated with `@function_tool`:
+Tools are discovered automatically from your project structure:
+
+```
+myproject/
+├── project.yml
+└── agents/
+    └── data_analyst/
+        ├── agent.yml
+        ├── instructions.md
+        └── tools/              # Agent-specific tools
+            ├── read_csv.py
+            └── calculate_statistics.py
+```
+
+In your agent.yml, reference tools by their function names:
+
+```yaml
+tools:
+  - read_csv
+  - calculate_statistics
+```
+
+See [Tools](tools.md) for details on creating tool functions.
+
+### Example Projects
+
+See the examples directory:
+- `examples/mcp_demo/` - Agent with MCP server integration
+- `examples/handoff_yaml/` - Multi-agent system with handoffs
+- `examples/minimal_with_model_settings/` - Simple agent with custom model settings
+
+## Agent Configuration Reference
+
+### Core Fields
+
+#### name (required)
+The agent's identifier. Must be lowercase, start with a letter, and contain only letters, numbers, and underscores.
+
+```yaml
+name: my_agent
+```
+
+**Note**: When defining agents in a project structure (`agents/<agent_name>/agent.yml`), the name must match the directory name.
+
+#### label (optional)
+Display-friendly name shown in UIs.
+
+```yaml
+label: My Amazing Agent
+```
+
+#### description (optional)
+Short description of the agent's purpose.
+
+```yaml
+description: "An agent that helps with data analysis tasks."
+```
+
+#### model (optional)
+The LLM model to use. Defaults to `gpt-4o`.
+
+```yaml
+model: gpt-4o-mini
+```
+
+### Instructions
+
+Define the agent's system instructions using one of these methods:
+
+#### instructions_file (recommended)
+Path to a markdown file containing instructions, relative to the agent.yml file:
+
+```yaml
+instructions_file: instructions.md
+```
+
+#### instructions (inline)
+Inline instructions as a string or multiline YAML string:
+
+```yaml
+instructions: |
+  You are a helpful assistant specialized in data analysis.
+
+  ## Guidelines
+  - Always explain your reasoning
+  - Ask clarifying questions when needed
+```
+
+### Tools
+
+#### tools
+List of tool function names to make available to the agent:
 
 ```yaml
 tools:
@@ -47,114 +161,424 @@ tools:
   - generate_report
 ```
 
-### Example Projects
+Tools are discovered from:
+1. The `tools/` directory adjacent to the agent.yml file
+2. Project-level `tools/` directory (specified in project.yml)
+3. Additional directories via `additional_tools_dirs`
 
-See the examples directory:
-- `examples/basic_yaml/` - Simple YAML-based agent
-- `examples/safe_agent_yaml/` - YAML agent with approval requirements
+See [Tools](tools.md) for details on creating tools.
 
-## Python-Based Agents
-
-For more complex scenarios, you can define agents entirely in Python:
-
-```python
-from omniagents.core import function_tool, create_agent
-
-@function_tool
-def my_tool(param: str) -> str:
-    """Tool description."""
-    return f"Result: {param}"
-
-instructions = """
-You are a helpful assistant.
-"""
-
-agent = create_agent(
-    name="MyAgent",
-    instructions=instructions,
-    tools=[my_tool],
-    use_safe_agent=False
-)
-```
-
-### Example Projects
-
-- `examples/basic_python/` - Python-based agent
-- `examples/safe_agent_python/` - Python agent with approval
-
-## Agent Properties
-
-### Name
-
-The agent's display name, shown in UI interfaces:
+#### additional_tools_dirs
+Additional directories to search for tools, relative to the agent.yml file:
 
 ```yaml
-name: DataAnalysisAgent
+additional_tools_dirs:
+  - ../shared_tools
+  - ../../common/tools
 ```
 
-### Instructions
+### Model Configuration
 
-System-level instructions that define the agent's behavior, personality, and capabilities. Can be:
+#### model_settings
+Fine-tune model behavior with OpenAI API parameters:
 
-- A file path (YAML): `instructions_file: instructions.md`
-- Inline string (Python): `instructions="You are..."`
+```yaml
+model_settings:
+  temperature: 0.7          # Randomness (0.0 - 2.0)
+  top_p: 0.9               # Nucleus sampling
+  max_tokens: 1000         # Maximum response length
+  frequency_penalty: 0.0   # Reduce repetition (-2.0 to 2.0)
+  presence_penalty: 0.0    # Encourage topic diversity (-2.0 to 2.0)
+  tool_choice: auto        # "auto", "required", "none", or specific tool name
+  parallel_tool_calls: true  # Allow multiple tool calls in one response
+```
 
-### Tools
+#### max_turns
+Maximum conversation turns per agent run (default: 20):
 
-Functions the agent can call to interact with external systems or perform actions. See [Tools](tools.md) for details.
+```yaml
+max_turns: 50
+```
 
-### Safe Agent Mode
+#### context_window
+Model's maximum context length in tokens (informational):
 
-When enabled, the agent must request user approval before executing any tool:
+```yaml
+context_window: 128000
+```
+
+### Agent Behavior
+
+#### tool_use_behavior
+How the agent handles tool calls:
+
+```yaml
+# Run LLM again after tool execution (default)
+tool_use_behavior: run_llm_again
+
+# Stop after first tool call
+tool_use_behavior: stop_on_first_tool
+
+# Stop only when specific tools are called
+tool_use_behavior:
+  stop_at_tool_names:
+    - final_answer
+    - submit_result
+```
+
+#### reset_tool_choice
+Reset `tool_choice` to auto after each tool call (default: true):
+
+```yaml
+reset_tool_choice: false
+```
+
+### Safety & Approval
+
+#### use_safe_agent
+Require user approval before executing tools (default: false):
 
 ```yaml
 use_safe_agent: true
 ```
 
-See [Safe Agent Mode](safe-agent.md) for details.
-
-### Layout
-
-UI layout configuration (currently supports `tabs` mode):
+#### safe_agent_options
+Fine-grained safety configuration:
 
 ```yaml
-layout: tabs
+safe_agent_options:
+  skip_approvals: false          # Skip all approvals
+  halt_on_rejection: true        # Stop run if user rejects a tool
+  safe_tool_names:               # Tools that don't require approval
+    - read_file
+    - search
+  safe_tool_patterns:            # Tool name patterns (regex)
+    - "^get_.*"
+    - ".*_read$"
 ```
 
-The `tabs` layout separates the conversation and tool execution logs into different tabs in the GUI.
+See [Safe Agent Mode](safe-agent.md) for details.
+
+### UI Configuration
+
+#### welcome_text
+Initial message shown to users:
+
+```yaml
+welcome_text: "Hello! I'm your data analysis assistant. How can I help?"
+```
+
+#### layout
+UI layout mode:
+
+```yaml
+layout: tabs    # Separate conversation and tool logs
+# or
+layout: classic # Single unified view (default)
+```
+
+#### theme_color
+Primary color for UI elements (hex code):
+
+```yaml
+theme_color: "#2196F3"
+```
+
+#### icon_map
+Custom icons for specific tools:
+
+```yaml
+icon_map:
+  search_web: search
+  calculate: calculate
+  send_email: mail
+```
 
 ## Advanced Configuration
 
-### Custom Context
+### Handoffs (Multi-Agent Systems)
 
-You can provide additional context to agents at runtime:
+Enable your agent to delegate tasks to other specialized agents.
 
-```python
-context = {
-    "user_id": "123",
-    "session_data": {...}
-}
+#### handoffs
+List of agents this agent can hand off to:
 
-# Context is passed when running the agent
+```yaml
+handoffs:
+  # Reference external agent YAML file
+  - yaml: ../math_agent/agent.yml
+    tool_name_override: ask_math_expert
+    tool_description_override: "Delegate mathematical problems to the math specialist"
+
+  # Inline agent definition
+  - inline:
+      name: quick_responder
+      model: gpt-4o-mini
+      instructions: "Provide brief, concise answers."
+      tools: []
+    tool_name_override: get_quick_answer
 ```
 
-### Dynamic Tool Loading
+#### handoff_description
+Description shown when this agent is used as a handoff target:
 
-Discover tools from directories:
+```yaml
+handoff_description: "Specialist in data analysis and visualization"
+```
 
-```python
-from omniagents.core.tools import discover_functions_in_dir
+### Guardrails
 
-tools = discover_functions_in_dir("path/to/tools")
+Validate and filter inputs and outputs for safety and compliance.
+
+#### input_guardrails
+List of input guardrail names to apply before processing user messages:
+
+```yaml
+input_guardrails:
+  - block_pii
+  - check_content_policy
+```
+
+#### output_guardrails
+List of output guardrail names to apply before returning responses:
+
+```yaml
+output_guardrails:
+  - filter_sensitive_data
+  - validate_json_output
+```
+
+Guardrails are discovered from the `guardrails/` directory in your project. See the guardrails documentation for details on creating custom guardrails.
+
+### Server Functions
+
+Expose server-side functions that clients can call via RPC.
+
+#### server_functions
+List of server function names to register, or `all` to register all discovered functions:
+
+```yaml
+# Register specific functions
+server_functions:
+  - get_user_profile
+  - save_preferences
+
+# Or register all discovered functions
+server_functions: all
+```
+
+#### additional_server_functions_dirs
+Additional directories to search for server functions:
+
+```yaml
+additional_server_functions_dirs:
+  - ../shared_server_functions
+```
+
+Server functions are discovered from the `server_functions/` directory.
+
+### MCP Servers
+
+Integrate Model Context Protocol servers to extend agent capabilities.
+
+#### mcp_servers
+List of MCP server configurations:
+
+```yaml
+mcp_servers:
+  - name: filesystem-server
+    type: stdio
+    params:
+      command: mcp-server-filesystem
+      args:
+        - "/allowed/directory"
+    options:
+      name: Filesystem Tools
+      cache_tools_list: true
+
+  - name: web-fetch-server
+    type: stdio
+    params:
+      command: demo_mcp_server
+```
+
+**MCP Server Configuration:**
+- **name**: Unique identifier for the MCP server
+- **type**: Server type (`stdio` for standard I/O communication)
+- **params**: Server-specific parameters
+  - **command**: Executable command to launch the server
+  - **args**: Command-line arguments (optional)
+- **options**: Additional options
+  - **name**: Display name for UI
+  - **cache_tools_list**: Cache tool list for performance (optional)
+
+#### mcp_config
+Extended MCP configuration options:
+
+```yaml
+mcp_config:
+  timeout: 30
+  retry_attempts: 3
+```
+
+### Environment Variables
+
+Use environment variable substitution in your configuration:
+
+```yaml
+model_settings:
+  temperature: ${AGENT_TEMPERATURE:-0.7}  # Use env var or default to 0.7
+
+variables:
+  api_endpoint: ${API_ENDPOINT:?API_ENDPOINT must be set}
+  api_key: ${API_KEY}
+```
+
+**Syntax:**
+- `${VAR_NAME}` - Required variable (error if not set)
+- `${VAR_NAME:-default}` - Use default value if not set
+- `${VAR_NAME:?error message}` - Custom error message if not set
+
+### Variables & Context
+
+Provide dynamic context to agent instructions:
+
+#### variables
+Key-value pairs accessible in instructions via template variables:
+
+```yaml
+variables:
+  user_name: ${USER_NAME}
+  environment: production
+  api_endpoint: https://api.example.com
+```
+
+These variables can be referenced in your instructions file or used by your agent's runtime context.
+
+### Output Configuration
+
+#### output_type
+Enforce structured output format:
+
+```yaml
+output_type: dict  # Options: str, dict, list, int, float, bool
+```
+
+#### output_type_strict
+Use strict JSON schema validation (default: true):
+
+```yaml
+output_type_strict: true
+```
+
+#### output_schema
+Define explicit JSON schema for outputs:
+
+```yaml
+output_schema:
+  properties:
+    summary:
+      type: string
+    confidence:
+      type: number
+    recommendations:
+      type: array
 ```
 
 ## Best Practices
 
-1. **Clear Instructions**: Write detailed, specific instructions for your agent
-2. **Tool Documentation**: Document each tool's purpose and parameters
-3. **Safe Mode for Destructive Actions**: Enable `use_safe_agent` for tools that modify data
-4. **Version Control**: Keep your agent YAML files in version control
-5. **Modular Tools**: Create focused, single-purpose tools
+### 1. Use Instruction Files
+Store instructions in separate markdown files rather than inline YAML strings:
+
+```yaml
+# Good
+instructions_file: instructions.md
+
+# Avoid
+instructions: "You are a helpful assistant..."
+```
+
+This makes instructions easier to read, edit, and version control.
+
+### 2. Start Simple
+Begin with minimal configuration and add complexity as needed:
+
+```yaml
+name: my_agent
+model: gpt-4o-mini
+instructions_file: instructions.md
+tools: []
+```
+
+### 3. Use Safe Mode for Destructive Operations
+Enable `use_safe_agent` for agents that can modify data or make external changes:
+
+```yaml
+use_safe_agent: true
+safe_agent_options:
+  safe_tool_names:
+    - read_only_tool  # These don't need approval
+    - search
+```
+
+### 4. Organize Multi-Agent Systems
+Use clear naming and directory structure for handoff agents:
+
+```
+agents/
+  ├── coordinator/
+  │   └── agent.yml
+  ├── math_specialist/
+  │   └── agent.yml
+  └── research_assistant/
+      └── agent.yml
+```
+
+### 5. Use Environment Variables for Secrets
+Never hardcode sensitive data in YAML files:
+
+```yaml
+# Good
+variables:
+  api_key: ${API_KEY}
+  database_url: ${DATABASE_URL}
+
+# Bad - Don't do this!
+variables:
+  api_key: "sk-1234567890abcdef"
+```
+
+### 6. Document Your Agents
+Use `label` and `description` fields for clarity:
+
+```yaml
+name: data_analyst
+label: Data Analysis Agent
+description: "Analyzes CSV files and generates statistical reports"
+```
+
+### 7. Test with Lower-Cost Models First
+Use `gpt-4o-mini` for development and testing before switching to more expensive models:
+
+```yaml
+# Development
+model: gpt-4o-mini
+
+# Production (when ready)
+# model: gpt-4o
+```
+
+### 8. Leverage Model Settings
+Fine-tune model behavior for your use case:
+
+```yaml
+model_settings:
+  temperature: 0.3  # Lower for factual/deterministic tasks
+  # temperature: 0.9  # Higher for creative tasks
+```
+
+### 9. Version Control Everything
+Keep all agent configurations, instructions, and tools in version control (git) to track changes and enable rollbacks.
 
 ## Next Steps
 

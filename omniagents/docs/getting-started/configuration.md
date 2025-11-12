@@ -60,21 +60,84 @@ OPENAI_BASE_URL=https://your-custom-endpoint.com/v1
 
 When using GUI mode, you can enter API keys in the settings screen. These are persisted in browser local storage.
 
-## Agent Configuration
+## Project Configuration
 
-Agents are configured using YAML files. Here's a complete example:
+OmniAgents uses a project-based structure defined by a `project.yml` file. This allows you to organize multiple agents, shared tools, guardrails, and evaluations in a single project.
+
+### Project Structure
+
+A typical OmniAgents project has the following structure:
+
+```
+myproject/
+├── project.yml           # Project configuration
+├── agents/              # Agent definitions
+│   └── agent_name/
+│       └── agent.yml    # Individual agent config
+├── tools/               # Shared tools (optional)
+├── guardrails/          # Input/output validation (optional)
+├── server_functions/    # Server-side RPC functions (optional)
+├── evaluations/         # Evaluation configs (optional)
+└── target/              # Build artifacts (auto-generated)
+```
+
+### project.yml
+
+Here's a complete example:
 
 ```yaml
-name: MyAgent
+name: myproject
+paths:
+  agents: agents
+  tools: tools
+  guardrails: guardrails
+  server_functions: server_functions
+  evaluations: evaluations
+  target: target
+agents:
+  entrypoint: agent_name  # Default agent to run
+  include: ["*"]          # Agent patterns to include (optional)
+  exclude: []             # Agent patterns to exclude (optional)
+
+tracing:
+  provider: studio        # Options: default, studio, agentio, none
+  project: myproject
+  name: trace_name
+  settings:
+    resume: never         # Options: allow, must, never
+```
+
+### Project Configuration Fields
+
+- **name** (required): Project identifier
+- **paths** (optional): Custom directory paths for project components
+  - **agents**: Directory containing agent definitions (default: `agents`)
+  - **tools**: Shared tools directory (default: `tools`)
+  - **guardrails**: Guardrails directory (default: `guardrails`)
+  - **server_functions**: Server functions directory (default: `server_functions`)
+  - **evaluations**: Evaluation configs directory (default: `evaluations`)
+  - **target**: Build output directory (default: `target`)
+- **agents** (required): Agent configuration
+  - **entrypoint**: Default agent key to run
+  - **include**: Glob patterns for agents to include
+  - **exclude**: Glob patterns for agents to exclude
+- **tracing** (optional): Tracing configuration (see Tracing Configuration below)
+
+### Agent Configuration
+
+Individual agents are defined in `agents/<agent_name>/agent.yml`:
+
+```yaml
+name: agent_name
 instructions_file: instructions.md
 tools: [tool1, tool2, tool3]
 use_safe_agent: true
 layout: tabs
 ```
 
-### Configuration Fields
+### Agent Configuration Fields
 
-- **name** (required): The agent's display name
+- **name** (required): The agent's name (must match directory name, lowercase)
 - **instructions_file** (required): Path to a markdown file containing the agent's system instructions
 - **tools** (optional): List of tool function names to make available to the agent
 - **use_safe_agent** (optional, default: false): When true, requires user approval before executing tools
@@ -82,21 +145,98 @@ layout: tabs
 
 ## Session Storage
 
-Conversation history is stored in `sessions.db` (SQLite database) at the repository root or a specified path.
+Conversation history is stored in SQLite databases organized by project and agent.
+
+### Storage Location
+
+By default, sessions are stored in:
+```
+~/.omniagents/sessions/<project_slug>/<agent_slug>/sessions.db
+```
+
+You can customize the location using the `OMNIAGENTS_HISTORY_DB` environment variable:
+
+```bash
+export OMNIAGENTS_HISTORY_DB="/path/to/custom/sessions.db"
+```
+
+You can also change the base OmniAgents home directory:
+
+```bash
+export OMNIAGENTS_HOME="/path/to/custom/omniagents"
+# Sessions will be stored in: /path/to/custom/omniagents/sessions/
+```
 
 ### Resuming Sessions
 
 Resume a previous conversation using the session ID:
 
 ```bash
-omniagents run -P agent.yml --mode cli --session-id <session-id>
+# From within project directory
+omniagents run --mode cli --session-id <session-id>
+
+# Or from outside project directory
+omniagents run -P /path/to/myproject --mode cli --session-id <session-id>
 ```
 
 In TUI mode, use the `--resume` flag to open a session picker:
 
 ```bash
-omniagents run -P agent.yml --mode tui --resume
+# From within project directory
+omniagents run --mode tui --resume
+
+# Or from outside project directory
+omniagents run -P /path/to/myproject --mode tui --resume
 ```
+
+## Tracing Configuration
+
+OmniAgents supports multiple tracing providers for monitoring and debugging agent execution.
+
+### Tracing Providers
+
+Configure tracing in your `project.yml`:
+
+```yaml
+tracing:
+  provider: studio        # Options: default, studio, none
+  project: myproject      # Project name for trace organization
+  name: trace_name        # Optional trace name
+  settings:
+    resume: never         # Options: allow, must, never
+```
+
+**Provider Options:**
+
+- **default**: Uses OpenAI SDK's default tracing (sends traces to OpenAI)
+- **studio**: Uses OmniAgents Studio for local trace storage and visualization
+  - Requires: `pip install omniagents[studio]`
+- **none**: Disables all tracing
+
+### Trace Storage
+
+When using the `studio` provider, traces are stored locally at:
+
+```
+~/.omniagents/traces/
+```
+
+You can customize this location with the `OMNIAGENTS_HOME` environment variable:
+
+```bash
+export OMNIAGENTS_HOME="/path/to/custom/omniagents"
+# Traces will be stored in: /path/to/custom/omniagents/traces/
+```
+
+### Viewing Traces
+
+To view traces collected with the Studio provider:
+
+```bash
+omniagents studio
+```
+
+This launches the OmniAgents Studio web interface for trace visualization and analysis.
 
 ## Tool Discovery
 
@@ -125,7 +265,11 @@ Common environment variables:
 - `AZURE_OPENAI_DEPLOYMENT`: Azure deployment name
 
 **OmniAgents Configuration:**
-- `OMNIAGENTS_DB_PATH`: Path to session database (default: `./sessions.db`)
+- `OMNIAGENTS_HOME`: Base directory for OmniAgents data (default: `~/.omniagents`)
+  - Sessions stored in: `$OMNIAGENTS_HOME/sessions/`
+  - Traces stored in: `$OMNIAGENTS_HOME/traces/`
+- `OMNIAGENTS_HISTORY_DB`: Override session database path (default: `~/.omniagents/sessions/<project>/<agent>/sessions.db`)
+- `OMNIAGENTS_AUDIO_STORAGE`: Override audio storage directory (default: `~/.omniagents/sessions/<project>/<agent>/audio/`)
 
 **Other API Keys:**
 - `SERPAPI_API_KEY`: SerpAPI key for web search tools (optional)
@@ -135,11 +279,52 @@ Common environment variables:
 When running in server mode, additional options are available:
 
 ```bash
-omniagents run -P agent.yml --mode server --host 0.0.0.0 --port 8000
+# From within project directory
+omniagents run --mode server --host 0.0.0.0 --port 8000
+
+# Or from outside project directory
+omniagents run -P /path/to/myproject --mode server --host 0.0.0.0 --port 8000
 ```
 
 - `--host`: Server host address (default: 127.0.0.1)
 - `--port`: Server port (default: 8000)
+
+## Running Projects
+
+OmniAgents runs projects, not individual agent files. When you're inside a project directory (containing `project.yml`), the project is automatically discovered:
+
+```bash
+# Navigate to your project directory
+cd /path/to/myproject
+
+# Run the default agent in TUI mode (default)
+omniagents run
+
+# Run in CLI mode
+omniagents run --mode cli
+
+# Run in GUI mode
+omniagents run --mode gui
+
+# Run in server mode
+omniagents run --mode server
+```
+
+You can also specify the project path using `-P` or `--project` if you're not in the project directory:
+
+```bash
+# Specify project directory
+omniagents run -P /path/to/myproject
+
+# Or specify project.yml directly
+omniagents run -P /path/to/myproject/project.yml
+```
+
+If your project has multiple agents, specify which one to run:
+
+```bash
+omniagents run --agent agent_name
+```
 
 ## Next Steps
 

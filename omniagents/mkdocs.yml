@@ -67,6 +67,7 @@ nav:
     - Defining Agents: guide/defining-agents.md
     - Running Modes: guide/running-modes.md
     - Tools: guide/tools.md
+    - Rich Tools: guide/rich-tools.md
     - Safe Agent Mode: guide/safe-agent.md
     - Session Management: guide/sessions.md
   - Backends:
