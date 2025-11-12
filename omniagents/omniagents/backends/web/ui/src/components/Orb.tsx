@@ -4,13 +4,30 @@ import './Orb.css';
 
 export default function Orb({ hue = 0, hoverIntensity = 0.2, rotateOnHover = true, forceHoverState = false, animationSpeed = 1.0, noiseScale = 0.65, noiseAmplitude = 1.0, innerRadius = 0.6 }) {
   const ctnDom = useRef(null);
+  const hueRef = useRef(hue);
   const hoverIntensityRef = useRef(hoverIntensity);
   const animationSpeedRef = useRef(animationSpeed);
   const noiseScaleRef = useRef(noiseScale);
   const noiseAmplitudeRef = useRef(noiseAmplitude);
   const innerRadiusRef = useRef(innerRadius);
 
+  // Debug logging
+  const debugEnabled = /^(1|true|yes)$/i.test(String(new URL(window.location.href).searchParams.get('debug') || ''))
+  if (debugEnabled) {
+    console.log('[Orb props]', {
+      hue: hue.toFixed(0),
+      hoverIntensity: hoverIntensity.toFixed(3),
+      rotateOnHover,
+      forceHoverState,
+      animationSpeed: animationSpeed.toFixed(2),
+      noiseScale: noiseScale.toFixed(2),
+      noiseAmplitude: noiseAmplitude.toFixed(3),
+      innerRadius: innerRadius.toFixed(3),
+    })
+  }
+
   // Update refs when props change
+  hueRef.current = hue;
   hoverIntensityRef.current = hoverIntensity;
   animationSpeedRef.current = animationSpeed;
   noiseScaleRef.current = noiseScale;
@@ -196,14 +213,14 @@ export default function Orb({ hue = 0, hoverIntensity = 0.2, rotateOnHover = tru
         iResolution: {
           value: new Vec3(gl.canvas.width, gl.canvas.height, gl.canvas.width / gl.canvas.height)
         },
-        hue: { value: hue },
+        hue: { value: hueRef.current },
         hover: { value: 0 },
         rot: { value: 0 },
-        hoverIntensity: { value: hoverIntensity },
-        animationSpeed: { value: animationSpeed },
-        noiseScale: { value: noiseScale },
-        noiseAmplitude: { value: noiseAmplitude },
-        innerRadius: { value: innerRadius }
+        hoverIntensity: { value: hoverIntensityRef.current },
+        animationSpeed: { value: animationSpeedRef.current },
+        noiseScale: { value: noiseScaleRef.current },
+        noiseAmplitude: { value: noiseAmplitudeRef.current },
+        innerRadius: { value: innerRadiusRef.current }
       }
     });
 
@@ -259,7 +276,7 @@ export default function Orb({ hue = 0, hoverIntensity = 0.2, rotateOnHover = tru
       const dt = (t - lastTime) * 0.001;
       lastTime = t;
       program.uniforms.iTime.value = t * 0.001;
-      program.uniforms.hue.value = hue;
+      program.uniforms.hue.value = hueRef.current;
       program.uniforms.hoverIntensity.value = hoverIntensityRef.current;
       program.uniforms.animationSpeed.value = animationSpeedRef.current;
       program.uniforms.noiseScale.value = noiseScaleRef.current;
@@ -287,7 +304,7 @@ export default function Orb({ hue = 0, hoverIntensity = 0.2, rotateOnHover = tru
       gl.getExtension('WEBGL_lose_context')?.loseContext();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hue, rotateOnHover, forceHoverState]);
+  }, [rotateOnHover, forceHoverState]);
 
   return <div ref={ctnDom} className="orb-container" />;
 }
