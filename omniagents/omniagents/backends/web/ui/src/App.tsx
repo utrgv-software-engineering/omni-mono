@@ -20,6 +20,7 @@ function wsUrlFromLocation(): string {
 export function App() {
   const [ui, setUI] = useState<UIState>('connecting')
   const [connected, setConnected] = useState(false)
+  const [voiceEnabled, setVoiceEnabled] = useState(false)
   const [items, setItems] = useState<MessageItem[]>([])
   const [thinking, setThinking] = useState(false)
   const [status, setStatus] = useState<string | undefined>(undefined)
@@ -67,6 +68,24 @@ export function App() {
           setWelcomeText(wt)
           document.title = agentName
         } catch {}
+        try {
+          const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+          const host = window.location.host
+          const base = `${proto}://${host}/ws/realtime`
+          const url = new URL(window.location.href)
+          const token = url.searchParams.get('token') || undefined
+          const { RealtimeRPCClient } = await import('./rpc/realtime')
+          const rtc = new RealtimeRPCClient(base, token)
+          await rtc.connect()
+          try {
+            const res: any = await rtc.startSession()
+            const sid = String(res?.session_id || '')
+            if (sid) {
+              setVoiceEnabled(true)
+              try { await rtc.stopSession(sid) } catch {}
+            }
+          } finally { rtc.disconnect() }
+        } catch { setVoiceEnabled(false) }
         const url = new URL(window.location.href)
         const resume = url.searchParams.get('resume') === 'true'
         const sid = url.searchParams.get('session') || undefined
@@ -478,7 +497,7 @@ export function App() {
         <Header agentName={agentName} connected={connected} onMenu={() => setSidebarOpen(v => !v)} />
         <div className="flex-1 flex flex-col min-h-0">
           <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} statusItalic={statusItalic} />
-          <Input disabled={!connected} thinking={thinking} onStop={handleStop} onSubmit={handleSubmit} />
+          <Input disabled={!connected} thinking={thinking} onStop={handleStop} onSubmit={handleSubmit} voiceEnabled={voiceEnabled} />
         </div>
       </div>
     </div>

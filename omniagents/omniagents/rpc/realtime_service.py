@@ -101,21 +101,28 @@ class RealtimeService(RpcMethodsBase):
             async for event in session.stream_events():
                 # Send event as notification to client
                 if self.channel:
-                    event_dict = event.to_dict()
-                    await self.channel.async_call("realtime_event", event_dict)
+                    try:
+                        event_dict = event.to_dict()
+                        await self.channel.async_call("realtime_event", event_dict)
+                    except Exception:
+                        # Client likely disconnected; stop streaming
+                        break
         except asyncio.CancelledError:
             # Task was cancelled during cleanup
             pass
         except Exception as e:
             # Log error and notify client
-            if self.channel:
-                await self.channel.async_call(
-                    "realtime_error",
-                    {
-                        "session_id": session_id,
-                        "error": str(e),
-                    },
-                )
+            try:
+                if self.channel:
+                    await self.channel.async_call(
+                        "realtime_error",
+                        {
+                            "session_id": session_id,
+                            "error": str(e),
+                        },
+                    )
+            except Exception:
+                pass
 
     async def send_audio(
         self, session_id: str, audio_base64: str, commit: bool = False

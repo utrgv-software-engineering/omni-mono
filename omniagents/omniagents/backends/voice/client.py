@@ -371,11 +371,16 @@ class VoiceClient:
                         # Send silence (zeros) to trigger server VAD
                         silence = b"\x00" * len(audio_data)
                         silence_base64 = base64.b64encode(silence).decode()
-                        await self.client.call(
-                            "send_audio",
-                            session_id=self.session_id,
-                            audio_base64=silence_base64,
-                        )
+                        try:
+                            await self.client.notify(
+                                "send_audio",
+                                session_id=self.session_id,
+                                audio_base64=silence_base64,
+                            )
+                        except Exception as e:
+                            if self.running:
+                                print(f"\n✗ Send error: {e}")
+                            break
                         self.handler.send_silence_chunks -= 1
                         await asyncio.sleep(0.01)
                         continue
@@ -389,11 +394,16 @@ class VoiceClient:
                     audio_base64 = base64.b64encode(audio_data).decode()
 
                     # Send to agent (server VAD will detect when you stop)
-                    await self.client.call(
-                        "send_audio",
-                        session_id=self.session_id,
-                        audio_base64=audio_base64,
-                    )
+                    try:
+                        await self.client.notify(
+                            "send_audio",
+                            session_id=self.session_id,
+                            audio_base64=audio_base64,
+                        )
+                    except Exception as e:
+                        if self.running:
+                            print(f"\n✗ Send error: {e}")
+                        break
 
                     # Small delay to prevent overwhelming the server
                     await asyncio.sleep(0.01)

@@ -13,6 +13,7 @@ from typing import Optional
 
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.runtime.overrides import apply_cli_overrides
+from omniagents.core.agents.specs import RealtimeSettings
 
 
 class WebBackend:
@@ -58,11 +59,48 @@ class WebBackend:
 
         apply_cli_overrides(spec, args)
 
+        try:
+            if not getattr(spec, "realtime_mode", False):
+                spec.realtime_mode = True
+            if not getattr(spec, "realtime_settings", None):
+                spec.realtime_settings = RealtimeSettings()
+            rs = spec.realtime_settings
+            if not rs.modalities or ("audio" not in rs.modalities):
+                rs.modalities = ["audio"]
+            if not rs.model_name:
+                rs.model_name = "gpt-realtime"
+            if not rs.voice:
+                rs.voice = "alloy"
+            if not rs.input_audio_format:
+                rs.input_audio_format = "pcm16"
+            if not rs.output_audio_format:
+                rs.output_audio_format = "pcm16"
+            if not rs.turn_detection:
+                rs.turn_detection = {
+                    "type": "server_vad",
+                    "threshold": 0.3,
+                    "prefix_padding_ms": 100,
+                    "silence_duration_ms": 200,
+                }
+            if rs.temperature is None:
+                rs.temperature = 0.8
+            if rs.max_output_tokens is None:
+                rs.max_output_tokens = 4096
+            if not rs.input_audio_transcription:
+                rs.input_audio_transcription = {"model": "whisper-1"}
+        except Exception:
+            pass
+
         config_path = kwargs.get("config_path")
         auth_token = kwargs.get("auth_token")
         debug = kwargs.get("debug", False)
         if not debug and args and hasattr(args, "debug"):
             debug = args.debug
+        try:
+            if debug:
+                os.environ["OMNIAGENTS_SERVER_DEBUG"] = "1"
+        except Exception:
+            pass
 
         app = build_app(config_path=config_path, spec=spec, auth_token=auth_token)
 
@@ -132,6 +170,8 @@ class WebBackend:
             init = kwargs.get("initial_prompt")
             if init:
                 qp.append(("initial", str(init)))
+            if debug:
+                qp.append(("debug", "1"))
         except Exception:
             pass
         open_url = None

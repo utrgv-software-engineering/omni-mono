@@ -122,3 +122,9 @@ class JsonRpcClient:
         self._pending[call_id] = fut
         await self._transport.send_json(payload)
         return await fut
+
+    async def notify(self, method: str, **params) -> None:
+        if not self._transport.is_connected():
+            raise RuntimeError("Transport is not connected")
+        payload = {"jsonrpc": "2.0", "method": method, "params": params}
+        await self._transport.send_json(payload)

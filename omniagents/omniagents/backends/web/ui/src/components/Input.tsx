@@ -2,8 +2,8 @@ import React, { useCallback, useMemo, useRef, useState } from 'react'
 import { PromptInput, PromptInputTextarea, PromptInputActions } from './promptkit/PromptInput'
 import { VoiceModal } from './VoiceModal'
 
-export function Input({ disabled, thinking, onStop, onSubmit }:
-  { disabled?: boolean; thinking?: boolean; onStop?: () => void; onSubmit: (text: string, files?: File[]) => void }) {
+export function Input({ disabled, thinking, onStop, onSubmit, voiceEnabled }:
+  { disabled?: boolean; thinking?: boolean; onStop?: () => void; onSubmit: (text: string, files?: File[]) => void; voiceEnabled?: boolean }) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [history, setHistory] = useState<string[]>([])
@@ -156,17 +156,19 @@ export function Input({ disabled, thinking, onStop, onSubmit }:
             </label>
 
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setIsVoiceModalOpen(true)}
-                className="hover:bg-bgCardAlt/50 flex h-8 w-8 items-center justify-center rounded-2xl"
-                aria-label="Voice mode"
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" className="text-white" aria-hidden="true">
-                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" fill="currentColor"/>
-                  <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none"/>
-                </svg>
-              </button>
+              {voiceEnabled ? (
+                <button
+                  type="button"
+                  onClick={() => setIsVoiceModalOpen(true)}
+                  className="hover:bg-bgCardAlt/50 flex h-8 w-8 items-center justify-center rounded-2xl"
+                  aria-label="Voice mode"
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" className="text-white" aria-hidden="true">
+                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" fill="currentColor"/>
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none"/>
+                  </svg>
+                </button>
+              ) : null}
 
               {!thinking ? (
               <button

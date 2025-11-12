@@ -118,7 +118,10 @@ class JsonRpcEndpoint:
                         await self._handle_internal_error(channel, None, exc)
                         continue
 
-                    await self._process_message(channel, data)
+                    try:
+                        await self._process_message(channel, data)
+                    except Exception:
+                        break
             finally:
                 try:
                     if getattr(self.methods, "channel", None) is channel:
