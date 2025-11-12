@@ -29,7 +29,7 @@ async function buildTUI() {
       format: "esm",
       sourcemap: true,
       minify: false,
-      external: ["react-devtools-core"],
+      external: [],
       banner: {
         js: `#!/usr/bin/env node
 import { createRequire } from 'node:module';
