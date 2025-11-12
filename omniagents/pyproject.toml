@@ -130,7 +130,8 @@ include-package-data = true
     "tui/tsconfig.json",
     "tui/src/**/*.ts",
     "tui/src/**/*.tsx",
-    "dist/*",
+    "tui/dist/*",
+    "tui/dist/**/*",
 ]
 "omniagents.backends.web" = [
     "ui/dist/*",
