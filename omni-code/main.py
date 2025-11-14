@@ -75,7 +75,7 @@ def cli_main(argv=None):
     parser.add_argument(
         "--mode",
         "-m",
-        choices=["gui", "cli", "server", "bubbletea", "tui", "ink"],
+        choices=["ink", "web", "server"],
         default="ink",
         help="Execution mode (default: ink)",
     )
@@ -88,7 +88,7 @@ def cli_main(argv=None):
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Show TUI session picker (TUI modes: bubbletea, tui, ink).",
+        help="Show TUI session picker (ink only).",
     )
     parser.add_argument(
         "--approvals",
@@ -100,10 +100,6 @@ def cli_main(argv=None):
         dest="on_reject",
         choices=["halt", "continue"],
         help="Behavior when a tool call is rejected: halt or continue",
-    )
-    parser.add_argument(
-        "--session-id",
-        help="Resume a previous CLI session",
     )
     parser.add_argument(
         "--host",
@@ -194,15 +190,13 @@ def cli_main(argv=None):
     kwargs = {"args": args}
 
     resume_flag = bool(getattr(args, "resume", False))
-    if resume_flag and args.mode not in ("bubbletea", "tui", "ink"):
-        print("Error: --resume is only supported in TUI modes (bubbletea, tui, ink).")
+    if resume_flag and args.mode != "ink":
+        print("Error: --resume is only supported in ink mode.")
         sys.exit(2)
     if resume_flag:
         kwargs["resume"] = True
 
-    if args.mode == "cli":
-        kwargs["session_id"] = args.session_id
-    elif args.mode == "server":
+    if args.mode in {"web", "server"}:
         kwargs.update(
             {
                 "host": args.host,
