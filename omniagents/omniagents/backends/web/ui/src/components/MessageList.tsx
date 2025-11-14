@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react'
 import { Markdown } from './promptkit/markdown'
 import { Message, MessageContent, MessageActions, MessageAction } from './promptkit/Message'
+import { ChatContainerContent, ChatContainerRoot, ChatContainerScrollAnchor } from './ChatContainer'
 
 export type ChatMessage = {
   type: 'chat'
@@ -48,8 +49,8 @@ export function MessageList({ items, statusText, thinking, statusSpinner, preamb
     setReactions(prev => ({ ...prev, [index]: prev[index] === type ? undefined : type }))
   }, [])
   return (
-    <div className="flex-1 overflow-y-auto">
-      <div className="container-chat px-3 py-3 space-y-3 md:space-y-4">
+    <ChatContainerRoot className="flex-1">
+      <ChatContainerContent className="container-chat px-3 py-3 space-y-3 md:space-y-4">
         {items.length === 0 ? (
           <div className="py-8">
             <div className="mx-auto max-w-xl text-center rounded-xl border border-bgCardAlt bg-bgCard px-4 py-6 shadow-sm">
@@ -69,8 +70,9 @@ export function MessageList({ items, statusText, thinking, statusSpinner, preamb
         {(thinking || statusText) ? (
           <StatusRow text={statusText || (thinking ? 'Thinking…' : '')} spinner={!!statusSpinner || !!thinking} italic={!!statusItalic && !thinking} />
         ) : null}
-      </div>
-    </div>
+        <ChatContainerScrollAnchor />
+      </ChatContainerContent>
+    </ChatContainerRoot>
   )
 }
 
@@ -239,25 +241,29 @@ function ToolCard({ item }: { item: ToolItem }) {
     </>
   )
   return (
-    <div className="rounded-md border border-bgCardAlt bg-bgCardAlt p-3">
-      <div className="flex items-center gap-2">
-        <span className={["inline-block w-2 h-2 rounded-full flex-shrink-0", iconFill].join(' ')} />
-        <div className="flex-1 text-sm text-gray-100">{titleNode}</div>
-        <button
-          className="w-6 h-6 flex items-center justify-center rounded hover:bg-bgColumn text-textSubtle hover:text-gray-200"
-          aria-label="Toggle details"
-          onClick={() => setOpen(v => !v)}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={[open ? 'rotate-180' : '', 'transition-transform'].join(' ')}>
-            <path d="M7 10l5 5 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
-      </div>
-      {open ? (
-        <div className="mt-2 space-y-3">
-          {renderToolBody(item)}
+    <div className="flex justify-start">
+      <div className="min-w-0 w-full md:max-w-[70%]">
+        <div className="rounded-md border border-bgCardAlt bg-bgCardAlt p-3">
+          <div className="flex items-center gap-2">
+            <span className={["inline-block w-2 h-2 rounded-full flex-shrink-0", iconFill].join(' ')} />
+            <div className="flex-1 min-w-0 text-sm text-gray-100">{titleNode}</div>
+            <button
+              className="w-6 h-6 flex items-center justify-center rounded hover:bg-bgColumn text-textSubtle hover:text-gray-200"
+              aria-label="Toggle details"
+              onClick={() => setOpen(v => !v)}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={[open ? 'rotate-180' : '', 'transition-transform'].join(' ')}>
+                <path d="M7 10l5 5 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </div>
+          {open ? (
+            <div className="mt-2 space-y-3">
+              {renderToolBody(item)}
+            </div>
+          ) : null}
         </div>
-      ) : null}
+      </div>
     </div>
   )
 }
@@ -345,11 +351,11 @@ function linesFromDiff(metadata: any): string[] {
 function diffView(lines: string[]) {
   const rows = lines.map((l, i) => {
     const cls = l.startsWith('+') && !l.startsWith('+++') ? 'text-successGreen' : (l.startsWith('-') && !l.startsWith('---') ? 'text-errorRed' : 'text-textSubtle')
-    return <div key={i} className={[cls, 'font-mono text-[12px]'].join(' ')}>{l}</div>
+    return <div key={i} className={[cls, 'font-mono text-[12px] whitespace-pre'].join(' ')}>{l}</div>
   })
   return (
-    <div className="w-full p-2 rounded border border-bgCardAlt bg-bgColumn">
-      <div className="space-y-0.5">{rows}</div>
+    <div className="w-full overflow-x-auto p-2 rounded border border-bgCardAlt bg-bgColumn">
+      <div className="space-y-0.5 min-w-fit">{rows}</div>
     </div>
   )
 }
@@ -380,16 +386,16 @@ function tableView(metadata: any) {
 
 function codeBlock(content: string) {
   return (
-    <div className="w-full p-2 rounded border border-bgCardAlt bg-bgColumn">
-      <pre className="whitespace-pre-wrap overflow-x-auto text-[12px] text-gray-100"><code>{content}</code></pre>
+    <div className="w-full overflow-x-auto p-2 rounded border border-bgCardAlt bg-bgColumn">
+      <pre className="whitespace-pre-wrap text-[12px] text-gray-100"><code>{content}</code></pre>
     </div>
   )
 }
 
 function preText(content: string) {
   return (
-    <div className="w-full p-2 rounded border border-bgCardAlt bg-bgColumn">
-      <pre className="whitespace-pre-wrap overflow-x-auto text-[12px] text-gray-100"><code>{content}</code></pre>
+    <div className="w-full overflow-x-auto p-2 rounded border border-bgCardAlt bg-bgColumn">
+      <pre className="whitespace-pre-wrap text-[12px] text-gray-100"><code>{content}</code></pre>
     </div>
   )
 }
@@ -417,7 +423,7 @@ function commandView(metadata: any, plainOutput: string) {
   if (typeof meta?.has_stderr === 'boolean' && meta.has_stderr) status.push('stderr captured')
   return (
     <div className="space-y-2">
-      <div className="w-full p-2 rounded border border-bgCardAlt bg-bgColumn font-mono text-[12px]">$ {String(command)}</div>
+      <div className="w-full overflow-x-auto p-2 rounded border border-bgCardAlt bg-bgColumn font-mono text-[12px]">$ {String(command)}</div>
       {status.length ? <div className="text-[12px] text-textSubtle">{status.join(' • ')}</div> : null}
       {output.trim().length ? preText(output.trimEnd()) : null}
     </div>
