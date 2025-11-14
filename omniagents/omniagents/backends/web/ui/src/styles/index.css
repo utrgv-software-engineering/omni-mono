@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 /* Basic layout */
-html, body, #root { height: 100%; }
+html, body, #root { height: 100%; overflow: hidden; }
 .app { height: 100%; display: flex; }
 
 .container-chat { width: 100%; margin-left: auto; margin-right: auto; }

@@ -5,3 +5,14 @@ include omniagents/backends/bubbletea/README.md
 recursive-include omniagents/backends/bubbletea/vendor *
 recursive-include omniagents/studio/server/static *
 recursive-include omniagents/core/project/templates *
+recursive-include omniagents/backends/ink/tui/dist *
+recursive-include omniagents/backends/ink/tui/src *.ts *.tsx
+include omniagents/backends/ink/tui/package.json
+include omniagents/backends/ink/tui/tsconfig.json
+include omniagents/backends/ink/tui/tsconfig.tsx.json
+recursive-include omniagents/backends/web/ui/dist *
+recursive-include omniagents/backends/web/ui/src *
+include omniagents/backends/web/ui/package.json
+include omniagents/backends/web/ui/tsconfig.json
+include omniagents/backends/web/ui/tailwind.config.js
+include omniagents/backends/web/ui/postcss.config.js
