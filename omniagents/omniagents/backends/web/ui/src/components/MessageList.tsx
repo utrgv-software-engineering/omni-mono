@@ -242,7 +242,7 @@ function ToolCard({ item }: { item: ToolItem }) {
   )
   return (
     <div className="flex justify-start">
-      <div className="min-w-0 w-full md:max-w-[70%]">
+      <div className="w-full min-w-0">
         <div className="rounded-md border border-bgCardAlt bg-bgCardAlt p-3">
           <div className="flex items-center gap-2">
             <span className={["inline-block w-2 h-2 rounded-full flex-shrink-0", iconFill].join(' ')} />
