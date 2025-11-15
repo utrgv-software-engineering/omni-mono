@@ -77,7 +77,7 @@ def setup_tracing(tracing_config: Optional[Dict[str, Any]]) -> None:
             )
             logger.info("Studio tracing enabled for project: %s", project)
         except Exception as exc:
-            logger.error("Failed to initialize studio tracing: %s", exc)
+            logger.error("Failed to initialize studio tracing: %s", exc, exc_info=True)
             print(f"❌ Error initializing studio tracing: {exc}")
             print("    Falling back to default OpenAI tracing")
 
@@ -89,7 +89,7 @@ def setup_tracing(tracing_config: Optional[Dict[str, Any]]) -> None:
             logger.info("Tracing disabled")
             print("🔇 Tracing disabled")
         except ImportError as e:
-            logger.error(f"Failed to disable tracing: {e}")
+            logger.error(f"Failed to disable tracing: {e}", exc_info=True)
             print(f"❌ Error disabling tracing: {e}")
 
     else:

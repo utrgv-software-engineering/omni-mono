@@ -660,7 +660,15 @@ async def stream_agent(
             print(f"[srv] ✗ Error during run: {e}")
 
         # Log detailed error context for debugging
-        logger.error(f"API request failed: {e}")
+        logger.error(f"API request failed: {e}", exc_info=True)
+
+        # If it's an APIError, log the actual error body from OpenAI
+        from openai import APIError
+        if isinstance(e, APIError):
+            logger.error(f"OpenAI API Error Body: {e.body}")
+            logger.error(f"OpenAI API Error Type: {e.type}")
+            logger.error(f"OpenAI API Error Code: {e.code}")
+
         logger.error(
             f"Error context - Session: {session.id}, "
             f"Turn: {turn_counter}, "

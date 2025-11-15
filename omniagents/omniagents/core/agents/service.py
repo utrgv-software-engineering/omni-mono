@@ -1187,13 +1187,13 @@ class AgentService(RpcMethodsBase):
                         # Permanent failures - don't retry
                         end_reason = "error"
                         error_info = _build_agent_error_info(e)
-                        logger.error(f"Permanent error: {e}")
+                        logger.error(f"Permanent error: {e}", exc_info=True)
                         break
                     except AgentsException as e:
                         # Other agent exceptions - preserve run_data, don't retry
                         end_reason = "error"
                         error_info = _build_agent_error_info(e)
-                        logger.error(f"Agent exception: {e}")
+                        logger.error(f"Agent exception: {e}", exc_info=True)
                         break
                     except Exception as e:
                         # Transient errors (network, rate limit, etc.) - may retry
@@ -1234,7 +1234,7 @@ class AgentService(RpcMethodsBase):
                         if not _msg:
                             _msg = e.__class__.__name__
                         error_info = {"message": _msg, "type": e.__class__.__name__}
-                        logger.error(f"Non-retryable error: {e}")
+                        logger.error(f"Non-retryable error: {e}", exc_info=True)
                         break
             finally:
                 # Inform client the run finished

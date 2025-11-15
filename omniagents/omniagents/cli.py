@@ -166,9 +166,9 @@ def main():
     run_parser.add_argument(
         "--mode",
         "-m",
-        choices=["server", "ink", "voice", "web"],
+        choices=["server", "ink", "web"],
         default="web",
-        help="Run mode: 'web' (default) for React web UI, 'ink' for React Ink TUI, 'server' for JSON-RPC server, 'voice' for push-to-talk voice interaction",
+        help="Run mode: 'web' (default) for React web UI, 'ink' for React Ink TUI, 'server' for JSON-RPC server",
     )
     run_parser.add_argument(
         "--project", "-P", type=str, help="Path to project.yml (dbt-style)."
@@ -634,9 +634,9 @@ def main():
     agent_run.add_argument(
         "--mode",
         "-m",
-        choices=["server", "ink", "voice", "web"],
+        choices=["server", "ink", "web"],
         default="web",
-        help="Run mode: 'web' (default) for React web UI, 'ink' for React Ink TUI, 'server' for JSON-RPC server, 'voice' for push-to-talk voice interaction",
+        help="Run mode: 'web' (default) for React web UI, 'ink' for React Ink TUI, 'server' for JSON-RPC server",
     )
     agent_run.add_argument(
         "--project", "-P", type=str, help="Path to project.yml (dbt-style)."

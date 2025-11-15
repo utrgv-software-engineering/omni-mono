@@ -83,7 +83,7 @@ async def _build_handoffs_from_configs(
                 if handoff_config.inline_spec
                 else "unknown"
             )
-            logger.error(f"Failed to build handoff agent {agent_identifier}: {e}")
+            logger.error(f"Failed to build handoff agent {agent_identifier}: {e}", exc_info=True)
             continue
 
     return handoffs

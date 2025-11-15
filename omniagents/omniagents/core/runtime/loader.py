@@ -34,7 +34,6 @@ def load_backend(backend_name: str) -> Optional[Any]:
     backend_modules = {
         "server": "omniagents.backends.server:ServerBackend",
         "ink": "omniagents.backends.ink:InkBackend",
-        "voice": "omniagents.backends.voice:VoiceBackend",
         "web": "omniagents.backends.web:WebBackend",
     }
 

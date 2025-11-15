@@ -27,10 +27,6 @@ server = [
     "fastapi[all]>=0.115.12",
     "uvicorn>=0.34.1",
 ]
-voice = [
-    "fastapi[all]>=0.115.12",
-    "uvicorn>=0.34.1",
-]
 web = [
     "fastapi[all]>=0.115.12",
     "uvicorn>=0.34.1",
@@ -42,7 +38,7 @@ studio-server = [
 docs = [
     "mkdocs-material>=9.5.0",
 ]
-all = ["omniagents[server,voice,web,studio,studio-server]"]
+all = ["omniagents[server,web,studio,studio-server]"]
 dev = [
     "pytest",
     "pytest-asyncio",
@@ -97,7 +93,6 @@ exclude = '''
 [project.entry-points."omniagents.backends"]
 server = "omniagents.backends.server:ServerBackend"
 ink = "omniagents.backends.ink:InkBackend"
-voice = "omniagents.backends.voice:VoiceBackend"
 web = "omniagents.backends.web:WebBackend"
 
 [build-system]

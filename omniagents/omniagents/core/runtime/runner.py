@@ -221,7 +221,7 @@ class Runner:
         common_group.add_argument(
             "--mode",
             "-m",
-            choices=["server", "ink", "voice", "web"],
+            choices=["server", "ink", "web"],
             default=default_mode,
             help=f"Execution mode (default: {default_mode})",
         )
