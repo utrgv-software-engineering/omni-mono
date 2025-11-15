@@ -72,11 +72,10 @@ omniagents run --mode web
 # Ink mode (React-based terminal UI)
 omniagents run --mode ink
 
-# Voice mode (voice-based interaction)
-omniagents run --mode voice
-
 # Server mode (JSON-RPC API)
 omniagents run --mode server
+
+Realtime voice capture/playback is available inside the web interface when enabled in settings.
 ```
 
 ## Step 5: Try the Sample Tools

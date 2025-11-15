@@ -39,24 +39,6 @@ omniagents run -P agent.yml --mode ink
 - Terminal-based workflows
 - React developers
 
-## Voice Mode
-
-Voice-based interaction:
-
-```bash
-omniagents run -P agent.yml --mode voice
-```
-
-**Features:**
-- Voice input and output
-- Real-time audio processing
-- Natural conversation flow
-
-**Use Cases:**
-- Hands-free operation
-- Voice assistants
-- Accessibility
-
 ## Server Mode
 
 JSON-RPC WebSocket API:
@@ -82,9 +64,8 @@ See [RPC Protocol](../api/rpc-protocol.md) for protocol details.
 
 | Mode | Use Case | Pros | Cons |
 |------|----------|------|------|
-| Web | Local development, end users | Visual, feature-rich | Browser required |
+| Web | Local development, end users | Visual, feature-rich, optional realtime voice | Browser required |
 | Ink | Terminal workflows | Lightweight, modern UI | Terminal only |
-| Voice | Hands-free, accessibility | Natural interaction | Requires audio setup |
 | Server | Web apps, remote | Flexible, remote | Requires client |
 
 ## Session Management

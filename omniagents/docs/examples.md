@@ -208,12 +208,6 @@ omniagents run -P examples/basic_yaml/agent.yml
 omniagents run -P examples/basic_yaml/agent.yml --mode ink
 ```
 
-### Voice Mode
-
-```bash
-omniagents run -P examples/basic_yaml/agent.yml --mode voice
-```
-
 ### Server Mode
 
 ```bash
@@ -254,6 +248,8 @@ omniagents run -P examples/basic_yaml/agent.yml --mode server
    ```bash
    omniagents run -P agent.yml
    ```
+
+Enable realtime voice interaction from the web interface settings if your project requires audio input/output.
 
 ## Next Steps
 

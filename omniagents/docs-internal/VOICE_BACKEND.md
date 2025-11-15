@@ -6,9 +6,11 @@
 
 **Solution**: Cache tool call arguments from raw model events and use them to enrich tool_start events.
 
+> Note: The standalone Python voice backend referenced here has since been removed. Voice interaction is now handled through the web backend, but these notes remain for historical context.
+
 ## Problem Statement
 
-When using the voice backend (`omniagents run --mode voice`), tool calls were detected and displayed, but the **arguments were not showing up**. The tool name and results were visible, but the JSON arguments passed to the tool were missing.
+When using the former standalone voice backend (`omniagents run --mode voice`), tool calls were detected and displayed, but the **arguments were not showing up**. The tool name and results were visible, but the JSON arguments passed to the tool were missing.
 
 ### Current Behavior
 
@@ -65,11 +67,10 @@ Terminal Output
   - `stream_events()` generator
   - Calls `map_realtime_session_event_to_rpc()`
 
-#### Voice Client
-- **`omniagents/backends/voice/client.py:89-103`** - Displays tool events
-  - `ClientNotificationHandler.realtime_event()` method
-  - Handles `realtime_tool_start` and `realtime_tool_end` events
-  - Extracts `tool_name` and `arguments` from params dict
+#### Voice Client (historical)
+- Previously `omniagents/backends/voice/client.py` handled tool event display
+  - `ClientNotificationHandler.realtime_event()` method processed `realtime_tool_start` and `realtime_tool_end`
+  - Extracted `tool_name` and `arguments` from the params dict
 
 - **`examples/realtime_voice_agent/voice_client.py:90-104`** - Standalone example
   - Same logic as voice backend client
