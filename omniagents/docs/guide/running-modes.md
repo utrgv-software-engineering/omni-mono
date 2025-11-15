@@ -21,6 +21,15 @@ omniagents run -P agent.yml --mode web
 - End-user interfaces
 - Visual feedback and interaction
 
+To dedicate a different agent for realtime voice sessions, add `voice_entrypoint` in `project.yml`:
+
+```yaml
+agents:
+  entrypoint: support_bot
+  voice_entrypoint: support_bot_voice
+```
+When `--mode web` runs without `--agent`, the voice entrypoint is used.
+
 ## Ink Mode
 
 Terminal UI built with React:
@@ -57,6 +66,8 @@ omniagents run -P agent.yml --mode server --host 0.0.0.0 --port 8000
 - Web applications
 - Remote clients
 - Integration with other systems
+
+If your `project.yml` defines `agents.voice_entrypoint`, running server mode without `--agent` loads that voice agent so `/ws/realtime` uses its realtime configuration.
 
 See [RPC Protocol](../api/rpc-protocol.md) for protocol details.
 

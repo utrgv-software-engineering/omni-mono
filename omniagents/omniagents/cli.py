@@ -1074,7 +1074,13 @@ def main():
                 build_spec_from_project = None
             if load_project and build_spec_from_project:
                 proj = load_project(str(args.project))
-                spec = build_spec_from_project(proj, agent_key=(args.agent or None))
+                spec = build_spec_from_project(
+                    proj,
+                    agent_key=(args.agent or None),
+                    prefer_voice=(
+                        args.agent is None and args.mode in {"web", "server"}
+                    ),
+                )
                 runner = Runner(spec=spec)
             else:
                 print("Error: project runtime not available.")
@@ -1094,7 +1100,13 @@ def main():
                     )
 
                     proj = load_project(proj_file)
-                    spec = build_spec_from_project(proj, agent_key=(args.agent or None))
+                    spec = build_spec_from_project(
+                        proj,
+                        agent_key=(args.agent or None),
+                        prefer_voice=(
+                            args.agent is None and args.mode in {"web", "server"}
+                        ),
+                    )
                     runner = Runner(spec=spec)
                 except Exception as e:
                     print(f"Error loading project: {e}")
@@ -1282,7 +1294,13 @@ def main():
                     build_spec_from_project = None
                 if load_project and build_spec_from_project:
                     proj = load_project(str(args.project))
-                    spec = build_spec_from_project(proj, agent_key=(args.agent or None))
+                    spec = build_spec_from_project(
+                        proj,
+                        agent_key=(args.agent or None),
+                        prefer_voice=(
+                            args.agent is None and args.mode in {"web", "server"}
+                        ),
+                    )
                     runner = Runner(spec=spec)
                 else:
                     print("Error: project runtime not available.")
@@ -1302,7 +1320,12 @@ def main():
 
                         proj = load_project(proj_file)
                         spec = build_spec_from_project(
-                            proj, agent_key=(args.agent or None)
+                            proj,
+                            agent_key=(args.agent or None),
+                            prefer_voice=(
+                                args.agent is None
+                                and args.mode in {"web", "server"}
+                            ),
                         )
                         runner = Runner(spec=spec)
                     except Exception as e:
