@@ -1,0 +1,419 @@
+interactions:
+- request:
+    body: '{"data":[{"object":"trace","id":"trace_9ea106cda1d84d5a89013f235f8db828","workflow_name":"omniagents_conversation","group_id":"session_6454fd8a-5b2d-4f7f-87df-8fda4f313664","metadata":null}]}'
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      authorization:
+      - DUMMY
+      connection:
+      - keep-alive
+      content-length:
+      - '191'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+      openai-beta:
+      - traces=v1
+      user-agent:
+      - python-httpx/0.28.1
+    method: POST
+    uri: https://api.openai.com/v1/traces/ingest
+  response:
+    body:
+      string: ''
+    headers:
+      CF-RAY:
+      - 99ebebe73d6dc303-IAH
+      Connection:
+      - keep-alive
+      Date:
+      - Sat, 15 Nov 2025 04:14:24 GMT
+      Server:
+      - cloudflare
+        path=/; expires=Sat, 15-Nov-25 04:44:24 GMT; domain=.api.openai.com; HttpOnly;
+        Secure; SameSite=None
+      - _cfuvid=W3ycbtni3JFJHdKgYyrO6xYGgfOeF8e7jJLfVljLKxM-1763180064151-0.0.1.1-604800000;
+        path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+      X-Content-Type-Options:
+      - nosniff
+      alt-svc:
+      - h3=":443"; ma=86400
+      cf-cache-status:
+      - DYNAMIC
+      openai-processing-ms:
+      - '107'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      x-envoy-upstream-service-time:
+      - '112'
+      x-openai-proxy-wasm:
+      - v0.1
+      x-request-id:
+      - req_ed5b9ff218acb3a1e1bd9dfc25f6c7cb
+    status:
+      code: 204
+      message: No Content
+- request:
+    body: '{"background":true,"include":[],"input":[{"role":"user","content":"Please
+      add 5 and 7 for me."}],"instructions":"You are a strict test agent. When asked
+      to add two integers, you must call the add_integers_tool with JSON arguments
+      containing keys ''a'' and ''b''. After receiving the tool result, reply with
+      the single word ''ack'' followed by the numeric result.","model":"gpt-4o-mini","stream":true,"temperature":0.0,"tool_choice":"auto","tools":[{"name":"echo_text_tool","parameters":{"properties":{"text":{"title":"Text","type":"string"}},"required":["text"],"title":"echo_text_tool_args","type":"object","additionalProperties":false},"strict":true,"type":"function","description":"Echo
+      text for verification."},{"name":"add_integers_tool","parameters":{"properties":{"a":{"title":"A","type":"integer"},"b":{"title":"B","type":"integer"}},"required":["a","b"],"title":"add_integers_tool_args","type":"object","additionalProperties":false},"strict":true,"type":"function","description":"Return
+      the sum of two integers."}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      authorization:
+      - DUMMY
+      connection:
+      - keep-alive
+      content-length:
+      - '1018'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+      user-agent:
+      - Agents/Python 0.4.2
+      x-stainless-arch:
+      - arm64
+      x-stainless-async:
+      - async:asyncio
+      x-stainless-lang:
+      - python
+      x-stainless-os:
+      - Linux
+      x-stainless-package-version:
+      - 2.6.1
+      x-stainless-read-timeout:
+      - '600'
+      x-stainless-retry-count:
+      - '0'
+      x-stainless-runtime:
+      - CPython
+      x-stainless-runtime-version:
+      - 3.13.7
+    method: POST
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: 'event: response.created
+
+        data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_00294479f4e6a430006917fe1b7a908191a8655cfbf209d16c","object":"response","created_at":1763180059,"status":"queued","background":true,"error":null,"incomplete_details":null,"instructions":"You
+        are a strict test agent. When asked to add two integers, you must call the
+        add_integers_tool with JSON arguments containing keys ''a'' and ''b''. After
+        receiving the tool result, reply with the single word ''ack'' followed by
+        the numeric result.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-mini-2024-07-18","output":[],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":0.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"function","description":"Echo
+        text for verification.","name":"echo_text_tool","parameters":{"properties":{"text":{"title":"Text","type":"string"}},"required":["text"],"title":"echo_text_tool_args","type":"object","additionalProperties":false},"strict":true},{"type":"function","description":"Return
+        the sum of two integers.","name":"add_integers_tool","parameters":{"properties":{"a":{"title":"A","type":"integer"},"b":{"title":"B","type":"integer"}},"required":["a","b"],"title":"add_integers_tool_args","type":"object","additionalProperties":false},"strict":true}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}}}
+
+
+        event: response.queued
+
+        data: {"type":"response.queued","sequence_number":1,"response":{"id":"resp_00294479f4e6a430006917fe1b7a908191a8655cfbf209d16c","object":"response","created_at":1763180059,"status":"queued","background":true,"error":null,"incomplete_details":null,"instructions":"You
+        are a strict test agent. When asked to add two integers, you must call the
+        add_integers_tool with JSON arguments containing keys ''a'' and ''b''. After
+        receiving the tool result, reply with the single word ''ack'' followed by
+        the numeric result.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-mini-2024-07-18","output":[],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":0.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"function","description":"Echo
+        text for verification.","name":"echo_text_tool","parameters":{"properties":{"text":{"title":"Text","type":"string"}},"required":["text"],"title":"echo_text_tool_args","type":"object","additionalProperties":false},"strict":true},{"type":"function","description":"Return
+        the sum of two integers.","name":"add_integers_tool","parameters":{"properties":{"a":{"title":"A","type":"integer"},"b":{"title":"B","type":"integer"}},"required":["a","b"],"title":"add_integers_tool_args","type":"object","additionalProperties":false},"strict":true}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}}}
+
+
+        event: response.in_progress
+
+        data: {"type":"response.in_progress","sequence_number":2,"response":{"truncation":"disabled","tool_choice":"auto","id":"resp_00294479f4e6a430006917fe1b7a908191a8655cfbf209d16c","usage":null,"status":"in_progress","top_p":1.0,"temperature":0.0,"top_logprobs":0,"object":"response","created_at":1763180059,"prompt_cache_key":null,"text":{"verbosity":"medium","format":{"type":"text"}},"incomplete_details":null,"previous_response_id":null,"model":"gpt-4o-mini-2024-07-18","safety_identifier":null,"metadata":{},"store":true,"output":[],"parallel_tool_calls":true,"error":null,"instructions":"You
+        are a strict test agent. When asked to add two integers, you must call the
+        add_integers_tool with JSON arguments containing keys ''a'' and ''b''. After
+        receiving the tool result, reply with the single word ''ack'' followed by
+        the numeric result.","max_output_tokens":null,"service_tier":"auto","max_tool_calls":null,"prompt_cache_retention":null,"tools":[{"parameters":{"required":["text"],"additionalProperties":false,"properties":{"text":{"title":"Text","type":"string"}},"title":"echo_text_tool_args","type":"object"},"strict":true,"description":"Echo
+        text for verification.","name":"echo_text_tool","type":"function"},{"parameters":{"required":["a","b"],"additionalProperties":false,"properties":{"b":{"title":"B","type":"integer"},"a":{"title":"A","type":"integer"}},"title":"add_integers_tool_args","type":"object"},"strict":true,"description":"Return
+        the sum of two integers.","name":"add_integers_tool","type":"function"}],"user":null,"background":true,"reasoning":{"effort":null,"summary":null}}}
+
+
+        event: response.output_item.added
+
+        data: {"type":"response.output_item.added","sequence_number":3,"item":{"call_id":"call_9KbNxV7eQ1Kjb3wFacfUThqj","id":"fc_00294479f4e6a430006917fe1d30548191961af4eb0daea4b9","status":"in_progress","type":"function_call","name":"add_integers_tool","arguments":""},"output_index":0}
+
+
+        event: response.function_call_arguments.delta
+
+        data: {"type":"response.function_call_arguments.delta","sequence_number":4,"delta":"{\"","item_id":"fc_00294479f4e6a430006917fe1d30548191961af4eb0daea4b9","output_index":0}
+
+
+        event: response.function_call_arguments.delta
+
+        data: {"type":"response.function_call_arguments.delta","sequence_number":5,"delta":"a","item_id":"fc_00294479f4e6a430006917fe1d30548191961af4eb0daea4b9","output_index":0}
+
+
+        event: response.function_call_arguments.delta
+
+        data: {"type":"response.function_call_arguments.delta","sequence_number":6,"delta":"\":","item_id":"fc_00294479f4e6a430006917fe1d30548191961af4eb0daea4b9","output_index":0}
+
+
+        event: response.function_call_arguments.delta
+
+        data: {"type":"response.function_call_arguments.delta","sequence_number":7,"delta":"5","item_id":"fc_00294479f4e6a430006917fe1d30548191961af4eb0daea4b9","output_index":0}
+
+
+        event: response.function_call_arguments.delta
+
+        data: {"type":"response.function_call_arguments.delta","sequence_number":8,"delta":",\"","item_id":"fc_00294479f4e6a430006917fe1d30548191961af4eb0daea4b9","output_index":0}
+
+
+        event: response.function_call_arguments.delta
+
+        data: {"type":"response.function_call_arguments.delta","sequence_number":9,"delta":"b","item_id":"fc_00294479f4e6a430006917fe1d30548191961af4eb0daea4b9","output_index":0}
+
+
+        event: response.function_call_arguments.delta
+
+        data: {"type":"response.function_call_arguments.delta","sequence_number":10,"delta":"\":","item_id":"fc_00294479f4e6a430006917fe1d30548191961af4eb0daea4b9","output_index":0}
+
+
+        event: response.function_call_arguments.delta
+
+        data: {"type":"response.function_call_arguments.delta","sequence_number":11,"delta":"7","item_id":"fc_00294479f4e6a430006917fe1d30548191961af4eb0daea4b9","output_index":0}
+
+
+        event: response.function_call_arguments.delta
+
+        data: {"type":"response.function_call_arguments.delta","sequence_number":12,"delta":"}","item_id":"fc_00294479f4e6a430006917fe1d30548191961af4eb0daea4b9","output_index":0}
+
+
+        event: response.function_call_arguments.done
+
+        data: {"type":"response.function_call_arguments.done","sequence_number":13,"item_id":"fc_00294479f4e6a430006917fe1d30548191961af4eb0daea4b9","arguments":"{\"a\":5,\"b\":7}","output_index":0}
+
+
+        event: response.output_item.done
+
+        data: {"type":"response.output_item.done","sequence_number":14,"item":{"call_id":"call_9KbNxV7eQ1Kjb3wFacfUThqj","id":"fc_00294479f4e6a430006917fe1d30548191961af4eb0daea4b9","status":"completed","type":"function_call","name":"add_integers_tool","arguments":"{\"a\":5,\"b\":7}"},"output_index":0}
+
+
+        event: response.completed
+
+        data: {"type":"response.completed","sequence_number":15,"response":{"truncation":"disabled","tool_choice":"auto","id":"resp_00294479f4e6a430006917fe1b7a908191a8655cfbf209d16c","usage":{"input_tokens":156,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0},"output_tokens":22,"total_tokens":178},"status":"completed","top_p":1.0,"temperature":0.0,"top_logprobs":0,"object":"response","created_at":1763180059,"prompt_cache_key":null,"text":{"verbosity":"medium","format":{"type":"text"}},"incomplete_details":null,"previous_response_id":null,"model":"gpt-4o-mini-2024-07-18","safety_identifier":null,"metadata":{},"store":true,"output":[{"call_id":"call_9KbNxV7eQ1Kjb3wFacfUThqj","id":"fc_00294479f4e6a430006917fe1d30548191961af4eb0daea4b9","status":"completed","type":"function_call","name":"add_integers_tool","arguments":"{\"a\":5,\"b\":7}"}],"parallel_tool_calls":true,"error":null,"instructions":"You
+        are a strict test agent. When asked to add two integers, you must call the
+        add_integers_tool with JSON arguments containing keys ''a'' and ''b''. After
+        receiving the tool result, reply with the single word ''ack'' followed by
+        the numeric result.","max_output_tokens":null,"service_tier":"default","max_tool_calls":null,"prompt_cache_retention":null,"tools":[{"parameters":{"required":["text"],"additionalProperties":false,"properties":{"text":{"title":"Text","type":"string"}},"title":"echo_text_tool_args","type":"object"},"strict":true,"description":"Echo
+        text for verification.","name":"echo_text_tool","type":"function"},{"parameters":{"required":["a","b"],"additionalProperties":false,"properties":{"b":{"title":"B","type":"integer"},"a":{"title":"A","type":"integer"}},"title":"add_integers_tool_args","type":"object"},"strict":true,"description":"Return
+        the sum of two integers.","name":"add_integers_tool","type":"function"}],"user":null,"background":true,"reasoning":{"effort":null,"summary":null}}}
+
+
+        '
+    headers:
+      CF-RAY:
+      - 99ebebcb6a314918-DFW
+      Connection:
+      - keep-alive
+      Content-Type:
+      - text/event-stream; charset=utf-8
+      Date:
+      - Sat, 15 Nov 2025 04:14:20 GMT
+      Server:
+      - cloudflare
+        path=/; expires=Sat, 15-Nov-25 04:44:20 GMT; domain=.api.openai.com; HttpOnly;
+        Secure; SameSite=None
+      - _cfuvid=aHVWg8hGgNDC98SqEDTbCA2Kd577okKlA6CFfzFasYo-1763180060292-0.0.1.1-604800000;
+        path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+      Strict-Transport-Security:
+      - max-age=31536000; includeSubDomains; preload
+      Transfer-Encoding:
+      - chunked
+      X-Content-Type-Options:
+      - nosniff
+      alt-svc:
+      - h3=":443"; ma=86400
+      cf-cache-status:
+      - DYNAMIC
+      openai-processing-ms:
+      - '799'
+      openai-version:
+      - '2020-10-01'
+      x-envoy-upstream-service-time:
+      - '807'
+      x-request-id:
+      - req_fa2ae4a4e36a4b0591cf729381abc321
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"background":true,"include":[],"input":[{"role":"user","content":"Please
+      add 5 and 7 for me."},{"arguments":"{\"a\":5,\"b\":7}","call_id":"call_9KbNxV7eQ1Kjb3wFacfUThqj","name":"add_integers_tool","type":"function_call","id":"fc_00294479f4e6a430006917fe1d30548191961af4eb0daea4b9","status":"completed"},{"call_id":"call_9KbNxV7eQ1Kjb3wFacfUThqj","output":"12","type":"function_call_output"}],"instructions":"You
+      are a strict test agent. When asked to add two integers, you must call the add_integers_tool
+      with JSON arguments containing keys ''a'' and ''b''. After receiving the tool
+      result, reply with the single word ''ack'' followed by the numeric result.","model":"gpt-4o-mini","stream":true,"temperature":0.0,"tools":[{"name":"echo_text_tool","parameters":{"properties":{"text":{"title":"Text","type":"string"}},"required":["text"],"title":"echo_text_tool_args","type":"object","additionalProperties":false},"strict":true,"type":"function","description":"Echo
+      text for verification."},{"name":"add_integers_tool","parameters":{"properties":{"a":{"title":"A","type":"integer"},"b":{"title":"B","type":"integer"}},"required":["a","b"],"title":"add_integers_tool_args","type":"object","additionalProperties":false},"strict":true,"type":"function","description":"Return
+      the sum of two integers."}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      authorization:
+      - DUMMY
+      connection:
+      - keep-alive
+      content-length:
+      - '1293'
+      content-type:
+      - application/json
+        _cfuvid=aHVWg8hGgNDC98SqEDTbCA2Kd577okKlA6CFfzFasYo-1763180060292-0.0.1.1-604800000
+      host:
+      - api.openai.com
+      user-agent:
+      - Agents/Python 0.4.2
+      x-stainless-arch:
+      - arm64
+      x-stainless-async:
+      - async:asyncio
+      x-stainless-lang:
+      - python
+      x-stainless-os:
+      - Linux
+      x-stainless-package-version:
+      - 2.6.1
+      x-stainless-read-timeout:
+      - '600'
+      x-stainless-retry-count:
+      - '0'
+      x-stainless-runtime:
+      - CPython
+      x-stainless-runtime-version:
+      - 3.13.7
+    method: POST
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: 'event: response.created
+
+        data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_00294479f4e6a430006917fe20da188191bb16e5e3d7b73468","object":"response","created_at":1763180064,"status":"queued","background":true,"error":null,"incomplete_details":null,"instructions":"You
+        are a strict test agent. When asked to add two integers, you must call the
+        add_integers_tool with JSON arguments containing keys ''a'' and ''b''. After
+        receiving the tool result, reply with the single word ''ack'' followed by
+        the numeric result.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-mini-2024-07-18","output":[],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":0.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"function","description":"Echo
+        text for verification.","name":"echo_text_tool","parameters":{"properties":{"text":{"title":"Text","type":"string"}},"required":["text"],"title":"echo_text_tool_args","type":"object","additionalProperties":false},"strict":true},{"type":"function","description":"Return
+        the sum of two integers.","name":"add_integers_tool","parameters":{"properties":{"a":{"title":"A","type":"integer"},"b":{"title":"B","type":"integer"}},"required":["a","b"],"title":"add_integers_tool_args","type":"object","additionalProperties":false},"strict":true}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}}}
+
+
+        event: response.queued
+
+        data: {"type":"response.queued","sequence_number":1,"response":{"id":"resp_00294479f4e6a430006917fe20da188191bb16e5e3d7b73468","object":"response","created_at":1763180064,"status":"queued","background":true,"error":null,"incomplete_details":null,"instructions":"You
+        are a strict test agent. When asked to add two integers, you must call the
+        add_integers_tool with JSON arguments containing keys ''a'' and ''b''. After
+        receiving the tool result, reply with the single word ''ack'' followed by
+        the numeric result.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-mini-2024-07-18","output":[],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":0.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"function","description":"Echo
+        text for verification.","name":"echo_text_tool","parameters":{"properties":{"text":{"title":"Text","type":"string"}},"required":["text"],"title":"echo_text_tool_args","type":"object","additionalProperties":false},"strict":true},{"type":"function","description":"Return
+        the sum of two integers.","name":"add_integers_tool","parameters":{"properties":{"a":{"title":"A","type":"integer"},"b":{"title":"B","type":"integer"}},"required":["a","b"],"title":"add_integers_tool_args","type":"object","additionalProperties":false},"strict":true}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}}}
+
+
+        event: response.in_progress
+
+        data: {"type":"response.in_progress","sequence_number":2,"response":{"truncation":"disabled","tool_choice":"auto","id":"resp_00294479f4e6a430006917fe20da188191bb16e5e3d7b73468","usage":null,"status":"in_progress","top_p":1.0,"temperature":0.0,"top_logprobs":0,"object":"response","created_at":1763180064,"prompt_cache_key":null,"text":{"verbosity":"medium","format":{"type":"text"}},"incomplete_details":null,"previous_response_id":null,"model":"gpt-4o-mini-2024-07-18","safety_identifier":null,"metadata":{},"store":true,"output":[],"parallel_tool_calls":true,"error":null,"instructions":"You
+        are a strict test agent. When asked to add two integers, you must call the
+        add_integers_tool with JSON arguments containing keys ''a'' and ''b''. After
+        receiving the tool result, reply with the single word ''ack'' followed by
+        the numeric result.","max_output_tokens":null,"service_tier":"auto","max_tool_calls":null,"prompt_cache_retention":null,"tools":[{"parameters":{"required":["text"],"additionalProperties":false,"title":"echo_text_tool_args","properties":{"text":{"title":"Text","type":"string"}},"type":"object"},"strict":true,"description":"Echo
+        text for verification.","name":"echo_text_tool","type":"function"},{"parameters":{"required":["a","b"],"additionalProperties":false,"title":"add_integers_tool_args","properties":{"a":{"title":"A","type":"integer"},"b":{"title":"B","type":"integer"}},"type":"object"},"strict":true,"description":"Return
+        the sum of two integers.","name":"add_integers_tool","type":"function"}],"user":null,"background":true,"reasoning":{"effort":null,"summary":null}}}
+
+
+        event: response.output_item.added
+
+        data: {"type":"response.output_item.added","sequence_number":3,"item":{"id":"msg_00294479f4e6a430006917fe230b808191a79aa391c47d4966","content":[],"role":"assistant","status":"in_progress","type":"message"},"output_index":0}
+
+
+        event: response.content_part.added
+
+        data: {"type":"response.content_part.added","sequence_number":4,"item_id":"msg_00294479f4e6a430006917fe230b808191a79aa391c47d4966","part":{"text":"","logprobs":[],"type":"output_text","annotations":[]},"content_index":0,"output_index":0}
+
+
+        event: response.output_text.delta
+
+        data: {"type":"response.output_text.delta","sequence_number":5,"delta":"ack","logprobs":[],"item_id":"msg_00294479f4e6a430006917fe230b808191a79aa391c47d4966","content_index":0,"output_index":0}
+
+
+        event: response.output_text.delta
+
+        data: {"type":"response.output_text.delta","sequence_number":6,"delta":" ","logprobs":[],"item_id":"msg_00294479f4e6a430006917fe230b808191a79aa391c47d4966","content_index":0,"output_index":0}
+
+
+        event: response.output_text.delta
+
+        data: {"type":"response.output_text.delta","sequence_number":7,"delta":"12","logprobs":[],"item_id":"msg_00294479f4e6a430006917fe230b808191a79aa391c47d4966","content_index":0,"output_index":0}
+
+
+        event: response.output_text.done
+
+        data: {"type":"response.output_text.done","sequence_number":8,"text":"ack
+        12","logprobs":[],"item_id":"msg_00294479f4e6a430006917fe230b808191a79aa391c47d4966","content_index":0,"output_index":0}
+
+
+        event: response.content_part.done
+
+        data: {"type":"response.content_part.done","sequence_number":9,"item_id":"msg_00294479f4e6a430006917fe230b808191a79aa391c47d4966","part":{"annotations":[],"text":"ack
+        12","logprobs":[],"type":"output_text"},"content_index":0,"output_index":0}
+
+
+        event: response.output_item.done
+
+        data: {"type":"response.output_item.done","sequence_number":10,"item":{"id":"msg_00294479f4e6a430006917fe230b808191a79aa391c47d4966","content":[{"annotations":[],"text":"ack
+        12","logprobs":[],"type":"output_text"}],"role":"assistant","status":"completed","type":"message"},"output_index":0}
+
+
+        event: response.completed
+
+        data: {"type":"response.completed","sequence_number":11,"response":{"truncation":"disabled","tool_choice":"auto","id":"resp_00294479f4e6a430006917fe20da188191bb16e5e3d7b73468","usage":{"input_tokens":190,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0},"output_tokens":5,"total_tokens":195},"status":"completed","top_p":1.0,"temperature":0.0,"top_logprobs":0,"object":"response","created_at":1763180064,"prompt_cache_key":null,"text":{"verbosity":"medium","format":{"type":"text"}},"incomplete_details":null,"previous_response_id":null,"model":"gpt-4o-mini-2024-07-18","safety_identifier":null,"metadata":{},"store":true,"output":[{"id":"msg_00294479f4e6a430006917fe230b808191a79aa391c47d4966","content":[{"text":"ack
+        12","logprobs":[],"type":"output_text","annotations":[]}],"role":"assistant","status":"completed","type":"message"}],"parallel_tool_calls":true,"error":null,"instructions":"You
+        are a strict test agent. When asked to add two integers, you must call the
+        add_integers_tool with JSON arguments containing keys ''a'' and ''b''. After
+        receiving the tool result, reply with the single word ''ack'' followed by
+        the numeric result.","max_output_tokens":null,"service_tier":"default","max_tool_calls":null,"prompt_cache_retention":null,"tools":[{"parameters":{"required":["text"],"additionalProperties":false,"title":"echo_text_tool_args","properties":{"text":{"title":"Text","type":"string"}},"type":"object"},"strict":true,"description":"Echo
+        text for verification.","name":"echo_text_tool","type":"function"},{"parameters":{"required":["a","b"],"additionalProperties":false,"title":"add_integers_tool_args","properties":{"a":{"title":"A","type":"integer"},"b":{"title":"B","type":"integer"}},"type":"object"},"strict":true,"description":"Return
+        the sum of two integers.","name":"add_integers_tool","type":"function"}],"user":null,"background":true,"reasoning":{"effort":null,"summary":null}}}
+
+
+        '
+    headers:
+      CF-RAY:
+      - 99ebebed0d524918-DFW
+      Connection:
+      - keep-alive
+      Content-Type:
+      - text/event-stream; charset=utf-8
+      Date:
+      - Sat, 15 Nov 2025 04:14:25 GMT
+      Server:
+      - cloudflare
+      Strict-Transport-Security:
+      - max-age=31536000; includeSubDomains; preload
+      Transfer-Encoding:
+      - chunked
+      X-Content-Type-Options:
+      - nosniff
+      alt-svc:
+      - h3=":443"; ma=86400
+      cf-cache-status:
+      - DYNAMIC
+      openai-processing-ms:
+      - '1100'
+      openai-version:
+      - '2020-10-01'
+      x-envoy-upstream-service-time:
+      - '1104'
+      x-request-id:
+      - req_bf4464bc974a46e480494d84e231bdf7
+    status:
+      code: 200
+      message: OK
+version: 1
