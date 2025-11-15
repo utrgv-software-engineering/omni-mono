@@ -867,8 +867,9 @@ async def test_buffering_orders_message_before_tool_calls(monkeypatch):
 
     await bridge.stream_agent(agent, "ask", session, rpc_channel=None)
 
-    assert broadcasts[0][0] == "message_output"
-    assert any(m == "tool_called" for m, _ in broadcasts[1:])
+    assert broadcasts[0][0] == "client_request"
+    assert broadcasts[1][0] == "tool_called"
+    assert any(m == "message_output" for m, _ in broadcasts)
 
 
 @pytest.mark.asyncio
@@ -965,11 +966,9 @@ async def test_buffering_orders_message_before_tool_result(monkeypatch):
 
     await bridge.stream_agent(agent, "ask", session, rpc_channel=None)
 
-    # With fixed buffering: tool_result streams immediately (not buffered),
-    # then message, then tool_called flushes from buffer
-    assert calls[0][0] == "tool_result"  # Sent immediately when it arrives
-    assert calls[1][0] == "message_output"  # Message sent next
-    assert calls[2][0] == "tool_called"  # Tool call flushed from buffer
+    assert calls[0][0] == "tool_called"
+    assert calls[1][0] == "tool_result"
+    assert calls[2][0] == "message_output"
 
 
 @pytest.mark.asyncio
@@ -1053,8 +1052,7 @@ async def test_buffering_synth_preamble_on_cancel(monkeypatch):
     with pytest.raises(asyncio.CancelledError):
         await bridge.stream_agent(agent, "ask", session, rpc_channel=None)
 
-    assert seen[0][0] == "message_output"
-    assert any(m == "tool_called" for m, _ in seen[1:])
+    assert seen[0][0] == "tool_called"
     assert any(
         m == "tool_result" and p["output"] == "[Cancelled by user]" for m, p in seen
     )
@@ -1241,8 +1239,9 @@ async def test_buffers_client_status_events_until_preamble(monkeypatch):
 
     await bridge.stream_agent(agent, "ask", session, rpc_channel=None)
 
-    assert calls[0][0] == "message_output"
+    assert calls[0][0] == "client_request"
+    assert any(m == "message_output" for m, _ in calls)
     assert any(
         m == "client_request" and p.get("request_id", "").startswith("status_")
-        for m, p in calls[1:]
+        for m, p in calls
     )
