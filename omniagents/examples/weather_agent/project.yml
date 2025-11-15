@@ -5,6 +5,7 @@ paths:
   target: target
 agents:
   entrypoint: weather_agent
+  voice_entrypoint: weather_voice
 
 tracing:
   provider: agentio
