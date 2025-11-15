@@ -3,7 +3,7 @@
  * Uses useReducer to batch cursor + content updates in single render
  */
 
-import React, { useReducer, useCallback, useEffect } from "react";
+import React, { useReducer, useCallback, useEffect, useLayoutEffect } from "react";
 import { Box, Text, useInput } from "ink";
 import chalk from "chalk";
 import { TokyoNightTheme } from "../theme.js";
@@ -18,6 +18,7 @@ interface InputState {
 }
 
 type InputAction =
+  | { type: "INSERT_TEXT"; text: string }
   | { type: "INSERT_CHAR"; char: string }
   | { type: "INSERT_NEWLINE" }
   | { type: "DELETE_CHAR" }
@@ -48,6 +49,19 @@ interface MultiLineInputProps {
  */
 function inputReducer(state: InputState, action: InputAction): InputState {
   switch (action.type) {
+    case "INSERT_TEXT": {
+      let nextState = state;
+      const sanitized = action.text.replace(/\r/g, "");
+      for (const char of sanitized) {
+        if (char === "\n") {
+          nextState = inputReducer(nextState, { type: "INSERT_NEWLINE" });
+        } else {
+          nextState = inputReducer(nextState, { type: "INSERT_CHAR", char });
+        }
+      }
+      return nextState;
+    }
+
     case "INSERT_CHAR": {
       const newLines = [...state.lines];
       const currentLine = newLines[state.cursorRow] || "";
@@ -59,7 +73,7 @@ function inputReducer(state: InputState, action: InputAction): InputState {
       return {
         ...state,
         lines: newLines,
-        cursorCol: state.cursorCol + 1,
+        cursorCol: state.cursorCol + action.char.length,
       };
     }
 
@@ -261,10 +275,16 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
       historyIndex: history.length,
       draft: "",
     });
+    const stateRef = React.useRef(state);
 
     // Update history index when history changes
     // But DON'T reset cursor/content - that's only for arrow key navigation
     const prevHistoryLengthRef = React.useRef(history.length);
+    const pasteModeRef = React.useRef(false);
+
+    useLayoutEffect(() => {
+      stateRef.current = state;
+    }, [state]);
 
     useEffect(() => {
       // Only update historyIndex, don't touch lines or cursor
@@ -279,7 +299,23 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
       }
     }, [history.length]);
 
-    const getValue = () => state.lines.join("\n");
+    const getValue = () => stateRef.current.lines.join("\n");
+
+    const insertText = useCallback(
+      (text: string) => {
+        if (!text) {
+          return;
+        }
+
+        const current = stateRef.current;
+        if (current.historyIndex !== history.length) {
+          dispatch({ type: "UPDATE_HISTORY_INDEX", index: history.length });
+        }
+
+        dispatch({ type: "INSERT_TEXT", text });
+      },
+      [history.length],
+    );
 
     const handleSubmit = useCallback(() => {
       const value = getValue().trim();
@@ -292,41 +328,55 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
     const handleHistoryUp = useCallback(() => {
       if (history.length === 0) return;
 
-      if (state.historyIndex === history.length) {
-        dispatch({ type: "SAVE_DRAFT", draft: getValue() });
+      const current = stateRef.current;
+
+      if (current.historyIndex === history.length) {
+        dispatch({
+          type: "SAVE_DRAFT",
+          draft: current.lines.join("\n"),
+        });
       }
 
-      if (state.historyIndex > 0) {
-        const newIndex = state.historyIndex - 1;
+      if (current.historyIndex > 0) {
+        const newIndex = current.historyIndex - 1;
         dispatch({
           type: "SET_HISTORY_INDEX",
           index: newIndex,
           value: history[newIndex],
         });
       }
-    }, [history, state.historyIndex, getValue]);
+    }, [history]);
 
     const handleHistoryDown = useCallback(() => {
       if (history.length === 0) return;
 
-      if (state.historyIndex < history.length - 1) {
-        const newIndex = state.historyIndex + 1;
+      const current = stateRef.current;
+
+      if (current.historyIndex < history.length - 1) {
+        const newIndex = current.historyIndex + 1;
         dispatch({
           type: "SET_HISTORY_INDEX",
           index: newIndex,
           value: history[newIndex],
         });
-      } else if (state.historyIndex === history.length - 1) {
+      } else if (current.historyIndex === history.length - 1) {
         dispatch({
           type: "SET_HISTORY_INDEX",
           index: history.length,
-          value: state.draft,
+          value: current.draft,
         });
       }
-    }, [history, state.historyIndex, state.draft]);
+    }, [history]);
 
     useInput((input, key) => {
+      const current = stateRef.current;
+
       if (disabled) {
+        return;
+      }
+
+      if (key.escape) {
+        onEscape?.();
         return;
       }
 
@@ -342,20 +392,20 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
         dispatch({ type: "DELETE_CHAR" });
       } else if (key.upArrow) {
         if (key.shift) {
-          if (state.cursorRow > 0) {
+          if (current.cursorRow > 0) {
             dispatch({ type: "MOVE_UP" });
           }
-        } else if (state.cursorRow === 0) {
+        } else if (current.cursorRow === 0) {
           handleHistoryUp();
         } else {
           dispatch({ type: "MOVE_UP" });
         }
       } else if (key.downArrow) {
         if (key.shift) {
-          if (state.cursorRow < state.lines.length - 1) {
+          if (current.cursorRow < current.lines.length - 1) {
             dispatch({ type: "MOVE_DOWN" });
           }
-        } else if (state.cursorRow === state.lines.length - 1) {
+        } else if (current.cursorRow === current.lines.length - 1) {
           handleHistoryDown();
         } else {
           dispatch({ type: "MOVE_DOWN" });
@@ -365,16 +415,28 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
       } else if (key.rightArrow) {
         dispatch({ type: "MOVE_RIGHT" });
       } else if (input && !key.ctrl && !key.meta) {
-        // Filter out mouse tracking escape sequences
-        // SGR mouse format: <row;col;buttonM or <row;col;buttonm
-        // CSI sequences: ESC [ or just [ with special chars
-        const isMouseEvent =
-          /^<\d+;\d+;\d+[Mm]$/.test(input) || // SGR mouse tracking
-          /^\x1b/.test(input) || // ESC character
-          (input.startsWith("[") && input.length > 1 && /[<M]/.test(input)); // CSI sequences
+        if (input === "\x1b[200~") {
+          pasteModeRef.current = true;
+          return;
+        }
 
-        if (!isMouseEvent) {
-          dispatch({ type: "INSERT_CHAR", char: input });
+        if (input === "\x1b[201~") {
+          pasteModeRef.current = false;
+          return;
+        }
+
+        const sanitized = input
+          .replace(/\x1b\[200~/g, "")
+          .replace(/\x1b\[201~/g, "")
+          .replace(/\r/g, "");
+
+        const isMouseEvent =
+          !pasteModeRef.current &&
+          (/^<\d+;\d+;\d+[Mm]$/.test(sanitized) ||
+            (sanitized.startsWith("[") && sanitized.length > 1 && /[<M]/.test(sanitized)));
+
+        if (!isMouseEvent && sanitized) {
+          insertText(sanitized);
         }
       }
     });
@@ -411,22 +473,26 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
           const showPrompt = actualIdx === 0;
 
           const prompt = showPrompt ? "> " : "  ";
+          const textColor = chalk.hex(TokyoNightTheme.inputText);
 
           let lineDisplay: string;
           if (isCurrentRow) {
-            // Build line with cursor as single string using chalk
-            lineDisplay =
-              line.slice(0, state.cursorCol) +
-              chalk.inverse(line[state.cursorCol] || " ") +
-              line.slice(state.cursorCol + 1);
+            const beforeRaw = line.slice(0, state.cursorCol);
+            const cursorRaw = line[state.cursorCol];
+            const afterRaw = cursorRaw === undefined ? "" : line.slice(state.cursorCol + 1);
+            const beforeColored = beforeRaw ? textColor(beforeRaw) : "";
+            const cursorColored = chalk.inverse(cursorRaw ?? " ");
+            const afterColored = afterRaw ? textColor(afterRaw) : "";
+            lineDisplay = `${beforeColored}${cursorColored}${afterColored}`;
           } else {
-            lineDisplay = line || (actualIdx === 0 && !line ? placeholder : "");
+            const displayValue = line || (actualIdx === 0 && !line ? placeholder : "");
+            lineDisplay = displayValue ? textColor(displayValue) : "";
           }
 
           return (
             <Box key={actualIdx}>
               <Text color={TokyoNightTheme.inputPrompt}>{prompt}</Text>
-              <Text color={TokyoNightTheme.inputText}>{lineDisplay}</Text>
+              <Text>{lineDisplay}</Text>
             </Box>
           );
         })}
