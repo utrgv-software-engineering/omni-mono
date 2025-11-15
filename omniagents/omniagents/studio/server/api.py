@@ -32,6 +32,8 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import Response
+from starlette.types import Scope
 from starlette.datastructures import URL
 
 import yaml
@@ -81,6 +83,24 @@ except Exception:  # pragma: no cover - optional dependency
     AgentOutputSchema = None  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+
+class SpaStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        try:
+            return await super().get_response(path, scope)
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            method = scope.get("method")
+            if method not in ("GET", "HEAD"):
+                raise
+            request_path = scope.get("path") or ""
+            if request_path.startswith("/api"):
+                raise
+            if "." in path:
+                raise
+            return await super().get_response("index.html", scope)
 
 MODEL_SETTING_SCHEMA: List[Dict[str, Any]] = [
     {
@@ -7426,7 +7446,7 @@ def create_api_app(
             if static_dir.exists():
                 app.mount(
                     "/",
-                    StaticFiles(directory=str(static_dir), html=True),
+                    SpaStaticFiles(directory=str(static_dir), html=True),
                     name="static",
                 )
                 break

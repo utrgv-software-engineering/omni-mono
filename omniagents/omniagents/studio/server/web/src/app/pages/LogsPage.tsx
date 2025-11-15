@@ -63,7 +63,7 @@ export function LogsPage() {
   useWebSocket()
 
   const updateSearch = useCallback(
-    (updates: Record<string, string | null>) => {
+    (updates: Record<string, string | null>, options?: { replace?: boolean }) => {
       const next = new URLSearchParams(searchParams)
       let changed = false
       for (const [key, value] of Object.entries(updates)) {
@@ -79,7 +79,7 @@ export function LogsPage() {
         }
       }
       if (changed) {
-        setSearchParams(next, { replace: true })
+        setSearchParams(next, { replace: options?.replace ?? false })
       }
     },
     [searchParams, setSearchParams],
@@ -87,7 +87,7 @@ export function LogsPage() {
 
   useEffect(() => {
     if (!projectParam && manifestProject) {
-      updateSearch({ [QUERY_PARAMS.project]: manifestProject })
+      updateSearch({ [QUERY_PARAMS.project]: manifestProject }, { replace: true })
     }
   }, [projectParam, manifestProject, updateSearch])
 
@@ -160,7 +160,7 @@ export function LogsPage() {
       return
     }
     const lastTrace = conversationTracesData.traces[conversationTracesData.traces.length - 1]
-    updateSearch({ [QUERY_PARAMS.trace]: lastTrace.trace_id })
+    updateSearch({ [QUERY_PARAMS.trace]: lastTrace.trace_id }, { replace: true })
   }, [viewMode, conversationParam, traceParam, conversationTracesData, updateSearch])
 
   const previousViewModeRef = useRef(viewMode)

@@ -39,7 +39,7 @@ export function PlaygroundPage() {
   }, [projectParam, sessionParam])
 
   const updateSearch = useCallback(
-    (updates: Record<string, string | null>) => {
+    (updates: Record<string, string | null>, options?: { replace?: boolean }) => {
       const next = new URLSearchParams(searchParams)
       let changed = false
       for (const [key, value] of Object.entries(updates)) {
@@ -55,7 +55,7 @@ export function PlaygroundPage() {
         }
       }
       if (changed) {
-        setSearchParams(next, { replace: true })
+        setSearchParams(next, { replace: options?.replace ?? false })
       }
     },
     [searchParams, setSearchParams],
@@ -87,7 +87,7 @@ export function PlaygroundPage() {
   )
 
   const handleBack = useCallback(() => {
-    updateSearch({ [QUERY_PARAMS.project]: null, [QUERY_PARAMS.session]: null })
+    updateSearch({ [QUERY_PARAMS.project]: null, [QUERY_PARAMS.session]: null }, { replace: true })
     navigate(ROUTES.home)
   }, [navigate, updateSearch])
 

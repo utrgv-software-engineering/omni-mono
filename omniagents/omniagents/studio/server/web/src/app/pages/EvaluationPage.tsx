@@ -29,7 +29,7 @@ export function EvaluationPage() {
   const activeTab = isValidEvaluationTab(rawTab) ? rawTab : 'scenarios'
 
   const updateSearch = useCallback(
-    (updates: Record<string, string | null>) => {
+    (updates: Record<string, string | null>, options?: { replace?: boolean }) => {
       const next = new URLSearchParams(searchParams)
       let changed = false
       for (const [key, value] of Object.entries(updates)) {
@@ -45,7 +45,7 @@ export function EvaluationPage() {
         }
       }
       if (changed) {
-        setSearchParams(next, { replace: true })
+        setSearchParams(next, { replace: options?.replace ?? false })
       }
     },
     [searchParams, setSearchParams],
@@ -53,7 +53,7 @@ export function EvaluationPage() {
 
   useEffect(() => {
     if (rawTab !== null && !isValidEvaluationTab(rawTab)) {
-      updateSearch({ [QUERY_PARAMS.tab]: null })
+      updateSearch({ [QUERY_PARAMS.tab]: null }, { replace: true })
     }
   }, [rawTab, updateSearch])
 
