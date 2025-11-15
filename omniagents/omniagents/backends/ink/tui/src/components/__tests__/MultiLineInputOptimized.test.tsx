@@ -1,11 +1,26 @@
 import React from "react";
 import stripAnsi from "strip-ansi";
-import { describe, expect, it, vi, afterEach } from "vitest";
-import { render as inkRender } from "ink";
+import { describe, expect, it, vi, afterEach, beforeAll } from "vitest";
 import { PassThrough } from "node:stream";
-import { MultiLineInputOptimized } from "../MultiLineInputOptimized.js";
+
+const inputHandlerStore = vi.hoisted(() => ({
+  current: undefined as ((input: string, key: any) => void) | undefined,
+}));
+
+vi.mock("ink", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("ink")>();
+  return {
+    ...actual,
+    useInput: (handler: any, options?: any) => {
+      inputHandlerStore.current = handler;
+      return actual.useInput(handler, options);
+    },
+  };
+});
 
 const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+const getInputHandler = () => inputHandlerStore.current;
 
 const normalize = (frame: string | undefined) => {
   if (!frame) return [];
@@ -116,9 +131,27 @@ class TestStdin extends PassThrough {
   unref() {}
 }
 
-const instances: Array<ReturnType<typeof inkRender>> = [];
+type InkModule = typeof import("ink");
+type InkRender = InkModule["render"];
+
+const instances: Array<ReturnType<InkRender>> = [];
+
+let MultiLineInputOptimized: React.ComponentType<any>;
+let inkRender: InkRender;
+
+beforeAll(async () => {
+  const inkModule = await import("ink");
+  inkRender = inkModule.render;
+  ({ MultiLineInputOptimized } = await import("../MultiLineInputOptimized.js"));
+});
 
 const renderInput = (props: React.ComponentProps<typeof MultiLineInputOptimized>) => {
+  if (!MultiLineInputOptimized) {
+    throw new Error("MultiLineInputOptimized not loaded");
+  }
+  if (!inkRender) {
+    throw new Error("Ink render not loaded");
+  }
   const stdout = new TestStdout();
   const stderr = new TestStderr();
   const stdin = new TestStdin();
@@ -143,6 +176,7 @@ afterEach(() => {
     instance?.unmount();
     instance?.cleanup();
   }
+  inputHandlerStore.current = undefined;
 });
 
 describe("MultiLineInputOptimized", () => {
@@ -233,5 +267,73 @@ describe("MultiLineInputOptimized", () => {
     stdin.write("foo\nbar");
     await flush();
     expect(normalize(lastFrame())).toEqual(["> foo", "  bar"]);
+  });
+
+  it("restores draft after navigating history", async () => {
+    const onSubmit = vi.fn();
+    const history = ["older message"];
+    const { stdin, lastFrame } = renderInput({ onSubmit, history });
+    await flush();
+    stdin.write("draft text");
+    await flush();
+    stdin.write("\u001b[A");
+    await flush();
+    expect(normalize(lastFrame()).at(0)).toBe("> older message");
+    stdin.write("\u001b[B");
+    await flush();
+    expect(normalize(lastFrame()).at(0)).toBe("> draft text");
+  });
+
+  it("inserts newline on ctrl+enter without submitting", async () => {
+    const onSubmit = vi.fn();
+    const { lastFrame } = renderInput({ onSubmit });
+    await flush();
+    const handler = getInputHandler();
+    expect(handler).toBeDefined();
+    handler?.("", {
+      upArrow: false,
+      downArrow: false,
+      leftArrow: false,
+      rightArrow: false,
+      pageDown: false,
+      pageUp: false,
+      return: true,
+      escape: false,
+      ctrl: true,
+      shift: false,
+      tab: false,
+      backspace: false,
+      delete: false,
+      meta: false,
+    });
+    await flush();
+    expect(onSubmit).not.toHaveBeenCalled();
+    const normalized = normalize(lastFrame());
+    expect(normalized.at(0)).toBe("> Type your message...");
+    expect(normalized.at(1)).toBe("");
+  });
+
+  it("does not submit when disableSubmit is true", async () => {
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = renderInput({ onSubmit, disableSubmit: true });
+    stdin.write("hello");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(normalize(lastFrame()).at(0)).toBe("> hello");
+  });
+
+  it("calls onEscape without clearing content", async () => {
+    const onEscape = vi.fn();
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = renderInput({ onSubmit, onEscape });
+    stdin.write("hi");
+    await flush();
+    stdin.write("\u001b");
+    await flush();
+    expect(onEscape).toHaveBeenCalledTimes(1);
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(normalize(lastFrame()).at(0)).toBe("> hi");
   });
 });
