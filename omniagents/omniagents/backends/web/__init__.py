@@ -23,7 +23,9 @@ class WebBackend:
             import uvicorn
             from fastapi.staticfiles import StaticFiles
         except ImportError as e:
-            print("Error: Server dependencies not installed. Install with: pip install omniagents[server]")
+            print(
+                "Error: Server dependencies not installed. Install with: pip install omniagents[server]"
+            )
             print(f"Details: {e}")
             sys.exit(1)
 
@@ -104,7 +106,11 @@ class WebBackend:
 
         app = build_app(config_path=config_path, spec=spec, auth_token=auth_token)
 
-        dev_flag_env = os.environ.get("OMNI_WEB_DEV", "0").lower() not in {"0", "false", "no"}
+        dev_flag_env = os.environ.get("OMNI_WEB_DEV", "0").lower() not in {
+            "0",
+            "false",
+            "no",
+        }
         dev_flag = bool(getattr(args, "dev", False)) or dev_flag_env
         dev_host = getattr(args, "dev_host", None) or host
         dev_port = int(getattr(args, "dev_port", 5173) or 5173)
@@ -118,10 +124,19 @@ class WebBackend:
                 print("  npm install")
                 print("  npm run build")
                 sys.exit(1)
-            app.mount("/", StaticFiles(directory=str(dist_dir), html=True), name="webui")
+            app.mount(
+                "/", StaticFiles(directory=str(dist_dir), html=True), name="webui"
+            )
 
         def run_server():
-            for name in ("agents", "openai", "httpx", "urllib3", "anthropic", "litellm"):
+            for name in (
+                "agents",
+                "openai",
+                "httpx",
+                "urllib3",
+                "anthropic",
+                "litellm",
+            ):
                 try:
                     lg = logging.getLogger(name)
                     lg.handlers.clear()
@@ -177,7 +192,9 @@ class WebBackend:
         open_url = None
         if dev_flag:
             try:
-                open_url = self._start_dev_server(ws_host=host, ws_port=port, dev_host=dev_host, dev_port=dev_port)
+                open_url = self._start_dev_server(
+                    ws_host=host, ws_port=port, dev_host=dev_host, dev_port=dev_port
+                )
             except Exception as e:
                 print(f"Error: Failed to start dev server: {e}")
                 open_url = None
@@ -185,6 +202,7 @@ class WebBackend:
             base = f"http://{host}:{port}/"
             if qp:
                 from urllib.parse import urlencode
+
                 qp.append(("ts", str(int(time.time()))))
                 open_url = base + "?" + urlencode(qp)
             else:
@@ -200,7 +218,9 @@ class WebBackend:
         except KeyboardInterrupt:
             pass
 
-    def _start_dev_server(self, *, ws_host: str, ws_port: int, dev_host: str, dev_port: int) -> Optional[str]:
+    def _start_dev_server(
+        self, *, ws_host: str, ws_port: int, dev_host: str, dev_port: int
+    ) -> Optional[str]:
         ui_dir = Path(__file__).parent / "ui"
         if not ui_dir.exists():
             return None
@@ -210,14 +230,30 @@ class WebBackend:
         env["OMNI_WS_HOST"] = str(ws_host)
         env["OMNI_WS_PORT"] = str(ws_port)
         # Start Vite dev server
-        cmd = ["npm", "run", "dev", "--", "--host", str(dev_host), "--port", str(dev_port)]
-        proc = subprocess.Popen(cmd, cwd=str(ui_dir), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        cmd = [
+            "npm",
+            "run",
+            "dev",
+            "--",
+            "--host",
+            str(dev_host),
+            "--port",
+            str(dev_port),
+        ]
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(ui_dir),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
         # Poll for readiness
         url = f"http://{dev_host}:{dev_port}/"
         for _ in range(40):
             time.sleep(0.5)
             try:
                 import urllib.request
+
                 with urllib.request.urlopen(url, timeout=1) as resp:
                     if resp.status == 200:
                         return url
@@ -239,7 +275,11 @@ class WebBackend:
             candidate = cache_dir / "dist"
             if candidate.is_dir() and (candidate / "index.html").exists():
                 return candidate
-        auto_build = os.environ.get("OMNI_WEB_AUTO_BUILD", "1").lower() not in {"0", "false", "no"}
+        auto_build = os.environ.get("OMNI_WEB_AUTO_BUILD", "1").lower() not in {
+            "0",
+            "false",
+            "no",
+        }
         if auto_build:
             try:
                 built = self._build_ui(debug=debug)
@@ -274,7 +314,11 @@ class WebBackend:
         stamp = self._stamp_path(cache_dir)
         need_sync = True
         try:
-            if stamp.exists() and src_hash and stamp.read_text(encoding="utf-8").strip() == src_hash:
+            if (
+                stamp.exists()
+                and src_hash
+                and stamp.read_text(encoding="utf-8").strip() == src_hash
+            ):
                 need_sync = False
         except Exception:
             need_sync = True
@@ -294,11 +338,27 @@ class WebBackend:
         if lockfile.exists():
             install_cmd = ["npm", "ci"]
         try:
-            subprocess.run(install_cmd, cwd=str(cache_dir), check=True, env=env, stdout=None if debug else subprocess.PIPE, stderr=None if debug else subprocess.PIPE, text=True)
+            subprocess.run(
+                install_cmd,
+                cwd=str(cache_dir),
+                check=True,
+                env=env,
+                stdout=None if debug else subprocess.PIPE,
+                stderr=None if debug else subprocess.PIPE,
+                text=True,
+            )
         except subprocess.CalledProcessError as e:
             raise SystemExit(e.returncode)
         try:
-            subprocess.run(["npm", "run", "build"], cwd=str(cache_dir), check=True, env=env, stdout=None if debug else subprocess.PIPE, stderr=None if debug else subprocess.PIPE, text=True)
+            subprocess.run(
+                ["npm", "run", "build"],
+                cwd=str(cache_dir),
+                check=True,
+                env=env,
+                stdout=None if debug else subprocess.PIPE,
+                stderr=None if debug else subprocess.PIPE,
+                text=True,
+            )
         except subprocess.CalledProcessError as e:
             raise SystemExit(e.returncode)
         out_dir = cache_dir / "dist"
@@ -356,6 +416,7 @@ class WebBackend:
             files = [f for f in files if os.path.isfile(f)]
             files.sort()
             import hashlib as _hashlib
+
             digest = _hashlib.sha256()
             for f in files:
                 with open(f, "rb") as fh:

@@ -51,7 +51,9 @@ def create_server_rpc_agent_spec() -> AgentSpec:
                 return False
             text = args.get("text", "") if isinstance(args, dict) else ""
             run_id = args.get("run_id") if isinstance(args, dict) else None
-            show_spinner = args.get("show_spinner", True) if isinstance(args, dict) else True
+            show_spinner = (
+                args.get("show_spinner", True) if isinstance(args, dict) else True
+            )
             await service_instance.set_client_status(
                 text,
                 session=session,

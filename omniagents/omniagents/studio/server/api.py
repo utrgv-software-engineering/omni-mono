@@ -102,6 +102,7 @@ class SpaStaticFiles(StaticFiles):
                 raise
             return await super().get_response("index.html", scope)
 
+
 MODEL_SETTING_SCHEMA: List[Dict[str, Any]] = [
     {
         "key": "temperature",

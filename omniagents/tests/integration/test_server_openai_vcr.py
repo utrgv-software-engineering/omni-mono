@@ -107,7 +107,9 @@ async def safe_rpc_server_url(safe_server_rpc_agent_spec):
 
 
 @pytest.mark.asyncio
-async def test_server_mode_streaming_with_openai(monkeypatch, rpc_server_url, server_rpc_agent_spec):
+async def test_server_mode_streaming_with_openai(
+    monkeypatch, rpc_server_url, server_rpc_agent_spec
+):
     mode = _determine_vcr_mode()
     if mode is None:
         pytest.skip("No OpenAI cassette available and OPENAI_API_KEY not set.")
@@ -191,22 +193,31 @@ async def test_server_mode_streaming_with_openai(monkeypatch, rpc_server_url, se
     tool_names = {tool.name for tool in server_rpc_agent_spec.available_tools}
     assert {"echo_text_tool", "add_integers_tool"} <= tool_names
 
-    function_calls = [entry for entry in history if entry.get("type") == "function_call"]
+    function_calls = [
+        entry for entry in history if entry.get("type") == "function_call"
+    ]
     assert function_calls
-    target_call = next((entry for entry in function_calls if entry.get("name") == "add_integers_tool"), None)
+    target_call = next(
+        (entry for entry in function_calls if entry.get("name") == "add_integers_tool"),
+        None,
+    )
     assert target_call is not None
     call_args = target_call.get("arguments")
     if isinstance(call_args, str):
         call_args = json.loads(call_args)
     assert call_args == {"a": 5, "b": 7}
 
-    function_outputs = [entry for entry in history if entry.get("type") == "function_call_output"]
+    function_outputs = [
+        entry for entry in history if entry.get("type") == "function_call_output"
+    ]
     assert function_outputs
     assert any("12" in str(item.get("output", "")) for item in function_outputs)
 
 
 @pytest.mark.asyncio
-async def test_server_mode_client_status_and_variables(monkeypatch, rpc_server_url, server_rpc_agent_spec):
+async def test_server_mode_client_status_and_variables(
+    monkeypatch, rpc_server_url, server_rpc_agent_spec
+):
     mode = _determine_vcr_mode()
     if mode is None:
         pytest.skip("No OpenAI cassette available and OPENAI_API_KEY not set.")
@@ -278,7 +289,9 @@ async def test_server_mode_client_status_and_variables(monkeypatch, rpc_server_u
 
             await client.call("archive_session", session_id=session_id)
             sessions_after = await client.call("list_sessions")
-            archived_entry = next(entry for entry in sessions_after if entry["id"] == session_id)
+            archived_entry = next(
+                entry for entry in sessions_after if entry["id"] == session_id
+            )
             assert archived_entry.get("archived") is True
 
             await client.call("delete_session", session_id=session_id)
@@ -316,7 +329,9 @@ async def test_server_mode_tool_approval_flow(
     methods = RecordingMethods()
 
     with recorder.use_cassette(SAFE_AGENT_CASSETTE.name):
-        async with JsonRpcClient.from_url(safe_rpc_server_url, methods=methods) as client:
+        async with JsonRpcClient.from_url(
+            safe_rpc_server_url, methods=methods
+        ) as client:
             methods.set_client(client)
             result = await client.call("start_run", prompt=_PROMPT_TEXT)
             run_id = result["run_id"]
