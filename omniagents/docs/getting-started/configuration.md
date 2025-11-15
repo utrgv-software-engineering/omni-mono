@@ -295,9 +295,6 @@ omniagents run
 # Run in ink mode
 omniagents run --mode ink
 
-# Run in voice mode
-omniagents run --mode voice
-
 # Run in server mode
 omniagents run --mode server
 ```
@@ -317,6 +314,8 @@ If your project has multiple agents, specify which one to run:
 ```bash
 omniagents run --agent agent_name
 ```
+
+Enable realtime voice controls from the web interface settings when needed for audio capture/playback.
 
 ## Next Steps
 

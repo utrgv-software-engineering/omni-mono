@@ -47,11 +47,6 @@ python -m omniagents.cli run -c path/to/agent.yaml --mode web
 python -m omniagents.cli run -c path/to/agent.yaml --mode ink
 ```
 
-**Voice Mode:**
-```bash
-python -m omniagents.cli run -c path/to/agent.yaml --mode voice
-```
-
 **Server Mode:**
 ```bash
 python -m omniagents.cli run -c path/to/agent.yaml --mode server --host 0.0.0.0 --port 8000
@@ -75,9 +70,8 @@ OmniAgents is a wrapper around OpenAI's agents library (`openai-agents==0.4.2`) 
    - Python code using the `@function_tool` decorator (see `examples/basic_python/`)
 
 2. **Backend Modes** (selected via `--mode` flag or entry point):
-   - **Web**: React-based web UI (default)
+   - **Web**: React-based web UI (default, includes optional realtime voice controls)
    - **Ink**: React Ink terminal UI
-   - **Voice**: Push-to-talk voice interaction
    - **Server**: FastAPI server exposing agents via WebSocket JSON-RPC protocol
    - Backends are dynamically loaded via entry points defined in `pyproject.toml` (`[project.entry-points."omniagents.backends"]`)
 
@@ -92,7 +86,7 @@ OmniAgents is a wrapper around OpenAI's agents library (`openai-agents==0.4.2`) 
      - `server_functions/`: Server-side functions exposed to RPC clients
      - `evaluation/`: Agent evaluation framework
      - `project/`: Project scaffolding templates
-   - `/omniagents/backends/`: UI/interface implementations (server, web, ink, voice)
+  - `/omniagents/backends/`: UI/interface implementations (server, web, ink)
    - `/omniagents/rpc/`: JSON-RPC protocol implementation for remote agent communication
    - `/omniagents/studio/`: Web-based UIs:
      - `tracing/`: Trace visualization UI
@@ -128,7 +122,7 @@ OmniAgents is a wrapper around OpenAI's agents library (`openai-agents==0.4.2`) 
 5. **Configuration**:
    - API keys via environment variables (e.g., `OPENAI_API_KEY`)
    - Agent-specific settings in YAML files (name, instructions_file, tools, use_safe_agent, layout)
-   - Optional dependencies controlled via `pyproject.toml` extras: `[server]`, `[voice]`, `[web]`, `[studio]`, `[studio-server]`, `[all]`, `[dev]`
+  - Optional dependencies controlled via `pyproject.toml` extras: `[server]`, `[web]`, `[studio]`, `[studio-server]`, `[all]`, `[dev]`
 
 6. **Multi-Language Components**:
    - **Python**: Core framework, backends, RPC implementation

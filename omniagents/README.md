@@ -3,9 +3,8 @@
 OmniAgents provides a lightweight wrapper around the [OpenAI Agents](https://github.com/openai/openai-agents-python) library.
 It offers several ways to run your assistant:
 
-- **Web** – React-based web UI
+- **Web** – React-based web UI with optional realtime voice controls
 - **Ink** – React Ink terminal UI
-- **Voice** – push-to-talk voice interaction
 - **Server** – expose an agent through a JSON‑RPC WebSocket API
 
 Agents are described using a small YAML file which lists available tools and where to load them from.  You can also build an agent directly in Python and run it with the same interface.
@@ -67,14 +66,6 @@ omniagents run -P path/to/project.yml --mode ink
 ```
 
 Official wheels include a prebuilt bundle; from source, the backend can auto-build if Node/npm are available.
-
-### Voice mode
-
-Push-to-talk voice interaction:
-
-```bash
-omniagents run -P path/to/project.yml --mode voice
-```
 
 ### Server mode
 

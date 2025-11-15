@@ -21,12 +21,24 @@ class DummyRunner:
 @pytest.fixture
 def stub_runtime(monkeypatch):
     module = types.ModuleType("omniagents.core.project.runtime")
+    module.calls = []
 
     def _load_project(path):
         return types.SimpleNamespace(path=path, paths={"tools": []})
 
-    def _build_spec_from_project(project, agent_key=None):
-        return {"project": project, "agent_key": agent_key}
+    def _build_spec_from_project(project, agent_key=None, prefer_voice=False):
+        module.calls.append(
+            {
+                "project": project,
+                "agent_key": agent_key,
+                "prefer_voice": prefer_voice,
+            }
+        )
+        return {
+            "project": project,
+            "agent_key": agent_key,
+            "prefer_voice": prefer_voice,
+        }
 
     def _resolve_agent(project, agent_key=None):
         key = agent_key or "entry"
@@ -91,6 +103,33 @@ def test_run_command_without_prompt_skips_initial_prompt(monkeypatch, stub_runti
     assert "initial_prompt" not in kwargs
 
 
+def test_run_command_web_mode_prefers_voice(monkeypatch, stub_runtime):
+    runner = DummyRunner()
+
+    def fake_runner(spec=None, config_path=None):
+        runner.spec = spec
+        return runner
+
+    monkeypatch.setattr("omniagents.cli.Runner", fake_runner)
+    monkeypatch.setattr("omniagents.cli.Debug.init", lambda cli_flag: None)
+
+    argv = [
+        "omniagents",
+        "run",
+        "--project",
+        "proj.yml",
+        "--mode",
+        "web",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    cli_main()
+
+    module = sys.modules["omniagents.core.project.runtime"]
+    assert module.calls
+    assert module.calls[-1]["prefer_voice"] is True
+
+
 def test_run_command_server_mode_includes_network_args(monkeypatch, stub_runtime):
     runner = DummyRunner()
     monkeypatch.setattr(
@@ -124,6 +163,63 @@ def test_run_command_server_mode_includes_network_args(monkeypatch, stub_runtime
     assert kwargs["port"] == 8765
     assert kwargs["auth_token"] == "token"
     assert kwargs["reload"] is True
+    module = sys.modules["omniagents.core.project.runtime"]
+    assert module.calls
+    assert module.calls[-1]["prefer_voice"] is True
+
+
+def test_run_command_web_mode_with_agent_disables_voice(monkeypatch, stub_runtime):
+    runner = DummyRunner()
+    monkeypatch.setattr(
+        "omniagents.cli.Runner", lambda spec=None, config_path=None: runner
+    )
+    monkeypatch.setattr("omniagents.cli.Debug.init", lambda cli_flag: None)
+
+    argv = [
+        "omniagents",
+        "run",
+        "--project",
+        "proj.yml",
+        "--mode",
+        "web",
+        "--agent",
+        "custom",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    cli_main()
+
+    module = sys.modules["omniagents.core.project.runtime"]
+    assert module.calls
+    assert module.calls[-1]["prefer_voice"] is False
+
+
+def test_run_command_server_mode_with_agent_disables_voice(
+    monkeypatch, stub_runtime
+):
+    runner = DummyRunner()
+    monkeypatch.setattr(
+        "omniagents.cli.Runner", lambda spec=None, config_path=None: runner
+    )
+    monkeypatch.setattr("omniagents.cli.Debug.init", lambda cli_flag: None)
+
+    argv = [
+        "omniagents",
+        "run",
+        "--project",
+        "proj.yml",
+        "--mode",
+        "server",
+        "--agent",
+        "custom",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    cli_main()
+
+    module = sys.modules["omniagents.core.project.runtime"]
+    assert module.calls
+    assert module.calls[-1]["prefer_voice"] is False
 
 
 def test_run_command_resume_invalid_mode_exits(monkeypatch, stub_runtime, capsys):
@@ -381,6 +477,94 @@ def test_agent_run_server_mode_forwards_args(monkeypatch, stub_runtime):
     assert kwargs["port"] == 9001
     assert kwargs["auth_token"] == "token"
     assert kwargs["reload"] is True
+    module = sys.modules["omniagents.core.project.runtime"]
+    assert module.calls
+    assert module.calls[-1]["prefer_voice"] is True
+
+
+def test_agent_run_web_mode_prefers_voice(monkeypatch, stub_runtime):
+    runner = DummyRunner()
+
+    def fake_runner(spec=None, config_path=None):
+        runner.spec = spec
+        return runner
+
+    monkeypatch.setattr("omniagents.cli.Runner", fake_runner)
+    monkeypatch.setattr("omniagents.cli.Debug.init", lambda cli_flag: None)
+
+    argv = [
+        "omniagents",
+        "agent",
+        "run",
+        "--project",
+        "proj.yml",
+        "--mode",
+        "web",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    cli_main()
+
+    module = sys.modules["omniagents.core.project.runtime"]
+    assert module.calls
+    assert module.calls[-1]["prefer_voice"] is True
+
+
+def test_agent_run_server_mode_prefers_voice(monkeypatch, stub_runtime):
+    runner = DummyRunner()
+
+    def fake_runner(spec=None, config_path=None):
+        runner.spec = spec
+        return runner
+
+    monkeypatch.setattr("omniagents.cli.Runner", fake_runner)
+    monkeypatch.setattr("omniagents.cli.Debug.init", lambda cli_flag: None)
+
+    argv = [
+        "omniagents",
+        "agent",
+        "run",
+        "--project",
+        "proj.yml",
+        "--mode",
+        "server",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    cli_main()
+
+    module = sys.modules["omniagents.core.project.runtime"]
+    assert module.calls
+    assert module.calls[-1]["prefer_voice"] is True
+
+
+def test_agent_run_server_mode_with_agent_disables_voice(
+    monkeypatch, stub_runtime
+):
+    runner = DummyRunner()
+    monkeypatch.setattr(
+        "omniagents.cli.Runner", lambda spec=None, config_path=None: runner
+    )
+    monkeypatch.setattr("omniagents.cli.Debug.init", lambda cli_flag: None)
+
+    argv = [
+        "omniagents",
+        "agent",
+        "run",
+        "--project",
+        "proj.yml",
+        "--mode",
+        "server",
+        "--agent",
+        "custom",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    cli_main()
+
+    module = sys.modules["omniagents.core.project.runtime"]
+    assert module.calls
+    assert module.calls[-1]["prefer_voice"] is False
 
 
 def test_agent_save_invokes_save_agent(monkeypatch, stub_runtime, tmp_path, capsys):

@@ -5,9 +5,8 @@ OmniAgents provides a lightweight wrapper around the [OpenAI Agents](https://git
 ## Features
 
 - **Multiple Interface Modes**: Choose the interface that best suits your needs
-    - Web - browser-based interface (default)
+    - Web - browser-based interface (default, includes optional realtime voice controls)
     - Ink - terminal UI built with React
-    - Voice - voice-based interaction
     - Server - expose agents through a JSON-RPC WebSocket API
 
 - **Simple Configuration**: Define agents using YAML files or Python code

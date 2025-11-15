@@ -5,6 +5,7 @@ paths:
   target: target
 agents:
   entrypoint: {sanitized}
+  voice_entrypoint: {sanitized}
 
 tracing:
   provider: agentio

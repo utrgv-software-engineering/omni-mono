@@ -48,6 +48,7 @@ class ProjectContext:
     paths: Dict[str, List[Path]]
     agents_map: Dict[str, Path]
     entrypoint: Optional[str]
+    voice_entrypoint: Optional[str]
     tracing_defaults: Optional[Dict[str, Any]]
     settings_defaults: List[Dict[str, Any]]
     ui_defaults: Dict[str, Any]
@@ -120,6 +121,7 @@ def load_project(project_path: str) -> ProjectContext:
 
     agents_section = proj.get("agents") or {}
     entry = agents_section.get("entrypoint")
+    voice_entry = agents_section.get("voice_entrypoint")
     include = agents_section.get("include")
     exclude = agents_section.get("exclude")
     include_globs = (
@@ -184,6 +186,19 @@ def load_project(project_path: str) -> ProjectContext:
         else:
             entry = None
 
+    if isinstance(voice_entry, str) and voice_entry:
+        if voice_entry not in agents_map:
+            raise FileNotFoundError(
+                f"Voice entrypoint '{voice_entry}' not found among agents: {sorted(agents_map.keys())}"
+            )
+    elif voice_entry in (None, ""):
+        voice_entry = None
+    else:
+        raise ValueError("Voice entrypoint must be a string if provided")
+
+    if voice_entry is None:
+        voice_entry = entry
+
     tracing_defaults = (
         proj.get("tracing") if isinstance(proj.get("tracing"), dict) else None
     )
@@ -242,6 +257,7 @@ def load_project(project_path: str) -> ProjectContext:
             if entry
             else (next(iter(agents_map.keys())) if agents_map else None)
         ),
+        voice_entrypoint=(str(voice_entry) if voice_entry else None),
         tracing_defaults=tracing_defaults,
         settings_defaults=settings_defaults,
         ui_defaults=ui_defaults,
@@ -262,8 +278,16 @@ def resolve_agent(
     return key, project.agents_map[key]
 
 
-def build_spec_from_project(project: ProjectContext, agent_key: Optional[str] = None):
-    key, agent_yaml = resolve_agent(project, agent_key)
+def build_spec_from_project(
+    project: ProjectContext,
+    agent_key: Optional[str] = None,
+    *,
+    prefer_voice: bool = False,
+):
+    selected_key = agent_key
+    if selected_key is None and prefer_voice and project.voice_entrypoint:
+        selected_key = project.voice_entrypoint
+    key, agent_yaml = resolve_agent(project, selected_key)
     pdefs = {
         "tracing": project.tracing_defaults or None,
         "settings": project.settings_defaults or [],

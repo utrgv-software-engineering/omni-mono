@@ -13,7 +13,7 @@
 pip install --upgrade --index-url https://pypi.fury.io/ericmichael/ --extra-index-url https://pypi.org/simple "omniagents[all]"
 ```
 
-This installs OmniAgents with all features including web, voice, server, and Ink backends.
+This installs OmniAgents with all available backends, including web, server, and Ink.
 
 ### Install Node.js
 
@@ -70,11 +70,10 @@ pip install -e ".[dev]"
 
 ### Available Feature Groups
 
-- `[all]` - All features (web, server, ink, voice, studio)
-- `[web]` - Web interface
+- `[all]` - All features (web, server, ink, studio)
+- `[web]` - Web interface (includes optional realtime voice controls)
 - `[server]` - Server mode with FastAPI
 - `[ink]` - Ink TUI mode
-- `[voice]` - Voice mode
 - `[studio]` - Studio web UI
 - `[docs]` - Documentation tools (MkDocs)
 - `[dev]` - Development dependencies (tests, linting, etc.)

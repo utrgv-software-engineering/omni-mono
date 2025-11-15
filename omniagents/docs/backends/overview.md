@@ -10,9 +10,8 @@ Backends are dynamically loaded via entry points defined in `pyproject.toml`. Ea
 
 | Backend | Mode Flag | Description | Built With |
 |---------|-----------|-------------|------------|
-| Web | `--mode web` | Browser-based interface | TypeScript/React |
+| Web | `--mode web` | Browser-based interface (supports optional realtime voice) | TypeScript/React |
 | Ink | `--mode ink` | React terminal UI | TypeScript/React |
-| Voice | `--mode voice` | Voice interface | Python |
 | Server | `--mode server` | JSON-RPC WebSocket API | Python/FastAPI |
 
 ## Backend Architecture
@@ -21,7 +20,6 @@ Backends are dynamically loaded via entry points defined in `pyproject.toml`. Ea
 omniagents/backends/
 ├── web/          # Browser-based web interface
 ├── ink/          # React Ink TUI backend
-├── voice/        # Voice interface
 └── server/       # FastAPI server backend
 ```
 
@@ -29,8 +27,8 @@ omniagents/backends/
 
 Consider:
 
-1. **User Experience**: Web for visual interface, Ink for terminal
-2. **Environment**: Web/Voice for local, Server for remote
+1. **User Experience**: Web for visual (and optional voice) interface, Ink for terminal
+2. **Environment**: Web for local UI, Server for remote access
 3. **Dependencies**: Some backends require optional dependencies
 4. **Platform**: All backends are cross-platform
 
@@ -46,9 +44,8 @@ All backends support:
 
 ### Backend-Specific Features
 
-- **Web**: Visual approval dialogs, rich UI components
+- **Web**: Visual approval dialogs, rich UI components, optional realtime voice capture/playback
 - **Ink**: Terminal-based interaction with React components
-- **Voice**: Audio input/output, natural conversation
 - **Server**: Remote client connections, JSON-RPC API
 
 ## Installation
@@ -62,9 +59,6 @@ pip install -e ".[web]"
 # Server backend
 pip install -e ".[server]"
 
-# Voice backend
-pip install -e ".[voice]"
-
 # All backends
 pip install -e ".[all]"
 ```
@@ -77,7 +71,6 @@ Backends are registered in `pyproject.toml`:
 [project.entry-points."omniagents.backends"]
 web = "omniagents.backends.web:WebBackend"
 ink = "omniagents.backends.ink:InkBackend"
-voice = "omniagents.backends.voice:VoiceBackend"
 server = "omniagents.backends.server:ServerBackend"
 ```
 

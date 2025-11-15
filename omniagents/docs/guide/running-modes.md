@@ -21,6 +21,15 @@ omniagents run -P agent.yml --mode web
 - End-user interfaces
 - Visual feedback and interaction
 
+To dedicate a different agent for realtime voice sessions, add `voice_entrypoint` in `project.yml`:
+
+```yaml
+agents:
+  entrypoint: support_bot
+  voice_entrypoint: support_bot_voice
+```
+When `--mode web` runs without `--agent`, the voice entrypoint is used.
+
 ## Ink Mode
 
 Terminal UI built with React:
@@ -38,24 +47,6 @@ omniagents run -P agent.yml --mode ink
 - Node.js environments
 - Terminal-based workflows
 - React developers
-
-## Voice Mode
-
-Voice-based interaction:
-
-```bash
-omniagents run -P agent.yml --mode voice
-```
-
-**Features:**
-- Voice input and output
-- Real-time audio processing
-- Natural conversation flow
-
-**Use Cases:**
-- Hands-free operation
-- Voice assistants
-- Accessibility
 
 ## Server Mode
 
@@ -76,15 +67,16 @@ omniagents run -P agent.yml --mode server --host 0.0.0.0 --port 8000
 - Remote clients
 - Integration with other systems
 
+If your `project.yml` defines `agents.voice_entrypoint`, running server mode without `--agent` loads that voice agent so `/ws/realtime` uses its realtime configuration.
+
 See [RPC Protocol](../api/rpc-protocol.md) for protocol details.
 
 ## Choosing a Mode
 
 | Mode | Use Case | Pros | Cons |
 |------|----------|------|------|
-| Web | Local development, end users | Visual, feature-rich | Browser required |
+| Web | Local development, end users | Visual, feature-rich, optional realtime voice | Browser required |
 | Ink | Terminal workflows | Lightweight, modern UI | Terminal only |
-| Voice | Hands-free, accessibility | Natural interaction | Requires audio setup |
 | Server | Web apps, remote | Flexible, remote | Requires client |
 
 ## Session Management
