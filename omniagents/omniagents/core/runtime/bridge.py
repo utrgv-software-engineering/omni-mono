@@ -664,6 +664,7 @@ async def stream_agent(
 
         # If it's an APIError, log the actual error body from OpenAI
         from openai import APIError
+
         if isinstance(e, APIError):
             logger.error(f"OpenAI API Error Body: {e.body}")
             logger.error(f"OpenAI API Error Type: {e.type}")

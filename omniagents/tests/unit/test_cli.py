@@ -194,9 +194,7 @@ def test_run_command_web_mode_with_agent_disables_voice(monkeypatch, stub_runtim
     assert module.calls[-1]["prefer_voice"] is False
 
 
-def test_run_command_server_mode_with_agent_disables_voice(
-    monkeypatch, stub_runtime
-):
+def test_run_command_server_mode_with_agent_disables_voice(monkeypatch, stub_runtime):
     runner = DummyRunner()
     monkeypatch.setattr(
         "omniagents.cli.Runner", lambda spec=None, config_path=None: runner
@@ -538,9 +536,7 @@ def test_agent_run_server_mode_prefers_voice(monkeypatch, stub_runtime):
     assert module.calls[-1]["prefer_voice"] is True
 
 
-def test_agent_run_server_mode_with_agent_disables_voice(
-    monkeypatch, stub_runtime
-):
+def test_agent_run_server_mode_with_agent_disables_voice(monkeypatch, stub_runtime):
     runner = DummyRunner()
     monkeypatch.setattr(
         "omniagents.cli.Runner", lambda spec=None, config_path=None: runner

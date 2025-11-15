@@ -10,3 +10,4 @@ pygit2
 fastapi[all]>=0.115.12
 uvicorn>=0.34.1
 pytest
+vcrpy>=5.1.0
