@@ -91,21 +91,6 @@ Get full message history for a session:
 }
 ```
 
-### tool_approval_response
-
-Respond to tool approval request (Safe Agent mode):
-
-```python
-{
-  "method": "tool_approval_response",
-  "params": {
-    "approval_id": "approval-id",
-    "approved": true,
-    "always_approve": false
-  }
-}
-```
-
 ## Event Notifications
 
 The server streams events during agent runs:
@@ -210,6 +195,8 @@ Token usage update (streamed during run):
 ## Client Functions
 
 The protocol supports server-initiated calls to client capabilities.
+
+> Tool approvals now flow exclusively through `client_request` + `client_response`. The legacy `tool_approval_response` RPC is removed.
 
 ### ui.request_tool_approval
 
