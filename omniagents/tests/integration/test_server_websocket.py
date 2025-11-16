@@ -23,7 +23,7 @@ async def mock_build_agent(settings, mcp, app):
 
 
 # Minimal mock stream_agent
-async def mock_stream_agent(agent, prompt, sess, channel, max_turns=20):
+async def mock_stream_agent(agent, prompt, sess, channel, max_turns=20, **_ignored):
     """Mock agent streaming - minimal implementation."""
     # Add user message to history
     user_msg = {"role": "user", "content": prompt}
@@ -32,6 +32,34 @@ async def mock_stream_agent(agent, prompt, sess, channel, max_turns=20):
 
     append_message(sess.id, user_msg)
     # The server will send run_end
+
+
+def _wait_for_result(ws, target_id):
+    while True:
+        resp = ws.receive_json()
+        if resp.get("id") == target_id and ("result" in resp or "error" in resp):
+            return resp
+
+
+def _wait_for_method(ws, method_name):
+    while True:
+        message = ws.receive_json()
+        if message.get("method") == method_name:
+            return message
+
+
+def _wait_for_run_completion(ws, request_id):
+    result = None
+    run_end = None
+    while not (result and run_end):
+        message = ws.receive_json()
+        if message.get("id") == request_id and (
+            "result" in message or "error" in message
+        ):
+            result = message
+        elif message.get("method") == "run_end":
+            run_end = message
+    return result, run_end
 
 
 class TestServerIntegration:
@@ -47,10 +75,30 @@ class TestServerIntegration:
             build_agent=mock_build_agent,
         )
 
+        async def _describe_session(_service, session, args):
+            return {
+                "session_id": session.id if session else None,
+                "args": args or {},
+            }
+
+        def _register(service):
+            service.register_server_function(
+                "session.describe",
+                _describe_session,
+                description="Return session metadata",
+                params_schema={"type": "object"},
+                result_schema={"type": "object"},
+            )
+
+        spec.register_server_functions = _register
+
         # Mock the stream_agent function
         from omniagents.core.runtime import bridge as runner_bridge
 
         monkeypatch.setattr(runner_bridge, "stream_agent", mock_stream_agent)
+        monkeypatch.setattr(
+            "omniagents.core.agents.service.stream_agent", mock_stream_agent
+        )
 
         # Build and return the app
         app = server_app.build_app(spec=spec)
@@ -73,23 +121,13 @@ class TestServerIntegration:
                     "params": {"prompt": "Hello"},
                 }
             )
+            start_resp, _ = _wait_for_run_completion(ws, 1)
 
-            while True:
-                resp = ws.receive_json()
-                if resp.get("id") == 1 and "result" in resp:
-                    break
+            assert "result" in start_resp
+            assert "session_id" in start_resp["result"]
+            assert "run_id" in start_resp["result"]
 
-            assert "result" in resp
-            assert "session_id" in resp["result"]
-            assert "run_id" in resp["result"]
-
-            session_id = resp["result"]["session_id"]
-
-            # Should receive run_end event
-            while True:
-                event = ws.receive_json()
-                if event.get("method") == "run_end":
-                    break
+            session_id = start_resp["result"]["session_id"]
 
             # 2. Get session history
             ws.send_json(
@@ -164,19 +202,10 @@ class TestServerIntegration:
                 }
             )
 
-            while True:
-                resp1 = ws.receive_json()
-                if resp1.get("id") == 1 and "result" in resp1:
-                    break
+            resp1, _ = _wait_for_run_completion(ws, 1)
 
             session_id = resp1["result"]["session_id"]
             run_id1 = resp1["result"]["run_id"]
-
-            # Wait for completion
-            while True:
-                event = ws.receive_json()
-                if event.get("method") == "run_end":
-                    break
 
             # Second run with same session
             ws.send_json(
@@ -188,20 +217,11 @@ class TestServerIntegration:
                 }
             )
 
-            while True:
-                resp2 = ws.receive_json()
-                if resp2.get("id") == 2 and "result" in resp2:
-                    break
+            resp2, _ = _wait_for_run_completion(ws, 2)
 
             assert resp2["result"]["session_id"] == session_id
             run_id2 = resp2["result"]["run_id"]
             assert run_id1 != run_id2
-
-            # Wait for completion
-            while True:
-                event = ws.receive_json()
-                if event.get("method") == "run_end":
-                    break
 
             # Check history has both messages
             ws.send_json(
@@ -219,27 +239,175 @@ class TestServerIntegration:
             assert any(msg["content"] == "First" for msg in history)
             assert any(msg["content"] == "Second" for msg in history)
 
-    def test_tool_approval_response(self, client):
-        """Test tool approval response method exists."""
+    def test_stop_run_cancels_active_run(self, client, monkeypatch):
+        """Verify stop_run cancels the in-flight task and emits run_end."""
+
+        async def blocking_stream_agent(*_args, **_kwargs):
+            try:
+                while True:
+                    await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                raise
+
+        monkeypatch.setattr(
+            "omniagents.core.agents.service.stream_agent", blocking_stream_agent
+        )
+
         with client.websocket_connect("/ws") as ws:
-            # Try to send a tool approval response (even if no request)
             ws.send_json(
                 {
                     "jsonrpc": "2.0",
                     "id": 1,
-                    "method": "tool_approval_response",
-                    "params": {
-                        "approval_id": "test_id",
-                        "approved": True,
-                        "always_approve": False,
-                        "error_message": None,
-                    },
+                    "method": "start_run",
+                    "params": {"prompt": "Blocking"},
+                }
+            )
+            start_resp = _wait_for_result(ws, 1)
+            run_id = start_resp["result"]["run_id"]
+
+            ws.send_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "stop_run",
+                    "params": {"run_id": run_id},
                 }
             )
 
-            resp = ws.receive_json()
-            # Service currently returns False when no pending approval exists
-            assert resp.get("result") is False
+            stop_resp = None
+            run_end = None
+            while not (stop_resp and run_end):
+                message = ws.receive_json()
+                if message.get("method") == "run_end":
+                    run_end = message
+                elif message.get("id") == 2:
+                    stop_resp = message
+
+            assert stop_resp["result"] is True
+            assert run_end["params"]["end_reason"] == "cancelled"
+
+    def test_send_user_message_appends_history(self, client, monkeypatch):
+        """send_user_message should append to the session history."""
+
+        async def slow_stream_agent(*_args, **_kwargs):
+            await asyncio.sleep(0.3)
+            return {}
+
+        monkeypatch.setattr(
+            "omniagents.core.agents.service.stream_agent", slow_stream_agent
+        )
+
+        with client.websocket_connect("/ws") as ws:
+            ws.send_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "start_run",
+                    "params": {"prompt": "Initial"},
+                }
+            )
+            start_resp = _wait_for_result(ws, 1)
+            run_id = start_resp["result"]["run_id"]
+            session_id = start_resp["result"]["session_id"]
+
+            ws.send_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "send_user_message",
+                    "params": {"run_id": run_id, "content": "Follow-up"},
+                }
+            )
+            msg_resp = _wait_for_result(ws, 2)
+            assert msg_resp["result"] is None
+
+            _wait_for_method(ws, "run_end")
+
+            ws.send_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "get_session_history",
+                    "params": {"session_id": session_id},
+                }
+            )
+            hist_resp = _wait_for_result(ws, 3)
+            history = hist_resp["result"]
+            assert any(entry.get("content") == "Follow-up" for entry in history)
+
+    def test_client_functions_records_capabilities(self, client):
+        """client_functions handshake should persist declared capabilities."""
+        with client.websocket_connect("/ws") as ws:
+            ws.send_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "client_functions",
+                    "params": {
+                        "version": 2,
+                        "functions": [{"name": "ui.custom", "description": "demo"}],
+                    },
+                }
+            )
+            resp = _wait_for_result(ws, 1)
+            assert resp["result"] is True
+
+        service = client.app.state.agent_service
+        assert any(
+            entry.get("version") == 2 and entry.get("functions")
+            for entry in service._client_capabilities.values()
+        )
+
+    def test_get_agent_info_and_server_functions(self, client):
+        """Expose agent metadata and registered server functions over RPC."""
+        with client.websocket_connect("/ws") as ws:
+            ws.send_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "get_agent_info",
+                    "params": {},
+                }
+            )
+            info = _wait_for_result(ws, 1)["result"]
+            assert info["name"] == "TestAgent"
+            assert "Welcome" in info["welcome_text"]
+
+            ws.send_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "list_server_functions",
+                    "params": {},
+                }
+            )
+            functions = _wait_for_result(ws, 2)["result"]
+            assert any(fn["name"] == "session.describe" for fn in functions)
+
+    def test_get_user_history_returns_recent_messages(self, client):
+        """get_user_history should surface latest user messages across sessions."""
+        with client.websocket_connect("/ws") as ws:
+            for idx, prompt in enumerate(["First", "Second"], start=1):
+                ws.send_json(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": idx,
+                        "method": "start_run",
+                        "params": {"prompt": prompt},
+                    }
+                )
+                _wait_for_run_completion(ws, idx)
+
+            ws.send_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 99,
+                    "method": "get_user_history",
+                    "params": {"limit": 5},
+                }
+            )
+            history = _wait_for_result(ws, 99)["result"]
+            assert any(entry.get("content") == "Second" for entry in history)
 
     def test_invalid_session_id(self, client):
         """Test handling of invalid session ID."""

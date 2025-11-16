@@ -699,7 +699,10 @@ class AgentService(RpcMethodsBase):
                 "error_message": error_message,
             },
         )
-        return False
+        raise RuntimeError(
+            "tool_approval_response is deprecated; respond via client_request/"
+            "client_response instead"
+        )
 
     # ------------------------------------------------------------------
     #  Client function registration (capability handshake)

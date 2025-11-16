@@ -199,20 +199,6 @@ Archive a conversation session.
 true
 ```
 
-### tool_approval_response(approval_id: string, approved: boolean, always_approve?: boolean, error_message?: string)
-Respond to a tool approval request (safe mode only).
-
-**Parameters:**
-- `approval_id` (string): ID from the approval request
-- `approved` (boolean): Whether to approve the tool execution
-- `always_approve` (boolean, optional): Auto-approve this tool for the session
-- `error_message` (string, optional): Error message to provide when rejecting a tool
-
-**Returns:**
-```json
-true
-```
-
 ## Event Notifications
 
 The server sends notifications during agent runs:
@@ -384,6 +370,8 @@ Notes:
 ## Client Functions (optional)
 
 Client Functions enable server-initiated calls to client-provided capabilities. This allows richer UIs and local integrations (e.g., rendering artifacts, file pickers, approval dialogs) while keeping the server stateless.
+
+> Tool approvals now flow exclusively through `client_request`/`client_response`. The legacy `tool_approval_response` RPC has been removed.
 
 Tool approvals are implemented using this mechanism, so clients that do not support `ui.request_tool_approval` should auto-approve or fail closed according to their security posture.
 
