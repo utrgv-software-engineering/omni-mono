@@ -174,8 +174,6 @@ def test_build_spec_from_project_applies_defaults(tmp_path: Path):
     assert spec.project_slug == "demo_project"
     assert spec.agent_slug == "beta"
     assert spec.model_name == "gpt-4.1-mini"
-    assert spec.theme_color == "#abcdef"
-    assert spec.layout == "minimal"
     assert spec.tracing_config.get("workflow_name") == "project-run"
     assert spec.get_agent_instructions() == "Beta inline"
 

@@ -46,6 +46,7 @@
     "@types/ws": "^8.5.10",
     "@typescript-eslint/eslint-plugin": "^6.21.0",
     "@typescript-eslint/parser": "^6.21.0",
+    "@vitest/coverage-v8": "^1.6.1",
     "esbuild": "^0.20.1",
     "eslint": "^8.56.0",
     "eslint-config-prettier": "^9.1.0",

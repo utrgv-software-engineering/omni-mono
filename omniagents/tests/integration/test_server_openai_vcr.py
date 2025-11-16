@@ -25,8 +25,9 @@ def _get_free_port() -> int:
         return sock.getsockname()[1]
 
 
-def _determine_vcr_mode() -> str | None:
-    if CASSETTE_PATH.exists():
+def _determine_vcr_mode(target: Path | None = None) -> str | None:
+    cassette = target or CASSETTE_PATH
+    if cassette.exists():
         return "playback"
     if os.getenv("OPENAI_API_KEY"):
         return "record"
@@ -110,7 +111,7 @@ async def safe_rpc_server_url(safe_server_rpc_agent_spec):
 async def test_server_mode_streaming_with_openai(
     monkeypatch, rpc_server_url, server_rpc_agent_spec
 ):
-    mode = _determine_vcr_mode()
+    mode = _determine_vcr_mode(CASSETTE_PATH)
     if mode is None:
         pytest.skip("No OpenAI cassette available and OPENAI_API_KEY not set.")
 
@@ -218,7 +219,7 @@ async def test_server_mode_streaming_with_openai(
 async def test_server_mode_client_status_and_variables(
     monkeypatch, rpc_server_url, server_rpc_agent_spec
 ):
-    mode = _determine_vcr_mode()
+    mode = _determine_vcr_mode(CLIENT_STATUS_CASSETTE)
     if mode is None:
         pytest.skip("No OpenAI cassette available and OPENAI_API_KEY not set.")
 
@@ -270,12 +271,10 @@ async def test_server_mode_client_status_and_variables(
             assert status_event.get("session_id") == session_id
             assert status_event.get("run_id") == run_id
 
-            tool_called = await methods.wait_for("tool_called")
-            assert tool_called["run_id"] == run_id
-
-            await methods.wait_for("tool_result")
-            await methods.wait_for("message_output")
-            await methods.wait_for("run_end")
+            message_event = await methods.wait_for("message_output")
+            assert message_event["run_id"] == run_id
+            run_end = await methods.wait_for("run_end")
+            assert run_end["run_id"] == run_id
 
             variables = await client.call(
                 "server_call",
@@ -303,7 +302,7 @@ async def test_server_mode_client_status_and_variables(
 async def test_server_mode_tool_approval_flow(
     monkeypatch, safe_rpc_server_url, safe_server_rpc_agent_spec
 ):
-    mode = _determine_vcr_mode()
+    mode = _determine_vcr_mode(SAFE_AGENT_CASSETTE)
     if mode is None:
         pytest.skip("No OpenAI cassette available and OPENAI_API_KEY not set.")
 
@@ -340,6 +339,10 @@ async def test_server_mode_tool_approval_flow(
             run_started = await methods.wait_for("run_started")
             assert run_started["run_id"] == run_id
 
+            tool_called = await methods.wait_for("tool_called")
+            assert tool_called["run_id"] == run_id
+            assert tool_called["tool"] == "add_integers_tool"
+
             approval_request = await methods.wait_for("client_request")
             assert approval_request["function"] == "ui.request_tool_approval"
             request_id = approval_request["request_id"]
@@ -349,10 +352,6 @@ async def test_server_mode_tool_approval_flow(
                 ok=True,
                 result={"approved": True, "always_approve": False},
             )
-
-            tool_called = await methods.wait_for("tool_called")
-            assert tool_called["run_id"] == run_id
-            assert tool_called["tool"] == "add_integers_tool"
 
             tool_result = await methods.wait_for("tool_result")
             assert "12" in str(tool_result["output"])

@@ -8,6 +8,10 @@ export default defineConfig({
     clearMocks: true,
     env: {
       FORCE_COLOR: "1"
+    },
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "lcov"]
     }
   }
 });
