@@ -23,9 +23,7 @@ async def mock_build_agent(settings, mcp, app):
 
 
 # Minimal mock stream_agent
-async def mock_stream_agent(
-    agent, prompt, sess, channel, max_turns=20, **_ignored
-):
+async def mock_stream_agent(agent, prompt, sess, channel, max_turns=20, **_ignored):
     """Mock agent streaming - minimal implementation."""
     # Add user message to history
     user_msg = {"role": "user", "content": prompt}
