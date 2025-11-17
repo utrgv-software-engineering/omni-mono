@@ -32,6 +32,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from starlette.types import Scope
 from starlette.datastructures import URL
@@ -89,7 +90,7 @@ class SpaStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope: Scope) -> Response:
         try:
             return await super().get_response(path, scope)
-        except HTTPException as exc:
+        except StarletteHTTPException as exc:
             if exc.status_code != 404:
                 raise
             method = scope.get("method")
