@@ -61,37 +61,44 @@ class WebBackend:
 
         apply_cli_overrides(spec, args)
 
-        try:
-            if not getattr(spec, "realtime_mode", False):
-                spec.realtime_mode = True
-            if not getattr(spec, "realtime_settings", None):
-                spec.realtime_settings = RealtimeSettings()
-            rs = spec.realtime_settings
-            if not rs.modalities or ("audio" not in rs.modalities):
-                rs.modalities = ["audio"]
-            if not rs.model_name:
-                rs.model_name = "gpt-realtime"
-            if not rs.voice:
-                rs.voice = "alloy"
-            if not rs.input_audio_format:
-                rs.input_audio_format = "pcm16"
-            if not rs.output_audio_format:
-                rs.output_audio_format = "pcm16"
-            if not rs.turn_detection:
-                rs.turn_detection = {
-                    "type": "server_vad",
-                    "threshold": 0.3,
-                    "prefix_padding_ms": 100,
-                    "silence_duration_ms": 200,
-                }
-            if rs.temperature is None:
-                rs.temperature = 0.8
-            if rs.max_output_tokens is None:
-                rs.max_output_tokens = 4096
-            if not rs.input_audio_transcription:
-                rs.input_audio_transcription = {"model": "whisper-1"}
-        except Exception:
-            pass
+        auto_open = self._should_auto_open(kwargs.get("auto_open"))
+        minimal_ui = self._is_minimal_ui(kwargs.get("minimal_ui"))
+
+        def _ensure_realtime_defaults(target_spec):
+            try:
+                if not getattr(target_spec, "realtime_mode", False):
+                    target_spec.realtime_mode = True
+                if not getattr(target_spec, "realtime_settings", None):
+                    target_spec.realtime_settings = RealtimeSettings()
+                rs = target_spec.realtime_settings
+                if not rs.modalities or ("audio" not in rs.modalities):
+                    rs.modalities = ["audio"]
+                if not rs.model_name:
+                    rs.model_name = "gpt-realtime"
+                if not rs.voice:
+                    rs.voice = "alloy"
+                if not rs.input_audio_format:
+                    rs.input_audio_format = "pcm16"
+                if not rs.output_audio_format:
+                    rs.output_audio_format = "pcm16"
+                if not rs.turn_detection:
+                    rs.turn_detection = {
+                        "type": "server_vad",
+                        "threshold": 0.3,
+                        "prefix_padding_ms": 100,
+                        "silence_duration_ms": 200,
+                    }
+                if rs.temperature is None:
+                    rs.temperature = 0.8
+                if rs.max_output_tokens is None:
+                    rs.max_output_tokens = 4096
+                if not rs.input_audio_transcription:
+                    rs.input_audio_transcription = {"model": "whisper-1"}
+            except Exception:
+                pass
+
+        realtime_spec = getattr(spec, "voice_spec", None) or spec
+        _ensure_realtime_defaults(realtime_spec)
 
         config_path = kwargs.get("config_path")
         auth_token = kwargs.get("auth_token")
@@ -187,6 +194,8 @@ class WebBackend:
                 qp.append(("initial", str(init)))
             if debug:
                 qp.append(("debug", "1"))
+            if minimal_ui:
+                qp.append(("minimal", "true"))
         except Exception:
             pass
         open_url = None
@@ -207,9 +216,15 @@ class WebBackend:
                 open_url = base + "?" + urlencode(qp)
             else:
                 open_url = base + f"?ts={int(time.time())}"
-        try:
-            webbrowser.open(open_url)
-        except Exception:
+        elif dev_flag and minimal_ui and open_url:
+            if "minimal=" not in open_url:
+                open_url = self._append_query_param(open_url, "minimal", "true")
+        if auto_open:
+            try:
+                webbrowser.open(open_url)
+            except Exception:
+                print(f"Open in browser: {open_url}")
+        else:
             print(f"Open in browser: {open_url}")
 
         try:
@@ -217,6 +232,34 @@ class WebBackend:
                 time.sleep(0.2)
         except KeyboardInterrupt:
             pass
+
+    @staticmethod
+    def _should_auto_open(auto_open_arg: bool | None) -> bool:
+        env_val = os.environ.get("OMNI_WEB_AUTO_OPEN")
+        env_enabled = True if env_val is None else env_val.lower() not in {
+            "0",
+            "false",
+            "no",
+        }
+        if auto_open_arg is None:
+            return env_enabled
+        return bool(auto_open_arg)
+
+    @staticmethod
+    def _is_minimal_ui(minimal_arg: bool | None) -> bool:
+        env_val = os.environ.get("OMNI_WEB_MINIMAL")
+        env_enabled = (
+            env_val is not None
+            and env_val.lower() not in {"0", "false", "no"}
+        )
+        if minimal_arg is None:
+            return env_enabled
+        return bool(minimal_arg)
+
+    @staticmethod
+    def _append_query_param(url: str, key: str, value: str) -> str:
+        sep = "&" if "?" in url else "?"
+        return f"{url}{sep}{key}={value}"
 
     def _start_dev_server(
         self, *, ws_host: str, ws_port: int, dev_host: str, dev_port: int

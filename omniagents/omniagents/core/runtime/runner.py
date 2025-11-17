@@ -34,6 +34,7 @@ class Runner:
         cls,
         agent: Any,  # AgentLike
         *,
+        voice_agent: Optional[Any] = None,
         welcome_text: Optional[str] = None,
         safe: bool = False,
         skip_approvals: bool = False,
@@ -55,68 +56,67 @@ class Runner:
         """
         from omniagents.core.utils.jinja_instructions import process_instructions
 
-        name = getattr(agent, "name", "agent")
-
-        # Process instructions through Jinja2 - converts string to callable
-        # This ensures instructions are re-rendered on every run, not just at creation
-        agent.instructions = process_instructions(agent.instructions)
-
-        # Generate agent_slug from agent name
-        agent_slug_value = name.lower().replace(" ", "_").replace("-", "_")
-
-        # Build agent function - always store the original agent
-        async def _builder(settings: Dict[str, Any], mcp, spec) -> Any:
-            return agent
-
-        # Handle context construction
-        # If variables are provided, use build_context to construct context
-        # Otherwise, use the provided context directly
+        # Handle context construction once for all specs
         final_context = context
         final_variables = variables
         if variables and build_context:
             final_context = build_context(variables)
+            # When build_context is used, keep variables stored as-is
         elif variables and not build_context:
             # If variables provided but no factory, use variables as context (dict mode)
             final_context = variables
             final_variables = None  # Don't store variables separately in this case
 
-        # Create spec from agent
-        spec = AgentSpec(
-            name=name,
-            welcome_text=welcome_text,
-            get_agent_instructions=lambda: agent.instructions,
-            build_agent=_builder,  # Always use custom builder
-            available_tools=getattr(agent, "tools", []),
-            model_name=getattr(agent, "model", None),
-            context_window=context_window,
-            use_safe_agent=safe,
-            safe_agent_options=SafeAgentOptions(
-                skip_approvals=skip_approvals,
-                halt_on_rejection=halt_on_rejection,
-                safe_tool_names=safe_tool_names or [],
-                safe_tool_patterns=safe_tool_patterns or [],
-            ),
-            settings_fields=list(DEFAULT_SETTINGS_FIELDS),
-            context=final_context,  # Pass the constructed context
-            variables=final_variables,  # Store variables separately if they exist
-            build_context=build_context,  # Keep factory for server mode
-            max_turns=max_turns,  # Pass through max_turns parameter
-            project_slug=None,
-            agent_slug=agent_slug_value,
-        )
-        # Optional: attach server functions registrar from callables
+        registrar = None
         if server_functions:
             try:
                 from omniagents.core.server_functions.discovery import (
                     build_server_functions_registrar,
                 )
 
-                spec.register_server_functions = build_server_functions_registrar(
-                    server_functions
-                )
+                registrar = build_server_functions_registrar(server_functions)
             except Exception:
-                # Best-effort; do not fail runner construction if discovery wiring fails
-                pass
+                registrar = None
+
+        def _build_spec(agent_obj: Any) -> AgentSpec:
+            local_agent = agent_obj
+            local_agent.instructions = process_instructions(local_agent.instructions)
+            name = getattr(local_agent, "name", "agent")
+            agent_slug_value = name.lower().replace(" ", "_").replace("-", "_")
+
+            async def _builder(settings: Dict[str, Any], mcp, spec) -> Any:
+                return local_agent
+
+            spec_obj = AgentSpec(
+                name=name,
+                welcome_text=welcome_text,
+                get_agent_instructions=lambda: local_agent.instructions,
+                build_agent=_builder,
+                available_tools=getattr(local_agent, "tools", []),
+                model_name=getattr(local_agent, "model", None),
+                context_window=context_window,
+                use_safe_agent=safe,
+                safe_agent_options=SafeAgentOptions(
+                    skip_approvals=skip_approvals,
+                    halt_on_rejection=halt_on_rejection,
+                    safe_tool_names=list(safe_tool_names or []),
+                    safe_tool_patterns=list(safe_tool_patterns or []),
+                ),
+                settings_fields=list(DEFAULT_SETTINGS_FIELDS),
+                context=final_context,
+                variables=final_variables,
+                build_context=build_context,
+                max_turns=max_turns,
+                project_slug=None,
+                agent_slug=agent_slug_value,
+            )
+            if registrar:
+                spec_obj.register_server_functions = registrar
+            return spec_obj
+
+        spec = _build_spec(agent)
+        if voice_agent:
+            spec.voice_spec = _build_spec(voice_agent)
 
         return cls(spec=spec)
 
@@ -233,6 +233,11 @@ class Runner:
             action="store_true",
             help="Resume previous session.",
         )
+        common_group.add_argument(
+            "--ui-minimal",
+            action="store_true",
+            help="Hide the sidebar when launching the web UI (adds minimal=true query param)",
+        )
 
         # SafeAgent control arguments (strict)
         safe_group = parser.add_argument_group(
@@ -288,6 +293,9 @@ class Runner:
         resume_flag = bool(getattr(args, "resume", False))
         if resume_flag:
             kwargs["resume"] = True
+
+        if getattr(args, "ui_minimal", False):
+            kwargs["minimal_ui"] = True
 
         # Add mode-specific kwargs
         if args.mode == "server":

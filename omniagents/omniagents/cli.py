@@ -253,6 +253,11 @@ def main():
         help="Port for the web dev server (default: 5173)",
     )
     run_parser.add_argument(
+        "--ui-minimal",
+        action="store_true",
+        help="Hide the sidebar when launching the web UI (adds minimal=true param)",
+    )
+    run_parser.add_argument(
         "prompt",
         nargs="*",
         help="Optional message to send immediately after startup.",
@@ -1136,6 +1141,9 @@ def main():
 
         if initial_prompt:
             kwargs["initial_prompt"] = initial_prompt
+
+        if getattr(args, "ui_minimal", False):
+            kwargs["minimal_ui"] = True
 
         # Add server-specific kwargs if in server mode
         if args.mode == "server":

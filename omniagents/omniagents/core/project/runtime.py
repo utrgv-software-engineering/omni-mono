@@ -284,6 +284,15 @@ def build_spec_from_project(
     *,
     prefer_voice: bool = False,
 ):
+    raw_agents_config = (
+        project.raw.get("agents") if isinstance(project.raw, dict) else {}
+    )
+    configured_voice_key = None
+    if isinstance(raw_agents_config, dict):
+        raw_voice = raw_agents_config.get("voice_entrypoint")
+        if isinstance(raw_voice, str) and raw_voice.strip():
+            configured_voice_key = raw_voice.strip()
+
     selected_key = agent_key
     if selected_key is None and prefer_voice and project.voice_entrypoint:
         selected_key = project.voice_entrypoint
@@ -303,4 +312,21 @@ def build_spec_from_project(
     project_name = project.raw.get("name") if isinstance(project.raw, dict) else None
     spec.project_slug = _slugify(project_name, project.root.name)
     spec.agent_slug = _slugify(key, key)
+
+    voice_spec = None
+    voice_key = configured_voice_key
+    if voice_key:
+        voice_path = project.agents_map.get(voice_key)
+        if voice_path:
+            voice_spec = load_agent_spec_from_yaml(
+                str(voice_path),
+                tool_registry=project.tool_registry,
+                guardrails_registry=project.guardrails_registry,
+                server_functions_registry=project.server_functions_registry,
+                project_defaults=pdefs,
+            )
+            voice_spec.project_slug = spec.project_slug
+            voice_spec.agent_slug = _slugify(voice_key, voice_key)
+    if voice_spec:
+        spec.voice_spec = voice_spec
     return spec

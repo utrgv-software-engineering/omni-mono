@@ -245,3 +245,4 @@ class AgentSpec:
     # --- Storage Metadata ---
     project_slug: Optional[str] = None
     agent_slug: Optional[str] = None
+    voice_spec: Optional["AgentSpec"] = field(default=None, repr=False)

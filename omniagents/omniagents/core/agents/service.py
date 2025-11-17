@@ -262,6 +262,33 @@ class AgentService(RpcMethodsBase):
                 value = getattr(field, "default", None)
             self._default_settings[key] = value
 
+        self.register_server_function(
+            "session.ensure",
+            self._sf_session_ensure,
+            description="Ensure a session exists and persist workspace metadata.",
+            params_schema={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "workspace_root": {"type": "string"},
+                    "context": {"type": "object"},
+                    "variables": {"type": "object"},
+                },
+                "additionalProperties": False,
+            },
+            result_schema={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "workspace_root": {"type": "string"},
+                    "context": {"type": "object"},
+                    "variables": {"type": "object"},
+                },
+                "required": ["session_id"],
+            },
+            strict=False,
+        )
+
     async def _ensure_session_mcp_servers(self, session: Session) -> list[Any]:
         """Ensure MCP servers are initialized and running for this session.
 
@@ -629,6 +656,80 @@ class AgentService(RpcMethodsBase):
             return list(session.history) if session else []
         except Exception:
             return []
+
+    def _sf_session_ensure(self, session: Session | None, args: dict | None = None) -> dict:
+        payload = args or {}
+        requested_id = payload.get("session_id")
+        workspace_root = payload.get("workspace_root")
+        provided_context = payload.get("context") if "context" in payload else None
+        provided_context_set = "context" in payload
+        provided_variables = payload.get("variables") if "variables" in payload else None
+        provided_variables_set = "variables" in payload
+
+        target_session: Session
+        if session is not None and (not requested_id or session.id == requested_id):
+            target_session = session
+        else:
+            target_session = self._session_manager.get_or_create(requested_id)
+
+        if self.channel is not None and self.channel not in target_session.channels:
+            target_session.channels.append(self.channel)
+
+        context_value = (
+            provided_context
+            if provided_context_set
+            else getattr(target_session, "context", None)
+        )
+        variables_value = (
+            provided_variables
+            if provided_variables_set
+            else getattr(target_session, "variables", None)
+        )
+
+        def _ensure_mapping(value):
+            if isinstance(value, dict):
+                return dict(value)
+            if value is None:
+                return {}
+            if hasattr(value, "__dict__"):
+                return dict(value.__dict__)
+            return {}
+
+        updated = False
+        if workspace_root:
+            context_value = _ensure_mapping(context_value)
+            context_value["workspace_root"] = workspace_root
+            variables_value = _ensure_mapping(variables_value)
+            variables_value["workspace_root"] = workspace_root
+            updated = True
+
+        if provided_context_set:
+            updated = True
+        if provided_variables_set:
+            updated = True
+
+        target_session.context = context_value
+        target_session.variables = variables_value
+
+        if updated:
+            self._session_manager.persist_metadata(
+                target_session,
+                context=context_value,
+                variables=variables_value,
+            )
+
+        effective_workspace = None
+        if isinstance(context_value, dict):
+            effective_workspace = context_value.get("workspace_root")
+        if effective_workspace is None and isinstance(variables_value, dict):
+            effective_workspace = variables_value.get("workspace_root")
+
+        return {
+            "session_id": target_session.id,
+            "workspace_root": effective_workspace,
+            "context": context_value,
+            "variables": variables_value,
+        }
 
     # ------------------------------------------------------------------
     #  Helper: best-effort async_call that tolerates disconnected sockets.

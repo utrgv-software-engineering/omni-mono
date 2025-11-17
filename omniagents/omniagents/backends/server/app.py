@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import asyncio
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from fastapi import FastAPI, WebSocket, Depends, HTTPException, status
 from fastapi import WebSocketDisconnect
@@ -85,19 +85,30 @@ def build_app(
     # ------------------------------------------------------------------
     # Register realtime endpoint if realtime mode is enabled
     # ------------------------------------------------------------------
-    if spec.realtime_mode:
-        # Build settings for realtime service
-        realtime_settings = {}
-        for field in getattr(spec, "settings_fields", []) or []:
+    def _collect_settings(target_spec: AgentSpec) -> dict:
+        settings: Dict[str, Any] = {}
+        for field in getattr(target_spec, "settings_fields", []) or []:
             key = getattr(field, "key", None)
             if not key:
                 continue
             value = os.getenv(key.upper())
             if value in (None, ""):
                 value = getattr(field, "default", None)
-            realtime_settings[key] = value
+            settings[key] = value
+        return settings
 
-        realtime_service = RealtimeService(spec, realtime_settings)
+    realtime_spec = getattr(spec, "voice_spec", None)
+    if realtime_spec is None and spec.realtime_mode:
+        realtime_spec = spec
+
+    if realtime_spec:
+        realtime_settings = _collect_settings(realtime_spec)
+        if not realtime_settings and realtime_spec is not spec:
+            fallback_settings = _collect_settings(spec)
+            for key, value in fallback_settings.items():
+                realtime_settings.setdefault(key, value)
+
+        realtime_service = RealtimeService(realtime_spec, realtime_settings)
         realtime_endpoint = JsonRpcEndpoint(realtime_service)
 
         if auth_token:

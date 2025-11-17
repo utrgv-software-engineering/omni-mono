@@ -13,6 +13,8 @@ from .history_db import (
     list_sessions as db_list_sessions,
     append_message as db_append_message,
     get_user_messages,
+    get_session_metadata,
+    update_session_metadata,
 )
 
 __all__ = ["Session", "SessionManager", "sm"]
@@ -63,6 +65,19 @@ class Session:  # noqa: D101
         )
         self.always_allow_tools: set[str] = set()
         self.always_allow_patterns: set[str] = set()
+        self.context: Any | None = None
+        self.variables: Any | None = None
+        try:
+            ctx, vars_data = get_session_metadata(
+                self.id, project_slug=project_slug, agent_slug=agent_slug
+            )
+            if ctx is not None:
+                self.context = ctx
+            if vars_data is not None:
+                self.variables = vars_data
+        except Exception:
+            self.context = None
+            self.variables = None
 
     def append_message(self, message: dict) -> None:
         """Add a message to this session and persist it."""
@@ -187,6 +202,15 @@ class SessionManager:  # noqa: D101
         """Return metadata for all known sessions."""
         return db_list_sessions(
             project_slug=self._project_slug, agent_slug=self._agent_slug
+        )
+
+    def persist_metadata(self, session: Session, *, context: Any, variables: Any) -> None:
+        update_session_metadata(
+            session.id,
+            context=context,
+            variables=variables,
+            project_slug=self._project_slug,
+            agent_slug=self._agent_slug,
         )
 
     def get_user_messages(

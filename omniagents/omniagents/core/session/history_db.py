@@ -9,6 +9,19 @@ from omniagents.core.paths import get_sessions_db_path
 _STORES: dict[str, Tuple[sqlite3.Connection, Lock]] = {}
 
 
+
+_UNSET = object()
+
+
+def _serialize_metadata(value: object) -> str | None:
+    if value is None:
+        return None
+    try:
+        return json.dumps(value)
+    except TypeError:
+        return json.dumps(value, default=str)
+
+
 def _ensure_schema(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute(
@@ -62,6 +75,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "UPDATE sessions SET created_at = datetime('now') WHERE created_at IS NULL"
         )
+    if "context_json" not in columns:
+        conn.execute("ALTER TABLE sessions ADD COLUMN context_json TEXT")
+    if "variables_json" not in columns:
+        conn.execute("ALTER TABLE sessions ADD COLUMN variables_json TEXT")
 
     conn.commit()
 
@@ -120,6 +137,54 @@ def register_session(
         conn.execute(
             "INSERT OR IGNORE INTO sessions(session_id, created_at) VALUES (?, datetime('now'))",
             (session_id,),
+        )
+        conn.commit()
+
+
+def get_session_metadata(
+    session_id: str,
+    *,
+    project_slug: str | None = None,
+    agent_slug: str | None = None,
+) -> tuple[dict | list | str | int | float | bool | None, dict | list | str | int | float | bool | None]:
+    conn, lock = _get_store(project_slug, agent_slug)
+    with lock:
+        cur = conn.execute(
+            "SELECT context_json, variables_json FROM sessions WHERE session_id=?",
+            (session_id,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None, None
+    ctx_raw, vars_raw = row
+    ctx = json.loads(ctx_raw) if ctx_raw is not None else None
+    vars_value = json.loads(vars_raw) if vars_raw is not None else None
+    return ctx, vars_value
+
+
+def update_session_metadata(
+    session_id: str,
+    *,
+    context: object = _UNSET,
+    variables: object = _UNSET,
+    project_slug: str | None = None,
+    agent_slug: str | None = None,
+) -> None:
+    assignments: list[str] = []
+    values: list[object] = []
+    if context is not _UNSET:
+        assignments.append("context_json=?")
+        values.append(_serialize_metadata(context))
+    if variables is not _UNSET:
+        assignments.append("variables_json=?")
+        values.append(_serialize_metadata(variables))
+    if not assignments:
+        return
+    conn, lock = _get_store(project_slug, agent_slug)
+    with lock:
+        conn.execute(
+            f"UPDATE sessions SET {', '.join(assignments)} WHERE session_id=?",
+            (*values, session_id),
         )
         conn.commit()
 

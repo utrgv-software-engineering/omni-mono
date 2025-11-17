@@ -47,6 +47,14 @@ export function App() {
   const [initialSent, setInitialSent] = useState(false)
   const preambleBufferRef = useRef<Array<{ content: string; timestamp: Date; superseded: boolean }>>([])
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [minimalMode] = useState(() => {
+    try {
+      const url = new URL(window.location.href)
+      return url.searchParams.get('minimal') === 'true'
+    } catch {
+      return false
+    }
+  })
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -484,17 +492,23 @@ export function App() {
   }
   return (
     <div className="app h-full flex flex-row">
-      <Sidebar
-        open={sidebarOpen}
-        sessions={sessions}
-        selectedId={sessionId}
-        onClose={() => setSidebarOpen(false)}
-        onNewChat={onNewChat}
-        onSelect={(id) => handleSelectSession(id)}
-        onDelete={handleDeleteSession}
-      />
+      {!minimalMode && (
+        <Sidebar
+          open={sidebarOpen}
+          sessions={sessions}
+          selectedId={sessionId}
+          onClose={() => setSidebarOpen(false)}
+          onNewChat={onNewChat}
+          onSelect={(id) => handleSelectSession(id)}
+          onDelete={handleDeleteSession}
+        />
+      )}
       <div className="flex-1 flex flex-col min-h-0">
-        <Header agentName={agentName} connected={connected} onMenu={() => setSidebarOpen(v => !v)} />
+        <Header
+          agentName={agentName}
+          connected={connected}
+          onMenu={minimalMode ? undefined : () => setSidebarOpen(v => !v)}
+        />
         <div className="flex-1 flex flex-col min-h-0">
           <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} statusItalic={statusItalic} />
           <Input disabled={!connected} thinking={thinking} onStop={handleStop} onSubmit={handleSubmit} voiceEnabled={voiceEnabled} />
