@@ -390,22 +390,45 @@ async def test_register_server_function_metadata_and_invocation():
     assert calls[1] == ("handler", session.id, {"x": 2})
 
     metadata = await service.list_server_functions()
-    assert metadata == [
-        {
-            "name": "with_on_invoke",
-            "description": "desc",
-            "params_schema": {"type": "object"},
-            "result_schema": {"type": "string"},
-            "strict": True,
+    assert metadata[0] == {
+        "name": "session.ensure",
+        "description": "Ensure a session exists and persist workspace metadata.",
+        "params_schema": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string"},
+                "workspace_root": {"type": "string"},
+                "context": {"type": "object"},
+                "variables": {"type": "object"},
+            },
+            "additionalProperties": False,
         },
-        {
-            "name": "direct_handler",
-            "description": None,
-            "params_schema": None,
-            "result_schema": None,
-            "strict": False,
+        "result_schema": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string"},
+                "workspace_root": {"type": "string"},
+                "context": {"type": "object"},
+                "variables": {"type": "object"},
+            },
+            "required": ["session_id"],
         },
-    ]
+        "strict": False,
+    }
+    assert metadata[1] == {
+        "name": "with_on_invoke",
+        "description": "desc",
+        "params_schema": {"type": "object"},
+        "result_schema": {"type": "string"},
+        "strict": True,
+    }
+    assert metadata[2] == {
+        "name": "direct_handler",
+        "description": None,
+        "params_schema": None,
+        "result_schema": None,
+        "strict": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -414,3 +437,23 @@ async def test_server_call_unknown_function_raises():
 
     with pytest.raises(ValueError):
         await service.server_call("missing")
+
+
+@pytest.mark.asyncio
+async def test_session_ensure_sets_workspace_root_and_persists():
+    service = build_service()
+
+    result = await service.server_call(
+        "session.ensure",
+        {"workspace_root": "/workspace"},
+    )
+
+    session_id = result["session_id"]
+    assert result["workspace_root"] == "/workspace"
+    assert result["context"]["workspace_root"] == "/workspace"
+    assert result["variables"]["workspace_root"] == "/workspace"
+
+    new_service = build_service()
+    restored = new_service._session_manager.get_or_create(session_id)
+    assert restored.context["workspace_root"] == "/workspace"
+    assert restored.variables["workspace_root"] == "/workspace"

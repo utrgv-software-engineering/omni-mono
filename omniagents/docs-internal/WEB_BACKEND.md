@@ -163,11 +163,13 @@ A complete, self-contained plan to implement a new backend launched via `omniage
   - `npm run build`
 - Run web backend:
   - `omniagents run -P project.yml --mode web`
-  - Options: `--resume`, `--session-id <id>`, `--debug`, `--auth-token <token>`
+  - Options: `--resume`, `--session-id <id>`, `--debug`, `--auth-token <token>`, `--ui-minimal`
 - Env vars:
   - `OMNI_WEB_AUTO_BUILD=0` to disable auto-build
   - `OMNI_WEB_UI_PATH=/abs/path/to/ui/dist` to use prebuilt assets
   - `OMNI_DEBUG=1` for verbose backend logs
+  - `OMNI_WEB_AUTO_OPEN=0` to skip launching the default browser (headless mode)
+  - `OMNI_WEB_MINIMAL=1` to always launch the UI without the sidebar (equivalent to passing `minimal=true` in the iframe URL)
 
 ## Implementation Checklist
 

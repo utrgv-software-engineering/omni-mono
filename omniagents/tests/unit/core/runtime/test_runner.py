@@ -97,6 +97,39 @@ def test_from_agent_configures_safe_options_and_server_functions(monkeypatch):
     assert built_agent is agent
 
 
+def test_from_agent_with_voice_agent_sets_voice_spec(monkeypatch):
+    monkeypatch.setattr(
+        "omniagents.core.utils.jinja_instructions.process_instructions",
+        lambda value: value,
+    )
+
+    class DummyAgent:
+        def __init__(self, name):
+            self.name = name
+            self.instructions = f"{name}-instructions"
+            self.tools = [f"{name}-tool"]
+            self.model = "gpt"
+
+    main_agent = DummyAgent("Main Agent")
+    voice_agent = DummyAgent("Voice Agent")
+
+    runner = Runner.from_agent(
+        main_agent,
+        voice_agent=voice_agent,
+        safe=True,
+        safe_tool_names=["common"],
+    )
+
+    spec = runner.spec
+    voice_spec = spec.voice_spec
+    assert voice_spec is not None
+    assert voice_spec is not spec
+    assert voice_spec.name == "Voice Agent"
+    assert voice_spec.safe_agent_options.safe_tool_names == ["common"]
+    assert voice_spec.available_tools == ["Voice Agent-tool"]
+    assert voice_spec.context is spec.context
+
+
 def test_from_agent_without_build_context_uses_variables_as_context(monkeypatch):
     monkeypatch.setattr(
         "omniagents.core.utils.jinja_instructions.process_instructions",

@@ -168,3 +168,55 @@ def test_history_db_get_user_messages_paginates_and_limits_results():
     assert len(messages) == 50
     assert messages[0]["content"] == "message-1153"
     assert messages[-1]["content"] == "message-1202"
+
+
+def test_session_metadata_roundtrip():
+    project = "project"
+    agent = "agent"
+    session_id = "session-meta"
+    history_db_module.register_session(
+        session_id,
+        project_slug=project,
+        agent_slug=agent,
+    )
+
+    history_db_module.update_session_metadata(
+        session_id,
+        context={"workspace_root": "/repo"},
+        variables={"workspace_root": "/repo"},
+        project_slug=project,
+        agent_slug=agent,
+    )
+
+    ctx, vars_data = history_db_module.get_session_metadata(
+        session_id,
+        project_slug=project,
+        agent_slug=agent,
+    )
+
+    assert ctx == {"workspace_root": "/repo"}
+    assert vars_data == {"workspace_root": "/repo"}
+
+
+def test_session_loads_metadata():
+    from omniagents.core.session.manager import Session
+
+    project = "project"
+    agent = "agent"
+    session_id = "session-meta-load"
+    history_db_module.register_session(
+        session_id,
+        project_slug=project,
+        agent_slug=agent,
+    )
+    history_db_module.update_session_metadata(
+        session_id,
+        context={"workspace_root": "/repo"},
+        variables={"workspace_root": "/repo"},
+        project_slug=project,
+        agent_slug=agent,
+    )
+
+    loaded = Session(project, agent, session_id)
+    assert loaded.context == {"workspace_root": "/repo"}
+    assert loaded.variables == {"workspace_root": "/repo"}

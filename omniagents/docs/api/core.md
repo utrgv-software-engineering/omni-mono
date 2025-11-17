@@ -105,6 +105,30 @@ Discover server functions in a directory.
 from omniagents.core import discover_server_functions_in_dir
 
 functions = discover_server_functions_in_dir("path/to/functions")
+
+### Built-in: `session.ensure`
+
+The agent server now exposes a `session.ensure` server function that callers can invoke via `server_call`. It ensures a session exists and optionally persists metadata such as a workspace root.
+
+**Parameters:**
+
+- `session_id` (string, optional): Existing session to update. When omitted, a new session is created.
+- `workspace_root` (string, optional): Filesystem root to store on the session. The value is mirrored on both `session.context["workspace_root"]` and `session.variables["workspace_root"]`.
+- `context` (object, optional): Arbitrary JSON-serializable context object to persist.
+- `variables` (object, optional): JSON-serializable variables to persist.
+
+**Returns:**
+
+```json
+{
+  "session_id": "sess_123",
+  "workspace_root": "/home/user/repo",
+  "context": {"workspace_root": "/home/user/repo"},
+  "variables": {"workspace_root": "/home/user/repo"}
+}
+```
+
+Persisted metadata is reloaded automatically on subsequent runs, so later `start_run` calls for the same session receive the stored workspace information.
 ```
 
 ## Artifacts

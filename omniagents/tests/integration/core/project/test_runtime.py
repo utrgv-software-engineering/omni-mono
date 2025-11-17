@@ -188,6 +188,42 @@ def test_resolve_agent_enforces_valid_keys(tmp_path: Path):
         resolve_agent(context, "unknown")
 
 
+def test_build_spec_from_project_attaches_voice_spec(tmp_path: Path):
+    root = tmp_path / "voice"
+    root.mkdir()
+    _write(
+        root / "project.yml",
+        """paths:
+  agents: agents
+agents:
+  entrypoint: primary
+  voice_entrypoint: voice_helper
+""",
+    )
+    _write(
+        root / "agents" / "primary" / "agent.yml",
+        """name: primary
+model: gpt-4o
+instructions: main
+""",
+    )
+    _write(
+        root / "agents" / "voice_helper" / "agent.yml",
+        """name: voice_helper
+model: gpt-realtime
+instructions: voice
+realtime_mode: true
+""",
+    )
+
+    context = load_project(str(root))
+    spec = build_spec_from_project(context)
+
+    assert spec.voice_spec is not None
+    assert spec.voice_spec.agent_slug == "voice_helper"
+    assert spec.voice_spec.model_name == "gpt-realtime"
+
+
 def test_load_project_rejects_name_mismatch(tmp_path: Path):
     root = tmp_path / "invalid"
     root.mkdir()
