@@ -123,6 +123,7 @@ omni
 
 Run `omni-setup` again anytime you need to update credentials. To use the CLI globally without activating the virtual environment, follow either the pipx or uv instructions above.
 
+
 ### Running tests
 ```bash
 pytest

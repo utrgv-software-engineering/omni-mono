@@ -16,6 +16,7 @@ ensure_tools_importable()
 from tools import *
 from omni_code.config import load_config
 from oagents.coding_agent import create_agent
+from oagents.voice_agent import create_voice_agent
 from server_functions.agentio_functions import good, bad, note, notes
 from server_functions.help import help_function
 from server_functions.filesystem import (
@@ -124,6 +125,16 @@ def cli_main(argv=None):
         help="Auto-reload on code changes",
     )
     parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Web mode only: run the backend without opening a browser window",
+    )
+    parser.add_argument(
+        "--ui-minimal",
+        action="store_true",
+        help="Web mode only: hide the Omni web sidebar for iframe embedding",
+    )
+    parser.add_argument(
         "prompt",
         nargs="*",
         help="Optional message to send immediately after startup.",
@@ -142,6 +153,12 @@ def cli_main(argv=None):
         skip_approvals=skip_approvals,
         halt_on_rejection=halt_on_rejection,
     )
+    voice_agent = None
+    if args.mode in {"web", "server"}:
+        voice_agent = create_voice_agent(
+            skip_approvals=skip_approvals,
+            halt_on_rejection=halt_on_rejection,
+        )
 
     terminal_available = terminal_supported()
 
@@ -167,6 +184,7 @@ def cli_main(argv=None):
 
     runner = Runner.from_agent(
         agent,
+        voice_agent=voice_agent,
         welcome_text="Welcome to Omni Code! I'm here to help you with your coding needs.",
         max_turns=1000,
         context_window=272000,
@@ -209,6 +227,11 @@ def cli_main(argv=None):
     prompt_text = " ".join(args.prompt).strip() if args.prompt else ""
     if prompt_text:
         kwargs["initial_prompt"] = prompt_text
+
+    if getattr(args, "no_browser", False):
+        kwargs["auto_open"] = False
+    if getattr(args, "ui_minimal", False):
+        kwargs["minimal_ui"] = True
 
     try:
         runner.run(mode=args.mode, **kwargs)

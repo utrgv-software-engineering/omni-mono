@@ -94,9 +94,20 @@ async def fs_list_dir(path: Optional[str] = None, include_files: Optional[bool] 
 # Intentionally no server-side state for workspace.
 
 
-@server_function(description="Ensure a session exists and return its id", strict=True)
-async def session_ensure() -> dict:
-    return {}
+@server_function(
+    description="Ensure a session exists, optionally persisting workspace metadata",
+    strict=True,
+)
+async def session_ensure(
+    workspace_root: Optional[str] = None,
+    context: Optional[Dict] = None,
+    variables: Optional[Dict] = None,
+) -> dict:
+    return {
+        "workspace_root": workspace_root,
+        "context": context,
+        "variables": variables,
+    }
 
 
 async def _session_ensure_on_invoke(service, session, args=None):
@@ -104,9 +115,51 @@ async def _session_ensure_on_invoke(service, session, args=None):
     sess = session
     if manager is not None and (sess is None or not getattr(sess, "id", None)):
         sess = manager.get_or_create(None)
+
+    call_args = {}
+    payload = args or {}
+    for key in ("workspace_root", "context", "variables"):
+        if key in payload and payload[key] is not None:
+            call_args[key] = payload[key]
+
     if sess is None:
-        return {"session_id": None}
-    return {"session_id": getattr(sess, "id", None)}
+        sess_id = None
+    else:
+        sess_id = getattr(sess, "id", None)
+
+    try:
+        # Proxy to the built-in omniagents session.ensure if present so persisted
+        # metadata (workspace root, context, variables) survives restarts.
+        return await service.server_call(
+            "session.ensure",
+            call_args or None,
+            session_id=sess_id,
+        )
+    except ValueError:
+        # Older omniagents builds don't register session.ensure. Fall back to
+        # the legacy behavior (best-effort, in-memory only).
+        result = {"session_id": sess_id}
+        if sess is None:
+            return result
+
+        if "workspace_root" in call_args:
+            wr_value = call_args["workspace_root"]
+            ctx = sess.context if isinstance(getattr(sess, "context", None), dict) else {}
+            ctx["workspace_root"] = wr_value
+            sess.context = ctx
+            vars_dict = sess.variables if isinstance(getattr(sess, "variables", None), dict) else {}
+            vars_dict["workspace_root"] = wr_value
+            sess.variables = vars_dict
+            result["workspace_root"] = wr_value
+
+        if "context" in call_args:
+            sess.context = call_args["context"]
+        if "variables" in call_args:
+            sess.variables = call_args["variables"]
+
+        result["context"] = getattr(sess, "context", None)
+        result["variables"] = getattr(sess, "variables", None)
+        return result
 
 
 setattr(session_ensure, "_server_function_on_invoke", _session_ensure_on_invoke)

@@ -1,6 +1,5 @@
 import os
 from datetime import datetime
-from typing import List, Tuple
 from importlib import resources
 
 from openai.types.shared import Reasoning
@@ -27,6 +26,7 @@ from tools import (
     download_file,
     convert_to_markdown,
 )
+from oagents.instruction_utils import format_instructions
 
 
 def _load_instructions() -> str:
@@ -52,44 +52,9 @@ def _load_instructions() -> str:
     return text.replace("{{today}}", today)
 
 
-def _collect_agents_md_downwards(start_dir: str) -> List[Tuple[str, str]]:
-    found: List[Tuple[str, str]] = []
-    for root, dirs, files in os.walk(start_dir):
-        if "AGENTS.md" in files:
-            path = os.path.join(root, "AGENTS.md")
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    found.append((path, f.read()))
-            except Exception:
-                pass
-    found.sort(
-        key=lambda x: (
-            (
-                len(os.path.relpath(os.path.dirname(x[0]), start_dir).split(os.sep))
-                if os.path.dirname(x[0]) != start_dir
-                else 0
-            ),
-            x[0],
-        )
-    )
-    return found
-
-
 def get_instructions(run_context=None, agent=None) -> str:
     base = _load_instructions()
-    cwd = os.getcwd()
-    agents_files = _collect_agents_md_downwards(cwd)
-    # Always include a Jinja placeholder for workspace; SilentUndefined => empty when missing
-    if not agents_files:
-        return base + "\n\n[Workspace]\n{{ workspace_root }}\n"
-    parts = [
-        base,
-        "\n\n[Workspace]\n{{ workspace_root }}\n",
-        "\n\n# Repository AGENTS.md (parent → child)\n",
-    ]
-    for path, text in agents_files:
-        parts.append(f"\n[AGENTS.md at {os.path.dirname(path)}]\n{text}")
-    return "".join(parts)
+    return format_instructions(base)
 
 
 def create_agent(*, skip_approvals: bool = False, halt_on_rejection: bool = True) -> SafeAgent:
