@@ -143,7 +143,7 @@ async def test_list_and_archive_sessions(monkeypatch):
         async def archive_session(self, session_id):
             archive_calls.append(session_id)
 
-    agent._rpc_client = SimpleNamespace(other=DummyOther())
+    agent._client = SimpleNamespace(other=DummyOther())
 
     sessions = await agent.list_sessions()
     assert sessions == list_response.result
@@ -170,13 +170,13 @@ async def test_stop_run_success_and_failure():
         async def stop_run(self, run_id):
             raise RuntimeError("boom")
 
-    agent._rpc_client = SimpleNamespace(other=SuccessOther())
+    agent._client = SimpleNamespace(other=SuccessOther())
     agent._current_run_id = "run-1"
     success = await agent.stop_run()
     assert success is True
     assert agent._current_run_id is None
 
-    agent._rpc_client = SimpleNamespace(other=FailingOther())
+    agent._client = SimpleNamespace(other=FailingOther())
     agent._current_run_id = "run-2"
     failure = await agent.stop_run()
     assert failure is False
@@ -266,11 +266,11 @@ async def test_ensure_client_initializes_rpc(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             self.entered = False
 
-    monkeypatch.setattr("omniagents.rpc.agents.local.JsonRpcClient", FakeClient)
+    monkeypatch.setattr("omniagents.rpc.agents.remote.JsonRpcClient", FakeClient)
 
     await agent._ensure_client()
-    assert isinstance(agent._rpc_client, FakeClient)
-    assert agent._rpc_client.entered is True
+    assert isinstance(agent._client, FakeClient)
+    assert agent._client.entered is True
     assert agent._client_transport.calls == 1
 
     await agent._ensure_client()
@@ -291,7 +291,7 @@ async def test_run_streamed_emits_events(monkeypatch):
         async def start_run(self, **kwargs):
             return SimpleNamespace(result={"session_id": "sess", "run_id": "run"})
 
-    agent._rpc_client = SimpleNamespace(other=DummyOther())
+    agent._client = SimpleNamespace(other=DummyOther())
 
     async def produce():
         await asyncio.sleep(0)

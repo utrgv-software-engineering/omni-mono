@@ -4,54 +4,14 @@ import asyncio
 from typing import Optional, Any, List, Dict
 from contextlib import suppress
 
-from omniagents.core.interfaces.agent import UnifiedAgentBase
 from omniagents.core.agents.service import AgentService
 from omniagents.core.agents.specs import AgentSpec
-from omniagents.rpc import RpcMethodsBase, JsonRpcClient
 from omniagents.rpc.transport.inmemory import InMemoryTransport
 from omniagents.rpc.transport import TransportClosedError
-from ._events import map_notification_to_event
+from .remote import RemoteAgent
 
 
-class _ClientEventMethods(RpcMethodsBase):
-    """RPC methods for receiving events from the local agent service."""
-
-    def __init__(self, event_queue: asyncio.Queue):
-        super().__init__()
-        self._event_queue = event_queue
-
-    async def _push_event(self, method: str, **params) -> bool:
-        """Push event to the queue."""
-        await self._event_queue.put({"method": method, "params": params})
-        return True
-
-    # Event notification methods
-    async def tool_called(self, **params):
-        return await self._push_event("tool_called", **params)
-
-    async def tool_result(self, **params):
-        return await self._push_event("tool_result", **params)
-
-    async def message_output(self, **params):
-        return await self._push_event("message_output", **params)
-
-    async def token(self, **params):
-        return await self._push_event("token", **params)
-
-    async def run_end(self, **params):
-        return await self._push_event("run_end", **params)
-
-    async def run_status(self, **params):
-        return await self._push_event("run_status", **params)
-
-    async def run_started(self, **params):
-        return await self._push_event("run_started", **params)
-
-    async def client_request(self, **params):
-        return await self._push_event("client_request", **params)
-
-
-class LocalAgent(UnifiedAgentBase):
+class LocalAgent(RemoteAgent):
     """
     Local agent implementation using in-memory RPC.
 
@@ -75,23 +35,20 @@ class LocalAgent(UnifiedAgentBase):
             approval_callback: Optional callback for tool approvals
             mcp_servers: Optional MCP servers
         """
-        super().__init__()
+        # Initialize RemoteAgent with no URL (we'll use custom transport)
+        super().__init__(url=None)
+        
         self.spec = spec
         self.settings = settings or {}
         self.approval_callback = approval_callback
         self.mcp_servers = mcp_servers or []
 
-        # RPC infrastructure
+        # RPC infrastructure (server side)
         self._agent_service: Optional[AgentService] = None
-        self._rpc_client: Optional[JsonRpcClient] = None
         self._client_transport: Optional[InMemoryTransport] = None
         self._server_transport: Optional[InMemoryTransport] = None
-        self._event_queue: asyncio.Queue = asyncio.Queue()
-        self._session_id: Optional[str] = None
-        self._current_run_id: Optional[str] = None
         self._initialized = False
-        self._last_run_end: Optional[Dict[str, Any]] = None
-
+        
         # Set agent properties from spec
         self.name = spec.name
         self.instructions = (
@@ -216,17 +173,18 @@ class LocalAgent(UnifiedAgentBase):
 
     async def _ensure_client(self):
         """Ensure RPC client is connected (lazy initialization like RemoteAgent)."""
-        if self._rpc_client is None:
+        if self._client is None:
             # Make sure we're initialized first
             await self.initialize()
 
             # Connect client transport
             await self._client_transport.connect()
+            
+            # Set transport for RemoteAgent to use
+            self._transport = self._client_transport
 
-            # Create and start RPC client
-            event_methods = _ClientEventMethods(self._event_queue)
-            self._rpc_client = JsonRpcClient(self._client_transport, event_methods)
-            await self._rpc_client.__aenter__()
+            # Call parent to create client
+            await super()._ensure_client()
 
     async def _run_server(self, endpoint, channel):
         """Run the server side of the RPC connection."""
@@ -283,115 +241,15 @@ class LocalAgent(UnifiedAgentBase):
             with suppress(asyncio.CancelledError, Exception):
                 await self._server_task
 
-        # Clean up RPC client
-        if self._rpc_client:
-            await self._rpc_client.__aexit__(None, None, None)
+        # Clean up RPC client via parent
+        if self._client:
+            await self._client.__aexit__(None, None, None)
 
         # Disconnect transports
         if self._client_transport:
             await self._client_transport.disconnect()
         if self._server_transport:
             await self._server_transport.disconnect()
-
-    def run_streamed(self, messages: List[Dict[str, str]], *, run_config=None):
-        """Run agent with streaming output."""
-
-        async def _events_gen():
-            await self._ensure_client()
-
-            # Extract prompt from messages
-            prompt = messages[-1]["content"] if messages else ""
-
-            # Start run via RPC
-            response = await self._rpc_client.other.start_run(
-                prompt=prompt, session_id=self._session_id
-            )
-
-            # Extract session_id and run_id
-            if hasattr(response, "result"):
-                result = response.result
-            else:
-                result = response
-
-            if isinstance(result, dict):
-                if not self._session_id and "session_id" in result:
-                    self._session_id = result["session_id"]
-                run_id = result.get("run_id")
-            else:
-                run_id = None
-
-            # Store current run_id for potential cancellation
-            self._current_run_id = run_id
-
-            # Stream events until run_end
-            while True:
-                event_data = await self._event_queue.get()
-
-                if event_data["method"] == "run_end":
-                    params = event_data.get("params", {})
-                    if not run_id or params.get("run_id") == run_id:
-                        # Cache last run_end payload for UI to inspect (errors, usage, model)
-                        try:
-                            self._last_run_end = dict(params)
-                        except Exception:
-                            self._last_run_end = None
-                        # Clear current run_id when run ends
-                        self._current_run_id = None
-                        break
-
-                # Convert to StreamEvent
-                event = map_notification_to_event(
-                    event_data["method"], event_data.get("params", {})
-                )
-                if event:
-                    yield event
-
-        class _StreamResult:
-            def __init__(self, events_gen):
-                self._events_gen = events_gen
-
-            def stream_events(self):
-                return self._events_gen
-
-        return _StreamResult(_events_gen())
-
-    def get_last_run_end(self) -> Optional[Dict[str, Any]]:
-        """Return the payload from the most recent run_end notification."""
-        return self._last_run_end
-
-    async def list_sessions(self) -> List[Dict[str, Any]]:
-        """List available sessions."""
-        await self._ensure_client()
-        response = await self._rpc_client.other.list_sessions()
-        return getattr(response, "result", response)
-
-    async def archive_session(self, session_id: str) -> None:
-        """Archive a session."""
-        await self._ensure_client()
-        await self._rpc_client.other.archive_session(session_id=session_id)
-
-    async def stop_run(self) -> bool:
-        """
-        Stop the currently running agent execution.
-
-        Returns:
-            bool: True if the run was successfully cancelled, False otherwise
-        """
-        if not self._current_run_id:
-            return False
-
-        await self._ensure_client()
-        try:
-            response = await self._rpc_client.other.stop_run(
-                run_id=self._current_run_id
-            )
-            result = getattr(response, "result", response)
-            if result:
-                # Clear the run_id since we've cancelled it
-                self._current_run_id = None
-            return result
-        except Exception:
-            return False
 
     # Context manager support for resource cleanup
     async def __aenter__(self):
@@ -400,12 +258,3 @@ class LocalAgent(UnifiedAgentBase):
 
     async def __aexit__(self, exc_type, exc, tb):
         await self.cleanup()
-
-    # Compatibility methods
-    def get_all_tools(self) -> List[Any]:
-        """Get all available tools (empty for RPC agents)."""
-        return []
-
-    def reset_run_state(self) -> None:
-        """Reset agent state (no-op for RPC agents)."""
-        pass

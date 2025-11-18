@@ -28,28 +28,31 @@ class RemoteAgent(UnifiedAgentBase):
 
     def __init__(
         self,
-        url: str,
+        url: str | None = None,
         token: str | None = None,
         variables: Dict[str, Any] | None = None,
         context: Any | None = None,
+        transport: Any | None = None,
     ) -> None:
         """
         Initialize remote agent.
 
         Args:
-            url: WebSocket URL of the remote agent server
+            url: WebSocket URL of the remote agent server (optional if transport provided)
             token: Optional authentication token
             variables: Optional variables dictionary for server-side context construction
             context: Optional pre-built context to use as-is
+            transport: Optional custom transport to use instead of WebSocket
         """
         super().__init__()
 
         # Add token to URL if provided
-        if token:
+        if url and token:
             sep = "&" if "?" in url else "?"
             url = f"{url}{sep}token={token}"
 
         self._url = url
+        self._transport = transport
         self._client: JsonRpcClient | None = None
         self._run_lock: asyncio.Lock = asyncio.Lock()
         self._event_queue: asyncio.Queue = asyncio.Queue()
@@ -191,9 +194,19 @@ class RemoteAgent(UnifiedAgentBase):
         if self._client is None:
             # Build methods object that forwards events into queue
             self._methods = _ClientEventMethods(self._event_queue)
-            self._client = await JsonRpcClient.from_url(
-                self._url, self._methods
-            ).__aenter__()
+
+            if self._transport:
+                # Use provided transport
+                self._client = await JsonRpcClient(
+                    self._transport, self._methods
+                ).__aenter__()
+            elif self._url:
+                # Create WebSocket transport from URL
+                self._client = await JsonRpcClient.from_url(
+                    self._url, self._methods
+                ).__aenter__()
+            else:
+                raise ValueError("Either url or transport must be provided")
 
     def _extract_run_id(self, resp) -> Optional[str]:
         """Extract run_id from various response formats."""
