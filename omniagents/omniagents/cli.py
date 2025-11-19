@@ -10,15 +10,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 # --- Core Framework Imports --- #
 # Note: All OpenAI client configuration (API key, base URL, tracing) should be done by the user script or environment.
-from omniagents import __version__
-from omniagents.core.runtime.runner import Runner
-from omniagents.core.debug import Debug
-from omniagents.core.project.export import save_agent_as_py
-from omniagents.core.eval.optimize import (
-    optimize_agent_from_project,
-    optimize_judge_from_project,
-)
-from omniagents.core.eval.annotate import annotate_scenarios, write_annotation_output
+try:
+    from omniagents._version import __version__
+except ImportError:
+    __version__ = "0.0.0"
+# Imports deferred to prevent early initialization of agents library
 
 
 CODESPACES_ENV = any(
@@ -123,12 +119,28 @@ def main():
             current = current.parent
     else:
         # Fallback: standard behavior only when no config path is known
+        # Search for .env starting from CWD  and going upward
         try:
-            if load_dotenv():
-                print("Loaded .env file")
-                env_loaded = True
+            current = Path.cwd()
+            env_file = None
+            while True:
+                candidate = current / ".env"
+                if candidate.exists():
+                    env_file = candidate
+                    break
+                if current == current.parent:
+                    break
+                current = current.parent
+            
+            if env_file:
+                try:
+                    if load_dotenv(env_file, override=False):
+                        print(f"Loaded .env file from {env_file}")
+                        env_loaded = True
+                except Exception as e:
+                    print(f"Warning: Could not load .env file {env_file}: {e}")
         except Exception as e:
-            print(f"Warning: Could not load .env file: {e}")
+            print(f"Warning: Error searching for .env file: {e}")
 
     # --- Command Line Arguments ---
     parser = argparse.ArgumentParser(description="OmniAgents CLI")
@@ -169,6 +181,9 @@ def main():
         choices=["server", "ink", "web"],
         default="web",
         help="Run mode: 'web' (default) for React web UI, 'ink' for React Ink TUI, 'server' for JSON-RPC server",
+    )
+    run_parser.add_argument(
+        "--config", "-c", type=str, help="Path to a single agent YAML config file."
     )
     run_parser.add_argument(
         "--project", "-P", type=str, help="Path to project.yml (dbt-style)."
@@ -1065,10 +1080,24 @@ def main():
             traceback.print_exc()
             sys.exit(1)
     elif args.command == "run":
+        from omniagents.core.runtime.runner import Runner
+
         # Resolve spec/config from either --config or --project
         runner = None
         resolved_config_path = None
-        if getattr(args, "project", None):
+
+        if getattr(args, "config", None):
+            # Single-file mode
+            resolved_config_path = args.config
+            try:
+                from omniagents.core.config.loader import load_agent_spec_from_yaml
+
+                spec = load_agent_spec_from_yaml(resolved_config_path)
+                runner = Runner(spec=spec)
+            except Exception as e:
+                print(f"Error loading agent config: {e}")
+                sys.exit(1)
+        elif getattr(args, "project", None):
             try:
                 from omniagents.core.project.runtime import (
                     load_project,
@@ -1117,6 +1146,8 @@ def main():
                 sys.exit(2)
 
         # Initialize debug system with CLI flag
+        from omniagents.core.debug import Debug
+
         Debug.init(cli_flag=args.debug)
 
         resume_flag = bool(getattr(args, "resume", False))
@@ -1188,6 +1219,8 @@ def main():
             _key, agent_yaml_path = resolve_agent(proj, agent_key=(args.agent or None))
             # Collect project tool dirs
             tool_dirs = proj.paths.get("tools") if hasattr(proj, "paths") else []
+            from omniagents.core.project.export import save_agent_as_py
+
             save_agent_as_py(
                 str(agent_yaml_path), args.output, project_tool_dirs=tool_dirs or []
             )
@@ -1283,6 +1316,9 @@ def main():
             sys.exit(1)
     elif args.command == "agent":
         if args.agent_cmd == "run":
+            from omniagents.core.runtime.runner import Runner
+            from omniagents.core.debug import Debug
+
             runner = None
             resolved_config_path = None
             if getattr(args, "project", None):
@@ -1392,6 +1428,8 @@ def main():
                     proj, agent_key=(args.agent or None)
                 )
                 tool_dirs = proj.paths.get("tools") if hasattr(proj, "paths") else []
+                from omniagents.core.project.export import save_agent_as_py
+
                 save_agent_as_py(
                     str(agent_yaml_path), args.output, project_tool_dirs=tool_dirs or []
                 )
@@ -1414,6 +1452,8 @@ def main():
                             "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
                         )
                         sys.exit(2)
+                from omniagents.core.eval.optimize import optimize_agent_from_project
+
                 optimize_agent_from_project(
                     proj_path=str(proj_path),
                     agent_key=(str(getattr(args, "agent", "") or "") or None),
@@ -2166,6 +2206,8 @@ def main():
                         "Error: Unable to determine Studio project; set tracing.project in project.yml or provide --studio-project."
                     )
                     sys.exit(2)
+                from omniagents.core.eval.annotate import annotate_scenarios
+
                 annotated, _original, source_path = annotate_scenarios(
                     Path(agent_yaml_path), scenario_path, studio_project, None
                 )
@@ -3075,6 +3117,8 @@ def main():
                             "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
                         )
                         sys.exit(2)
+                from omniagents.core.eval.optimize import optimize_agent_from_project
+
                 optimize_agent_from_project(
                     proj_path=str(proj_path),
                     agent_key=(str(getattr(args, "agent", "") or "") or None),

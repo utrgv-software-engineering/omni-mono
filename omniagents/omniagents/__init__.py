@@ -9,27 +9,27 @@ except Exception:
     __version__ = "0.0.0"
     __version_info__ = (0, 0, 0)
 
-try:
-    from .core.runtime.runner import Runner  # type: ignore
-except Exception:
-    Runner = None  # type: ignore
+# Lazy imports to prevent early initialization of agents library
+_LAZY_IMPORTS = {
+    "Runner": ".core.runtime.runner",
+    "function_tool": ".core",
+    "server_function": ".core",
+    "input_guardrail": ".core",
+    "output_guardrail": ".core",
+    "GuardrailFunctionOutput": ".core",
+}
 
-try:
-    from .core import function_tool  # type: ignore
-except Exception:
-    function_tool = None  # type: ignore
 
-try:
-    from .core import server_function  # type: ignore
-except Exception:
-    server_function = None  # type: ignore
-
-try:
-    from .core import input_guardrail, output_guardrail, GuardrailFunctionOutput  # type: ignore
-except Exception:
-    input_guardrail = None  # type: ignore
-    output_guardrail = None  # type: ignore
-    GuardrailFunctionOutput = None  # type: ignore
+def __getattr__(name):
+    """Lazy import attributes to avoid early initialization."""
+    if name in _LAZY_IMPORTS:
+        module_path = _LAZY_IMPORTS[name]
+        try:
+            module = importlib.import_module(module_path, package="omniagents")
+            return getattr(module, name)
+        except Exception:
+            return None
+    raise AttributeError(f"module 'omniagents' has no attribute '{name}'")
 
 
 def _register_agentio_alias() -> None:
@@ -59,7 +59,10 @@ __all__ = [
     "GuardrailFunctionOutput",
 ]
 
-try:
-    from .patches import agents_stream_resume as _stream_resume_patch  # noqa: F401
-except Exception:
-    pass
+
+# Defer patch import to prevent early initialization
+# This will be applied if/when the agents library is actually used
+# try:
+#     from .patches import agents_stream_resume as _stream_resume_patch  # noqa: F401
+# except Exception:
+#     pass
