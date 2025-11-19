@@ -183,55 +183,23 @@ class SafeAgent(Agent):
         wrapped_handoffs = []
         for handoff in handoffs:
             if isinstance(handoff, Handoff):
-                # Wrap the on_invoke_handoff function
                 original_invoke = handoff.on_invoke_handoff
 
                 async def wrapped_invoke(ctx, input_json, _original=original_invoke):
-                    # Call the original handoff function
                     agent = await _original(ctx, input_json)
 
-                    # If the returned agent is not already a SafeAgent, wrap it
-                    if not isinstance(agent, SafeAgent):
-                        # Get the approval callback from context or instance
-                        approval_cb = self._approval_callback
-
-                        if approval_cb and not self._skip_approvals:
-                            # Create a SafeAgent wrapping the returned agent
-                            # Inherit safe tool settings from parent
-                            safe_agent = SafeAgent(
-                                name=agent.name,
-                                tools=agent.tools,
-                                instructions=agent.instructions,
-                                model=agent.model,
-                                model_settings=getattr(agent, "model_settings", None),
-                                mcp_servers=getattr(agent, "mcp_servers", []) or [],
-                                handoffs=getattr(agent, "handoffs", []),
-                                handoff_description=getattr(
-                                    agent, "handoff_description", None
-                                ),
-                                prompt=getattr(agent, "prompt", None),
-                                # SafeAgent params - inherit from parent
-                                approval_callback=approval_cb,
-                                safe_tool_names=list(
-                                    self._safe_tool_names
-                                ),  # Inherit parent's safe tools
-                                safe_tool_patterns=[
-                                    p.pattern for p in self._safe_tool_patterns
-                                ],  # Inherit patterns
-                                skip_approvals=self._skip_approvals,
-                                halt_on_rejection=self.halt_on_rejection,
-                            )
-                            if Debug.enabled():
-                                print(
-                                    f"[SafeAgent] Wrapped handoff agent '{agent.name}' in SafeAgent",
-                                    file=sys.stderr,
-                                )
-                            return safe_agent
+                    if (
+                        isinstance(agent, SafeAgent)
+                        and self._approval_callback
+                        and hasattr(agent, "set_approval_callback")
+                    ):
+                        try:
+                            agent.set_approval_callback(self._approval_callback)
+                        except Exception:
+                            pass
 
                     return agent
 
-                # Create a new Handoff with the wrapped invoke function
-                # We need to copy all attributes
                 import dataclasses
 
                 wrapped_handoff = dataclasses.replace(
@@ -239,7 +207,6 @@ class SafeAgent(Agent):
                 )
                 wrapped_handoffs.append(wrapped_handoff)
             else:
-                # Not a Handoff object, just pass through
                 wrapped_handoffs.append(handoff)
 
         return wrapped_handoffs
