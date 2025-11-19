@@ -121,19 +121,7 @@ def init(
                     temp_storage.close()
 
         _server_url = None
-        print(
-            f"\n📊 OmniAgents Studio tracing initialized for project: {_default_project}"
-        )
-        if _current_name:
-            print(f"📝 Trace name: {_current_name}")
-        if _default_project:
-            db_hint = resolved_db_path or (get_traces_dir() / f"{_default_project}.db")
-            print(f"💾 Database: {db_hint}")
-            print(
-                f"💡 Run 'omniagents studio serve --project {_default_project}' to view traces\n"
-            )
-        else:
-            print("💡 Use trace() with project parameter to record traces\n")
+
 
     if replace_default:
         set_trace_processors([_processor])
