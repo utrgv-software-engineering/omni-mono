@@ -1,56 +1,115 @@
 from __future__ import annotations
 
-import requests
 from typing import Dict, Any
 from omniagents import function_tool
-import re
 import json
-
+import re
 
 @function_tool
 def geocode(city_name: str) -> Dict[str, Any]:
     """
-    Geocodes a city name into latitude and longitude using Open‑Meteo Geocoding API.
-
+    Geocodes a city name into latitude and longitude using a MOCK service.
+    
     Args:
         city_name: City name only (e.g., "New York", "Paris").
-
+        
     Returns:
-        Dictionary with a "results" list. Each item may contain name, country, latitude, longitude.
-
-    Example:
-        data = geocode("London")
-        lat = data["results"][0]["latitude"]
-        lon = data["results"][0]["longitude"]
+        Dictionary with a "results" list.
     """
     if not city_name or not isinstance(city_name, str):
         return {"error": "city_name must be a non-empty string"}
 
-    # Sanitize trailing punctuation that often leaks from prompts
     name = str(city_name).strip()
-    name = re.sub(r"[\s.,!?;:]+$", "", name)
-
-    url = "https://geocoding-api.open-meteo.com/v1/search"
-    params = {
-        "name": name,
-        "count": 10,
-        "language": "en",
-        "format": "json",
-    }
-    try:
-        r = requests.get(url, params=params, timeout=15)
-        r.raise_for_status()
-        data = r.json()
-        if not data or "results" not in data or not data["results"]:
-            return json.dumps({"error": "No results found for the given city"})
-        return json.dumps(data)
-    except requests.HTTPError as e:
-        return json.dumps({"error": f"HTTP error: {e}"})
-    except requests.Timeout:
-        return json.dumps({"error": "Request timed out"})
-    except Exception as e:
-        return json.dumps({"error": f"Unexpected error: {e}"})
-
+    name_lower = name.lower()
+    
+    results = []
+    
+    if "manchester" in name_lower:
+        results = [
+            {
+                "id": 2643123,
+                "name": "Manchester",
+                "latitude": 53.48095,
+                "longitude": -2.23743,
+                "elevation": 38.0,
+                "feature_code": "PPLA",
+                "country_code": "GB",
+                "admin1_id": 6269131,
+                "admin2_id": 2643123,
+                "timezone": "Europe/London",
+                "population": 395515,
+                "country_id": 2635167,
+                "country": "United Kingdom",
+                "admin1": "England",
+                "admin2": "Manchester"
+            },
+            {
+                "id": 5089178,
+                "name": "Manchester",
+                "latitude": 42.99564,
+                "longitude": -71.45479,
+                "elevation": 64.0,
+                "feature_code": "PPLA",
+                "country_code": "US",
+                "admin1_id": 5090174,
+                "admin2_id": 5087463,
+                "timezone": "America/New_York",
+                "population": 110229,
+                "country_id": 6252001,
+                "country": "United States",
+                "admin1": "New Hampshire",
+                "admin2": "Hillsborough"
+            }
+        ]
+    elif "richmond" in name_lower:
+        results = [
+             {
+                "id": 4781756,
+                "name": "Richmond",
+                "latitude": 37.55376,
+                "longitude": -77.46026,
+                "elevation": 45.0,
+                "feature_code": "PPLA",
+                "country_code": "US",
+                "admin1_id": 6254928,
+                "timezone": "America/New_York",
+                "population": 220289,
+                "country_id": 6252001,
+                "country": "United States",
+                "admin1": "Virginia"
+            },
+            {
+                "id": 2638864,
+                "name": "Richmond",
+                "latitude": 51.46171,
+                "longitude": -0.30579,
+                "elevation": 19.0,
+                "feature_code": "PPL",
+                "country_code": "GB",
+                "admin1_id": 6269131,
+                "admin2_id": 2648110,
+                "timezone": "Europe/London",
+                "population": 214605,
+                "country_id": 2635167,
+                "country": "United Kingdom",
+                "admin1": "England",
+                "admin2": "Greater London"
+            }
+        ]
+    else:
+        # Generic fallback
+        results = [
+            {
+                "id": 12345,
+                "name": name.title(),
+                "latitude": 40.7128,
+                "longitude": -74.0060,
+                "country": "Mock Country",
+                "admin1": "Mock State"
+            }
+        ]
+        
+    return json.dumps({"results": results})
 
 @function_tool
 def get_weather(
@@ -60,60 +119,54 @@ def get_weather(
     temperature_unit: str = "celsius",
 ) -> Dict[str, Any]:
     """
-    Returns current weather for given coordinates using Open‑Meteo.
-
-    Args:
-        latitude: Decimal latitude (−90..90)
-        longitude: Decimal longitude (−180..180)
-        timezone: IANA timezone or "auto"
-        temperature_unit: "celsius" or "fahrenheit"
-
-    Returns:
-        Dictionary containing current weather, units, and metadata from the API.
-
-    Example:
-        geo = geocode("Berlin")
-        lat = geo["results"][0]["latitude"]
-        lon = geo["results"][0]["longitude"]
-        weather = get_weather(lat, lon)
+    Returns MOCK current weather for given coordinates.
     """
     try:
-        if not (-90.0 <= float(latitude) <= 90.0) or not (
-            -180.0 <= float(longitude) <= 180.0
-        ):
+        lat = float(latitude)
+        lon = float(longitude)
+        if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
             return json.dumps({"error": "Invalid coordinates"})
     except Exception:
         return json.dumps({"error": "Invalid coordinate types"})
 
-    fields = [
-        "temperature_2m",
-        "apparent_temperature",
-        "relative_humidity_2m",
-        "is_day",
-        "precipitation",
-        "rain",
-        "showers",
-        "snowfall",
-        "weather_code",
-        "wind_speed_10m",
-        "wind_direction_10m",
-        "wind_gusts_10m",
-    ]
-    url = "https://api.open-meteo.com/v1/forecast"
-    params = {
-        "latitude": latitude,
-        "longitude": longitude,
-        "current": ",".join(fields),
-        "timezone": timezone,
-        "temperature_unit": temperature_unit,
+    # Return static nice weather
+    mock_data = {
+        "latitude": lat,
+        "longitude": lon,
+        "generationtime_ms": 0.1,
+        "utc_offset_seconds": 0,
+        "timezone": "GMT",
+        "timezone_abbreviation": "GMT",
+        "elevation": 10.0,
+        "current_units": {
+            "time": "iso8601",
+            "interval": "seconds",
+            "temperature_2m": "°C" if temperature_unit == "celsius" else "°F",
+            "relative_humidity_2m": "%",
+            "is_day": "",
+            "precipitation": "mm",
+            "rain": "mm",
+            "showers": "mm",
+            "snowfall": "cm",
+            "weather_code": "wmo code",
+            "wind_speed_10m": "km/h",
+            "wind_direction_10m": "°",
+            "wind_gusts_10m": "km/h"
+        },
+        "current": {
+            "time": "2023-10-27T12:00",
+            "interval": 900,
+            "temperature_2m": 20.5,
+            "relative_humidity_2m": 45,
+            "is_day": 1,
+            "precipitation": 0.0,
+            "rain": 0.0,
+            "showers": 0.0,
+            "snowfall": 0.0,
+            "weather_code": 0, # Clear sky
+            "wind_speed_10m": 10.5,
+            "wind_direction_10m": 180,
+            "wind_gusts_10m": 25.0
+        }
     }
-    try:
-        r = requests.get(url, params=params, timeout=15)
-        r.raise_for_status()
-        return json.dumps(r.json())
-    except requests.HTTPError as e:
-        return json.dumps({"error": f"HTTP error: {e}"})
-    except requests.Timeout:
-        return json.dumps({"error": "Request timed out"})
-    except Exception as e:
-        return json.dumps({"error": f"Unexpected error: {e}"})
+    return json.dumps(mock_data)
