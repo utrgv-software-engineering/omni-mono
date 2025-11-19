@@ -46,6 +46,8 @@ export function App() {
   const client = useMemo(() => new RPCClient(wsUrlFromLocation()), [])
   const [initialSent, setInitialSent] = useState(false)
   const preambleBufferRef = useRef<Array<{ content: string; timestamp: Date; superseded: boolean }>>([])
+  const pendingApprovalsRef = useRef(new Map<string, (MessageItem & { session_id?: string })>())
+  const urlSessionHandledRef = useRef(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [minimalMode] = useState(() => {
     try {
@@ -55,6 +57,30 @@ export function App() {
       return false
     }
   })
+  const [initialSessionParam] = useState<string | undefined>(() => {
+    try {
+      const url = new URL(window.location.href)
+      const value = url.searchParams.get('session')
+      return value ? value : undefined
+    } catch {
+      return undefined
+    }
+  })
+  const sessionIdRef = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    sessionIdRef.current = sessionId
+  }, [sessionId])
+  const appendPendingApprovals = useCallback((base: MessageItem[], targetSession?: string) => {
+    if (!targetSession) return base
+    const additions: MessageItem[] = []
+    for (const item of pendingApprovalsRef.current.values()) {
+      const itemSession = (item as any).session_id
+      if (itemSession && itemSession !== targetSession) continue
+      const exists = base.some(existing => existing.type === 'approval' && (existing as any).request_id === (item as any).request_id)
+      if (!exists) additions.push(item)
+    }
+    return additions.length ? [...base, ...additions] : base
+  }, [])
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -202,7 +228,19 @@ export function App() {
         const argumentsText = String(args?.arguments ?? '')
         const metadata = args?.metadata
         setThinking(false)
-        setItems(prev => [...prev, { type: 'approval', request_id, tool, argumentsText, metadata }])
+        if (!request_id) {
+          return
+        }
+        const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
+        const approvalItem: MessageItem & { session_id?: string } = { type: 'approval', request_id, tool, argumentsText, metadata, session_id: eventSessionId }
+        pendingApprovalsRef.current.set(request_id, approvalItem)
+        const shouldDisplay = !eventSessionId || !sessionIdRef.current || sessionIdRef.current === eventSessionId
+        if (shouldDisplay) {
+          setItems(prev => {
+            const filtered = prev.filter(it => !(it.type === 'approval' && (it as any).request_id === request_id))
+            return [...filtered, approvalItem]
+          })
+        }
         return
       }
       if (fn === 'ui.set_status') {
@@ -344,15 +382,19 @@ export function App() {
   }, [connected, ui, initialSent, items.length, handleSubmit])
 
   const handleApprovalDecision = useCallback(async (request_id: string, value: 'yes' | 'always' | 'no') => {
+    const removeApproval = () => {
+      pendingApprovalsRef.current.delete(request_id)
+      setItems(prev => prev.filter(it => !(it.type === 'approval' && (it as any).request_id === request_id)))
+    }
     try {
       const approved = value !== 'no'
       const always_approve = value === 'always'
       await client.clientResponse(request_id, true, { approved, always_approve })
-      setItems(prev => prev.filter(it => !(it.type === 'approval' && (it as any).request_id === request_id)))
+      removeApproval()
       setThinking(true)
     } catch (e) {
       await client.clientResponse(request_id, false, undefined, { message: String((e as Error)?.message || 'failed') })
-      setItems(prev => prev.filter(it => !(it.type === 'approval' && (it as any).request_id === request_id)))
+      removeApproval()
       setThinking(true)
     }
   }, [client])
@@ -445,13 +487,23 @@ export function App() {
             continue
           }
         }
-        setItems(msgs)
+        const merged = appendPendingApprovals(msgs, id)
+        setItems(merged)
       } catch {}
     } else {
       setItems([])
     }
     setUI('chat')
-  }, [client])
+  }, [client, appendPendingApprovals])
+
+  useEffect(() => {
+    if (urlSessionHandledRef.current) return
+    if (!initialSessionParam) return
+    if (!connected) return
+    if (ui !== 'chat') return
+    urlSessionHandledRef.current = true
+    handleSelectSession(initialSessionParam)
+  }, [connected, ui, handleSelectSession, initialSessionParam])
 
   useEffect(() => {
     if (!connected) return

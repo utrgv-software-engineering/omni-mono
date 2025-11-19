@@ -137,3 +137,52 @@ async def test_request_tool_approval_queues_and_adds_safe():
     assert error is None
     assert session.pending_events[0][0] == "client_request"
     assert "tool_name" in session.always_allow_tools
+    assert session.pending_client_requests == {}
+    assert service._client_request_sessions == {}
+
+
+@pytest.mark.asyncio
+async def test_get_session_history_replays_live_state():
+    service = AgentService(make_spec())
+    session = service._session_manager.get_or_create()
+    session.history = []
+    session.active_run_started_payload = {
+        "run_id": "run1",
+        "session_id": session.id,
+    }
+    session.active_run_status_payload = {
+        "run_id": "run1",
+        "status": "retrying",
+    }
+    session.active_run_set_status_payload = {
+        "request_id": "status_req",
+        "function": "ui.set_status",
+        "args": {"text": "Working", "show_spinner": True},
+        "session_id": session.id,
+    }
+    session.pending_client_requests["pending_req"] = {
+        "request_id": "pending_req",
+        "function": "ui.request_tool_approval",
+        "args": {"tool": "shell@run"},
+        "session_id": session.id,
+    }
+
+    class Recorder:
+        def __init__(self):
+            self.calls = []
+
+        async def async_call(self, method, args):
+            self.calls.append((method, args))
+            return True
+
+    channel = Recorder()
+    service.channel = channel
+    result = await service.get_session_history(session.id)
+    assert isinstance(result, list)
+    methods = [m for m, _ in channel.calls]
+    assert "run_started" in methods
+    assert "run_status" in methods
+    client_requests = [
+        args for method, args in channel.calls if method == "client_request"
+    ]
+    assert len(client_requests) >= 2

@@ -246,6 +246,7 @@ class AgentService(RpcMethodsBase):
         self._pending_client_requests: dict[str, asyncio.Future] = {}
         # Optional capability registry per connected channel
         self._client_capabilities: dict[Any, dict] = {}
+        self._client_request_sessions: dict[str, Session] = {}
         # Server functions registry (client→server dynamic functions)
         # Map name -> {"func": callable, "description": str | None, "params_schema": dict | None, "result_schema": dict | None}
         self._server_functions: dict[str, dict] = {}
@@ -657,13 +658,17 @@ class AgentService(RpcMethodsBase):
         except Exception:
             return []
 
-    def _sf_session_ensure(self, session: Session | None, args: dict | None = None) -> dict:
+    def _sf_session_ensure(
+        self, session: Session | None, args: dict | None = None
+    ) -> dict:
         payload = args or {}
         requested_id = payload.get("session_id")
         workspace_root = payload.get("workspace_root")
         provided_context = payload.get("context") if "context" in payload else None
         provided_context_set = "context" in payload
-        provided_variables = payload.get("variables") if "variables" in payload else None
+        provided_variables = (
+            payload.get("variables") if "variables" in payload else None
+        )
         provided_variables_set = "variables" in payload
 
         target_session: Session
@@ -731,6 +736,51 @@ class AgentService(RpcMethodsBase):
             "variables": variables_value,
         }
 
+    def _record_live_event(
+        self, session: Session | None, method: str, payload: dict
+    ) -> None:
+        if session is None:
+            return
+        data = dict(payload)
+        if method == "run_started":
+            session.active_run_id = data.get("run_id")
+            session.active_run_started_payload = data
+        elif method == "run_status":
+            session.active_run_status_payload = data
+        elif method == "client_request" and data.get("function") == "ui.set_status":
+            session.active_run_set_status_payload = data
+
+    def _clear_live_state(self, session: Session | None) -> None:
+        if session is None:
+            return
+        session.active_run_id = None
+        session.active_run_started_payload = None
+        session.active_run_status_payload = None
+        session.active_run_set_status_payload = None
+        for req_id in list(session.pending_client_requests.keys()):
+            self._client_request_sessions.pop(req_id, None)
+        session.pending_client_requests.clear()
+
+    async def _replay_live_state(self, session: Session, channel) -> None:
+        if session is None or channel is None:
+            return
+        events: list[tuple[str, dict]] = []
+        if session.active_run_started_payload:
+            events.append(("run_started", session.active_run_started_payload))
+        if session.active_run_status_payload:
+            events.append(("run_status", session.active_run_status_payload))
+        if session.active_run_set_status_payload:
+            events.append(("client_request", session.active_run_set_status_payload))
+        for payload in session.pending_client_requests.values():
+            events.append(("client_request", payload))
+        for method, payl in events:
+            await self._safe_notify(channel, method, payl)
+
+    def _forget_pending_request(self, request_id: str) -> None:
+        sess = self._client_request_sessions.pop(request_id, None)
+        if sess is not None:
+            sess.pending_client_requests.pop(request_id, None)
+
     # ------------------------------------------------------------------
     #  Helper: best-effort async_call that tolerates disconnected sockets.
     #  Returns True if the notification was delivered, False if the WebSocket
@@ -753,7 +803,10 @@ class AgentService(RpcMethodsBase):
         payload: dict,
         *,
         queue_if_unseen: bool = False,
+        track_live: bool = False,
     ) -> bool:
+        if track_live:
+            self._record_live_event(session, method, payload)
         if not session.channels:
             if queue_if_unseen and hasattr(session, "pending_events"):
                 session.pending_events.append((method, payload))
@@ -839,6 +892,7 @@ class AgentService(RpcMethodsBase):
         if fut and not fut.done():
             # Store a simple envelope
             fut.set_result({"ok": ok, "result": result, "error": error})
+        self._forget_pending_request(request_id)
         return True
 
     # ------------------------------------------------------------------
@@ -874,6 +928,9 @@ class AgentService(RpcMethodsBase):
             payload["idempotency_key"] = idempotency_key
 
         _debug_rpc("client_request", payload)
+
+        if session is not None and function == "ui.set_status":
+            session.active_run_set_status_payload = dict(payload)
 
         # Broadcast to all known channels for the session, or current channel if none provided
         channels = list(session.channels) if session is not None else [self.channel]
@@ -979,6 +1036,18 @@ class AgentService(RpcMethodsBase):
         req_id = uuid.uuid4().hex
         request_args.pop("approval_id", None)
 
+        event_payload = {
+            "request_id": req_id,
+            "function": "ui.request_tool_approval",
+            "args": request_args,
+            "session_id": payload.get("session_id"),
+            "run_id": payload.get("run_id"),
+            "approval_id": approval_id,
+        }
+
+        _sess.pending_client_requests[req_id] = dict(event_payload)
+        self._client_request_sessions[req_id] = _sess
+
         targets: list[Any] = []
         if run_id:
             preferred = _sess.run_channels.get(run_id)
@@ -1001,14 +1070,7 @@ class AgentService(RpcMethodsBase):
             ok = await self._safe_notify(
                 ch,
                 "client_request",
-                {
-                    "request_id": req_id,
-                    "function": "ui.request_tool_approval",
-                    "args": request_args,
-                    "session_id": payload.get("session_id"),
-                    "run_id": payload.get("run_id"),
-                    "approval_id": approval_id,
-                },
+                event_payload,
             )
             if ok:
                 delivered_any = True
@@ -1027,14 +1089,7 @@ class AgentService(RpcMethodsBase):
             _sess.pending_events.append(
                 (
                     "client_request",
-                    {
-                        "request_id": req_id,
-                        "function": "ui.request_tool_approval",
-                        "args": request_args,
-                        "session_id": payload.get("session_id"),
-                        "run_id": payload.get("run_id"),
-                        "approval_id": approval_id,
-                    },
+                    event_payload,
                 )
             )
 
@@ -1042,6 +1097,7 @@ class AgentService(RpcMethodsBase):
             envelope = await fut
         finally:
             self._pending_client_requests.pop(req_id, None)
+            self._forget_pending_request(req_id)
 
         if not isinstance(envelope, dict):
             raise RuntimeError("Invalid client response for tool approval")
@@ -1321,6 +1377,7 @@ class AgentService(RpcMethodsBase):
                                         "total": max_retries,
                                         "next_delay": delay,
                                     },
+                                    track_live=True,
                                 )
                             except Exception:
                                 pass
@@ -1379,6 +1436,7 @@ class AgentService(RpcMethodsBase):
                     sess.current_task = None
                 if sess.current_stream_result is not None:
                     sess.current_stream_result = None
+                self._clear_live_state(sess)
 
         task_name = f"run_{uuid.uuid4().hex}"
         _debug_rpc(
@@ -1404,6 +1462,7 @@ class AgentService(RpcMethodsBase):
                 "run_id": task_name,
                 "session_id": sess.id,
             },
+            track_live=True,
         )
         return {"run_id": task_name, "session_id": sess.id}
 
@@ -1447,6 +1506,8 @@ class AgentService(RpcMethodsBase):
                 if not delivered_any:
                     still_pending.append((meth, payl))
             sess.pending_events = still_pending
+
+        await self._replay_live_state(sess, self.channel)
 
         from omniagents.core.runtime.bridge import _filter_history_for_api
 

@@ -67,6 +67,11 @@ class Session:  # noqa: D101
         self.always_allow_patterns: set[str] = set()
         self.context: Any | None = None
         self.variables: Any | None = None
+        self.active_run_id: str | None = None
+        self.active_run_started_payload: dict | None = None
+        self.active_run_status_payload: dict | None = None
+        self.active_run_set_status_payload: dict | None = None
+        self.pending_client_requests: Dict[str, dict] = {}
         try:
             ctx, vars_data = get_session_metadata(
                 self.id, project_slug=project_slug, agent_slug=agent_slug
@@ -204,7 +209,9 @@ class SessionManager:  # noqa: D101
             project_slug=self._project_slug, agent_slug=self._agent_slug
         )
 
-    def persist_metadata(self, session: Session, *, context: Any, variables: Any) -> None:
+    def persist_metadata(
+        self, session: Session, *, context: Any, variables: Any
+    ) -> None:
         update_session_metadata(
             session.id,
             context=context,
