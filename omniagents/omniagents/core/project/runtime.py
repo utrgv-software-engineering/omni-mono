@@ -281,8 +281,6 @@ def resolve_agent(
 def build_spec_from_project(
     project: ProjectContext,
     agent_key: Optional[str] = None,
-    *,
-    prefer_voice: bool = False,
 ):
     raw_agents_config = (
         project.raw.get("agents") if isinstance(project.raw, dict) else {}
@@ -294,8 +292,6 @@ def build_spec_from_project(
             configured_voice_key = raw_voice.strip()
 
     selected_key = agent_key
-    if selected_key is None and prefer_voice and project.voice_entrypoint:
-        selected_key = project.voice_entrypoint
     key, agent_yaml = resolve_agent(project, selected_key)
     pdefs = {
         "tracing": project.tracing_defaults or None,

@@ -208,7 +208,33 @@ async def _default_build_agent(
     api_key_from_settings = settings.get("openai_api_key")
     if not api_key_from_settings:
         api_key_from_settings = os.getenv("OPENAI_API_KEY")
-    if api_key_from_settings:
+
+    # Check for Azure configuration to apply header injection fix
+    base_url = settings.get("openai_base_url") or os.getenv("OPENAI_BASE_URL")
+    is_azure = base_url and (
+        "openai.azure.com" in base_url or "services.ai.azure.com" in base_url
+    )
+
+    if api_key_from_settings and is_azure:
+        logger.debug("Configuring Azure OpenAI client with header injection fix")
+        try:
+            from agents import AsyncOpenAI, set_default_openai_client
+
+            # Create client with dummy key in constructor to avoid Bearer token,
+            # and real key in headers to satisfy Azure requirements.
+            client = AsyncOpenAI(
+                api_key="dummy",
+                base_url=base_url,
+                default_headers={"api-key": api_key_from_settings},
+            )
+            set_default_openai_client(client)
+        except ImportError:
+            logger.warning(
+                "Could not import AsyncOpenAI/set_default_openai_client from agents. "
+                "Falling back to standard key configuration."
+            )
+            set_default_openai_key(api_key_from_settings, use_for_tracing=False)
+    elif api_key_from_settings:
         logger.debug("Configuring default OpenAI key from settings/environment")
         set_default_openai_key(api_key_from_settings, use_for_tracing=False)
     else:

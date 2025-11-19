@@ -1082,9 +1082,6 @@ def main():
                 spec = build_spec_from_project(
                     proj,
                     agent_key=(args.agent or None),
-                    prefer_voice=(
-                        args.agent is None and args.mode in {"web", "server"}
-                    ),
                 )
                 runner = Runner(spec=spec)
             else:
@@ -1108,9 +1105,6 @@ def main():
                     spec = build_spec_from_project(
                         proj,
                         agent_key=(args.agent or None),
-                        prefer_voice=(
-                            args.agent is None and args.mode in {"web", "server"}
-                        ),
                     )
                     runner = Runner(spec=spec)
                 except Exception as e:
@@ -1305,9 +1299,6 @@ def main():
                     spec = build_spec_from_project(
                         proj,
                         agent_key=(args.agent or None),
-                        prefer_voice=(
-                            args.agent is None and args.mode in {"web", "server"}
-                        ),
                     )
                     runner = Runner(spec=spec)
                 else:
@@ -1330,9 +1321,6 @@ def main():
                         spec = build_spec_from_project(
                             proj,
                             agent_key=(args.agent or None),
-                            prefer_voice=(
-                                args.agent is None and args.mode in {"web", "server"}
-                            ),
                         )
                         runner = Runner(spec=spec)
                     except Exception as e:

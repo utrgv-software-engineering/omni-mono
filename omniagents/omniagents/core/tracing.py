@@ -28,14 +28,30 @@ def setup_tracing(tracing_config: Optional[Dict[str, Any]]) -> None:
             }
     """
     if not tracing_config:
-        # No tracing config - keep SDK's default behavior
+        # No tracing config - disable tracing by default
+        try:
+            from agents import set_trace_processors
+
+            set_trace_processors([])
+        except ImportError:
+            pass
         return
 
     provider = (tracing_config.get("provider") or "default").lower()
 
     if provider == "default":
-        # Keep SDK's default behavior (traces go to OpenAI)
-        logger.debug("Using default OpenAI tracing")
+        # Explicit 'default' provider also disables tracing now, unless we want to support opt-in OpenAI tracing.
+        # The user said "user's need to optin to tracing".
+        # If they explicitly wrote "provider: default", maybe they WANT OpenAI tracing?
+        # But for safety with Azure, let's assume "default" in our config context might just mean "unspecified".
+        # However, the user said "by default tracing should be disabled".
+        # Let's map "default" to disabled as well for now to be safe, or just treat it as "none".
+        try:
+            from agents import set_trace_processors
+
+            set_trace_processors([])
+        except ImportError:
+            pass
         return
     elif provider in {"studio", "agentio"}:
         tracing_module = None

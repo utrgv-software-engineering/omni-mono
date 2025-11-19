@@ -3,6 +3,7 @@ paths:
   evaluations: evaluations
   agents: agents
   target: target
+  tools: tools
 agents:
   entrypoint: weather_agent
   voice_entrypoint: weather_voice

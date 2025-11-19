@@ -236,10 +236,10 @@ class AgentService(RpcMethodsBase):
             self.spec.agent_slug = agent_slug
         self._session_manager = SessionManager(project_slug, agent_slug)
         try:
-            if getattr(self.spec, "tracing_config", None):
-                from omniagents.core.tracing import setup_tracing
+            # Always setup tracing to ensure defaults (disabled) are applied
+            from omniagents.core.tracing import setup_tracing
 
-                setup_tracing(self.spec.tracing_config)
+            setup_tracing(getattr(self.spec, "tracing_config", None))
         except Exception:
             pass
         # Client-function request tracking (server→client RPC-style)
