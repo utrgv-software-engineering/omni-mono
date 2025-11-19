@@ -374,137 +374,141 @@ async def _run_scenario(
     agent = await create_unified_agent(spec)
     prompt = scenario.get("prompt", "")
     msgs = [{"role": "user", "content": prompt}]
-    if workflow_name:
-        try:
-            from agentio import trace as agentio_trace
-
+    try:
+        if workflow_name:
             try:
-                import omniagents as _oa
-
-                _oa_version = getattr(_oa, "__version__", None)
-            except Exception:
-                _oa_version = None
-            try:
-                cfg = yaml.safe_load(Path(agent_yaml).read_text(encoding="utf-8")) or {}
-                raw_dims = list(
-                    (
+                from agentio import trace as agentio_trace
+    
+                try:
+                    import omniagents as _oa
+    
+                    _oa_version = getattr(_oa, "__version__", None)
+                except Exception:
+                    _oa_version = None
+                try:
+                    cfg = yaml.safe_load(Path(agent_yaml).read_text(encoding="utf-8")) or {}
+                    raw_dims = list(
                         (
-                            (cfg.get("evaluation") or {}).get(
-                                "synthetic_data_generation"
-                            )
-                            or {}
-                        ).get("dimensions")
+                            (
+                                (cfg.get("evaluation") or {}).get(
+                                    "synthetic_data_generation"
+                                )
+                                or {}
+                            ).get("dimensions")
+                        )
+                        or []
                     )
-                    or []
-                )
-                dims_catalog = _catalog_with_labels(raw_dims)
-            except Exception:
-                dims_catalog = []
-            import hashlib as _hashlib
-            import json as _json
-
-            try:
-                _cat_blob = _json.dumps(
-                    dims_catalog, sort_keys=True, ensure_ascii=False
-                )
-                catalog_id = _hashlib.sha1(_cat_blob.encode("utf-8")).hexdigest()[:16]
-            except Exception:
-                catalog_id = None
-            import uuid as _uuid
-
-            try:
-                _sid = scenario.get("id") or scenario.get("name") or "scenario"
-                run_uid = f"{_sid}-{_uuid.uuid4().hex[:8]}"
-            except Exception:
-                run_uid = _uuid.uuid4().hex[:8]
-            meta = {
-                "omniagents": {
-                    "run_type": "evaluation",
-                    "scenario": {
-                        "id": scenario.get("id"),
-                        "name": scenario.get("name"),
-                    },
-                    "run": {"id": run_uid},
-                    "synthetic": {
-                        "catalog_id": catalog_id,
-                        "catalog": {"dimensions": dims_catalog},
-                        "selection": {"mapping": scenario.get("dimensions", {})},
-                    },
-                    "config": {"agent_yaml": str(agent_yaml)},
-                    **({"omniagents_version": _oa_version} if _oa_version else {}),
+                    dims_catalog = _catalog_with_labels(raw_dims)
+                except Exception:
+                    dims_catalog = []
+                import hashlib as _hashlib
+                import json as _json
+    
+                try:
+                    _cat_blob = _json.dumps(
+                        dims_catalog, sort_keys=True, ensure_ascii=False
+                    )
+                    catalog_id = _hashlib.sha1(_cat_blob.encode("utf-8")).hexdigest()[:16]
+                except Exception:
+                    catalog_id = None
+                import uuid as _uuid
+    
+                try:
+                    _sid = scenario.get("id") or scenario.get("name") or "scenario"
+                    run_uid = f"{_sid}-{_uuid.uuid4().hex[:8]}"
+                except Exception:
+                    run_uid = _uuid.uuid4().hex[:8]
+                meta = {
+                    "omniagents": {
+                        "run_type": "evaluation",
+                        "scenario": {
+                            "id": scenario.get("id"),
+                            "name": scenario.get("name"),
+                        },
+                        "run": {"id": run_uid},
+                        "synthetic": {
+                            "catalog_id": catalog_id,
+                            "catalog": {"dimensions": dims_catalog},
+                            "selection": {"mapping": scenario.get("dimensions", {})},
+                        },
+                        "config": {"agent_yaml": str(agent_yaml)},
+                        **({"omniagents_version": _oa_version} if _oa_version else {}),
+                    }
                 }
-            }
-            gid = run_uid
-            with agentio_trace(workflow_name, group_id=gid, metadata=meta):
+                gid = run_uid
+                with agentio_trace(workflow_name, group_id=gid, metadata=meta):
+                    result = agent.run_streamed(msgs)
+                    async for _ in result.stream_events():
+                        pass
+            except Exception:
                 result = agent.run_streamed(msgs)
                 async for _ in result.stream_events():
                     pass
-        except Exception:
+        else:
             result = agent.run_streamed(msgs)
             async for _ in result.stream_events():
                 pass
-    else:
-        result = agent.run_streamed(msgs)
-        async for _ in result.stream_events():
-            pass
-
-    run_error_payload = None
-    get_last_run_end = getattr(agent, "get_last_run_end", None)
-    if callable(get_last_run_end):
-        try:
-            candidate = get_last_run_end()
-        except Exception:
-            candidate = None
-        if isinstance(candidate, dict) and candidate.get("error"):
-            run_error_payload = candidate
-
-    session_id = getattr(agent, "_session_id", None)
-    history = (
-        load_history(
-            session_id,
-            project_slug=spec.project_slug,
-            agent_slug=spec.agent_slug,
-        )
-        if session_id
-        else []
-    )
-
-    measures = scenario.get("measures") or []
-    metadata = await _run_judges(Path(agent_yaml), eval_cfg, scenario, history)
-    if run_error_payload is not None:
-        metadata.setdefault("agent_error", run_error_payload)
-    ctx = build_eval_context(
-        history=history, tools=spec.available_tools, metadata=metadata
-    )
-    measures_out = run_measures(ctx, measures=measures) if measures else []
-    if run_error_payload is not None:
-        err_info = run_error_payload.get("error")
-        if isinstance(err_info, dict):
-            reason = (
-                err_info.get("message") or err_info.get("type") or "agent_run_failed"
+    
+        run_error_payload = None
+        get_last_run_end = getattr(agent, "get_last_run_end", None)
+        if callable(get_last_run_end):
+            try:
+                candidate = get_last_run_end()
+            except Exception:
+                candidate = None
+            if isinstance(candidate, dict) and candidate.get("error"):
+                run_error_payload = candidate
+    
+        session_id = getattr(agent, "_session_id", None)
+        history = (
+            load_history(
+                session_id,
+                project_slug=spec.project_slug,
+                agent_slug=spec.agent_slug,
             )
-            details = err_info
-        else:
-            reason = str(err_info)
-            details = {"message": str(err_info)}
-        measures_out.append(
-            {
-                "name": "_agent_error",
-                "passed": False,
-                "reason": reason,
-                "details": details,
-            }
+            if session_id
+            else []
         )
-
-    return {
-        "scenario": scenario.get("name", "scenario"),
-        "prompt": prompt,
-        "session_id": session_id,
-        "final_assistant_text": final_assistant_text(history),
-        "measures": measures_out,
-        "history_len": len(history),
-        "metadata": metadata,
-    }
+    
+        measures = scenario.get("measures") or []
+        metadata = await _run_judges(Path(agent_yaml), eval_cfg, scenario, history)
+        if run_error_payload is not None:
+            metadata.setdefault("agent_error", run_error_payload)
+        ctx = build_eval_context(
+            history=history, tools=spec.available_tools, metadata=metadata
+        )
+        measures_out = run_measures(ctx, measures=measures) if measures else []
+        if run_error_payload is not None:
+            err_info = run_error_payload.get("error")
+            if isinstance(err_info, dict):
+                reason = (
+                    err_info.get("message") or err_info.get("type") or "agent_run_failed"
+                )
+                details = err_info
+            else:
+                reason = str(err_info)
+                details = {"message": str(err_info)}
+            measures_out.append(
+                {
+                    "name": "_agent_error",
+                    "passed": False,
+                    "reason": reason,
+                    "details": details,
+                }
+            )
+    
+        return {
+            "scenario": scenario.get("name", "scenario"),
+            "prompt": prompt,
+            "session_id": session_id,
+            "final_assistant_text": final_assistant_text(history),
+            "measures": measures_out,
+            "history_len": len(history),
+            "metadata": metadata,
+        }
+    finally:
+        if hasattr(agent, "cleanup"):
+            await agent.cleanup()
 
 
 async def run_evaluation_async(
@@ -512,6 +516,7 @@ async def run_evaluation_async(
     workflow_name: str | None = None,
     include_unmeasured: bool = False,
     progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
+    concurrency: int = 5,
 ) -> Dict[str, Any]:
     cfg_path = Path(compiled_yaml).resolve()
     raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
@@ -580,15 +585,20 @@ async def run_evaluation_async(
             progress_cb({"event": "start", "total": total_runs})
         except Exception:
             pass
-    idx = 0
-    for sc in scenarios:
-        for _ in range(runs_per):
+    
+    sem = asyncio.Semaphore(concurrency)
+    completed_count = 0
+    
+    async def _worker(sc):
+        nonlocal completed_count
+        async with sem:
             r = await _run_scenario(
                 str(cfg_path), sc, defaults, eval_cfg, workflow_name
             )
             r["scenario_config"] = sc
-            all_runs.append(r)
-            idx += 1
+            
+            # Update progress safely
+            completed_count += 1
             if progress_cb:
                 try:
                     measures = r.get("measures") or []
@@ -603,7 +613,7 @@ async def run_evaluation_async(
                     progress_cb(
                         {
                             "event": "progress",
-                            "index": idx,
+                            "index": completed_count,
                             "total": total_runs,
                             "scenario": r.get("scenario"),
                             "failed": failed,
@@ -613,6 +623,17 @@ async def run_evaluation_async(
                     )
                 except Exception:
                     pass
+            return r
+
+    tasks = []
+    for sc in scenarios:
+        for _ in range(runs_per):
+            tasks.append(asyncio.create_task(_worker(sc)))
+            
+    if tasks:
+        all_runs = await asyncio.gather(*tasks)
+    else:
+        all_runs = []
 
     metrics = compute_metrics(all_runs, metrics_cfg)
     out = {
@@ -669,6 +690,7 @@ def run_evaluation(
                 workflow_name=name,
                 include_unmeasured=include_unmeasured,
                 progress_cb=progress_cb,
+                concurrency=int(tracing_cfg.get("concurrency") or 5),
             )
         )
     return asyncio.run(
@@ -676,5 +698,6 @@ def run_evaluation(
             compiled_yaml,
             include_unmeasured=include_unmeasured,
             progress_cb=progress_cb,
+            concurrency=int((tracing_cfg or {}).get("concurrency") or 5),
         )
     )
