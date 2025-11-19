@@ -127,7 +127,43 @@ async def test_safe_agent_requests_approval_via_rpc(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_handoff_wrapping_propagates_settings():
+async def test_plain_handoff_agent_is_not_wrapped():
+    async def callback(name, formatted, metadata):
+        return True, False, None
+
+    def tracking_tool(name):
+        async def _invoke(_ctx, params_json):
+            return json.dumps({"result": name})
+
+        return FunctionTool(
+            name=name, description=name, params_json_schema={}, on_invoke_tool=_invoke
+        )
+
+    child_agent = Agent(
+        name="child",
+        instructions="",
+        model="gpt",
+        tools=[tracking_tool("child_tool")],
+    )
+    parent_agent = SafeAgent(
+        name="parent",
+        tools=[tracking_tool("parent_tool")],
+        instructions="",
+        model="gpt",
+        approval_callback=callback,
+        handoffs=[handoff(child_agent)],
+    )
+    ctx = RunContextWrapper(context=None)
+    returned_agent = await parent_agent.handoffs[0].on_invoke_handoff(
+        ctx, json.dumps({})
+    )
+    assert isinstance(returned_agent, Agent)
+    assert not isinstance(returned_agent, SafeAgent)
+    assert returned_agent is child_agent
+
+
+@pytest.mark.asyncio
+async def test_safe_handoff_agent_receives_callback():
     async def callback(name, formatted, metadata):
         return True, False, None
 
@@ -144,18 +180,22 @@ async def test_handoff_wrapping_propagates_settings():
             name=name, description=name, params_json_schema={}, on_invoke_tool=_invoke
         )
 
-    grandchild_agent = Agent(
+    grandchild_agent = SafeAgent(
         name="grandchild",
-        instructions="",
-        model="gpt",
         tools=[tracking_tool("grand_tool", grand_tool_calls)],
-    )
-    child_agent = Agent(
-        name="child",
         instructions="",
         model="gpt",
+        approval_callback=None,
+        handoffs=[],
+    )
+    child_agent = SafeAgent(
+        name="child",
         tools=[tracking_tool("child_tool", child_tool_calls)],
+        instructions="",
+        model="gpt",
+        approval_callback=None,
         handoffs=[handoff(grandchild_agent)],
+        safe_tool_patterns=[r"grand_.*"],
     )
     parent_agent = SafeAgent(
         name="parent",
@@ -173,11 +213,9 @@ async def test_handoff_wrapping_propagates_settings():
     )
     assert isinstance(wrapped_child, SafeAgent)
     assert wrapped_child._approval_callback is callback
-    assert wrapped_child.is_tool_safe(tracking_tool("child_tool", [])) is True
     nested = await wrapped_child.handoffs[0].on_invoke_handoff(ctx, json.dumps({}))
     assert isinstance(nested, SafeAgent)
     assert nested._approval_callback is callback
-    assert nested.is_tool_safe(tracking_tool("grand_tool", [])) is True
 
 
 @pytest.mark.asyncio
