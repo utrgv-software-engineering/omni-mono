@@ -1107,7 +1107,7 @@ def main():
                 load_project = None
                 build_spec_from_project = None
             if load_project and build_spec_from_project:
-                proj = load_project(str(args.project))
+                proj = load_project(args.project)
                 spec = build_spec_from_project(
                     proj,
                     agent_key=(args.agent or None),

@@ -16,6 +16,7 @@ def geocode(city_name: str) -> Dict[str, Any]:
     Returns:
         Dictionary with a "results" list.
     """
+    print("Calling Geocode")
     if not city_name or not isinstance(city_name, str):
         return {"error": "city_name must be a non-empty string"}
 

@@ -8,6 +8,9 @@ lifecycle management.
 import asyncio
 import uuid
 import base64
+import logging
+import os
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from typing import Optional, Dict, Any, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
@@ -19,6 +22,148 @@ from omniagents.rpc.realtime_events import (
     RealtimeEventBase,
     map_realtime_session_event_to_rpc,
 )
+
+
+logger = logging.getLogger(__name__)
+
+
+def _mask_secret(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return "*" * len(value)
+    return f"{value[:4]}...{value[-4:]}"
+
+
+def _collect_headers(settings: Dict[str, Any]) -> Dict[str, Any]:
+    merged: Dict[str, Any] = {}
+    for key in ("headers", "extra_headers", "openai_headers", "openai_extra_headers"):
+        value = settings.get(key)
+        if isinstance(value, dict):
+            merged.update(value)
+    return merged
+
+
+def _scrub_headers(headers: Dict[str, Any]) -> Dict[str, Any]:
+    scrubbed: Dict[str, Any] = {}
+    for key, value in headers.items():
+        if not isinstance(key, str):
+            continue
+        lowered = key.lower()
+        if isinstance(value, str) and any(
+            token in lowered for token in ("authorization", "api", "token", "secret")
+        ):
+            scrubbed[key] = _mask_secret(value)
+        else:
+            scrubbed[key] = value
+    return scrubbed
+
+
+def _is_azure_endpoint(url: Optional[str]) -> bool:
+    if not url:
+        return False
+    lowered = url.lower()
+    return "openai.azure.com" in lowered or "services.ai.azure.com" in lowered
+
+
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    if isinstance(value, (int, float)):
+        return value != 0
+    return False
+
+
+def _resolve_realtime_deployment_name(spec: AgentSpec, settings: Dict[str, Any]) -> Optional[str]:
+    candidates = [
+        settings.get("azure_openai_deployment_name"),
+        settings.get("openai_realtime_deployment"),
+        settings.get("openai_realtime_model"),
+        settings.get("openai_model"),
+        os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
+        os.getenv("OPENAI_REALTIME_DEPLOYMENT"),
+        os.getenv("OPENAI_REALTIME_MODEL"),
+        os.getenv("OPENAI_MODEL"),
+        os.getenv("MODEL_NAME"),
+    ]
+    if spec.realtime_settings and spec.realtime_settings.model_name:
+        candidates.append(spec.realtime_settings.model_name)
+    if spec.model_name:
+        candidates.append(spec.model_name)
+    for value in candidates:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _normalize_ws_scheme(raw_scheme: Optional[str]) -> str:
+    if not raw_scheme:
+        return "wss"
+    lowered = raw_scheme.lower()
+    if lowered == "https":
+        return "wss"
+    if lowered == "http":
+        return "ws"
+    if lowered in {"ws", "wss"}:
+        return lowered
+    return "wss"
+
+
+def _build_azure_realtime_url(
+    candidate_url: Optional[str],
+    base_url: Optional[str],
+    spec: AgentSpec,
+    settings: Dict[str, Any],
+) -> Optional[str]:
+    deployment = _resolve_realtime_deployment_name(spec, settings)
+    if not deployment:
+        return candidate_url or base_url
+    endpoint = (
+        os.getenv("AZURE_OPENAI_ENDPOINT")
+        or candidate_url
+        or base_url
+        or os.getenv("OPENAI_BASE_URL")
+        or settings.get("openai_base_url")
+    )
+    if not endpoint:
+        return candidate_url or base_url
+    parsed = urlparse(endpoint if "://" in endpoint else f"https://{endpoint}")
+    netloc = parsed.netloc or parsed.path
+    if not netloc:
+        return candidate_url or base_url
+    scheme = _normalize_ws_scheme(parsed.scheme)
+    api_version = (
+        settings.get("azure_openai_api_version")
+        or os.getenv("AZURE_OPENAI_API_VERSION")
+        or "2024-10-21-preview"
+    )
+    deployment_path = deployment.strip()
+    return f"{scheme}://{netloc}/openai/deployments/{deployment_path}/realtime?api-version={api_version}"
+
+
+def _resolve_realtime_url(
+    explicit_url: Optional[str],
+    base_url: Optional[str],
+    spec: AgentSpec,
+    settings: Dict[str, Any],
+) -> Optional[str]:
+    candidate = explicit_url or base_url
+    if not candidate:
+        return None
+    parsed = urlparse(candidate if "://" in candidate else f"https://{candidate}")
+    query = parsed.query or ""
+    azure_signal = (
+        _is_azure_endpoint(candidate)
+        or _is_azure_endpoint(base_url)
+        or bool(os.getenv("AZURE_OPENAI_ENDPOINT"))
+    )
+    if not azure_signal:
+        return explicit_url
+    if "api-version" in query:
+        return candidate
+    return _build_azure_realtime_url(candidate, base_url, spec, settings)
 
 
 class RealtimeSession:
@@ -98,6 +243,13 @@ class RealtimeSession:
         api_key = self.settings.get("openai_api_key") or self.settings.get("api_key")
         if not api_key:
             raise ValueError("OpenAI API key not provided in settings")
+
+        masked_key = _mask_secret(api_key)
+        logger.info(
+            "RealtimeSession %s using API key %s",
+            self.session_id,
+            masked_key,
+        )
 
         # Build tools if available
         tools = self.spec.available_tools if self.spec.available_tools else []
@@ -202,10 +354,88 @@ class RealtimeSession:
             )
 
         # Build model_config
-        model_config = {
-            "api_key": self._api_key,
+        model_config: Dict[str, Any] = {
             "initial_model_settings": initial_model_settings,
         }
+
+        realtime_url = (
+            self.settings.get("openai_realtime_url")
+            or os.getenv("OPENAI_REALTIME_URL")
+            or self.settings.get("openai_realtime_base_url")
+            or os.getenv("OPENAI_REALTIME_BASE_URL")
+        )
+        base_url = self.settings.get("openai_base_url") or os.getenv("OPENAI_BASE_URL")
+        resolved_url = _resolve_realtime_url(
+            explicit_url=realtime_url,
+            base_url=base_url,
+            spec=self.spec,
+            settings=self.settings,
+        )
+        if resolved_url:
+            model_config["url"] = resolved_url
+
+        headers = _collect_headers(self.settings)
+        current_url = model_config.get("url")
+        azure_target = _is_azure_endpoint(current_url) or _is_azure_endpoint(base_url)
+        force_header_flag = self.settings.get("openai_realtime_force_api_key_header")
+        if force_header_flag is None:
+            force_header_flag = os.getenv("OPENAI_REALTIME_FORCE_API_KEY_HEADER")
+        use_api_key_header = _coerce_bool(force_header_flag) or azure_target
+        header_has_api_key = any(
+            isinstance(key, str) and key.lower() == "api-key" for key in headers.keys()
+        )
+        api_key_consumed = False
+
+        if use_api_key_header and self._api_key and not header_has_api_key:
+            headers["api-key"] = self._api_key
+            api_key_consumed = True
+        elif header_has_api_key:
+            api_key_consumed = True
+
+        if headers:
+            model_config["headers"] = headers
+
+        query_flag = self.settings.get("openai_realtime_api_key_in_query")
+        if query_flag is None:
+            query_flag = os.getenv("OPENAI_REALTIME_API_KEY_IN_QUERY")
+        query_flag = _coerce_bool(query_flag)
+
+        if query_flag and model_config.get("url") and self._api_key:
+            parsed = urlparse(model_config["url"])
+            params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+            if "api-key" not in params:
+                params["api-key"] = self._api_key
+                model_config["url"] = urlunparse(
+                    (
+                        parsed.scheme,
+                        parsed.netloc,
+                        parsed.path,
+                        parsed.params,
+                        urlencode(params, doseq=True),
+                        parsed.fragment,
+                    )
+                )
+            if "api-key" in params:
+                api_key_consumed = True
+
+        if api_key_consumed:
+            model_config.pop("api_key", None)
+        elif self._api_key:
+            model_config["api_key"] = self._api_key
+
+        scrubbed_headers = _scrub_headers(headers)
+        logger.info(
+            "RealtimeSession %s connecting run_id=%s base_url=%s headers=%s",
+            self.session_id,
+            self._run_id,
+            model_config.get("url") or base_url or "<default>",
+            scrubbed_headers or {},
+        )
+        logger.debug(
+            "RealtimeSession %s model settings: %s",
+            self.session_id,
+            initial_model_settings,
+        )
 
         # Get the session from runner.run()
         # This returns a RealtimeSession that needs to be used as async context manager

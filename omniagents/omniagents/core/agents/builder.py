@@ -20,6 +20,7 @@ async def _build_handoffs_from_configs(
     settings: Dict[str, Any],
     approval_callback: Optional[Any] = None,
     _loading_stack: Optional[Set[Path]] = None,
+    parent_spec: Optional["AgentSpec"] = None,
 ) -> List["Handoff"]:
     """Build handoff objects from HandoffConfig list."""
     from agents import handoff
@@ -43,9 +44,18 @@ async def _build_handoffs_from_configs(
                     )
                     continue
 
-                # Load the handoff agent spec
-                # Don't pass loading_stack to avoid confusion between loading and building phases
-                handoff_spec = load_agent_spec_from_yaml(str(yaml_path))
+                # Load the handoff agent spec with registries from parent spec
+                # This ensures handoff agents use the same project-level tool registry
+                tool_registry = parent_spec._tool_registry if parent_spec else None
+                guardrails_registry = parent_spec._guardrails_registry if parent_spec else None
+                server_functions_registry = parent_spec._server_functions_registry if parent_spec else None
+                
+                handoff_spec = load_agent_spec_from_yaml(
+                    str(yaml_path),
+                    tool_registry=tool_registry,
+                    guardrails_registry=guardrails_registry,
+                    server_functions_registry=server_functions_registry,
+                )
 
                 # Add this path to building stack for recursive building
                 new_loading_stack = _loading_stack.copy()
@@ -198,6 +208,7 @@ async def _default_build_agent(
             settings=settings,
             approval_callback=approval_callback,
             _loading_stack=_loading_stack,
+            parent_spec=spec,
         )
 
     # Configure API key for the default client if provided.

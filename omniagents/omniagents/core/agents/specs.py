@@ -245,4 +245,12 @@ class AgentSpec:
     # --- Storage Metadata ---
     project_slug: Optional[str] = None
     agent_slug: Optional[str] = None
+    
+    # --- Hidden fields for passing registries to handoff agents ---
+    # These are populated when loading from project mode and used to pass
+    # the same tool/guardrails/server_functions registries to handoff agents
+    _tool_registry: Optional[Dict[str, Any]] = field(default=None, repr=False)
+    _guardrails_registry: Optional[Dict[str, Dict[str, Any]]] = field(default=None, repr=False)
+    _server_functions_registry: Optional[Dict[str, Any]] = field(default=None, repr=False)
+    
     voice_spec: Optional["AgentSpec"] = field(default=None, repr=False)

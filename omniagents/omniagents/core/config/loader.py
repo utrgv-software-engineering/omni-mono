@@ -398,20 +398,25 @@ def load_agent_spec_from_yaml(
     # caller's current working directory.
     try:
         try:
-            from dotenv import load_dotenv  # type: ignore
+            from dotenv import dotenv_values  # type: ignore
         except Exception:
-            load_dotenv = None  # python-dotenv not available
+            dotenv_values = None  # type: ignore
 
-        if load_dotenv is not None:
+        if dotenv_values is not None:
             current = config_file.parent
-            # Walk upward until filesystem root; load the first .env found
             while True:
                 env_path = current / ".env"
                 if env_path.exists():
                     try:
-                        # Do not override values already in os.environ; YAML-local
-                        # .env simply becomes the default source of env vars.
-                        load_dotenv(env_path, override=False)
+                        loaded_values = dotenv_values(env_path) or {}
+                        for key, value in loaded_values.items():
+                            if not key:
+                                continue
+                            existing_value = os.environ.get(key)
+                            if existing_value:
+                                continue
+                            if value is not None:
+                                os.environ[key] = value
                     except Exception:
                         pass
                     break
@@ -1257,5 +1262,10 @@ def load_agent_spec_from_yaml(
             spec.register_server_functions = server_functions_registrar
         except Exception:
             pass
+
+    # Store registries in spec for passing to handoff agents
+    spec._tool_registry = tool_registry
+    spec._guardrails_registry = guardrails_registry
+    spec._server_functions_registry = server_functions_registry
 
     return spec
