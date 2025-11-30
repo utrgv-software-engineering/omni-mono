@@ -462,6 +462,7 @@ def test_run_evaluation_with_agentio_tracing(monkeypatch, tmp_path):
         workflow_name=None,
         include_unmeasured=False,
         progress_cb=None,
+        concurrency=5,
     ):
         async_calls.append(
             {
@@ -469,6 +470,7 @@ def test_run_evaluation_with_agentio_tracing(monkeypatch, tmp_path):
                 "workflow_name": workflow_name,
                 "include_unmeasured": include_unmeasured,
                 "progress_cb": progress_cb,
+                "concurrency": concurrency,
             }
         )
         return {"ok": True}

@@ -91,6 +91,13 @@ class RemoteAgent(UnifiedAgentBase):
                 if self._context is not None:
                     start_params["context"] = self._context
 
+            # Pass workflow_name from run_config if provided
+            if run_config is not None:
+                if run_config.workflow_name:
+                    start_params["workflow_name"] = run_config.workflow_name
+                if run_config.group_id:
+                    start_params["group_id"] = run_config.group_id
+
             # Start run on remote server
             resp = await self._client.other.start_run(**start_params)
 

@@ -75,6 +75,10 @@ class InkBackend:
         resume_mode = bool(kwargs.get("resume"))
         initial_prompt = kwargs.get("initial_prompt")
 
+        # Ink mode does not support voice/realtime, so disable it
+        spec.realtime_mode = False
+        spec.voice_spec = None
+
         # Build the FastAPI app with the agent spec
         app = build_app(config_path=config_path, spec=spec, auth_token=auth_token)
 

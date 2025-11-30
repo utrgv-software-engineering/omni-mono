@@ -55,9 +55,22 @@ def _load_local_measures(cfg_path: Path) -> None:
             base_dir / "evaluation" / "measures.py",
             base_dir / "eval" / "measures.py",
         ]
+
+        # Find project root by searching upward for project.yml
+        prj_root = None
+        cur = base_dir.resolve()
+        while True:
+            if (cur / "project.yml").is_file():
+                prj_root = cur
+                break
+            if cur == cur.parent:
+                break
+            cur = cur.parent
+
+        # Also try via agents.json if present (legacy path)
         try:
             agents_manifest = base_dir / "agents.json"
-            if agents_manifest.is_file():
+            if agents_manifest.is_file() and prj_root is None:
                 import json as _json
 
                 data = _json.loads(agents_manifest.read_text(encoding="utf-8"))
@@ -72,7 +85,6 @@ def _load_local_measures(cfg_path: Path) -> None:
                         )
                     except Exception:
                         agent_file = None
-                prj_root = None
                 if agent_file:
                     cur = agent_file.resolve().parent
                     while True:
@@ -82,27 +94,24 @@ def _load_local_measures(cfg_path: Path) -> None:
                         if cur == cur.parent:
                             break
                         cur = cur.parent
-                if prj_root:
-                    import yaml as _yaml
-
-                    proj = (
-                        _yaml.safe_load(
-                            (prj_root / "project.yml").read_text(encoding="utf-8")
-                        )
-                        or {}
-                    )
-                    paths = proj.get("paths") or {}
-                    eval_paths = paths.get("evaluations", "evaluations")
-                    eval_dirs = (
-                        eval_paths if isinstance(eval_paths, list) else [eval_paths]
-                    )
-                    for ed in eval_dirs:
-                        ep = Path(ed)
-                        if not ep.is_absolute():
-                            ep = (prj_root / ep).resolve()
-                        candidates.append(ep / "measures.py")
         except Exception:
             pass
+
+        if prj_root:
+            import yaml as _yaml
+
+            proj = (
+                _yaml.safe_load((prj_root / "project.yml").read_text(encoding="utf-8"))
+                or {}
+            )
+            paths = proj.get("paths") or {}
+            eval_paths = paths.get("evaluations", "evaluations")
+            eval_dirs = eval_paths if isinstance(eval_paths, list) else [eval_paths]
+            for ed in eval_dirs:
+                ep = Path(ed)
+                if not ep.is_absolute():
+                    ep = (prj_root / ep).resolve()
+                candidates.append(ep / "measures.py")
         for py in candidates:
             if py.is_file():
                 mod_name = f"eval_measures_{py.parent.name}"
@@ -269,7 +278,7 @@ async def _run_judges(
             instructions = read_text_file(cfg_path.parent, str(instr_file))
         if not instructions:
             instructions = "You are an evaluation agent. Return ONLY a JSON object appropriate for this judge."
-        model = agent_cfg.get("model", "gpt-4o-mini")
+        model = agent_cfg.get("model", "gpt-4.1")
         output_type = agent_cfg.get("output_type", "dict")
         output_type_strict = bool(agent_cfg.get("output_type_strict", False))
         expect_dict = False
@@ -377,16 +386,19 @@ async def _run_scenario(
     try:
         if workflow_name:
             try:
-                from agentio import trace as agentio_trace
-    
+                from omniagents.studio.tracing import trace as agentio_trace
+
                 try:
                     import omniagents as _oa
-    
+
                     _oa_version = getattr(_oa, "__version__", None)
                 except Exception:
                     _oa_version = None
                 try:
-                    cfg = yaml.safe_load(Path(agent_yaml).read_text(encoding="utf-8")) or {}
+                    cfg = (
+                        yaml.safe_load(Path(agent_yaml).read_text(encoding="utf-8"))
+                        or {}
+                    )
                     raw_dims = list(
                         (
                             (
@@ -403,16 +415,18 @@ async def _run_scenario(
                     dims_catalog = []
                 import hashlib as _hashlib
                 import json as _json
-    
+
                 try:
                     _cat_blob = _json.dumps(
                         dims_catalog, sort_keys=True, ensure_ascii=False
                     )
-                    catalog_id = _hashlib.sha1(_cat_blob.encode("utf-8")).hexdigest()[:16]
+                    catalog_id = _hashlib.sha1(_cat_blob.encode("utf-8")).hexdigest()[
+                        :16
+                    ]
                 except Exception:
                     catalog_id = None
                 import uuid as _uuid
-    
+
                 try:
                     _sid = scenario.get("id") or scenario.get("name") or "scenario"
                     run_uid = f"{_sid}-{_uuid.uuid4().hex[:8]}"
@@ -448,7 +462,7 @@ async def _run_scenario(
             result = agent.run_streamed(msgs)
             async for _ in result.stream_events():
                 pass
-    
+
         run_error_payload = None
         get_last_run_end = getattr(agent, "get_last_run_end", None)
         if callable(get_last_run_end):
@@ -458,7 +472,7 @@ async def _run_scenario(
                 candidate = None
             if isinstance(candidate, dict) and candidate.get("error"):
                 run_error_payload = candidate
-    
+
         session_id = getattr(agent, "_session_id", None)
         history = (
             load_history(
@@ -469,7 +483,7 @@ async def _run_scenario(
             if session_id
             else []
         )
-    
+
         measures = scenario.get("measures") or []
         metadata = await _run_judges(Path(agent_yaml), eval_cfg, scenario, history)
         if run_error_payload is not None:
@@ -482,7 +496,9 @@ async def _run_scenario(
             err_info = run_error_payload.get("error")
             if isinstance(err_info, dict):
                 reason = (
-                    err_info.get("message") or err_info.get("type") or "agent_run_failed"
+                    err_info.get("message")
+                    or err_info.get("type")
+                    or "agent_run_failed"
                 )
                 details = err_info
             else:
@@ -496,7 +512,7 @@ async def _run_scenario(
                     "details": details,
                 }
             )
-    
+
         return {
             "scenario": scenario.get("name", "scenario"),
             "prompt": prompt,
@@ -585,10 +601,10 @@ async def run_evaluation_async(
             progress_cb({"event": "start", "total": total_runs})
         except Exception:
             pass
-    
+
     sem = asyncio.Semaphore(concurrency)
     completed_count = 0
-    
+
     async def _worker(sc):
         nonlocal completed_count
         async with sem:
@@ -596,7 +612,7 @@ async def run_evaluation_async(
                 str(cfg_path), sc, defaults, eval_cfg, workflow_name
             )
             r["scenario_config"] = sc
-            
+
             # Update progress safely
             completed_count += 1
             if progress_cb:
@@ -629,7 +645,7 @@ async def run_evaluation_async(
     for sc in scenarios:
         for _ in range(runs_per):
             tasks.append(asyncio.create_task(_worker(sc)))
-            
+
     if tasks:
         all_runs = await asyncio.gather(*tasks)
     else:
@@ -653,6 +669,28 @@ async def run_evaluation_async(
     return out
 
 
+def _needs_extended_pipeline(eval_cfg: Dict[str, Any]) -> bool:
+    """Check if evaluation needs the extended pipeline.
+
+    Extended pipeline is needed for:
+    - Environment configuration
+    - Synthetic scenarios (type: synthetic)
+    - Scripted multi-turn scenarios (prompts: [...])
+    """
+    if eval_cfg.get("environment"):
+        return True
+
+    for sc in eval_cfg.get("scenarios") or []:
+        # Synthetic scenario
+        if sc.get("type") == "synthetic":
+            return True
+        # Scripted multi-turn
+        if "prompts" in sc and isinstance(sc["prompts"], list):
+            return True
+
+    return False
+
+
 def run_evaluation(
     compiled_yaml: Path,
     tracing_cfg: Optional[Dict[str, Any]] = None,
@@ -660,12 +698,36 @@ def run_evaluation(
     include_unmeasured: bool = False,
     progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Dict[str, Any]:
+    # Check if we need environment-aware evaluation
+    cfg_path = Path(compiled_yaml).resolve()
+    raw_cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    eval_cfg = raw_cfg.get("evaluation") or {}
+
+    # Use extended pipeline for environment, synthetic, or multi-turn scenarios
+    if _needs_extended_pipeline(eval_cfg):
+        from omniagents.core.eval.multi_turn import (
+            run_evaluation_with_environment_async,
+        )
+
+        return asyncio.run(
+            run_evaluation_with_environment_async(
+                compiled_yaml,
+                workflow_name=workflow_base_name,
+                include_unmeasured=include_unmeasured,
+                progress_cb=progress_cb,
+                concurrency=int((tracing_cfg or {}).get("concurrency") or 5),
+            )
+        )
+
     use_agentio = False
     name = None
     try:
-        if tracing_cfg and str(tracing_cfg.get("provider", "")).lower() == "agentio":
+        if tracing_cfg and str(tracing_cfg.get("provider", "")).lower() in (
+            "agentio",
+            "studio",
+        ):
             use_agentio = True
-            import agentio
+            import omniagents.studio.tracing as studio_tracing
             from datetime import datetime
 
             base_name = (
@@ -677,7 +739,7 @@ def run_evaluation(
             name = f"{base_name}_scenarios_{start_suffix}"
             project = tracing_cfg.get("project") or "agent_eval"
             settings = tracing_cfg.get("settings") or {}
-            agentio.init(
+            studio_tracing.init(
                 project=str(project), name=name, replace_default=True, **settings
             )
     except Exception:

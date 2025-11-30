@@ -14,6 +14,7 @@ dependencies = [
     "requests",
     "beautifulsoup4",
     "pygit2",
+    "jsonref>=1.0.0",
 ]
 
 [project.scripts]

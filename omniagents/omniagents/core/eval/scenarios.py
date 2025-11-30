@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import hashlib
 import json
@@ -12,6 +13,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional
 
 import yaml
+from agents import RunConfig
+
+_logger = logging.getLogger(__name__)
 
 from omniagents.core.eval.pipeline import _catalog_with_labels
 from omniagents.core.utils.jinja import render_template, read_text_file
@@ -131,7 +135,7 @@ async def _build_generator_agent(
         raise RuntimeError(f"omniagents not available: {e}")
 
     instructions = _get_instructions(base_dir, agent_cfg)
-    model = agent_cfg.get("model", "gpt-4o-mini")
+    model = agent_cfg.get("model", "gpt-4.1")
     if not instructions:
         instructions = "You generate realistic user prompts given a persona tuple. Return ONLY JSON with keys name and prompt."
     try:
@@ -435,7 +439,7 @@ async def generate_scenarios(
         rendered = render_template(prompt_str, **ctx)
         if workflow_name:
             try:
-                from agentio import trace as agentio_trace
+                from omniagents.studio.tracing import trace as agentio_trace
 
                 try:
                     import omniagents as _oa
@@ -584,7 +588,20 @@ async def run_scenarios_against_agent(
 ) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
     cfg = _read_yaml(agent_yaml)
-    defaults = (cfg.get("evaluation") or {}).get("defaults") or {}
+    eval_cfg = cfg.get("evaluation") or {}
+    defaults = eval_cfg.get("defaults") or {}
+
+    # Load environment class if configured
+    environment = None
+    env_config = eval_cfg.get("environment")
+    base_dir = Path(agent_yaml).parent
+    if env_config:
+        try:
+            from omniagents.core.eval.multi_turn import load_environment_class
+
+            environment = load_environment_class(env_config, base_dir)
+        except Exception as e:
+            _logger.debug("Environment loading skipped: %s", e)
     raw_dims_catalog = list(
         ((cfg.get("evaluation") or {}).get("synthetic_data_generation") or {}).get(
             "dimensions"
@@ -649,6 +666,30 @@ async def run_scenarios_against_agent(
                 spec.max_turns = int(defaults.get("max_turns", spec.max_turns))
         except Exception:
             pass
+
+        # Environment setup for scenarios with fixtures
+        env_context = None
+        scenario_fixture = sc.get("fixture")
+        if environment and scenario_fixture:
+            try:
+                env_context = await environment.setup(sc)
+                # Inject environment context into spec.context for tools
+                if env_context and env_context.data:
+                    if spec.context is None:
+                        spec.context = {}
+                    elif not isinstance(spec.context, dict):
+                        spec.context = {"_original": spec.context}
+
+                    # Merge all environment data into context
+                    spec.context.update(env_context.data)
+
+                    # Set env vars as specified by the environment
+                    env_vars = environment.get_env_vars(env_context)
+                    for var_name, var_value in env_vars.items():
+                        os.environ[var_name] = str(var_value)
+            except Exception as e:
+                _logger.debug("Environment setup skipped for scenario: %s", e)
+
         prompt = sc.get("prompt", "")
         msgs = [{"role": "user", "content": prompt}]
         agent = None
@@ -664,7 +705,7 @@ async def run_scenarios_against_agent(
             try:
                 if workflow_name:
                     try:
-                        from agentio import trace as agentio_trace
+                        from omniagents.studio.tracing import trace as agentio_trace
 
                         try:
                             import omniagents as _oa
@@ -704,8 +745,11 @@ async def run_scenarios_against_agent(
                             }
                         }
                         gid = run_uid
+                        run_config = RunConfig(
+                            workflow_name=workflow_name, group_id=gid
+                        )
                         with agentio_trace(workflow_name, group_id=gid, metadata=meta):
-                            run = agent.run_streamed(msgs)
+                            run = agent.run_streamed(msgs, run_config=run_config)
                             async for _ in run.stream_events():
                                 pass
                     except Exception:
@@ -769,6 +813,14 @@ async def run_scenarios_against_agent(
         if agent_error_payload is not None:
             payload["agent_error"] = agent_error_payload
         results.append(payload)
+
+        # Environment teardown
+        if env_context and environment:
+            try:
+                await environment.teardown(env_context)
+            except Exception as e:
+                _logger.warning("Environment teardown failed: %s", e)
+
         if progress_cb:
             try:
                 ev = {

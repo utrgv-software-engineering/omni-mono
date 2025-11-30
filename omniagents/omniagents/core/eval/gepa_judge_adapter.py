@@ -259,7 +259,7 @@ class OmniAgentsJudgeAdapter:
         from omniagents.core.agents.builder import _default_build_agent
 
         agent_cfg = self._judge_cfg.get("agent") or {}
-        model = agent_cfg.get("model") or "gpt-4o-mini"
+        model = agent_cfg.get("model") or "gpt-4.1"
 
         def _get_instr() -> str:
             return instructions
@@ -511,7 +511,7 @@ class OmniAgentsJudgeAdapter:
             try:
                 if self.workflow_name:
                     try:
-                        from agentio import trace as agentio_trace  # type: ignore
+                        from omniagents.studio.tracing import trace as agentio_trace  # type: ignore
                         import uuid as _uuid
 
                         run_uid = _uuid.uuid4().hex[:8]
@@ -1060,7 +1060,7 @@ class OmniAgentsJudgeAdapter:
                 prompt = self._render_optimizer_prompt(name, base_text, ds_items)
                 if self.workflow_name:
                     try:
-                        from agentio import trace as agentio_trace  # type: ignore
+                        from omniagents.studio.tracing import trace as agentio_trace  # type: ignore
                         import uuid as _uuid
 
                         run_uid = _uuid.uuid4().hex[:8]

@@ -32,22 +32,6 @@ def __getattr__(name):
     raise AttributeError(f"module 'omniagents' has no attribute '{name}'")
 
 
-def _register_agentio_alias() -> None:
-    try:
-        agentio_module = importlib.import_module("omniagents.agentio")
-    except Exception:
-        return
-    sys.modules["agentio"] = agentio_module
-    submodules = getattr(agentio_module, "_SUBMODULE_MAP", {})
-    for alias, target in submodules.items():
-        try:
-            sys.modules[f"agentio.{alias}"] = importlib.import_module(target)
-        except Exception:
-            continue
-
-
-_register_agentio_alias()
-
 __all__ = [
     "__version__",
     "__version_info__",

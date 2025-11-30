@@ -148,7 +148,7 @@ async def evaluate_split(
                 )
             except Exception:
                 pass
-        model = agent_cfg.get("model", "gpt-4o-mini")
+        model = agent_cfg.get("model", "gpt-4.1")
         output_type = agent_cfg.get("output_type", dict)
         output_type_strict = bool(agent_cfg.get("output_type_strict", False))
         out_type = dict

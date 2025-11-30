@@ -131,7 +131,7 @@ def main():
                 if current == current.parent:
                     break
                 current = current.parent
-            
+
             if env_file:
                 try:
                     if load_dotenv(env_file, override=False):
@@ -579,6 +579,53 @@ def main():
         "--type", dest="opt_type", choices=["agent", "judge"], default="agent"
     )
     gen_optimizer.add_argument("--force", action="store_true")
+
+    gen_openapi = gen_sub.add_parser(
+        "openapi", help="Generate @function_tool functions from an OpenAPI spec"
+    )
+    gen_openapi.add_argument(
+        "--spec", "-s", required=True, help="Path to OpenAPI spec (YAML or JSON)"
+    )
+    gen_openapi.add_argument(
+        "--name",
+        "-n",
+        required=True,
+        help="API name for env var prefix (e.g., hotel_api -> HOTEL_API_KEY, HOTEL_API_BASE_URL)",
+    )
+    gen_openapi.add_argument(
+        "--project",
+        "-P",
+        required=False,
+        default=".",
+        help="Path to project.yml or its directory (default: current directory)",
+    )
+    gen_openapi.add_argument(
+        "--output",
+        "-o",
+        required=False,
+        default=None,
+        help="Output file path (default: tools/<name>_tools.py relative to project)",
+    )
+    gen_openapi.add_argument(
+        "--include-tags",
+        nargs="*",
+        default=None,
+        help="Only include operations with these OpenAPI tags",
+    )
+    gen_openapi.add_argument(
+        "--exclude-operations",
+        nargs="*",
+        default=None,
+        help="Exclude specific operationIds",
+    )
+    gen_openapi.add_argument(
+        "--context-params",
+        nargs="*",
+        default=None,
+        help="Path parameters to inject from runtime context instead of function args "
+        "(e.g., --context-params hotel_id user_id). These will be read from "
+        "ctx.context['param_name'] or fall back to ENV_PREFIX_PARAM_NAME env var.",
+    )
 
     studio_parser = subparsers.add_parser("studio", help="OmniAgents Studio utilities")
     studio_sub = studio_parser.add_subparsers(dest="studio_cmd")
@@ -1237,15 +1284,10 @@ def main():
             sys.exit(1)
         try:
             from omniagents.studio import tracing as studio_mod
-        except ImportError:
-            try:
-                from omniagents import agentio as studio_mod
-            except ImportError as e:
-                print(f"Error importing Studio module: {e}")
-                print(
-                    "Install optional dependencies with: pip install omniagents[studio]"
-                )
-                sys.exit(1)
+        except ImportError as e:
+            print(f"Error importing Studio module: {e}")
+            print("Install optional dependencies with: pip install omniagents[studio]")
+            sys.exit(1)
 
         project_hint, _manifest_path, derived_from_manifest = (
             _resolve_studio_project_value(getattr(args, "project", None))
@@ -2001,18 +2043,7 @@ def main():
                     provider = str(tracing.get("provider", "")).lower()
                     if provider in {"studio", "agentio"}:
                         from datetime import datetime
-
-                        try:
-                            from omniagents.studio import tracing as studio_tracing
-
-                            tracing_module = studio_tracing
-                        except ImportError:
-                            tracing_module = None
-
-                        if tracing_module is None:
-                            import agentio as legacy_tracing
-
-                            tracing_module = legacy_tracing
+                        from omniagents.studio import tracing as tracing_module
 
                         base_name = tracing.get("name") or _P(compiled_cfg_path).stem
                         if name_arg:
@@ -2322,18 +2353,7 @@ def main():
                     provider = str(tracing.get("provider", "")).lower()
                     if provider in {"studio", "agentio"}:
                         from datetime import datetime
-
-                        try:
-                            from omniagents.studio import tracing as studio_tracing
-
-                            tracing_module = studio_tracing
-                        except ImportError:
-                            tracing_module = None
-
-                        if tracing_module is None:
-                            import agentio as legacy_tracing
-
-                            tracing_module = legacy_tracing
+                        from omniagents.studio import tracing as tracing_module
 
                         project = tracing.get("project") or "scenario_runs"
                         base_name = tracing.get("name") or Path(compiled_cfg_path).stem
@@ -3765,6 +3785,68 @@ def main():
                 print("Next: use with --optimizer <key> on eval agent|judge optimize")
             except Exception as e:
                 print(f"Error generating optimizer: {e}")
+                import traceback
+
+                traceback.print_exc()
+                sys.exit(1)
+        elif args.gen_cmd == "openapi":
+            try:
+                from omniagents.core.openapi import generate_tools_file
+                from omniagents.core.project.scaffold import _resolve_project_root
+
+                spec_path = str(args.spec)
+                api_name = str(args.name)
+                include_tags = getattr(args, "include_tags", None)
+                exclude_ops = getattr(args, "exclude_operations", None)
+                project_ref = str(getattr(args, "project", ".") or ".")
+
+                # Resolve project root to find tools directory
+                try:
+                    project_root = _resolve_project_root(project_ref)
+                    tools_dir = project_root / "tools"
+                except FileNotFoundError:
+                    # No project.yml found, use current directory
+                    project_root = Path(project_ref).resolve()
+                    if project_root.is_file():
+                        project_root = project_root.parent
+                    tools_dir = project_root / "tools"
+
+                # Determine output path
+                output_path = getattr(args, "output", None)
+                if output_path:
+                    output_path = str(output_path)
+                else:
+                    output_path = str(tools_dir / f"{api_name}_tools.py")
+
+                context_params = getattr(args, "context_params", None)
+
+                count = generate_tools_file(
+                    spec_path=spec_path,
+                    output_path=output_path,
+                    api_name=api_name,
+                    include_tags=include_tags,
+                    exclude_operations=exclude_ops,
+                    context_params=context_params,
+                )
+                print(f"Generated {count} tools from OpenAPI spec")
+                print(f"  Spec: {spec_path}")
+                print(f"  Output: {output_path}")
+                print(f"  API name: {api_name}")
+                env_prefix = api_name.upper()
+                print(f"\nRequired environment variables:")
+                print(f"  {env_prefix}_BASE_URL - Base URL for the API")
+                print(f"  {env_prefix}_KEY - API key for authentication")
+                print(
+                    "\nNext: add the tool names to your agent's 'tools' list in agent.yml"
+                )
+            except FileNotFoundError as e:
+                print(f"Error: {e}")
+                sys.exit(1)
+            except ValueError as e:
+                print(f"Error: {e}")
+                sys.exit(1)
+            except Exception as e:
+                print(f"Error generating OpenAPI tools: {e}")
                 import traceback
 
                 traceback.print_exc()

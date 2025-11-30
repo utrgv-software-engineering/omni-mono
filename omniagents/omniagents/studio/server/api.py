@@ -3567,18 +3567,9 @@ def create_api_app(
                     name_label = None
             if provider in {"studio", "agentio"}:
                 try:
-                    from omniagents.studio import tracing as studio_tracing
-
-                    tracing_module = studio_tracing
+                    from omniagents.studio import tracing as tracing_module
                 except ImportError:
                     tracing_module = None
-                if tracing_module is None:
-                    try:
-                        import agentio as legacy_tracing
-
-                        tracing_module = legacy_tracing
-                    except Exception:
-                        tracing_module = None
                 if tracing_module is not None:
                     base_name = tracing.get("name") or compiled_path.stem
                     label = name_label or "scenarios"
@@ -4897,18 +4888,9 @@ def create_api_app(
                 label = payload.name.strip() or None
             if provider in {"studio", "agentio"}:
                 try:
-                    from omniagents.studio import tracing as studio_tracing
-
-                    tracing_module = studio_tracing
+                    from omniagents.studio import tracing as tracing_module
                 except ImportError:
                     tracing_module = None
-                if tracing_module is None:
-                    try:
-                        import agentio as legacy_tracing
-
-                        tracing_module = legacy_tracing
-                    except Exception:
-                        tracing_module = None
                 if tracing_module is not None:
                     base_name = tracing.get("name") or compiled_path.stem
                     label_segment = label or "suite"
@@ -5071,18 +5053,9 @@ def create_api_app(
             provider = str(tracing.get("provider") or "").lower()
             if provider in {"studio", "agentio"}:
                 try:
-                    from omniagents.studio import tracing as studio_tracing
-
-                    tracing_module = studio_tracing
+                    from omniagents.studio import tracing as tracing_module
                 except ImportError:
                     tracing_module = None
-                if tracing_module is None:
-                    try:
-                        import agentio as legacy_tracing
-
-                        tracing_module = legacy_tracing
-                    except Exception:
-                        tracing_module = None
                 if tracing_module is not None:
                     base_name = tracing.get("name") or compiled_path.stem
                     scenario_dir = Path(scenario_set.path).resolve().parent

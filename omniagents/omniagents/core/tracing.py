@@ -64,14 +64,6 @@ def setup_tracing(tracing_config: Optional[Dict[str, Any]]) -> None:
         except ImportError as exc:
             errors.append(exc)
 
-        if tracing_module is None and provider == "agentio":
-            try:
-                import agentio as legacy_tracing
-
-                tracing_module = legacy_tracing
-            except ImportError as exc:
-                errors.append(exc)
-
         if tracing_module is None:
             logger.warning("Studio tracing not available, using default OpenAI tracing")
             if errors:
