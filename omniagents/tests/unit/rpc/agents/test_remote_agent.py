@@ -177,7 +177,8 @@ async def test_run_streamed_with_variables(monkeypatch):
         await agent._event_queue.put({"method": "run_end", "params": {"run_id": "rid"}})
 
     runner = agent.run_streamed(
-        [{"role": "user", "content": "hi"}], run_config=SimpleNamespace()
+        [{"role": "user", "content": "hi"}],
+        run_config=SimpleNamespace(workflow_name=None, group_id=None),
     )
     gen = runner.stream_events()
 

@@ -16,6 +16,13 @@ except ImportError:
     __version__ = "0.0.0"
 # Imports deferred to prevent early initialization of agents library
 
+# Module-level imports for testability (allows monkeypatching in tests)
+from omniagents.core.project.export import save_agent_as_py
+from omniagents.core.eval.optimize import optimize_agent_from_project
+from omniagents.core.eval.annotate import annotate_scenarios, write_annotation_output
+from omniagents.core.runtime.runner import Runner
+from omniagents.core.debug import Debug
+
 
 CODESPACES_ENV = any(
     os.environ.get(key)
@@ -1125,8 +1132,6 @@ def main():
             traceback.print_exc()
             sys.exit(1)
     elif args.command == "run":
-        from omniagents.core.runtime.runner import Runner
-
         # Resolve spec/config from either --config or --project
         runner = None
         resolved_config_path = None
@@ -1191,8 +1196,6 @@ def main():
                 sys.exit(2)
 
         # Initialize debug system with CLI flag
-        from omniagents.core.debug import Debug
-
         Debug.init(cli_flag=args.debug)
 
         resume_flag = bool(getattr(args, "resume", False))
@@ -1264,8 +1267,6 @@ def main():
             _key, agent_yaml_path = resolve_agent(proj, agent_key=(args.agent or None))
             # Collect project tool dirs
             tool_dirs = proj.paths.get("tools") if hasattr(proj, "paths") else []
-            from omniagents.core.project.export import save_agent_as_py
-
             save_agent_as_py(
                 str(agent_yaml_path), args.output, project_tool_dirs=tool_dirs or []
             )
@@ -1356,9 +1357,6 @@ def main():
             sys.exit(1)
     elif args.command == "agent":
         if args.agent_cmd == "run":
-            from omniagents.core.runtime.runner import Runner
-            from omniagents.core.debug import Debug
-
             runner = None
             resolved_config_path = None
             if getattr(args, "project", None):
@@ -1468,8 +1466,6 @@ def main():
                     proj, agent_key=(args.agent or None)
                 )
                 tool_dirs = proj.paths.get("tools") if hasattr(proj, "paths") else []
-                from omniagents.core.project.export import save_agent_as_py
-
                 save_agent_as_py(
                     str(agent_yaml_path), args.output, project_tool_dirs=tool_dirs or []
                 )
@@ -1492,8 +1488,6 @@ def main():
                             "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
                         )
                         sys.exit(2)
-                from omniagents.core.eval.optimize import optimize_agent_from_project
-
                 optimize_agent_from_project(
                     proj_path=str(proj_path),
                     agent_key=(str(getattr(args, "agent", "") or "") or None),
@@ -2235,8 +2229,6 @@ def main():
                         "Error: Unable to determine Studio project; set tracing.project in project.yml or provide --studio-project."
                     )
                     sys.exit(2)
-                from omniagents.core.eval.annotate import annotate_scenarios
-
                 annotated, _original, source_path = annotate_scenarios(
                     Path(agent_yaml_path), scenario_path, studio_project, None
                 )
@@ -3135,8 +3127,6 @@ def main():
                             "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
                         )
                         sys.exit(2)
-                from omniagents.core.eval.optimize import optimize_agent_from_project
-
                 optimize_agent_from_project(
                     proj_path=str(proj_path),
                     agent_key=(str(getattr(args, "agent", "") or "") or None),

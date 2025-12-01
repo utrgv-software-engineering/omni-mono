@@ -136,7 +136,7 @@ class TestLocalAgent:
         mock_response.result = [{"id": "session1", "created": "2024-01-01"}]
         mock_client.other.list_sessions.return_value = mock_response
 
-        with patch.object(adapter, "_rpc_client", mock_client):
+        with patch.object(adapter, "_client", mock_client):
             with patch.object(adapter, "initialize", new_callable=AsyncMock):
                 sessions = await adapter.list_sessions()
 
@@ -152,7 +152,7 @@ class TestLocalAgent:
         mock_client = AsyncMock()
         mock_client.other.archive_session.return_value = Mock()
 
-        with patch.object(adapter, "_rpc_client", mock_client):
+        with patch.object(adapter, "_client", mock_client):
             with patch.object(adapter, "initialize", new_callable=AsyncMock):
                 await adapter.archive_session("session123")
 

@@ -103,7 +103,7 @@ def test_run_command_without_prompt_skips_initial_prompt(monkeypatch, stub_runti
     assert "initial_prompt" not in kwargs
 
 
-def test_run_command_web_mode_prefers_voice(monkeypatch, stub_runtime):
+def test_run_command_web_mode_defaults_voice_off(monkeypatch, stub_runtime):
     runner = DummyRunner()
 
     def fake_runner(spec=None, config_path=None):
@@ -127,7 +127,7 @@ def test_run_command_web_mode_prefers_voice(monkeypatch, stub_runtime):
 
     module = sys.modules["omniagents.core.project.runtime"]
     assert module.calls
-    assert module.calls[-1]["prefer_voice"] is True
+    assert module.calls[-1]["prefer_voice"] is False
 
 
 def test_run_command_server_mode_includes_network_args(monkeypatch, stub_runtime):
@@ -165,7 +165,7 @@ def test_run_command_server_mode_includes_network_args(monkeypatch, stub_runtime
     assert kwargs["reload"] is True
     module = sys.modules["omniagents.core.project.runtime"]
     assert module.calls
-    assert module.calls[-1]["prefer_voice"] is True
+    assert module.calls[-1]["prefer_voice"] is False
 
 
 def test_run_command_web_mode_with_agent_disables_voice(monkeypatch, stub_runtime):
@@ -477,10 +477,10 @@ def test_agent_run_server_mode_forwards_args(monkeypatch, stub_runtime):
     assert kwargs["reload"] is True
     module = sys.modules["omniagents.core.project.runtime"]
     assert module.calls
-    assert module.calls[-1]["prefer_voice"] is True
+    assert module.calls[-1]["prefer_voice"] is False
 
 
-def test_agent_run_web_mode_prefers_voice(monkeypatch, stub_runtime):
+def test_agent_run_web_mode_defaults_voice_off(monkeypatch, stub_runtime):
     runner = DummyRunner()
 
     def fake_runner(spec=None, config_path=None):
@@ -505,10 +505,10 @@ def test_agent_run_web_mode_prefers_voice(monkeypatch, stub_runtime):
 
     module = sys.modules["omniagents.core.project.runtime"]
     assert module.calls
-    assert module.calls[-1]["prefer_voice"] is True
+    assert module.calls[-1]["prefer_voice"] is False
 
 
-def test_agent_run_server_mode_prefers_voice(monkeypatch, stub_runtime):
+def test_agent_run_server_mode_defaults_voice_off(monkeypatch, stub_runtime):
     runner = DummyRunner()
 
     def fake_runner(spec=None, config_path=None):
@@ -533,7 +533,7 @@ def test_agent_run_server_mode_prefers_voice(monkeypatch, stub_runtime):
 
     module = sys.modules["omniagents.core.project.runtime"]
     assert module.calls
-    assert module.calls[-1]["prefer_voice"] is True
+    assert module.calls[-1]["prefer_voice"] is False
 
 
 def test_agent_run_server_mode_with_agent_disables_voice(monkeypatch, stub_runtime):

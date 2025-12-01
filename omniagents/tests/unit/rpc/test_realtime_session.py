@@ -782,7 +782,7 @@ async def test_start_session_with_guardrails(settings_with_key):
         assert call_kwargs["output_guardrails"][0] == mock_output_guardrail
 
 
-def test_resolve_realtime_url_non_azure_returns_none(monkeypatch, realtime_spec):
+def test_resolve_realtime_url_builds_from_base_url(monkeypatch, realtime_spec):
     monkeypatch.delenv("AZURE_OPENAI_ENDPOINT", raising=False)
     resolved = _resolve_realtime_url(
         explicit_url=None,
@@ -790,7 +790,8 @@ def test_resolve_realtime_url_non_azure_returns_none(monkeypatch, realtime_spec)
         spec=realtime_spec,
         settings={},
     )
-    assert resolved is None
+    # Now builds a realtime URL from the base_url
+    assert resolved == "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview"
 
 
 def test_resolve_realtime_url_keeps_explicit(monkeypatch, realtime_spec):
@@ -805,7 +806,7 @@ def test_resolve_realtime_url_keeps_explicit(monkeypatch, realtime_spec):
     assert resolved == explicit
 
 
-def test_resolve_realtime_url_builds_azure_path(monkeypatch, realtime_spec):
+def test_resolve_realtime_url_builds_from_azure_base_url(monkeypatch, realtime_spec):
     monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://cs-hackr.openai.azure.com/")
     monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-realtime")
     monkeypatch.setenv("AZURE_OPENAI_API_VERSION", "2024-05-01-preview")
@@ -815,9 +816,10 @@ def test_resolve_realtime_url_builds_azure_path(monkeypatch, realtime_spec):
         spec=realtime_spec,
         settings={},
     )
+    # Now builds a realtime URL directly from base_url with model param
     assert (
         resolved
-        == "wss://cs-hackr.openai.azure.com/openai/deployments/gpt-realtime/realtime?api-version=2024-05-01-preview"
+        == "wss://cs-hackr.openai.azure.com/openai/v1/realtime?model=gpt-realtime"
     )
 
 

@@ -150,7 +150,12 @@ async def test_build_handoffs_from_configs_builds_agents(monkeypatch, tmp_path):
         build_calls.append((_loading_stack, approval_callback, spec.name))
         return types.SimpleNamespace(name=spec.name)
 
-    def fake_loader(path):
+    def fake_loader(
+        path,
+        tool_registry=None,
+        guardrails_registry=None,
+        server_functions_registry=None,
+    ):
         return child_spec
 
     handoff_calls = []
