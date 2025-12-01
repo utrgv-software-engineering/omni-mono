@@ -236,11 +236,16 @@ class WebBackend:
     @staticmethod
     def _should_auto_open(auto_open_arg: bool | None) -> bool:
         env_val = os.environ.get("OMNI_WEB_AUTO_OPEN")
-        env_enabled = True if env_val is None else env_val.lower() not in {
-            "0",
-            "false",
-            "no",
-        }
+        env_enabled = (
+            True
+            if env_val is None
+            else env_val.lower()
+            not in {
+                "0",
+                "false",
+                "no",
+            }
+        )
         if auto_open_arg is None:
             return env_enabled
         return bool(auto_open_arg)
@@ -248,10 +253,11 @@ class WebBackend:
     @staticmethod
     def _is_minimal_ui(minimal_arg: bool | None) -> bool:
         env_val = os.environ.get("OMNI_WEB_MINIMAL")
-        env_enabled = (
-            env_val is not None
-            and env_val.lower() not in {"0", "false", "no"}
-        )
+        env_enabled = env_val is not None and env_val.lower() not in {
+            "0",
+            "false",
+            "no",
+        }
         if minimal_arg is None:
             return env_enabled
         return bool(minimal_arg)

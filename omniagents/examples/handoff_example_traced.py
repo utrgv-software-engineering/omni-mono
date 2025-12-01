@@ -3,7 +3,7 @@ from __future__ import annotations
 from dotenv import load_dotenv
 from agents import Agent, handoff, set_default_openai_api
 from omniagents import Runner, function_tool
-import agentio  # Import AgentIO for tracing
+import omniagents.studio.tracing as studio_tracing  # Import Studio for tracing
 
 # Load environment variables from .env file
 load_dotenv()
@@ -11,9 +11,9 @@ load_dotenv()
 # Set the default OpenAI API to use chat completions
 set_default_openai_api("chat_completions")
 
-# Initialize AgentIO tracing
+# Initialize Studio tracing
 # This will create a local database and launch the dashboard
-agentio.init(
+studio_tracing.init(
     project="handoff_demo",  # Group traces under this project
     name="multi_agent_handoff",  # Name for this trace
     resume="never",  # Always create a new trace

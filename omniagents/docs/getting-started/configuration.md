@@ -100,7 +100,7 @@ agents:
   exclude: []             # Agent patterns to exclude (optional)
 
 tracing:
-  provider: studio        # Options: default, studio, agentio, none
+  provider: studio        # Options: default, studio, none
   project: myproject
   name: trace_name
   settings:

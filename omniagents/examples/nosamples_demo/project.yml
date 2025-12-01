@@ -7,7 +7,7 @@ agents:
   entrypoint: nosamples_demo
 
 tracing:
-  provider: agentio
+  provider: studio
   project: nosamples_demo_project
   name: nosamples_demo
   settings:

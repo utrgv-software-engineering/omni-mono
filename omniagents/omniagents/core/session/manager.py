@@ -204,7 +204,9 @@ class SessionManager:  # noqa: D101
             project_slug=self._project_slug, agent_slug=self._agent_slug
         )
 
-    def persist_metadata(self, session: Session, *, context: Any, variables: Any) -> None:
+    def persist_metadata(
+        self, session: Session, *, context: Any, variables: Any
+    ) -> None:
         update_session_metadata(
             session.id,
             context=context,

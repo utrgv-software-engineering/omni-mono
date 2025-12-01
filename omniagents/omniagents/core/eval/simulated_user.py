@@ -11,11 +11,34 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from agents import Agent, Runner
+from contextlib import contextmanager
+
+from agents import Agent, Runner, RunConfig
+from agents.tracing.scope import Scope
 
 from omniagents.core.utils.jinja import render_template
 
 __all__ = ["SimulatedUser", "UserPersona", "COMPLETION_SIGNALS"]
+
+
+@contextmanager
+def isolated_trace_context():
+    """Temporarily clear the trace context to allow creating a new independent trace.
+
+    The OpenAI Agents SDK reuses the current trace if one exists. This context manager
+    temporarily clears the trace context so that a new trace can be created with its
+    own workflow_name and group_id.
+    """
+    # Save current trace and span
+    old_trace_token = Scope.set_current_trace(None)
+    old_span_token = Scope.set_current_span(None)
+    try:
+        yield
+    finally:
+        # Restore previous trace and span
+        Scope.reset_current_trace(old_trace_token)
+        Scope.reset_current_span(old_span_token)
+
 
 # Sentinel to detect when user signals completion
 COMPLETION_SIGNALS = ["[DONE]", "[GOAL_ACHIEVED]", "[GIVE_UP]"]
@@ -119,6 +142,7 @@ class SimulatedUser:
     """A simulated user that interacts with an agent to achieve a goal.
 
     Uses an agents.Agent to generate realistic user responses based on a persona.
+    Maintains conversation history so the LLM has full context of the exchange.
     """
 
     def __init__(
@@ -126,13 +150,16 @@ class SimulatedUser:
         persona: UserPersona,
         agent_description: str,
         model: str = "gpt-4.1",
+        run_config: Optional[RunConfig] = None,
     ):
         self.persona = persona
         self.agent_description = agent_description
         self.model = model
+        self.run_config = run_config
         self._agent: Optional[Agent] = None
         self._completed = False
         self._completion_reason: Optional[str] = None
+        self._history: List[Dict[str, str]] = []  # Conversation history
 
     def _get_agent(self) -> Agent:
         """Get or create the underlying Agent."""
@@ -162,6 +189,11 @@ class SimulatedUser:
         Returns either the configured initial_message or generates one from the goal.
         """
         if self.persona.initial_message:
+            # Store in history as user's first message (from simulated user's perspective,
+            # their output is what gets sent TO the real agent as a "user" message)
+            self._history.append(
+                {"role": "assistant", "content": self.persona.initial_message}
+            )
             return self.persona.initial_message
 
         # Generate an initial message based on the goal
@@ -170,14 +202,21 @@ Your goal: {self.persona.goal}
 
 Write only the message, nothing else. Be natural and conversational."""
 
-        result = await Runner.run(self._get_agent(), prompt, max_turns=1)
-        return str(result.final_output or "")
+        # Use isolated trace context so simulated user gets its own trace
+        with isolated_trace_context():
+            result = await Runner.run(
+                self._get_agent(), prompt, max_turns=1, run_config=self.run_config
+            )
+        response = str(result.final_output or "")
+        # Store the generated message in history
+        self._history.append({"role": "assistant", "content": response})
+        return response
 
     async def respond(self, assistant_message: str) -> str:
         """Generate the user's response to the assistant's message.
 
         Args:
-            assistant_message: The assistant's latest message.
+            assistant_message: The assistant's latest message (from the real agent).
 
         Returns:
             The user's response text.
@@ -185,9 +224,22 @@ Write only the message, nothing else. Be natural and conversational."""
         if self._completed:
             return "[DONE] (already completed)"
 
-        # The prompt is just the assistant's message - the agent has instructions
-        result = await Runner.run(self._get_agent(), assistant_message, max_turns=1)
+        # Add the real agent's message to history (appears as "user" to the simulated user LLM)
+        self._history.append({"role": "user", "content": assistant_message})
+
+        # Use isolated trace context so simulated user gets its own trace
+        with isolated_trace_context():
+            # Pass the full conversation history
+            result = await Runner.run(
+                self._get_agent(),
+                self._history.copy(),
+                max_turns=1,
+                run_config=self.run_config,
+            )
         response = str(result.final_output or "")
+
+        # Add simulated user's response to history
+        self._history.append({"role": "assistant", "content": response})
 
         # Check for completion signals
         response_upper = response.upper()

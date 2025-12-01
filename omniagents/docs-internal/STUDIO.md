@@ -5,9 +5,9 @@ OmniAgents Studio is the local-first experience for inspecting runs, traces, and
 ## Current Integration Status
 
 - **Trace tooling in-tree**: The Studio tracing toolkit now lives under `omniagents/studio/tracing`, removing the need to manage a separate repository. The FastAPI server and React UI assets are published from `omniagents/studio/server`, and the CLI has a dedicated `studio` command group (`omniagents studio ...`) that exposes the server, export, and project-inspection flows.
-- **CLI entry point**: `omniagents studio serve` replaces the former `agentio serve`. Optional extras `omniagents[studio]` and `omniagents[studio-server]` provide the HTTPX/FastAPI/uvicorn dependencies so that Studio ships with the same releases as OmniAgents.
+- **CLI entry point**: `omniagents studio serve` provides the Studio server. Optional extras `omniagents[studio]` and `omniagents[studio-server]` provide the HTTPX/FastAPI/uvicorn dependencies so that Studio ships with the same releases as OmniAgents.
 - **Storage unification**: Both OmniAgents session logs and Studio trace archives now live under `~/.omniagents/` (configurable via `OMNIAGENTS_HOME`). Session history is stored at `~/.omniagents/sessions/sessions.db`, while Studio traces and analysis databases are stored under `~/.omniagents/traces/` (one SQLite file per project). The server now creates an empty database when a project is specified, so Studio can launch before any traces exist. This alignment avoids scattering data across ad-hoc locations and prepares the ground for additional Studio features.
-- **Runtime wiring**: The Studio backend surfaces the same API endpoints as the original AgentIO server, but the CLI scaffolding now lives directly in OmniAgents. Auto-loading project manifests will be added in a follow-up so Studio can discover `project.yml` automatically when invoked from a project directory.
+- **Runtime wiring**: The Studio backend surfaces API endpoints and the CLI scaffolding lives directly in OmniAgents. Auto-loading project manifests will be added in a follow-up so Studio can discover `project.yml` automatically when invoked from a project directory.
 - **UI branding checkpoint**: The React static bundle now carries OmniAgents Studio naming, with broader navigation and visual updates scheduled for a subsequent iteration.
 
 ## Development Workflow
@@ -81,7 +81,7 @@ OmniAgents Studio is the local-first experience for inspecting runs, traces, and
 
 - **Manifest-aware runtime**: Teach `omniagents studio serve` to inspect the current working tree for `project.yml`, infer the entry agent, and preload project metadata so the UI can display context immediately.
 - **UI updates**: Rebrand the React bundle to “OmniAgents Studio” and tighten navigation around core workflows (run review, logs, synthetic data). This will incorporate OmniAgents conventions (agent names, workflow keys, failure categories) directly into the interface.
-- **Studio Python utilities**: Expose higher-level helpers under `omniagents.studio` for scripts and notebooks (e.g., opening Studio, exporting annotations, inspecting traces). These will build on the existing `agentio` functions but present Studio-focused abstractions.
+- **Studio Python utilities**: Expose higher-level helpers under `omniagents.studio` for scripts and notebooks (e.g., opening Studio, exporting annotations, inspecting traces).
 - **Documentation**: Expand this document with quickstarts, command references, and troubleshooting guidance once the auto-discovery and UI work land.
 - **Beyond tracing**: Evolve Studio into the control plane for OmniAgents projects—think dbt Cloud for agents—covering manifest management, log orchestration, artifact review, and collaborative annotations. Tracing remains the baseline feature, but every change should keep the broader “project cockpit” vision in mind.
 - **UI parity with CLI**: Gradually surface major `omniagents` CLI flows—agent creation, guardrails, scenario generation, log suites, agent-as-judge scaffolds, optimization runs, and project compilation—directly in the Studio so users can launch workflows without leaving the UI.

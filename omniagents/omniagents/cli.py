@@ -462,9 +462,7 @@ def main():
     )
     scen_ann.add_argument("--input", "-i", default="")
     scen_ann.add_argument("--output", "-o", default=None)
-    scen_ann.add_argument(
-        "--studio-project", "--agentio-project", dest="studio_project", default=None
-    )
+    scen_ann.add_argument("--studio-project", dest="studio_project", default=None)
     scen_ann.add_argument("--select", default="")
     scen_ann.add_argument("--exclude", default="")
     scen_ann.add_argument("-q", "--quiet", action="count", default=0)
@@ -2041,7 +2039,7 @@ def main():
                 wf_name = None
                 try:
                     provider = str(tracing.get("provider", "")).lower()
-                    if provider in {"studio", "agentio"}:
+                    if provider == "studio":
                         from datetime import datetime
                         from omniagents.studio import tracing as tracing_module
 
@@ -2296,7 +2294,7 @@ def main():
                     exclude=str(getattr(args, "exclude", "") or ""),
                     agent_key=(str(getattr(args, "agent", "") or "") or None),
                 )
-                from omniagents.core.eval.scenarios import run_scenarios_against_agent
+                from omniagents.core.eval.multi_turn import run_scenarios_against_agent
                 from pathlib import Path as _P
 
                 base = _P(proj_path).resolve()
@@ -2351,7 +2349,7 @@ def main():
                 tracing = cfg.get("tracing") or {}
                 try:
                     provider = str(tracing.get("provider", "")).lower()
-                    if provider in {"studio", "agentio"}:
+                    if provider == "studio":
                         from datetime import datetime
                         from omniagents.studio import tracing as tracing_module
 

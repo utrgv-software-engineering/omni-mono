@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import asyncio
-import logging
-import os
 import hashlib
 import json
+import logging
 import math
 import random
 import re
@@ -13,16 +11,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional
 
 import yaml
-from agents import RunConfig
 
 _logger = logging.getLogger(__name__)
 
 from omniagents.core.eval.pipeline import _catalog_with_labels
 from omniagents.core.utils.jinja import render_template, read_text_file
-from omniagents.core.config.loader import load_agent_spec_from_yaml
-from omniagents.core.agents.factory import create_unified_agent
-from omniagents.core.session.history_db import load_history
-from omniagents.core.evaluation import final_assistant_text
 
 
 def _read_yaml(p: Path) -> Dict[str, Any]:
@@ -439,7 +432,7 @@ async def generate_scenarios(
         rendered = render_template(prompt_str, **ctx)
         if workflow_name:
             try:
-                from omniagents.studio.tracing import trace as agentio_trace
+                from omniagents.studio.tracing import trace as studio_trace
 
                 try:
                     import omniagents as _oa
@@ -469,7 +462,7 @@ async def generate_scenarios(
                     }
                 }
                 gid = run_uid
-                with agentio_trace(workflow_name, group_id=gid, metadata=meta):
+                with studio_trace(workflow_name, group_id=gid, metadata=meta):
                     outs = await _run_generation(
                         agent, rendered, max_turns=int(input_cfg.get("max_turns", 1))
                     )
@@ -575,271 +568,3 @@ async def generate_scenarios(
         except Exception:
             pass
     return scenarios, out_path, ts
-
-
-async def run_scenarios_against_agent(
-    agent_yaml: Path,
-    scenarios: List[Dict[str, Any]],
-    max_turns: int | None = None,
-    include_history: bool = False,
-    workflow_name: str | None = None,
-    progress_cb: Any | None = None,
-    scenario_source_path: Optional[Path] = None,
-) -> List[Dict[str, Any]]:
-    results: List[Dict[str, Any]] = []
-    cfg = _read_yaml(agent_yaml)
-    eval_cfg = cfg.get("evaluation") or {}
-    defaults = eval_cfg.get("defaults") or {}
-
-    # Load environment class if configured
-    environment = None
-    env_config = eval_cfg.get("environment")
-    base_dir = Path(agent_yaml).parent
-    if env_config:
-        try:
-            from omniagents.core.eval.multi_turn import load_environment_class
-
-            environment = load_environment_class(env_config, base_dir)
-        except Exception as e:
-            _logger.debug("Environment loading skipped: %s", e)
-    raw_dims_catalog = list(
-        ((cfg.get("evaluation") or {}).get("synthetic_data_generation") or {}).get(
-            "dimensions"
-        )
-        or []
-    )
-    dims_catalog = _catalog_with_labels(raw_dims_catalog)
-    import hashlib as _hashlib, json as _json
-
-    try:
-        _cat_blob = _json.dumps(dims_catalog, sort_keys=True, ensure_ascii=False)
-        catalog_id = _hashlib.sha1(_cat_blob.encode("utf-8")).hexdigest()[:16]
-    except Exception:
-        catalog_id = None
-    total = len(scenarios)
-    if progress_cb:
-        try:
-            progress_cb({"event": "start", "total": total})
-        except Exception:
-            pass
-    tracing_initialized = False
-    failed_count = 0
-
-    def _normalize_error(err: Any) -> Dict[str, Any]:
-        if isinstance(err, dict):
-            return err
-        message = "" if err is None else str(err)
-        if isinstance(err, BaseException):
-            return {
-                "message": message,
-                "type": err.__class__.__name__,
-            }
-        if message:
-            return {"message": message}
-        return {"message": "unknown_error"}
-
-    for idx, sc in enumerate(scenarios):
-        scenario_path_value: Optional[str] = None
-        try:
-            raw_path = sc.get("_source_path")
-            if raw_path:
-                scenario_path_value = str(raw_path)
-        except Exception:
-            scenario_path_value = None
-        if scenario_path_value is None and scenario_source_path is not None:
-            scenario_path_value = str(scenario_source_path)
-        spec = load_agent_spec_from_yaml(str(agent_yaml))
-        trace_cfg = dict(spec.tracing_config or {})
-        if workflow_name:
-            trace_cfg["workflow_name"] = workflow_name
-        spec.tracing_config = trace_cfg
-        if not tracing_initialized:
-            from omniagents.core.tracing import setup_tracing
-
-            setup_tracing(spec.tracing_config)
-            tracing_initialized = True
-        spec.use_safe_agent = False
-        try:
-            if max_turns is not None:
-                spec.max_turns = int(max_turns)
-            elif "max_turns" in defaults:
-                spec.max_turns = int(defaults.get("max_turns", spec.max_turns))
-        except Exception:
-            pass
-
-        # Environment setup for scenarios with fixtures
-        env_context = None
-        scenario_fixture = sc.get("fixture")
-        if environment and scenario_fixture:
-            try:
-                env_context = await environment.setup(sc)
-                # Inject environment context into spec.context for tools
-                if env_context and env_context.data:
-                    if spec.context is None:
-                        spec.context = {}
-                    elif not isinstance(spec.context, dict):
-                        spec.context = {"_original": spec.context}
-
-                    # Merge all environment data into context
-                    spec.context.update(env_context.data)
-
-                    # Set env vars as specified by the environment
-                    env_vars = environment.get_env_vars(env_context)
-                    for var_name, var_value in env_vars.items():
-                        os.environ[var_name] = str(var_value)
-            except Exception as e:
-                _logger.debug("Environment setup skipped for scenario: %s", e)
-
-        prompt = sc.get("prompt", "")
-        msgs = [{"role": "user", "content": prompt}]
-        agent = None
-        error_info: Dict[str, Any] | None = None
-        agent_error_payload: Dict[str, Any] | None = None
-
-        try:
-            agent = await create_unified_agent(spec)
-        except Exception as exc:
-            error_info = _normalize_error(exc)
-
-        if agent is not None and error_info is None:
-            try:
-                if workflow_name:
-                    try:
-                        from omniagents.studio.tracing import trace as agentio_trace
-
-                        try:
-                            import omniagents as _oa
-
-                            _oa_version = getattr(_oa, "__version__", None)
-                        except Exception:
-                            _oa_version = None
-                        import uuid as _uuid
-
-                        try:
-                            _sid = sc.get("id") or sc.get("name") or "scenario"
-                            run_uid = f"{_sid}-{_uuid.uuid4().hex[:8]}"
-                        except Exception:
-                            run_uid = _uuid.uuid4().hex[:8]
-                        scenario_meta = {
-                            "id": sc.get("id"),
-                            "name": sc.get("name"),
-                        }
-                        if scenario_path_value:
-                            scenario_meta["path"] = scenario_path_value
-                        meta = {
-                            "omniagents": {
-                                "run_type": "synthetic_generation",
-                                "scenario": scenario_meta,
-                                "run": {"id": run_uid},
-                                "synthetic": {
-                                    "catalog_id": catalog_id,
-                                    "catalog": {"dimensions": dims_catalog},
-                                    "selection": {"mapping": sc.get("dimensions", {})},
-                                },
-                                "config": {"agent_yaml": str(agent_yaml)},
-                                **(
-                                    {"omniagents_version": _oa_version}
-                                    if _oa_version
-                                    else {}
-                                ),
-                            }
-                        }
-                        gid = run_uid
-                        run_config = RunConfig(
-                            workflow_name=workflow_name, group_id=gid
-                        )
-                        with agentio_trace(workflow_name, group_id=gid, metadata=meta):
-                            run = agent.run_streamed(msgs, run_config=run_config)
-                            async for _ in run.stream_events():
-                                pass
-                    except Exception:
-                        run = agent.run_streamed(msgs)
-                        async for _ in run.stream_events():
-                            pass
-                else:
-                    run = agent.run_streamed(msgs)
-                    async for _ in run.stream_events():
-                        pass
-            except Exception as exc:
-                error_info = _normalize_error(exc)
-
-        session_id = getattr(agent, "_session_id", None) if agent else None
-
-        if agent is not None:
-            get_last_run_end = getattr(agent, "get_last_run_end", None)
-            if callable(get_last_run_end):
-                try:
-                    candidate = get_last_run_end()
-                except Exception:
-                    candidate = None
-                if isinstance(candidate, dict) and candidate.get("error"):
-                    agent_error_payload = candidate
-                    if error_info is None:
-                        error_info = _normalize_error(candidate.get("error"))
-
-        history: List[Dict[str, Any]] = []
-        final_text = ""
-        if error_info is None and session_id:
-            history = load_history(
-                session_id,
-                project_slug=spec.project_slug,
-                agent_slug=spec.agent_slug,
-            )
-            try:
-                final_text = final_assistant_text(history)
-            except Exception:
-                final_text = ""
-        else:
-            if error_info is None and agent is None:
-                error_info = _normalize_error("failed_to_create_agent")
-        if error_info is not None:
-            failed_count += 1
-            history = []
-            final_text = ""
-
-        payload = {
-            "scenario_id": sc.get("id"),
-            "scenario_name": sc.get("name"),
-            "prompt": prompt,
-            "session_id": session_id,
-            "final_assistant_text": final_text,
-            "history_len": len(history),
-            **({"history": history} if include_history else {}),
-        }
-        if scenario_path_value:
-            payload["scenario_path"] = scenario_path_value
-        if error_info is not None:
-            payload["error"] = error_info
-        if agent_error_payload is not None:
-            payload["agent_error"] = agent_error_payload
-        results.append(payload)
-
-        # Environment teardown
-        if env_context and environment:
-            try:
-                await environment.teardown(env_context)
-            except Exception as e:
-                _logger.warning("Environment teardown failed: %s", e)
-
-        if progress_cb:
-            try:
-                ev = {
-                    "event": "progress",
-                    "current": idx + 1,
-                    "total": total,
-                    "scenario_id": sc.get("id"),
-                }
-                if failed_count:
-                    ev["failed"] = failed_count
-                progress_cb(ev)
-            except Exception:
-                pass
-    if progress_cb:
-        try:
-            done_payload = {"event": "done", "count": len(results)}
-            if failed_count:
-                done_payload["failed"] = failed_count
-            progress_cb(done_payload)
-        except Exception:
-            pass
-    return results

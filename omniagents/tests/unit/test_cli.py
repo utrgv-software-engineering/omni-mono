@@ -1141,9 +1141,11 @@ def test_eval_scenarios_run(monkeypatch, tmp_path, capsys):
             progress_cb({"event": "done", "count": len(scenarios)})
         return [{"id": scenarios[0]["id"], "result": "ok"}]
 
-    scenarios_module = types.ModuleType("omniagents.core.eval.scenarios")
-    scenarios_module.run_scenarios_against_agent = fake_run
-    monkeypatch.setitem(sys.modules, "omniagents.core.eval.scenarios", scenarios_module)
+    multi_turn_module = types.ModuleType("omniagents.core.eval.multi_turn")
+    multi_turn_module.run_scenarios_against_agent = fake_run
+    monkeypatch.setitem(
+        sys.modules, "omniagents.core.eval.multi_turn", multi_turn_module
+    )
 
     argv = [
         "omniagents",

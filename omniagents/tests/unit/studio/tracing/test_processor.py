@@ -65,8 +65,6 @@ def test_get_project_prefers_metadata():
     processor = StudioTraceProcessor(default_project="fallback")
     trace_primary = TraceStub("trace-primary", metadata={"studio_project": "alpha"})
     assert processor._get_project_from_trace(trace_primary) == "alpha"
-    trace_secondary = TraceStub("trace-secondary", metadata={"agentio_project": "beta"})
-    assert processor._get_project_from_trace(trace_secondary) == "beta"
     trace_default = TraceStub("trace-default")
     assert processor._get_project_from_trace(trace_default) == "fallback"
 

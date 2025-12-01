@@ -146,11 +146,6 @@ def test_studio_cli_missing_extras(monkeypatch, tmp_path, capsys):
 
     monkeypatch.delitem(sys.modules, "omniagents.studio", raising=False)
     monkeypatch.delitem(sys.modules, "omniagents.studio.tracing", raising=False)
-    monkeypatch.delitem(sys.modules, "omniagents.agentio", raising=False)
-    for key in list(sys.modules.keys()):
-        if key.startswith("omniagents.agentio") or key.startswith("agentio"):
-            monkeypatch.delitem(sys.modules, key, raising=False)
-    monkeypatch.delattr(omniagents, "agentio", raising=False)
 
     attempts = []
     original_import = builtins.__import__
@@ -159,9 +154,6 @@ def test_studio_cli_missing_extras(monkeypatch, tmp_path, capsys):
         if name.startswith("omniagents.studio"):
             attempts.append(name)
             raise ImportError("studio extras missing")
-        if name.startswith("omniagents.agentio"):
-            attempts.append(name)
-            raise ImportError("agentio fallback missing")
         return original_import(name, globals, locals, fromlist, level)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)

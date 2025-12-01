@@ -76,7 +76,9 @@ def _coerce_bool(value: Any) -> bool:
     return False
 
 
-def _resolve_realtime_deployment_name(spec: AgentSpec, settings: Dict[str, Any]) -> Optional[str]:
+def _resolve_realtime_deployment_name(
+    spec: AgentSpec, settings: Dict[str, Any]
+) -> Optional[str]:
     candidates = [
         settings.get("azure_openai_deployment_name"),
         settings.get("openai_realtime_deployment"),

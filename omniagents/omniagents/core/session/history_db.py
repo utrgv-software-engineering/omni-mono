@@ -9,7 +9,6 @@ from omniagents.core.paths import get_sessions_db_path
 _STORES: dict[str, Tuple[sqlite3.Connection, Lock]] = {}
 
 
-
 _UNSET = object()
 
 
@@ -146,7 +145,10 @@ def get_session_metadata(
     *,
     project_slug: str | None = None,
     agent_slug: str | None = None,
-) -> tuple[dict | list | str | int | float | bool | None, dict | list | str | int | float | bool | None]:
+) -> tuple[
+    dict | list | str | int | float | bool | None,
+    dict | list | str | int | float | bool | None,
+]:
     conn, lock = _get_store(project_slug, agent_slug)
     with lock:
         cur = conn.execute(

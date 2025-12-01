@@ -823,9 +823,7 @@ def test_resolve_realtime_url_builds_azure_path(monkeypatch, realtime_spec):
 
 def test_resolve_realtime_url_respects_explicit_azure_query(monkeypatch, realtime_spec):
     monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://cs-hackr.openai.azure.com/")
-    explicit = (
-        "wss://cs-hackr.openai.azure.com/openai/deployments/foo/realtime?api-version=2024-05-01-preview"
-    )
+    explicit = "wss://cs-hackr.openai.azure.com/openai/deployments/foo/realtime?api-version=2024-05-01-preview"
     resolved = _resolve_realtime_url(
         explicit_url=explicit,
         base_url=None,

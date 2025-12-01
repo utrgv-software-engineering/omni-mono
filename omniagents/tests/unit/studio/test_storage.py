@@ -575,7 +575,7 @@ def test_processor_handles_generation_span_inputs(tmp_path, monkeypatch):
     processor = StudioTraceProcessor(default_project="fallback")
     trace = DummyTrace(
         "trace-gen",
-        metadata={"agentio_project": "project-gen"},
+        metadata={"studio_project": "project-gen"},
         group_id="group-gen",
         workflow_name="wf",
     )

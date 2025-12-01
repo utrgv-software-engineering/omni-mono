@@ -8,10 +8,19 @@ import pytest
 from omniagents.core.tracing import setup_tracing
 
 
-def test_setup_tracing_default_provider_logs(caplog):
-    caplog.set_level(logging.DEBUG)
+def test_setup_tracing_default_provider_disables(monkeypatch):
+    """Default provider disables tracing (tracing is opt-in)."""
+    calls = []
+    stub_agents = types.ModuleType("agents")
+
+    def set_trace_processors(value):
+        calls.append(value)
+
+    stub_agents.set_trace_processors = set_trace_processors
+    monkeypatch.setitem(sys.modules, "agents", stub_agents)
     setup_tracing({"provider": "default"})
-    assert "Using default OpenAI tracing" in caplog.text
+    # Default provider should disable tracing (opt-in by default)
+    assert calls == [[]]
 
 
 def test_setup_tracing_studio_initializes_stub(monkeypatch, caplog):
@@ -31,28 +40,6 @@ def test_setup_tracing_studio_initializes_stub(monkeypatch, caplog):
     assert calls
     assert calls[0]["project"] == "proj"
     assert "Studio tracing enabled" in caplog.text
-
-
-def test_setup_tracing_agentio_fallback(monkeypatch):
-    calls = []
-    stub_agentio = types.ModuleType("agentio")
-
-    def legacy_init(**kwargs):
-        calls.append(kwargs)
-
-    stub_agentio.init = legacy_init
-    monkeypatch.setitem(sys.modules, "agentio", stub_agentio)
-    real_import = builtins.__import__
-
-    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name == "omniagents.studio":
-            raise ImportError("missing studio")
-        return real_import(name, globals, locals, fromlist, level)
-
-    monkeypatch.setattr(builtins, "__import__", fake_import)
-    setup_tracing({"provider": "agentio", "project": "legacy"})
-    assert calls
-    assert calls[0]["project"] == "legacy"
 
 
 def test_setup_tracing_warns_when_studio_missing(monkeypatch, caplog, capsys):

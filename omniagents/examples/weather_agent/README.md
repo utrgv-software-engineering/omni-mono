@@ -48,7 +48,7 @@ To generate synthetic scenarios into a named set (outputs under `artifacts/eval/
 python -m omniagents.cli eval scenarios generate -P examples/weather_agent/project.yml --name demo --count 100
 ```
 
-After running scenarios to produce traces in AgentIO, annotate all scenarios with failure categories (keeps all scenarios, does not prune). The output goes to the same `<name>` folder as the input:
+After running scenarios to produce traces in Studio, annotate all scenarios with failure categories (keeps all scenarios, does not prune). The output goes to the same `<name>` folder as the input:
 
 ```bash
 python -m omniagents.cli eval annotate -P examples/weather_agent/project.yml \

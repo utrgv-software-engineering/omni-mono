@@ -7,7 +7,7 @@ model: gpt-4o
 
 # Tracing configuration
 tracing:
-  provider: agentio  # Options: default, agentio, none
+  provider: studio  # Options: default, studio, none
   project: test_project
   name: test_trace
   settings:

@@ -386,7 +386,7 @@ async def _run_scenario(
     try:
         if workflow_name:
             try:
-                from omniagents.studio.tracing import trace as agentio_trace
+                from omniagents.studio.tracing import trace as studio_trace
 
                 try:
                     import omniagents as _oa
@@ -450,7 +450,7 @@ async def _run_scenario(
                     }
                 }
                 gid = run_uid
-                with agentio_trace(workflow_name, group_id=gid, metadata=meta):
+                with studio_trace(workflow_name, group_id=gid, metadata=meta):
                     result = agent.run_streamed(msgs)
                     async for _ in result.stream_events():
                         pass
@@ -703,30 +703,10 @@ def run_evaluation(
     raw_cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
     eval_cfg = raw_cfg.get("evaluation") or {}
 
-    # Use extended pipeline for environment, synthetic, or multi-turn scenarios
-    if _needs_extended_pipeline(eval_cfg):
-        from omniagents.core.eval.multi_turn import (
-            run_evaluation_with_environment_async,
-        )
-
-        return asyncio.run(
-            run_evaluation_with_environment_async(
-                compiled_yaml,
-                workflow_name=workflow_base_name,
-                include_unmeasured=include_unmeasured,
-                progress_cb=progress_cb,
-                concurrency=int((tracing_cfg or {}).get("concurrency") or 5),
-            )
-        )
-
-    use_agentio = False
-    name = None
+    # Initialize tracing if configured (applies to all paths)
+    workflow_name = None
     try:
-        if tracing_cfg and str(tracing_cfg.get("provider", "")).lower() in (
-            "agentio",
-            "studio",
-        ):
-            use_agentio = True
+        if tracing_cfg and str(tracing_cfg.get("provider", "")).lower() == "studio":
             import omniagents.studio.tracing as studio_tracing
             from datetime import datetime
 
@@ -736,30 +716,42 @@ def run_evaluation(
                 or Path(compiled_yaml).stem
             )
             start_suffix = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-            name = f"{base_name}_scenarios_{start_suffix}"
+            workflow_name = f"{base_name}_scenarios_{start_suffix}"
             project = tracing_cfg.get("project") or "agent_eval"
             settings = tracing_cfg.get("settings") or {}
             studio_tracing.init(
-                project=str(project), name=name, replace_default=True, **settings
+                project=str(project),
+                name=workflow_name,
+                replace_default=True,
+                **settings,
             )
     except Exception:
-        use_agentio = False
-        name = None
-    if use_agentio:
+        workflow_name = None
+
+    concurrency = int((tracing_cfg or {}).get("concurrency") or 5)
+
+    # Use extended pipeline for environment, synthetic, or multi-turn scenarios
+    if _needs_extended_pipeline(eval_cfg):
+        from omniagents.core.eval.multi_turn import (
+            run_evaluation_with_environment_async,
+        )
+
         return asyncio.run(
-            run_evaluation_async(
+            run_evaluation_with_environment_async(
                 compiled_yaml,
-                workflow_name=name,
+                workflow_name=workflow_name,
                 include_unmeasured=include_unmeasured,
                 progress_cb=progress_cb,
-                concurrency=int(tracing_cfg.get("concurrency") or 5),
+                concurrency=concurrency,
             )
         )
+
     return asyncio.run(
         run_evaluation_async(
             compiled_yaml,
+            workflow_name=workflow_name,
             include_unmeasured=include_unmeasured,
             progress_cb=progress_cb,
-            concurrency=int((tracing_cfg or {}).get("concurrency") or 5),
+            concurrency=concurrency,
         )
     )

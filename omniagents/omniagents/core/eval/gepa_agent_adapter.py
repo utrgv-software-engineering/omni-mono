@@ -266,7 +266,7 @@ class OmniAgentsAgentAdapter:
                 try:
                     if self.workflow_name:
                         try:
-                            from omniagents.studio.tracing import trace as agentio_trace  # type: ignore
+                            from omniagents.studio.tracing import trace as studio_trace  # type: ignore
                             import uuid as _uuid
 
                             run_uid = _uuid.uuid4().hex[:8]
@@ -286,7 +286,7 @@ class OmniAgentsAgentAdapter:
                                 }
                             }
                             gid = run_uid
-                            with agentio_trace(
+                            with studio_trace(
                                 self.workflow_name, group_id=gid, metadata=meta
                             ):
                                 res = await self._run_once(instructions, prompt)
@@ -664,7 +664,7 @@ class OmniAgentsAgentAdapter:
                 prompt = self._render_optimizer_prompt(name, base_text, ds_items)
                 if self.workflow_name:
                     try:
-                        from omniagents.studio.tracing import trace as agentio_trace  # type: ignore
+                        from omniagents.studio.tracing import trace as studio_trace  # type: ignore
                         import uuid as _uuid
 
                         run_uid = _uuid.uuid4().hex[:8]
@@ -678,7 +678,7 @@ class OmniAgentsAgentAdapter:
                                 "run": {"id": run_uid},
                             }
                         }
-                        with agentio_trace(
+                        with studio_trace(
                             self.workflow_name, group_id=run_uid, metadata=meta
                         ):
                             res = await AgentsRunner.run(agent, prompt, max_turns=1)

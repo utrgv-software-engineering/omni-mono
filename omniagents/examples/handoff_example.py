@@ -3,7 +3,7 @@ from __future__ import annotations
 from dotenv import load_dotenv
 from agents import Agent, handoff
 from omniagents import Runner, function_tool
-import agentio  # Import AgentIO for tracing
+import omniagents.studio.tracing as studio_tracing  # Import Studio for tracing
 
 # Load environment variables from .env file
 load_dotenv()
@@ -62,8 +62,8 @@ def build_agent() -> Agent:
 
 
 def main() -> None:
-    # Initialize AgentIO tracing
-    agentio.init(
+    # Initialize Studio tracing
+    studio_tracing.init(
         project="handoff_demo",
         name="multi_agent_handoff",
         resume="never",  # Always create a new trace

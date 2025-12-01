@@ -8,7 +8,7 @@ Add a `tracing` section to your agent's YAML configuration:
 
 ```yaml
 tracing:
-  provider: studio  # Options: default, studio, agentio, none
+  provider: studio  # Options: default, studio, none
   project: my_project
   name: my_trace
   settings:
@@ -28,7 +28,7 @@ tracing:
 Or simply omit the `tracing` section entirely.
 
 ### `studio` (Local Trace Storage)
-Uses the built-in OmniAgents Studio tracing module to store traces locally and provide a web UI for visualization. The legacy value `agentio` is still accepted as an alias for compatibility, but new projects should use `studio`.
+Uses the built-in OmniAgents Studio tracing module to store traces locally and provide a web UI for visualization.
 
 ```yaml
 tracing:

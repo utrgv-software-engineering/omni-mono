@@ -7,7 +7,7 @@ agents:
   entrypoint: wired_demo
 
 tracing:
-  provider: agentio
+  provider: studio
   project: wired_demo_project
   name: wired_demo
   settings:

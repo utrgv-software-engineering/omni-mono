@@ -3,9 +3,9 @@ model: gpt-4o
 instructions_file: instructions.md
 welcome_text: "Ask me the time or to flip a coin!"
 
-# Enable AgentIO tracing
+# Enable Studio tracing
 tracing:
-  provider: agentio
+  provider: studio
   project: basic_yaml_demo
   name: tool_demo_yaml
   settings:

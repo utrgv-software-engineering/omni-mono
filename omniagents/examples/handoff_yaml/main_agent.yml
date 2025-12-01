@@ -3,9 +3,9 @@ model: gpt-4o
 instructions_file: instructions.md
 welcome_text: "Hi! I can help with general questions, math problems, or time-related queries. What do you need?"
 
-# Enable AgentIO tracing
+# Enable Studio tracing
 tracing:
-  provider: agentio
+  provider: studio
   project: handoff_yaml_demo
   name: multi_agent_handoff_yaml
   settings:

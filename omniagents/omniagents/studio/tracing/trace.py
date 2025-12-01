@@ -7,7 +7,7 @@ from typing import Any, Optional
 from agents.tracing import trace as sdk_trace
 from agents.tracing import add_trace_processor
 
-from .processor import StudioTraceProcessor, AgentIOProcessor
+from .processor import StudioTraceProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,6 @@ def trace(
 
     if target_project:
         enhanced_metadata["studio_project"] = target_project
-        enhanced_metadata.setdefault("agentio_project", target_project)
 
     if server_url:
         logger.warning(

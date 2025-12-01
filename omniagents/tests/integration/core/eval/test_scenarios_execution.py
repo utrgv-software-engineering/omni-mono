@@ -116,15 +116,15 @@ def _configure_execution(monkeypatch, responses):
         )
         yield
 
-    agentio_mod = types.ModuleType("agentio")
-    agentio_mod.trace = fake_trace
+    studio_tracing_mod = types.ModuleType("omniagents.studio.tracing")
+    studio_tracing_mod.trace = fake_trace
 
     monkeypatch.setattr(scenarios, "create_unified_agent", fake_create_agent)
     monkeypatch.setattr(scenarios, "load_history", fake_load_history)
     monkeypatch.setattr(scenarios, "final_assistant_text", fake_final_assistant_text)
     monkeypatch.setattr("omniagents.core.tracing.setup_tracing", fake_setup_tracing)
     monkeypatch.setattr(scenarios, "load_agent_spec_from_yaml", fake_load_spec)
-    monkeypatch.setitem(sys.modules, "agentio", agentio_mod)
+    monkeypatch.setitem(sys.modules, "omniagents.studio.tracing", studio_tracing_mod)
 
     return progress_events, trace_calls, setup_calls
 

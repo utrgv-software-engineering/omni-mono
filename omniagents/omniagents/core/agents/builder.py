@@ -47,9 +47,13 @@ async def _build_handoffs_from_configs(
                 # Load the handoff agent spec with registries from parent spec
                 # This ensures handoff agents use the same project-level tool registry
                 tool_registry = parent_spec._tool_registry if parent_spec else None
-                guardrails_registry = parent_spec._guardrails_registry if parent_spec else None
-                server_functions_registry = parent_spec._server_functions_registry if parent_spec else None
-                
+                guardrails_registry = (
+                    parent_spec._guardrails_registry if parent_spec else None
+                )
+                server_functions_registry = (
+                    parent_spec._server_functions_registry if parent_spec else None
+                )
+
                 handoff_spec = load_agent_spec_from_yaml(
                     str(yaml_path),
                     tool_registry=tool_registry,

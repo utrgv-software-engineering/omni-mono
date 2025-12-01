@@ -204,7 +204,7 @@ def optimize_agent_from_project(
     try:
         cfg_tr = yaml.safe_load(_P(compiled_cfg_path).read_text(encoding="utf-8")) or {}
         tracing = cfg_tr.get("tracing") or {}
-        if str(tracing.get("provider", "")).lower() in {"studio", "agentio"}:
+        if str(tracing.get("provider", "")).lower() == "studio":
             base_name = tracing.get("name") or _P(compiled_cfg_path).stem
             if reference_split_path is not None:
                 ts = reference_split_path.parents[2].name
@@ -245,10 +245,7 @@ def optimize_agent_from_project(
     try:
         cfg_tr = yaml.safe_load(_P(compiled_cfg_path).read_text(encoding="utf-8")) or {}
         tracing = cfg_tr.get("tracing") or {}
-        if (
-            str(tracing.get("provider", "")).lower() in {"studio", "agentio"}
-            and workflow_name
-        ):
+        if str(tracing.get("provider", "")).lower() == "studio" and workflow_name:
             try:
                 from omniagents.studio import tracing as tracing_module
             except ImportError:
@@ -700,7 +697,7 @@ def optimize_judge_from_project(
     try:
         cfg_tr = yaml.safe_load(_P(compiled_cfg_path).read_text(encoding="utf-8")) or {}
         tracing = cfg_tr.get("tracing") or {}
-        if str(tracing.get("provider", "")).lower() == "agentio":
+        if str(tracing.get("provider", "")).lower() == "studio":
             import json as _json
 
             base_name = tracing.get("name") or _P(compiled_cfg_path).stem
@@ -757,10 +754,7 @@ def optimize_judge_from_project(
     try:
         cfg_tr = yaml.safe_load(_P(compiled_cfg_path).read_text(encoding="utf-8")) or {}
         tracing = cfg_tr.get("tracing") or {}
-        if (
-            str(tracing.get("provider", "")).lower() in {"studio", "agentio"}
-            and workflow_name
-        ):
+        if str(tracing.get("provider", "")).lower() == "studio" and workflow_name:
             from omniagents.studio import tracing as tracing_module
 
             project = tracing.get("project") or "default"

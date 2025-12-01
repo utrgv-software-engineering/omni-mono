@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 from agents import Agent
 from agents.run_context import RunContextWrapper
 from omniagents import Runner
-import agentio  # Import AgentIO for tracing
+import omniagents.studio.tracing as studio_tracing  # Import Studio for tracing
 
 # Load environment variables from .env file
 load_dotenv()
@@ -95,8 +95,8 @@ Always personalize your responses based on these details."""
 
 
 def main():
-    # Initialize AgentIO tracing
-    agentio.init(
+    # Initialize Studio tracing
+    studio_tracing.init(
         project="dynamic_instructions_sdk",
         name="personal_assistant",
         resume="never",  # Always create a new trace
