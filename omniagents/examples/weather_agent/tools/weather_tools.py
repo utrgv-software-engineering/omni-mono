@@ -5,14 +5,15 @@ from omniagents import function_tool
 import json
 import re
 
+
 @function_tool
 def geocode(city_name: str) -> Dict[str, Any]:
     """
     Geocodes a city name into latitude and longitude using a MOCK service.
-    
+
     Args:
         city_name: City name only (e.g., "New York", "Paris").
-        
+
     Returns:
         Dictionary with a "results" list.
     """
@@ -22,9 +23,9 @@ def geocode(city_name: str) -> Dict[str, Any]:
 
     name = str(city_name).strip()
     name_lower = name.lower()
-    
+
     results = []
-    
+
     if "manchester" in name_lower:
         results = [
             {
@@ -42,7 +43,7 @@ def geocode(city_name: str) -> Dict[str, Any]:
                 "country_id": 2635167,
                 "country": "United Kingdom",
                 "admin1": "England",
-                "admin2": "Manchester"
+                "admin2": "Manchester",
             },
             {
                 "id": 5089178,
@@ -59,12 +60,12 @@ def geocode(city_name: str) -> Dict[str, Any]:
                 "country_id": 6252001,
                 "country": "United States",
                 "admin1": "New Hampshire",
-                "admin2": "Hillsborough"
-            }
+                "admin2": "Hillsborough",
+            },
         ]
     elif "richmond" in name_lower:
         results = [
-             {
+            {
                 "id": 4781756,
                 "name": "Richmond",
                 "latitude": 37.55376,
@@ -77,7 +78,7 @@ def geocode(city_name: str) -> Dict[str, Any]:
                 "population": 220289,
                 "country_id": 6252001,
                 "country": "United States",
-                "admin1": "Virginia"
+                "admin1": "Virginia",
             },
             {
                 "id": 2638864,
@@ -94,8 +95,8 @@ def geocode(city_name: str) -> Dict[str, Any]:
                 "country_id": 2635167,
                 "country": "United Kingdom",
                 "admin1": "England",
-                "admin2": "Greater London"
-            }
+                "admin2": "Greater London",
+            },
         ]
     else:
         # Generic fallback
@@ -106,11 +107,12 @@ def geocode(city_name: str) -> Dict[str, Any]:
                 "latitude": 40.7128,
                 "longitude": -74.0060,
                 "country": "Mock Country",
-                "admin1": "Mock State"
+                "admin1": "Mock State",
             }
         ]
-        
+
     return json.dumps({"results": results})
+
 
 @function_tool
 def get_weather(
@@ -152,7 +154,7 @@ def get_weather(
             "weather_code": "wmo code",
             "wind_speed_10m": "km/h",
             "wind_direction_10m": "°",
-            "wind_gusts_10m": "km/h"
+            "wind_gusts_10m": "km/h",
         },
         "current": {
             "time": "2023-10-27T12:00",
@@ -164,10 +166,10 @@ def get_weather(
             "rain": 0.0,
             "showers": 0.0,
             "snowfall": 0.0,
-            "weather_code": 0, # Clear sky
+            "weather_code": 0,  # Clear sky
             "wind_speed_10m": 10.5,
             "wind_direction_10m": 180,
-            "wind_gusts_10m": 25.0
-        }
+            "wind_gusts_10m": 25.0,
+        },
     }
     return json.dumps(mock_data)

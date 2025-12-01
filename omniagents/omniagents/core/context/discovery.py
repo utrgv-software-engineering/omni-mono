@@ -90,7 +90,9 @@ def discover_context_factories(agent_dir: Path) -> Dict[str, Callable]:
 
             except Exception as e:
                 if Debug.enabled():
-                    print(f"Warning: Error loading {py_file} for context discovery: {e}")
+                    print(
+                        f"Warning: Error loading {py_file} for context discovery: {e}"
+                    )
                 continue
 
     finally:
@@ -111,7 +113,10 @@ def discover_context_factories(agent_dir: Path) -> Dict[str, Callable]:
                             mod = sys.modules.get(mod_name)
                             if mod:
                                 mod_file = getattr(mod, "__file__", "") or ""
-                                if project_root_str in mod_file or agent_dir_str in mod_file:
+                                if (
+                                    project_root_str in mod_file
+                                    or agent_dir_str in mod_file
+                                ):
                                     del sys.modules[mod_name]
 
     return discovered

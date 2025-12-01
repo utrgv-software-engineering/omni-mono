@@ -44,8 +44,6 @@ DEFAULT_SETTINGS_FIELDS = [
 ]
 
 
-
-
 def _parse_mcp_servers_config(
     config: Dict[str, Any],
     *,
