@@ -1,6 +1,8 @@
 import yaml
 import os
 import re
+import importlib
+import sys
 
 from pathlib import Path
 from typing import Dict, Any, List, Callable, Optional, Set
@@ -17,6 +19,7 @@ from omniagents.core.agents.specs import (
 )
 from omniagents.core.tools.discovery import discover_functions_in_dir
 from omniagents.core.guardrails.discovery import discover_guardrails_in_dir
+from omniagents.core.context.discovery import discover_context_factories
 from omniagents.core.debug import Debug
 from omniagents.core.server_functions.discovery import (
     discover_server_functions_in_dir,
@@ -39,6 +42,8 @@ DEFAULT_SETTINGS_FIELDS = [
         hint="Required",
     ),
 ]
+
+
 
 
 def _parse_mcp_servers_config(
@@ -1186,23 +1191,52 @@ def load_agent_spec_from_yaml(
     ):
         tracing_config = project_defaults.get("tracing")
 
-    # --- Variables for dynamic instructions ---
+    # --- Variables and Context Factory for dynamic instructions ---
     # Variables support environment variable substitution
+    # Context factory is specified by name via `context:` field and discovered from agent dir
     variables_config = config.get("variables")
+    context_factory_name = config.get("context")
+
+    # Discover context factories from agent directory (decorated with @context_factory)
+    build_context_func: Optional[Callable] = None
+    if context_factory_name:
+        context_factories = discover_context_factories(base_dir)
+        if context_factory_name in context_factories:
+            build_context_func = context_factories[context_factory_name]
+            if Debug.enabled():
+                print(f"Using context factory: {context_factory_name}")
+        else:
+            available = list(context_factories.keys()) if context_factories else []
+            print(
+                f"Warning: Context factory '{context_factory_name}' not found in {base_dir}. "
+                f"Available: {available}"
+            )
 
     # Apply environment variable substitution if variables are provided
+    context_config = None
+    variables_for_spec = None
+
     if variables_config is not None:
         try:
             # Apply environment variable substitution to variables
-            context_config = _substitute_env_vars(variables_config)
+            substituted_vars = _substitute_env_vars(variables_config)
             if Debug.enabled():
-                print(f"Variables after substitution: {context_config}")
+                print(f"Variables after substitution: {substituted_vars}")
+
+            if build_context_func:
+                # When context factory is specified:
+                # - Store substituted variables as spec.variables
+                # - Leave spec.context as None
+                # - The factory will be called at runtime to build context
+                variables_for_spec = substituted_vars
+                context_config = None
+            else:
+                # No factory: use variables directly as context (original behavior)
+                context_config = substituted_vars
+
         except ValueError as e:
             print(f"Error substituting environment variables: {e}")
             raise
-    else:
-        # No variables provided, context will be None
-        context_config = None
 
     # --- Build Agent (Placeholder/Default) ---
     # The actual Agent/SafeAgent creation is deferred to AgentApp using a default builder.
@@ -1242,6 +1276,8 @@ def load_agent_spec_from_yaml(
         safe_agent_options=safe_options,
         # SDK Runner Context
         context=context_config,
+        variables=variables_for_spec,
+        build_context=build_context_func,
         # Tracing Config
         tracing_config=tracing_config,
         # MCP Config

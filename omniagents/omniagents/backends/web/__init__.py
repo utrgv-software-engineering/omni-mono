@@ -30,14 +30,6 @@ class WebBackend:
             sys.exit(1)
 
         args = kwargs.get("args")
-        host_arg = None
-        port_arg = None
-        try:
-            host_arg = getattr(args, "host", None)
-            port_arg = getattr(args, "port", None)
-        except Exception:
-            host_arg = None
-            port_arg = None
         codespaces_env = any(
             os.environ.get(k)
             for k in (
@@ -46,18 +38,19 @@ class WebBackend:
                 "GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN",
             )
         )
-        host = host_arg or ("0.0.0.0" if codespaces_env else "127.0.0.1")
-        if port_arg is not None:
-            try:
-                port = int(port_arg)
-            except Exception:
-                port = None
+
+        # Check for explicit CLI overrides (CLI defaults are host="0.0.0.0", port=8000)
+        host_arg = getattr(args, "host", None) if args else None
+        port_arg = getattr(args, "port", None) if args else None
+        host_override = host_arg if host_arg and host_arg != "0.0.0.0" else None
+        port_override = port_arg if port_arg and port_arg != 8000 else None
+
+        # Default: localhost:8080 with sequential fallback (or 0.0.0.0 in Codespaces)
+        host = host_override or ("0.0.0.0" if codespaces_env else "127.0.0.1")
+        if port_override:
+            port = port_override
         else:
-            port = None
-        if port is None:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind(("", 0))
-                port = s.getsockname()[1]
+            port = self._find_available_port(8080)
 
         apply_cli_overrides(spec, args)
 
@@ -208,7 +201,10 @@ class WebBackend:
                 print(f"Error: Failed to start dev server: {e}")
                 open_url = None
         if open_url is None:
-            base = f"http://{host}:{port}/"
+            # Use 'localhost' instead of '127.0.0.1' for browser URL
+            # Chrome requires this for secure context (getUserMedia, etc.)
+            url_host = "localhost" if host == "127.0.0.1" else host
+            base = f"http://{url_host}:{port}/"
             if qp:
                 from urllib.parse import urlencode
 
@@ -232,6 +228,25 @@ class WebBackend:
                 time.sleep(0.2)
         except KeyboardInterrupt:
             pass
+
+    @staticmethod
+    def _find_available_port(start_port: int, max_attempts: int = 20) -> int:
+        """Find an available port starting from start_port.
+
+        Tries ports sequentially (start_port, start_port+1, ...) until
+        an available one is found or max_attempts is reached.
+        """
+        for offset in range(max_attempts):
+            port = start_port + offset
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.bind(("127.0.0.1", port))
+                    return port
+            except OSError:
+                continue
+        raise RuntimeError(
+            f"Could not find available port in range {start_port}-{start_port + max_attempts - 1}"
+        )
 
     @staticmethod
     def _should_auto_open(auto_open_arg: bool | None) -> bool:

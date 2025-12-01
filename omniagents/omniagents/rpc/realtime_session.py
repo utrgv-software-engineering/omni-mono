@@ -83,21 +83,17 @@ def _resolve_realtime_deployment_name(
         settings.get("azure_openai_deployment_name"),
         settings.get("openai_realtime_deployment"),
         settings.get("openai_realtime_model"),
-        settings.get("openai_model"),
         os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
         os.getenv("OPENAI_REALTIME_DEPLOYMENT"),
         os.getenv("OPENAI_REALTIME_MODEL"),
-        os.getenv("OPENAI_MODEL"),
-        os.getenv("MODEL_NAME"),
     ]
     if spec.realtime_settings and spec.realtime_settings.model_name:
         candidates.append(spec.realtime_settings.model_name)
-    if spec.model_name:
-        candidates.append(spec.model_name)
     for value in candidates:
         if isinstance(value, str) and value.strip():
             return value.strip()
-    return None
+    # Default to gpt-realtime if nothing specified
+    return "gpt-realtime"
 
 
 def _normalize_ws_scheme(raw_scheme: Optional[str]) -> str:
@@ -145,6 +141,42 @@ def _build_azure_realtime_url(
     return f"{scheme}://{netloc}/openai/deployments/{deployment_path}/realtime?api-version={api_version}"
 
 
+def _build_realtime_url_from_base(
+    base_url: str,
+    model_name: Optional[str],
+) -> str:
+    """Build a realtime WebSocket URL from a base HTTP URL.
+
+    Converts https://host/openai/v1 to wss://host/openai/v1/realtime?model=X
+    """
+    # Convert scheme
+    ws_url = base_url.replace("https://", "wss://").replace("http://", "ws://")
+
+    # Ensure it ends with /realtime
+    ws_url = ws_url.rstrip("/")
+    if not ws_url.endswith("/realtime"):
+        ws_url = ws_url + "/realtime"
+
+    # Add model as query param if provided
+    if model_name:
+        parsed = urlparse(ws_url)
+        params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        if "model" not in params:
+            params["model"] = model_name
+            ws_url = urlunparse(
+                (
+                    parsed.scheme,
+                    parsed.netloc,
+                    parsed.path,
+                    parsed.params,
+                    urlencode(params, doseq=True),
+                    parsed.fragment,
+                )
+            )
+
+    return ws_url
+
+
 def _resolve_realtime_url(
     explicit_url: Optional[str],
     base_url: Optional[str],
@@ -152,20 +184,36 @@ def _resolve_realtime_url(
     settings: Dict[str, Any],
 ) -> Optional[str]:
     candidate = explicit_url or base_url
-    if not candidate:
-        return None
-    parsed = urlparse(candidate if "://" in candidate else f"https://{candidate}")
-    query = parsed.query or ""
-    azure_signal = (
-        _is_azure_endpoint(candidate)
-        or _is_azure_endpoint(base_url)
-        or bool(os.getenv("AZURE_OPENAI_ENDPOINT"))
+    logger.debug(
+        "_resolve_realtime_url: explicit_url=%s, base_url=%s, candidate=%s",
+        explicit_url,
+        base_url,
+        candidate,
     )
-    if not azure_signal:
+    if not candidate:
+        logger.debug("_resolve_realtime_url: no candidate URL, returning None")
+        return None
+
+    # If an explicit realtime URL was provided (openai_realtime_url), use it as-is
+    if explicit_url:
+        logger.debug(
+            "_resolve_realtime_url: explicit URL provided, returning as-is: %s",
+            explicit_url,
+        )
         return explicit_url
-    if "api-version" in query:
-        return candidate
-    return _build_azure_realtime_url(candidate, base_url, spec, settings)
+
+    # We're falling back to base_url - need to construct the realtime URL
+    # Get the model/deployment name for the URL
+    model_name = _resolve_realtime_deployment_name(spec, settings)
+    logger.debug(
+        "_resolve_realtime_url: building from base_url=%s with model=%s",
+        base_url,
+        model_name,
+    )
+
+    result = _build_realtime_url_from_base(base_url, model_name)
+    logger.debug("_resolve_realtime_url: built URL: %s", result)
+    return result
 
 
 class RealtimeSession:
@@ -360,6 +408,24 @@ class RealtimeSession:
             "initial_model_settings": initial_model_settings,
         }
 
+        # Debug: log all URL sources
+        logger.debug(
+            "RealtimeSession %s URL resolution inputs: "
+            "settings[openai_realtime_url]=%s, "
+            "env[OPENAI_REALTIME_URL]=%s, "
+            "settings[openai_realtime_base_url]=%s, "
+            "env[OPENAI_REALTIME_BASE_URL]=%s, "
+            "settings[openai_base_url]=%s, "
+            "env[OPENAI_BASE_URL]=%s",
+            self.session_id,
+            self.settings.get("openai_realtime_url"),
+            os.getenv("OPENAI_REALTIME_URL"),
+            self.settings.get("openai_realtime_base_url"),
+            os.getenv("OPENAI_REALTIME_BASE_URL"),
+            self.settings.get("openai_base_url"),
+            os.getenv("OPENAI_BASE_URL"),
+        )
+
         realtime_url = (
             self.settings.get("openai_realtime_url")
             or os.getenv("OPENAI_REALTIME_URL")
@@ -367,12 +433,27 @@ class RealtimeSession:
             or os.getenv("OPENAI_REALTIME_BASE_URL")
         )
         base_url = self.settings.get("openai_base_url") or os.getenv("OPENAI_BASE_URL")
+
+        logger.debug(
+            "RealtimeSession %s URL resolution: realtime_url=%s, base_url=%s",
+            self.session_id,
+            realtime_url,
+            base_url,
+        )
+
         resolved_url = _resolve_realtime_url(
             explicit_url=realtime_url,
             base_url=base_url,
             spec=self.spec,
             settings=self.settings,
         )
+
+        logger.debug(
+            "RealtimeSession %s _resolve_realtime_url returned: %s",
+            self.session_id,
+            resolved_url,
+        )
+
         if resolved_url:
             model_config["url"] = resolved_url
 
@@ -437,6 +518,20 @@ class RealtimeSession:
             "RealtimeSession %s model settings: %s",
             self.session_id,
             initial_model_settings,
+        )
+
+        # Log the final model_config being passed to runner.run()
+        # Scrub sensitive data for logging
+        loggable_config = {
+            k: (_mask_secret(v) if k == "api_key" else v)
+            for k, v in model_config.items()
+            if k != "headers"
+        }
+        loggable_config["headers"] = scrubbed_headers
+        logger.debug(
+            "RealtimeSession %s final model_config for runner.run(): %s",
+            self.session_id,
+            loggable_config,
         )
 
         # Get the session from runner.run()

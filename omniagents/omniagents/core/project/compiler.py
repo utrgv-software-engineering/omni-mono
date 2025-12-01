@@ -527,6 +527,21 @@ def compile_project(
     except Exception:
         pass
 
+    # Copy agent-level Python files (e.g., context.py for context factories)
+    try:
+        agent_dir = agent_path.parent
+        for py_file in agent_dir.glob("*.py"):
+            if py_file.name.startswith("_"):
+                continue
+            dst_py = target_dir / py_file.name
+            if not (dst_py.exists() or dst_py.is_symlink()):
+                try:
+                    dst_py.symlink_to(py_file.resolve())
+                except Exception:
+                    shutil.copy2(py_file.resolve(), dst_py)
+    except Exception:
+        pass
+
     # Agents manifest for runtime tooling
     try:
         from .runtime import load_project

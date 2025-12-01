@@ -17,6 +17,7 @@ _LAZY_IMPORTS = {
     "input_guardrail": ".core",
     "output_guardrail": ".core",
     "GuardrailFunctionOutput": ".core",
+    "context_factory": ".core.context",
 }
 
 
@@ -41,6 +42,7 @@ __all__ = [
     "input_guardrail",
     "output_guardrail",
     "GuardrailFunctionOutput",
+    "context_factory",
 ]
 
 
