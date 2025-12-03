@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import logging
+import os
 import shutil
 import uuid
 from collections import defaultdict
@@ -82,6 +83,36 @@ except Exception:  # pragma: no cover - optional dependency
     AgentOutputSchema = None  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+
+def _expand_env_template(value: str) -> str:
+    """Expand ${VAR:-default} style templates using environment variables.
+
+    Supports:
+    - ${VAR} - replaced with env var value or empty string
+    - ${VAR:-default} - replaced with env var value or default if not set
+
+    Args:
+        value: String that may contain ${VAR:-default} templates.
+
+    Returns:
+        String with templates expanded.
+    """
+    import os
+    import re
+
+    if not isinstance(value, str) or "${" not in value:
+        return value
+
+    # Pattern for ${VAR:-default} or ${VAR}
+    pattern = r"\$\{([^}:]+)(?::-([^}]*))?\}"
+
+    def replacer(match: re.Match) -> str:
+        var_name = match.group(1)
+        default = match.group(2) or ""
+        return os.environ.get(var_name, default)
+
+    return re.sub(pattern, replacer, value)
 
 
 class SpaStaticFiles(StaticFiles):
@@ -737,7 +768,16 @@ class EvaluationMeasureDeleteResponse(BaseModel):
 class ScenarioEntryModel(BaseModel):
     id: Optional[str] = None
     name: str
-    prompt: str
+    description: Optional[str] = None
+    type: Optional[str] = None  # 'synthetic' or 'scripted' (default)
+    prompt: Optional[str] = None  # Single prompt for scripted single-turn
+    prompts: Optional[List[str]] = None  # Multiple prompts for scripted multi-turn
+    goal: Optional[str] = None  # Goal for synthetic scenarios
+    fixture: Optional[str] = None  # Fixture reference
+    persona: Optional[Dict[str, Any]] = None  # Simulated user persona
+    initial_message: Optional[str] = None  # First message for synthetic
+    agent_description: Optional[str] = None  # Agent description for synthetic
+    max_exchanges: Optional[int] = None  # Max conversation turns
     dimensions: Optional[Dict[str, Any]] = None
     measures: Optional[List[Any]] = None
     failure_categories: Optional[List[str]] = None
@@ -1203,6 +1243,7 @@ class SuiteRunJob:
     workflow_name: Optional[str] = None
     summary: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    warnings: Optional[List[str]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -1228,6 +1269,7 @@ class SuiteRunJob:
             "workflow_name": self.workflow_name,
             "summary": self.summary,
             "error": self.error,
+            "warnings": self.warnings,
         }
 
 
@@ -1970,6 +2012,7 @@ class EvaluationSuiteRunStatusModel(BaseModel):
     workflow_name: Optional[str] = None
     summary: Optional[EvaluationSuiteRunSummaryModel] = None
     error: Optional[str] = None
+    warnings: Optional[List[str]] = None
 
 
 class EvaluationSuiteRunResponse(BaseModel):
@@ -3212,8 +3255,64 @@ def create_api_app(
         scenarios: List[ScenarioEntryModel] = []
         for idx, item in enumerate(raw_items):
             name = str(item.get("name") or f"scenario_{idx + 1}")
-            prompt = str(item.get("prompt") or "")
             scenario_id = item.get("id")
+
+            # Description
+            description = (
+                str(item.get("description"))
+                if item.get("description") is not None
+                else None
+            )
+
+            # Scenario type (synthetic or scripted)
+            scenario_type = (
+                str(item.get("type")) if item.get("type") is not None else None
+            )
+
+            # Prompt (single-turn scripted)
+            prompt = str(item.get("prompt")) if item.get("prompt") is not None else None
+
+            # Prompts (multi-turn scripted)
+            raw_prompts = item.get("prompts")
+            prompts: Optional[List[str]] = None
+            if isinstance(raw_prompts, list):
+                prompts = [str(p) for p in raw_prompts if p is not None]
+
+            # Goal (synthetic scenarios)
+            goal = str(item.get("goal")) if item.get("goal") is not None else None
+
+            # Fixture reference
+            fixture = (
+                str(item.get("fixture")) if item.get("fixture") is not None else None
+            )
+
+            # Persona (synthetic scenarios)
+            persona = (
+                item.get("persona") if isinstance(item.get("persona"), dict) else None
+            )
+
+            # Initial message (synthetic scenarios)
+            initial_message = (
+                str(item.get("initial_message"))
+                if item.get("initial_message") is not None
+                else None
+            )
+
+            # Agent description (synthetic scenarios)
+            agent_description = (
+                str(item.get("agent_description"))
+                if item.get("agent_description") is not None
+                else None
+            )
+
+            # Max exchanges (synthetic scenarios)
+            raw_max_exchanges = item.get("max_exchanges")
+            max_exchanges: Optional[int] = None
+            if isinstance(raw_max_exchanges, int):
+                max_exchanges = raw_max_exchanges
+            elif isinstance(raw_max_exchanges, str) and raw_max_exchanges.isdigit():
+                max_exchanges = int(raw_max_exchanges)
+
             dimensions = (
                 item.get("dimensions")
                 if isinstance(item.get("dimensions"), dict)
@@ -3255,7 +3354,16 @@ def create_api_app(
                 ScenarioEntryModel(
                     id=str(scenario_id) if scenario_id is not None else None,
                     name=name,
+                    description=description,
+                    type=scenario_type,
                     prompt=prompt,
+                    prompts=prompts,
+                    goal=goal,
+                    fixture=fixture,
+                    persona=persona,
+                    initial_message=initial_message,
+                    agent_description=agent_description,
+                    max_exchanges=max_exchanges,
                     dimensions=dimensions,
                     measures=measures,
                     failure_categories=failure_categories,
@@ -4868,6 +4976,7 @@ def create_api_app(
         )
         loop = asyncio.get_running_loop()
         progress_state = {"total": 0, "completed": 0}
+        saved_env_vars: Dict[str, Optional[str]] = {}
         try:
             compiled_cfg_path, _ = compile_project(
                 str(manifest_path),
@@ -4914,6 +5023,20 @@ def create_api_app(
                     base_dir / "artifacts" / "eval" / name_value / "run_results.json"
                 ).resolve()
             final_out.parent.mkdir(parents=True, exist_ok=True)
+
+            # Set environment variables from evaluation environment config
+            # This ensures tools have access to required env vars (e.g., API keys)
+            eval_cfg = cfg.get("evaluation") or {}
+            env_config = eval_cfg.get("environment", {}).get("config", {})
+            for key, value in env_config.items():
+                if isinstance(value, str):
+                    resolved = _expand_env_template(value)
+                    # Use uppercase key as env var name (e.g., api_base -> API_BASE)
+                    env_key = key.upper()
+                    # Also try common naming patterns
+                    # e.g., api_base from hotel config -> HOTEL_API_BASE_URL
+                    saved_env_vars[env_key] = os.environ.get(env_key)
+                    os.environ[env_key] = resolved
 
             def _schedule_update(**updates: Any) -> None:
                 asyncio.run_coroutine_threadsafe(
@@ -5004,6 +5127,10 @@ def create_api_app(
 
             final_total = progress_state["total"] or progress_state["completed"]
             completed_value = progress_state["completed"] or final_total
+
+            # Extract warnings from result (e.g., environment loading errors)
+            result_warnings = result.get("warnings") or []
+
             await manager.update_job(
                 job_id,
                 state="completed",
@@ -5013,12 +5140,20 @@ def create_api_app(
                 result_path=str(final_out),
                 workflow_name=workflow_name,
                 summary=summary_model.model_dump(),
+                warnings=result_warnings if result_warnings else None,
             )
         except Exception as exc:
             logger.exception("Evaluation suite run %s failed", job_id)
             await manager.update_job(
                 job_id, state="failed", error=str(exc), finished_at=_utc_now()
             )
+        finally:
+            # Restore original environment variables
+            for env_key, original_value in saved_env_vars.items():
+                if original_value is None:
+                    os.environ.pop(env_key, None)
+                else:
+                    os.environ[env_key] = original_value
 
     async def _run_scenario_job(
         job_id: str,

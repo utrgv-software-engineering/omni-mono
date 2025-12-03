@@ -681,10 +681,17 @@ async def run_evaluation_with_environment_async(
     _load_local_measures(cfg_path)
 
     # Try to load environment from config if not provided
-    if environment is None:
-        env_config = eval_cfg.get("environment")
-        if env_config:
-            environment = load_environment_class(env_config, cfg_path.parent)
+    env_config = eval_cfg.get("environment")
+    env_load_error: Optional[str] = None
+    if environment is None and env_config:
+        environment = load_environment_class(env_config, cfg_path.parent)
+        if environment is None and env_config.get("class"):
+            # Environment was configured but failed to load
+            env_load_error = (
+                f"Failed to load environment class: {env_config.get('class')}. "
+                "Check that the module exists and all dependencies are installed."
+            )
+            _logger.error(env_load_error)
 
     # Filter scenarios
     if not include_unmeasured:
@@ -767,7 +774,7 @@ async def run_evaluation_with_environment_async(
     synthetic_count = sum(1 for sc in scenarios if _is_synthetic_scenario(sc))
     scripted_multi_count = sum(1 for sc in scenarios if _is_scripted_multi_turn(sc))
 
-    return {
+    result = {
         "agent_yaml": str(cfg_path),
         "runs": all_runs,
         "metrics": metrics,
@@ -777,6 +784,15 @@ async def run_evaluation_with_environment_async(
             "scripted_multi_turn_scenarios": scripted_multi_count,
         },
     }
+
+    # Include environment loading error if present
+    if env_load_error:
+        result["environment_error"] = env_load_error
+        result["warnings"] = result.get("warnings", []) + [
+            f"Environment loading failed: {env_load_error}"
+        ]
+
+    return result
 
 
 async def run_scenarios_against_agent(

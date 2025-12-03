@@ -231,7 +231,16 @@ export interface StudioProjectMetadata {
 export interface EvaluationScenarioEntry {
   id?: string | null
   name: string
-  prompt: string
+  description?: string | null
+  type?: string | null // 'synthetic' or 'scripted' (default)
+  prompt?: string | null // Single prompt for scripted single-turn
+  prompts?: string[] | null // Multiple prompts for scripted multi-turn
+  goal?: string | null // Goal for synthetic scenarios
+  fixture?: string | null // Fixture reference
+  persona?: Record<string, any> | null // Simulated user persona
+  initial_message?: string | null // First message for synthetic
+  agent_description?: string | null // Agent description for synthetic
+  max_exchanges?: number | null // Max conversation turns
   dimensions?: Record<string, any> | null
   measures?: any[] | null
   failure_categories?: string[] | null
@@ -457,6 +466,7 @@ export interface EvaluationSuiteRunStatus {
   workflow_name?: string | null
   summary?: EvaluationSuiteRunSummary | null
   error?: string | null
+  warnings?: string[] | null
 }
 
 export interface EvaluationSuiteRunResponse {

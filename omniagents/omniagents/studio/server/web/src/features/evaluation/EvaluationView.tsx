@@ -576,13 +576,25 @@ function DatasetsPanel({
                             const assistantMessage = assistantMessageRaw && assistantMessageRaw.trim().length > 0 ? assistantMessageRaw : '—'
                             return (
                               <tr key={`${scenario.id || scenario.name || 'scenario'}-${index}`} className="border-b border-border/50">
-                                <td className="px-3 py-2 align-top text-sm font-medium text-foreground">{scenario.name}</td>
+                                <td className="px-3 py-2 align-top text-sm font-medium text-foreground">
+                                  <div className="flex items-center gap-1.5">
+                                    <span>{scenario.name}</span>
+                                    {scenario.type === 'synthetic' ? (
+                                      <span className="rounded bg-violet-500/10 px-1 py-0.5 text-[9px] font-medium text-violet-600 dark:text-violet-400">syn</span>
+                                    ) : scenario.prompts && scenario.prompts.length > 0 ? (
+                                      <span className="rounded bg-blue-500/10 px-1 py-0.5 text-[9px] font-medium text-blue-600 dark:text-blue-400">multi</span>
+                                    ) : null}
+                                    {scenario.fixture ? (
+                                      <span className="rounded bg-emerald-500/10 px-1 py-0.5 text-[9px] font-medium text-emerald-600 dark:text-emerald-400">{scenario.fixture}</span>
+                                    ) : null}
+                                  </div>
+                                </td>
                                 <td className="px-3 py-2 align-top text-xs">
                                   <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium ${labelClass}`}>{labelText}</span>
                                 </td>
                                 <td className="px-3 py-2 align-top text-xs text-muted-foreground">{formatDimensionsList(scenario.dimensions)}</td>
                                 <td className="px-3 py-2 align-top text-sm text-foreground">
-                                  <div className="max-h-36 overflow-y-auto whitespace-pre-wrap">{scenario.prompt}</div>
+                                  <div className="max-h-36 overflow-y-auto whitespace-pre-wrap">{scenario.goal || scenario.prompt || (scenario.prompts ? scenario.prompts.join(' → ') : '')}</div>
                                 </td>
                                 <td className="px-3 py-2 align-top text-sm text-muted-foreground">
                                   <div className="max-h-36 overflow-y-auto whitespace-pre-wrap text-foreground">
@@ -1557,7 +1569,24 @@ function ScenarioSetDetail({
                 <div key={key} className="rounded-md border border-border bg-background px-4 py-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <div className="text-sm font-semibold">{scenario.name}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold">{scenario.name}</span>
+                        {scenario.type === 'synthetic' ? (
+                          <span className="rounded-md bg-violet-500/10 border border-violet-500/40 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-400">
+                            synthetic
+                          </span>
+                        ) : scenario.prompts && scenario.prompts.length > 0 ? (
+                          <span className="rounded-md bg-blue-500/10 border border-blue-500/40 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">
+                            multi-turn
+                          </span>
+                        ) : null}
+                        {scenario.fixture ? (
+                          <span className="rounded-md bg-emerald-500/10 border border-emerald-500/40 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                            {scenario.fixture}
+                          </span>
+                        ) : null}
+                      </div>
+                      {scenario.description ? <div className="mt-0.5 text-xs text-muted-foreground">{scenario.description}</div> : null}
                       {scenario.id ? <div className="text-xs text-muted-foreground">ID: {scenario.id}</div> : null}
                       {typeof scenario.metadata?.index === 'number' ? <div className="text-xs text-muted-foreground">Index: {scenario.metadata.index}</div> : null}
                     </div>
@@ -1593,7 +1622,36 @@ function ScenarioSetDetail({
                       </button>
                     </div>
                   </div>
+                  {scenario.goal ? (
+                    <div className="mt-2">
+                      <span className="text-xs font-medium text-muted-foreground">Goal: </span>
+                      <span className="text-sm text-foreground">{scenario.goal}</span>
+                    </div>
+                  ) : null}
                   {scenario.prompt ? <p className="mt-2 text-sm text-muted-foreground">{scenario.prompt}</p> : null}
+                  {scenario.prompts && scenario.prompts.length > 0 ? (
+                    <div className="mt-2 space-y-1">
+                      <span className="text-xs font-medium text-muted-foreground">Prompts ({scenario.prompts.length}):</span>
+                      {scenario.prompts.map((p, i) => (
+                        <div key={i} className="ml-2 text-sm text-muted-foreground">
+                          {i + 1}. {p}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  {scenario.persona ? (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <span className="text-xs font-medium text-muted-foreground">Persona:</span>
+                      {Object.entries(scenario.persona).map(([k, v]) => (
+                        <span key={k} className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                          {k}: {String(v)}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  {scenario.max_exchanges ? (
+                    <div className="mt-1 text-xs text-muted-foreground">Max exchanges: {scenario.max_exchanges}</div>
+                  ) : null}
                   {scenario.dimensions && Object.keys(scenario.dimensions).length > 0 ? (
                     <div className="mt-2 flex flex-wrap gap-2">
                       {Object.entries(scenario.dimensions).map(([key, value]) => (
@@ -3501,6 +3559,15 @@ function SuiteRunDetail({ jobId, status, onBack, onDismiss, onNavigateToLogs, pr
               ) : null}
               {status?.error ? (
                 <div className="rounded border border-destructive/60 bg-destructive/10 px-3 py-2 text-xs text-destructive">{status.error}</div>
+              ) : null}
+              {status?.warnings && status.warnings.length > 0 ? (
+                <div className="space-y-1">
+                  {status.warnings.map((warning, idx) => (
+                    <div key={idx} className="rounded border border-amber-500/60 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                      ⚠️ {warning}
+                    </div>
+                  ))}
+                </div>
               ) : null}
             </div>
           </div>

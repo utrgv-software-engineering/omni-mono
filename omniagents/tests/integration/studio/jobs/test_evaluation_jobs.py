@@ -206,3 +206,122 @@ def test_failure_category_validation_errors(studio_api_env):
         headers=headers,
     )
     assert invalid_measure.status_code == 400
+
+
+def test_evaluation_suite_sets_environment_variables_from_config(
+    monkeypatch, studio_api_env
+):
+    """Test that environment variables from evaluation.environment.config are set."""
+    import os
+
+    compiled_path = studio_api_env.project_dir / "compiled_env_test.yml"
+    captured_env_vars = {}
+
+    def _fake_compile_project(manifest_path, select="", exclude="", agent_key=None):
+        # Return a compiled config with environment settings
+        compiled_path.write_text(
+            """
+tracing:
+  provider: none
+evaluation:
+  environment:
+    class: some.module.EnvClass
+    config:
+      api_base: "${TEST_API_BASE:-http://default-api.com}"
+      api_token: "static-token-value"
+""",
+            encoding="utf-8",
+        )
+        return str(compiled_path), {}
+
+    def _fake_run_evaluation(
+        compiled_cfg,
+        tracing_cfg=None,
+        workflow_base_name=None,
+        include_unmeasured=False,
+        progress_cb=None,
+    ):
+        # Capture environment variables during evaluation
+        captured_env_vars["API_BASE"] = os.environ.get("API_BASE")
+        captured_env_vars["API_TOKEN"] = os.environ.get("API_TOKEN")
+        if progress_cb:
+            progress_cb({"event": "start", "total": 1})
+            progress_cb({"event": "progress", "index": 1})
+        return {"runs": [], "metrics": [], "stats": {"total_scenarios": 0}}
+
+    monkeypatch.setattr(studio_api, "compile_project", _fake_compile_project)
+    monkeypatch.setattr(studio_api, "run_evaluation", _fake_run_evaluation)
+
+    # Ensure env vars don't exist before test
+    os.environ.pop("API_BASE", None)
+    os.environ.pop("API_TOKEN", None)
+
+    payload = {"name": "env-test"}
+    response = studio_api_env.client.post(
+        "/api/evaluation/suite/run", json=payload, headers=_auth_header()
+    )
+    assert response.status_code == 200
+    job_id = response.json()["job_id"]
+
+    status = _wait_for_completion(
+        studio_api_env.portal,
+        f"/api/evaluation/suite/run/{job_id}",
+        studio_api_env.client,
+    )
+    assert status["state"] == "completed"
+
+    # Verify env vars were set during evaluation (default was used for api_base)
+    assert captured_env_vars["API_BASE"] == "http://default-api.com"
+    assert captured_env_vars["API_TOKEN"] == "static-token-value"
+
+    # Verify env vars are cleaned up after evaluation
+    assert os.environ.get("API_BASE") is None
+    assert os.environ.get("API_TOKEN") is None
+
+
+def test_evaluation_suite_propagates_warnings_from_result(monkeypatch, studio_api_env):
+    """Test that warnings from run_evaluation result appear in job status."""
+    compiled_path = studio_api_env.project_dir / "compiled_warnings_test.yml"
+
+    def _fake_compile_project(manifest_path, select="", exclude="", agent_key=None):
+        compiled_path.write_text("tracing:\n  provider: none\n", encoding="utf-8")
+        return str(compiled_path), {}
+
+    def _fake_run_evaluation(
+        compiled_cfg,
+        tracing_cfg=None,
+        workflow_base_name=None,
+        include_unmeasured=False,
+        progress_cb=None,
+    ):
+        if progress_cb:
+            progress_cb({"event": "start", "total": 1})
+            progress_cb({"event": "progress", "index": 1})
+        return {
+            "runs": [],
+            "metrics": [],
+            "stats": {"total_scenarios": 0},
+            "warnings": [
+                "Environment loading failed: Failed to load environment class: my.EnvClass"
+            ],
+        }
+
+    monkeypatch.setattr(studio_api, "compile_project", _fake_compile_project)
+    monkeypatch.setattr(studio_api, "run_evaluation", _fake_run_evaluation)
+
+    payload = {"name": "warnings-test"}
+    response = studio_api_env.client.post(
+        "/api/evaluation/suite/run", json=payload, headers=_auth_header()
+    )
+    assert response.status_code == 200
+    job_id = response.json()["job_id"]
+
+    status = _wait_for_completion(
+        studio_api_env.portal,
+        f"/api/evaluation/suite/run/{job_id}",
+        studio_api_env.client,
+    )
+    assert status["state"] == "completed"
+    assert status["warnings"] is not None
+    assert len(status["warnings"]) == 1
+    assert "Environment loading failed" in status["warnings"][0]
