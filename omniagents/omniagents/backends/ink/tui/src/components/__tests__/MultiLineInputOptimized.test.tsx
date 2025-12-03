@@ -206,10 +206,45 @@ describe("MultiLineInputOptimized", () => {
 
   it("submits trimmed content on enter", async () => {
     const onSubmit = vi.fn();
-    const { stdin, lastFrame } = renderInput({ onSubmit });
-    stdin.write(" test ");
+    const { lastFrame } = renderInput({ onSubmit });
     await flush();
-    stdin.write("\r");
+    const handler = getInputHandler();
+    expect(handler).toBeDefined();
+    // Type " test "
+    handler?.(" test ", {
+      upArrow: false,
+      downArrow: false,
+      leftArrow: false,
+      rightArrow: false,
+      pageDown: false,
+      pageUp: false,
+      return: false,
+      escape: false,
+      ctrl: false,
+      shift: false,
+      tab: false,
+      backspace: false,
+      delete: false,
+      meta: false,
+    });
+    await flush();
+    // Press enter to submit
+    handler?.("", {
+      upArrow: false,
+      downArrow: false,
+      leftArrow: false,
+      rightArrow: false,
+      pageDown: false,
+      pageUp: false,
+      return: true,
+      escape: false,
+      ctrl: false,
+      shift: false,
+      tab: false,
+      backspace: false,
+      delete: false,
+      meta: false,
+    });
     await flush();
     expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(onSubmit).toHaveBeenCalledWith("test");
@@ -334,10 +369,45 @@ describe("MultiLineInputOptimized", () => {
 
   it("does not submit when disableSubmit is true", async () => {
     const onSubmit = vi.fn();
-    const { stdin, lastFrame } = renderInput({ onSubmit, disableSubmit: true });
-    stdin.write("hello");
+    const { lastFrame } = renderInput({ onSubmit, disableSubmit: true });
     await flush();
-    stdin.write("\r");
+    const handler = getInputHandler();
+    expect(handler).toBeDefined();
+    // Type "hello"
+    handler?.("hello", {
+      upArrow: false,
+      downArrow: false,
+      leftArrow: false,
+      rightArrow: false,
+      pageDown: false,
+      pageUp: false,
+      return: false,
+      escape: false,
+      ctrl: false,
+      shift: false,
+      tab: false,
+      backspace: false,
+      delete: false,
+      meta: false,
+    });
+    await flush();
+    // Press enter (should not submit because disableSubmit is true)
+    handler?.("", {
+      upArrow: false,
+      downArrow: false,
+      leftArrow: false,
+      rightArrow: false,
+      pageDown: false,
+      pageUp: false,
+      return: true,
+      escape: false,
+      ctrl: false,
+      shift: false,
+      tab: false,
+      backspace: false,
+      delete: false,
+      meta: false,
+    });
     await flush();
     expect(onSubmit).not.toHaveBeenCalled();
     expect(normalize(lastFrame()).at(0)).toBe("> hello");
