@@ -54,6 +54,11 @@ async def _broadcast(session, method: str, payload: dict) -> bool:  # noqa: D401
     if not session.channels:
         return False
 
+    if method == "client_request":
+        func = (payload or {}).get("function") if isinstance(payload, dict) else None
+        if func == "ui.set_status":
+            session.active_run_set_status_payload = dict(payload)
+
     delivered_any = False
     dead_channels = []
     for ch in list(session.channels):

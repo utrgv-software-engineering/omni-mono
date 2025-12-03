@@ -35,6 +35,7 @@ export type ApprovalItem = {
   tool: string
   argumentsText?: string
   metadata?: any
+  session_id?: string
 }
 
 export type MessageItem = ChatMessage | ToolItem | ApprovalItem
