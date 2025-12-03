@@ -263,8 +263,27 @@ describe("MultiLineInputOptimized", () => {
 
   it("handles multi-line paste by splitting into separate rows", async () => {
     const onSubmit = vi.fn();
-    const { stdin, lastFrame } = renderInput({ onSubmit });
-    stdin.write("foo\nbar");
+    const { lastFrame } = renderInput({ onSubmit });
+    await flush();
+    const handler = getInputHandler();
+    expect(handler).toBeDefined();
+    // Simulate pasting multi-line text by calling handler directly with the text
+    handler?.("foo\nbar", {
+      upArrow: false,
+      downArrow: false,
+      leftArrow: false,
+      rightArrow: false,
+      pageDown: false,
+      pageUp: false,
+      return: false,
+      escape: false,
+      ctrl: false,
+      shift: false,
+      tab: false,
+      backspace: false,
+      delete: false,
+      meta: false,
+    });
     await flush();
     expect(normalize(lastFrame())).toEqual(["> foo", "  bar"]);
   });
