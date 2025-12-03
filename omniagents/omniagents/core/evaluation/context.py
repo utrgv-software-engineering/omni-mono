@@ -116,7 +116,7 @@ class JudgeResult:
 class EvalContext:
     session_id: Optional[str] = None
     history: List[Dict[str, Any]] = field(default_factory=list)
-    agent: Any | None = None
+    agent: Optional[Any] = None
     available_tools: Set[str] = field(default_factory=set)
     metadata: Dict[str, Any] = field(default_factory=dict)
     _tool_calls: List[ToolCall] = field(default_factory=list, repr=False)
@@ -126,6 +126,24 @@ class EvalContext:
     _assistant_messages: List[Message] = field(default_factory=list, repr=False)
     _user_messages: List[Message] = field(default_factory=list, repr=False)
     final_assistant_message: Optional[Message] = None
+    # Environment support for multi-turn evaluation
+    _environment: Optional[Any] = field(default=None, repr=False)
+    _environment_context: Optional[Any] = field(default=None, repr=False)
+
+    @property
+    def environment(self) -> Optional[Any]:
+        """The EvalEnvironment instance, if running with environment support."""
+        return self._environment
+
+    @property
+    def environment_context(self) -> Optional[Any]:
+        """The EnvironmentContext from setup, if running with environment support."""
+        return self._environment_context
+
+    @property
+    def scenario(self) -> Dict[str, Any]:
+        """The scenario configuration, if available in metadata."""
+        return self.metadata.get("scenario", {})
 
     def tool_calls(self, name: Optional[str] = None) -> List[ToolCall]:
         if name is None:
@@ -195,6 +213,44 @@ class EvalContext:
         ans = answer.strip()
         reason = reasoning.strip()
         return JudgeResult(answer=ans, reasoning=reason, raw=data)
+
+    async def verify(self, expected: Dict[str, Any]) -> Dict[str, Any]:
+        """Verify expected state against actual state using the environment.
+
+        This method calls the environment's verify() method to check database
+        or API state. Only works when running with environment support.
+
+        Args:
+            expected: Expected state specification (e.g., {"reservation": {"exists": True}})
+
+        Returns:
+            Dict with {"success": bool, "results": {...}}
+
+        Raises:
+            RuntimeError: If no environment is configured.
+        """
+        if self._environment is None or self._environment_context is None:
+            raise RuntimeError(
+                "verify() requires environment support. "
+                "Make sure scenario is run with an EvalEnvironment."
+            )
+        return await self._environment.verify(self._environment_context, expected)
+
+    def get_env_data(self, key: str, default: Any = None) -> Any:
+        """Get a value from the environment context.
+
+        Convenience method for accessing environment context data in measures.
+
+        Args:
+            key: The key to look up (e.g., "hotel_id", "session_id").
+            default: Default value if key not found.
+
+        Returns:
+            The value from environment context, or default.
+        """
+        if self._environment_context is None:
+            return default
+        return self._environment_context.get(key, default)
 
 
 def allowed_tool_names(

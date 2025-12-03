@@ -313,6 +313,7 @@ async def stream_agent(
     context_window: Optional[int] = None,
     include_user_message: bool = True,
     workflow_name: Optional[str] = None,
+    group_id: Optional[str] = None,
     user_content: Optional[Any] = None,
 ) -> dict | None:  # noqa: D401
     """Drive agent.run_streamed and forward events to *rpc_channel*.
@@ -414,7 +415,7 @@ async def stream_agent(
         from agents import RunConfig
 
         run_config = RunConfig(
-            group_id=f"session_{session.id}",
+            group_id=group_id or f"session_{session.id}",
             workflow_name=workflow_name or "omniagents_conversation",
         )
 

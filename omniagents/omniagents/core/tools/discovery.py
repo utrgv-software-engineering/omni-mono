@@ -323,7 +323,6 @@ def discover_functions_in_dir(
                         if Debug.enabled():
                             print(f"  Discovered marked tool: {name}")
                         discovered_functions[name] = obj
-                    # Optionally log other functions found but not marked
                     # elif inspect.isfunction(obj) and obj.__module__ == module_path and not name.startswith("_"):
                     #     print(f"  Found unmarked function: {name}")
 

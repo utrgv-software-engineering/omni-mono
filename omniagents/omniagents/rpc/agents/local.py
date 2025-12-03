@@ -36,8 +36,13 @@ class LocalAgent(RemoteAgent):
             mcp_servers: Optional MCP servers
         """
         # Initialize RemoteAgent with no URL (we'll use custom transport)
-        super().__init__(url=None)
-        
+        # Pass context and variables from spec to parent
+        super().__init__(
+            url=None,
+            variables=getattr(spec, "variables", None),
+            context=getattr(spec, "context", None),
+        )
+
         self.spec = spec
         self.settings = settings or {}
         self.approval_callback = approval_callback
@@ -48,7 +53,7 @@ class LocalAgent(RemoteAgent):
         self._client_transport: Optional[InMemoryTransport] = None
         self._server_transport: Optional[InMemoryTransport] = None
         self._initialized = False
-        
+
         # Set agent properties from spec
         self.name = spec.name
         self.instructions = (
@@ -179,7 +184,7 @@ class LocalAgent(RemoteAgent):
 
             # Connect client transport
             await self._client_transport.connect()
-            
+
             # Set transport for RemoteAgent to use
             self._transport = self._client_transport
 

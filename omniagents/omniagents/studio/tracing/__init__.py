@@ -20,8 +20,6 @@ from omniagents.core.project.runtime import load_project, build_spec_from_projec
 from .processor import (
     StudioTraceProcessor,
     RemoteStudioTraceProcessor,
-    AgentIOProcessor,
-    RemoteAgentIOProcessor,
 )
 from .storage import SQLiteStorage
 from .utils import generate_readable_name
@@ -121,7 +119,6 @@ def init(
                     temp_storage.close()
 
         _server_url = None
-
 
     if replace_default:
         set_trace_processors([_processor])
@@ -498,8 +495,6 @@ __all__ = [
     "get_current_project",
     "set_conversation_analysis",
     "append_conversation_note",
-    "AgentIOProcessor",
-    "RemoteAgentIOProcessor",
     "StudioTraceProcessor",
     "RemoteStudioTraceProcessor",
 ]

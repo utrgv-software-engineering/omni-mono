@@ -79,15 +79,16 @@ async def create_unified_agent(
 
 def is_remote_agent(agent: UnifiedAgent) -> bool:
     """
-    Check if an agent is a remote agent.
+    Check if an agent is a remote agent (not a local agent).
 
     Args:
         agent: The agent to check
 
     Returns:
-        True if the agent is a RemoteAgent, False otherwise
+        True if the agent is a RemoteAgent but not a LocalAgent, False otherwise
     """
-    return isinstance(agent, RemoteAgent)
+    # LocalAgent is a subclass of RemoteAgent, so we need to exclude it
+    return isinstance(agent, RemoteAgent) and not isinstance(agent, LocalAgent)
 
 
 def is_local_agent(agent: UnifiedAgent) -> bool:

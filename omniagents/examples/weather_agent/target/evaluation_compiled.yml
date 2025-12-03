@@ -14,7 +14,7 @@ safe_agent_options:
 input_guardrails: []
 output_guardrails: []
 tracing:
-  provider: agentio
+  provider: studio
   project: weather_agent_demo
   name: weather_agent
   settings:

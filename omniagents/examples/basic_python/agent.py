@@ -7,7 +7,7 @@ from time import sleep
 from dotenv import load_dotenv
 from agents import Agent
 from omniagents import Runner, function_tool
-import agentio  # Import AgentIO for tracing
+import omniagents.studio.tracing as studio_tracing  # Import Studio for tracing
 
 # Load environment variables from .env file
 load_dotenv()
@@ -39,8 +39,8 @@ def build_agent() -> Agent:
 
 
 def main() -> None:
-    # Initialize AgentIO tracing
-    agentio.init(
+    # Initialize Studio tracing
+    studio_tracing.init(
         project="basic_python_demo",
         name="tool_demo",
         resume="never",  # Always create a new trace

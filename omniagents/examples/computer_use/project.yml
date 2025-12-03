@@ -7,7 +7,7 @@ agents:
   entrypoint: computer_use
 
 tracing:
-  provider: agentio
+  provider: studio
   project: computer_use_project
   name: computer_use
   settings:

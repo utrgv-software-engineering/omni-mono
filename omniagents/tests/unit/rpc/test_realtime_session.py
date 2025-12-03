@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock, patch, MagicMock
 
 from omniagents.core.agents.specs import AgentSpec, RealtimeSettings, HandoffConfig
 from omniagents.core.session.audio_storage import AudioStorage
-from omniagents.rpc.realtime_session import RealtimeSession
+from omniagents.rpc.realtime_session import RealtimeSession, _resolve_realtime_url
 from omniagents.rpc.realtime_events import (
     RealtimeAudioEvent,
     RealtimeTurnStartedEvent,
@@ -207,6 +207,87 @@ async def test_connect_session(realtime_spec, settings_with_key):
 
         # Verify session was entered
         mock_session.__aenter__.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_connect_session_azure_headers(realtime_spec):
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+
+    with (
+        patch("agents.realtime.RealtimeAgent", create=True),
+        patch("agents.realtime.RealtimeRunner", create=True) as MockRunner,
+        patch("omniagents.rpc.realtime_session.history_db.register_session"),
+    ):
+        mock_runner = MockRunner.return_value
+        mock_runner.run = AsyncMock(return_value=mock_session)
+
+        settings = {
+            "openai_api_key": "azure-key",
+            "openai_realtime_url": "wss://example.openai.azure.com/openai/realtime?deployment=rt",
+        }
+        session = RealtimeSession(realtime_spec, settings=settings)
+        await session.start()
+        await session.connect()
+
+        model_config = mock_runner.run.call_args[1]["model_config"]
+        assert "api_key" not in model_config
+        assert model_config["headers"]["api-key"] == "azure-key"
+        assert model_config["url"].startswith("wss://example.openai.azure.com")
+
+
+@pytest.mark.asyncio
+async def test_connect_session_query_flag_override(realtime_spec):
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+
+    with (
+        patch("agents.realtime.RealtimeAgent", create=True),
+        patch("agents.realtime.RealtimeRunner", create=True) as MockRunner,
+        patch("omniagents.rpc.realtime_session.history_db.register_session"),
+    ):
+        mock_runner = MockRunner.return_value
+        mock_runner.run = AsyncMock(return_value=mock_session)
+
+        settings = {
+            "openai_api_key": "proxy-key",
+            "openai_realtime_url": "wss://proxy.internal/realtime",
+            "openai_realtime_api_key_in_query": True,
+        }
+        session = RealtimeSession(realtime_spec, settings=settings)
+        await session.start()
+        await session.connect()
+
+        model_config = mock_runner.run.call_args[1]["model_config"]
+        assert "api_key" not in model_config
+        assert "api-key=proxy-key" in model_config["url"]
+
+
+@pytest.mark.asyncio
+async def test_connect_session_force_header_non_azure(realtime_spec):
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+
+    with (
+        patch("agents.realtime.RealtimeAgent", create=True),
+        patch("agents.realtime.RealtimeRunner", create=True) as MockRunner,
+        patch("omniagents.rpc.realtime_session.history_db.register_session"),
+    ):
+        mock_runner = MockRunner.return_value
+        mock_runner.run = AsyncMock(return_value=mock_session)
+
+        settings = {
+            "openai_api_key": "custom-key",
+            "openai_realtime_url": "wss://proxy.internal/realtime",
+            "openai_realtime_force_api_key_header": True,
+        }
+        session = RealtimeSession(realtime_spec, settings=settings)
+        await session.start()
+        await session.connect()
+
+        model_config = mock_runner.run.call_args[1]["model_config"]
+        assert "api_key" not in model_config
+        assert model_config["headers"]["api-key"] == "custom-key"
 
 
 @pytest.mark.asyncio
@@ -699,6 +780,59 @@ async def test_start_session_with_guardrails(settings_with_key):
         assert "output_guardrails" in call_kwargs
         assert len(call_kwargs["output_guardrails"]) == 1
         assert call_kwargs["output_guardrails"][0] == mock_output_guardrail
+
+
+def test_resolve_realtime_url_builds_from_base_url(monkeypatch, realtime_spec):
+    monkeypatch.delenv("AZURE_OPENAI_ENDPOINT", raising=False)
+    resolved = _resolve_realtime_url(
+        explicit_url=None,
+        base_url="https://api.openai.com/v1",
+        spec=realtime_spec,
+        settings={},
+    )
+    # Now builds a realtime URL from the base_url
+    assert resolved == "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview"
+
+
+def test_resolve_realtime_url_keeps_explicit(monkeypatch, realtime_spec):
+    monkeypatch.delenv("AZURE_OPENAI_ENDPOINT", raising=False)
+    explicit = "wss://proxy.internal/realtime"
+    resolved = _resolve_realtime_url(
+        explicit_url=explicit,
+        base_url=None,
+        spec=realtime_spec,
+        settings={},
+    )
+    assert resolved == explicit
+
+
+def test_resolve_realtime_url_builds_from_azure_base_url(monkeypatch, realtime_spec):
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://cs-hackr.openai.azure.com/")
+    monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-realtime")
+    monkeypatch.setenv("AZURE_OPENAI_API_VERSION", "2024-05-01-preview")
+    resolved = _resolve_realtime_url(
+        explicit_url=None,
+        base_url="https://cs-hackr.openai.azure.com/openai/v1/",
+        spec=realtime_spec,
+        settings={},
+    )
+    # Now builds a realtime URL directly from base_url with model param
+    assert (
+        resolved
+        == "wss://cs-hackr.openai.azure.com/openai/v1/realtime?model=gpt-realtime"
+    )
+
+
+def test_resolve_realtime_url_respects_explicit_azure_query(monkeypatch, realtime_spec):
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://cs-hackr.openai.azure.com/")
+    explicit = "wss://cs-hackr.openai.azure.com/openai/deployments/foo/realtime?api-version=2024-05-01-preview"
+    resolved = _resolve_realtime_url(
+        explicit_url=explicit,
+        base_url=None,
+        spec=realtime_spec,
+        settings={},
+    )
+    assert resolved == explicit
 
 
 @pytest.mark.asyncio

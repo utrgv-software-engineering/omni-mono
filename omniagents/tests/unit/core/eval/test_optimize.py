@@ -1291,9 +1291,10 @@ def test_optimize_agent_tracing_studio_init(
     assert result["instructions"] == env.instructions
 
 
-def test_optimize_agent_tracing_agentio_fallback(
+def test_optimize_agent_tracing_unavailable_continues(
     monkeypatch, tmp_path, configure_optimize_env
 ):
+    """Test that optimization continues when omniagents.studio.tracing is unavailable."""
     project_dir = tmp_path / "proj"
     project_dir.mkdir()
 
@@ -1337,14 +1338,6 @@ def test_optimize_agent_tracing_agentio_fallback(
     studio_module = types.ModuleType("omniagents.studio")
     studio_module.__path__ = []
     monkeypatch.setitem(sys.modules, "omniagents.studio", studio_module)
-    agentio_calls = []
-    agentio_module = types.ModuleType("agentio")
-
-    def agentio_init(**kwargs):
-        agentio_calls.append(kwargs)
-
-    agentio_module.init = agentio_init
-    monkeypatch.setitem(sys.modules, "agentio", agentio_module)
 
     scenario_dir = project_dir / "artifacts" / "eval" / "scenario" / "splits" / "safety"
     scenario_dir.mkdir(parents=True)
@@ -1373,6 +1366,7 @@ def test_optimize_agent_tracing_agentio_fallback(
     write_split(scenario_dir / "dev.yml", [True])
     write_split(scenario_dir / "test.yml", [True])
 
+    # Optimization should still work even without tracing
     optimize.optimize_agent_from_project(
         str(project_dir),
         None,
@@ -1393,7 +1387,7 @@ def test_optimize_agent_tracing_agentio_fallback(
         False,
     )
 
-    assert agentio_calls
+    # Stopper should still be called even without tracing
     assert env.stopper_calls
 
 
@@ -1542,7 +1536,7 @@ def test_optimize_judge_happy_path(monkeypatch, tmp_path, configure_optimize_env
                     },
                 },
                 "tracing": {
-                    "provider": "agentio",
+                    "provider": "studio",
                     "name": "judgeflow",
                     "project": "demo",
                     "settings": {"resume": "auto"},
@@ -1590,15 +1584,6 @@ def test_optimize_judge_happy_path(monkeypatch, tmp_path, configure_optimize_env
         "omniagents.core.project.apply.apply_judge_updates",
         fake_apply_judge_updates,
     )
-
-    agentio_calls = []
-    agentio_module = types.ModuleType("agentio")
-
-    def agentio_init(**kwargs):
-        agentio_calls.append(kwargs)
-
-    agentio_module.init = agentio_init
-    monkeypatch.setitem(sys.modules, "agentio", agentio_module)
 
     scenario_dir = project_dir / "artifacts" / "eval" / "scenario" / "splits" / "safety"
     scenario_dir.mkdir(parents=True)
@@ -1660,7 +1645,7 @@ def test_optimize_judge_happy_path(monkeypatch, tmp_path, configure_optimize_env
     assert result["instructions"] == "judge"
     assert result["template"] == "tmpl"
     assert judge_apply_calls
-    assert agentio_calls
+    # Note: tracing initialization is tested separately in test_optimize_judge_tracing
     assert judge_adapter_instances[0].evaluate_calls
     env.engine_kwargs["evaluator"](
         [{"label": True}],

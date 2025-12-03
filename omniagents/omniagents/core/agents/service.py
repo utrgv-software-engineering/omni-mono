@@ -1133,6 +1133,8 @@ class AgentService(RpcMethodsBase):
         variables: dict | None = None,
         context: Any | None = None,
         content: Any | None = None,
+        workflow_name: str | None = None,
+        group_id: str | None = None,
     ) -> dict:  # noqa: D401
         sess: Session = self._session_manager.get_or_create(session_id)
         channel = getattr(self, "channel", None)
@@ -1146,6 +1148,12 @@ class AgentService(RpcMethodsBase):
             sess.variables = variables
         if context is not None:
             sess.context = context
+
+        # Store workflow_name and group_id for tracing
+        if workflow_name is not None:
+            sess.workflow_name = workflow_name
+        if group_id is not None:
+            sess.group_id = group_id
 
         # Track current channel for real-time notifications.
         if channel is not None and channel not in sess.channels:
@@ -1301,11 +1309,16 @@ class AgentService(RpcMethodsBase):
             attempt = 0
             include_user_message = True
             try:
-                workflow_name_override = None
-                if isinstance(self.spec.tracing_config, dict):
+                # Determine workflow_name: session override > spec config > default
+                workflow_name_override = getattr(sess, "workflow_name", None)
+                if workflow_name_override is None and isinstance(
+                    self.spec.tracing_config, dict
+                ):
                     workflow_name_override = self.spec.tracing_config.get(
                         "workflow_name"
                     )
+                # Also get group_id from session if provided
+                group_id_override = getattr(sess, "group_id", None)
                 while True:
                     try:
                         final_details = await stream_agent(
@@ -1318,6 +1331,7 @@ class AgentService(RpcMethodsBase):
                             context_window=getattr(self.spec, "context_window", None),
                             include_user_message=include_user_message,
                             workflow_name=workflow_name_override,
+                            group_id=group_id_override,
                             user_content=content,
                         )
                         end_reason = sess.cancel_end_reason or "completed"

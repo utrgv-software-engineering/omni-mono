@@ -4,7 +4,7 @@ from agents import Agent
 from omniagents import Runner, function_tool
 from datetime import datetime
 import random
-import agentio  # Import AgentIO for tracing
+import omniagents.studio.tracing as studio_tracing  # Import Studio for tracing
 
 INSTRUCTIONS = """You are a friendly assistant.\nUse `get_current_time` when a user asks for the current time.\nUse `flip_coin` when asked to flip a coin."""
 
@@ -31,8 +31,8 @@ def build_agent() -> Agent:
 
 
 def main() -> None:
-    # Initialize AgentIO tracing
-    agentio.init(
+    # Initialize Studio tracing
+    studio_tracing.init(
         project="safe_agent_demo",
         name="safe_tool_demo",
         resume="never",  # Always create a new trace

@@ -7,7 +7,7 @@ agents:
   entrypoint: mcp_agent
 
 tracing:
-  provider: agentio
+  provider: studio
   project: mcp_agent_project
   name: mcp_agent
   settings:

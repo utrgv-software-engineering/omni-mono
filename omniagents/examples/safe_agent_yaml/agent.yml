@@ -9,9 +9,9 @@ safe_agent_options:
   safe_tool_names: []
   safe_tool_patterns: []
 
-# Enable AgentIO tracing
+# Enable Studio tracing
 tracing:
-  provider: agentio
+  provider: studio
   project: safe_agent_yaml_demo
   name: safe_tool_demo_yaml
   settings:

@@ -4,7 +4,7 @@ from agents import Agent
 from omniagents import Runner, function_tool
 from datetime import datetime
 import random
-import agentio  # Import AgentIO for tracing
+import omniagents.studio.tracing as studio_tracing  # Import Studio for tracing
 
 INSTRUCTIONS = open("instructions.md", "r").read()
 
@@ -31,8 +31,8 @@ def build_agent() -> Agent:
 
 
 def main() -> None:
-    # Initialize AgentIO tracing
-    agentio.init(
+    # Initialize Studio tracing
+    studio_tracing.init(
         project="remote_agent_demo",
         name="remote_server",
         resume="never",  # Always create a new trace

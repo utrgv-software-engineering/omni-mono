@@ -491,7 +491,9 @@ def attach_capture(service):
     """Attach event capture to service for observing broadcasts."""
     events = []
 
-    async def capture(self, session, method, payload, *, queue_if_unseen=False):
+    async def capture(
+        self, session, method, payload, *, queue_if_unseen=False, track_live=False
+    ):
         events.append({"method": method, "payload": payload, "queue": queue_if_unseen})
         return True
 

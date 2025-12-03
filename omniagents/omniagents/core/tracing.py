@@ -18,7 +18,7 @@ def setup_tracing(tracing_config: Optional[Dict[str, Any]]) -> None:
         tracing_config: Tracing configuration from YAML or None for defaults.
             Expected keys include:
             {
-                'provider': 'default' | 'studio' | 'agentio' | 'none',
+                'provider': 'default' | 'studio' | 'none',
                 'project': 'project_name',
                 'name': 'trace_name',
                 'settings': {
@@ -53,7 +53,7 @@ def setup_tracing(tracing_config: Optional[Dict[str, Any]]) -> None:
         except ImportError:
             pass
         return
-    elif provider in {"studio", "agentio"}:
+    elif provider == "studio":
         tracing_module = None
         errors = []
 
@@ -63,14 +63,6 @@ def setup_tracing(tracing_config: Optional[Dict[str, Any]]) -> None:
             tracing_module = studio_tracing
         except ImportError as exc:
             errors.append(exc)
-
-        if tracing_module is None and provider == "agentio":
-            try:
-                import agentio as legacy_tracing
-
-                tracing_module = legacy_tracing
-            except ImportError as exc:
-                errors.append(exc)
 
         if tracing_module is None:
             logger.warning("Studio tracing not available, using default OpenAI tracing")

@@ -30,9 +30,7 @@ class StudioTraceProcessor(TracingProcessor):
 
     def _get_project_from_trace(self, trace: Any) -> str:
         if hasattr(trace, "metadata") and trace.metadata:
-            project = trace.metadata.get("studio_project") or trace.metadata.get(
-                "agentio_project"
-            )
+            project = trace.metadata.get("studio_project")
             if project:
                 return project
         return self.default_project or "default"
@@ -129,11 +127,7 @@ class RemoteStudioTraceProcessor(TracingProcessor):
 
         self.endpoint = endpoint
         self.project = project
-        self.token = (
-            token
-            or os.environ.get("OMNIAGENTS_STUDIO_TOKEN")
-            or os.environ.get("AGENTIO_TOKEN")
-        )
+        self.token = token or os.environ.get("OMNIAGENTS_STUDIO_TOKEN")
         self.client = None
         self._client_lock = threading.Lock()
         self._queued_events = deque(maxlen=1000)
@@ -269,12 +263,7 @@ class RemoteStudioTraceProcessor(TracingProcessor):
                 self._send_now(event["type"], event["data"])
 
 
-AgentIOProcessor = StudioTraceProcessor
-RemoteAgentIOProcessor = RemoteStudioTraceProcessor
-
 __all__ = [
     "StudioTraceProcessor",
     "RemoteStudioTraceProcessor",
-    "AgentIOProcessor",
-    "RemoteAgentIOProcessor",
 ]

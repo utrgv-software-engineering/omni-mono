@@ -8,7 +8,7 @@ agents:
   voice_entrypoint: {sanitized}
 
 tracing:
-  provider: agentio
+  provider: studio
   project: {sanitized}_project
   name: {sanitized}
   settings:

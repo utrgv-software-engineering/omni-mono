@@ -3,9 +3,9 @@ model: gpt-4o
 instructions_file: instructions.md
 welcome_text: "I'm an agent with input and output guardrails. Try asking me something!"
 
-# Enable AgentIO tracing
+# Enable Studio tracing
 tracing:
-  provider: agentio
+  provider: studio
   project: guardrails_yaml_demo
   name: guardrails_agent
   settings:

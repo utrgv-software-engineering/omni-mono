@@ -13,7 +13,6 @@ def test_package_exports_available():
     assert callable(omniagents.input_guardrail)
     assert callable(omniagents.output_guardrail)
     assert omniagents.GuardrailFunctionOutput is not None
-    assert sys.modules.get("agentio") is omniagents.agentio
 
 
 def test_package_exports_missing_dependencies(monkeypatch):

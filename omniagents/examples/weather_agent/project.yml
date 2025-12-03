@@ -9,7 +9,7 @@ agents:
   voice_entrypoint: weather_voice
 
 tracing:
-  provider: agentio
+  provider: studio
   project: weather_agent_demo
   name: weather_agent
   settings:
