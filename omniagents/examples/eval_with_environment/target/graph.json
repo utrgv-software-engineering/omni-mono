@@ -1,0 +1,10 @@
+{
+  "project_name": "eval_with_environment",
+  "agent_file": "/home/emm/code/omniagents/examples/eval_with_environment/agents/demo_agent/agent.yml",
+  "compiled_file": "/home/emm/code/omniagents/examples/eval_with_environment/target/evaluation_compiled.yml",
+  "resources": {
+    "scenarios": [],
+    "judges": [],
+    "metrics": []
+  }
+}
