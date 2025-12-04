@@ -20,6 +20,7 @@ except ImportError:
 from omniagents.core.project.export import save_agent_as_py
 from omniagents.core.eval.optimize import optimize_agent_from_project
 from omniagents.core.eval.annotate import annotate_scenarios, write_annotation_output
+from omniagents.core.eval.results import save_evaluation_run
 from omniagents.core.runtime.runner import Runner
 from omniagents.core.debug import Debug
 
@@ -403,7 +404,7 @@ def main():
         "--color", choices=["auto", "always", "never"], default="auto"
     )
     scen_run = scen_sub.add_parser(
-        "run", help="Run scenarios from a YAML file to record fixtures"
+        "run", help="Run scenarios (includes scenarios without measures by default)"
     )
     scen_run.add_argument(
         "--project",
@@ -414,41 +415,26 @@ def main():
     scen_run.add_argument(
         "--agent", "-a", default="", help="Agent key (defaults to entrypoint)"
     )
+    scen_run.add_argument("--output", "-o", default="", help="Write JSON to this path")
     scen_run.add_argument(
-        "--name",
-        default=None,
-        help="Scenario set name under artifacts/eval/<name>/ (alternative to --input)",
+        "--reporter", choices=["auto", "pretty", "tap"], default="auto"
     )
     scen_run.add_argument(
-        "--input", "-i", default="", help="Path to scenarios YAML to run"
+        "--color", choices=["auto", "always", "never"], default="auto"
     )
-    scen_run.add_argument(
-        "--output",
-        "-o",
-        default="",
-        help="Write generated_runs.json to this path (default alongside scenarios file)",
-    )
-    scen_run.add_argument("--run-max-turns", type=int, default=None)
     scen_run.add_argument("--select", default="")
     scen_run.add_argument("--exclude", default="")
-    ih_group = scen_run.add_mutually_exclusive_group()
-    ih_group.add_argument(
-        "--include-history",
-        dest="include_history",
-        action="store_true",
-        help="Include full history in runs.json (default)",
-    )
-    ih_group.add_argument(
-        "--no-include-history",
-        dest="include_history",
-        action="store_false",
-        help="Do not include history in runs.json",
-    )
-    scen_run.set_defaults(include_history=True)
     scen_run.add_argument("-q", "--quiet", action="count", default=0)
     scen_run.add_argument("-v", "--verbose", action="count", default=0)
     scen_run.add_argument(
-        "--color", choices=["auto", "always", "never"], default="auto"
+        "--exclude-unmeasured",
+        action="store_true",
+        help="Exclude scenarios without measures/failure_categories (default: include them)",
+    )
+    scen_run.add_argument(
+        "--name",
+        default=None,
+        help="Optional scenario set name to include in tracing workflow base name",
     )
     scen_ann = scen_sub.add_parser(
         "annotate", help="Annotate scenarios with Studio categories"
@@ -1559,7 +1545,14 @@ def main():
             traceback.print_exc()
             sys.exit(1)
     elif args.command == "eval":
-        if args.eval_cmd == "suite" and getattr(args, "suite_cmd", None) == "run":
+        # Handle both "eval suite run" and "eval scenarios run" with same code path
+        is_suite_run = (
+            args.eval_cmd == "suite" and getattr(args, "suite_cmd", None) == "run"
+        )
+        is_scenarios_run = (
+            args.eval_cmd == "scenarios" and getattr(args, "scen_cmd", None) == "run"
+        )
+        if is_suite_run or is_scenarios_run:
             try:
                 from omniagents.core.project.compiler import compile_project
 
@@ -1657,42 +1650,57 @@ def main():
                         )
                 except Exception:
                     wf_base = None
+                # eval scenarios run: include unmeasured by default
+                # eval suite run: exclude unmeasured by default
+                if is_scenarios_run:
+                    include_unmeasured = not bool(
+                        getattr(args, "exclude_unmeasured", False)
+                    )
+                else:
+                    include_unmeasured = bool(
+                        getattr(args, "include_unmeasured", False)
+                    )
                 data = run_evaluation(
                     _P(compiled_cfg_path),
                     tracing_cfg=tracing,
                     workflow_base_name=wf_base,
-                    include_unmeasured=bool(getattr(args, "include_unmeasured", False)),
+                    include_unmeasured=include_unmeasured,
                     progress_cb=_progress_cb,
                 )
-                text = json.dumps(data, indent=2)
-                yaml_output = (cfg.get("evaluation") or {}).get("output") or ""
+                # Determine output location
                 out_arg = str(getattr(args, "output", "") or "").strip()
-                final_out_path = out_arg or yaml_output
-                if final_out_path:
-                    final_out = _P(final_out_path)
+                yaml_output = (cfg.get("evaluation") or {}).get("output") or ""
+                explicit_output = out_arg or yaml_output
+
+                base_proj = _P(proj_path).resolve()
+                if base_proj.is_file():
+                    base_proj = base_proj.parent
+                name_arg = str(getattr(args, "name", "") or "").strip()
+
+                if explicit_output:
+                    # Explicit --output flag: write raw JSON (backwards compat)
+                    final_out = _P(explicit_output)
                     if not final_out.is_absolute():
                         base = _P(compiled_cfg_path).resolve().parent
                         final_out = (base / final_out).resolve()
+                    final_out.parent.mkdir(parents=True, exist_ok=True)
+                    final_out.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                    print(f"Wrote results: {final_out}")
                 else:
-                    base_proj = _P(proj_path).resolve()
-                    if base_proj.is_file():
-                        base_proj = base_proj.parent
-                    name_arg = str(getattr(args, "name", "") or "").strip()
+                    # Use structured results storage
                     if name_arg:
-                        final_out = (
-                            base_proj
-                            / "artifacts"
-                            / "eval"
-                            / name_arg
-                            / "run_results.json"
-                        ).resolve()
+                        scenario_dir = base_proj / "artifacts" / "eval" / name_arg
                     else:
-                        final_out = (
-                            base_proj / "artifacts" / "eval" / "run_results.json"
-                        ).resolve()
-                final_out.parent.mkdir(parents=True, exist_ok=True)
-                final_out.write_text(text, encoding="utf-8")
-                print(f"Wrote results: {final_out}")
+                        scenario_dir = base_proj / "artifacts" / "eval"
+                    # Create a placeholder scenario path for results directory
+                    scenario_path = scenario_dir / "scenarios.yml"
+                    final_out = save_evaluation_run(
+                        scenario_path=scenario_path,
+                        data=data,
+                        source="cli",
+                        scenario_name=name_arg or "default",
+                    )
+                    print(f"Wrote results: {final_out}")
                 checks = []
                 runs = data.get("runs", []) or []
                 metrics = data.get("metrics", []) or []
@@ -2266,383 +2274,8 @@ def main():
 
                 traceback.print_exc()
                 sys.exit(1)
-        elif args.eval_cmd == "scenarios" and getattr(args, "scen_cmd", None) == "run":
-            try:
-                from omniagents.core.project.compiler import compile_project
-
-                proj_path = getattr(args, "project", None)
-                if not proj_path:
-                    p = Path.cwd() / "project.yml"
-                    if p.is_file():
-                        proj_path = str(p)
-                    else:
-                        print(
-                            "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
-                        )
-                        sys.exit(2)
-                compiled_cfg_path, _graph = compile_project(
-                    str(proj_path),
-                    select=str(getattr(args, "select", "") or ""),
-                    exclude=str(getattr(args, "exclude", "") or ""),
-                    agent_key=(str(getattr(args, "agent", "") or "") or None),
-                )
-                from omniagents.core.eval.multi_turn import run_scenarios_against_agent
-                from pathlib import Path as _P
-
-                base = _P(proj_path).resolve()
-                base = base.parent if base.is_file() else base
-                name_arg = str(getattr(args, "name", "") or "").strip()
-                inp = str(getattr(args, "input", "") or "").strip()
-                if inp:
-                    in_path = _P(inp)
-                    if not in_path.is_absolute():
-                        in_path = (base / in_path).resolve()
-                elif name_arg:
-                    in_path = (
-                        base
-                        / "artifacts"
-                        / "eval"
-                        / name_arg
-                        / "generated_scenarios.yml"
-                    ).resolve()
-                else:
-                    print(
-                        "Error: Provide --name <scenario_set> or --input <path> for scenarios."
-                    )
-                    sys.exit(2)
-                if not in_path.exists():
-                    print(f"Error: Scenarios file not found: {in_path}")
-                    sys.exit(2)
-                sc_dir = in_path.parent
-                y = yaml.safe_load(in_path.read_text(encoding="utf-8")) or {}
-                scenarios = list((y.get("scenarios") or []))
-                for sc in scenarios:
-                    if not sc.get("id"):
-                        mapping = (
-                            sc.get("dimensions")
-                            if isinstance(sc.get("dimensions"), dict)
-                            else None
-                        )
-                        import hashlib, json as _json
-
-                        blob = _json.dumps(
-                            {
-                                "prompt": str(sc.get("prompt", "")),
-                                "dimensions": mapping or {},
-                            },
-                            sort_keys=True,
-                        )
-                        sc["id"] = hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
-                    sc["_source_path"] = str(in_path)
-                cfg = (
-                    yaml.safe_load(_P(compiled_cfg_path).read_text(encoding="utf-8"))
-                    or {}
-                )
-                tracing = cfg.get("tracing") or {}
-                try:
-                    provider = str(tracing.get("provider", "")).lower()
-                    if provider == "studio":
-                        from datetime import datetime
-                        from omniagents.studio import tracing as tracing_module
-
-                        project = tracing.get("project") or "scenario_runs"
-                        base_name = tracing.get("name") or Path(compiled_cfg_path).stem
-                        ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-                        sc_name = name_arg or sc_dir.name
-                        wf_name = f"{base_name}_scenarios_{sc_name}_{ts}"
-                        resume = (tracing.get("settings") or {}).get("resume", "never")
-                        tracing_module.init(
-                            project=str(project),
-                            name=wf_name,
-                            resume=str(resume),
-                            replace_default=True,
-                        )
-                        import asyncio as _asyncio
-
-                        qlvl_pre = int(getattr(args, "quiet", 0) or 0)
-                        vlvl_pre = int(getattr(args, "verbose", 0) or 0)
-                        vlevel_pre = vlvl_pre - qlvl_pre
-                        quiet_pre = vlevel_pre < 0
-                        did_stream_line = False
-                        line_count = 0
-
-                        def _isatty_pre():
-                            try:
-                                return sys.stdout.isatty()
-                            except Exception:
-                                return False
-
-                        def _use_color_pre():
-                            if args.color == "always":
-                                return True
-                            if args.color == "never":
-                                return False
-                            return _isatty_pre()
-
-                        def _c_pre(s: str, color: str) -> str:
-                            if not _use_color_pre():
-                                return s
-                            codes = {
-                                "red": "\x1b[31m",
-                                "green": "\x1b[32m",
-                                "yellow": "\x1b[33m",
-                                "bold": "\x1b[1m",
-                                "reset": "\x1b[0m",
-                            }
-                            return f"{codes.get(color, '')}{s}{codes['reset']}"
-
-                        def _progress_cb(ev: dict):
-                            nonlocal did_stream_line, line_count
-                            if quiet_pre:
-                                return
-                            et = ev.get("event")
-                            if et == "start":
-                                try:
-                                    tot = ev.get("total")
-                                    print(f"Running {tot} scenarios...", flush=True)
-                                except Exception:
-                                    pass
-                            elif et == "progress":
-                                did_stream_line = True
-                                try:
-                                    print(_c_pre(".", "green"), end="", flush=True)
-                                except Exception:
-                                    pass
-                                line_count += 1
-                                if line_count >= 80:
-                                    try:
-                                        print("")
-                                    except Exception:
-                                        pass
-                                    line_count = 0
-                            elif et == "done":
-                                if line_count:
-                                    try:
-                                        print("")
-                                    except Exception:
-                                        pass
-                                    line_count = 0
-                                try:
-                                    cnt = ev.get("count")
-                                    print(f"Completed {cnt} scenarios.")
-                                except Exception:
-                                    pass
-
-                        runs = _asyncio.run(
-                            run_scenarios_against_agent(
-                                _P(compiled_cfg_path).resolve(),
-                                scenarios,
-                                max_turns=args.run_max_turns,
-                                include_history=bool(
-                                    getattr(args, "include_history", False)
-                                ),
-                                workflow_name=wf_name,
-                                progress_cb=_progress_cb,
-                                scenario_source_path=in_path,
-                            )
-                        )
-                    else:
-                        import asyncio as _asyncio
-
-                        qlvl_pre = int(getattr(args, "quiet", 0) or 0)
-                        vlvl_pre = int(getattr(args, "verbose", 0) or 0)
-                        vlevel_pre = vlvl_pre - qlvl_pre
-                        quiet_pre = vlevel_pre < 0
-                        did_stream_line = False
-                        line_count = 0
-
-                        def _isatty_pre():
-                            try:
-                                return sys.stdout.isatty()
-                            except Exception:
-                                return False
-
-                        def _use_color_pre():
-                            if args.color == "always":
-                                return True
-                            if args.color == "never":
-                                return False
-                            return _isatty_pre()
-
-                        def _c_pre(s: str, color: str) -> str:
-                            if not _use_color_pre():
-                                return s
-                            codes = {
-                                "red": "\x1b[31m",
-                                "green": "\x1b[32m",
-                                "yellow": "\x1b[33m",
-                                "bold": "\x1b[1m",
-                                "reset": "\x1b[0m",
-                            }
-                            return f"{codes.get(color, '')}{s}{codes['reset']}"
-
-                        def _progress_cb(ev: dict):
-                            nonlocal did_stream_line, line_count
-                            if quiet_pre:
-                                return
-                            et = ev.get("event")
-                            if et == "start":
-                                try:
-                                    tot = ev.get("total")
-                                    print(f"Running {tot} scenarios...", flush=True)
-                                except Exception:
-                                    pass
-                            elif et == "progress":
-                                did_stream_line = True
-                                try:
-                                    print(_c_pre(".", "green"), end="", flush=True)
-                                except Exception:
-                                    pass
-                                line_count += 1
-                                if line_count >= 80:
-                                    try:
-                                        print("")
-                                    except Exception:
-                                        pass
-                                    line_count = 0
-                            elif et == "done":
-                                if line_count:
-                                    try:
-                                        print("")
-                                    except Exception:
-                                        pass
-                                    line_count = 0
-                                try:
-                                    cnt = ev.get("count")
-                                    print(f"Completed {cnt} scenarios.")
-                                except Exception:
-                                    pass
-
-                        runs = _asyncio.run(
-                            run_scenarios_against_agent(
-                                _P(compiled_cfg_path).resolve(),
-                                scenarios,
-                                max_turns=args.run_max_turns,
-                                include_history=bool(
-                                    getattr(args, "include_history", False)
-                                ),
-                                progress_cb=_progress_cb,
-                                scenario_source_path=in_path,
-                            )
-                        )
-                except Exception:
-                    import asyncio as _asyncio
-
-                    qlvl_pre = int(getattr(args, "quiet", 0) or 0)
-                    vlvl_pre = int(getattr(args, "verbose", 0) or 0)
-                    vlevel_pre = vlvl_pre - qlvl_pre
-                    quiet_pre = vlevel_pre < 0
-                    did_stream_line = False
-                    line_count = 0
-
-                    def _isatty_pre():
-                        try:
-                            return sys.stdout.isatty()
-                        except Exception:
-                            return False
-
-                    def _use_color_pre():
-                        if args.color == "always":
-                            return True
-                        if args.color == "never":
-                            return False
-                        return _isatty_pre()
-
-                    def _c_pre(s: str, color: str) -> str:
-                        if not _use_color_pre():
-                            return s
-                        codes = {
-                            "red": "\x1b[31m",
-                            "green": "\x1b[32m",
-                            "yellow": "\x1b[33m",
-                            "bold": "\x1b[1m",
-                            "reset": "\x1b[0m",
-                        }
-                        return f"{codes.get(color, '')}{s}{codes['reset']}"
-
-                    def _progress_cb(ev: dict):
-                        nonlocal did_stream_line, line_count
-                        if quiet_pre:
-                            return
-                        et = ev.get("event")
-                        if et == "start":
-                            try:
-                                tot = ev.get("total")
-                                print(f"Running {tot} scenarios...", flush=True)
-                            except Exception:
-                                pass
-                        elif et == "progress":
-                            did_stream_line = True
-                            try:
-                                print(_c_pre(".", "green"), end="", flush=True)
-                            except Exception:
-                                pass
-                            line_count += 1
-                            if line_count >= 80:
-                                try:
-                                    print("")
-                                except Exception:
-                                    pass
-                                line_count = 0
-                        elif et == "done":
-                            if line_count:
-                                try:
-                                    print("")
-                                except Exception:
-                                    pass
-                                line_count = 0
-                            try:
-                                cnt = ev.get("count")
-                                print(f"Completed {cnt} scenarios.")
-                            except Exception:
-                                pass
-
-                    runs = _asyncio.run(
-                        run_scenarios_against_agent(
-                            _P(compiled_cfg_path).resolve(),
-                            scenarios,
-                            max_turns=args.run_max_turns,
-                            include_history=bool(
-                                getattr(args, "include_history", False)
-                            ),
-                            progress_cb=_progress_cb,
-                            scenario_source_path=in_path,
-                        )
-                    )
-                out_arg = str(getattr(args, "output", "") or "").strip()
-                if out_arg:
-                    run_out = _P(out_arg)
-                    if not run_out.is_absolute():
-                        run_out = (base / run_out).resolve()
-                else:
-                    run_out = (sc_dir / "generated_runs.json").resolve()
-                run_out.parent.mkdir(parents=True, exist_ok=True)
-                Path(run_out).write_text(
-                    json.dumps({"runs": runs}, indent=2), encoding="utf-8"
-                )
-                print(f"Ran {len(runs)} scenarios; wrote results to {run_out}")
-                try:
-                    mf = sc_dir / "manifest.json"
-                    if "wf_name" in locals() and wf_name and mf.exists():
-                        try:
-                            md = json.loads(mf.read_text(encoding="utf-8"))
-                        except Exception:
-                            md = {}
-                        md["workflow_run"] = str(wf_name)
-                        try:
-                            mf.write_text(json.dumps(md, indent=2), encoding="utf-8")
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-            except Exception as e:
-                print(f"Error running scenarios: {e}")
-                import traceback
-
-                traceback.print_exc()
-                sys.exit(1)
         elif args.eval_cmd == "scenarios":
-            print("Error: Provide a scenarios subcommand: generate | run")
+            print("Error: Provide a scenarios subcommand: generate | run | annotate")
             sys.exit(2)
         elif args.eval_cmd == "judge" and getattr(args, "judge_cmd", None) == "run":
             try:

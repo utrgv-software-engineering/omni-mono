@@ -293,6 +293,9 @@ def _filter_scenarios(
             typ, pat = expr.split(":", 1)
             typ = typ.strip().lower()
             pat = pat.strip()
+            if typ == "id":
+                scenario_id = str(it.get("id") or "")
+                return fnmatch.fnmatch(scenario_id, pat)
             if typ == "name":
                 nm = str(it.get("name") or it.get("id") or "")
                 return fnmatch.fnmatch(nm, pat)

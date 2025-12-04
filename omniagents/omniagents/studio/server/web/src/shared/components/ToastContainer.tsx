@@ -38,7 +38,21 @@ export function ToastContainer() {
           >
             <div className="flex items-start gap-3">
               <div className={`mt-1 h-2 w-2 rounded-full ${indicator}`} />
-              <div className={`flex-1 text-sm font-medium leading-snug ${text}`}>{toast.message}</div>
+              <div className="flex-1">
+                <div className={`text-sm font-medium leading-snug ${text}`}>{toast.message}</div>
+                {toast.action && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      toast.action?.onClick()
+                      dismissToast(toast.id)
+                    }}
+                    className="mt-1 text-xs font-medium text-primary hover:underline"
+                  >
+                    {toast.action.label}
+                  </button>
+                )}
+              </div>
               <button
                 type="button"
                 onClick={() => dismissToast(toast.id)}

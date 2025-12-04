@@ -14,7 +14,7 @@ interface ConversationListProps {
 type FilterType = 'all' | 'unanalyzed' | 'good' | 'bad' | 'annotated' | 'bad-no-notes'
 
 export function ConversationList({ conversations, onConversationSelect, selectedConversationId }: ConversationListProps) {
-  const { selectedConversation, searchQuery, conversationAnalysis, filters, updateFilters, selectedProject, selectedWorkflow } = useTraceStore()
+  const { selectedConversation, searchQuery, conversationAnalysis, filters, updateFilters, selectedProject, selectedWorkflow, evaluationResults, loadEvaluationResults } = useTraceStore()
   const [activeFilter, setActiveFilter] = useState<FilterType>('all')
   const [focusedIndex, setFocusedIndex] = useState<number>(0)
   const listRef = useRef<HTMLDivElement>(null)
@@ -26,7 +26,12 @@ export function ConversationList({ conversations, onConversationSelect, selected
   
   // Auto-select first project if none selected
   // Auto-selection handled in header now
-  
+
+  // Load evaluation results on mount and when project changes
+  useEffect(() => {
+    loadEvaluationResults()
+  }, [loadEvaluationResults, selectedProject])
+
   const activeConversationId = selectedConversationId ?? selectedConversation?.group_id ?? null
 
   // Filter conversations based on search and analysis status
@@ -296,7 +301,8 @@ export function ConversationList({ conversations, onConversationSelect, selected
               const isFocused = index === focusedIndex
               const timeAgo = formatDistanceToNow(new Date(conversation.created_at), { addSuffix: true })
               const analysis = conversationAnalysis[conversation.group_id]
-              
+              const evalResult = evaluationResults[conversation.group_id]
+
               // Simple status check
               const hasNotes = analysis?.notes && analysis.notes.trim().length > 0
               const judgment = analysis?.judgment
@@ -330,11 +336,24 @@ export function ConversationList({ conversations, onConversationSelect, selected
                           <span>{conversation.trace_count} trace{conversation.trace_count !== 1 ? 's' : ''} • {timeAgo}</span>
                         </div>
                       </div>
-                      {conversation.has_errors && (
-                        <AlertCircle className="w-4 h-4 text-destructive flex-shrink-0" />
-                      )}
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        {evalResult && (
+                          <span
+                            className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                              evalResult.passed
+                                ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                                : 'bg-red-500/10 text-red-600 dark:text-red-400'
+                            }`}
+                          >
+                            {evalResult.passed ? 'PASS' : 'FAIL'}
+                          </span>
+                        )}
+                        {conversation.has_errors && (
+                          <AlertCircle className="w-4 h-4 text-destructive" />
+                        )}
+                      </div>
                     </div>
-                    
+
                     {/* Analysis status indicator in bottom right */}
                     {(hasNotes || judgment || isMarked) && (
                       <div className="absolute bottom-0 right-0 flex items-center gap-0.5">

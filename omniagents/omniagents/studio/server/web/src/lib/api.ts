@@ -50,6 +50,8 @@ import type {
   EvaluationMeasureCreatePayload,
   EvaluationMeasureUpdatePayload,
   EvaluationMeasureDeleteResponse,
+  EvaluationResultsListResponse,
+  EvaluationResultsDetailResponse,
 } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_URL || `${window.location.origin}/api`
@@ -473,6 +475,15 @@ class ApiClient {
 
   async getEvaluationSuiteRunStatus(jobId: string): Promise<EvaluationSuiteRunResponse> {
     return this.fetch(`/evaluation/suite/run/${jobId}`)
+  }
+
+  async getEvaluationResults(): Promise<EvaluationResultsListResponse> {
+    return this.fetch('/evaluation/results')
+  }
+
+  async getEvaluationResultsDetail(path: string): Promise<EvaluationResultsDetailResponse> {
+    const searchParams = new URLSearchParams({ path })
+    return this.fetch(`/evaluation/results/detail?${searchParams.toString()}`)
   }
 
   async createPlaygroundSession(payload: PlaygroundSessionPayload): Promise<PlaygroundSessionResponse> {

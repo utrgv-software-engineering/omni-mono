@@ -16,6 +16,11 @@ interface AnalysisGoals {
   badTracesRequiringCategories: number  // Step 4: Bad traces needing categorization
 }
 
+interface EvaluationResultLookup {
+  passed: boolean
+  measureCount: number
+}
+
 interface TraceStore {
   // Data
   conversations: Conversation[]
@@ -25,6 +30,9 @@ interface TraceStore {
   selectedTrace: Trace | null
   spans: Span[]
   selectedSpan: Span | null
+
+  // Evaluation Results (lookup by group_id)
+  evaluationResults: Record<string, EvaluationResultLookup>
   
   // UI State
   searchQuery: string
@@ -76,6 +84,9 @@ interface TraceStore {
   
   // Goals Actions
   setAnalysisGoals: (goals: AnalysisGoals) => void
+
+  // Evaluation Results Actions
+  loadEvaluationResults: () => Promise<void>
 }
 
 export const useTraceStore = create<TraceStore>()(
@@ -89,6 +100,7 @@ export const useTraceStore = create<TraceStore>()(
   selectedTrace: null,
   spans: [],
   selectedSpan: null,
+  evaluationResults: {},
   searchQuery: '',
   selectedProject: null,  // null = All Projects
   selectedWorkflow: null,
@@ -335,7 +347,34 @@ export const useTraceStore = create<TraceStore>()(
   
   setAnalysisGoals: (goals: AnalysisGoals) => {
     set({ analysisGoals: goals })
-  }
+  },
+
+  loadEvaluationResults: async () => {
+    try {
+      const listResponse = await api.getEvaluationResults()
+      const lookup: Record<string, EvaluationResultLookup> = {}
+
+      for (const result of listResponse.results) {
+        try {
+          const detail = await api.getEvaluationResultsDetail(result.path)
+          for (const scenario of detail.scenarios) {
+            if (scenario.group_id) {
+              lookup[scenario.group_id] = {
+                passed: scenario.passed,
+                measureCount: scenario.measures.length,
+              }
+            }
+          }
+        } catch {
+          // Skip failed detail fetches
+        }
+      }
+
+      set({ evaluationResults: lookup })
+    } catch (error) {
+      console.error('Failed to load evaluation results:', error)
+    }
+  },
 }),
     {
       name: 'studio-ui-state', // localStorage key

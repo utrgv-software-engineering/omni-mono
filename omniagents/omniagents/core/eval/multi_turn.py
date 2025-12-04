@@ -210,6 +210,7 @@ async def _run_scripted_single_turn(
     """Run a scripted single-turn scenario (prompt: "...")."""
     prompt = scenario["prompt"]  # Required for single-turn
     msgs = [{"role": "user", "content": prompt}]
+    run_uid = None
 
     if workflow_name:
         import uuid as _uuid
@@ -272,6 +273,12 @@ async def _run_scripted_single_turn(
         run_measures(eval_ctx, measures=measure_names) if measure_names else []
     )
 
+    result_metadata = {
+        "environment_context": context.data if context else {},
+    }
+    if run_uid:
+        result_metadata["group_id"] = run_uid
+
     return {
         "scenario": scenario.get("name", "scenario"),
         "type": "scripted",
@@ -281,9 +288,7 @@ async def _run_scripted_single_turn(
         "measures": measures_out,
         "history_len": len(history),
         "exchanges": 1,
-        "metadata": {
-            "environment_context": context.data if context else {},
-        },
+        "metadata": result_metadata,
     }
 
 
@@ -299,6 +304,7 @@ async def _run_scripted_multi_turn(
     """Run a scripted multi-turn scenario (prompts: [...])."""
     prompts = scenario["prompts"]  # Required, validated by caller
     session_id = None
+    run_uid = None
 
     if workflow_name and studio_trace:
         import uuid as _uuid
@@ -362,6 +368,12 @@ async def _run_scripted_multi_turn(
         run_measures(eval_ctx, measures=measure_names) if measure_names else []
     )
 
+    result_metadata = {
+        "environment_context": context.data if context else {},
+    }
+    if run_uid:
+        result_metadata["group_id"] = run_uid
+
     return {
         "scenario": scenario.get("name", "scenario"),
         "type": "scripted",
@@ -371,9 +383,7 @@ async def _run_scripted_multi_turn(
         "measures": measures_out,
         "history_len": len(history),
         "exchanges": len(prompts),
-        "metadata": {
-            "environment_context": context.data if context else {},
-        },
+        "metadata": result_metadata,
     }
 
 
@@ -395,6 +405,7 @@ async def _run_synthetic_scenario(
     # Create run configs for agent and simulated user (separate group_ids for distinct traces)
     agent_run_config = None
     user_run_config = None
+    agent_run_uid = None
 
     if workflow_name:
         import uuid as _uuid
@@ -474,6 +485,12 @@ async def _run_synthetic_scenario(
     # Count exchanges from history
     exchanges = sum(1 for m in history if m.get("role") == "user")
 
+    result_metadata = {
+        "environment_context": context.data if context else {},
+    }
+    if agent_run_uid:
+        result_metadata["group_id"] = agent_run_uid
+
     return {
         "scenario": scenario.get("name", "scenario"),
         "type": "synthetic",
@@ -485,9 +502,7 @@ async def _run_synthetic_scenario(
         "exchanges": exchanges,
         "user_completed": simulated_user.completed,
         "user_completion_reason": simulated_user.completion_reason,
-        "metadata": {
-            "environment_context": context.data if context else {},
-        },
+        "metadata": result_metadata,
     }
 
 
@@ -803,6 +818,7 @@ async def run_scenarios_against_agent(
     workflow_name: str | None = None,
     progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
     scenario_source_path: Optional[Path] = None,
+    concurrency: int = 5,
 ) -> List[Dict[str, Any]]:
     """Run scenarios against an agent with full environment and measures support.
 
@@ -819,6 +835,7 @@ async def run_scenarios_against_agent(
         workflow_name: Optional workflow name for tracing.
         progress_cb: Optional progress callback function.
         scenario_source_path: Optional path to the scenario source file.
+        concurrency: Maximum number of scenarios to run in parallel (default 5).
 
     Returns:
         List of scenario run results with measures, history, etc.
@@ -854,7 +871,6 @@ async def run_scenarios_against_agent(
     if env_config:
         environment = load_environment_class(env_config, cfg_path.parent)
 
-    results: List[Dict[str, Any]] = []
     total = len(scenarios)
 
     if progress_cb:
@@ -863,90 +879,108 @@ async def run_scenarios_against_agent(
         except Exception:
             pass
 
+    # Shared state for progress tracking
+    completed_count = 0
     failed_count = 0
+    results_lock = asyncio.Lock()
 
-    for idx, sc in enumerate(scenarios):
-        # Add source path to scenario if provided
-        if scenario_source_path and "_source_path" not in sc:
-            sc["_source_path"] = str(scenario_source_path)
+    sem = asyncio.Semaphore(concurrency)
 
-        # Run the scenario using the full implementation
-        run_result = await run_scenario(
-            str(cfg_path),
-            sc,
-            environment,
-            defaults,
-            eval_cfg,
-            workflow_name,
-            studio_trace,
-        )
+    async def _run_single(idx: int, sc: Dict[str, Any]) -> Dict[str, Any]:
+        nonlocal completed_count, failed_count
 
-        # Check for errors
-        if run_result.get("error"):
-            failed_count += 1
+        async with sem:
+            # Add source path to scenario if provided
+            if scenario_source_path and "_source_path" not in sc:
+                sc["_source_path"] = str(scenario_source_path)
 
-        # Transform result to match legacy format
-        result = {
-            "scenario_id": sc.get("id"),
-            "scenario_name": sc.get("name") or run_result.get("scenario"),
-            "prompt": sc.get("prompt") or run_result.get("prompt"),
-            "session_id": run_result.get("session_id"),
-            "final_assistant_text": run_result.get("final_assistant_text", ""),
-            "history_len": run_result.get("history_len", 0),
-            "measures": run_result.get("measures", []),
-            "type": run_result.get("type", "scripted"),
-            "exchanges": run_result.get("exchanges", 1),
-        }
-
-        # Include history if requested (would need to load from session)
-        if include_history and run_result.get("session_id"):
-            from omniagents.core.session.history_db import load_history
-            from omniagents.core.config.loader import load_agent_spec_from_yaml
-
-            spec = load_agent_spec_from_yaml(str(cfg_path))
-            history = load_history(
-                run_result["session_id"],
-                project_slug=spec.project_slug,
-                agent_slug=spec.agent_slug,
+            # Run the scenario using the full implementation
+            run_result = await run_scenario(
+                str(cfg_path),
+                sc,
+                environment,
+                defaults,
+                eval_cfg,
+                workflow_name,
+                studio_trace,
             )
-            result["history"] = history
 
-        if scenario_source_path:
-            result["scenario_path"] = str(scenario_source_path)
+            # Transform result to match legacy format
+            result = {
+                "scenario_id": sc.get("id"),
+                "scenario_name": sc.get("name") or run_result.get("scenario"),
+                "prompt": sc.get("prompt") or run_result.get("prompt"),
+                "session_id": run_result.get("session_id"),
+                "final_assistant_text": run_result.get("final_assistant_text", ""),
+                "history_len": run_result.get("history_len", 0),
+                "measures": run_result.get("measures", []),
+                "type": run_result.get("type", "scripted"),
+                "exchanges": run_result.get("exchanges", 1),
+            }
 
-        if run_result.get("error"):
-            result["error"] = run_result["error"]
+            # Include history if requested (would need to load from session)
+            if include_history and run_result.get("session_id"):
+                from omniagents.core.session.history_db import load_history
+                from omniagents.core.config.loader import load_agent_spec_from_yaml
 
-        # Include synthetic-specific fields
-        if run_result.get("type") == "synthetic":
-            result["goal"] = run_result.get("goal")
-            result["user_completed"] = run_result.get("user_completed")
-            result["user_completion_reason"] = run_result.get("user_completion_reason")
+                spec = load_agent_spec_from_yaml(str(cfg_path))
+                history = load_history(
+                    run_result["session_id"],
+                    project_slug=spec.project_slug,
+                    agent_slug=spec.agent_slug,
+                )
+                result["history"] = history
 
-        results.append(result)
+            if scenario_source_path:
+                result["scenario_path"] = str(scenario_source_path)
 
-        if progress_cb:
-            try:
-                ev = {
-                    "event": "progress",
-                    "current": idx + 1,
-                    "total": total,
-                    "scenario_id": sc.get("id"),
-                    "scenario": run_result.get("scenario"),
-                    "passed": sum(
-                        1 for m in run_result.get("measures", []) if m.get("passed")
-                    ),
-                    "failed": sum(
-                        1
-                        for m in run_result.get("measures", [])
-                        if m.get("passed") is False
-                    ),
-                }
-                if failed_count:
-                    ev["failed_scenarios"] = failed_count
-                progress_cb(ev)
-            except Exception:
-                pass
+            if run_result.get("error"):
+                result["error"] = run_result["error"]
+
+            # Include synthetic-specific fields
+            if run_result.get("type") == "synthetic":
+                result["goal"] = run_result.get("goal")
+                result["user_completed"] = run_result.get("user_completed")
+                result["user_completion_reason"] = run_result.get(
+                    "user_completion_reason"
+                )
+
+            # Update progress
+            async with results_lock:
+                completed_count += 1
+                if run_result.get("error"):
+                    failed_count += 1
+
+                if progress_cb:
+                    try:
+                        ev = {
+                            "event": "progress",
+                            "current": completed_count,
+                            "total": total,
+                            "scenario_id": sc.get("id"),
+                            "scenario": run_result.get("scenario"),
+                            "passed": sum(
+                                1
+                                for m in run_result.get("measures", [])
+                                if m.get("passed")
+                            ),
+                            "failed": sum(
+                                1
+                                for m in run_result.get("measures", [])
+                                if m.get("passed") is False
+                            ),
+                        }
+                        if failed_count:
+                            ev["failed_scenarios"] = failed_count
+                        progress_cb(ev)
+                    except Exception:
+                        pass
+
+            return result
+
+    # Run all scenarios in parallel with concurrency limit
+    tasks = [_run_single(idx, sc) for idx, sc in enumerate(scenarios)]
+    results = await asyncio.gather(*tasks)
 
     if progress_cb:
         try:
@@ -957,4 +991,4 @@ async def run_scenarios_against_agent(
         except Exception:
             pass
 
-    return results
+    return list(results)

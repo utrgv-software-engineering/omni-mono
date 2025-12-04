@@ -2,16 +2,22 @@ import { create } from 'zustand'
 
 type ToastTone = 'info' | 'success' | 'error'
 
+type ToastAction = {
+  label: string
+  onClick: () => void
+}
+
 type ToastRecord = {
   id: string
   message: string
   tone: ToastTone
   duration: number
+  action?: ToastAction
 }
 
 interface ToastState {
   toasts: ToastRecord[]
-  pushToast: (options: { message: string; tone?: ToastTone; duration?: number }) => string
+  pushToast: (options: { message: string; tone?: ToastTone; duration?: number; action?: ToastAction }) => string
   dismissToast: (id: string) => void
 }
 
@@ -24,10 +30,10 @@ const generateId = () => {
 
 export const useToastStore = create<ToastState>((set, get) => ({
   toasts: [],
-  pushToast: ({ message, tone = 'info', duration = 4000 }) => {
+  pushToast: ({ message, tone = 'info', duration = 4000, action }) => {
     const id = generateId()
     set((state) => ({
-      toasts: [...state.toasts, { id, message, tone, duration }],
+      toasts: [...state.toasts, { id, message, tone, duration, action }],
     }))
     if (duration > 0 && typeof window !== 'undefined') {
       window.setTimeout(() => {

@@ -6,7 +6,7 @@ import json
 import pytest
 import yaml
 
-from omniagents.core.project.compiler import compile_project
+from omniagents.core.project.compiler import compile_project, _filter_scenarios
 
 
 def _write_yaml(path: Path, data: dict) -> Path:
@@ -329,3 +329,135 @@ def test_compile_project_rejects_invalid_judge_key(tmp_path: Path):
     with pytest.raises(ValueError) as excinfo:
         compile_project(str(project_dir))
     assert "Judge keys must be non-empty strings" in str(excinfo.value)
+
+
+# --- _filter_scenarios unit tests ---
+
+
+class TestFilterScenarios:
+    """Unit tests for _filter_scenarios function."""
+
+    def test_filter_by_id_exact_match(self):
+        """Filter scenarios using id: prefix with exact match."""
+        scenarios = [
+            {"id": "abc123", "name": "Test 1"},
+            {"id": "def456", "name": "Test 2"},
+            {"id": "ghi789", "name": "Test 3"},
+        ]
+        filtered = _filter_scenarios(scenarios, "id:def456", None)
+        assert len(filtered) == 1
+        assert filtered[0]["id"] == "def456"
+
+    def test_filter_by_id_wildcard(self):
+        """Filter scenarios using id: prefix with wildcard pattern."""
+        scenarios = [
+            {"id": "test-abc", "name": "Test 1"},
+            {"id": "test-def", "name": "Test 2"},
+            {"id": "other-ghi", "name": "Test 3"},
+        ]
+        filtered = _filter_scenarios(scenarios, "id:test-*", None)
+        assert len(filtered) == 2
+        assert {s["id"] for s in filtered} == {"test-abc", "test-def"}
+
+    def test_filter_by_id_no_match(self):
+        """Filter by id returns empty list when no match."""
+        scenarios = [
+            {"id": "abc123", "name": "Test 1"},
+        ]
+        filtered = _filter_scenarios(scenarios, "id:nonexistent", None)
+        assert len(filtered) == 0
+
+    def test_filter_by_name_prefix(self):
+        """Filter scenarios using name: prefix."""
+        scenarios = [
+            {"id": "1", "name": "greeting-test"},
+            {"id": "2", "name": "farewell-test"},
+        ]
+        filtered = _filter_scenarios(scenarios, "name:greeting-*", None)
+        assert len(filtered) == 1
+        assert filtered[0]["name"] == "greeting-test"
+
+    def test_filter_by_name_fallback(self):
+        """Filter by name without prefix (fallback behavior)."""
+        scenarios = [
+            {"id": "1", "name": "alpha"},
+            {"id": "2", "name": "beta"},
+        ]
+        filtered = _filter_scenarios(scenarios, "alpha", None)
+        assert len(filtered) == 1
+        assert filtered[0]["name"] == "alpha"
+
+    def test_filter_by_tag(self):
+        """Filter scenarios using tag: prefix."""
+        scenarios = [
+            {"id": "1", "name": "Test 1", "tags": ["smoke", "fast"]},
+            {"id": "2", "name": "Test 2", "tags": ["regression"]},
+            {"id": "3", "name": "Test 3", "tags": ["smoke", "slow"]},
+        ]
+        filtered = _filter_scenarios(scenarios, "tag:smoke", None)
+        assert len(filtered) == 2
+        assert {s["id"] for s in filtered} == {"1", "3"}
+
+    def test_filter_by_measure(self):
+        """Filter scenarios using measure: prefix."""
+        scenarios = [
+            {"id": "1", "name": "Test 1", "measures": ["accuracy", "speed"]},
+            {"id": "2", "name": "Test 2", "measures": ["accuracy"]},
+            {"id": "3", "name": "Test 3", "measures": ["coverage"]},
+        ]
+        filtered = _filter_scenarios(scenarios, "measure:speed", None)
+        assert len(filtered) == 1
+        assert filtered[0]["id"] == "1"
+
+    def test_filter_multiple_select(self):
+        """Filter with multiple comma-separated select patterns."""
+        scenarios = [
+            {"id": "abc", "name": "Test 1"},
+            {"id": "def", "name": "Test 2"},
+            {"id": "ghi", "name": "Test 3"},
+        ]
+        filtered = _filter_scenarios(scenarios, "id:abc,id:ghi", None)
+        assert len(filtered) == 2
+        assert {s["id"] for s in filtered} == {"abc", "ghi"}
+
+    def test_filter_exclude(self):
+        """Filter with exclude pattern."""
+        scenarios = [
+            {"id": "1", "name": "keep-this"},
+            {"id": "2", "name": "remove-this"},
+            {"id": "3", "name": "keep-that"},
+        ]
+        filtered = _filter_scenarios(scenarios, None, "name:remove-*")
+        assert len(filtered) == 2
+        assert {s["name"] for s in filtered} == {"keep-this", "keep-that"}
+
+    def test_filter_select_and_exclude_combined(self):
+        """Filter with both select and exclude patterns."""
+        scenarios = [
+            {"id": "1", "name": "test-alpha"},
+            {"id": "2", "name": "test-beta"},
+            {"id": "3", "name": "test-gamma"},
+            {"id": "4", "name": "other"},
+        ]
+        filtered = _filter_scenarios(scenarios, "name:test-*", "name:test-gamma")
+        assert len(filtered) == 2
+        assert {s["name"] for s in filtered} == {"test-alpha", "test-beta"}
+
+    def test_filter_empty_select_returns_all(self):
+        """Empty select and exclude returns all scenarios."""
+        scenarios = [
+            {"id": "1", "name": "Test 1"},
+            {"id": "2", "name": "Test 2"},
+        ]
+        filtered = _filter_scenarios(scenarios, None, None)
+        assert len(filtered) == 2
+
+    def test_filter_handles_missing_id(self):
+        """Filter by id handles scenarios without id field."""
+        scenarios = [
+            {"name": "Test 1"},  # no id
+            {"id": "def456", "name": "Test 2"},
+        ]
+        filtered = _filter_scenarios(scenarios, "id:def456", None)
+        assert len(filtered) == 1
+        assert filtered[0]["id"] == "def456"

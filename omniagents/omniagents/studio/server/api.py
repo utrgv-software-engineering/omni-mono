@@ -53,7 +53,7 @@ from omniagents.core.project.runtime import (
     build_spec_from_project,
     resolve_agent,
 )
-from omniagents.core.project.compiler import compile_project
+from omniagents.core.project.compiler import compile_project, _filter_scenarios
 from omniagents.core.eval.scenarios import generate_scenarios
 from omniagents.core.eval.multi_turn import run_scenarios_against_agent
 from omniagents.core.eval.split import create_splits
@@ -67,6 +67,12 @@ from omniagents.core.eval.optimize import (
     optimize_agent_from_project,
 )
 from omniagents.core.eval.pipeline import run_evaluation, _load_local_measures
+from omniagents.core.eval.results import (
+    generate_run_id,
+    get_results_directory,
+    save_run_results,
+    update_runs_index,
+)
 from omniagents.core.evaluation.registry import _MEASURES as _REGISTERED_MEASURES
 from omniagents.core.project.apply import apply_agent_instructions
 from omniagents.core.project.scaffold import (
@@ -2018,6 +2024,46 @@ class EvaluationSuiteRunStatusModel(BaseModel):
 class EvaluationSuiteRunResponse(BaseModel):
     job_id: str
     status: Optional[EvaluationSuiteRunStatusModel] = None
+
+
+# Evaluation Results Models
+class EvaluationMeasureResultModel(BaseModel):
+    name: str
+    passed: bool
+    reason: Optional[str] = None
+
+
+class EvaluationScenarioResultModel(BaseModel):
+    scenario_id: Optional[str] = None
+    scenario_name: str
+    type: Literal["scripted", "synthetic"] = "scripted"
+    passed: bool
+    measures: List[EvaluationMeasureResultModel] = []
+    error: Optional[Dict[str, str]] = None
+    group_id: Optional[str] = None
+
+
+class EvaluationRunSummaryModel(BaseModel):
+    path: str
+    run_at: str
+    total_scenarios: int
+    passed: int
+    failed: int
+    workflow_name: Optional[str] = None
+
+
+class EvaluationResultsListResponse(BaseModel):
+    project: Optional[str] = None
+    results: List[EvaluationRunSummaryModel] = []
+
+
+class EvaluationResultsDetailResponse(BaseModel):
+    project: Optional[str] = None
+    path: str
+    run_at: str
+    summary: Dict[str, int]
+    scenarios: List[EvaluationScenarioResultModel] = []
+    workflow_name: Optional[str] = None
 
 
 def build_playground_spec(
@@ -5161,7 +5207,8 @@ def create_api_app(
         manifest_path: Path,
         scenario_set: ScenarioSetModel,
         scenarios: List[Dict[str, Any]],
-        output_path: Path,
+        results_dir: Path,
+        run_id: str,
     ) -> None:
         manager: ScenarioRunManager = app.state.scenario_run_manager
         await manager.update_job(
@@ -5240,11 +5287,50 @@ def create_api_app(
                 scenario_source_path=Path(scenario_set.path),
             )
 
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(
-                json.dumps({"runs": runs}, indent=2), encoding="utf-8"
+            # Save results using structured storage
+            run_metadata = {
+                "id": run_id,
+                "created_at": _utc_now(),
+                "finished_at": _utc_now(),
+                "workflow_name": workflow_name,
+                "source_path": str(Path(scenario_set.path).resolve()),
+                "agent": payload.agent,
+                "filters": {
+                    "select": payload.select,
+                    "exclude": payload.exclude,
+                },
+                "summary": {
+                    "total_scenarios": len(runs),
+                    "passed": sum(
+                        1
+                        for r in runs
+                        if all(m.get("passed", False) for m in r.get("measures", []))
+                    ),
+                    "failed": sum(
+                        1
+                        for r in runs
+                        if not all(
+                            m.get("passed", False) for m in r.get("measures", [])
+                        )
+                    ),
+                },
+            }
+            results_path = save_run_results(results_dir, run_id, runs, run_metadata)
+
+            # Update runs index
+            update_runs_index(
+                results_dir,
+                {
+                    "id": run_id,
+                    "timestamp": run_metadata["created_at"],
+                    "path": str(results_path),
+                    "workflow_name": workflow_name,
+                    "summary": run_metadata["summary"],
+                    "source": str(Path(scenario_set.path).resolve().parent.name),
+                },
             )
 
+            # Update manifest with workflow info
             manifest_file = Path(scenario_set.path).resolve().parent / "manifest.json"
             if workflow_name:
                 try:
@@ -5269,7 +5355,7 @@ def create_api_app(
                 completed=len(runs),
                 total=progress["total"],
                 finished_at=_utc_now(),
-                runs_path=str(output_path),
+                runs_path=str(results_path),
                 workflow_name=workflow_name,
             )
         except Exception as exc:
@@ -5280,14 +5366,24 @@ def create_api_app(
 
     def _resolve_runs_output_path(
         manifest_path: Path, scenario_path: Path, override: Optional[str]
-    ) -> Path:
+    ) -> Tuple[Path, str]:
+        """Returns (results_directory, run_id) for storing run results."""
+        run_id = generate_run_id()
         base_dir = manifest_path.parent.resolve()
+
         if override:
             candidate = Path(override)
             if not candidate.is_absolute():
                 candidate = (base_dir / candidate).resolve()
-            return candidate
-        return (scenario_path.parent / "generated_runs.json").resolve()
+            # If override is a file path, use its parent
+            if candidate.suffix == ".json":
+                results_dir = candidate.parent / "results"
+            else:
+                results_dir = candidate / "results"
+            results_dir.mkdir(parents=True, exist_ok=True)
+            return (results_dir, run_id)
+
+        return (get_results_directory(scenario_path), run_id)
 
     @app.post("/api/evaluation/suite/run")
     async def start_evaluation_suite_run(payload: EvaluationSuiteRunRequest):
@@ -5348,9 +5444,19 @@ def create_api_app(
             if not entries:
                 raise HTTPException(status_code=422, detail="Scenario set is empty")
             scenarios = _ensure_scenario_ids(entries)
+            # Apply select/exclude filter before running
+            if payload.select or payload.exclude:
+                scenarios = _filter_scenarios(
+                    scenarios, payload.select, payload.exclude
+                )
+            if not scenarios:
+                raise HTTPException(
+                    status_code=422,
+                    detail="No scenarios match the select/exclude filter",
+                )
             for sc in scenarios:
                 sc["_source_path"] = str(file_path)
-            output_path = _resolve_runs_output_path(
+            results_dir, run_id = _resolve_runs_output_path(
                 manifest_path, file_path, payload.output_path
             )
             resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
@@ -5364,7 +5470,8 @@ def create_api_app(
                     manifest_path,
                     scenario_set,
                     scenarios,
-                    output_path,
+                    results_dir,
+                    run_id,
                 )
             )
             await manager.register_task(job.job_id, task)
@@ -7196,6 +7303,150 @@ def create_api_app(
             )
             return EvaluationMeasureDeleteResponse(
                 project=project_name, deleted=measure_name, measures=response.measures
+            ).model_dump()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    # Evaluation Results Endpoints
+    def _find_result_runs(manifest_path: Path) -> List[Dict[str, Any]]:
+        """Find all evaluation runs from runs.json indexes."""
+        base_dir = manifest_path.parent.resolve()
+        runs: List[Dict[str, Any]] = []
+
+        index_patterns = [
+            "evaluations/**/results/runs.json",
+            "artifacts/eval/**/results/runs.json",
+        ]
+        for pattern in index_patterns:
+            for runs_index in base_dir.glob(pattern):
+                try:
+                    index_data = json.loads(runs_index.read_text(encoding="utf-8"))
+                    for run in index_data.get("runs", []):
+                        run["_results_dir"] = str(runs_index.parent)
+                        runs.append(run)
+                except Exception:
+                    pass
+
+        return sorted(runs, key=lambda r: r.get("timestamp", ""), reverse=True)
+
+    def _parse_results_file(
+        results_path: Path,
+    ) -> Tuple[Dict[str, int], List[Dict[str, Any]]]:
+        """Parse generated_runs.json into summary and scenario list."""
+        data = json.loads(results_path.read_text(encoding="utf-8"))
+        runs = data.get("runs", [])
+
+        summary = {"total": 0, "passed": 0, "failed": 0}
+        scenarios: List[Dict[str, Any]] = []
+
+        for run in runs:
+            measures = run.get("measures", [])
+            all_passed = (
+                all(m.get("passed", False) for m in measures) if measures else True
+            )
+
+            summary["total"] += 1
+            if all_passed:
+                summary["passed"] += 1
+            else:
+                summary["failed"] += 1
+
+            scenarios.append(
+                {
+                    "scenario_id": run.get("scenario_id") or run.get("id"),
+                    "scenario_name": run.get("scenario_name")
+                    or run.get("scenario", "unnamed"),
+                    "type": run.get("type", "scripted"),
+                    "passed": all_passed,
+                    "measures": [
+                        {
+                            "name": m.get("name", "unknown"),
+                            "passed": m.get("passed", False),
+                            "reason": m.get("reason"),
+                        }
+                        for m in measures
+                    ],
+                    "error": run.get("error"),
+                    "group_id": (
+                        run.get("metadata", {}).get("group_id")
+                        if isinstance(run.get("metadata"), dict)
+                        else None
+                    ),
+                }
+            )
+
+        return summary, scenarios
+
+    @app.get("/api/evaluation/results")
+    async def get_evaluation_results():
+        """List all available result runs with summaries."""
+        try:
+            manifest_path = _get_manifest_path()
+            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            project_name = resources.get("project_name") or app.state.default_project
+
+            results: List[EvaluationRunSummaryModel] = []
+            for run in _find_result_runs(manifest_path):
+                try:
+                    summary = run.get("summary", {})
+                    results.append(
+                        EvaluationRunSummaryModel(
+                            path=run.get("path", ""),
+                            run_at=run.get("timestamp", ""),
+                            total_scenarios=summary.get("total_scenarios", 0),
+                            passed=summary.get("passed", 0),
+                            failed=summary.get("failed", 0),
+                            workflow_name=run.get("workflow_name"),
+                        )
+                    )
+                except Exception as e:
+                    logger.warning("Failed to process run entry: %s", e)
+
+            return EvaluationResultsListResponse(
+                project=project_name, results=results
+            ).model_dump()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.get("/api/evaluation/results/detail")
+    async def get_evaluation_results_detail(path: str = Query(...)):
+        """Get detailed results for a specific run."""
+        try:
+            results_path = Path(path).resolve()
+            if not results_path.is_file():
+                raise HTTPException(status_code=404, detail="Results file not found")
+
+            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            project_name = resources.get("project_name") or app.state.default_project
+
+            summary, scenarios = _parse_results_file(results_path)
+
+            # Get workflow_name from metadata.json (in same directory as results.json)
+            metadata_file = results_path.parent / "metadata.json"
+            workflow_name = None
+            run_at = datetime.fromtimestamp(
+                results_path.stat().st_mtime, tz=timezone.utc
+            ).isoformat()
+            if metadata_file.is_file():
+                try:
+                    mdata = json.loads(metadata_file.read_text(encoding="utf-8"))
+                    workflow_name = mdata.get("workflow_name")
+                    if mdata.get("created_at"):
+                        run_at = mdata["created_at"]
+                except Exception:
+                    pass
+
+            return EvaluationResultsDetailResponse(
+                project=project_name,
+                path=str(results_path),
+                run_at=run_at,
+                summary=summary,
+                scenarios=[EvaluationScenarioResultModel(**s) for s in scenarios],
+                workflow_name=workflow_name,
             ).model_dump()
         except HTTPException:
             raise

@@ -119,11 +119,9 @@ def test_scenario_run_job_progress(monkeypatch, studio_api_env):
         _fake_run_scenarios_against_agent,
     )
     scenario_path = studio_api_env.project_dir / "evaluations" / "scenarios.yml"
-    output_path = studio_api_env.project_dir / "runs" / "golden_output.json"
     payload = {
         "kind": "golden",
         "set_path": str(scenario_path),
-        "output_path": str(output_path),
     }
     response = studio_api_env.client.post(
         "/api/evaluation/scenarios/run", json=payload, headers=_auth_header()
@@ -136,8 +134,11 @@ def test_scenario_run_job_progress(monkeypatch, studio_api_env):
         studio_api_env.client,
     )
     assert status["state"] == "completed"
-    assert status["runs_path"] == str(output_path)
-    data = json.loads(Path(status["runs_path"]).read_text(encoding="utf-8"))
+    # Results now go to structured storage: results/<run_id>/results.json
+    runs_path = Path(status["runs_path"])
+    assert runs_path.name == "results.json"
+    assert runs_path.parent.parent.name == "results"
+    data = json.loads(runs_path.read_text(encoding="utf-8"))
     assert "runs" in data
     assert status["completed"] == status["total"]
 

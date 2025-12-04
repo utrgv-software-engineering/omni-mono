@@ -710,3 +710,43 @@ export interface EvaluationAgentOptimizationResponse {
   job_id: string
   status?: EvaluationAgentOptimizationStatus | null
 }
+
+// Evaluation Results Types
+export interface EvaluationMeasureResult {
+  name: string
+  passed: boolean
+  reason: string | null
+}
+
+export interface EvaluationScenarioResult {
+  scenario_id: string | null
+  scenario_name: string
+  type: 'scripted' | 'synthetic'
+  passed: boolean
+  measures: EvaluationMeasureResult[]
+  error: { type: string; message: string } | null
+  group_id: string | null
+}
+
+export interface EvaluationRunSummary {
+  path: string
+  run_at: string
+  total_scenarios: number
+  passed: number
+  failed: number
+  workflow_name: string | null
+}
+
+export interface EvaluationResultsListResponse {
+  project: string | null
+  results: EvaluationRunSummary[]
+}
+
+export interface EvaluationResultsDetailResponse {
+  project: string | null
+  path: string
+  run_at: string
+  summary: { total: number; passed: number; failed: number }
+  scenarios: EvaluationScenarioResult[]
+  workflow_name: string | null
+}
