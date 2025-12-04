@@ -88,7 +88,8 @@ export function useWorkflows(project: string | null) {
     queryKey: ['workflows', project],
     queryFn: () => (project ? api.getWorkflows(project) : { workflows: [] }),
     enabled: !!project,
-    staleTime: 1000 * 60 * 5,
+    staleTime: 1000 * 5,
+    refetchInterval: 1000 * 5,
   })
 }
 

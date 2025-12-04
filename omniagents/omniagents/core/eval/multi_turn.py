@@ -916,6 +916,7 @@ async def run_scenarios_against_agent(
                 "measures": run_result.get("measures", []),
                 "type": run_result.get("type", "scripted"),
                 "exchanges": run_result.get("exchanges", 1),
+                "metadata": run_result.get("metadata"),
             }
 
             # Include history if requested (would need to load from session)

@@ -73,18 +73,20 @@ export function EvaluationPage() {
   }, [navigate])
 
   const handleNavigateToLogs = useCallback(
-    (projectName: string | null, workflowName: string | null) => {
+    (projectName: string | null, workflowName: string | null, conversationId?: string | null) => {
       const trimmedProject = projectName?.trim()
       if (!trimmedProject) {
         navigate(ROUTES.logs)
         return
       }
       const trimmedWorkflow = workflowName?.trim()
+      const trimmedConversation = conversationId?.trim()
       navigate(
         buildRoutePath('logs', {
           query: {
             [QUERY_PARAMS.project]: trimmedProject,
             [QUERY_PARAMS.workflow]: trimmedWorkflow ?? null,
+            [QUERY_PARAMS.conversation]: trimmedConversation ?? null,
           },
         }),
       )

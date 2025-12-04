@@ -53,7 +53,7 @@ interface EvaluationViewProps {
   projectName?: string | null
   isAvailable: boolean
   isLoadingMetadata: boolean
-  onNavigateToLogs?: (projectName: string | null, workflowName: string | null) => void
+  onNavigateToLogs?: (projectName: string | null, workflowName: string | null, conversationId?: string | null) => void
 }
 
 const DEFAULT_JUDGE_INSTRUCTIONS = `AI Agent Information
@@ -4586,7 +4586,7 @@ function MeasuresPanel({ projectName }: { projectName?: string | null }) {
   )
 }
 
-function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChange, onDatasetFocus }: { projectName?: string | null; isAvailable: boolean; onNavigateToLogs?: (projectName: string | null, workflowName: string | null) => void; onTabChange: (tab: EvaluationTab) => void; onDatasetFocus?: (focus: DatasetFocusRequest) => void }) {
+function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChange, onDatasetFocus }: { projectName?: string | null; isAvailable: boolean; onNavigateToLogs?: (projectName: string | null, workflowName: string | null, conversationId?: string | null) => void; onTabChange: (tab: EvaluationTab) => void; onDatasetFocus?: (focus: DatasetFocusRequest) => void }) {
   const queryClient = useQueryClient()
   const { data, isLoading, isError, refetch, isFetching } = useEvaluationScenarios(isAvailable)
   const { data: dimensionsData } = useDimensions(isAvailable)
@@ -5798,7 +5798,7 @@ function ResultsPanel({
   onNavigateToLogs,
 }: {
   projectName?: string | null
-  onNavigateToLogs?: (projectName: string | null, workflowName: string | null) => void
+  onNavigateToLogs?: (projectName: string | null, workflowName: string | null, conversationId?: string | null) => void
 }) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [lastViewedTime] = useState<number>(() => Date.now())
@@ -5996,9 +5996,21 @@ function ResultsPanel({
                                   </span>
                                 )}
                               </div>
-                              <span className="text-xs text-muted-foreground">
-                                {scenario.measures.length} measure{scenario.measures.length !== 1 ? 's' : ''}
-                              </span>
+                              <div className="flex items-center gap-3">
+                                <span className="text-xs text-muted-foreground">
+                                  {scenario.measures.length} measure{scenario.measures.length !== 1 ? 's' : ''}
+                                </span>
+                                {scenario.group_id && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onNavigateToLogs?.(resolvedProjectName, detailData.workflow_name, scenario.group_id)}
+                                    className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                                  >
+                                    <ExternalLink className="h-3 w-3" />
+                                    View Trace
+                                  </button>
+                                )}
+                              </div>
                             </div>
 
                             {/* Measures */}
