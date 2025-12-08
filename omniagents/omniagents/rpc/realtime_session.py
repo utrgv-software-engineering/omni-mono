@@ -313,6 +313,7 @@ class RealtimeSession:
                 handoff_configs=self.spec.handoff_configs,
                 settings=self.settings,
                 approval_callback=None,  # No approval callback for realtime
+                parent_spec=self.spec,
             )
 
         # Get guardrails from spec
@@ -320,15 +321,40 @@ class RealtimeSession:
             self.spec.output_guardrails if self.spec.output_guardrails else []
         )
 
+        # Build instructions with context (Jinja2 template processing)
+        raw_instructions = (
+            self.spec.get_agent_instructions()
+            if self.spec.get_agent_instructions
+            else ""
+        )
+
+        # Build context from factory if available
+        context_dict = {}
+        if self.spec.build_context and self.spec.variables is not None:
+            try:
+                context_dict = self.spec.build_context(self.spec.variables)
+            except Exception as e:
+                logger.warning(f"Failed to build context: {e}")
+        elif self.spec.context:
+            # Use pre-built context if available
+            context_dict = self.spec.context if isinstance(self.spec.context, dict) else {}
+
+        # Render Jinja2 template if context is available
+        if context_dict and raw_instructions:
+            from omniagents.core.utils.jinja_instructions import render_template
+            try:
+                instructions = render_template(raw_instructions, silent_undefined=True, **context_dict)
+            except Exception as e:
+                logger.warning(f"Failed to render instructions template: {e}")
+                instructions = raw_instructions
+        else:
+            instructions = raw_instructions
+
         # Create agent with realtime configuration
         # RealtimeAgent only takes: name, instructions, tools, handoffs, output_guardrails, hooks
         self._agent = RealtimeAgent(
             name=self.spec.name or "RealtimeAgent",
-            instructions=(
-                self.spec.get_agent_instructions()
-                if self.spec.get_agent_instructions
-                else ""
-            ),
+            instructions=instructions,
             tools=tools,
             handoffs=handoffs,
             output_guardrails=output_guardrails,

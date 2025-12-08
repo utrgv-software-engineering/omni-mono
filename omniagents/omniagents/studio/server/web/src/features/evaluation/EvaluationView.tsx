@@ -3622,7 +3622,7 @@ function SuiteRunDetail({ jobId, status, onBack, onDismiss, onNavigateToLogs, pr
               className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
             >
               <ExternalLink className="h-3.5 w-3.5" />
-              View Logs
+              View Traces
             </button>
           ) : null}
           <button
@@ -4588,6 +4588,7 @@ function MeasuresPanel({ projectName }: { projectName?: string | null }) {
 
 function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChange, onDatasetFocus }: { projectName?: string | null; isAvailable: boolean; onNavigateToLogs?: (projectName: string | null, workflowName: string | null, conversationId?: string | null) => void; onTabChange: (tab: EvaluationTab) => void; onDatasetFocus?: (focus: DatasetFocusRequest) => void }) {
   const queryClient = useQueryClient()
+  const pushToast = useToastStore((state) => state.pushToast)
   const { data, isLoading, isError, refetch, isFetching } = useEvaluationScenarios(isAvailable)
   const { data: dimensionsData } = useDimensions(isAvailable)
   const [pendingKey, setPendingKey] = useState<string | null>(null)
@@ -4993,7 +4994,28 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
           if (status !== undefined) {
             setActiveSuiteRun({ jobId, status: status ?? null })
             const state = status?.state
-            if (state === 'completed' || state === 'failed' || state === 'cancelled') {
+            if (state === 'completed') {
+              suiteCompletionRef.current = true
+              pushToast({
+                message: 'Evaluation suite completed',
+                tone: 'success',
+                duration: 8000,
+                action: { label: 'View Results', onClick: () => onTabChange('results') },
+              })
+              try {
+                socket?.close()
+              } catch {}
+            } else if (state === 'failed') {
+              suiteCompletionRef.current = true
+              pushToast({
+                message: `Evaluation suite failed${status?.error ? `: ${status.error}` : ''}`,
+                tone: 'error',
+                duration: 8000,
+              })
+              try {
+                socket?.close()
+              } catch {}
+            } else if (state === 'cancelled') {
               suiteCompletionRef.current = true
               try {
                 socket?.close()
@@ -5312,21 +5334,47 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
                   {suiteStatus.summary.passed_checks} passed • {suiteStatus.summary.failed_checks} failed • {suiteStatus.summary.skipped_checks} skipped
                 </div>
               ) : null}
+              <div className="text-xs text-muted-foreground">
+                Started {formatTimestamp(suiteStatus?.started_at) || 'pending'}
+                {suiteStatus?.finished_at ? ` • Finished ${formatTimestamp(suiteStatus.finished_at)}` : ''}
+              </div>
               {suiteStatus?.result_path ? (
                 <div className="text-xs text-muted-foreground">
                   Results <span className="font-mono">{formatScenarioPath(suiteStatus.result_path)}</span>
                 </div>
               ) : null}
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleShowSuiteDetail}
-                  className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
-                >
-                  <BarChart3 className="h-3.5 w-3.5" />
-                  View Details
-                </button>
-              </div>
+              {suiteState === 'completed' && (
+                <div className="flex items-center gap-2 mt-2">
+                  <button
+                    type="button"
+                    onClick={() => onTabChange?.('results')}
+                    className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+                  >
+                    <BarChart3 className="h-3.5 w-3.5" />
+                    View Results
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleShowSuiteDetail}
+                    className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+                  >
+                    <BarChart3 className="h-3.5 w-3.5" />
+                    View Details
+                  </button>
+                </div>
+              )}
+              {suiteState !== 'completed' && (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleShowSuiteDetail}
+                    className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+                  >
+                    <BarChart3 className="h-3.5 w-3.5" />
+                    View Details
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         ) : null}

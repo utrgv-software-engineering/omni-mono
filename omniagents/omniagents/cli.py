@@ -258,6 +258,19 @@ def main():
         action="store_true",
         help="Auto-reload server when code changes (server mode only)",
     )
+    # SSL options
+    run_parser.add_argument(
+        "--ssl-cert",
+        dest="ssl_cert",
+        default=None,
+        help="Path to SSL certificate file for HTTPS (web/server mode)",
+    )
+    run_parser.add_argument(
+        "--ssl-key",
+        dest="ssl_key",
+        default=None,
+        help="Path to SSL private key file for HTTPS (web/server mode)",
+    )
     # Web dev options
     run_parser.add_argument(
         "--dev",

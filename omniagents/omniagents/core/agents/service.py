@@ -1228,7 +1228,11 @@ class AgentService(RpcMethodsBase):
                 else:
                     runtime_context = sess.variables
             else:
-                runtime_context = self.spec.context
+                # Fall back to spec-level context, building from factory if available
+                if self.spec.build_context and self.spec.variables is not None:
+                    runtime_context = self.spec.build_context(self.spec.variables)
+                else:
+                    runtime_context = self.spec.context
 
             # Retry policy (env configurable)
             import math

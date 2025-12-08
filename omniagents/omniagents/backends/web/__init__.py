@@ -39,14 +39,18 @@ class WebBackend:
             )
         )
 
-        # Check for explicit CLI overrides (CLI defaults are host="0.0.0.0", port=8000)
+        # Check for explicit CLI overrides
         host_arg = getattr(args, "host", None) if args else None
         port_arg = getattr(args, "port", None) if args else None
-        host_override = host_arg if host_arg and host_arg != "0.0.0.0" else None
-        port_override = port_arg if port_arg and port_arg != 8000 else None
+        ssl_cert = getattr(args, "ssl_cert", None) if args else None
+        ssl_key = getattr(args, "ssl_key", None) if args else None
 
         # Default: localhost:8080 with sequential fallback (or 0.0.0.0 in Codespaces)
-        host = host_override or ("0.0.0.0" if codespaces_env else "127.0.0.1")
+        if host_arg:
+            host = host_arg
+        else:
+            host = "0.0.0.0" if codespaces_env else "127.0.0.1"
+        port_override = port_arg if port_arg and port_arg != 8000 else None
         if port_override:
             port = port_override
         else:
@@ -128,6 +132,9 @@ class WebBackend:
                 "/", StaticFiles(directory=str(dist_dir), html=True), name="webui"
             )
 
+        # Determine if SSL is enabled
+        use_ssl = bool(ssl_cert and ssl_key)
+
         def run_server():
             for name in (
                 "agents",
@@ -145,15 +152,19 @@ class WebBackend:
                     lg.propagate = False
                 except Exception:
                     pass
-            uvicorn.run(
-                app,
-                host=host,
-                port=port,
-                log_level="error",
-                access_log=False,
-                proxy_headers=True,
-                forwarded_allow_ips="*",
-            )
+            uvicorn_kwargs = {
+                "app": app,
+                "host": host,
+                "port": port,
+                "log_level": "error",
+                "access_log": False,
+                "proxy_headers": True,
+                "forwarded_allow_ips": "*",
+            }
+            if use_ssl:
+                uvicorn_kwargs["ssl_certfile"] = ssl_cert
+                uvicorn_kwargs["ssl_keyfile"] = ssl_key
+            uvicorn.run(**uvicorn_kwargs)
 
         server_thread = Thread(target=run_server, daemon=True)
         server_thread.start()
@@ -204,7 +215,8 @@ class WebBackend:
             # Use 'localhost' instead of '127.0.0.1' for browser URL
             # Chrome requires this for secure context (getUserMedia, etc.)
             url_host = "localhost" if host == "127.0.0.1" else host
-            base = f"http://{url_host}:{port}/"
+            scheme = "https" if use_ssl else "http"
+            base = f"{scheme}://{url_host}:{port}/"
             if qp:
                 from urllib.parse import urlencode
 
