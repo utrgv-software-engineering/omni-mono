@@ -376,6 +376,7 @@ def load_agent_spec_from_yaml(
     guardrails_registry: Optional[Dict[str, Dict[str, Any]]] = None,
     server_functions_registry: Optional[Dict[str, Any]] = None,
     project_defaults: Optional[Dict[str, Any]] = None,
+    user_mcp_servers: Optional[List[MCPServerConfig]] = None,
 ) -> AgentSpec:
     """
     Loads agent configuration from a YAML file and builds an AgentSpec.
@@ -1118,6 +1119,14 @@ def load_agent_spec_from_yaml(
 
     # --- MCP Configuration ---
     mcp_servers = _parse_mcp_servers_config(config, config_path=str(config_file))
+
+    # Merge user MCP servers if provided (user configs override project configs)
+    if user_mcp_servers:
+        servers_by_name = {s.name: s for s in mcp_servers}
+        for user_server in user_mcp_servers:
+            servers_by_name[user_server.name] = user_server
+        mcp_servers = list(servers_by_name.values())
+
     # Extended MCP config
     mcp_config_from_yaml = config.get("mcp_config", {})
     if not isinstance(mcp_config_from_yaml, dict):

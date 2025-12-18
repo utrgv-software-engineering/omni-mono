@@ -170,3 +170,111 @@ mcp_servers:
     spec = load_agent_spec_from_yaml(str(yaml_path))
     with pytest.raises(ValueError):
         build_mcp_servers(spec, {})
+
+
+# =============================================================================
+# User MCP Server Merge Tests
+# =============================================================================
+
+
+def test_user_mcp_servers_merged_with_agent_defined(tmp_path):
+    """Test user MCP servers merge with agent.yml defined servers."""
+    yaml_path = tmp_path / "agent.yml"
+    yaml_path.write_text(
+        """
+name: test_agent
+instructions: hello
+mcp_servers:
+  - name: agent-server
+    type: stdio
+    params:
+      command: agent-cmd
+"""
+    )
+
+    user_mcp_servers = [
+        MCPServerConfig(
+            name="user-server",
+            type="stdio",
+            params={"command": "user-cmd"},
+        )
+    ]
+
+    spec = load_agent_spec_from_yaml(str(yaml_path), user_mcp_servers=user_mcp_servers)
+
+    assert len(spec.mcp_servers) == 2
+    names = {s.name for s in spec.mcp_servers}
+    assert names == {"agent-server", "user-server"}
+
+
+def test_user_mcp_overrides_same_name_agent_server(tmp_path):
+    """Test user server with same name replaces agent.yml server."""
+    yaml_path = tmp_path / "agent.yml"
+    yaml_path.write_text(
+        """
+name: test_agent
+instructions: hello
+mcp_servers:
+  - name: shared-server
+    type: stdio
+    params:
+      command: agent-cmd
+"""
+    )
+
+    user_mcp_servers = [
+        MCPServerConfig(
+            name="shared-server",  # Same name as agent-defined
+            type="stdio",
+            params={"command": "user-cmd"},  # Different command
+        )
+    ]
+
+    spec = load_agent_spec_from_yaml(str(yaml_path), user_mcp_servers=user_mcp_servers)
+
+    assert len(spec.mcp_servers) == 1
+    assert spec.mcp_servers[0].name == "shared-server"
+    # User config should override
+    assert spec.mcp_servers[0].params["command"] == "user-cmd"
+
+
+def test_user_mcp_servers_none_preserves_agent_defined(tmp_path):
+    """Test that None user_mcp_servers preserves agent-defined servers."""
+    yaml_path = tmp_path / "agent.yml"
+    yaml_path.write_text(
+        """
+name: test_agent
+instructions: hello
+mcp_servers:
+  - name: agent-server
+    type: stdio
+    params:
+      command: agent-cmd
+"""
+    )
+
+    spec = load_agent_spec_from_yaml(str(yaml_path), user_mcp_servers=None)
+
+    assert len(spec.mcp_servers) == 1
+    assert spec.mcp_servers[0].name == "agent-server"
+
+
+def test_user_mcp_servers_empty_list_preserves_agent_defined(tmp_path):
+    """Test that empty user_mcp_servers list preserves agent-defined servers."""
+    yaml_path = tmp_path / "agent.yml"
+    yaml_path.write_text(
+        """
+name: test_agent
+instructions: hello
+mcp_servers:
+  - name: agent-server
+    type: stdio
+    params:
+      command: agent-cmd
+"""
+    )
+
+    spec = load_agent_spec_from_yaml(str(yaml_path), user_mcp_servers=[])
+
+    assert len(spec.mcp_servers) == 1
+    assert spec.mcp_servers[0].name == "agent-server"

@@ -631,6 +631,44 @@ def main():
         "ctx.context['param_name'] or fall back to ENV_PREFIX_PARAM_NAME env var.",
     )
 
+    # MCP server generator
+    gen_mcp = gen_sub.add_parser(
+        "mcp", help="Generate a FastMCP server from an OpenAPI spec"
+    )
+    gen_mcp.add_argument(
+        "--spec", "-s", required=True, help="Path to OpenAPI spec (YAML or JSON)"
+    )
+    gen_mcp.add_argument(
+        "--name",
+        "-n",
+        required=True,
+        help="API name for env var prefix (e.g., hotel_api -> HOTEL_API_KEY)",
+    )
+    gen_mcp.add_argument(
+        "--server-name",
+        default=None,
+        help="MCP server display name (default: API name in title case)",
+    )
+    gen_mcp.add_argument(
+        "--output",
+        "-o",
+        required=False,
+        default=None,
+        help="Output file path (default: <name>_mcp_server.py)",
+    )
+    gen_mcp.add_argument(
+        "--include-tags",
+        nargs="*",
+        default=None,
+        help="Only include operations with these OpenAPI tags",
+    )
+    gen_mcp.add_argument(
+        "--exclude-operations",
+        nargs="*",
+        default=None,
+        help="Exclude specific operationIds",
+    )
+
     studio_parser = subparsers.add_parser("studio", help="OmniAgents Studio utilities")
     studio_sub = studio_parser.add_subparsers(dest="studio_cmd")
 
@@ -3481,6 +3519,54 @@ def main():
                 sys.exit(1)
             except Exception as e:
                 print(f"Error generating OpenAPI tools: {e}")
+                import traceback
+
+                traceback.print_exc()
+                sys.exit(1)
+        elif args.gen_cmd == "mcp":
+            try:
+                from omniagents.core.openapi import generate_mcp_server_file
+
+                spec_path = str(args.spec)
+                api_name = str(args.name)
+                server_name = getattr(args, "server_name", None)
+                if not server_name:
+                    # Convert snake_case to Title Case
+                    server_name = api_name.replace("_", " ").title()
+
+                include_tags = getattr(args, "include_tags", None)
+                exclude_ops = getattr(args, "exclude_operations", None)
+
+                output_path = getattr(args, "output", None)
+                if not output_path:
+                    output_path = f"{api_name}_mcp_server.py"
+
+                count = generate_mcp_server_file(
+                    spec_path=spec_path,
+                    output_path=output_path,
+                    server_name=server_name,
+                    api_name=api_name,
+                    include_tags=include_tags,
+                    exclude_operations=exclude_ops,
+                )
+                print(f"Generated MCP server with {count} tools")
+                print(f"  Spec: {spec_path}")
+                print(f"  Output: {output_path}")
+                print(f"  Server name: {server_name}")
+                env_prefix = api_name.upper()
+                print(f"\nRequired environment variables:")
+                print(f"  {env_prefix}_BASE_URL - API base URL")
+                print(f"  {env_prefix}_KEY - API key for authentication")
+                print(f"\nRun with:")
+                print(f"  python {output_path}")
+            except FileNotFoundError as e:
+                print(f"Error: {e}")
+                sys.exit(1)
+            except ValueError as e:
+                print(f"Error: {e}")
+                sys.exit(1)
+            except Exception as e:
+                print(f"Error generating MCP server: {e}")
                 import traceback
 
                 traceback.print_exc()

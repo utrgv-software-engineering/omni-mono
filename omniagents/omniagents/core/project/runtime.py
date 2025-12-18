@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional, List, Tuple
+from typing import Any, Dict, Optional, List, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from omniagents.core.agents.specs import MCPServerConfig
 import fnmatch
 import re
 import fnmatch
@@ -55,6 +58,9 @@ class ProjectContext:
     tool_registry: Dict[str, Any]
     guardrails_registry: Dict[str, Dict[str, Any]]
     server_functions_registry: Dict[str, Any]
+    # User-supplied MCP server support
+    allow_user_mcp_servers: bool = False
+    user_mcp_servers: List["MCPServerConfig"] = field(default_factory=list)
 
 
 def _validate_agent_name(expected_key: str, yaml_name: Any, path: Path) -> str:
@@ -247,6 +253,25 @@ def load_project(project_path: str) -> ProjectContext:
             except Exception:
                 pass
 
+    # --- User MCP Server Support ---
+    allow_user_mcp = proj.get("allow_user_mcp_servers", False)
+    if not isinstance(allow_user_mcp, bool):
+        print("Warning: 'allow_user_mcp_servers' should be a boolean. Using False.")
+        allow_user_mcp = False
+
+    user_mcp_configs: List[Any] = []
+    if allow_user_mcp:
+        from omniagents.core.config.user_mcp import load_user_mcp_config
+
+        project_name = proj.get("name")
+        if not project_name or not isinstance(project_name, str):
+            project_name = base_dir.name
+        project_name_slug = _slugify(project_name, base_dir.name)
+        user_mcp_configs = load_user_mcp_config(
+            project_root=base_dir,
+            project_name=project_name_slug,
+        )
+
     return ProjectContext(
         root=base_dir,
         raw=proj,
@@ -264,6 +289,8 @@ def load_project(project_path: str) -> ProjectContext:
         tool_registry=tool_registry,
         guardrails_registry=guardrails_registry,
         server_functions_registry=server_functions_registry,
+        allow_user_mcp_servers=allow_user_mcp,
+        user_mcp_servers=user_mcp_configs,
     )
 
 
@@ -304,6 +331,9 @@ def build_spec_from_project(
         guardrails_registry=project.guardrails_registry,
         server_functions_registry=project.server_functions_registry,
         project_defaults=pdefs,
+        user_mcp_servers=(
+            project.user_mcp_servers if project.allow_user_mcp_servers else None
+        ),
     )
     project_name = project.raw.get("name") if isinstance(project.raw, dict) else None
     spec.project_slug = _slugify(project_name, project.root.name)
@@ -320,6 +350,9 @@ def build_spec_from_project(
                 guardrails_registry=project.guardrails_registry,
                 server_functions_registry=project.server_functions_registry,
                 project_defaults=pdefs,
+                user_mcp_servers=(
+                    project.user_mcp_servers if project.allow_user_mcp_servers else None
+                ),
             )
             voice_spec.project_slug = spec.project_slug
             voice_spec.agent_slug = _slugify(voice_key, voice_key)
