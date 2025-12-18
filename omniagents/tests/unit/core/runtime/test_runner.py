@@ -411,6 +411,11 @@ def test_from_agent_server_functions_failure(monkeypatch):
 
 
 def test_from_remote_uses_direct_token(monkeypatch):
+    # Mock setup_tracing to avoid side effects during test
+    monkeypatch.setattr(
+        "omniagents.core.tracing.setup_tracing",
+        lambda config: None,
+    )
     monkeypatch.setattr("os.getenv", lambda key: pytest.fail("should not read env"))
 
     runner = Runner.from_remote(

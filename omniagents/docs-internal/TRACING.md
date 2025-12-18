@@ -1,6 +1,6 @@
 # Tracing Configuration in OmniAgents
 
-OmniAgents supports configurable tracing providers to help you monitor and debug your agents. By default, the OpenAI Agents SDK sends traces to OpenAI's servers. You can override this behavior using the `tracing` configuration in your YAML files.
+OmniAgents supports configurable tracing providers to help you monitor and debug your agents. **By default, OmniAgents uses Studio tracing** which stores traces locally and never sends data to external servers. Users must explicitly opt-in to OpenAI tracing via `provider: openai`.
 
 ## Configuration
 
@@ -17,15 +17,15 @@ tracing:
 
 ## Providers
 
-### `default` (Default Behavior)
-Keeps the OpenAI SDK's default behavior - traces are sent to OpenAI's servers.
+### `openai` (OpenAI Tracing)
+Enables the OpenAI SDK's default behavior - traces are sent to OpenAI's servers.
 
 ```yaml
 tracing:
-  provider: default
+  provider: openai
 ```
 
-Or simply omit the `tracing` section entirely.
+**Note:** You must explicitly opt-in to OpenAI tracing by specifying `provider: openai`.
 
 ### `studio` (Local Trace Storage)
 Uses the built-in OmniAgents Studio tracing module to store traces locally and provide a web UI for visualization.
@@ -82,54 +82,60 @@ tools:
   - create_ticket
 ```
 
-### Example 2: Disable Tracing for Development
+### Example 2: Enable OpenAI Tracing (Opt-in)
+
+```yaml
+name: Production Agent
+model: gpt-4o
+instructions: Production agent with OpenAI tracing.
+
+# Explicitly opt-in to OpenAI tracing
+tracing:
+  provider: openai
+
+tools:
+  - production_tool
+```
+
+### Example 3: Default Behavior (No Tracing)
 
 ```yaml
 name: Development Agent
 model: gpt-4o
 instructions: Agent for development testing.
 
-# Disable all tracing during development
-tracing:
-  provider: none
-
+# No tracing section needed - tracing is disabled by default
 tools:
   - debug_tool
 ```
 
-### Example 3: Keep Default OpenAI Tracing
+Or explicitly disable with:
 
 ```yaml
-name: Production Agent
-model: gpt-4o
-instructions: Production agent with default tracing.
-
-# Explicitly use default OpenAI tracing
 tracing:
-  provider: default
-
-tools:
-  - production_tool
+  provider: none
 ```
 
 ## How It Works
 
 1. When OmniAgents loads your YAML configuration, it reads the `tracing` section
 2. During Runner initialization, before creating the agent, it configures the tracing provider
-3. For `studio`: Replaces OpenAI's default trace processor with OmniAgents Studio's processor
-4. For `none`: Clears all trace processors to disable tracing
-5. For `default`: Leaves OpenAI's default configuration unchanged
+3. **No config or `default`**: Uses Studio tracing (local storage, no external data)
+4. For `studio`: Uses OmniAgents Studio for local trace storage
+   - If Studio is not installed, tracing is disabled (no fallback to OpenAI)
+5. For `openai`: Enables OpenAI's default tracing behavior (explicit opt-in required)
+6. For `none`: Disables all tracing
 
 ## Fallback Behavior
 
 - If `studio` is configured but dependencies are not installed, OmniAgents will:
   - Print a warning message
-  - Fall back to default OpenAI tracing
+  - Disable tracing (no data sent to OpenAI)
   - Continue running normally
 
 - If an unknown provider is specified, OmniAgents will:
   - Print a warning message
-  - Use default OpenAI tracing
+  - Disable tracing (no data sent to OpenAI)
 
 ## Programmatic Usage
 

@@ -23,11 +23,10 @@ class Runner:
         else:
             raise ValueError("Either spec or config_path must be provided")
 
-        # Setup tracing if configured
-        if self.spec.tracing_config:
-            from omniagents.core.tracing import setup_tracing
+        # Setup tracing - disabled by default unless explicitly configured
+        from omniagents.core.tracing import setup_tracing
 
-            setup_tracing(self.spec.tracing_config)
+        setup_tracing(self.spec.tracing_config)
 
     @classmethod
     def from_agent(
