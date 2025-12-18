@@ -1,4 +1,4 @@
-from omni_agents.coding_agent.context import format_agents_md_block
+from omni_agents.omni.context import format_agents_md_block
 
 
 def test_format_agents_md_block_without_agents(monkeypatch, tmp_path):

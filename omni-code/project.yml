@@ -6,7 +6,7 @@ paths:
   server_functions: server_functions
   target: target
 agents:
-  entrypoint: coding_agent
+  entrypoint: omni
   voice_entrypoint: voice_agent
 
 settings:

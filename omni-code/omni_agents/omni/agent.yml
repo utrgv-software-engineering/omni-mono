@@ -1,4 +1,4 @@
-name: Omni
+name: omni
 label: Omni Code
 description: "Full-stack coding agent with workspace access"
 instructions_file: instructions.md

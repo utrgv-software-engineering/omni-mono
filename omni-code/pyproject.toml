@@ -41,13 +41,13 @@ packages = [
     "server_functions",
     "omni_code",
     "omni_agents",
-    "omni_agents.coding_agent",
+    "omni_agents.omni",
     "omni_agents.voice_agent",
     "omni_agents.init_agent",
 ]
 
 [tool.setuptools.package-data]
-"omni_agents.coding_agent" = ["*.yml", "*.md"]
+"omni_agents.omni" = ["*.yml", "*.md"]
 "omni_agents.voice_agent" = ["*.yml", "*.md"]
 "omni_agents.init_agent" = ["*.yml", "*.md"]
 "*" = ["project.yml"]

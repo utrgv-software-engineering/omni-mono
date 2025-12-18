@@ -13,8 +13,8 @@ from typing import Any, Dict
 
 from omniagents import context_factory
 
-# Import shared utilities from coding_agent
-from omni_agents.coding_agent.context import format_agents_md_block
+# Import shared utilities from omni agent
+from omni_agents.omni.context import format_agents_md_block
 
 
 @context_factory
