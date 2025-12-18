@@ -1,13 +1,13 @@
 from omniagents import server_function
 from omniagents.core.session import Session
-import agentio
+from omniagents.studio import tracing
 
 
 @server_function(description="Mark conversation acceptable and submit feedback to developers (optional note included)", strict=True)
 async def good(session: Session, text: str) -> dict:
     try:
         group_id = f"session_{session.id}"
-        agentio.set_conversation_analysis(
+        tracing.set_conversation_analysis(
             group_id,
             judgment="acceptable",
             notes=text,
@@ -22,7 +22,7 @@ async def good(session: Session, text: str) -> dict:
 async def bad(session: Session, text: str) -> dict:
     try:
         group_id = f"session_{session.id}"
-        agentio.set_conversation_analysis(
+        tracing.set_conversation_analysis(
             group_id,
             judgment="unacceptable",
             notes=text,
@@ -36,7 +36,7 @@ async def bad(session: Session, text: str) -> dict:
 def _read_note(session: Session) -> dict:
     try:
         group_id = f"session_{session.id}"
-        analysis = agentio.get_conversation_analysis(group_id)
+        analysis = tracing.get_conversation_analysis(group_id)
         notes = analysis.get("notes") or ""
         judgment = analysis.get("judgment")
         if not notes or judgment not in ("acceptable", "unacceptable"):
@@ -56,4 +56,3 @@ async def note(session: Session) -> dict:
 @server_function(description="Alias of 'note' (analysis summary for developer review)", strict=True, name_override="notes")
 async def notes(session: Session) -> dict:
     return _read_note(session)
-

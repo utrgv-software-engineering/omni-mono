@@ -1,0 +1,45 @@
+name: voice_agent
+label: Omni Code Voice
+description: "Voice-optimized coding agent"
+instructions_file: instructions.md
+welcome_text: |
+  Welcome to Omni Code Voice! I'm ready to help with your coding needs.
+
+tools:
+  - dispatch
+  - list_directory
+  - glob_files
+  - grep_files
+  - read_file
+  - apply_patch
+  - write_file
+  - execute_bash
+  - web_fetch
+  - web_search
+  - youtube_search
+  - scholar_search
+  - download_file
+  - convert_to_markdown
+
+model_settings:
+  reasoning:
+    effort: high
+
+use_safe_agent: true
+safe_agent_options:
+  skip_approvals: false
+  halt_on_rejection: true
+  safe_tool_names:
+    - list_directory
+    - glob_files
+    - grep_files
+    - read_file
+    - dispatch
+    - web_fetch
+    - web_search
+    - youtube_search
+    - scholar_search
+    - convert_to_markdown
+
+context: build_voice_context
+variables: {}

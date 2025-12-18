@@ -1,15 +1,14 @@
-from oagents.instruction_utils import format_instructions
+from omni_agents.coding_agent.context import format_agents_md_block
 
 
-def test_format_instructions_without_agents(monkeypatch, tmp_path):
+def test_format_agents_md_block_without_agents(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    result = format_instructions("Base text")
-    assert "Base text" in result
+    result = format_agents_md_block()
     assert "[Workspace]" in result
     assert "# Repository AGENTS" not in result
 
 
-def test_format_instructions_with_agents(monkeypatch, tmp_path):
+def test_format_agents_md_block_with_agents(monkeypatch, tmp_path):
     root_agents = tmp_path / "AGENTS.md"
     root_agents.write_text("root instructions", encoding="utf-8")
     nested_dir = tmp_path / "nested"
@@ -19,9 +18,8 @@ def test_format_instructions_with_agents(monkeypatch, tmp_path):
 
     monkeypatch.chdir(tmp_path)
 
-    result = format_instructions("Voice base")
+    result = format_agents_md_block()
 
-    assert "Voice base" in result
     assert "# Repository AGENTS" in result
     assert f"[AGENTS.md at {tmp_path}]" in result
     assert f"[AGENTS.md at {nested_dir}]" in result

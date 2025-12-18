@@ -1,0 +1,24 @@
+name: init_agent
+label: AGENTS.md Init Agent
+description: "Agent for creating and updating AGENTS.md files"
+instructions_file: instructions.md
+welcome_text: |
+  Ready to create or update AGENTS.md for this repository.
+
+tools:
+  - list_directory
+  - glob_files
+  - grep_files
+  - read_file
+  - apply_patch
+  - write_file
+
+use_safe_agent: true
+safe_agent_options:
+  skip_approvals: false
+  halt_on_rejection: true
+  safe_tool_names:
+    - list_directory
+    - glob_files
+    - grep_files
+    - read_file

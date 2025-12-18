@@ -1,0 +1,45 @@
+name: Omni
+label: Omni Code
+description: "Full-stack coding agent with workspace access"
+instructions_file: instructions.md
+welcome_text: |
+  Welcome to Omni Code! I'm here to help you with your coding needs.
+
+tools:
+  - dispatch
+  - list_directory
+  - glob_files
+  - grep_files
+  - read_file
+  - apply_patch
+  - write_file
+  - execute_bash
+  - web_fetch
+  - web_search
+  - youtube_search
+  - scholar_search
+  - download_file
+  - convert_to_markdown
+
+model_settings:
+  reasoning:
+    effort: low
+
+use_safe_agent: true
+safe_agent_options:
+  skip_approvals: false
+  halt_on_rejection: true
+  safe_tool_names:
+    - list_directory
+    - glob_files
+    - grep_files
+    - read_file
+    - dispatch
+    - web_fetch
+    - web_search
+    - youtube_search
+    - scholar_search
+    - convert_to_markdown
+
+context: build_coding_context
+variables: {}

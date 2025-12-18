@@ -1,0 +1,24 @@
+name: omni_code
+allow_user_mcp_servers: true
+paths:
+  agents: omni_agents
+  tools: tools
+  server_functions: server_functions
+  target: target
+agents:
+  entrypoint: coding_agent
+  voice_entrypoint: voice_agent
+
+settings:
+  - key: model_name
+    label: Model Name
+    group: OpenAI API
+    default: gpt-5
+    hint: "Model to use (e.g., gpt-5, gpt-4o)"
+
+tracing:
+  provider: studio
+  project: omni_code
+  name: omni_code
+  settings:
+    resume: never
