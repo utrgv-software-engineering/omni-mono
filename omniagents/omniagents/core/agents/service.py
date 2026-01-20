@@ -250,6 +250,7 @@ class AgentService(RpcMethodsBase):
         # Server functions registry (client→server dynamic functions)
         # Map name -> {"func": callable, "description": str | None, "params_schema": dict | None, "result_schema": dict | None}
         self._server_functions: dict[str, dict] = {}
+        self._runtime_hooks: dict[str, list[Any]] = {}
         # Note: we intentionally do NOT register built-in example functions
         # like "session.get_history" so they won't surface in UIs that
         # dynamically list server functions (e.g., Bubble Tea /help).
@@ -441,6 +442,7 @@ class AgentService(RpcMethodsBase):
                     active_servers,
                     self.spec,
                     approval_callback,
+                    session=session,
                 )
 
             agent = self._clone_agent(agent)
@@ -562,6 +564,49 @@ class AgentService(RpcMethodsBase):
             "strict": strict,
         }
 
+    def register_runtime_hook(self, event: str, func: Any) -> None:
+        self._runtime_hooks.setdefault(str(event), []).append(func)
+
+    async def emit_runtime_hook(self, event: str, **kwargs: Any) -> None:
+        funcs = list(self._runtime_hooks.get(str(event), []))
+        if not funcs:
+            return
+
+        for fn in funcs:
+            try:
+                if asyncio.iscoroutinefunction(fn):
+                    await fn(service=self, event=str(event), **kwargs)
+                else:
+                    fn(service=self, event=str(event), **kwargs)
+            except Exception:
+                logger.debug(
+                    "Runtime hook failed",
+                    exc_info=True,
+                    extra={"runtime_hook_event": str(event)},
+                )
+
+    async def invoke_runtime_hooks(self, event: str, **kwargs: Any) -> Any | None:
+        funcs = list(self._runtime_hooks.get(str(event), []))
+        if not funcs:
+            return None
+
+        result: Any | None = None
+        for fn in funcs:
+            try:
+                if asyncio.iscoroutinefunction(fn):
+                    value = await fn(service=self, event=str(event), **kwargs)
+                else:
+                    value = fn(service=self, event=str(event), **kwargs)
+                if value is not None:
+                    result = value
+            except Exception:
+                logger.debug(
+                    "Runtime hook failed",
+                    exc_info=True,
+                    extra={"runtime_hook_event": str(event)},
+                )
+        return result
+
     async def list_server_functions(self) -> list[dict]:  # noqa: D401
         """Return metadata for all registered server functions."""
         result = []
@@ -602,6 +647,9 @@ class AgentService(RpcMethodsBase):
         if session_id:
             try:
                 sess = self._session_manager.get_or_create(session_id)
+                # Ensure the invoking channel is tracked for client notifications
+                if self.channel is not None and self.channel not in sess.channels:
+                    sess.channels.append(self.channel)
             except Exception:
                 sess = None
 
@@ -749,6 +797,8 @@ class AgentService(RpcMethodsBase):
             session.active_run_status_payload = data
         elif method == "client_request" and data.get("function") == "ui.set_status":
             session.active_run_set_status_payload = data
+        elif method == "client_request" and data.get("function") == "ui.set_session_state":
+            session.active_session_state_payload = data
 
     def _clear_live_state(self, session: Session | None) -> None:
         if session is None:
@@ -757,6 +807,7 @@ class AgentService(RpcMethodsBase):
         session.active_run_started_payload = None
         session.active_run_status_payload = None
         session.active_run_set_status_payload = None
+        session.active_session_state_payload = None
         for req_id in list(session.pending_client_requests.keys()):
             self._client_request_sessions.pop(req_id, None)
         session.pending_client_requests.clear()
@@ -771,6 +822,8 @@ class AgentService(RpcMethodsBase):
             events.append(("run_status", session.active_run_status_payload))
         if session.active_run_set_status_payload:
             events.append(("client_request", session.active_run_set_status_payload))
+        if session.active_session_state_payload:
+            events.append(("client_request", session.active_session_state_payload))
         for payload in session.pending_client_requests.values():
             events.append(("client_request", payload))
         for method, payl in events:
@@ -931,6 +984,8 @@ class AgentService(RpcMethodsBase):
 
         if session is not None and function == "ui.set_status":
             session.active_run_set_status_payload = dict(payload)
+        if session is not None and function == "ui.set_session_state":
+            session.active_session_state_payload = dict(payload)
 
         # Broadcast to all known channels for the session, or current channel if none provided
         channels = list(session.channels) if session is not None else [self.channel]
@@ -1155,6 +1210,33 @@ class AgentService(RpcMethodsBase):
         if group_id is not None:
             sess.group_id = group_id
 
+        # Initialize model_config from spec resolver if not already set
+        if sess.model_config is None and self.spec.resolve_default_model_config:
+            try:
+                default_config = self.spec.resolve_default_model_config()
+                if default_config:
+                    sess.model_config = default_config
+                    if default_config.get("name"):
+                        sess.active_model = default_config.get("name")
+                    # Notify UI of initial session state
+                    try:
+                        await self.request_client_function(
+                            "ui.set_session_state",
+                            {
+                                "model": sess.active_model,
+                                "label": default_config.get("label"),
+                                "provider": default_config.get("provider"),
+                                "max_input_tokens": default_config.get("max_input_tokens"),
+                                "max_output_tokens": default_config.get("max_output_tokens"),
+                            },
+                            session=sess,
+                            expect_result=False,
+                        )
+                    except Exception:
+                        pass  # UI notification is best-effort
+            except Exception as e:
+                logger.debug(f"Failed to resolve default model config: {e}")
+
         # Track current channel for real-time notifications.
         if channel is not None and channel not in sess.channels:
             sess.channels.append(channel)
@@ -1323,20 +1405,63 @@ class AgentService(RpcMethodsBase):
                     )
                 # Also get group_id from session if provided
                 group_id_override = getattr(sess, "group_id", None)
+
+                # Determine model provider based on session model config
+                model_provider = None
+                session_model_config = getattr(sess, "model_config", None)
+                if session_model_config:
+                    provider_type = session_model_config.get("provider")
+                    if provider_type == "litellm":
+                        try:
+                            from agents.extensions.models.litellm_provider import (
+                                LitellmProvider,
+                            )
+
+                            model_provider = LitellmProvider()
+                        except ImportError:
+                            logger.warning(
+                                "LiteLLM not installed. Install with: pip install litellm"
+                            )
+                    elif provider_type == "openai-compatible":
+                        # For openai-compatible, we set OPENAI_BASE_URL
+                        base_url = session_model_config.get("base_url")
+                        if base_url:
+                            os.environ["OPENAI_BASE_URL"] = base_url
+
                 while True:
                     try:
+                        # Get token limits from session model config
+                        _max_input = (
+                            session_model_config.get("max_input_tokens")
+                            if session_model_config
+                            else None
+                        )
+                        _max_output = (
+                            session_model_config.get("max_output_tokens")
+                            if session_model_config
+                            else None
+                        )
+                        _model_label = (
+                            session_model_config.get("label")
+                            if session_model_config
+                            else None
+                        )
                         final_details = await stream_agent(
                             agent,
                             prompt,
                             sess,
                             self.channel,
+                            service=self,
                             max_turns=self.spec.max_turns,
                             context=runtime_context,
-                            context_window=getattr(self.spec, "context_window", None),
+                            max_input_tokens=_max_input,
+                            max_output_tokens=_max_output,
                             include_user_message=include_user_message,
                             workflow_name=workflow_name_override,
                             group_id=group_id_override,
                             user_content=content,
+                            model_provider=model_provider,
+                            model_label=_model_label,
                         )
                         end_reason = sess.cancel_end_reason or "completed"
                         error_info = None
@@ -1428,8 +1553,8 @@ class AgentService(RpcMethodsBase):
                         payload["usage"] = final_details["usage"]
                     if final_details.get("model") is not None:
                         payload["model"] = final_details.get("model")
-                    if final_details.get("context_window") is not None:
-                        payload["context_window"] = final_details.get("context_window")
+                    if final_details.get("max_input_tokens") is not None:
+                        payload["max_input_tokens"] = final_details.get("max_input_tokens")
                     if final_details.get("max_output_tokens") is not None:
                         payload["max_output_tokens"] = final_details.get(
                             "max_output_tokens"
@@ -1532,6 +1657,24 @@ class AgentService(RpcMethodsBase):
         result = _filter_history_for_api(sess.history)
         _debug_rpc("get_session_history result", {"history": result})
         return result
+
+    async def fork_session(self, session_id: str, *, new_session_id: str | None = None) -> dict:  # noqa: D401
+        _debug_rpc(
+            "fork_session",
+            {"session_id": session_id, "new_session_id": new_session_id},
+        )
+        sess: Session = self._session_manager.get_or_create(session_id)
+        new_sess = self._session_manager.fork_session(sess, new_session_id=new_session_id)
+        try:
+            await self._broadcast_session(
+                sess,
+                "session_forked",
+                {"session_id": sess.id, "new_session_id": new_sess.id},
+                track_live=True,
+            )
+        except Exception:
+            pass
+        return {"session_id": sess.id, "new_session_id": new_sess.id}
 
     async def list_sessions(self) -> list[dict]:  # noqa: D401
         """Return metadata for all sessions."""

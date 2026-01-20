@@ -242,15 +242,17 @@ class InkBackend:
             p = Path(env_override).expanduser()
             if p.exists() and p.is_file():
                 return p
+        # Check source directory first (for development)
+        base = Path(__file__).parent
+        dist_path = base / "tui" / "dist" / "index.js"
+        if dist_path.exists() and dist_path.is_file():
+            return dist_path
+        # Fall back to cache directory (for installed packages)
         cache_dir = self._cache_dir()
         if cache_dir is not None:
             dist_path = cache_dir / "dist" / "index.js"
             if dist_path.exists() and dist_path.is_file():
                 return dist_path
-        base = Path(__file__).parent
-        dist_path = base / "tui" / "dist" / "index.js"
-        if dist_path.exists() and dist_path.is_file():
-            return dist_path
         return None
 
     def _build_binary(self, debug: bool = False) -> Path:

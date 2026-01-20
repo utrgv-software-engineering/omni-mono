@@ -7,15 +7,19 @@ import { Box, Text } from "ink";
 import { TokyoNightTheme } from "../theme.js";
 import type { UsageInfo } from "../store/appStore.js";
 
+// Helper function to format numbers with commas
+function formatNumber(n: number): string {
+  return n.toLocaleString();
+}
+
 // Helper function to format usage info
-function formatUsage(usage: UsageInfo): string {
-  const modelName = usage.model || "unknown";
-  if (usage.contextWindow && usage.contextWindow > 0) {
-    const remaining = usage.contextWindow - usage.totalTokens;
-    const percentage = Math.round((remaining / usage.contextWindow) * 100);
-    return `context remaining: ${percentage}% • ${modelName}`;
+function formatUsage(usage: UsageInfo, modelOverride?: string | null): string {
+  const modelName = modelOverride || usage.model || "unknown";
+  if (usage.maxInputTokens && usage.maxInputTokens > 0) {
+    const percentage = Math.round((usage.totalTokens / usage.maxInputTokens) * 100);
+    return `context window: ${percentage}% • ${modelName}`;
   }
-  return `tokens: ${usage.totalTokens} • ${modelName}`;
+  return `tokens: ${formatNumber(usage.totalTokens)} • ${modelName}`;
 }
 
 export interface HelpProps {
@@ -23,6 +27,7 @@ export interface HelpProps {
   isPendingApproval?: boolean;
   connected?: boolean;
   usage?: UsageInfo | null;
+  sessionModel?: string | null;
   waitingForSecondCtrlC?: boolean;
 }
 
@@ -32,6 +37,7 @@ export const Help = React.memo<HelpProps>(
     isPendingApproval = false,
     connected = true,
     usage = null,
+    sessionModel = null,
     waitingForSecondCtrlC = false,
   }) => {
     let helpText = "";
@@ -47,7 +53,9 @@ export const Help = React.memo<HelpProps>(
             <Text color={TokyoNightTheme.help}> • or wait to continue</Text>
           </Box>
           {usage && (
-            <Text color={TokyoNightTheme.help}>{formatUsage(usage)}</Text>
+            <Text color={TokyoNightTheme.help}>
+              {formatUsage(usage, sessionModel)}
+            </Text>
           )}
         </Box>
       );
@@ -68,7 +76,9 @@ export const Help = React.memo<HelpProps>(
       <Box justifyContent="space-between" width="100%">
         <Text color={TokyoNightTheme.help}>{helpText}</Text>
         {usage && (
-          <Text color={TokyoNightTheme.help}>{formatUsage(usage)}</Text>
+          <Text color={TokyoNightTheme.help}>
+            {formatUsage(usage, sessionModel)}
+          </Text>
         )}
       </Box>
     );
@@ -79,6 +89,7 @@ export const Help = React.memo<HelpProps>(
       prev.isThinking !== next.isThinking ||
       prev.isPendingApproval !== next.isPendingApproval ||
       prev.connected !== next.connected ||
+      prev.sessionModel !== next.sessionModel ||
       prev.waitingForSecondCtrlC !== next.waitingForSecondCtrlC
     ) {
       return false;
@@ -91,7 +102,7 @@ export const Help = React.memo<HelpProps>(
     return (
       prev.usage.totalTokens === next.usage.totalTokens &&
       prev.usage.model === next.usage.model &&
-      prev.usage.contextWindow === next.usage.contextWindow
+      prev.usage.maxInputTokens === next.usage.maxInputTokens
     );
   },
 );

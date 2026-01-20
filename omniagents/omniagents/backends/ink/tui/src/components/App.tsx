@@ -18,6 +18,7 @@ import {
   useThinking,
   useApproval,
   useUsage,
+  useSessionModel,
   useSessionId,
   useCurrentRunId,
   usePreamble,
@@ -137,9 +138,10 @@ const HelpWrapper = React.memo<{
   thinking: boolean;
   approval: ApprovalInfo | null;
   usage: ReturnType<typeof useUsage>;
+  sessionModel: string | null;
   waitingForSecondCtrlC: boolean;
 }>(
-  ({ connected, thinking, approval, usage, waitingForSecondCtrlC }) => {
+  ({ connected, thinking, approval, usage, sessionModel, waitingForSecondCtrlC }) => {
     return (
       <Box paddingX={1} paddingBottom={1}>
         <Help
@@ -147,6 +149,7 @@ const HelpWrapper = React.memo<{
           isPendingApproval={!!approval}
           connected={connected}
           usage={usage}
+          sessionModel={sessionModel}
           waitingForSecondCtrlC={waitingForSecondCtrlC}
         />
       </Box>
@@ -158,6 +161,7 @@ const HelpWrapper = React.memo<{
       prev.thinking === next.thinking &&
       prev.approval === next.approval &&
       prev.usage === next.usage &&
+      prev.sessionModel === next.sessionModel &&
       prev.waitingForSecondCtrlC === next.waitingForSecondCtrlC
     );
   },
@@ -219,6 +223,7 @@ export const App: React.FC<AppProps> = ({
   const thinking = useThinking();
   const approval = useApproval();
   const usage = useUsage();
+  const sessionModel = useSessionModel();
   const sessionId = useSessionId();
   const currentRunId = useCurrentRunId();
   const actions = useActions();
@@ -724,6 +729,7 @@ export const App: React.FC<AppProps> = ({
               thinking={thinking}
               approval={approval}
               usage={usage}
+              sessionModel={sessionModel}
               waitingForSecondCtrlC={waitingForSecondCtrlC}
             />
           </Box>

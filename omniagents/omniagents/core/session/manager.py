@@ -42,6 +42,8 @@ class Session:  # noqa: D101
             if session_id
             else []
         )
+        if session_id:
+            self._repair_history_after_unclean_shutdown()
         self.current_task: Optional[asyncio.Task] = None
         self.current_stream_result: Any | None = None
         self.cancel_requested: bool = False
@@ -71,7 +73,13 @@ class Session:  # noqa: D101
         self.active_run_started_payload: dict | None = None
         self.active_run_status_payload: dict | None = None
         self.active_run_set_status_payload: dict | None = None
+        self.active_session_state_payload: dict | None = None
         self.pending_client_requests: Dict[str, dict] = {}
+        # Model configuration for runtime switching
+        self.active_model: str | None = None
+        self.model_config: Dict[str, Any] | None = None
+        self.reasoning_effort: str | None = None
+        self._reasoning_explicitly_set: bool = False
         try:
             ctx, vars_data = get_session_metadata(
                 self.id, project_slug=project_slug, agent_slug=agent_slug
@@ -93,6 +101,86 @@ class Session:  # noqa: D101
             project_slug=self._project_slug,
             agent_slug=self._agent_slug,
         )
+
+    def _repair_history_after_unclean_shutdown(self) -> None:
+        response_call_ids_in_order: list[str] = []
+        response_call_ids_seen: set[str] = set()
+        response_outputs_seen: set[str] = set()
+
+        chat_tool_call_ids_in_order: list[str] = []
+        chat_tool_call_ids_seen: set[str] = set()
+        chat_tool_outputs_seen: set[str] = set()
+
+        for item in self.history:
+            if not isinstance(item, dict):
+                continue
+
+            item_type = item.get("type")
+            if isinstance(item_type, str) and item_type.endswith("_call_output"):
+                call_id = item.get("call_id")
+                if isinstance(call_id, str) and call_id:
+                    response_outputs_seen.add(call_id)
+                continue
+
+            if isinstance(item_type, str) and item_type.endswith("_call") and not item_type.endswith(
+                "_call_output"
+            ):
+                call_id = item.get("call_id")
+                if (
+                    isinstance(call_id, str)
+                    and call_id
+                    and call_id not in response_call_ids_seen
+                ):
+                    response_call_ids_seen.add(call_id)
+                    response_call_ids_in_order.append(call_id)
+                continue
+
+            role = item.get("role")
+            if role == "assistant":
+                tool_calls = item.get("tool_calls")
+                if isinstance(tool_calls, list):
+                    for tool_call in tool_calls:
+                        if not isinstance(tool_call, dict):
+                            continue
+                        tool_call_id = tool_call.get("id")
+                        if (
+                            isinstance(tool_call_id, str)
+                            and tool_call_id
+                            and tool_call_id not in chat_tool_call_ids_seen
+                        ):
+                            chat_tool_call_ids_seen.add(tool_call_id)
+                            chat_tool_call_ids_in_order.append(tool_call_id)
+                continue
+
+            if role == "tool":
+                tool_call_id = item.get("tool_call_id")
+                if isinstance(tool_call_id, str) and tool_call_id:
+                    chat_tool_outputs_seen.add(tool_call_id)
+                continue
+
+        missing_responses = [
+            cid for cid in response_call_ids_in_order if cid not in response_outputs_seen
+        ]
+        for call_id in missing_responses:
+            self.append_message(
+                {
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": "[Missing tool output: previous process terminated]",
+                }
+            )
+
+        missing_chat = [
+            cid for cid in chat_tool_call_ids_in_order if cid not in chat_tool_outputs_seen
+        ]
+        for tool_call_id in missing_chat:
+            self.append_message(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": "[Missing tool output: previous process terminated]",
+                }
+            )
 
 
 class SessionManager:  # noqa: D101
@@ -118,6 +206,40 @@ class SessionManager:  # noqa: D101
         )
         self._by_id[sess.id] = sess
         return sess
+
+    def fork_session(
+        self,
+        source_session: Session,
+        *,
+        new_session_id: str | None = None,
+        history: list[dict] | None = None,
+        context: Any | None = None,
+        variables: Any | None = None,
+    ) -> Session:
+        new_session = self.get_or_create(new_session_id)
+        new_history = list(
+            history if history is not None else list(source_session.history)
+        )
+        new_session.history = []
+        register_session(
+            new_session.id, project_slug=self._project_slug, agent_slug=self._agent_slug
+        )
+        for msg in new_history:
+            try:
+                new_session.append_message(dict(msg))
+            except Exception:
+                continue
+        new_session.context = context if context is not None else source_session.context
+        new_session.variables = variables if variables is not None else source_session.variables
+        try:
+            self.persist_metadata(
+                new_session,
+                context=new_session.context,
+                variables=new_session.variables,
+            )
+        except Exception:
+            pass
+        return new_session
 
     def bind_task(self, task: asyncio.Task, session: Session) -> None:  # noqa: D401
         run_id = task.get_name()

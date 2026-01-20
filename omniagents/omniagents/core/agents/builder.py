@@ -111,8 +111,18 @@ async def _default_build_agent(
     spec: "AgentSpec",
     approval_callback: Optional[Any] = None,
     _loading_stack: Optional[Set[Path]] = None,
+    session: Optional[Any] = None,
 ) -> "AgentLike":
-    """Internal default function to build the agent instance."""
+    """Internal default function to build the agent instance.
+
+    Args:
+        settings: Settings dictionary
+        mcp_servers: Pre-built MCP servers or None
+        spec: Agent specification
+        approval_callback: Callback for tool approval
+        _loading_stack: Internal stack for circular reference detection
+        session: Optional session with model overrides (active_model, reasoning_effort)
+    """
     from agents import Agent, set_default_openai_key
     from agents.model_settings import ModelSettings
     from agents.models._openai_shared import get_default_openai_client
@@ -167,6 +177,15 @@ async def _default_build_agent(
     # Get core config from spec/settings
     agent_name = spec.name
     model_name = spec.model_name or settings.get("model_name", "gpt-4o")
+
+    # Session-level model override
+    session_model_config = None
+    if session is not None:
+        session_model_config = getattr(session, "model_config", None)
+        if session_model_config and session_model_config.get("model"):
+            model_name = session_model_config["model"]
+            logger.debug(f"Using session model override: {model_name}")
+
     instructions = process_instructions(spec.get_agent_instructions())
     tools = spec.available_tools
     provided_mcp_servers: List[Any] = []
@@ -275,6 +294,36 @@ async def _default_build_agent(
     else:
         # Default settings without tools
         model_settings = ModelSettings()
+
+    # Session-level reasoning effort override
+    if session is not None:
+        session_reasoning = getattr(session, "reasoning_effort", None)
+        if session_reasoning:
+            from agents.model_settings import Reasoning
+
+            # Create a new ModelSettings with the reasoning override
+            # We need to copy all existing settings and add/replace reasoning
+            updated_kwargs = {}
+            for field in [
+                "temperature",
+                "top_p",
+                "frequency_penalty",
+                "presence_penalty",
+                "tool_choice",
+                "parallel_tool_calls",
+                "truncation",
+                "max_tokens",
+                "reasoning",
+                "store",
+                "include_usage",
+            ]:
+                val = getattr(model_settings, field, None)
+                if val is not None:
+                    updated_kwargs[field] = val
+            # Override reasoning with session value
+            updated_kwargs["reasoning"] = Reasoning(effort=session_reasoning)
+            model_settings = ModelSettings(**updated_kwargs)
+            logger.debug(f"Using session reasoning effort: {session_reasoning}")
 
     # Build the agent
     base_agent = Agent(

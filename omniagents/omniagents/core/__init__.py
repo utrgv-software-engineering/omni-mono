@@ -29,6 +29,19 @@ except Exception:
     register_server_functions_from_dir = None  # type: ignore
 
 try:
+    from .runtime_hooks.discovery import (  # type: ignore
+        runtime_hook,
+        discover_runtime_hooks_in_dir,
+        build_runtime_hooks_registrar,
+        register_runtime_hooks_from_dir,
+    )
+except Exception:
+    runtime_hook = None  # type: ignore
+    discover_runtime_hooks_in_dir = None  # type: ignore
+    build_runtime_hooks_registrar = None  # type: ignore
+    register_runtime_hooks_from_dir = None  # type: ignore
+
+try:
     from .tools.artifacts import display_artifact, set_artifact_callback, emit_artifact  # type: ignore
 except Exception:
     display_artifact = set_artifact_callback = emit_artifact = None  # type: ignore

@@ -57,19 +57,25 @@ def server_function(
         sig = inspect.signature(f)
         hints = get_type_hints(f)
         params = list(sig.parameters.items())
+        takes_service = False
         takes_session = False
         filtered_params: list[tuple[str, inspect.Parameter]] = []
+        idx = 0
         if params:
             first_name, first_param = params[0]
-            ann = hints.get(first_name, first_param.annotation)
+            if first_name == "service":
+                takes_service = True
+                idx = 1
+
+        if len(params) > idx:
+            name_, p = params[idx]
+            ann = hints.get(name_, p.annotation)
             if ann is not inspect._empty and (ann is _SessionType):
                 takes_session = True
-            else:
-                filtered_params.append((first_name, first_param))
-            for name_, p in params[1:]:
-                filtered_params.append((name_, p))
-        else:
-            filtered_params = []
+                idx += 1
+
+        for name_, p in params[idx:]:
+            filtered_params.append((name_, p))
 
         Model = None
         payload_names: list[str] = []
@@ -145,12 +151,20 @@ def server_function(
             else:
                 kwargs = dict(data)
             if inspect.iscoroutinefunction(f):
-                if takes_session:
+                if takes_service and takes_session:
+                    res = await f(service, session, **kwargs)
+                elif takes_service:
+                    res = await f(service, **kwargs)
+                elif takes_session:
                     res = await f(session, **kwargs)
                 else:
                     res = await f(**kwargs)
             else:
-                if takes_session:
+                if takes_service and takes_session:
+                    res = f(service, session, **kwargs)
+                elif takes_service:
+                    res = f(service, **kwargs)
+                elif takes_session:
                     res = f(session, **kwargs)
                 else:
                     res = f(**kwargs)

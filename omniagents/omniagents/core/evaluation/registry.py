@@ -22,7 +22,30 @@ class InvalidMeasureError(EvaluationRegistryError):
 _MEASURES: Dict[str, Callable[[Any], Dict[str, Any]]] = {}
 
 
-def evaluation_measure(func: Callable | None = None, *, name: Optional[str] = None):
+def evaluation_measure(
+    func: Callable | None = None,
+    *,
+    name: Optional[str] = None,
+    overwrite: bool = False,
+):
+    """Register a function as an evaluation measure.
+
+    Args:
+        func: The measure function (takes EvalContext, returns dict with 'passed' key)
+        name: Optional name override (defaults to function name)
+        overwrite: If True, silently replace existing measure with same name.
+                   Useful in notebooks where cells may be re-run.
+
+    Example:
+        @evaluation_measure
+        def my_measure(ctx):
+            return {"passed": True, "reason": "All good"}
+
+        # In notebooks, use overwrite=True to allow re-running cells:
+        @evaluation_measure(overwrite=True)
+        def my_measure(ctx):
+            return {"passed": True}
+    """
     def decorator(f: Callable[[Any], Dict[str, Any]]):
         if not callable(f):
             raise TypeError("evaluation_measure expects a callable")
@@ -31,7 +54,7 @@ def evaluation_measure(func: Callable | None = None, *, name: Optional[str] = No
             raise ValueError("evaluation_measure requires a non-empty measure name")
         key = key.strip()
         existing = _MEASURES.get(key)
-        if existing and existing is not f:
+        if existing and existing is not f and not overwrite:
             raise DuplicateMeasureError(
                 f"evaluation measure '{key}' already registered"
             )

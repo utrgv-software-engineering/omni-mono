@@ -420,14 +420,14 @@ async def test_stream_agent_without_user_message(monkeypatch):
         session,
         rpc_channel=None,
         include_user_message=False,
-        context_window=256,
+        max_input_tokens=256,
     )
 
     assert session.append_count == 0
     assert session.history == [{"role": "system", "content": "ready"}]
     assert captured_inputs[0] == [{"role": "system", "content": "ready"}]
     assert configs[0]["workflow_name"] == "omniagents_conversation"
-    assert result["context_window"] == 256
+    assert result["max_input_tokens"] == 256
 
 
 @pytest.mark.asyncio
@@ -774,6 +774,32 @@ def test_filter_history_for_api_handles_multiple_reasoning_groups():
     assert result[5]["type"] == "function_call_output"
     assert result[5]["call_id"].startswith("call_synth_")
     assert result[5]["output"] == "r2"
+
+
+def test_filter_history_for_api_finds_outputs_appended_later():
+    history = [
+        {"type": "reasoning", "id": "rs_1", "summary": []},
+        {
+            "type": "function_call",
+            "id": "fc_1",
+            "call_id": "call_1",
+            "name": "tool1",
+            "arguments": "{}",
+        },
+        {"role": "assistant", "content": "partial"},
+        {"role": "user", "content": "next"},
+        {"type": "function_call_output", "call_id": "call_1", "output": "cancelled"},
+    ]
+
+    result = bridge._filter_history_for_api(history)
+
+    assert any(
+        item.get("type") == "function_call_output"
+        and isinstance(item.get("call_id"), str)
+        and item.get("call_id", "").startswith("call_synth_")
+        and item.get("output") == "cancelled"
+        for item in result
+    )
 
 
 @pytest.mark.asyncio

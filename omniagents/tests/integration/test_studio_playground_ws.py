@@ -176,7 +176,7 @@ def test_playground_ws_streams_happy_path(monkeypatch, studio_client):
                 "output_tokens_details": {"reasoning_tokens": 0},
             },
             "model": "gpt-4o-mini",
-            "context_window": 8192,
+            "max_input_tokens": 8192,
             "max_output_tokens": 1024,
             "truncation": "auto",
         }

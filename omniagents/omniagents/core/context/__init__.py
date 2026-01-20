@@ -25,6 +25,6 @@ Usage:
 """
 
 from .decorator import context_factory
-from .discovery import discover_context_factories
+from .discovery import discover_context_factories, model_config_resolver
 
-__all__ = ["context_factory", "discover_context_factories"]
+__all__ = ["context_factory", "discover_context_factories", "model_config_resolver"]

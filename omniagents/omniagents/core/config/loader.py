@@ -19,11 +19,18 @@ from omniagents.core.agents.specs import (
 )
 from omniagents.core.tools.discovery import discover_functions_in_dir
 from omniagents.core.guardrails.discovery import discover_guardrails_in_dir
-from omniagents.core.context.discovery import discover_context_factories
+from omniagents.core.context.discovery import (
+    discover_context_factories,
+    discover_model_config_resolvers,
+)
 from omniagents.core.debug import Debug
 from omniagents.core.server_functions.discovery import (
     discover_server_functions_in_dir,
     build_server_functions_registrar,
+)
+from omniagents.core.runtime_hooks.discovery import (
+    discover_runtime_hooks_in_dir,
+    build_runtime_hooks_registrar,
 )
 
 DEFAULT_SETTINGS_FIELDS = [
@@ -602,22 +609,6 @@ def load_agent_spec_from_yaml(
         )
         output_type_strict = True
 
-    # --- Context Window (optional, top-level) ---
-    context_window = config.get("context_window")
-    if context_window is not None:
-        try:
-            context_window = int(context_window)
-            if context_window <= 0:
-                print(
-                    "Warning: 'context_window' should be a positive integer. Ignoring."
-                )
-                context_window = None
-        except Exception:
-            print(
-                f"Warning: 'context_window' should be an integer. Got {type(context_window).__name__}. Ignoring."
-            )
-            context_window = None
-
     # --- Prompt Configuration ---
     prompt_config = config.get("prompt")  # Optional prompt configuration
     prompt = None
@@ -957,6 +948,49 @@ def load_agent_spec_from_yaml(
                     selected_funcs
                 )
 
+    runtime_hooks_registrar = None
+    if not remote_ws_url:
+        runtime_hooks_dir = (base_dir / "runtime_hooks").resolve()
+        discovered_runtime_hooks: Dict[str, List[Callable]] = {}
+        if runtime_hooks_dir.is_dir():
+            discovered_runtime_hooks = discover_runtime_hooks_in_dir(
+                str(runtime_hooks_dir)
+            )
+            if Debug.enabled():
+                print(
+                    f"Discovered runtime hooks from 'runtime_hooks' subdirectory: {runtime_hooks_dir}"
+                )
+
+        rh_cfg = config.get("runtime_hooks", None)
+        if rh_cfg is None:
+            register_all_hooks = True
+        else:
+            register_all_hooks = False
+            if isinstance(rh_cfg, str) and rh_cfg.strip().lower() in {"*", "all"}:
+                register_all_hooks = True
+            elif isinstance(rh_cfg, bool) and rh_cfg is True:
+                register_all_hooks = True
+
+        if discovered_runtime_hooks:
+            if register_all_hooks:
+                runtime_hooks_registrar = build_runtime_hooks_registrar(
+                    discovered_runtime_hooks
+                )
+            else:
+                hook_names = rh_cfg
+                if hook_names and not isinstance(hook_names, list):
+                    print(
+                        f"Warning: 'runtime_hooks' in {config_path} should be a list of event names. Ignoring."
+                    )
+                    hook_names = []
+                if hook_names:
+                    selected: Dict[str, List[Callable]] = {
+                        k: v
+                        for k, v in discovered_runtime_hooks.items()
+                        if k in set([str(x) for x in hook_names])
+                    }
+                    runtime_hooks_registrar = build_runtime_hooks_registrar(selected)
+
     # --- Guardrail Discovery and Selection ---
     # Check the 'guardrails' subdirectory for guardrail definitions
     input_guardrails_list = []
@@ -1219,6 +1253,23 @@ def load_agent_spec_from_yaml(
                 f"Available: {available}"
             )
 
+    # --- Model Config Resolver Discovery ---
+    # Discover model config resolver from agent directory (decorated with @model_config_resolver)
+    model_config_resolver_name = config.get("model_config_resolver")
+    model_config_resolver_func: Optional[Callable] = None
+    if model_config_resolver_name:
+        model_config_resolvers = discover_model_config_resolvers(base_dir)
+        if model_config_resolver_name in model_config_resolvers:
+            model_config_resolver_func = model_config_resolvers[model_config_resolver_name]
+            if Debug.enabled():
+                print(f"Using model config resolver: {model_config_resolver_name}")
+        else:
+            available = list(model_config_resolvers.keys()) if model_config_resolvers else []
+            print(
+                f"Warning: Model config resolver '{model_config_resolver_name}' not found in {base_dir}. "
+                f"Available: {available}"
+            )
+
     # Apply environment variable substitution if variables are provided
     context_config = None
     variables_for_spec = None
@@ -1260,7 +1311,6 @@ def load_agent_spec_from_yaml(
         build_agent=build_agent_func,  # Defer to internal builder
         available_tools=selected_tool_functions if not remote_ws_url else [],
         model_name=model_name_from_config if not remote_ws_url else None,
-        context_window=context_window,
         max_turns=max_turns_cfg,
         handoff_description=handoff_description,
         reset_tool_choice=reset_tool_choice,
@@ -1306,9 +1356,22 @@ def load_agent_spec_from_yaml(
         except Exception:
             pass
 
+    if runtime_hooks_registrar:
+        try:
+            spec.register_runtime_hooks = runtime_hooks_registrar
+        except Exception:
+            pass
+
+    if model_config_resolver_func:
+        try:
+            spec.resolve_default_model_config = model_config_resolver_func
+        except Exception:
+            pass
+
     # Store registries in spec for passing to handoff agents
     spec._tool_registry = tool_registry
     spec._guardrails_registry = guardrails_registry
     spec._server_functions_registry = server_functions_registry
+    spec._runtime_hooks_registry = None
 
     return spec

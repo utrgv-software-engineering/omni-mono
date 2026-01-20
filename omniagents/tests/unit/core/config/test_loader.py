@@ -347,7 +347,6 @@ def test_loader_discovers_assets_and_applies_config(tmp_path):
         label: Label
         description: Something
         use_safe_agent: false
-        context_window: 1234
         tools:
           - alpha_tool
           - beta_tool
@@ -438,7 +437,6 @@ def test_loader_discovers_assets_and_applies_config(tmp_path):
             "version": "1",
             "variables": {"foo": 1},
         }
-        assert spec.context_window == 1234
         assert spec.tracing_config == {"enabled": True}
         assert spec.mcp_config == {"endpoint": "http://mcp"}
         assert len(spec.mcp_servers) == 1

@@ -73,6 +73,13 @@ def build_app(
     except Exception as e:
         # Best-effort; don't crash server startup on example registrar failure
         print(f"Warning: register_server_functions failed: {e}")
+
+    try:
+        registrar = getattr(spec, "register_runtime_hooks", None)
+        if callable(registrar):
+            registrar(service)
+    except Exception as e:
+        print(f"Warning: register_runtime_hooks failed: {e}")
     endpoint = JsonRpcEndpoint(service)
 
     if auth_token:
@@ -117,6 +124,13 @@ def build_app(
             )
         else:
             realtime_endpoint.register_route(app, "/ws/realtime")
+    else:
+        # Add a fallback route that gracefully rejects connections when realtime is disabled
+        # This prevents StaticFiles from catching the WebSocket request and crashing
+        async def _realtime_disabled(websocket: WebSocket):
+            await websocket.close(code=4404)  # Custom code: feature not available
+
+        app.add_api_websocket_route("/ws/realtime", _realtime_disabled)
 
     if getattr(service, "terminal_manager", None) is not None:
 
@@ -214,4 +228,10 @@ def build_app(
                     pass
 
         app.add_api_websocket_route("/ws/terminal", _terminal_route)
+    else:
+        # Add a fallback route that gracefully rejects connections when terminal is disabled
+        async def _terminal_disabled(websocket: WebSocket):
+            await websocket.close(code=4404)
+
+        app.add_api_websocket_route("/ws/terminal", _terminal_disabled)
     return app

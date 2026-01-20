@@ -14,10 +14,12 @@ _LAZY_IMPORTS = {
     "Runner": ".core.runtime.runner",
     "function_tool": ".core",
     "server_function": ".core",
+    "runtime_hook": ".core",
     "input_guardrail": ".core",
     "output_guardrail": ".core",
     "GuardrailFunctionOutput": ".core",
     "context_factory": ".core.context",
+    "model_config_resolver": ".core.context",
 }
 
 
@@ -30,19 +32,26 @@ def __getattr__(name):
             return getattr(module, name)
         except Exception:
             return None
+    # Re-export Agent from the underlying agents library
+    if name == "Agent":
+        from agents import Agent
+        return Agent
     raise AttributeError(f"module 'omniagents' has no attribute '{name}'")
 
 
 __all__ = [
     "__version__",
     "__version_info__",
+    "Agent",
     "Runner",
     "function_tool",
     "server_function",
+    "runtime_hook",
     "input_guardrail",
     "output_guardrail",
     "GuardrailFunctionOutput",
     "context_factory",
+    "model_config_resolver",
 ]
 
 

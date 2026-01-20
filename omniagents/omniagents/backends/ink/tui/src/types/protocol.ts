@@ -97,7 +97,7 @@ export interface RunEndEvent {
       total_tokens: number;
     };
     model?: string;
-    context_window?: number;
+    max_input_tokens?: number;
     max_output_tokens?: number;
     truncation?: string;
     error?: {
@@ -116,7 +116,7 @@ export interface TokenEvent {
     turn: number;
     response_id: string;
     model?: string;
-    context_window?: number;
+    max_input_tokens?: number;
     max_output_tokens?: number;
     truncation?: string;
     delta: {
@@ -194,6 +194,16 @@ export interface AddArtifactRequest {
     content: string;
     language?: string;
     metadata?: Record<string, unknown>;
+  };
+}
+
+export interface SetSessionStateRequest {
+  function: "ui.set_session_state";
+  arguments: {
+    model?: string;
+    label?: string;
+    provider?: string;
+    reasoning_effort?: string;
   };
 }
 

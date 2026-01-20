@@ -121,7 +121,7 @@ async def test_start_run_success_keeps_mcp_stack(monkeypatch):
         return {
             "usage": {"input_tokens": 3},
             "model": "gpt-success",
-            "context_window": 4096,
+            "max_input_tokens": 4096,
             "max_output_tokens": 512,
         }
 
@@ -147,7 +147,7 @@ async def test_start_run_success_keeps_mcp_stack(monkeypatch):
     assert payload["end_reason"] == "completed"
     assert payload["usage"] == {"input_tokens": 3}
     assert payload["model"] == "gpt-success"
-    assert payload["context_window"] == 4096
+    assert payload["max_input_tokens"] == 4096
     assert payload["max_output_tokens"] == 512
     assert "error" not in payload
     assert end_event["queue"] is True

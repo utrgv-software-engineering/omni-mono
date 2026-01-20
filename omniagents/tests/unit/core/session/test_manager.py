@@ -112,3 +112,52 @@ def test_get_or_create_registers_external_session_identifier():
     assert entry["message_count"] == 0
     assert "first_message" not in entry
     assert "last_message" not in entry
+
+
+def test_get_or_create_repairs_missing_tool_outputs_after_crash(temp_history_db):
+    manager = make_manager()
+    session = manager.get_or_create()
+    session.append_message(
+        {
+            "type": "function_call",
+            "id": "fc_1",
+            "call_id": "call_1",
+            "name": "alpha",
+            "arguments": "{}",
+            "status": "completed",
+        }
+    )
+
+    reloaded = make_manager().get_or_create(session.id)
+    assert any(
+        item.get("type") == "function_call_output"
+        and item.get("call_id") == "call_1"
+        and "Missing tool output" in (item.get("output") or "")
+        for item in reloaded.history
+    )
+
+
+def test_get_or_create_repairs_missing_chat_completions_tool_outputs(temp_history_db):
+    manager = make_manager()
+    session = manager.get_or_create()
+    session.append_message(
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "alpha", "arguments": "{}"},
+                }
+            ],
+        }
+    )
+
+    reloaded = make_manager().get_or_create(session.id)
+    assert any(
+        item.get("role") == "tool"
+        and item.get("tool_call_id") == "call_1"
+        and "Missing tool output" in (item.get("content") or "")
+        for item in reloaded.history
+    )

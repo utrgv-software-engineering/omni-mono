@@ -221,7 +221,7 @@ function StatusRow({ text, spinner, italic }: { text?: string; spinner?: boolean
 
 function ToolCard({ item }: { item: ToolItem }) {
   const [open, setOpen] = useState(false)
-  const hasResult = !!item.output && item.output.trim().length > 0
+  const hasResult = item.status === 'result'
   const iconFill = hasResult ? 'bg-successGreen' : 'bg-warningOrange'
   const headerNode = useMemo(() => {
     const meta = item.metadata

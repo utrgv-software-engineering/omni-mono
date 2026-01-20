@@ -56,7 +56,7 @@ class RunEndEvent extends RemoteEvent {
   RunEndEvent(this.runId, this.reason,
       {this.usage,
       this.model,
-      this.contextWindow,
+      this.maxInputTokens,
       this.maxOutputTokens,
       this.truncation,
       this.error});
@@ -64,7 +64,7 @@ class RunEndEvent extends RemoteEvent {
   final String reason;
   final UsageDetails? usage;
   final String? model;
-  final int? contextWindow;
+  final int? maxInputTokens;
   final int? maxOutputTokens;
   final String? truncation;
   final RunEndError? error;
@@ -100,7 +100,7 @@ class TokenUsageEvent extends RemoteEvent {
       required this.turn,
       required this.responseId,
       this.model,
-      this.contextWindow,
+      this.maxInputTokens,
       this.maxOutputTokens,
       this.truncation,
       required this.delta,
@@ -109,7 +109,7 @@ class TokenUsageEvent extends RemoteEvent {
   final int turn;
   final String responseId;
   final String? model;
-  final int? contextWindow;
+  final int? maxInputTokens;
   final int? maxOutputTokens;
   final String? truncation;
   final UsageDetails delta;

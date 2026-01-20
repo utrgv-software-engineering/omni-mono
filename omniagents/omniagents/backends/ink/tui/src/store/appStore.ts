@@ -40,13 +40,16 @@ export interface UsageInfo {
   outputTokens: number;
   totalTokens: number;
   model?: string;
-  contextWindow?: number;
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
 }
 
 interface AppState {
   // Data
   messages: Message[];
   usage: UsageInfo | null;
+  sessionModel: string | null;
+  sessionReasoningEffort: string | null;
   sessionId: string | undefined;
 
   // UI State
@@ -75,6 +78,12 @@ interface AppState {
     ) => void;
     setApproval: (approval: ApprovalInfo | null) => void;
     setUsage: (usage: UsageInfo) => void;
+    setSessionState: (state: {
+      model?: string | null;
+      label?: string | null;
+      provider?: string | null;
+      reasoning_effort?: string | null;
+    }) => void;
     setSessionId: (sessionId: string | undefined) => void;
     setCurrentRunId: (runId: string | null) => void;
     setPreamble: (preamble: string | null) => void;
@@ -89,6 +98,8 @@ export const useAppStore = create<AppState>()(
     // Initial state
     messages: [],
     usage: null,
+    sessionModel: null,
+    sessionReasoningEffort: null,
     sessionId: undefined,
     thinking: false,
     status: null,
@@ -187,10 +198,20 @@ export const useAppStore = create<AppState>()(
             !current ||
             current.totalTokens !== usage.totalTokens ||
             current.model !== usage.model ||
-            current.contextWindow !== usage.contextWindow
+            current.maxInputTokens !== usage.maxInputTokens ||
+            current.maxOutputTokens !== usage.maxOutputTokens
           ) {
             state.usage = usage;
           }
+        }),
+
+      setSessionState: (sessionState) =>
+        set((state) => {
+          const label = (sessionState.label ?? null) as string | null;
+          const model = (sessionState.model ?? null) as string | null;
+          state.sessionModel = label || model;
+          state.sessionReasoningEffort =
+            (sessionState.reasoning_effort ?? null) as string | null;
         }),
 
       setSessionId: (sessionId) =>
@@ -274,6 +295,9 @@ export const useStatus = () =>
   );
 export const useApproval = () => useAppStore((s) => s.approval);
 export const useUsage = () => useAppStore((s) => s.usage);
+export const useSessionModel = () => useAppStore((s) => s.sessionModel);
+export const useSessionReasoningEffort = () =>
+  useAppStore((s) => s.sessionReasoningEffort);
 export const useSessionId = () => useAppStore((s) => s.sessionId);
 export const useCurrentRunId = () => useAppStore((s) => s.currentRunId);
 export const usePreamble = () => useAppStore((s) => s.preamble);

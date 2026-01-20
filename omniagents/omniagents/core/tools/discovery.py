@@ -10,7 +10,9 @@ import traceback
 from omniagents.core.debug import Debug
 
 # Import the original decorator from the agents library
-from agents.tool import function_tool as original_function_tool
+from agents.tool import function_tool as original_function_tool, FunctionTool
+
+
 
 # --- Rich Tool Output Class --- #
 
@@ -57,7 +59,7 @@ def _wrap_sync_function(func: Callable) -> tuple[Callable, bool]:
     return async_wrapper, True
 
 
-def function_tool(func: Callable = None, **kwargs) -> Callable:
+def function_tool(func: Callable = None, **kwargs) -> FunctionTool:
     """
     A wrapper around agents.tool.function_tool that adds a marker
     attribute for easier discovery by the omniagents_core framework.
@@ -72,16 +74,17 @@ def function_tool(func: Callable = None, **kwargs) -> Callable:
     def decorator(f):
         wrapped_func, _ = _wrap_sync_function(f)
         client_status = kwargs.pop("client_status", None)
-        decorated_func = original_function_tool(wrapped_func, **kwargs)
+        tool = original_function_tool(wrapped_func, **kwargs)
+
         # Add our marker attribute
-        setattr(decorated_func, "_is_omniagents_core_tool", True)
+        setattr(tool, "_is_omniagents_core_tool", True)
         # Attach optional client status text for UIs that support it
         if client_status:
             try:
-                setattr(decorated_func, "_client_status_text", str(client_status))
+                setattr(tool, "_client_status_text", str(client_status))
             except Exception:
                 pass
-        return decorated_func
+        return tool
 
     # Handle both @function_tool and @function_tool(...) usage
     if func is None:
@@ -90,7 +93,7 @@ def function_tool(func: Callable = None, **kwargs) -> Callable:
         return decorator(func)
 
 
-def rich_function_tool(func: Callable = None, **kwargs) -> Callable:
+def rich_function_tool(func: Callable = None, **kwargs) -> FunctionTool:
     """
     A decorator for tools that return RichToolOutput with separate LLM and UI components.
 
@@ -110,15 +113,16 @@ def rich_function_tool(func: Callable = None, **kwargs) -> Callable:
     def decorator(f):
         wrapped_func, _ = _wrap_sync_function(f)
         client_status = kwargs.pop("client_status", None)
-        decorated_func = original_function_tool(wrapped_func, **kwargs)
-        setattr(decorated_func, "_is_omniagents_core_tool", True)
-        setattr(decorated_func, "_is_rich_tool", True)
+        tool = original_function_tool(wrapped_func, **kwargs)
+
+        setattr(tool, "_is_omniagents_core_tool", True)
+        setattr(tool, "_is_rich_tool", True)
         if client_status:
             try:
-                setattr(decorated_func, "_client_status_text", str(client_status))
+                setattr(tool, "_client_status_text", str(client_status))
             except Exception:
                 pass
-        return decorated_func
+        return tool
 
     # Handle both @rich_function_tool and @rich_function_tool(...) usage
     if func is None:

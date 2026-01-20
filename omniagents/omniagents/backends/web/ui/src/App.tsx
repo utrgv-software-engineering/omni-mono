@@ -32,7 +32,7 @@ export function App() {
   const [sessions, setSessions] = useState<SessionItem[]>([])
   const [_usageTotals, setUsageTotals] = useState<any | undefined>(undefined)
   const [_usageDelta, setUsageDelta] = useState<any | undefined>(undefined)
-  const [_modelInfo, setModelInfo] = useState<{ model?: string; context_window?: number; max_output_tokens?: number } | undefined>(undefined)
+  const [_modelInfo, setModelInfo] = useState<{ model?: string; max_input_tokens?: number; max_output_tokens?: number } | undefined>(undefined)
   const [agentName, setAgentName] = useState<string>('OmniAgent')
   const [welcomeText, setWelcomeText] = useState<string | undefined>(undefined)
   const normalizeAgentName = useCallback((name: string) => {
@@ -172,7 +172,7 @@ export function App() {
         const usage = p?.usage || {}
         const info = {
           model: p?.model,
-          context_window: p?.context_window,
+          max_input_tokens: p?.max_input_tokens,
           max_output_tokens: p?.max_output_tokens,
         }
         setModelInfo(info)
@@ -192,7 +192,7 @@ export function App() {
       try {
         setUsageDelta(p?.delta)
         setUsageTotals(p?.totals)
-        setModelInfo({ model: p?.model, context_window: p?.context_window, max_output_tokens: p?.max_output_tokens })
+        setModelInfo({ model: p?.model, max_input_tokens: p?.max_input_tokens, max_output_tokens: p?.max_output_tokens })
       } catch {}
     })
     const offToolCalled = client.on('tool_called', (p: any) => {
@@ -373,7 +373,10 @@ export function App() {
     if (!connected) return
     if (ui !== 'chat') return
     if (initialSent) return
+    // Only send initial message if there's no session param (session param is handled separately)
     const url = new URL(window.location.href)
+    const hasSessionParam = url.searchParams.has('session')
+    if (hasSessionParam) return
     const initial = url.searchParams.get('initial')
     if (initial && items.length === 0) {
       handleSubmit(initial)
@@ -502,8 +505,28 @@ export function App() {
     if (!connected) return
     if (ui !== 'chat') return
     urlSessionHandledRef.current = true
-    handleSelectSession(initialSessionParam)
-  }, [connected, ui, handleSelectSession, initialSessionParam])
+    // Load session history, then send initial message only if session is empty
+    ;(async () => {
+      await handleSelectSession(initialSessionParam)
+      const url = new URL(window.location.href)
+      const initial = url.searchParams.get('initial')
+      if (initial && !initialSent) {
+        // Check if session has history - if items is still empty after handleSelectSession, it's a new session
+        // We need to check the actual history since handleSelectSession sets items
+        try {
+          const history = await client.getSessionHistory(initialSessionParam)
+          if (history.length === 0) {
+            handleSubmit(initial)
+            setInitialSent(true)
+          }
+        } catch {
+          // If we can't get history, assume it's new and send initial
+          handleSubmit(initial)
+          setInitialSent(true)
+        }
+      }
+    })()
+  }, [connected, ui, handleSelectSession, initialSessionParam, client, initialSent, handleSubmit])
 
   useEffect(() => {
     if (!connected) return

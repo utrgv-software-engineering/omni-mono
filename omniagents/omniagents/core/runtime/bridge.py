@@ -136,6 +136,25 @@ def _stream_event_payload(item, run_id: str):
     return None, None
 
 
+def _apply_compaction_window(history: list[dict]) -> list[dict]:
+    if not history:
+        return []
+    last_summary_idx: int | None = None
+    for idx in range(len(history) - 1, -1, -1):
+        item = history[idx]
+        if (
+            isinstance(item, dict)
+            and item.get("role") == "assistant"
+            and isinstance(item.get("omniagents"), dict)
+            and item["omniagents"].get("kind") == "context_summary"
+        ):
+            last_summary_idx = idx
+            break
+    if last_summary_idx is None:
+        return list(history)
+    return list(history[last_summary_idx:])
+
+
 def _filter_history_for_api(history: list[dict]) -> list[dict]:
     """Reorder history items to match OpenAI API requirements.
 
@@ -156,7 +175,11 @@ def _filter_history_for_api(history: list[dict]) -> list[dict]:
     """
     reordered = []
     i = 0
+    consumed_indices: set[int] = set()
     while i < len(history):
+        if i in consumed_indices:
+            i += 1
+            continue
         item = history[i]
         item_type = item.get("type", "message")
 
@@ -189,21 +212,20 @@ def _filter_history_for_api(history: list[dict]) -> list[dict]:
             # Collect outputs for the function calls
             outputs = []
             call_ids = {fc.get("call_id") for fc in function_calls if fc.get("call_id")}
-            while j < len(history) and call_ids:
-                next_item = history[j]
-                next_type = next_item.get("type", "")
-                if next_type.endswith("_call_output"):
+
+            if call_ids:
+                for k in range(j, len(history)):
+                    next_item = history[k]
+                    next_type = next_item.get("type", "")
+                    if not (isinstance(next_type, str) and next_type.endswith("_call_output")):
+                        continue
                     output_call_id = next_item.get("call_id")
                     if output_call_id in call_ids:
                         outputs.append(next_item)
+                        consumed_indices.add(k)
                         call_ids.remove(output_call_id)
-                        j += 1
-                    else:
-                        # Output for a different call, stop collecting
-                        break
-                else:
-                    # Not an output, stop collecting
-                    break
+                        if not call_ids:
+                            break
 
             if message:
                 # Valid reasoning group: reorder to reasoning → message → function_calls → outputs
@@ -274,14 +296,17 @@ def _filter_history_for_api(history: list[dict]) -> list[dict]:
                     j += 1
 
                 # Find the output that matches this call_id
-                if j < len(history):
-                    next_item = history[j]
-                    if (
-                        next_item.get("type", "").endswith("_call_output")
-                        and next_item.get("call_id") == call_id
-                    ):
-                        output = next_item
-                        j += 1
+                if call_id:
+                    for k in range(j, len(history)):
+                        next_item = history[k]
+                        if (
+                            isinstance(next_item.get("type", ""), str)
+                            and next_item.get("type", "").endswith("_call_output")
+                            and next_item.get("call_id") == call_id
+                        ):
+                            output = next_item
+                            consumed_indices.add(k)
+                            break
 
                 # Reorder: message → function_call → output
                 if message:
@@ -302,19 +327,34 @@ def _filter_history_for_api(history: list[dict]) -> list[dict]:
     return reordered
 
 
+def _strip_internal_keys_for_api(items: list[dict]) -> list[dict]:
+    cleaned: list[dict] = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        copied = dict(item)
+        copied.pop("omniagents", None)
+        cleaned.append(copied)
+    return cleaned
+
+
 async def stream_agent(
     agent,
     prompt: str,
     session,
     rpc_channel,
     *,
+    service: Any | None = None,
     max_turns: int = 20,
     context: Optional[Any] = None,
-    context_window: Optional[int] = None,
+    max_input_tokens: Optional[int] = None,
+    max_output_tokens: Optional[int] = None,
     include_user_message: bool = True,
     workflow_name: Optional[str] = None,
     group_id: Optional[str] = None,
     user_content: Optional[Any] = None,
+    model_provider: Optional[Any] = None,
+    model_label: Optional[str] = None,
 ) -> dict | None:  # noqa: D401
     """Drive agent.run_streamed and forward events to *rpc_channel*.
 
@@ -329,7 +369,10 @@ async def stream_agent(
     # ------------------------------------------------------------------
     if include_user_message:
         # Filter history to remove tool call items before passing to API
-        clean_history = _filter_history_for_api(session.history)
+        windowed_history = _apply_compaction_window(session.history)
+        clean_history = _strip_internal_keys_for_api(
+            _filter_history_for_api(windowed_history)
+        )
         # Include prompt at end and persist to session history on first attempt
         if user_content is not None:
             agent_input = clean_history + [{"role": "user", "content": user_content}]
@@ -341,7 +384,9 @@ async def stream_agent(
     else:
         # For retries, avoid re-adding the user message; keep context identical
         # Still need to filter history
-        agent_input = _filter_history_for_api(list(session.history))
+        agent_input = _strip_internal_keys_for_api(
+            _filter_history_for_api(list(session.history))
+        )
 
     if Debug.enabled():
         print(
@@ -400,11 +445,9 @@ async def stream_agent(
 
     # Track latest model info seen during the run (can change across turns)
     last_model_info = {
-        "model": getattr(agent, "model", None),
-        "context_window": context_window,
-        "max_output_tokens": getattr(
-            getattr(agent, "model_settings", None), "max_tokens", None
-        ),
+        "model": model_label or getattr(agent, "model", None),
+        "max_input_tokens": max_input_tokens,
+        "max_output_tokens": max_output_tokens,
         "truncation": getattr(
             getattr(agent, "model_settings", None), "truncation", None
         ),
@@ -414,10 +457,14 @@ async def stream_agent(
         # Use Runner to run the agent
         from agents import RunConfig
 
-        run_config = RunConfig(
-            group_id=group_id or f"session_{session.id}",
-            workflow_name=workflow_name or "omniagents_conversation",
-        )
+
+        run_config_kwargs = {
+            "group_id": group_id or f"session_{session.id}",
+            "workflow_name": workflow_name or "omniagents_conversation",
+        }
+        if model_provider is not None:
+            run_config_kwargs["model_provider"] = model_provider
+        run_config = RunConfig(**run_config_kwargs)
 
         # Import Runner locally to avoid module-level import
         from agents import Runner as _Runner
@@ -509,20 +556,32 @@ async def stream_agent(
                         "response_id": getattr(data.response, "id", None),
                         # Optional model info so clients can adjust UI per-turn
                         "model": last_model_info.get("model"),
-                        "context_window": last_model_info.get("context_window"),
+                        "max_input_tokens": last_model_info.get("max_input_tokens"),
                         "max_output_tokens": last_model_info.get("max_output_tokens"),
                         "truncation": last_model_info.get("truncation"),
                     }
                     # Drop None values to avoid sending JSON null for optional fields
                     for key in [
                         "model",
-                        "context_window",
+                        "max_input_tokens",
                         "max_output_tokens",
                         "truncation",
                     ]:
                         if usage_payload.get(key) is None:
                             usage_payload.pop(key, None)
                     await _broadcast(session, "token", usage_payload)
+                    if service is not None:
+                        try:
+                            emit = getattr(service, "emit_runtime_hook", None)
+                            if emit is not None:
+                                await emit(
+                                    "token",
+                                    session=session,
+                                    run_id=asyncio.current_task().get_name(),
+                                    params=usage_payload,
+                                )
+                        except Exception:
+                            pass
                     last_usage_totals = current_totals
                 # Continue to next event after handling raw response
                 continue
@@ -763,7 +822,7 @@ async def stream_agent(
     return {
         "usage": last_usage_totals,
         "model": last_model_info.get("model"),
-        "context_window": last_model_info.get("context_window"),
+        "max_input_tokens": last_model_info.get("max_input_tokens"),
         "max_output_tokens": last_model_info.get("max_output_tokens"),
         "truncation": last_model_info.get("truncation"),
     }

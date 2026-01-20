@@ -467,17 +467,17 @@ class _ChatViewState extends State<_ChatView> {
 
   String? _usageTooltip(ChatModel model) {
     final name = model.modelName;
-    final cw = model.contextWindow;
+    final maxIn = model.maxInputTokens;
     final totals = model.usageTotals;
     final used = totals?.totalTokens;
     if (name != null &&
         name.isNotEmpty &&
-        cw != null &&
-        cw > 0 &&
+        maxIn != null &&
+        maxIn > 0 &&
         used != null) {
-      var remaining = cw - used;
+      var remaining = maxIn - used;
       if (remaining < 0) remaining = 0;
-      var pct = ((remaining * 100) / cw).floor();
+      var pct = ((remaining * 100) / maxIn).floor();
       if (pct < 0) pct = 0;
       if (pct > 100) pct = 100;
       return 'context remaining: $pct% • $name';
@@ -1426,7 +1426,7 @@ class ChatModel extends ChangeNotifier {
   bool statusShowSpinner = false;
   String? currentRunId;
   String? modelName;
-  int? contextWindow;
+  int? maxInputTokens;
   UsageDetails? usageTotals;
   final List<String> globalHistory = [];
   int historyIndex = 0;
@@ -1833,7 +1833,7 @@ class ChatModel extends ChangeNotifier {
           statusShowSpinner = false;
         }
         if (event.model != null) modelName = event.model;
-        if (event.contextWindow != null) contextWindow = event.contextWindow;
+        if (event.maxInputTokens != null) maxInputTokens = event.maxInputTokens;
         if (event.usage != null) usageTotals = event.usage;
         currentRunId = null;
       }
@@ -1887,7 +1887,7 @@ class ChatModel extends ChangeNotifier {
     } else if (event is TokenUsageEvent) {
       usageTotals = event.totals;
       if (event.model != null) modelName = event.model;
-      if (event.contextWindow != null) contextWindow = event.contextWindow;
+      if (event.maxInputTokens != null) maxInputTokens = event.maxInputTokens;
     } else if (event is ClientRequestEvent) {
       final fn = event.function.toLowerCase();
       if (fn == 'ui.set_status') {

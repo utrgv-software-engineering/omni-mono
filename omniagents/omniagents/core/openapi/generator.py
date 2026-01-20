@@ -21,6 +21,14 @@ def _camel_to_snake(name: str) -> str:
     return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
 
 
+def _sanitize_param_name(name: str) -> str:
+    """Sanitize a parameter name to be a valid Python identifier.
+
+    Replaces hyphens with underscores and removes other invalid chars.
+    """
+    return name.replace("-", "_")
+
+
 def _flatten_object_properties(
     prop_name: str, prop_schema: Dict[str, Any], prefix: str = ""
 ) -> List[tuple]:

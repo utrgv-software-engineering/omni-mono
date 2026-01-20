@@ -256,8 +256,8 @@ The server sends notifications during agent runs:
     "run_id": "run-123",
     "end_reason": "completed",
     "model": "gpt-4o-mini",
-    "context_window": 128000,
-    "max_output_tokens": 2048,
+    "max_input_tokens": 128000,
+    "max_output_tokens": 16384,
     "truncation": "auto",
     "usage": {
       "requests": 3,
@@ -338,8 +338,8 @@ The server may stream usage updates at the end of each model turn. This allows c
     "turn": 2,
     "response_id": "resp_abc123",
     "model": "gpt-4o-mini",
-    "context_window": 128000,
-    "max_output_tokens": 2048,
+    "max_input_tokens": 128000,
+    "max_output_tokens": 16384,
     "truncation": "auto",
     "delta": {
       "requests": 1,
@@ -364,7 +364,7 @@ The server may stream usage updates at the end of each model turn. This allows c
 Notes:
 - The server emits a "token" notification after each model response completes. The "delta" object represents the usage for that single turn; "totals" is the aggregate since the start of the run.
 - Model metadata is included with each token event so clients always see the model used for that turn. A server may change models mid-conversation.
-- If present, "context_window" indicates the maximum input tokens the model can accept for that turn. Clients should consider reserving space for "max_output_tokens" when estimating whether the next call will fit.
+- If present, "max_input_tokens" indicates the maximum input context tokens the model can accept. "max_output_tokens" indicates the maximum tokens the model can generate in a single response. Clients can use these to calculate context utilization and warn when approaching limits.
 - The final aggregate usage and last-known model metadata are also included in the run_end event.
 
 ## Client Functions (optional)

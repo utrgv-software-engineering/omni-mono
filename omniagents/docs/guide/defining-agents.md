@@ -200,13 +200,6 @@ Maximum conversation turns per agent run (default: 20):
 max_turns: 50
 ```
 
-#### context_window
-Model's maximum context length in tokens (informational):
-
-```yaml
-context_window: 128000
-```
-
 ### Agent Behavior
 
 #### tool_use_behavior

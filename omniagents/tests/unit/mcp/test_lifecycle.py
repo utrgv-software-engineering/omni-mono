@@ -525,7 +525,7 @@ async def test_minimal_reproduction_sequential_runs_with_mcp(monkeypatch):
         return {
             "usage": {"input_tokens": 5},
             "model": "test-model",
-            "context_window": 4096,
+            "max_input_tokens": 4096,
             "max_output_tokens": 512,
         }
 
@@ -596,7 +596,7 @@ async def test_hypothesis_1_mcp_without_safeagent(monkeypatch):
         return {
             "usage": {"input_tokens": 3},
             "model": "test",
-            "context_window": 4096,
+            "max_input_tokens": 4096,
             "max_output_tokens": 512,
         }
 
@@ -656,7 +656,7 @@ async def test_hypothesis_3_approval_callback_auto_approve(monkeypatch):
         return {
             "usage": {"input_tokens": 3},
             "model": "test",
-            "context_window": 4096,
+            "max_input_tokens": 4096,
             "max_output_tokens": 512,
         }
 
@@ -814,7 +814,7 @@ async def test_anyio_mcp_with_connection_reuse_reproduces_hang(monkeypatch):
         return {
             "usage": {"input_tokens": 5},
             "model": "test-model",
-            "context_window": 4096,
+            "max_input_tokens": 4096,
             "max_output_tokens": 512,
         }
 

@@ -165,9 +165,6 @@ class AgentSpec:
     ]
     available_tools: List[Callable] = field(default_factory=list)
     model_name: Optional[str] = None  # Model name used by default builder
-    # Optional maximum input context window (tokens). This is model capability metadata, not a
-    # runtime call parameter. If provided, clients can warn when approaching limits.
-    context_window: Optional[int] = None
     max_turns: int = 20  # Maximum turns per run (overrides Runner default)
     handoff_description: Optional[str] = None  # Description when used as a handoff
     reset_tool_choice: bool = True  # Reset tool choice after tool call
@@ -238,6 +235,14 @@ class AgentSpec:
     # examples to inject custom functions without modifying core server code.
     register_server_functions: Optional[Callable[[Any], None]] = None
 
+    register_runtime_hooks: Optional[Callable[[Any], None]] = None
+
+    # --- Optional hook to resolve default model configuration --- #
+    # A callable that returns the default model config dict (with keys like
+    # 'model', 'provider', 'max_input_tokens', 'max_output_tokens') for a session.
+    # Used to initialize session.model_config before the first run if not already set.
+    resolve_default_model_config: Optional[Callable[[], Optional[Dict[str, Any]]]] = None
+
     # --- Optional Metadata ---
     label: Optional[str] = None
     description: Optional[str] = None
@@ -256,5 +261,7 @@ class AgentSpec:
     _server_functions_registry: Optional[Dict[str, Any]] = field(
         default=None, repr=False
     )
+
+    _runtime_hooks_registry: Optional[Dict[str, Any]] = field(default=None, repr=False)
 
     voice_spec: Optional["AgentSpec"] = field(default=None, repr=False)

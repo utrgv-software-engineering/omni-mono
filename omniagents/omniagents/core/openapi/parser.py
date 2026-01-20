@@ -93,8 +93,10 @@ def _extract_parameters(
 
 def _parse_parameter(param: Dict[str, Any]) -> Parameter:
     """Parse a single parameter definition."""
+    # Sanitize name to be a valid Python identifier (replace hyphens with underscores)
+    name = param.get("name", "").replace("-", "_")
     return Parameter(
-        name=param.get("name", ""),
+        name=name,
         location=param.get("in", "query"),
         required=param.get("required", False),
         schema=param.get("schema", {"type": "string"}),
@@ -195,8 +197,10 @@ def parse_openapi_spec(
 
             operation_id = operation.get("operationId")
             if not operation_id:
-                # Skip operations without operationId
-                continue
+                # Generate operationId from method + path
+                # e.g., GET /data/obs/{regionCode}/recent -> get_data_obs_regionCode_recent
+                path_part = path_str.lstrip("/").replace("/", "_").replace("{", "").replace("}", "").replace("-", "_")
+                operation_id = f"{method}_{path_part}"
 
             if operation_id in exclude_set:
                 continue

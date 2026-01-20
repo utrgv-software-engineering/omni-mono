@@ -320,7 +320,8 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
         total_tokens: number;
       };
       model?: string;
-      context_window?: number;
+      max_input_tokens?: number;
+      max_output_tokens?: number;
     }) => {
       batcher.add(() => {
         actions.setUsage({
@@ -328,7 +329,8 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
           outputTokens: params.totals.output_tokens,
           totalTokens: params.totals.total_tokens,
           model: params.model,
-          contextWindow: params.context_window,
+          maxInputTokens: params.max_input_tokens,
+          maxOutputTokens: params.max_output_tokens,
         });
       });
     };
@@ -375,6 +377,16 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       return { ack: true };
     };
 
+    const handleSetSessionState = async (args: Record<string, unknown>) => {
+      actions.setSessionState({
+        model: (args.model as string | undefined) ?? null,
+        label: (args.label as string | undefined) ?? null,
+        provider: (args.provider as string | undefined) ?? null,
+        reasoning_effort: (args.reasoning_effort as string | undefined) ?? null,
+      });
+      return { ack: true };
+    };
+
     // Register event handlers
     client.on("message_output", handleMessageOutput);
     client.on("tool_called", handleToolCalled);
@@ -387,6 +399,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     // Register client functions
     client.registerClientFunction("ui.request_tool_approval", handleApproval);
     client.registerClientFunction("ui.set_status", handleSetStatus);
+    client.registerClientFunction("ui.set_session_state", handleSetSessionState);
 
     // Cleanup
     return () => {
@@ -401,6 +414,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       // Cleanup registered client functions
       client.unregisterClientFunction("ui.request_tool_approval");
       client.unregisterClientFunction("ui.set_status");
+      client.unregisterClientFunction("ui.set_session_state");
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, sessionId, batcher]);
