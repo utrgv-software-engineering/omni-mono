@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import random
 from typing import Any, AsyncIterator
@@ -15,6 +16,8 @@ from openai.types.responses import (
 )
 
 from agents.tracing import SpanError, response_span
+
+logger = logging.getLogger(__name__)
 
 
 def _env_int(name: str, default: int) -> int:
@@ -231,6 +234,23 @@ def _install_patch() -> None:
                         ) as rstream:
                             async for chunk in _iterate_events(rstream):
                                 yield chunk
+
+                    # Check if stream ended without ResponseCompletedEvent
+                    if final_response is None and response_id and attempt < max_attempts:
+                        # Stream ended prematurely - retry by resuming
+                        logger.warning(
+                            f"Stream ended without ResponseCompletedEvent "
+                            f"(response_id={response_id}, last_seq={last_seq}), "
+                            f"retrying (attempt {attempt + 1}/{max_attempts})"
+                        )
+                        delay = _jitter_delay(base_delay, attempt, max_delay)
+                        if delay > 0:
+                            try:
+                                await asyncio.sleep(delay)
+                            except asyncio.CancelledError:
+                                raise
+                        attempt += 1
+                        continue
 
                     if final_response and tracing.include_data():
                         span_response.span_data.response = final_response
