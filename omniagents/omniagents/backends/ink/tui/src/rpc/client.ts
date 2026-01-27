@@ -415,6 +415,8 @@ export class RPCClient extends EventEmitter {
       function: string;
       args: Record<string, unknown>;
       session_id?: string;
+      run_id?: string;
+      approval_id?: string;
     };
 
     const { request_id, function: funcName, args } = params;
@@ -431,7 +433,13 @@ export class RPCClient extends EventEmitter {
     }
 
     try {
-      const result = await handler(args);
+      const result = await handler({
+        ...args,
+        request_id,
+        session_id: params.session_id,
+        run_id: params.run_id,
+        approval_id: params.approval_id,
+      });
       // Send success response via client_response RPC method
       await this.clientResponse(
         request_id,

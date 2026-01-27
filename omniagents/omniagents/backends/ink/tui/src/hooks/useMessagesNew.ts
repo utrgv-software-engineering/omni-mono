@@ -19,14 +19,18 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
   const { client, sessionId } = options;
   const actions = useActions();
   const batcher = useRef(new EventBatcher()).current;
-  const approvalResolverRef = useRef<
-    | ((value: {
+  const approvalResolversRef = useRef<
+    Map<
+      string,
+      (value: {
         approved: boolean;
         always_approve?: boolean;
         error_message?: string;
-      }) => void)
-    | null
-  >(null);
+      }) => void
+    >
+  >(new Map());
+  const approvalQueueRef = useRef<ApprovalInfo[]>([]);
+  const currentApprovalRequestIdRef = useRef<string | null>(null);
 
   // Buffer for messages with superseded tracking
   const messageBufferRef = useRef<Array<{
@@ -347,8 +351,9 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
         run_id: args.run_id as string,
       };
 
-      // Set pending approval - single state update, no extra message
-      actions.setApproval(approvalInfo);
+      const requestId =
+        approvalInfo.request_id || `${Date.now()}_${Math.random()}`;
+      approvalInfo.request_id = requestId;
 
       // Return promise that waits for user to approve/deny
       return new Promise<{
@@ -356,7 +361,16 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
         always_approve?: boolean;
         error_message?: string;
       }>((resolve) => {
-        approvalResolverRef.current = resolve;
+        approvalResolversRef.current.set(requestId, resolve);
+        approvalQueueRef.current.push(approvalInfo);
+
+        if (!currentApprovalRequestIdRef.current) {
+          const next = approvalQueueRef.current.shift();
+          if (next) {
+            currentApprovalRequestIdRef.current = next.request_id;
+            actions.setApproval(next);
+          }
+        }
       });
     };
 
@@ -421,13 +435,20 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
 
   // Return approval handler function
   const approveToolCall = async (approved: boolean, alwaysApprove: boolean) => {
-    if (!approvalResolverRef.current) return;
+    const currentRequestId = currentApprovalRequestIdRef.current;
+    if (!currentRequestId) return;
+
+    const resolver = approvalResolversRef.current.get(currentRequestId);
+    if (!resolver) return;
+
+    const next = approvalQueueRef.current.shift() || null;
+    currentApprovalRequestIdRef.current = next ? next.request_id : null;
 
     // Clear approval and restore thinking state
     // The server will decide via events whether the run continues or stops
     batcher.add(() => {
-      actions.setApproval(null);
-      actions.setThinking(true); // Always go back to thinking - let server send run_end if it stops
+      actions.setApproval(next);
+      actions.setThinking(!next);
     });
 
     // Resolve the promise that the server is waiting for
@@ -439,8 +460,8 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
           error_message: "User rejected tool call",
         };
 
-    approvalResolverRef.current(result);
-    approvalResolverRef.current = null;
+    approvalResolversRef.current.delete(currentRequestId);
+    resolver(result);
   };
 
   const cancelRun = async (runId: string) => {
