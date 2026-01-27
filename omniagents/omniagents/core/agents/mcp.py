@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from typing import Any, Dict, List
 
@@ -10,8 +12,33 @@ from agents.mcp import (
     MCPServerStdio,
     MCPServerStreamableHttp,
 )
+from mcp import StdioServerParameters, stdio_client
 
 from .specs import AgentSpec, MCPServerConfig
+
+
+class QuietMCPServerStdio(MCPServerStdio):
+    """MCPServerStdio subclass that suppresses stderr output.
+
+    This prevents MCP server subprocess output from interfering with TUIs.
+    """
+
+    def create_streams(self):
+        """Create streams with stderr redirected to /dev/null."""
+        # Open /dev/null for stderr
+        devnull = open(os.devnull, "w")
+
+        @asynccontextmanager
+        async def quiet_stdio_client():
+            async with stdio_client(self.params, errlog=devnull) as streams:
+                try:
+                    yield streams
+                finally:
+                    pass
+            # Close devnull after the context exits
+            devnull.close()
+
+        return quiet_stdio_client()
 
 
 def _coerce_pathlike(value: Any) -> Any:
@@ -57,7 +84,7 @@ def _instantiate_server(cfg: MCPServerConfig, params: Dict[str, Any]) -> MCPServ
             raise ValueError(
                 f"MCP server '{cfg.name}' requires a command for stdio transport"
             )
-        return MCPServerStdio(params, **common_kwargs)
+        return QuietMCPServerStdio(params, **common_kwargs)
     if server_type == "streamable_http":
         if "url" not in params or not params["url"]:
             raise ValueError(

@@ -374,52 +374,73 @@ def glob_files(
         return RichToolOutput(llm_output, ui_metadata)
 
 
+# Constants for grep_files
+_GREP_DEFAULT_FILE_LIMIT = 100
+_GREP_MAX_FILE_LIMIT = 2000
+_GREP_DEFAULT_TIMEOUT = 30
+
+
 @rich_function_tool(client_status="Searching file contents...")
 def grep_files(
     ctx: RunContextWrapper[Any],
     pattern: str,
     path: Optional[str] = None,
     include: Optional[str] = None,
+    limit: Optional[int] = None,
+    timeout: Optional[int] = None,
     ignore_hidden: Optional[bool] = None,
     respect_gitignore: Optional[bool] = None,
 ) -> RichToolOutput:
     """
-    Searches for patterns in file contents using regular expressions.
+    Searches for files containing a pattern. Returns file paths and match counts only.
 
     Args:
         pattern: The regular expression pattern to search for
-        path: Directory or file to search in. Defaults to the workspace root when omitted.
-        include: Optional file pattern (glob) to filter which files to search (e.g., "*.py")
-        ignore_hidden: If True, exclude files/dirs with any hidden segment (names starting with '.')
-        respect_gitignore: If True, exclude paths ignored by Git (.gitignore, .git/info/exclude, etc.)
+        path: Directory or file to search in. Defaults to the workspace root.
+        include: Optional file pattern (glob) to filter files (e.g., "*.py")
+        limit: Maximum number of files to return (default: 100, max: 2000)
+        timeout: Maximum search time in seconds (default: 30)
+        ignore_hidden: If True, exclude hidden files/dirs (default: False)
+        respect_gitignore: If True, exclude gitignored paths (default: True)
 
     Returns:
-        Tuple of (llm_output, ui_metadata) where:
-        - llm_output: Text description of matches found
-        - ui_metadata: Rich metadata for UI rendering
-        Binary files are skipped.
+        List of file paths with match counts, sorted by modification time (newest first).
+        Use read_file to see the actual matching content.
 
     Usage:
-        Use this tool to search file contents for specific patterns.
-        - If path is not provided, the workspace root (or current directory) will be used
-        - If include is not provided, all files will be searched
-        - The path argument can point to a single file or a directory
+        # Find files containing TODO comments
+        grep_files("TODO", include="*.py")
+
+        # Find files with function definitions, then read them
+        grep_files("def\\s+\\w+\\(", include="*.py")
+        # Then use read_file on specific files to see content
 
     Examples:
-        # Find all occurrences of "TODO" in Python files
-        grep_files("TODO", path="./", include="*.py")
+        # Find all Python files importing requests
+        grep_files("import requests", include="*.py")
 
-        # Search for function definitions in the src directory
-        grep_files("def\\s+\\w+\\(", path="src", include="*.py")
-
-        # Find all imports in Python files
-        grep_files("^import\\s+\\w+", path="./", include="*.py")
-
-        # Search all tracked files, including hidden ones
-        grep_files("TODO", path="./", include=None, ignore_hidden=False, respect_gitignore=True)
+        # Find config files mentioning "database"
+        grep_files("database", include="*.{json,yaml,toml}")
     """
+    import time as time_module
+
+    start_time = time_module.monotonic()
+
+    # Set defaults
+    if limit is None:
+        limit = _GREP_DEFAULT_FILE_LIMIT
+    limit = max(1, min(limit, _GREP_MAX_FILE_LIMIT))
+
+    if timeout is None:
+        timeout = _GREP_DEFAULT_TIMEOUT
+
+    if ignore_hidden is None:
+        ignore_hidden = False
+    if respect_gitignore is None:
+        respect_gitignore = True
+
     try:
-        # Defaults
+        # Resolve path
         resolved_path = _resolve_path(ctx, path)
         resolved_path = os.path.abspath(resolved_path)
         base_is_file = os.path.isfile(resolved_path)
@@ -427,21 +448,32 @@ def grep_files(
         if not repo_root:
             repo_root = "."
         repo_root = os.path.abspath(repo_root)
-        if ignore_hidden is None:
-            ignore_hidden = False
-        if respect_gitignore is None:
-            respect_gitignore = True
 
         results = []
-        total_matches = 0
+        files_with_matches = 0
+        files_searched = 0
         skipped_gitignored = 0
         skipped_hidden = 0
         skipped_binary = 0
+        timed_out = False
 
         # Compile the regex pattern
-        regex = re.compile(pattern)
+        try:
+            regex = re.compile(pattern)
+        except re.error as e:
+            return RichToolOutput(
+                f"Invalid regex pattern '{pattern}': {e}",
+                {
+                    "value": f"Invalid regex pattern: {e}",
+                    "display_type": "error",
+                    "summary": "Pattern search failed",
+                    "preview": str(e),
+                    "truncated": False,
+                    "metadata": {"error_type": "grep_error", "pattern": pattern},
+                },
+            )
 
-        # Walk the tree and collect candidate files, pruning ignored/hidden dirs early
+        # Walk the tree and collect candidate files
         files_to_search: List[str] = []
         real_to_index: Dict[str, int] = {}
 
@@ -472,6 +504,11 @@ def grep_files(
             record_file(resolved_path)
         else:
             for root, dirs, filenames in os.walk(resolved_path):
+                # Check timeout during directory walk
+                if time_module.monotonic() - start_time > timeout:
+                    timed_out = True
+                    break
+
                 pruned_dirs = []
                 for d in list(dirs):
                     d_full = os.path.join(root, d)
@@ -493,7 +530,7 @@ def grep_files(
                     f_full = os.path.join(root, fname)
                     record_file(f_full)
 
-        # Apply include as a recursive filter like grep's --include
+        # Apply include filter
         if include is not None and include != "":
             filtered: List[str] = []
             for f in files_to_search:
@@ -509,98 +546,104 @@ def grep_files(
             key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True
         )
 
-        # Search through files
+        # Search through files - only count matches, don't store content
         for file_path in files_to_search:
+            # Check timeout
+            if time_module.monotonic() - start_time > timeout:
+                timed_out = True
+                break
+
+            # Check if we've hit the file limit
+            if len(results) >= limit:
+                break
+
+            files_searched += 1
+
             try:
                 with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                    file_matches = []
-                    for i, line in enumerate(f, 1):
+                    match_count = 0
+                    for line in f:
                         if regex.search(line):
-                            file_matches.append(
-                                {"line_number": i, "content": line.rstrip()}
-                            )
+                            match_count += 1
 
-                    if file_matches:
-                        results.append(
-                            {
-                                "file": file_path,
-                                "matches": file_matches,
-                                "match_count": len(file_matches),
-                            }
-                        )
-                        total_matches += len(file_matches)
-            except Exception as e:
+                    if match_count > 0:
+                        files_with_matches += 1
+                        results.append({
+                            "file": file_path,
+                            "match_count": match_count,
+                        })
+            except Exception:
                 # Skip files that can't be read
                 continue
 
-        # Create preview showing first few matches
-        preview_lines = []
-        preview_limit = 5  # Show first 5 file results
-        for i, file_result in enumerate(results[:preview_limit]):
-            file_path = file_result["file"]
-            match_count = file_result["match_count"]
-            preview_lines.append(f"{file_path}: {match_count} matches")
-            # Show first match from this file
-            if file_result["matches"]:
-                first_match = file_result["matches"][0]
-                preview_lines.append(
-                    f"  Line {first_match['line_number']}: {first_match['content'].strip()[:60]}"
-                )
+        # Check if there might be more files we didn't search
+        more_files_possible = len(files_to_search) > files_searched
 
-        preview = "\n".join(preview_lines) if preview_lines else "No matches found"
-        truncated = len(results) > preview_limit
+        elapsed_ms = int((time_module.monotonic() - start_time) * 1000)
 
-        # Create LLM output
-        if total_matches == 0:
-            llm_output = f"No matches found for pattern '{pattern}' in {resolved_path}"
+        # Build LLM output - just file paths and counts
+        output_lines = []
+
+        if timed_out:
+            output_lines.append(f"Search timed out after {timeout}s (searched {files_searched} files)")
+            output_lines.append("")
+
+        if len(results) == 0:
+            output_lines.append(f"No matches found for pattern '{pattern}'")
             hints = []
             if skipped_gitignored:
-                hints.append(f"skipped {skipped_gitignored} file(s) due to .gitignore")
+                hints.append(f"skipped {skipped_gitignored} gitignored")
             if skipped_hidden and ignore_hidden:
-                hints.append(f"skipped {skipped_hidden} hidden file(s)")
+                hints.append(f"skipped {skipped_hidden} hidden")
             if skipped_binary:
-                hints.append(f"skipped {skipped_binary} binary file(s)")
+                hints.append(f"skipped {skipped_binary} binary")
             if hints:
-                llm_output += " (" + ", ".join(hints) + ")"
-        elif len(results) == 1:
-            llm_output = f"Found {total_matches} matches for '{pattern}' in 1 file:\n"
-            for match in results[0]["matches"][:5]:
-                llm_output += f"  {results[0]['file']}:{match['line_number']}: {match['content'].strip()}\n"
-            if results[0]["match_count"] > 5:
-                llm_output += (
-                    f"  ... and {results[0]['match_count'] - 5} more matches\n"
-                )
+                output_lines.append(f"({', '.join(hints)})")
         else:
-            llm_output = f"Found {total_matches} matches for '{pattern}' in {len(results)} files:\n"
-            for i, file_result in enumerate(results[:5]):
-                llm_output += (
-                    f"  {file_result['file']}: {file_result['match_count']} matches\n"
-                )
-                if (
-                    file_result["matches"] and i < 3
-                ):  # Show first match for first 3 files
-                    first_match = file_result["matches"][0]
-                    llm_output += f"    Line {first_match['line_number']}: {first_match['content'].strip()[:80]}\n"
-            if len(results) > 5:
-                llm_output += f"  ... and {len(results) - 5} more files\n"
+            total_matches = sum(r["match_count"] for r in results)
+
+            # Summary
+            if len(results) >= limit or more_files_possible:
+                output_lines.append(f"Found matches in {files_with_matches}+ files (showing {len(results)}):")
+            else:
+                output_lines.append(f"Found {total_matches} matches in {len(results)} files:")
+            output_lines.append("")
+
+            # File list with match counts
+            for result in results:
+                output_lines.append(f"{result['file']}: {result['match_count']} matches")
+
+            # Truncation notice
+            if len(results) >= limit or more_files_possible:
+                output_lines.append("")
+                output_lines.append(f"[Use limit={limit + 100} to see more files]")
+
+        llm_output = "\n".join(output_lines)
+
+        # Create preview for UI
+        preview_lines = [f"{r['file']}: {r['match_count']} matches" for r in results[:10]]
+        if len(results) > 10:
+            preview_lines.append(f"... and {len(results) - 10} more files")
+        preview = "\n".join(preview_lines) if preview_lines else "No matches found"
 
         # Create UI metadata
         ui_metadata = {
-            "value": results,  # The actual result - list of match results
+            "value": results,
             "display_type": "search_results",
-            "summary": f"Found {total_matches} matches for '{pattern}' in {len(results)} files",
+            "summary": f"Found matches in {len(results)} files",
             "preview": preview,
-            "truncated": truncated,
+            "truncated": len(results) >= limit or more_files_possible,
             "metadata": {
-                "query": pattern,
-                "result_count": total_matches,
-                "match_count": total_matches,
-                "file_count": len(results),
-                "search_type": "grep",
+                "pattern": pattern,
+                "files_with_matches": files_with_matches,
+                "files_returned": len(results),
+                "files_searched": files_searched,
+                "limit": limit,
+                "elapsed_ms": elapsed_ms,
+                "timed_out": timed_out,
                 "scope": f"{include or '*'} in {path if path not in (None, '') else resolved_path}",
-                "preview_files": min(len(results), preview_limit),
-                "ignore_hidden": bool(ignore_hidden),
-                "respect_gitignore": bool(respect_gitignore),
+                "ignore_hidden": ignore_hidden,
+                "respect_gitignore": respect_gitignore,
                 "skipped_gitignored": skipped_gitignored,
                 "skipped_hidden": skipped_hidden,
                 "skipped_binary": skipped_binary,
@@ -608,6 +651,7 @@ def grep_files(
         }
 
         return RichToolOutput(llm_output, ui_metadata)
+
     except Exception as e:
         llm_output = f"Error searching files: {str(e)}"
 
@@ -632,158 +676,316 @@ def grep_files(
         return RichToolOutput(llm_output, ui_metadata)
 
 
+# Constants for list_directory
+_LIST_DIR_DEFAULT_LIMIT = 50
+_LIST_DIR_DEFAULT_DEPTH = 2
+_LIST_DIR_MAX_ENTRY_LENGTH = 500
+_LIST_DIR_INDENT_SPACES = 2
+
+
+def _truncate_entry_name(name: str, max_length: int = _LIST_DIR_MAX_ENTRY_LENGTH) -> str:
+    """Truncate an entry name to max_length, preserving UTF-8 char boundaries."""
+    if len(name) <= max_length:
+        return name
+    return name[:max_length].encode("utf-8", errors="ignore")[:max_length].decode(
+        "utf-8", errors="ignore"
+    )
+
+
+class _DirEntry:
+    """Represents a directory entry with metadata for display."""
+
+    def __init__(
+        self,
+        name: str,
+        display_name: str,
+        full_path: str,
+        depth: int,
+        entry_type: str,  # "dir", "file", "symlink", "other"
+    ):
+        self.name = name  # For sorting
+        self.display_name = display_name
+        self.full_path = full_path
+        self.depth = depth
+        self.entry_type = entry_type
+
+    def format_line(self) -> str:
+        """Format entry with indentation and type suffix."""
+        indent = " " * (self.depth * _LIST_DIR_INDENT_SPACES)
+        suffix = ""
+        if self.entry_type == "dir":
+            suffix = "/"
+        elif self.entry_type == "symlink":
+            suffix = "@"
+        elif self.entry_type == "other":
+            suffix = "?"
+        return f"{indent}{self.display_name}{suffix}"
+
+
+def _collect_entries_with_depth(
+    dir_path: str,
+    base_path: str,
+    current_depth: int,
+    max_depth: int,
+    respect_gitignore: bool,
+    ignore_hidden: bool,
+) -> List[_DirEntry]:
+    """
+    Collect directory entries up to max_depth levels deep.
+    Returns entries in sorted order with proper nesting.
+    """
+    entries = []
+
+    try:
+        with os.scandir(dir_path) as scanner:
+            items = list(scanner)
+    except PermissionError:
+        return entries
+
+    # Sort items by name
+    items.sort(key=lambda e: e.name)
+
+    for item in items:
+        # Check if should skip
+        if _should_skip(item.path, base_path, respect_gitignore, ignore_hidden):
+            continue
+
+        # Determine entry type
+        try:
+            if item.is_symlink():
+                entry_type = "symlink"
+            elif item.is_dir():
+                entry_type = "dir"
+            elif item.is_file():
+                entry_type = "file"
+            else:
+                entry_type = "other"
+        except OSError:
+            entry_type = "other"
+
+        # Create display name (truncated if needed)
+        display_name = _truncate_entry_name(item.name)
+
+        entry = _DirEntry(
+            name=item.name,
+            display_name=display_name,
+            full_path=item.path,
+            depth=current_depth,
+            entry_type=entry_type,
+        )
+        entries.append(entry)
+
+        # Recurse into directories if within depth limit
+        if entry_type == "dir" and current_depth < max_depth - 1:
+            child_entries = _collect_entries_with_depth(
+                item.path,
+                base_path,
+                current_depth + 1,
+                max_depth,
+                respect_gitignore,
+                ignore_hidden,
+            )
+            entries.extend(child_entries)
+
+    return entries
+
+
 @rich_function_tool(client_status="Listing directory...")
 def list_directory(
     ctx: RunContextWrapper[Any],
     path: str,
-    recursive: Optional[bool],
+    offset: Optional[int] = None,
+    limit: Optional[int] = None,
+    depth: Optional[int] = None,
     ignore_hidden: Optional[bool] = None,
     respect_gitignore: Optional[bool] = None,
 ) -> RichToolOutput:
     """
-    Lists files and directories in the specified path.
+    Lists files and directories in the specified path with pagination and depth control.
 
     Args:
         path: The directory path to list contents of
-        recursive: Whether to list contents recursively
-        ignore_hidden: If True, exclude files/dirs with names starting with '.' (and their contents)
-        respect_gitignore: If True, exclude paths ignored by Git (.gitignore, .git/info/exclude, etc.)
+        offset: 1-based entry number to start from (default: 1)
+        limit: Maximum number of entries to return (default: 50)
+        depth: Maximum directory depth to traverse (default: 2, min: 1)
+        ignore_hidden: If True, exclude files/dirs starting with '.' (default: False)
+        respect_gitignore: If True, exclude paths ignored by Git (default: True)
 
     Returns:
         Tuple of (llm_output, ui_metadata) where:
-        - llm_output: Text description of directory contents
+        - llm_output: Indented tree with type markers (/ for dirs, @ for symlinks)
         - ui_metadata: Rich metadata for UI rendering
 
     Usage:
-        Use this tool to list directory contents.
-        - If recursive is not provided, it defaults to False
-        - If path is empty ("" or whitespace), the current working directory "./" will be used
+        # List current directory (default: 50 entries, 2 levels deep)
+        list_directory(".")
 
-    Examples:
-        # List contents of the current directory
-        list_directory(".", recursive=False)
+        # List with pagination
+        list_directory(".", offset=51, limit=50)
 
-        # List contents of a specific directory recursively
-        list_directory("/path/to/directory", recursive=True)
+        # List 3 levels deep
+        list_directory(".", depth=3)
 
-        # Show everything, including hidden and gitignored
-        list_directory(".", recursive=True, ignore_hidden=False, respect_gitignore=False)
+        # List without hidden files
+        list_directory(".", ignore_hidden=True)
+
+    Output format:
+        Absolute path: /path/to/dir
+        src/
+          components/
+            Button.tsx
+            Input.tsx
+          utils.ts
+        README.md
+        [25 more entries. Use offset=26 to continue.]
+
+    Notes:
+        - Entries are sorted alphabetically
+        - Directories show nested contents up to the specified depth
+        - Symlinks are marked with @, directories with /
+        - Entry names longer than 500 characters are truncated
     """
     try:
-        # Defaults
-        path = _resolve_path(ctx, path)
-        if recursive is None:
-            recursive = False
+        # Set defaults
+        if offset is None:
+            offset = 1
+        if offset < 1:
+            offset = 1
+        if limit is None:
+            limit = _LIST_DIR_DEFAULT_LIMIT
+        if limit < 1:
+            limit = 1
+        if depth is None:
+            depth = _LIST_DIR_DEFAULT_DEPTH
+        if depth < 1:
+            depth = 1
         if ignore_hidden is None:
-            ignore_hidden = False  # Preserve current default behavior
+            ignore_hidden = False
         if respect_gitignore is None:
-            respect_gitignore = True  # Preserve current default behavior
+            respect_gitignore = True
 
-        files = []
-        directories = []
+        path = _resolve_path(ctx, path)
 
-        if recursive:
-            for root, dirs, filenames in os.walk(path):
-                # Remove ignored/hidden directories so os.walk does NOT recurse into
-                # them, preventing huge listings (e.g., .venv)
-                dirs[:] = [
-                    d
-                    for d in dirs
-                    if not _should_skip(
-                        os.path.join(root, d), path, respect_gitignore, ignore_hidden
-                    )
-                ]
+        if not os.path.isdir(path):
+            return RichToolOutput(
+                f"Error: '{path}' is not a directory",
+                {
+                    "value": "",
+                    "display_type": "error",
+                    "summary": "Not a directory",
+                    "preview": "",
+                    "truncated": False,
+                    "metadata": {"error_type": "not_directory", "path": path},
+                },
+            )
 
-                # Add directories that are not ignored
-                for dir_name in dirs:
-                    dir_path = os.path.join(root, dir_name)
-                    directories.append(dir_path)
+        # Collect all entries with depth-limited traversal
+        all_entries = _collect_entries_with_depth(
+            path, path, 0, depth, respect_gitignore, ignore_hidden
+        )
 
-                # Add files
-                for filename in filenames:
-                    file_path = os.path.join(root, filename)
-                    if not _should_skip(
-                        file_path, path, respect_gitignore, ignore_hidden
-                    ):
-                        files.append(file_path)
-        else:
-            # List only the specified directory
-            with os.scandir(path) as entries:
-                for entry in entries:
-                    if entry.is_file():
-                        if not _should_skip(
-                            entry.path, path, respect_gitignore, ignore_hidden
-                        ):
-                            files.append(entry.path)
-                    elif entry.is_dir():
-                        if not _should_skip(
-                            entry.path, path, respect_gitignore, ignore_hidden
-                        ):
-                            directories.append(entry.path)
+        total_entries = len(all_entries)
 
-        # Sort by name
-        files.sort()
-        directories.sort()
+        if total_entries == 0:
+            return RichToolOutput(
+                f"Absolute path: {path}\n(empty directory)",
+                {
+                    "value": {"entries": []},
+                    "display_type": "directory_listing",
+                    "summary": f"Directory {os.path.basename(path)} is empty",
+                    "preview": "(empty)",
+                    "truncated": False,
+                    "metadata": {
+                        "path": path,
+                        "total_entries": 0,
+                        "entries_returned": 0,
+                        "depth": depth,
+                        "ignore_hidden": ignore_hidden,
+                        "respect_gitignore": respect_gitignore,
+                    },
+                },
+            )
 
-        # Create preview
-        total_items = len(files) + len(directories)
-        preview_lines = []
+        # Apply pagination
+        start_idx = offset - 1
+        if start_idx >= total_entries:
+            return RichToolOutput(
+                f"Error: offset {offset} exceeds entry count ({total_entries} entries)",
+                {
+                    "value": "",
+                    "display_type": "error",
+                    "summary": "Offset out of range",
+                    "preview": "",
+                    "truncated": False,
+                    "metadata": {"error_type": "invalid_offset", "path": path},
+                },
+            )
+
+        end_idx = min(start_idx + limit, total_entries)
+        selected_entries = all_entries[start_idx:end_idx]
+
+        # Format output lines
+        output_lines = [f"Absolute path: {path}"]
+        for entry in selected_entries:
+            output_lines.append(entry.format_line())
+
+        # Add truncation notice if there are more entries
+        remaining = total_entries - end_idx
+        was_truncated = remaining > 0
+        if was_truncated:
+            next_offset = end_idx + 1
+            output_lines.append(f"[{remaining} more entries. Use offset={next_offset} to continue.]")
+
+        llm_output = "\n".join(output_lines)
+
+        # Create preview for UI (first 20 formatted entries)
         preview_limit = 20
+        preview_entries = selected_entries[:preview_limit]
+        preview_lines = [entry.format_line() for entry in preview_entries]
+        if len(selected_entries) > preview_limit:
+            preview_lines.append(f"... and {len(selected_entries) - preview_limit} more")
+        preview = "\n".join(preview_lines) if preview_lines else "(empty)"
 
-        # Add directories first (with trailing /)
-        for dir_path in directories[: min(10, preview_limit // 2)]:
-            rel_path = (
-                os.path.relpath(dir_path, path)
-                if recursive
-                else os.path.basename(dir_path)
-            )
-            preview_lines.append(f"📁 {rel_path}/")
-
-        # Then add files
-        remaining = preview_limit - len(preview_lines)
-        for file_path in files[:remaining]:
-            rel_path = (
-                os.path.relpath(file_path, path)
-                if recursive
-                else os.path.basename(file_path)
-            )
-            preview_lines.append(f"📄 {rel_path}")
-
-        preview = "\n".join(preview_lines) if preview_lines else "Empty directory"
-        truncated = total_items > preview_limit
-
-        # Create LLM output
-        if total_items == 0:
-            llm_output = f"Directory {path} is empty"
-        else:
-            llm_output = f"Listed {total_items} items in {path}:\n"
-            llm_output += f"  {len(directories)} directories\n"
-            llm_output += f"  {len(files)} files\n"
-            if preview_lines:
-                llm_output += "\nContents:\n" + "\n".join(preview_lines[:10])
-                if total_items > 10:
-                    llm_output += f"\n... and {total_items - 10} more items"
+        # Count dirs and files in selection
+        dir_count = sum(1 for e in selected_entries if e.entry_type == "dir")
+        file_count = sum(1 for e in selected_entries if e.entry_type == "file")
+        symlink_count = sum(1 for e in selected_entries if e.entry_type == "symlink")
 
         # Create UI metadata
         ui_metadata = {
-            "value": {"files": files, "directories": directories},  # The actual result
+            "value": {
+                "entries": [
+                    {
+                        "name": e.display_name,
+                        "path": e.full_path,
+                        "type": e.entry_type,
+                        "depth": e.depth,
+                    }
+                    for e in selected_entries
+                ]
+            },
             "display_type": "directory_listing",
-            "summary": f"Listed {total_items} items in {path}",
+            "summary": f"Listed {len(selected_entries)} of {total_entries} entries in {os.path.basename(path)}",
             "preview": preview,
-            "truncated": truncated,
+            "truncated": was_truncated or len(selected_entries) > preview_limit,
             "metadata": {
                 "path": path,
-                "file_count": len(files),
-                "dir_count": len(directories),
-                "total_count": total_items,
-                "recursive": recursive,
-                "preview_count": min(total_items, preview_limit),
-                "ignore_hidden": bool(ignore_hidden),
-                "respect_gitignore": bool(respect_gitignore),
+                "total_entries": total_entries,
+                "entries_returned": len(selected_entries),
+                "offset": offset,
+                "limit": limit,
+                "depth": depth,
+                "dir_count": dir_count,
+                "file_count": file_count,
+                "symlink_count": symlink_count,
+                "was_truncated": was_truncated,
+                "ignore_hidden": ignore_hidden,
+                "respect_gitignore": respect_gitignore,
             },
         }
 
         return RichToolOutput(llm_output, ui_metadata)
+
     except Exception as e:
         llm_output = f"Error listing directory: {str(e)}"
 
@@ -808,122 +1010,390 @@ def list_directory(
         return RichToolOutput(llm_output, ui_metadata)
 
 
+# Constants for read_file
+_READ_FILE_DEFAULT_LIMIT = 2000
+_READ_FILE_MAX_LINE_LENGTH = 500
+_READ_FILE_TAB_WIDTH = 4
+_READ_FILE_COMMENT_PREFIXES = ("#", "//", "--", "/*", "<!--")
+
+
+def _truncate_line(line: str, max_length: int = _READ_FILE_MAX_LINE_LENGTH) -> str:
+    """Truncate a line to max_length, preserving UTF-8 char boundaries."""
+    if len(line) <= max_length:
+        return line
+    # Find a safe truncation point at a character boundary
+    truncated = line[:max_length]
+    # Ensure we don't cut in the middle of a multi-byte character
+    return truncated.encode("utf-8", errors="ignore")[:max_length].decode(
+        "utf-8", errors="ignore"
+    )
+
+
+def _measure_indent(line: str, tab_width: int = _READ_FILE_TAB_WIDTH) -> int:
+    """Measure indentation level in spaces (tabs converted to tab_width spaces)."""
+    indent = 0
+    for char in line:
+        if char == " ":
+            indent += 1
+        elif char == "\t":
+            indent += tab_width
+        else:
+            break
+    return indent
+
+
+def _is_comment_line(line: str) -> bool:
+    """Check if a line is a comment (for header detection in indentation mode)."""
+    stripped = line.strip()
+    return any(stripped.startswith(prefix) for prefix in _READ_FILE_COMMENT_PREFIXES)
+
+
+def _read_file_indentation_mode(
+    all_lines: List[str],
+    anchor_line: int,
+    max_levels: int,
+    include_siblings: bool,
+    include_header: bool,
+    max_lines: int,
+) -> Tuple[List[Tuple[int, str]], bool]:
+    """
+    Read lines around an anchor using indentation-aware expansion.
+
+    Returns a list of (line_number, line_content) tuples and a flag indicating
+    if the output was truncated due to max_lines.
+    """
+    if not all_lines:
+        return [], False
+
+    total_lines = len(all_lines)
+    if anchor_line < 1 or anchor_line > total_lines:
+        return [], False
+
+    anchor_idx = anchor_line - 1
+
+    # Compute effective indents (blank lines inherit previous indent)
+    effective_indents = []
+    prev_indent = 0
+    for line in all_lines:
+        if line.strip():
+            prev_indent = _measure_indent(line)
+        effective_indents.append(prev_indent)
+
+    anchor_indent = effective_indents[anchor_idx]
+
+    # Compute minimum indent based on max_levels
+    if max_levels == 0:
+        min_indent = 0
+    else:
+        min_indent = max(0, anchor_indent - (max_levels * _READ_FILE_TAB_WIDTH))
+
+    # Expand outward from anchor
+    result_indices = [anchor_idx]
+    up_idx = anchor_idx - 1
+    down_idx = anchor_idx + 1
+    up_min_indent_count = 0
+    down_min_indent_count = 0
+
+    while len(result_indices) < max_lines:
+        progressed = False
+
+        # Expand upward
+        if up_idx >= 0:
+            if effective_indents[up_idx] >= min_indent:
+                # Check sibling/header rules at min_indent level
+                if effective_indents[up_idx] == min_indent and not include_siblings:
+                    allow_header = include_header and _is_comment_line(
+                        all_lines[up_idx]
+                    )
+                    can_take = allow_header or up_min_indent_count == 0
+                    if can_take:
+                        result_indices.insert(0, up_idx)
+                        up_min_indent_count += 1
+                        progressed = True
+                    up_idx = -1  # Stop going up
+                else:
+                    result_indices.insert(0, up_idx)
+                    progressed = True
+                up_idx -= 1
+            else:
+                up_idx = -1  # Hit a line with less indent, stop
+
+        if len(result_indices) >= max_lines:
+            break
+
+        # Expand downward
+        if down_idx < total_lines:
+            if effective_indents[down_idx] >= min_indent:
+                if (
+                    effective_indents[down_idx] == min_indent
+                    and not include_siblings
+                ):
+                    if down_min_indent_count > 0:
+                        down_idx = total_lines  # Stop going down
+                    else:
+                        result_indices.append(down_idx)
+                        down_min_indent_count += 1
+                        progressed = True
+                        down_idx += 1
+                else:
+                    result_indices.append(down_idx)
+                    progressed = True
+                    down_idx += 1
+            else:
+                down_idx = total_lines  # Hit a line with less indent, stop
+
+        if not progressed:
+            break
+
+    # Trim leading/trailing blank lines
+    while result_indices and not all_lines[result_indices[0]].strip():
+        result_indices.pop(0)
+    while result_indices and not all_lines[result_indices[-1]].strip():
+        result_indices.pop()
+
+    truncated = len(result_indices) >= max_lines
+    return [(idx + 1, all_lines[idx]) for idx in result_indices], truncated
+
+
 @rich_function_tool(client_status="Reading file...")
 def read_file(
     ctx: RunContextWrapper[Any],
     file_path: str,
-    start_line: Optional[int],
-    num_lines: Optional[int],
+    start_line: Optional[int] = None,
+    num_lines: Optional[int] = None,
+    mode: Optional[str] = None,
+    anchor_line: Optional[int] = None,
+    max_levels: Optional[int] = None,
+    include_siblings: Optional[bool] = None,
+    include_header: Optional[bool] = None,
 ) -> RichToolOutput:
     """
-    Reads the contents of a file.
+    Reads the contents of a file with line numbers and truncation handling.
 
     Args:
         file_path: Path to the file to read
-        start_line: 1-based line number to start reading from
-        num_lines: Maximum number of lines to read
+        start_line: 1-based line number to start reading from (default: 1)
+        num_lines: Maximum number of lines to read (default: 2000)
+        mode: Reading mode - "slice" (default) or "indentation"
+        anchor_line: For indentation mode: the line to expand around (defaults to start_line)
+        max_levels: For indentation mode: max parent indentation levels to include (0 = unlimited)
+        include_siblings: For indentation mode: include sibling blocks at same indent (default: False)
+        include_header: For indentation mode: include header comments above blocks (default: True)
 
     Returns:
         Tuple of (llm_output, ui_metadata) where:
-        - llm_output: The file content as a string
+        - llm_output: Lines formatted as "L{n}: {content}" with truncation notices
         - ui_metadata: Rich metadata for UI rendering
 
     Usage:
-        Use this tool to read the contents of files.
-        - If start_line is not provided, it defaults to 1 (first line)
-        - If num_lines is not provided, all remaining lines will be read
+        # Read first 2000 lines of a file (default)
+        read_file("/path/to/file.txt")
 
-    Examples:
-        # Read an entire file
-        read_file("/path/to/file.txt", start_line=1, num_lines=null)
+        # Read 50 lines starting from line 100
+        read_file("/path/to/file.txt", start_line=100, num_lines=50)
 
-        # Read 10 lines starting from line 5
-        read_file("/path/to/file.txt", start_line=5, num_lines=10)
+        # Read the function/block containing line 42 (indentation mode)
+        read_file("/path/to/file.py", mode="indentation", anchor_line=42, max_levels=2)
+
+    Notes:
+        - Lines are prefixed with "L{n}: " for easy reference
+        - Lines longer than 500 characters are truncated
+        - In indentation mode, the tool expands from anchor_line to capture the
+          logical code block based on indentation levels
     """
     try:
-        # Default to start at beginning if not specified (1-based)
+        # Set defaults
         if start_line is None:
             start_line = 1
+        if start_line < 1:
+            start_line = 1
+        if num_lines is None:
+            num_lines = _READ_FILE_DEFAULT_LIMIT
+        if mode is None:
+            mode = "slice"
+        if max_levels is None:
+            max_levels = 0
+        if include_siblings is None:
+            include_siblings = False
+        if include_header is None:
+            include_header = True
 
         file_path = _resolve_path(ctx, file_path)
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-            # Read all lines
             all_lines = f.readlines()
 
-            # Apply start_line and num_lines filters (1-based to 0-based)
-            if start_line < 1:
-                start_line = 1
+        total_file_lines = len(all_lines)
+        truncation_notices = []
+        was_truncated = False
 
+        if mode == "indentation":
+            # Indentation-aware reading
+            effective_anchor = anchor_line if anchor_line is not None else start_line
+            max_result_lines = min(num_lines, _READ_FILE_DEFAULT_LIMIT)
+
+            line_tuples, indent_truncated = _read_file_indentation_mode(
+                all_lines,
+                effective_anchor,
+                max_levels,
+                include_siblings,
+                include_header,
+                max_result_lines,
+            )
+
+            if not line_tuples:
+                return RichToolOutput(
+                    f"Error: anchor_line {effective_anchor} is out of range (file has {total_file_lines} lines)",
+                    {
+                        "value": "",
+                        "display_type": "error",
+                        "summary": "Invalid anchor line",
+                        "preview": "",
+                        "truncated": False,
+                        "metadata": {
+                            "error_type": "invalid_anchor",
+                            "file_path": file_path,
+                        },
+                    },
+                )
+
+            was_truncated = indent_truncated
+            selected_line_numbers = [ln for ln, _ in line_tuples]
+            selected_lines = [content for _, content in line_tuples]
+
+        else:
+            # Slice mode (default)
             start_idx = start_line - 1
 
-            if num_lines is None:
-                # Read all remaining lines
-                selected_lines = all_lines[start_idx:]
-            else:
-                # Read specified number of lines
-                selected_lines = all_lines[start_idx : start_idx + max(0, num_lines)]
+            if start_idx >= total_file_lines:
+                return RichToolOutput(
+                    f"Error: start_line {start_line} exceeds file length ({total_file_lines} lines)",
+                    {
+                        "value": "",
+                        "display_type": "error",
+                        "summary": "Start line out of range",
+                        "preview": "",
+                        "truncated": False,
+                        "metadata": {
+                            "error_type": "invalid_offset",
+                            "file_path": file_path,
+                        },
+                    },
+                )
 
-            content = "".join(selected_lines)
+            end_idx = min(start_idx + num_lines, total_file_lines)
+            selected_lines = all_lines[start_idx:end_idx]
+            selected_line_numbers = list(range(start_line, start_line + len(selected_lines)))
 
-            # Detect file language from extension
-            ext = os.path.splitext(file_path)[1].lower()
-            language_map = {
-                ".py": "python",
-                ".js": "javascript",
-                ".ts": "typescript",
-                ".java": "java",
-                ".cpp": "cpp",
-                ".c": "c",
-                ".cs": "csharp",
-                ".go": "go",
-                ".rs": "rust",
-                ".rb": "ruby",
-                ".php": "php",
-                ".swift": "swift",
-                ".kt": "kotlin",
-                ".scala": "scala",
-                ".html": "html",
-                ".css": "css",
-                ".json": "json",
-                ".xml": "xml",
-                ".yaml": "yaml",
-                ".yml": "yaml",
-                ".toml": "toml",
-                ".md": "markdown",
-            }
-            language = language_map.get(ext, "text")
+            # Check if we hit the limit
+            remaining_lines = total_file_lines - end_idx
+            if remaining_lines > 0 and len(selected_lines) >= num_lines:
+                was_truncated = True
+                truncation_notices.append(
+                    f"[{remaining_lines} more lines not shown. Use start_line={end_idx + 1} to continue.]"
+                )
 
-            # Create preview
-            preview_limit = 20
-            if len(selected_lines) > preview_limit:
-                preview_lines = selected_lines[:preview_limit]
-                preview = "".join(preview_lines)
-                truncated = True
-            else:
-                preview = content
-                truncated = False
+        # Format lines with line numbers and truncate long lines
+        formatted_lines = []
+        lines_truncated_count = 0
 
-            # LLM output is just the content
-            llm_output = content
+        for line_num, line in zip(selected_line_numbers, selected_lines):
+            # Remove trailing newline for processing
+            line_content = line.rstrip("\n\r")
 
-            # Create UI metadata
-            ui_metadata = {
-                "value": content,  # The actual file content
-                "display_type": "file_content",
-                "summary": f"Read {len(selected_lines)} lines from {os.path.basename(file_path)}",
-                "preview": preview,
-                "truncated": truncated,
-                "metadata": {
-                    "file_path": file_path,
-                    "line_count": len(selected_lines),
-                    "file_size": len(content),
-                    "language": language,
-                    "start_line": start_line,
-                    "preview_lines": min(len(selected_lines), preview_limit),
-                },
-            }
+            # Truncate long lines
+            if len(line_content) > _READ_FILE_MAX_LINE_LENGTH:
+                original_len = len(line_content)
+                line_content = _truncate_line(line_content, _READ_FILE_MAX_LINE_LENGTH)
+                lines_truncated_count += 1
 
-            return RichToolOutput(llm_output, ui_metadata)
+            formatted_lines.append(f"L{line_num}: {line_content}")
+
+        # Build LLM output with truncation notices
+        llm_lines = []
+
+        # Add header with truncation info if needed
+        if was_truncated or lines_truncated_count > 0:
+            llm_lines.append(f"Total file lines: {total_file_lines}")
+            if lines_truncated_count > 0:
+                llm_lines.append(
+                    f"[{lines_truncated_count} lines exceeded {_READ_FILE_MAX_LINE_LENGTH} chars and were truncated]"
+                )
+            llm_lines.append("")
+
+        llm_lines.extend(formatted_lines)
+
+        if truncation_notices:
+            llm_lines.append("")
+            llm_lines.extend(truncation_notices)
+
+        llm_output = "\n".join(llm_lines)
+
+        # Detect file language from extension
+        ext = os.path.splitext(file_path)[1].lower()
+        language_map = {
+            ".py": "python",
+            ".js": "javascript",
+            ".ts": "typescript",
+            ".tsx": "typescript",
+            ".jsx": "javascript",
+            ".java": "java",
+            ".cpp": "cpp",
+            ".c": "c",
+            ".h": "c",
+            ".hpp": "cpp",
+            ".cs": "csharp",
+            ".go": "go",
+            ".rs": "rust",
+            ".rb": "ruby",
+            ".php": "php",
+            ".swift": "swift",
+            ".kt": "kotlin",
+            ".scala": "scala",
+            ".html": "html",
+            ".css": "css",
+            ".scss": "scss",
+            ".json": "json",
+            ".xml": "xml",
+            ".yaml": "yaml",
+            ".yml": "yaml",
+            ".toml": "toml",
+            ".md": "markdown",
+            ".sh": "bash",
+            ".bash": "bash",
+            ".zsh": "zsh",
+            ".sql": "sql",
+        }
+        language = language_map.get(ext, "text")
+
+        # Create preview for UI (first 20 formatted lines)
+        preview_limit = 20
+        preview_lines = formatted_lines[:preview_limit]
+        preview = "\n".join(preview_lines)
+        ui_truncated = len(formatted_lines) > preview_limit
+
+        # Create UI metadata
+        ui_metadata = {
+            "value": "\n".join(formatted_lines),  # The formatted file content
+            "display_type": "file_content",
+            "summary": f"Read {len(formatted_lines)} lines from {os.path.basename(file_path)}",
+            "preview": preview,
+            "truncated": ui_truncated or was_truncated,
+            "metadata": {
+                "file_path": file_path,
+                "total_file_lines": total_file_lines,
+                "lines_returned": len(formatted_lines),
+                "lines_truncated": lines_truncated_count,
+                "language": language,
+                "start_line": selected_line_numbers[0] if selected_line_numbers else start_line,
+                "end_line": selected_line_numbers[-1] if selected_line_numbers else start_line,
+                "mode": mode,
+                "was_content_truncated": was_truncated,
+                "preview_lines": min(len(formatted_lines), preview_limit),
+            },
+        }
+
+        return RichToolOutput(llm_output, ui_metadata)
+
     except Exception as e:
         llm_output = f"Error reading file: {str(e)}"
 

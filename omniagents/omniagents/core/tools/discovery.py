@@ -78,6 +78,8 @@ def function_tool(func: Callable = None, **kwargs) -> FunctionTool:
 
         # Add our marker attribute
         setattr(tool, "_is_omniagents_core_tool", True)
+        # Store original function for direct invocation (used by TRL/GRPO training)
+        setattr(tool, "_original_func", f)
         # Attach optional client status text for UIs that support it
         if client_status:
             try:
@@ -117,6 +119,8 @@ def rich_function_tool(func: Callable = None, **kwargs) -> FunctionTool:
 
         setattr(tool, "_is_omniagents_core_tool", True)
         setattr(tool, "_is_rich_tool", True)
+        # Store original function for direct invocation (used by TRL/GRPO training)
+        setattr(tool, "_original_func", f)
         if client_status:
             try:
                 setattr(tool, "_client_status_text", str(client_status))

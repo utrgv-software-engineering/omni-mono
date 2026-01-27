@@ -189,7 +189,9 @@ async def _default_build_agent(
     instructions = process_instructions(spec.get_agent_instructions())
     tools = spec.available_tools
     provided_mcp_servers: List[Any] = []
-    if mcp_servers:
+    # Check if mcp_servers was explicitly provided (including empty list)
+    # None means "use spec.mcp_servers", empty list means "no servers"
+    if mcp_servers is not None:
         if isinstance(mcp_servers, (list, tuple)):
             provided_mcp_servers = list(mcp_servers)
         else:
@@ -280,13 +282,36 @@ async def _default_build_agent(
     # Note: We don't create a client here anymore. The SDK will handle client resolution
     # through its provider chain, which respects set_default_openai_client() if called
 
-    # Build ModelSettings from spec config or use defaults
+    # Build ModelSettings from model config, spec config, or defaults
+    # Priority: agent YAML model_settings > model config model_settings > defaults
+    # This allows model-level defaults (e.g., store=False + include for reasoning models)
+    # to be overridden by agent-specific settings.
+    model_settings_kwargs = {}
+
+    # Start with model-level settings from session model_config (if present)
+    # This allows models to define default settings (e.g., reasoning model requirements)
+    if session_model_config and session_model_config.get("model_settings"):
+        model_level_settings = session_model_config["model_settings"]
+        if isinstance(model_level_settings, dict):
+            model_settings_kwargs.update(model_level_settings)
+            logger.debug(f"Applied model-level settings: {list(model_level_settings.keys())}")
+
+    # Override with agent-level settings from spec (if present)
     if spec.model_settings:
-        # Create ModelSettings from the dictionary
-        model_settings_kwargs = spec.model_settings.copy()
-        # If tools are available and tool_choice not explicitly set, default to "auto"
-        if tools and "tool_choice" not in model_settings_kwargs:
-            model_settings_kwargs["tool_choice"] = "auto"
+        # Deep merge for nested dicts like extra_body
+        for key, value in spec.model_settings.items():
+            if key in model_settings_kwargs and isinstance(value, dict) and isinstance(model_settings_kwargs[key], dict):
+                # Merge nested dicts (e.g., extra_body)
+                model_settings_kwargs[key] = {**model_settings_kwargs[key], **value}
+            else:
+                model_settings_kwargs[key] = value
+
+    # If tools are available and tool_choice not explicitly set, default to "auto"
+    if tools and "tool_choice" not in model_settings_kwargs:
+        model_settings_kwargs["tool_choice"] = "auto"
+
+    # Create ModelSettings from merged kwargs
+    if model_settings_kwargs:
         model_settings = ModelSettings(**model_settings_kwargs)
     elif tools:
         # Default settings with tool_choice when tools are available
@@ -316,6 +341,9 @@ async def _default_build_agent(
                 "reasoning",
                 "store",
                 "include_usage",
+                "extra_body",
+                "extra_headers",
+                "extra_query",
             ]:
                 val = getattr(model_settings, field, None)
                 if val is not None:

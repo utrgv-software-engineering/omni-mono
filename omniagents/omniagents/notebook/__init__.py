@@ -58,6 +58,12 @@ from .evaluation import (
     EvalEnvironment,
     EnvironmentContext,
     NoOpEnvironment,
+    # From core (for advanced users)
+    EvalContext,
+    ToolCall,
+    build_eval_context,
+    pass_reason,
+    fail_reason,
 )
 
 __all__ = [
@@ -87,4 +93,10 @@ __all__ = [
     "EvalEnvironment",
     "EnvironmentContext",
     "NoOpEnvironment",
+    # From core (for advanced users)
+    "EvalContext",
+    "ToolCall",
+    "build_eval_context",
+    "pass_reason",
+    "fail_reason",
 ]

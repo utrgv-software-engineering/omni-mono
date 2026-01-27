@@ -145,6 +145,20 @@ class EvalContext:
         """The scenario configuration, if available in metadata."""
         return self.metadata.get("scenario", {})
 
+    @property
+    def expect(self) -> Dict[str, Any]:
+        """The expect dict from the scenario, for easy access in measures.
+
+        This is a shortcut for ctx.scenario.get('expect', {}).
+
+        Example:
+            @measure
+            def my_measure(ctx: EvalContext):
+                expected = ctx.expect.get('expected_answer')
+                # instead of: ctx.scenario.get('expect', {}).get('expected_answer')
+        """
+        return self.scenario.get("expect", {})
+
     def tool_calls(self, name: Optional[str] = None) -> List[ToolCall]:
         if name is None:
             return list(self._tool_calls)

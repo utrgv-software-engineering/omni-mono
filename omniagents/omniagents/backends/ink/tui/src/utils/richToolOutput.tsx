@@ -85,6 +85,44 @@ export const RichToolOutput = React.memo<{
           </Box>
         );
 
+      case "command":
+        return (
+          <Box flexDirection="column">
+            <Text>  └─ {summaryText}</Text>
+            {preview && (
+              <RenderCommandOutput
+                preview={preview}
+                metadata={metadata.metadata}
+                truncated={truncated}
+              />
+            )}
+          </Box>
+        );
+
+      case "file_content":
+        return (
+          <Box flexDirection="column">
+            <Text>  └─ {summaryText}</Text>
+            {preview && (
+              <RenderFileContent
+                preview={preview}
+                metadata={metadata.metadata}
+                truncated={truncated}
+              />
+            )}
+          </Box>
+        );
+
+      case "web_content":
+        return (
+          <Box flexDirection="column">
+            <Text>  └─ {summaryText}</Text>
+            {preview && (
+              <RenderWebContent preview={preview} truncated={truncated} />
+            )}
+          </Box>
+        );
+
       default:
         // Default: plain text rendering
         return (
@@ -279,7 +317,7 @@ const RenderSearchResults = React.memo<{
 
 /**
  * Render directory listing
- * Matches Bubbletea's formatDirectoryListing
+ * Tool provides: total_entries, entries_returned, file_count, dir_count, symlink_count, was_truncated
  */
 const RenderDirectoryListing = React.memo<{
   preview: string;
@@ -287,11 +325,33 @@ const RenderDirectoryListing = React.memo<{
   truncated?: boolean;
 }>(
   ({ preview, metadata, truncated }) => {
-    const lines = preview.split("\n").slice(0, 10);
+    const lines = preview.split("\n").slice(0, 15);
+    const totalEntries = metadata?.total_entries as number | undefined;
+    const wasTruncated = metadata?.was_truncated as boolean | undefined;
+    const fileCount = metadata?.file_count as number | undefined;
+    const dirCount = metadata?.dir_count as number | undefined;
 
     return (
       <Box flexDirection="column" paddingLeft={5}>
         {lines.map((line, idx) => {
+          // Entry lines with numbering (e.g., "  1. src/")
+          const entryMatch = line.match(/^\s*(\d+)\.\s+(.+)$/);
+          if (entryMatch) {
+            const entryNum = entryMatch[1];
+            const entryName = entryMatch[2];
+            const isDir = entryName.endsWith("/");
+            const isSymlink = entryName.includes(" → ");
+
+            return (
+              <Text key={idx}>
+                <Text dimColor>{entryNum.padStart(3, " ")}. </Text>
+                <Text bold={isDir} color={isSymlink ? TokyoNightTheme.info : undefined}>
+                  {entryName}
+                </Text>
+              </Text>
+            );
+          }
+
           // Directories (end with /)
           if (line.endsWith("/")) {
             return (
@@ -301,23 +361,16 @@ const RenderDirectoryListing = React.memo<{
             );
           }
 
-          // Executables
-          if (
-            line.includes(".exe") ||
-            line.includes(".sh") ||
-            line.includes(".bat") ||
-            line.startsWith("*")
-          ) {
-            return <Text key={idx}>{line}</Text>;
-          }
-
-          // Regular files
+          // Regular files/entries
           return <Text key={idx}>{line}</Text>;
         })}
-        {truncated && metadata && (
+        {(truncated || wasTruncated) && (
           <Text dimColor italic>
-            ... {metadata.file_count} files, {metadata.dir_count} directories
-            total
+            {totalEntries !== undefined
+              ? `... ${totalEntries.toLocaleString()} total entries`
+              : fileCount !== undefined && dirCount !== undefined
+              ? `... ${fileCount} files, ${dirCount} directories total`
+              : "... more entries"}
           </Text>
         )}
       </Box>
@@ -372,6 +425,156 @@ const RenderPlainPreview = React.memo<{ preview: string; truncated?: boolean }>(
         {truncated && (
           <Text dimColor italic>
             ... more output
+          </Text>
+        )}
+      </Box>
+    );
+  },
+  (prev, next) =>
+    prev.preview === next.preview && prev.truncated === next.truncated,
+);
+
+/**
+ * Render command (bash) output
+ * Shows exit code status and timing information
+ */
+const RenderCommandOutput = React.memo<{
+  preview: string;
+  metadata?: Record<string, unknown>;
+  truncated?: boolean;
+}>(
+  ({ preview, metadata, truncated }) => {
+    const lines = preview.split("\n").slice(0, 15);
+    const success = metadata?.success as boolean | undefined;
+    const exitCode = metadata?.exit_code as number | undefined;
+    const wallTimeMs = metadata?.wall_time_ms as number | undefined;
+    const wasTruncated = metadata?.was_truncated as boolean | undefined;
+    const charsTruncated = metadata?.chars_truncated as number | undefined;
+
+    return (
+      <Box flexDirection="column" paddingLeft={5}>
+        {/* Status line */}
+        {exitCode !== undefined && (
+          <Text>
+            <Text color={success ? TokyoNightTheme.info : TokyoNightTheme.error}>
+              Exit: {exitCode}
+            </Text>
+            {wallTimeMs !== undefined && (
+              <Text dimColor> ({wallTimeMs}ms)</Text>
+            )}
+            {wasTruncated && charsTruncated && (
+              <Text dimColor> [{charsTruncated.toLocaleString()} chars truncated]</Text>
+            )}
+          </Text>
+        )}
+        {/* Output lines */}
+        {lines.map((line, idx) => {
+          // Highlight stderr lines
+          if (line.startsWith("[stderr]")) {
+            return (
+              <Text key={idx} color={TokyoNightTheme.warning}>
+                {line}
+              </Text>
+            );
+          }
+          return (
+            <Text key={idx} color={TokyoNightTheme.toolResult}>
+              {line}
+            </Text>
+          );
+        })}
+        {truncated && (
+          <Text dimColor italic>
+            ... more output
+          </Text>
+        )}
+      </Box>
+    );
+  },
+  (prev, next) =>
+    prev.preview === next.preview &&
+    prev.metadata === next.metadata &&
+    prev.truncated === next.truncated,
+);
+
+/**
+ * Render file content with line numbers
+ * Tool provides: total_file_lines, lines_returned, lines_truncated_count, start_line, end_line
+ */
+const RenderFileContent = React.memo<{
+  preview: string;
+  metadata?: Record<string, unknown>;
+  truncated?: boolean;
+}>(
+  ({ preview, metadata, truncated }) => {
+    const lines = preview.split("\n").slice(0, 15);
+    const totalLines = metadata?.total_file_lines as number | undefined;
+    const linesTruncated = metadata?.lines_truncated_count as number | undefined;
+    const startLine = metadata?.start_line as number | undefined;
+
+    return (
+      <Box flexDirection="column" paddingLeft={5}>
+        {/* File info */}
+        {totalLines !== undefined && (
+          <Text dimColor>
+            {totalLines.toLocaleString()} lines total
+            {linesTruncated ? ` (${linesTruncated} lines truncated)` : ""}
+          </Text>
+        )}
+        {/* Content with line numbers preserved from L{n}: format */}
+        {lines.map((line, idx) => {
+          // Lines already have L{n}: prefix from the tool
+          const lineNumMatch = line.match(/^L(\d+):/);
+          if (lineNumMatch) {
+            const lineNum = lineNumMatch[1];
+            const content = line.slice(lineNumMatch[0].length);
+            return (
+              <Text key={idx}>
+                <Text dimColor>{lineNum.padStart(4, " ")}│</Text>
+                <Text color={TokyoNightTheme.toolResult}>{content}</Text>
+              </Text>
+            );
+          }
+          return (
+            <Text key={idx} color={TokyoNightTheme.toolResult}>
+              {line}
+            </Text>
+          );
+        })}
+        {truncated && (
+          <Text dimColor italic>
+            ... more content
+          </Text>
+        )}
+      </Box>
+    );
+  },
+  (prev, next) =>
+    prev.preview === next.preview &&
+    prev.metadata === next.metadata &&
+    prev.truncated === next.truncated,
+);
+
+/**
+ * Render web content (fetched page)
+ */
+const RenderWebContent = React.memo<{
+  preview: string;
+  truncated?: boolean;
+}>(
+  ({ preview, truncated }) => {
+    const lines = preview.split("\n").slice(0, 12);
+
+    return (
+      <Box flexDirection="column" paddingLeft={5}>
+        {lines.map((line, idx) => (
+          <Text key={idx} color={TokyoNightTheme.toolResult}>
+            {line}
+          </Text>
+        ))}
+        {truncated && (
+          <Text dimColor italic>
+            ... more content
           </Text>
         )}
       </Box>

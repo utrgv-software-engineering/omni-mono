@@ -341,20 +341,32 @@ class AgentService(RpcMethodsBase):
                     servers = build_mcp_servers(self.spec, settings)
 
                     # Enter each server into the exit stack
+                    # Handle individual server failures gracefully
                     for server in servers:
-                        if hasattr(server, "__aenter__") and hasattr(
-                            server, "__aexit__"
-                        ):
-                            # Context manager style (stdio, sse, etc.)
-                            active = await stack.enter_async_context(server)
-                        else:
-                            # Manual connect/cleanup style
-                            await server.connect()
-                            stack.push_async_callback(server.cleanup)
-                            active = server
-                        active_servers.append(active)
+                        server_name = getattr(server, "name", "unknown")
+                        try:
+                            if hasattr(server, "__aenter__") and hasattr(
+                                server, "__aexit__"
+                            ):
+                                # Context manager style (stdio, sse, etc.)
+                                active = await stack.enter_async_context(server)
+                            else:
+                                # Manual connect/cleanup style
+                                await server.connect()
+                                stack.push_async_callback(server.cleanup)
+                                active = server
+                            active_servers.append(active)
+                        except Exception as server_err:
+                            # Log at debug level to avoid TUI interference
+                            # Users can enable debug logging to see MCP connection failures
+                            from omniagents.core.utils.logging import get_logger
+                            _mcp_logger = get_logger(__name__)
+                            _mcp_logger.debug(
+                                f"MCP server '{server_name}' failed to connect: {server_err}. "
+                                "Continuing without this server."
+                            )
 
-                    # Store active servers on session
+                    # Store active servers on session (may be partial list)
                     session._mcp_servers_active = active_servers
                     active_servers_holder["servers"] = active_servers
 
@@ -367,7 +379,7 @@ class AgentService(RpcMethodsBase):
                         await shutdown_event.wait()
 
                 except Exception as e:
-                    # If initialization fails, signal error state
+                    # If initialization fails catastrophically, signal error state
                     session._mcp_servers_active = []
                     active_servers_holder["servers"] = []
                     servers_ready.set()

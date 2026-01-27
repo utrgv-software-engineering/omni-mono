@@ -14,6 +14,14 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 from agents import Agent, Runner as AgentRunner
 
+# Disable OpenAI tracing by default for notebook evaluation
+# Users can opt-in to tracing by setting it up explicitly before importing
+try:
+    from agents import set_trace_processors
+    set_trace_processors([])
+except ImportError:
+    pass
+
 from omniagents.core.evaluation.context import (
     EvalContext,
     ToolCall,
@@ -571,6 +579,63 @@ class EvalSuiteResults:
         filtered_results = [r for r in self.results if r.name in case_names]
         return EvalSuiteResults(suite=self.suite, results=filtered_results)
 
+    def breakdown(self, column: str) -> "pd.DataFrame":
+        """Get pass rate breakdown by a metadata column.
+
+        Extracts the specified column from measure extras and groups results
+        by that column, showing total count, passed count, and accuracy.
+
+        Args:
+            column: The metadata column name to group by (e.g., 'problem_type',
+                   'problem_level'). This should be a key in the measure's
+                   extra dict.
+
+        Returns:
+            DataFrame with columns: Total, Passed, Accuracy
+
+        Example:
+            results = await suite.run(agent)
+            results.breakdown('problem_type')
+            #                  Total  Passed  Accuracy
+            # problem_type
+            # Algebra             45      38    84.4%
+            # Geometry            25      18    72.0%
+            # Number Theory       30      22    73.3%
+        """
+        try:
+            import pandas as pd
+        except ImportError:
+            raise ImportError("pandas required for breakdown(). Install with: pip install pandas")
+
+        # Extract metadata from measure extras
+        rows = []
+        for r in self.results:
+            row_data = {column: None, "passed": r.passed}
+            # Look through measures for the column value
+            for m in r.measures:
+                if m.extra and column in m.extra:
+                    row_data[column] = m.extra[column]
+                    break
+            rows.append(row_data)
+
+        df = pd.DataFrame(rows)
+
+        # Filter out rows where the column is None
+        df = df[df[column].notna()]
+
+        if df.empty:
+            return pd.DataFrame(columns=["Total", "Passed", "Accuracy"])
+
+        # Group and aggregate
+        stats = df.groupby(column).agg(
+            Total=("passed", "count"),
+            Passed=("passed", "sum"),
+        )
+        stats["Accuracy"] = (stats["Passed"] / stats["Total"]).apply(lambda x: f"{x:.1%}")
+        stats["Passed"] = stats["Passed"].astype(int)
+
+        return stats
+
     def _repr_html_(self) -> str:
         """Rich HTML display."""
         s = self.summary
@@ -659,6 +724,74 @@ class EvalSuite:
         self.name = name
         self.description = description
         self.cases: List[TestCase] = []
+
+    @classmethod
+    def from_records(
+        cls,
+        records: List[Dict[str, Any]],
+        *,
+        input_fn: Callable[[Dict[str, Any]], str],
+        name: str = "Dataset Evaluation",
+        description: str = "",
+        expect_fn: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
+        tags_fn: Optional[Callable[[Dict[str, Any]], List[str]]] = None,
+        name_fn: Optional[Callable[[int, Dict[str, Any]], str]] = None,
+        measures: Optional[List[str]] = None,
+        judges: Optional[List[Union[str, "Judge"]]] = None,
+    ) -> "EvalSuite":
+        """Create an EvalSuite from a list of records (dicts).
+
+        This is a convenience method for creating test cases from datasets
+        without writing repetitive loop code.
+
+        Args:
+            records: List of dicts, each representing one test case
+            input_fn: Function that takes a record and returns the input prompt
+            name: Name for the suite
+            description: Description for the suite
+            expect_fn: Optional function that takes a record and returns expect dict
+            tags_fn: Optional function that takes a record and returns list of tags
+            name_fn: Optional function that takes (index, record) and returns case name.
+                    Defaults to "case_{index}"
+            measures: Measures to run on all cases
+            judges: Judges to run on all cases
+
+        Returns:
+            EvalSuite with one test case per record
+
+        Example:
+            # Create suite from MATH dataset
+            suite = EvalSuite.from_records(
+                math_data[:100],
+                name="MATH Evaluation",
+                input_fn=lambda p: f"Question:\\n{p['problem']}\\n\\nAnswer:",
+                expect_fn=lambda p: {
+                    'expected_answer': p['answer'],
+                    'problem_type': p['type'],
+                    'problem_level': p['level'],
+                },
+                tags_fn=lambda p: [p['type'], p['level']],
+                measures=["correct_math_answer"],
+            )
+        """
+        suite = cls(name=name, description=description)
+
+        for i, record in enumerate(records):
+            case_name = name_fn(i, record) if name_fn else f"case_{i}"
+            input_text = input_fn(record)
+            expect = expect_fn(record) if expect_fn else None
+            tags = tags_fn(record) if tags_fn else None
+
+            suite.add(
+                name=case_name,
+                input=input_text,
+                expect=expect,
+                measures=measures,
+                judges=judges,
+                tags=tags,
+            )
+
+        return suite
 
     def add(
         self,

@@ -331,6 +331,11 @@ function renderToolBody(item: ToolItem) {
       else if (dt === 'table') sections.push(tableView(meta))
       else if (dt === 'file_write') sections.push(codeBlock((meta.value as string) || out))
       else if (dt === 'command') sections.push(commandView(meta, out))
+      else if (dt === 'file_content') sections.push(fileContentView(meta, out))
+      else if (dt === 'directory_listing') sections.push(directoryListingView(meta, out))
+      else if (dt === 'search_results') sections.push(searchResultsView(meta, out))
+      else if (dt === 'web_content') sections.push(webContentView(meta, out))
+      else if (dt === 'error') sections.push(errorView(meta, out))
       else if (typeof meta.preview === 'string' && meta.preview.trim().length > 0) sections.push(preText(meta.preview))
       else sections.push(preText(out))
     } else {
@@ -421,12 +426,146 @@ function commandView(metadata: any, plainOutput: string) {
   const status: string[] = []
   if (typeof meta?.success === 'boolean') status.push(meta.success ? 'success' : 'failed')
   if (typeof meta?.exit_code === 'number') status.push('exit ' + String(meta.exit_code))
+  if (typeof meta?.wall_time_ms === 'number') status.push(meta.wall_time_ms + 'ms')
+  if (typeof meta?.was_truncated === 'boolean' && meta.was_truncated) {
+    const charsTruncated = meta?.chars_truncated
+    status.push(typeof charsTruncated === 'number' ? `${charsTruncated.toLocaleString()} chars truncated` : 'truncated')
+  }
   if (typeof meta?.has_stderr === 'boolean' && meta.has_stderr) status.push('stderr captured')
+  const statusColor = meta?.success === false ? 'text-errorRed' : 'text-textSubtle'
   return (
     <div className="space-y-2">
       <div className="w-full overflow-x-auto p-2 rounded border border-bgCardAlt bg-bgColumn font-mono text-[12px]">$ {String(command)}</div>
-      {status.length ? <div className="text-[12px] text-textSubtle">{status.join(' • ')}</div> : null}
+      {status.length ? <div className={["text-[12px]", statusColor].join(' ')}>{status.join(' • ')}</div> : null}
       {output.trim().length ? preText(output.trimEnd()) : null}
+    </div>
+  )
+}
+
+function fileContentView(metadata: any, plainOutput: string) {
+  const meta = metadata?.metadata || {}
+  const preview = typeof metadata?.preview === 'string' ? metadata.preview : plainOutput
+  const stats: string[] = []
+  // Tool provides: total_file_lines, lines_returned, lines_truncated_count, start_line, end_line
+  if (typeof meta?.total_file_lines === 'number') stats.push(`${meta.total_file_lines.toLocaleString()} lines total`)
+  if (typeof meta?.lines_truncated_count === 'number' && meta.lines_truncated_count > 0) stats.push(`${meta.lines_truncated_count} long lines truncated`)
+  if (typeof meta?.start_line === 'number' && typeof meta?.end_line === 'number') {
+    stats.push(`showing L${meta.start_line}-${meta.end_line}`)
+  }
+  return (
+    <div className="space-y-2">
+      {stats.length ? <div className="text-[12px] text-textSubtle">{stats.join(' • ')}</div> : null}
+      <div className="w-full overflow-x-auto p-2 rounded border border-bgCardAlt bg-bgColumn">
+        <pre className="whitespace-pre-wrap text-[12px] text-gray-100 font-mono"><code>{preview}</code></pre>
+      </div>
+    </div>
+  )
+}
+
+function directoryListingView(metadata: any, plainOutput: string) {
+  const meta = metadata?.metadata || {}
+  const preview = typeof metadata?.preview === 'string' ? metadata.preview : plainOutput
+  const stats: string[] = []
+  // Tool provides: total_entries, entries_returned, file_count, dir_count, symlink_count, was_truncated
+  if (typeof meta?.total_entries === 'number') stats.push(`${meta.total_entries.toLocaleString()} entries`)
+  if (typeof meta?.file_count === 'number') stats.push(`${meta.file_count} files`)
+  if (typeof meta?.dir_count === 'number') stats.push(`${meta.dir_count} dirs`)
+  if (typeof meta?.symlink_count === 'number' && meta.symlink_count > 0) stats.push(`${meta.symlink_count} symlinks`)
+  if (typeof meta?.was_truncated === 'boolean' && meta.was_truncated) stats.push('truncated')
+
+  // Parse and render entries with formatting
+  const lines = preview.split('\n')
+  const formattedLines = lines.map((line, i) => {
+    // Entry lines with numbering (e.g., "  1. src/")
+    const entryMatch = line.match(/^\s*(\d+)\.\s+(.+)$/)
+    if (entryMatch) {
+      const entryName = entryMatch[2]
+      const isDir = entryName.endsWith('/')
+      const isSymlink = entryName.includes(' → ')
+      const className = isDir ? 'font-semibold' : (isSymlink ? 'text-tweetBlue' : '')
+      return <div key={i} className={["font-mono text-[12px]", className].join(' ')}>{line}</div>
+    }
+    return <div key={i} className="font-mono text-[12px]">{line}</div>
+  })
+
+  return (
+    <div className="space-y-2">
+      {stats.length ? <div className="text-[12px] text-textSubtle">{stats.join(' • ')}</div> : null}
+      <div className="w-full overflow-x-auto p-2 rounded border border-bgCardAlt bg-bgColumn">
+        {formattedLines}
+      </div>
+    </div>
+  )
+}
+
+function searchResultsView(metadata: any, plainOutput: string) {
+  const meta = metadata?.metadata || {}
+  const preview = typeof metadata?.preview === 'string' ? metadata.preview : plainOutput
+  const stats: string[] = []
+  // Tool provides: files_with_matches, files_returned, files_searched, elapsed_ms, timed_out
+  if (typeof meta?.files_with_matches === 'number') stats.push(`${meta.files_with_matches} files with matches`)
+  if (typeof meta?.files_searched === 'number') stats.push(`${meta.files_searched.toLocaleString()} files searched`)
+  if (typeof meta?.elapsed_ms === 'number') stats.push(`${meta.elapsed_ms}ms`)
+  if (typeof meta?.timed_out === 'boolean' && meta.timed_out) stats.push('timed out')
+  if (typeof metadata?.truncated === 'boolean' && metadata.truncated) stats.push('truncated')
+
+  // Parse and highlight file paths vs content
+  const lines = preview.split('\n')
+  const formattedLines = lines.map((line, i) => {
+    // File header line (e.g., "src/utils.py: 8 matches")
+    if (line.includes(': ') && (line.includes('match') || line.match(/:\s*\d+\s*$/))) {
+      return <div key={i} className="font-mono text-[12px] font-semibold text-tweetBlue">{line}</div>
+    }
+    return <div key={i} className="font-mono text-[12px] text-gray-100">{line}</div>
+  })
+
+  return (
+    <div className="space-y-2">
+      {stats.length ? <div className="text-[12px] text-textSubtle">{stats.join(' • ')}</div> : null}
+      <div className="w-full overflow-x-auto p-2 rounded border border-bgCardAlt bg-bgColumn">
+        {formattedLines}
+      </div>
+    </div>
+  )
+}
+
+function webContentView(metadata: any, plainOutput: string) {
+  const meta = metadata?.metadata || {}
+  const preview = typeof metadata?.preview === 'string' ? metadata.preview : plainOutput
+  const stats: string[] = []
+  if (typeof meta?.title === 'string' && meta.title.trim()) stats.push(meta.title)
+  if (typeof meta?.elapsed_ms === 'number') stats.push(`${meta.elapsed_ms}ms`)
+  if (typeof meta?.link_count === 'number') stats.push(`${meta.link_count} links`)
+  if (typeof meta?.links_truncated === 'boolean' && meta.links_truncated && typeof meta?.total_links === 'number') {
+    stats.push(`(${meta.total_links} total)`)
+  }
+
+  return (
+    <div className="space-y-2">
+      {stats.length ? <div className="text-[12px] text-textSubtle">{stats.join(' • ')}</div> : null}
+      <div className="w-full overflow-x-auto p-2 rounded border border-bgCardAlt bg-bgColumn">
+        <pre className="whitespace-pre-wrap text-[12px] text-gray-100"><code>{preview}</code></pre>
+      </div>
+    </div>
+  )
+}
+
+function errorView(metadata: any, plainOutput: string) {
+  const preview = typeof metadata?.preview === 'string' ? metadata.preview : plainOutput
+  const summary = typeof metadata?.summary === 'string' ? metadata.summary : ''
+  const meta = metadata?.metadata || {}
+  const errorType = typeof meta?.error_type === 'string' ? meta.error_type : ''
+
+  return (
+    <div className="space-y-2">
+      {(summary || errorType) ? (
+        <div className="text-[12px] text-errorRed font-medium">
+          {summary || errorType}
+        </div>
+      ) : null}
+      <div className="w-full overflow-x-auto p-2 rounded border border-errorRed/30 bg-errorRed/10">
+        <pre className="whitespace-pre-wrap text-[12px] text-errorRed"><code>{preview}</code></pre>
+      </div>
     </div>
   )
 }
