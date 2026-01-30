@@ -6,8 +6,10 @@ as well as supervised fine-tuning (SFT) using session traces.
 
 Key components:
 - train_grpo: High-level API for GRPO agent training
+- train_grpo_curriculum: GRPO with curriculum learning (staged training)
 - GRPOTrainingConfig: Configuration for GRPO training
 - GRPOTrainingResult: Result with save_model() and to_ollama() methods
+- CurriculumStage: Configuration for a single curriculum stage
 - measure_to_reward: Convert @measure functions to GRPO reward functions
 - eval_suite_to_hf_dataset: Convert EvalSuite to HuggingFace Dataset
 - export_traces_for_sft: Export session traces for supervised fine-tuning
@@ -67,8 +69,15 @@ Example usage:
 from .rewards import measure_to_reward, MeasureRewardAdapter, combine_rewards
 from .dataset import eval_suite_to_hf_dataset, eval_cases_to_hf_dataset, records_to_hf_dataset
 from .grpo import GRPOTrainingConfig, GRPOTrainingResult, train_grpo, GRPOTrainer
+from .curriculum import (
+    CurriculumStage,
+    StageResult,
+    CurriculumTrainingResult,
+    train_grpo_curriculum,
+)
 from .sft import (
     export_traces_for_sft,
+    eval_results_to_sft_dataset,
     SFTTrainingConfig,
     SFTTrainingResult,
     SFTTrainer,
@@ -89,10 +98,16 @@ __all__ = [
     "GRPOTrainingResult",
     "train_grpo",
     "GRPOTrainer",
+    # Curriculum Learning
+    "CurriculumStage",
+    "StageResult",
+    "CurriculumTrainingResult",
+    "train_grpo_curriculum",
     # SFT Training
     "SFTTrainingConfig",
     "SFTTrainingResult",
     "SFTTrainer",
     "train_sft",
     "export_traces_for_sft",
+    "eval_results_to_sft_dataset",
 ]

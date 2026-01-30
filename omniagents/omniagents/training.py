@@ -2,7 +2,7 @@
 
 This module re-exports training utilities for convenient imports.
 
-Example:
+Example (basic GRPO):
     from omniagents import Agent, function_tool
     from omniagents.training import train_grpo, GRPOTrainingConfig
 
@@ -27,6 +27,36 @@ Example:
     result.save_model("./trained_model")
     result.to_ollama("my-math-agent")
 
+Example (curriculum learning):
+    from omniagents.training import (
+        CurriculumStage,
+        train_grpo_curriculum,
+        GRPOTrainingConfig,
+    )
+
+    curriculum = [
+        CurriculumStage(
+            name="basic_tool_use",
+            measures=["used_geocode", "used_get_weather"],
+            tags=["simple"],
+            epochs=1,
+        ),
+        CurriculumStage(
+            name="multi_step",
+            measures=["multiple_geocode_calls", "multiple_weather_calls"],
+            tags=["comparison"],
+            epochs=2,
+            include_previous_measures=True,
+        ),
+    ]
+
+    result = train_grpo_curriculum(
+        agent=agent,
+        suite=suite,
+        curriculum=curriculum,
+        config=GRPOTrainingConfig(num_generations=2),
+    )
+
 See omniagents.core.training for full documentation.
 """
 
@@ -44,12 +74,18 @@ from omniagents.core.training import (
     GRPOTrainingResult,
     train_grpo,
     GRPOTrainer,
+    # Curriculum Learning
+    CurriculumStage,
+    StageResult,
+    CurriculumTrainingResult,
+    train_grpo_curriculum,
     # SFT Training
     SFTTrainingConfig,
     SFTTrainingResult,
     SFTTrainer,
     train_sft,
     export_traces_for_sft,
+    eval_results_to_sft_dataset,
 )
 
 __all__ = [
@@ -66,10 +102,16 @@ __all__ = [
     "GRPOTrainingResult",
     "train_grpo",
     "GRPOTrainer",
+    # Curriculum Learning
+    "CurriculumStage",
+    "StageResult",
+    "CurriculumTrainingResult",
+    "train_grpo_curriculum",
     # SFT Training
     "SFTTrainingConfig",
     "SFTTrainingResult",
     "SFTTrainer",
     "train_sft",
     "export_traces_for_sft",
+    "eval_results_to_sft_dataset",
 ]

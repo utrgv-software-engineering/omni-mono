@@ -323,6 +323,7 @@ class GRPOTrainingResult:
         *,
         model_path: Optional[str] = None,
         llama_cpp_path: Optional[str] = None,
+        quantization: str = "q8_0",
     ) -> str:
         """Convert the trained model to Ollama format and register it.
 
@@ -336,6 +337,7 @@ class GRPOTrainingResult:
             model_name: Name to register the model as in Ollama
             model_path: Path to the model (defaults to self.model_path)
             llama_cpp_path: Path to llama.cpp repo (searches common locations if not specified)
+            quantization: GGUF quantization type (default: "q8_0"). Options: f32, f16, bf16, q8_0, etc.
 
         Returns:
             The Ollama model name that can be used with litellm/ollama_chat/
@@ -369,10 +371,11 @@ class GRPOTrainingResult:
 
         try:
             # Step 1: Convert safetensors to GGUF using llama.cpp
-            print("  Converting to GGUF format...")
+            print(f"  Converting to GGUF format (quantization: {quantization})...")
             convert_cmd = [
                 "python", str(convert_script),
                 str(path),
+                "--outtype", quantization,
                 "--outfile", str(gguf_path),
             ]
 

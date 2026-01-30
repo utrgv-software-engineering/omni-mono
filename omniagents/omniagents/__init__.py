@@ -35,6 +35,7 @@ def __getattr__(name):
     # Re-export Agent from the underlying agents library
     if name == "Agent":
         from agents import Agent
+
         return Agent
     raise AttributeError(f"module 'omniagents' has no attribute '{name}'")
 
@@ -55,9 +56,7 @@ __all__ = [
 ]
 
 
-# Defer patch import to prevent early initialization
-# This will be applied if/when the agents library is actually used
-# try:
-#     from .patches import agents_stream_resume as _stream_resume_patch  # noqa: F401
-# except Exception:
-#     pass
+try:
+    from .patches import disable_token_streaming as _no_token_stream_patch  # noqa: F401
+except Exception:
+    pass

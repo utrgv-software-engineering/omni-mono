@@ -55,7 +55,7 @@ class SFTTrainingConfig:
         warmup_ratio: Warmup ratio (default: 0.1)
 
         # Sequence parameters
-        max_seq_length: Maximum sequence length (default: 2048)
+        max_length: Maximum sequence length (default: 2048)
         packing: Whether to pack sequences for efficiency (default: False)
 
         # Output
@@ -76,7 +76,7 @@ class SFTTrainingConfig:
     warmup_ratio: float = 0.1
 
     # Sequence parameters
-    max_seq_length: int = 2048
+    max_length: int = 2048
     packing: bool = False
 
     # Output
@@ -105,7 +105,7 @@ class SFTTrainingConfig:
             learning_rate=self.learning_rate,
             max_grad_norm=self.max_grad_norm,
             warmup_ratio=self.warmup_ratio,
-            max_seq_length=self.max_seq_length,
+            max_length=self.max_length,
             packing=self.packing,
             save_strategy=self.save_strategy,
             logging_steps=self.logging_steps,
@@ -145,6 +145,256 @@ class SFTTrainingResult:
         self.trainer.save_model(path)
         self.model_path = path
         return path
+
+    def to_ollama(
+        self,
+        model_name: str,
+        *,
+        model_path: Optional[str] = None,
+        llama_cpp_path: Optional[str] = None,
+        quantization: str = "q8_0",
+    ) -> str:
+        """Convert the trained model to Ollama format and register it.
+
+        This converts the HuggingFace model (safetensors) to GGUF format using
+        llama.cpp's convert_hf_to_gguf.py script, then registers it with Ollama.
+
+        The chat template is automatically detected from the model architecture
+        and fetched from a matching Ollama base model.
+
+        Args:
+            model_name: Name to register the model as in Ollama
+            model_path: Path to the model (defaults to self.model_path)
+            llama_cpp_path: Path to llama.cpp repo (searches common locations if not specified)
+            quantization: GGUF quantization type (default: "q8_0"). Options: f32, f16, bf16, q8_0, etc.
+
+        Returns:
+            The Ollama model name that can be used with litellm/ollama_chat/
+
+        Example:
+            result = trainer.train(dataset)
+            result.save_model("./trained_model")
+            ollama_name = result.to_ollama("my-trained-agent")
+
+            # Now use with omniagents
+            agent.model = f"ollama_chat/{ollama_name}"
+        """
+        import subprocess
+        import json
+
+        path = model_path or self.model_path
+        if path is None:
+            raise ValueError(
+                "No model path available. Call save_model() first or provide model_path."
+            )
+
+        path = Path(path).resolve()
+        gguf_path = path / "model.gguf"
+        modelfile_path = path / "Modelfile"
+
+        # Find llama.cpp convert script
+        convert_script = self._find_llama_cpp_convert(llama_cpp_path)
+
+        print(f"Converting model to Ollama format: {model_name}")
+        print(f"  Source: {path}")
+        print(f"  Using: {convert_script}")
+
+        try:
+            # Step 1: Convert safetensors to GGUF using llama.cpp
+            print(f"  Converting to GGUF format (quantization: {quantization})...")
+            convert_cmd = [
+                "python", str(convert_script),
+                str(path),
+                "--outtype", quantization,
+                "--outfile", str(gguf_path),
+            ]
+
+            result = subprocess.run(
+                convert_cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            print(f"  Created GGUF: {gguf_path}")
+
+            # Step 2: Get chat template from base model
+            template, stop_tokens = self._get_ollama_template(path)
+
+            # Step 3: Create Modelfile with template
+            modelfile_content = f"FROM {gguf_path}\n\n"
+            if template:
+                modelfile_content += f'TEMPLATE """{template}"""\n\n'
+            for stop in stop_tokens:
+                modelfile_content += f'PARAMETER stop "{stop}"\n'
+
+            modelfile_path.write_text(modelfile_content)
+
+            # Step 4: Create Ollama model from GGUF
+            print("  Registering with Ollama...")
+            ollama_cmd = ["ollama", "create", model_name, "-f", str(modelfile_path)]
+
+            result = subprocess.run(
+                ollama_cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            print(f"Successfully created Ollama model: {model_name}")
+            return model_name
+
+        except subprocess.CalledProcessError as e:
+            error_msg = e.stderr or e.stdout or str(e)
+            raise RuntimeError(
+                f"Failed to create Ollama model. Error: {error_msg}"
+            ) from e
+        except FileNotFoundError as e:
+            if "ollama" in str(e):
+                raise RuntimeError(
+                    "ollama command not found. Please install Ollama: https://ollama.com/download"
+                ) from e
+            raise
+        finally:
+            # Clean up the Modelfile (keep the GGUF for potential reuse)
+            if modelfile_path.exists():
+                modelfile_path.unlink()
+
+    def _find_llama_cpp_convert(self, llama_cpp_path: Optional[str] = None) -> Path:
+        """Find the llama.cpp convert_hf_to_gguf.py script."""
+        import os
+
+        # Check explicit argument first
+        if llama_cpp_path:
+            script = Path(llama_cpp_path) / "convert_hf_to_gguf.py"
+            if script.exists():
+                return script
+            raise FileNotFoundError(f"convert_hf_to_gguf.py not found at {llama_cpp_path}")
+
+        # Check LLAMA_CPP_PATH environment variable
+        env_path = os.environ.get("LLAMA_CPP_PATH")
+        if env_path:
+            script = Path(env_path) / "convert_hf_to_gguf.py"
+            if script.exists():
+                return script
+
+        # Search common locations
+        search_paths = [
+            Path.home() / "code" / "llama.cpp",
+            Path.home() / "llama.cpp",
+            Path.home() / "projects" / "llama.cpp",
+            Path("/opt/llama.cpp"),
+            Path.cwd() / "llama.cpp",
+        ]
+
+        for base in search_paths:
+            script = base / "convert_hf_to_gguf.py"
+            if script.exists():
+                return script
+
+        raise FileNotFoundError(
+            "llama.cpp not found. Please either:\n"
+            "  1. Set LLAMA_CPP_PATH in your .env file\n"
+            "  2. Clone to ~/code/llama.cpp (auto-detected)\n"
+            "  3. Pass llama_cpp_path='/path/to/llama.cpp' to to_ollama()\n\n"
+            "To install:\n"
+            "  git clone https://github.com/ggml-org/llama.cpp.git\n"
+            "  pip install -r llama.cpp/requirements.txt"
+        )
+
+    def _get_ollama_template(self, model_path: Path) -> tuple:
+        """Get the Ollama chat template based on the model architecture.
+
+        Reads config.json to detect the model architecture, maps it to a known
+        Ollama base model, and fetches the template from that model.
+
+        Returns:
+            Tuple of (template_string, list_of_stop_tokens)
+        """
+        import subprocess
+        import json
+
+        # Map HuggingFace architectures to Ollama base models
+        ARCH_TO_OLLAMA_MODEL = {
+            "Qwen2ForCausalLM": "qwen2.5:0.5b",
+            "Qwen2_5ForCausalLM": "qwen2.5:0.5b",
+            "Qwen3ForCausalLM": "qwen3:0.6b",
+            "LlamaForCausalLM": "llama3.2:1b",
+            "MistralForCausalLM": "mistral:7b",
+            "GemmaForCausalLM": "gemma:2b",
+            "Gemma2ForCausalLM": "gemma2:2b",
+            "PhiForCausalLM": "phi3:mini",
+            "Phi3ForCausalLM": "phi3:mini",
+        }
+
+        # Default stop tokens for common architectures
+        ARCH_TO_STOP_TOKENS = {
+            "Qwen2ForCausalLM": ["<|im_start|>", "<|im_end|>"],
+            "Qwen2_5ForCausalLM": ["<|im_start|>", "<|im_end|>"],
+            "Qwen3ForCausalLM": ["<|im_start|>", "<|im_end|>"],
+            "LlamaForCausalLM": ["<|eot_id|>"],
+            "MistralForCausalLM": ["</s>"],
+            "GemmaForCausalLM": ["<end_of_turn>"],
+            "Gemma2ForCausalLM": ["<end_of_turn>"],
+            "PhiForCausalLM": ["<|end|>"],
+            "Phi3ForCausalLM": ["<|end|>"],
+        }
+
+        # Read model config to get architecture
+        config_path = model_path / "config.json"
+        if not config_path.exists():
+            print("  Warning: config.json not found, using basic template")
+            return None, []
+
+        with open(config_path) as f:
+            config = json.load(f)
+
+        architectures = config.get("architectures", [])
+        if not architectures:
+            print("  Warning: No architecture found in config.json")
+            return None, []
+
+        arch = architectures[0]
+        print(f"  Detected architecture: {arch}")
+
+        # Get corresponding Ollama model
+        ollama_model = ARCH_TO_OLLAMA_MODEL.get(arch)
+        stop_tokens = ARCH_TO_STOP_TOKENS.get(arch, [])
+
+        if not ollama_model:
+            print(f"  Warning: Unknown architecture {arch}, using basic template")
+            return None, stop_tokens
+
+        # Try to fetch template from Ollama
+        try:
+            result = subprocess.run(
+                ["ollama", "show", ollama_model, "--template"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                print(f"  Using template from: {ollama_model}")
+                return result.stdout, stop_tokens
+            else:
+                # Model not available, try to pull it
+                print(f"  Pulling base model for template: {ollama_model}")
+                subprocess.run(
+                    ["ollama", "pull", ollama_model],
+                    capture_output=True,
+                    timeout=300,
+                )
+                # Retry getting template
+                result = subprocess.run(
+                    ["ollama", "show", ollama_model, "--template"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    return result.stdout, stop_tokens
+        except Exception as e:
+            print(f"  Warning: Could not fetch template: {e}")
+
+        return None, stop_tokens
 
 
 class SFTTrainer:
@@ -264,7 +514,7 @@ class SFTTrainer:
         # Create TRL trainer
         trl_config = self.config.to_trl_config()
         print(f"SFT Configuration:")
-        print(f"  Max sequence length: {trl_config.max_seq_length}")
+        print(f"  Max sequence length: {trl_config.max_length}")
         print(f"  Learning rate: {trl_config.learning_rate}")
         print(f"  Epochs: {trl_config.num_train_epochs}")
         print(f"  Packing: {trl_config.packing}")
@@ -441,6 +691,88 @@ def train_sft(
         include_system=include_system,
         max_sessions=max_sessions,
     )
+
+
+def eval_results_to_sft_dataset(
+    results: Any,  # EvalSuiteResults - avoid import cycle
+    *,
+    filter_passed: bool = True,
+    filter_fn: Optional[Callable[[Any], bool]] = None,
+    include_system: bool = True,
+    include_tool_calls: bool = True,
+) -> "Dataset":
+    """
+    Convert evaluation results to SFT training dataset.
+
+    This is the key function for distillation - it extracts successful
+    teacher runs and converts them to a format suitable for SFT training,
+    preserving tool calls so the student can learn agentic behavior.
+
+    Args:
+        results: EvalSuiteResults from running suite.run(agent)
+        filter_passed: If True, only include results where all measures passed
+        filter_fn: Optional custom filter function that takes an EvalResult
+        include_system: Include system messages in training data
+        include_tool_calls: Include tool calls in OpenAI format (essential for
+                           teaching tool use to the student model)
+
+    Returns:
+        HuggingFace Dataset with 'messages' column in OpenAI chat format
+
+    Example:
+        # Run teacher model to generate expert traces
+        teacher_results = await suite.run(teacher_agent)
+
+        # Convert successful runs to training dataset
+        dataset = eval_results_to_sft_dataset(
+            teacher_results,
+            filter_passed=True,
+            include_tool_calls=True,
+        )
+
+        # Train student model
+        trainer = SFTTrainer("Qwen/Qwen2.5-0.5B-Instruct")
+        result = trainer.train(dataset)
+    """
+    if Dataset is None:
+        raise ImportError(
+            "The 'datasets' package is required for eval_results_to_sft_dataset. "
+            "Install it with: pip install datasets"
+        )
+
+    all_messages = []
+
+    for result in results.results:
+        # Apply filters
+        if filter_passed and not result.passed:
+            continue
+        if filter_fn and not filter_fn(result):
+            continue
+
+        # Get history from result
+        history = getattr(result, "history", None)
+        if not history:
+            continue
+
+        # Convert history to OpenAI format
+        if include_tool_calls:
+            messages = _convert_history_to_openai_format(history, include_system)
+        else:
+            messages = []
+            for msg in history:
+                role = msg.get("role")
+                if role not in ("system", "user", "assistant"):
+                    continue
+                if role == "system" and not include_system:
+                    continue
+                content = _extract_content(msg)
+                if content:
+                    messages.append({"role": role, "content": content})
+
+        if messages:
+            all_messages.append(messages)
+
+    return Dataset.from_dict({"messages": all_messages})
 
 
 def export_traces_for_sft(
@@ -643,30 +975,220 @@ def _load_judgments(project_slug: str) -> Dict[str, str]:
 def _to_conversational_format(
     histories: List[List[Dict[str, Any]]],
     include_system: bool,
+    include_tool_calls: bool = True,
 ) -> Dict[str, List[Any]]:
     """Convert histories to conversational format for SFTTrainer.
 
     Output format: {"messages": [[{"role": "user", "content": "..."}, ...], ...]}
+
+    Args:
+        histories: List of conversation histories
+        include_system: Include system messages
+        include_tool_calls: If True, convert tool calls to OpenAI format.
+                           If False, only include text messages (original behavior).
     """
-    all_messages: List[List[Dict[str, str]]] = []
+    all_messages: List[List[Dict[str, Any]]] = []
 
     for history in histories:
-        messages: List[Dict[str, str]] = []
-        for msg in history:
-            role = msg.get("role")
-            if role not in ("system", "user", "assistant"):
-                continue
-            if role == "system" and not include_system:
-                continue
+        if include_tool_calls:
+            messages = _convert_history_to_openai_format(history, include_system)
+        else:
+            # Original behavior - text only
+            messages = []
+            for msg in history:
+                role = msg.get("role")
+                if role not in ("system", "user", "assistant"):
+                    continue
+                if role == "system" and not include_system:
+                    continue
 
-            content = _extract_content(msg)
-            if content:
-                messages.append({"role": role, "content": content})
+                content = _extract_content(msg)
+                if content:
+                    messages.append({"role": role, "content": content})
 
         if messages:
             all_messages.append(messages)
 
     return {"messages": all_messages}
+
+
+def _convert_history_to_openai_format(
+    history: List[Dict[str, Any]],
+    include_system: bool = True,
+) -> List[Dict[str, Any]]:
+    """
+    Convert omniagents history format to OpenAI chat format with tool calls.
+
+    This is essential for SFT training on agentic tasks where the student
+    needs to learn tool calling behavior from the teacher.
+
+    omniagents format:
+    - {"role": "system", "content": "..."}
+    - {"role": "user", "content": "..."}
+    - {"role": "assistant", "content": "...", "type": "message"}
+    - {"type": "function_call", "name": "geocode", "arguments": {...}, "call_id": "..."}
+    - {"type": "function_call_output", "call_id": "...", "output": "..."}
+
+    OpenAI format:
+    - {"role": "system", "content": "..."}
+    - {"role": "user", "content": "..."}
+    - {"role": "assistant", "content": "...", "tool_calls": [...]}
+    - {"role": "tool", "tool_call_id": "...", "content": "..."}
+    """
+    import json as _json
+
+    messages = []
+
+    i = 0
+    while i < len(history):
+        item = history[i]
+
+        if not isinstance(item, dict):
+            i += 1
+            continue
+
+        role = item.get("role")
+        item_type = item.get("type")
+
+        # System message
+        if role == "system":
+            if include_system:
+                content = item.get("content", "")
+                if content:
+                    messages.append({"role": "system", "content": content})
+            i += 1
+            continue
+
+        # User message
+        if role == "user":
+            content = _extract_content(item)
+            if content:
+                messages.append({"role": "user", "content": content})
+            i += 1
+            continue
+
+        # Assistant message (text response)
+        if role == "assistant":
+            content = _extract_content(item)
+
+            # Look ahead for tool calls that follow this message
+            tool_calls = []
+            j = i + 1
+            while j < len(history):
+                next_item = history[j]
+                if next_item.get("type") == "function_call":
+                    call_id = next_item.get("call_id", f"call_{j}")
+                    name = next_item.get("name", "")
+                    args = next_item.get("arguments", {})
+                    if isinstance(args, str):
+                        args_str = args
+                    else:
+                        args_str = _json.dumps(args)
+
+                    tool_calls.append({
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "arguments": args_str,
+                        }
+                    })
+                    j += 1
+                elif next_item.get("type") == "function_call_output":
+                    # Tool output - we'll handle after adding assistant message
+                    break
+                elif next_item.get("role") in ("user", "assistant"):
+                    # Next turn
+                    break
+                else:
+                    j += 1
+
+            # Build assistant message
+            assistant_msg: Dict[str, Any] = {"role": "assistant"}
+            if content:
+                assistant_msg["content"] = content
+            if tool_calls:
+                assistant_msg["tool_calls"] = tool_calls
+
+            # Only add if there's content or tool calls
+            if content or tool_calls:
+                messages.append(assistant_msg)
+
+            i = j  # Skip to after tool calls
+            continue
+
+        # Function call (standalone, not preceded by assistant message)
+        if item_type == "function_call":
+            # Create an assistant message with this tool call
+            call_id = item.get("call_id", f"call_{i}")
+            name = item.get("name", "")
+            args = item.get("arguments", {})
+            if isinstance(args, str):
+                args_str = args
+            else:
+                args_str = _json.dumps(args)
+
+            # Look for more consecutive tool calls
+            tool_calls = [{
+                "id": call_id,
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "arguments": args_str,
+                }
+            }]
+
+            j = i + 1
+            while j < len(history):
+                next_item = history[j]
+                if next_item.get("type") == "function_call":
+                    nc_id = next_item.get("call_id", f"call_{j}")
+                    nc_name = next_item.get("name", "")
+                    nc_args = next_item.get("arguments", {})
+                    if isinstance(nc_args, str):
+                        nc_args_str = nc_args
+                    else:
+                        nc_args_str = _json.dumps(nc_args)
+
+                    tool_calls.append({
+                        "id": nc_id,
+                        "type": "function",
+                        "function": {
+                            "name": nc_name,
+                            "arguments": nc_args_str,
+                        }
+                    })
+                    j += 1
+                else:
+                    break
+
+            messages.append({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": tool_calls,
+            })
+            i = j
+            continue
+
+        # Function call output (tool response)
+        if item_type == "function_call_output":
+            call_id = item.get("call_id", "")
+            output = item.get("output", "")
+            if isinstance(output, dict):
+                output = _json.dumps(output)
+
+            messages.append({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": str(output),
+            })
+            i += 1
+            continue
+
+        # Skip unknown items
+        i += 1
+
+    return messages
 
 
 def _to_prompt_completion_format(
