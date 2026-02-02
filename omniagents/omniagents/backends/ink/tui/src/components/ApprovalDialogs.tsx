@@ -93,12 +93,12 @@ export const DiffApproval = React.memo<
         </Text>
       </Box>
 
-      {diffLines.length > 0 && (
-        <Box marginBottom={1} flexDirection="column">
-          <Text dimColor>Changes:</Text>
-          <Box flexDirection="column">
-            {diffLines.map((line, idx) => {
-              const lineStr = line.replace(/\n$/, "");
+        {diffLines.length > 0 && (
+          <Box marginBottom={1} flexDirection="column">
+            <Text color={TokyoNightTheme.defaultText}>Changes:</Text>
+            <Box flexDirection="column">
+              {diffLines.map((line, idx) => {
+                const lineStr = line.replace(/\n$/, "");
 
               // Skip file headers
               if (lineStr.startsWith("+++") || lineStr.startsWith("---")) {
@@ -106,13 +106,13 @@ export const DiffApproval = React.memo<
               }
 
               // Hunk header
-              if (lineStr.startsWith("@@")) {
-                return (
-                  <Text key={idx} dimColor>
-                    {lineStr}
-                  </Text>
-                );
-              }
+                if (lineStr.startsWith("@@")) {
+                  return (
+                    <Text key={idx} color={TokyoNightTheme.defaultText}>
+                      {lineStr}
+                    </Text>
+                  );
+                }
 
               // Addition
               if (lineStr.startsWith("+") && !lineStr.startsWith("+++")) {
@@ -133,15 +133,15 @@ export const DiffApproval = React.memo<
               }
 
               // Context
-              return (
-                <Text key={idx} dimColor>
-                  {lineStr}
-                </Text>
-              );
-            })}
+                return (
+                  <Text key={idx} color={TokyoNightTheme.defaultText}>
+                    {lineStr}
+                  </Text>
+                );
+              })}
+            </Box>
           </Box>
-        </Box>
-      )}
+        )}
 
       <Box flexDirection="column" marginBottom={1}>
         {DEFAULT_OPTIONS.map((option, index) => (
@@ -160,7 +160,9 @@ export const DiffApproval = React.memo<
       </Box>
 
       <Box>
-        <Text dimColor>Use ↑↓ to navigate, Enter to select, ESC to deny</Text>
+        <Text color={TokyoNightTheme.defaultText}>
+          Use ↑↓ to navigate, Enter to select, ESC to deny
+        </Text>
       </Box>
     </Box>
   );
@@ -215,16 +217,18 @@ export const FileWriteApproval = React.memo<
 
       {content && (
         <Box marginBottom={1} flexDirection="column">
-          <Text dimColor>Content:</Text>
+          <Text color={TokyoNightTheme.defaultText}>Content:</Text>
           <Box flexDirection="column">
             {content
               .split("\n")
               .slice(0, 15)
               .map((line, idx) => (
-                <Text key={idx}>{line}</Text>
+                <Text key={idx} color={TokyoNightTheme.toolResult}>
+                  {line}
+                </Text>
               ))}
             {content.split("\n").length > 15 && (
-              <Text dimColor italic>
+              <Text color={TokyoNightTheme.defaultText} italic>
                 ... {content.split("\n").length - 15} more lines
               </Text>
             )}
@@ -249,7 +253,9 @@ export const FileWriteApproval = React.memo<
       </Box>
 
       <Box>
-        <Text dimColor>Use ↑↓ to navigate, Enter to select, ESC to deny</Text>
+        <Text color={TokyoNightTheme.defaultText}>
+          Use ↑↓ to navigate, Enter to select, ESC to deny
+        </Text>
       </Box>
     </Box>
   );
@@ -318,7 +324,7 @@ export const CommandApproval = React.memo<
 
       {command && (
         <Box marginBottom={1} flexDirection="column">
-          <Text dimColor>Command:</Text>
+          <Text color={TokyoNightTheme.defaultText}>Command:</Text>
           <Text color={TokyoNightTheme.info}>$ {command}</Text>
         </Box>
       )}
@@ -340,7 +346,9 @@ export const CommandApproval = React.memo<
       </Box>
 
       <Box>
-        <Text dimColor>Use ↑↓ to navigate, Enter to select, ESC to deny</Text>
+        <Text color={TokyoNightTheme.defaultText}>
+          Use ↑↓ to navigate, Enter to select, ESC to deny
+        </Text>
       </Box>
     </Box>
   );

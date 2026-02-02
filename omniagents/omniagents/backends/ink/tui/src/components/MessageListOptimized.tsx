@@ -128,7 +128,7 @@ const AssistantMessage = React.memo<{ message: Message }>(
               )}
             </Box>
             <Box flexGrow={1}>
-              <Text>{line}</Text>
+              <Text color={TokyoNightTheme.assistantMessage}>{line}</Text>
             </Box>
           </Box>
         ))}
@@ -169,7 +169,7 @@ const ToolCallMessage = React.memo<{ message: Message }>(
               <Text bold color={TokyoNightTheme.toolName}>
                 {tool}
               </Text>
-              <Text dimColor> ({argsPreview})</Text>
+              <Text color={TokyoNightTheme.defaultText}> ({argsPreview})</Text>
             </Box>
           </Box>
           <Box>
@@ -191,7 +191,7 @@ const ToolCallMessage = React.memo<{ message: Message }>(
             <Text bold color={TokyoNightTheme.toolName}>
               {tool}
             </Text>
-            <Text dimColor> ({argsPreview})</Text>
+            <Text color={TokyoNightTheme.defaultText}> ({argsPreview})</Text>
           </Box>
         </Box>
         {output && (

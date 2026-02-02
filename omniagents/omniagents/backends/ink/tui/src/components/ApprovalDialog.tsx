@@ -133,8 +133,8 @@ export const ApprovalDialog = React.memo<ApprovalDialogProps>(
         </Box>
 
         <Box marginBottom={1} flexDirection="column">
-          <Text dimColor>Arguments:</Text>
-          <Text>
+          <Text color={TokyoNightTheme.defaultText}>Arguments:</Text>
+          <Text color={TokyoNightTheme.toolResult}>
             {argsDisplay.length > 200
               ? argsDisplay.slice(0, 200) + "..."
               : argsDisplay}
@@ -158,7 +158,9 @@ export const ApprovalDialog = React.memo<ApprovalDialogProps>(
         </Box>
 
         <Box>
-          <Text dimColor>Use ↑↓ to navigate, Enter to select, ESC to deny</Text>
+          <Text color={TokyoNightTheme.defaultText}>
+            Use ↑↓ to navigate, Enter to select, ESC to deny
+          </Text>
         </Box>
       </Box>
     );

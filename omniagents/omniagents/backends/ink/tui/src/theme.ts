@@ -33,5 +33,6 @@ export const TokyoNightTheme = {
 
   // Help text
   help: "#565f89", // Muted gray-blue for help
+  defaultText: "#565f89",
   inputText: "#c0caf5", // Default text color
 } as const;

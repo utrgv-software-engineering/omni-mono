@@ -318,6 +318,11 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
 
     // TOKEN USAGE - batched
     const handleTokenUsage = (params: {
+      delta: {
+        input_tokens: number;
+        output_tokens: number;
+        total_tokens: number;
+      };
       totals: {
         input_tokens: number;
         output_tokens: number;
@@ -329,9 +334,9 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     }) => {
       batcher.add(() => {
         actions.setUsage({
-          inputTokens: params.totals.input_tokens,
-          outputTokens: params.totals.output_tokens,
-          totalTokens: params.totals.total_tokens,
+          inputTokens: params.delta.input_tokens,
+          outputTokens: params.delta.output_tokens,
+          totalTokens: params.delta.total_tokens,
           model: params.model,
           maxInputTokens: params.max_input_tokens,
           maxOutputTokens: params.max_output_tokens,

@@ -5,6 +5,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { Logo } from "./Logo.js";
+import { TokyoNightTheme } from "../theme.js";
 
 export interface HeaderProps {
   agentName: string;
@@ -26,7 +27,7 @@ export const Header = React.memo<HeaderProps>(
         {/* Welcome message */}
         {welcomeText && (
           <Box paddingY={1} marginTop={1}>
-            <Text>{welcomeText}</Text>
+            <Text color={TokyoNightTheme.defaultText}>{welcomeText}</Text>
           </Box>
         )}
       </Box>

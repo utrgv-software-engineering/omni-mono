@@ -37,6 +37,7 @@ import { SessionList } from "./SessionList.js";
 import { Scrollable } from "./Scrollable.js";
 import { MouseProvider } from "../contexts/MouseContext.js";
 import { ScrollProvider } from "../contexts/ScrollProvider.js";
+import { TokyoNightTheme } from "../theme.js";
 
 /**
  * Wrapper to keep ApprovalDialog mounted to prevent flicker
@@ -644,7 +645,9 @@ export const App: React.FC<AppProps> = ({
   if (uiState === "connecting") {
     return (
       <Box flexDirection="column">
-        <Text>Connecting to {agentName}...</Text>
+        <Text color={TokyoNightTheme.defaultText}>
+          Connecting to {agentName}...
+        </Text>
       </Box>
     );
   }
@@ -652,8 +655,10 @@ export const App: React.FC<AppProps> = ({
   if (uiState === "error" || (error && !connected)) {
     return (
       <Box flexDirection="column">
-        <Text color="red">Failed to connect to server:</Text>
-        <Text>{error?.message || "Unknown error"}</Text>
+        <Text color={TokyoNightTheme.error}>Failed to connect to server:</Text>
+        <Text color={TokyoNightTheme.defaultText}>
+          {error?.message || "Unknown error"}
+        </Text>
       </Box>
     );
   }
@@ -677,7 +682,7 @@ export const App: React.FC<AppProps> = ({
         </Box>
         {debug && (
           <Box paddingX={1} marginTop={1}>
-            <Text dimColor>
+            <Text color={TokyoNightTheme.defaultText}>
               DEBUG: State={uiState}, Selected={selectedSessionIndex}/
               {availableSessions.length}
             </Text>

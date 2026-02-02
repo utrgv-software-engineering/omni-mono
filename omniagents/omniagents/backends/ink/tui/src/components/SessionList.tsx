@@ -108,7 +108,9 @@ export const SessionList = React.memo<SessionListProps>(
     if (sessions.length === 0) {
       return (
         <Box flexDirection="column" paddingX={1}>
-          <Text>No sessions found. Press Tab to create a new session.</Text>
+          <Text color={TokyoNightTheme.defaultText}>
+            No sessions found. Press Tab to create a new session.
+          </Text>
         </Box>
       );
     }
