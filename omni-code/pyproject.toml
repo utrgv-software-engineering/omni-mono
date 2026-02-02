@@ -12,6 +12,7 @@ dependencies = [
     "requests>=2.31.0",
     "beautifulsoup4>=4.12.0",
     "pygit2>=1.13.0",
+    "litellm>=1.0.0",  # For non-OpenAI model support
 ]
 
 [tool.pytest.ini_options]
@@ -28,7 +29,7 @@ dev = [
 
 [project.scripts]
 omni = "main:cli_main"
-omni-setup = "omni_code.setup_cli:main"
+omni-setup = "omni_code.model_cli:setup_entrypoint"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

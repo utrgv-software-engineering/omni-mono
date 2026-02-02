@@ -11,7 +11,7 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
 
-from omniagents import context_factory
+from omniagents import context_factory, model_config_resolver
 
 
 def collect_agents_md(start_dir: str) -> List[Tuple[str, str]]:
@@ -84,3 +84,28 @@ def build_coding_context(variables: Dict[str, Any] = None) -> Dict[str, Any]:
     context.update(variables)
 
     return context
+
+
+@model_config_resolver
+def resolve_default_model() -> Dict[str, Any]:
+    """
+    Resolve the default model configuration.
+
+    This provides the model's max_input_tokens and max_output_tokens
+    to enable context remaining calculation in the UI.
+
+    Returns:
+        Dict with model configuration including name, model, provider,
+        max_input_tokens, and max_output_tokens.
+    """
+    try:
+        from omni_code.models import get_default_model_config, get_default_model_name
+
+        config = get_default_model_config()
+        if config:
+            name = get_default_model_name()
+            config["name"] = name
+            return config
+    except Exception:
+        pass
+    return None

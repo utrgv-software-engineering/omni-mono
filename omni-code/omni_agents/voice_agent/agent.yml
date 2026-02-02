@@ -41,5 +41,15 @@ safe_agent_options:
     - scholar_search
     - convert_to_markdown
 
+server_functions:
+  - help
+  - good
+  - bad
+  - note
+  - notes
+  - models
+  - model
+  - reasoning
+
 context: build_voice_context
 variables: {}

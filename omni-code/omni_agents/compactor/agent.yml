@@ -1,0 +1,14 @@
+name: compactor
+label: Context Compactor
+description: "Summarizes the current conversation context for continuation"
+instructions_file: instructions.md
+
+tools: []
+
+model_settings:
+  tool_choice: none
+
+max_turns: 1
+
+variables: {}
+

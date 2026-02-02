@@ -1,5 +1,6 @@
 name: omni_code
 allow_user_mcp_servers: true
+allow_user_models: true
 paths:
   agents: omni_agents
   tools: tools

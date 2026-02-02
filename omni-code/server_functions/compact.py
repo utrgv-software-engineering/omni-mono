@@ -1,0 +1,426 @@
+from __future__ import annotations
+
+import asyncio
+import copy
+import json
+from pathlib import Path
+from typing import Any
+
+from agents import Runner
+from omniagents import server_function
+from omniagents.core.agents.builder import _default_build_agent
+from omniagents.core.config.loader import load_agent_spec_from_yaml
+from omniagents.core.session.manager import Session
+from openai import APIStatusError, BadRequestError
+
+
+def _last_user_message(history: list[dict]) -> str | None:
+    for item in reversed(history or []):
+        if item.get("role") == "user" and isinstance(item.get("content"), str):
+            content = item.get("content")
+            if content:
+                return content
+    return None
+
+
+def _is_context_length_exceeded(err: Exception) -> bool:
+    if not isinstance(err, (BadRequestError, APIStatusError)):
+        return False
+    body = getattr(err, "body", None)
+    if isinstance(body, dict):
+        error_obj = body.get("error")
+        if isinstance(error_obj, dict):
+            return error_obj.get("code") == "context_length_exceeded"
+    return False
+
+
+def _summarization_window(history: list[dict]) -> list[dict]:
+    if not history:
+        return []
+    last_summary_idx: int | None = None
+    for idx in range(len(history) - 1, -1, -1):
+        item = history[idx]
+        if (
+            isinstance(item, dict)
+            and item.get("role") == "assistant"
+            and isinstance(item.get("omniagents"), dict)
+            and item["omniagents"].get("kind") == "context_summary"
+        ):
+            last_summary_idx = idx
+            break
+    start = (last_summary_idx + 1) if last_summary_idx is not None else 0
+    return list(history[start:])
+
+
+def _extract_transcript(history: list[dict]) -> str:
+    parts: list[str] = []
+    for item in history or []:
+        if not isinstance(item, dict):
+            continue
+        parts.append(json.dumps(item, ensure_ascii=False, default=str))
+    return "\n".join(parts)
+
+
+def _extract_user_messages(history: list[dict]) -> list[str]:
+    messages: list[str] = []
+    for item in history or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("role") != "user":
+            continue
+        content = item.get("content")
+        if isinstance(content, str) and content:
+            messages.append(content)
+    return messages
+
+
+def _format_user_messages_block(messages: list[str]) -> str:
+    if not messages:
+        return "(none)"
+
+    parts: list[str] = []
+    last_idx = len(messages) - 1
+    for idx, msg in enumerate(messages):
+        label = f"#{idx + 1}"
+        if idx == last_idx:
+            label += " (LAST)"
+        parts.append(f"- {label}:\n```\n{msg}\n```")
+    return "\n".join(parts)
+
+
+def _extract_tool_events(history: list[dict]) -> list[dict]:
+    events: list[dict] = []
+    for item in history or []:
+        if not isinstance(item, dict):
+            continue
+
+        role = item.get("role")
+        if role in {"tool", "function"}:
+            events.append(item)
+            continue
+
+        tool_calls = item.get("tool_calls")
+        if isinstance(tool_calls, list) and tool_calls:
+            events.append({"role": role, "tool_calls": tool_calls})
+            continue
+
+        omni = item.get("omniagents")
+        if isinstance(omni, dict) and any(
+            key in omni for key in ("tool_name", "tool_call", "tool_result")
+        ):
+            events.append(item)
+
+    return events
+
+
+def _format_tool_events_block(events: list[dict], *, max_items: int = 5) -> str:
+    if not events:
+        return "(none)"
+
+    tail = events[-max_items:]
+    parts: list[str] = []
+    for idx, ev in enumerate(tail, start=max(1, len(events) - len(tail) + 1)):
+        safe_ev = _sanitize_tool_event(ev)
+        parts.append(
+            f"- #{idx}:\n```json\n{json.dumps(safe_ev, ensure_ascii=False, default=str)}\n```"
+        )
+    return "\n".join(parts)
+
+
+def _trim_text_head(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + f"\n...[TRUNCATED {len(text) - max_chars} chars]..."
+
+
+def _trim_text_tail(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return f"...[TRUNCATED {len(text) - max_chars} chars]...\n" + text[-max_chars:]
+
+
+def _extract_tool_name_from_event(event: dict) -> str | None:
+    name = event.get("name")
+    if isinstance(name, str) and name:
+        return name
+
+    tool_name = event.get("tool_name")
+    if isinstance(tool_name, str) and tool_name:
+        return tool_name
+
+    tool_calls = event.get("tool_calls")
+    if isinstance(tool_calls, list) and tool_calls:
+        first = tool_calls[0]
+        if isinstance(first, dict):
+            fn = first.get("function")
+            if isinstance(fn, dict):
+                fn_name = fn.get("name")
+                if isinstance(fn_name, str) and fn_name:
+                    return fn_name
+
+    omni = event.get("omniagents")
+    if isinstance(omni, dict):
+        omni_name = omni.get("tool_name") or omni.get("name")
+        if isinstance(omni_name, str) and omni_name:
+            return omni_name
+
+    return None
+
+
+def _trim_large_strings(value: Any, *, max_chars: int) -> Any:
+    if isinstance(value, str):
+        return _trim_text_head(value, max_chars)
+    if isinstance(value, list):
+        return [_trim_large_strings(v, max_chars=max_chars) for v in value]
+    if isinstance(value, dict):
+        return {k: _trim_large_strings(v, max_chars=max_chars) for k, v in value.items()}
+    return value
+
+
+def _trim_exec_bash_fields(value: Any, *, stdout_chars: int, stderr_chars: int) -> Any:
+    if isinstance(value, list):
+        return [_trim_exec_bash_fields(v, stdout_chars=stdout_chars, stderr_chars=stderr_chars) for v in value]
+    if isinstance(value, dict):
+        out: dict = {}
+        for k, v in value.items():
+            if isinstance(v, str) and k.lower() in {"stdout", "out"}:
+                out[k] = _trim_text_tail(v, stdout_chars)
+                continue
+            if isinstance(v, str) and k.lower() in {"stderr", "err"}:
+                out[k] = _trim_text_tail(v, stderr_chars)
+                continue
+            out[k] = _trim_exec_bash_fields(v, stdout_chars=stdout_chars, stderr_chars=stderr_chars)
+        return out
+    return value
+
+
+def _sanitize_tool_event(event: dict) -> dict:
+    tool_name = _extract_tool_name_from_event(event)
+
+    try:
+        event_copy = copy.deepcopy(event)
+    except Exception:
+        event_copy = {"event": str(event)}
+
+    if tool_name in {"read_file", "convert_to_markdown"}:
+        safe = event_copy
+    elif tool_name == "execute_bash":
+        safe = _trim_exec_bash_fields(event_copy, stdout_chars=2000, stderr_chars=4000)
+        safe = _trim_large_strings(safe, max_chars=2000)
+    else:
+        safe = _trim_large_strings(event_copy, max_chars=2000)
+
+    try:
+        rendered = json.dumps(safe, ensure_ascii=False, default=str)
+    except Exception:
+        safe = {"tool_name": tool_name or "UNKNOWN", "event": str(event_copy)}
+        rendered = json.dumps(safe, ensure_ascii=False, default=str)
+
+    max_event_chars = 8000
+    if len(rendered) <= max_event_chars:
+        return safe
+
+    minimal = {
+        "tool_name": tool_name or "UNKNOWN",
+        "truncated": True,
+        "original_chars": len(rendered),
+    }
+    if isinstance(safe, dict):
+        for key in ("command", "cmd", "args", "exit_code", "returncode"):
+            val = safe.get(key)
+            if val is not None:
+                minimal[key] = val
+    minimal["snippet_tail"] = _trim_text_tail(rendered, max_event_chars)
+    return minimal
+
+
+def _extract_file_paths_from_tool_event(event: dict) -> list[str]:
+    tool_name = _extract_tool_name_from_event(event) or ""
+    paths: list[str] = []
+
+    def add_path(value: Any) -> None:
+        if isinstance(value, str) and value:
+            paths.append(value)
+
+    if tool_name in {"read_file", "apply_patch", "write_file"}:
+        for k in ("file_path", "path"):
+            add_path(event.get(k))
+        tool_calls = event.get("tool_calls")
+        if isinstance(tool_calls, list):
+            for call in tool_calls:
+                if not isinstance(call, dict):
+                    continue
+                fn = call.get("function")
+                if not isinstance(fn, dict):
+                    continue
+                args = fn.get("arguments")
+                if isinstance(args, dict):
+                    for k in ("file_path", "path"):
+                        add_path(args.get(k))
+                elif isinstance(args, str):
+                    try:
+                        args_obj = json.loads(args)
+                        if isinstance(args_obj, dict):
+                            for k in ("file_path", "path"):
+                                add_path(args_obj.get(k))
+                    except Exception:
+                        pass
+
+    if tool_name == "list_directory":
+        add_path(event.get("path"))
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for p in paths:
+        if p in seen:
+            continue
+        seen.add(p)
+        out.append(p)
+    return out
+
+
+def _resume_protocol_block(*, history: list[dict], tool_events: list[dict]) -> str:
+    user_messages = _extract_user_messages(history)
+    has_user_intent = bool(user_messages and user_messages[-1].strip())
+    has_tool_activity = bool(tool_events)
+    active = has_user_intent and (has_tool_activity or len(user_messages) > 1)
+
+    touched: list[str] = []
+    for ev in tool_events[-5:]:
+        touched.extend(_extract_file_paths_from_tool_event(ev))
+
+    touched_unique: list[str] = []
+    seen: set[str] = set()
+    for p in touched:
+        if p in seen:
+            continue
+        seen.add(p)
+        touched_unique.append(p)
+
+    if not active:
+        return (
+            "Resume Protocol:\n"
+            "- No active task detected (manual compaction or idle).\n"
+            "- Ask the user what to do next.\n"
+        )
+
+    if touched_unique:
+        files_block = "\n".join(f"- {p}" for p in touched_unique)
+    else:
+        files_block = "- UNKNOWN (no file paths detected; re-scan or ask user)"
+
+    return (
+        "Resume Protocol (do this first):\n"
+        "1) Re-read the relevant files to confirm current state:\n"
+        f"{files_block}\n"
+        "2) Review the last 5 tool events and reproduce any failing command if applicable.\n"
+        "3) Continue with the pending tasks / next steps from the summary.\n"
+    )
+
+
+def _extract_response_text(resp: Any) -> str:
+    out = []
+    for item in getattr(resp, "output", None) or []:
+        if getattr(item, "type", None) != "message":
+            continue
+        if getattr(item, "role", None) != "assistant":
+            continue
+        for c in getattr(item, "content", None) or []:
+            if getattr(c, "type", None) in {"output_text", "text"}:
+                text = getattr(c, "text", None)
+                if isinstance(text, str) and text:
+                    out.append(text)
+    return "".join(out).strip()
+
+
+async def _run_compaction_agent(*, model: str | None, prompt: str) -> str:
+    agent_yaml = (
+        Path(__file__).resolve().parent.parent
+        / "omni_agents"
+        / "compactor"
+        / "agent.yml"
+    )
+    spec = load_agent_spec_from_yaml(str(agent_yaml))
+    if model:
+        spec.model_name = model
+    agent = await _default_build_agent(settings={}, mcp_servers=None, spec=spec)
+    result = await Runner.run(agent, prompt, max_turns=1)
+    return result.final_output_as(str)
+
+
+@server_function(
+    description="Compact context by appending a summary marker",
+    strict=True,
+    name_override="compact",
+)
+async def compact(service: Any, session: Session) -> dict:
+    await service.set_client_status(
+        "Compacting...",
+        session=session,
+        run_id=getattr(session, "active_run_id", None),
+        show_spinner=True,
+    )
+    try:
+        full_history = list(getattr(session, "history", []) or [])
+        window = _summarization_window(full_history)
+
+        model_name = getattr(session, "active_model", None) or getattr(
+            service.spec, "model_name", None
+        )
+
+        while True:
+            transcript = _extract_transcript(window)
+            user_messages = _extract_user_messages(full_history)
+            user_messages_block = _format_user_messages_block(user_messages)
+            prompt = (
+                "All user messages (verbatim; last is highlighted):\n"
+                f"{user_messages_block}\n\n"
+                "Conversation transcript since last checkpoint (raw items; includes tool calls/outputs):\n"
+                f"{transcript}"
+            )
+
+            try:
+                summary_body = await _run_compaction_agent(
+                    model=model_name,
+                    prompt=prompt,
+                )
+                break
+            except Exception as e:
+                if _is_context_length_exceeded(e) and window:
+                    window.pop(0)
+                    continue
+                raise
+
+        summary_body = summary_body or "(no summary produced)"
+        user_messages = _extract_user_messages(full_history)
+        user_messages_block = _format_user_messages_block(user_messages)
+        tool_events = _extract_tool_events(full_history)
+        tool_events_block = _format_tool_events_block(tool_events, max_items=5)
+        resume_protocol = _resume_protocol_block(history=full_history, tool_events=tool_events)
+        summary_text = (
+            "Another language model started to solve this problem and produced a summary of its thinking process. "
+            "This message is a checkpoint to help you continue the work without duplicating effort. "
+            f"{resume_protocol}\n"
+            "Here are all user messages (verbatim; last is highlighted):\n"
+            f"{user_messages_block}\n\n"
+            "Here are the last 5 tool call/result events (verbatim):\n"
+            f"{tool_events_block}\n\n"
+            "Here is the summary produced by the other language model:\n\n"
+            f"{summary_body}"
+        )
+
+        summary_item = {
+            "role": "assistant",
+            "content": summary_text,
+            "omniagents": {"kind": "context_summary", "version": 1},
+        }
+        session.append_message(summary_item)
+    finally:
+        await service.set_client_status(
+            "",
+            session=session,
+            run_id=getattr(session, "active_run_id", None),
+            show_spinner=False,
+        )
+
+    return "Context compacted."

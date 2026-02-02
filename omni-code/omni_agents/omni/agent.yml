@@ -8,8 +8,6 @@ welcome_text: |
 tools:
   - dispatch
   - list_directory
-  - glob_files
-  - grep_files
   - read_file
   - apply_patch
   - write_file
@@ -24,6 +22,9 @@ tools:
 model_settings:
   reasoning:
     effort: low
+  parallel_tool_calls: false
+
+max_turns: 10000
 
 use_safe_agent: true
 safe_agent_options:
@@ -41,5 +42,17 @@ safe_agent_options:
     - scholar_search
     - convert_to_markdown
 
+server_functions:
+  - help
+  - good
+  - bad
+  - note
+  - notes
+  - compact
+  - models
+  - model
+  - reasoning
+
 context: build_coding_context
+model_config_resolver: resolve_default_model
 variables: {}
