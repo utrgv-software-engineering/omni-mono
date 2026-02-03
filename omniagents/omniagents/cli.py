@@ -34,6 +34,7 @@ CODESPACES_ENV = any(
     )
 )
 DEFAULT_STUDIO_DEV_HOST = "0.0.0.0" if CODESPACES_ENV else "127.0.0.1"
+DEFAULT_BIND_HOST = "0.0.0.0" if CODESPACES_ENV else "127.0.0.1"
 
 
 def _merge_prompt_words(words: Optional[List[str]] | None) -> Optional[str]:
@@ -237,15 +238,15 @@ def main():
     # Server-specific arguments
     run_parser.add_argument(
         "--host",
-        default="0.0.0.0",
-        help="Host interface to bind (server mode only, default 0.0.0.0)",
+        default=None,
+        help="Host interface to bind (server mode only; default 127.0.0.1)",
     )
     run_parser.add_argument(
         "--port",
         "-p",
         type=int,
-        default=8000,
-        help="Port to listen on (server mode only, default 8000)",
+        default=None,
+        help="Port to listen on (server mode only; default 8000)",
     )
     run_parser.add_argument(
         "--auth-token",
@@ -676,7 +677,9 @@ def main():
         "serve", help="Run the OmniAgents Studio web UI"
     )
     studio_serve.add_argument(
-        "--host", default="0.0.0.0", help="Host interface to bind (default: 0.0.0.0)"
+        "--host",
+        default=None,
+        help="Host interface to bind (default: 127.0.0.1)",
     )
     studio_serve.add_argument(
         "--port", type=int, default=7860, help="Port to bind (default: 7860)"
@@ -789,15 +792,15 @@ def main():
     )
     agent_run.add_argument(
         "--host",
-        default="0.0.0.0",
-        help="Host interface to bind (server mode only, default 0.0.0.0)",
+        default=None,
+        help="Host interface to bind (server mode only; default 127.0.0.1)",
     )
     agent_run.add_argument(
         "--port",
         "-p",
         type=int,
-        default=8000,
-        help="Port to listen on (server mode only, default 8000)",
+        default=None,
+        help="Port to listen on (server mode only; default 8000)",
     )
     agent_run.add_argument(
         "--auth-token",
@@ -1257,10 +1260,12 @@ def main():
 
         # Add server-specific kwargs if in server mode
         if args.mode == "server":
+            host_value = args.host or DEFAULT_BIND_HOST
+            port_value = args.port or 8000
             kwargs.update(
                 {
-                    "host": args.host,
-                    "port": args.port,
+                    "host": host_value,
+                    "port": port_value,
                     "auth_token": args.auth_token,
                     "reload": args.reload,
                 }
@@ -1336,11 +1341,12 @@ def main():
 
         if args.studio_cmd == "serve":
             try:
+                host_value = args.host or DEFAULT_BIND_HOST
                 dev_host_value = getattr(args, "dev_host", None)
                 if dev_host_value is None:
-                    dev_host_value = args.host or DEFAULT_STUDIO_DEV_HOST
+                    dev_host_value = host_value
                 studio_mod.serve(
-                    host=args.host,
+                    host=host_value,
                     port=args.port,
                     db_path=getattr(args, "db_path", None),
                     project=inferred_project,
@@ -1456,10 +1462,12 @@ def main():
             if initial_prompt:
                 kwargs["initial_prompt"] = initial_prompt
             if args.mode == "server":
+                host_value = args.host or DEFAULT_BIND_HOST
+                port_value = args.port or 8000
                 kwargs.update(
                     {
-                        "host": args.host,
-                        "port": args.port,
+                        "host": host_value,
+                        "port": port_value,
                         "auth_token": args.auth_token,
                         "reload": args.reload,
                     }

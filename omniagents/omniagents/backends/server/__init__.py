@@ -14,7 +14,7 @@ class ServerBackend:
             spec: The agent specification
             **kwargs: Additional backend-specific arguments:
                 - config_path: Path to YAML config file
-                - host: Host to bind to (default: 0.0.0.0)
+                - host: Host to bind to (default: 127.0.0.1)
                 - port: Port to listen on (default: 8000)
                 - auth_token: Optional bearer token for authentication
                 - reload: Enable auto-reload on code changes
@@ -34,7 +34,7 @@ class ServerBackend:
 
         # Extract server-specific kwargs
         config_path = kwargs.get("config_path")
-        host = kwargs.get("host", "0.0.0.0")
+        host = kwargs.get("host", "127.0.0.1")
         port = kwargs.get("port", 8000)
         auth_token = kwargs.get("auth_token")
         reload = kwargs.get("reload", False)

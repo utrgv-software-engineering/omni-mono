@@ -50,9 +50,8 @@ class WebBackend:
             host = host_arg
         else:
             host = "0.0.0.0" if codespaces_env else "127.0.0.1"
-        port_override = port_arg if port_arg and port_arg != 8000 else None
-        if port_override:
-            port = port_override
+        if port_arg is not None:
+            port = int(port_arg)
         else:
             port = self._find_available_port(8080)
 
@@ -169,13 +168,15 @@ class WebBackend:
         server_thread = Thread(target=run_server, daemon=True)
         server_thread.start()
 
+        health_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+
         max_retries = 10
         for i in range(max_retries):
             time.sleep(0.5)
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     s.settimeout(1)
-                    s.connect(("127.0.0.1", port))
+                    s.connect((health_host, port))
                     s.close()
                     break
             except (socket.timeout, ConnectionRefusedError):
@@ -214,7 +215,9 @@ class WebBackend:
         if open_url is None:
             # Use 'localhost' instead of '127.0.0.1' for browser URL
             # Chrome requires this for secure context (getUserMedia, etc.)
-            url_host = "localhost" if host == "127.0.0.1" else host
+            url_host = (
+                "localhost" if host in {"127.0.0.1", "0.0.0.0", "::", "::1"} else host
+            )
             scheme = "https" if use_ssl else "http"
             base = f"{scheme}://{url_host}:{port}/"
             if qp:

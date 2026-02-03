@@ -17,6 +17,7 @@ from omniagents.core.debug import Debug
 if TYPE_CHECKING:
     from IPython.display import IFrame
 
+
 class Runner:
     """Run agents in different modes."""
 
@@ -109,15 +110,23 @@ class Runner:
                         params = params.dict(exclude_none=True)
                     elif not isinstance(params, dict):
                         # Fallback: try to convert to dict
-                        params = dict(params) if hasattr(params, "__iter__") else vars(params)
+                        params = (
+                            dict(params)
+                            if hasattr(params, "__iter__")
+                            else vars(params)
+                        )
                     mcp_server_configs.append(
                         MCPServerConfig(
-                            name=getattr(server, "name", f"mcp-{len(mcp_server_configs)}"),
+                            name=getattr(
+                                server, "name", f"mcp-{len(mcp_server_configs)}"
+                            ),
                             type=server_type,
                             params=params,
                             options={
                                 "name": getattr(server, "name", None),
-                                "cache_tools_list": getattr(server, "cache_tools_list", False),
+                                "cache_tools_list": getattr(
+                                    server, "cache_tools_list", False
+                                ),
                             },
                         )
                     )
@@ -324,14 +333,14 @@ class Runner:
         server_group = parser.add_argument_group("server mode options")
         server_group.add_argument(
             "--host",
-            default="0.0.0.0",
-            help="Host interface to bind (default: 0.0.0.0)",
+            default=None,
+            help="Host interface to bind (default: 127.0.0.1)",
         )
         server_group.add_argument(
             "--port",
             "-p",
             type=int,
-            default=8000,
+            default=None,
             help="Port to listen on (default: 8000)",
         )
         server_group.add_argument(
@@ -360,10 +369,20 @@ class Runner:
 
         # Add mode-specific kwargs
         if args.mode == "server":
+            codespaces_env = any(
+                os.environ.get(key)
+                for key in (
+                    "CODESPACES",
+                    "CODESPACE_NAME",
+                    "GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN",
+                )
+            )
+            host_value = args.host or ("0.0.0.0" if codespaces_env else "127.0.0.1")
+            port_value = args.port or 8000
             kwargs.update(
                 {
-                    "host": args.host,
-                    "port": args.port,
+                    "host": host_value,
+                    "port": port_value,
                     "auth_token": args.auth_token,
                     "reload": args.reload,
                 }
@@ -464,7 +483,14 @@ class Runner:
         def run_server():
             import logging
 
-            for name in ("agents", "openai", "httpx", "urllib3", "anthropic", "litellm"):
+            for name in (
+                "agents",
+                "openai",
+                "httpx",
+                "urllib3",
+                "anthropic",
+                "litellm",
+            ):
                 try:
                     lg = logging.getLogger(name)
                     lg.handlers.clear()
@@ -562,7 +588,9 @@ class Runner:
             cache_base = home / "Library" / "Caches" / "OmniAgents"
         else:
             xdg = os.environ.get("XDG_CACHE_HOME")
-            cache_base = Path(xdg) / "omniagents" if xdg else home / ".cache" / "omniagents"
+            cache_base = (
+                Path(xdg) / "omniagents" if xdg else home / ".cache" / "omniagents"
+            )
 
         if cache_base:
             candidate = cache_base / "web" / "ui" / "dist"

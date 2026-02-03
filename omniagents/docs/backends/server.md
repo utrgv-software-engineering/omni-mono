@@ -11,7 +11,7 @@ pip install -e ".[server]"
 ## Usage
 
 ```bash
-omniagents run -P agent.yml --mode server --host 0.0.0.0 --port 8000
+omniagents run -P agent.yml --mode server
 ```
 
 ## Features
@@ -74,6 +74,12 @@ Clients must implement handlers for these functions.
 
 ```bash
 omniagents run -P agent.yml --mode server --host 127.0.0.1 --port 8000
+```
+
+To expose the server to your LAN/VPN, bind all interfaces:
+
+```bash
+omniagents run -P agent.yml --mode server --host 0.0.0.0 --port 8000
 ```
 
 ### CORS (if needed)
