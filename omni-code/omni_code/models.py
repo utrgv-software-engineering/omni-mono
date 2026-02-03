@@ -396,6 +396,14 @@ def apply_api_keys_to_env() -> None:
 
 
 def has_models_configured() -> bool:
-    """Check if any models are available (project defaults or user config)."""
-    # Always true now since we have project defaults
-    return bool(get_merged_models())
+    """Check whether a usable default model is configured."""
+    resolved = resolve_model_for_runtime()
+    if not resolved:
+        return False
+
+    provider = (resolved.get("provider") or "").strip().lower()
+
+    if provider == "openai-compatible":
+        return bool(resolved.get("model")) and bool(resolved.get("base_url"))
+
+    return bool(resolved.get("api_key"))

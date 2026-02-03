@@ -1,7 +1,7 @@
 """Default models provided by omni-code.
 
 These are the built-in models that ship with omni-code.
-Users can add their own models via ~/.config/omni-code/models.json,
+Users can add their own models via ~/.config/omni_code/models.json,
 which will be merged with (and can override) these defaults.
 """
 
@@ -17,12 +17,15 @@ _REASONING_MODEL_SETTINGS: Dict[str, Any] = {
 }
 
 # Project-provided default models
-# Users don't need to configure these - they work out of the box with an OpenAI API key
+# Each model explicitly declares its api_key source so that switching
+# models at runtime resolves the correct credentials without relying
+# on whatever happens to be in os.environ at the time.
 DEFAULT_MODELS: Dict[str, Dict[str, Any]] = {
     "gpt-5.1": {
         "provider": "openai",
         "model": "gpt-5.1",
         "label": "GPT-5.1",
+        "api_key": "${OPENAI_API_KEY}",
         "max_input_tokens": 272000,
         "max_output_tokens": 128000,
         "model_settings": _REASONING_MODEL_SETTINGS,
@@ -31,6 +34,7 @@ DEFAULT_MODELS: Dict[str, Dict[str, Any]] = {
         "provider": "openai",
         "model": "gpt-5.1-codex",
         "label": "GPT-5.1 Codex",
+        "api_key": "${OPENAI_API_KEY}",
         "max_input_tokens": 272000,
         "max_output_tokens": 128000,
         "model_settings": _REASONING_MODEL_SETTINGS,
@@ -39,6 +43,7 @@ DEFAULT_MODELS: Dict[str, Dict[str, Any]] = {
         "provider": "openai",
         "model": "gpt-5.2",
         "label": "GPT-5.2",
+        "api_key": "${OPENAI_API_KEY}",
         "max_input_tokens": 272000,
         "max_output_tokens": 128000,
         "model_settings": _REASONING_MODEL_SETTINGS,

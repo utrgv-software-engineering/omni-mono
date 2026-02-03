@@ -22,7 +22,7 @@ tools:
 model_settings:
   reasoning:
     effort: low
-  parallel_tool_calls: false
+  parallel_tool_calls: true
 
 max_turns: 10000
 

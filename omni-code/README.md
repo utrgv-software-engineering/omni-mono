@@ -51,23 +51,36 @@ omni
 ```
 
 The setup wizard guides you through choosing your provider (OpenAI, Azure, or custom), securely collects required keys, and writes them to a global config file:
-- macOS/Linux: `~/.config/omni-code/config.env`
-- Windows: `%APPDATA%\OmniCode\config.env`
+- macOS/Linux: `~/.config/omni_code/models.json`
+- Windows: `%APPDATA%\OmniCode\models.json`
 
 You can rerun `omni-setup` anytime to update credentials. After setup, run `omni` from any directory to start the assistant. By default it launches in the `ink` TUI; use `--mode` to switch (`web` or `server`).
+
+If you prefer environment variables, you can skip the wizard and just set `OPENAI_API_KEY` (the built-in default models reference it via `${OPENAI_API_KEY}`).
+
+### Updating
+
+If you installed via pipx, you can upgrade with:
+
+```bash
+omni update
+```
+
+Non-interactive:
+
+```bash
+omni update --yes
+```
 
 > When the wizard prompts for API keys it uses hidden input, so you will not see characters or `***` while typing.
 
 ### Using Azure OpenAI
-- Run `omni-setup` and choose option 2 (Azure) to provide:
-  - `AZURE_OPENAI_API_KEY`
-  - `AZURE_OPENAI_API_VERSION`
-  - `AZURE_OPENAI_ENDPOINT` (for example `https://your-resource.openai.azure.com/`)
-  - `AZURE_OPENAI_DEPLOYMENT`
-- The configured model used by the agents comes from `OMNI_CODE_MODEL`. For Azure, this automatically uses your deployment name; for OpenAI/custom, the wizard prompts for a default model (defaults to `gpt-5`).
-- Optional telemetry fields (`OPENAI_ORG`, `OPENAI_PROJECT`) are prompted when present in your existing config.
-- Launch `omni`; the runner detects `OPENAI_PROVIDER=azure` from your saved config and uses the Azure client automatically.
-- Advanced users can export the same variables manually instead of using the wizard.
+- Run `omni-setup` and choose the Azure option to provide your endpoint, deployment, API version, and API key.
+- Manage models later with:
+  - `omni model list`
+  - `omni model default <name>`
+  - `omni model show <name>`
+- Advanced users can reference environment variables from `models.json` using `${VAR_NAME}` instead of storing keys directly.
 
 ## Developer Setup
 
@@ -76,11 +89,12 @@ You can rerun `omni-setup` anytime to update credentials. After setup, run `omni
 .
 ├── main.py
 ├── tools/
-├── oagents/
+├── omni_agents/
 ├── server_functions/
 ├── omni_code/
 ├── tests/
 ├── docs/
+├── project.yml
 ├── pyproject.toml
 └── requirements.txt
 ```
