@@ -330,6 +330,14 @@ def _filter_history_for_api(history: list[dict]) -> list[dict]:
     return reordered
 
 
+_STATUS_STRIP_TYPES = frozenset({
+    "reasoning",
+    "message",
+    "function_call",
+    "function_call_output",
+})
+
+
 def _strip_internal_keys_for_api(items: list[dict]) -> list[dict]:
     cleaned: list[dict] = []
     for item in items or []:
@@ -337,6 +345,19 @@ def _strip_internal_keys_for_api(items: list[dict]) -> list[dict]:
             continue
         copied = dict(item)
         copied.pop("omniagents", None)
+        # The API returns `status` on output items (reasoning, message, etc.)
+        # but may reject it when those items are sent back as input.
+        # Strip it from types where it's output-only metadata.
+        if copied.get("type") in _STATUS_STRIP_TYPES:
+            copied.pop("status", None)
+        # Drop reasoning items entirely.  With store=false the API does
+        # not persist them, so referencing their IDs on the next turn
+        # causes a 404.  Even with store=true, encrypted_content is
+        # model-specific and breaks after a model switch.  The model
+        # produces fresh reasoning each turn so history reasoning items
+        # add no value.
+        if copied.get("type") == "reasoning":
+            continue
         cleaned.append(copied)
     return cleaned
 
