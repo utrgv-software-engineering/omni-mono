@@ -66,6 +66,13 @@ def _is_azure_endpoint(url: Optional[str]) -> bool:
     return "openai.azure.com" in lowered or "services.ai.azure.com" in lowered
 
 
+def _is_openai_compatible_azure_endpoint(url: Optional[str]) -> bool:
+    if not _is_azure_endpoint(url):
+        return False
+    lowered = (url or "").lower()
+    return "/openai/v1" in lowered
+
+
 def _coerce_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -96,6 +103,19 @@ def _resolve_realtime_deployment_name(
     return "gpt-realtime"
 
 
+def _resolve_realtime_model_name(spec: AgentSpec, settings: Dict[str, Any]) -> Optional[str]:
+    candidates = [
+        settings.get("openai_realtime_model"),
+        os.getenv("OPENAI_REALTIME_MODEL"),
+    ]
+    if spec.realtime_settings and spec.realtime_settings.model_name:
+        candidates.append(spec.realtime_settings.model_name)
+    for value in candidates:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 def _normalize_ws_scheme(raw_scheme: Optional[str]) -> str:
     if not raw_scheme:
         return "wss"
@@ -119,11 +139,12 @@ def _build_azure_realtime_url(
     if not deployment:
         return candidate_url or base_url
     endpoint = (
-        os.getenv("AZURE_OPENAI_ENDPOINT")
+        settings.get("azure_openai_endpoint")
+        or settings.get("openai_base_url")
         or candidate_url
         or base_url
+        or os.getenv("AZURE_OPENAI_ENDPOINT")
         or os.getenv("OPENAI_BASE_URL")
-        or settings.get("openai_base_url")
     )
     if not endpoint:
         return candidate_url or base_url
@@ -203,8 +224,23 @@ def _resolve_realtime_url(
         return explicit_url
 
     # We're falling back to base_url - need to construct the realtime URL
-    # Get the model/deployment name for the URL
-    model_name = _resolve_realtime_deployment_name(spec, settings)
+    if (
+        (_is_azure_endpoint(base_url) or _is_azure_endpoint(candidate))
+        and not _is_openai_compatible_azure_endpoint(base_url)
+        and not _is_openai_compatible_azure_endpoint(candidate)
+    ):
+        model_name = _resolve_realtime_deployment_name(spec, settings)
+        azure_url = _build_azure_realtime_url(
+            candidate_url=candidate,
+            base_url=base_url,
+            spec=spec,
+            settings=settings,
+        )
+        if azure_url:
+            logger.debug("_resolve_realtime_url: built Azure URL: %s", azure_url)
+            return azure_url
+
+    model_name = _resolve_realtime_model_name(spec, settings)
     logger.debug(
         "_resolve_realtime_url: building from base_url=%s with model=%s",
         base_url,
@@ -452,13 +488,19 @@ class RealtimeSession:
             os.getenv("OPENAI_BASE_URL"),
         )
 
-        realtime_url = (
-            self.settings.get("openai_realtime_url")
-            or os.getenv("OPENAI_REALTIME_URL")
-            or self.settings.get("openai_realtime_base_url")
-            or os.getenv("OPENAI_REALTIME_BASE_URL")
+        def _get_setting_or_env(setting_key: str, env_key: str) -> Optional[str]:
+            if setting_key in self.settings:
+                value = self.settings.get(setting_key)
+                return value if isinstance(value, str) and value.strip() else None
+            value = os.getenv(env_key)
+            return value if isinstance(value, str) and value.strip() else None
+
+        realtime_url = _get_setting_or_env(
+            "openai_realtime_url", "OPENAI_REALTIME_URL"
+        ) or _get_setting_or_env(
+            "openai_realtime_base_url", "OPENAI_REALTIME_BASE_URL"
         )
-        base_url = self.settings.get("openai_base_url") or os.getenv("OPENAI_BASE_URL")
+        base_url = _get_setting_or_env("openai_base_url", "OPENAI_BASE_URL")
 
         logger.debug(
             "RealtimeSession %s URL resolution: realtime_url=%s, base_url=%s",

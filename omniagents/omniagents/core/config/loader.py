@@ -22,6 +22,7 @@ from omniagents.core.guardrails.discovery import discover_guardrails_in_dir
 from omniagents.core.context.discovery import (
     discover_context_factories,
     discover_model_config_resolvers,
+    discover_realtime_settings_resolvers,
 )
 from omniagents.core.debug import Debug
 from omniagents.core.server_functions.discovery import (
@@ -1270,6 +1271,29 @@ def load_agent_spec_from_yaml(
                 f"Available: {available}"
             )
 
+    realtime_settings_resolver_name = config.get("realtime_settings_resolver")
+    realtime_settings_resolver_func: Optional[Callable] = None
+    if realtime_settings_resolver_name:
+        realtime_settings_resolvers = discover_realtime_settings_resolvers(base_dir)
+        if realtime_settings_resolver_name in realtime_settings_resolvers:
+            realtime_settings_resolver_func = realtime_settings_resolvers[
+                realtime_settings_resolver_name
+            ]
+            if Debug.enabled():
+                print(
+                    f"Using realtime settings resolver: {realtime_settings_resolver_name}"
+                )
+        else:
+            available = (
+                list(realtime_settings_resolvers.keys())
+                if realtime_settings_resolvers
+                else []
+            )
+            print(
+                f"Warning: Realtime settings resolver '{realtime_settings_resolver_name}' not found in {base_dir}. "
+                f"Available: {available}"
+            )
+
     # Apply environment variable substitution if variables are provided
     context_config = None
     variables_for_spec = None
@@ -1365,6 +1389,12 @@ def load_agent_spec_from_yaml(
     if model_config_resolver_func:
         try:
             spec.resolve_default_model_config = model_config_resolver_func
+        except Exception:
+            pass
+
+    if realtime_settings_resolver_func:
+        try:
+            spec.resolve_realtime_settings = realtime_settings_resolver_func
         except Exception:
             pass
 

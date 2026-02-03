@@ -243,6 +243,8 @@ class AgentSpec:
     # Used to initialize session.model_config before the first run if not already set.
     resolve_default_model_config: Optional[Callable[[], Optional[Dict[str, Any]]]] = None
 
+    resolve_realtime_settings: Optional[Callable[[], Optional[Dict[str, Any]]]] = None
+
     # --- Optional Metadata ---
     label: Optional[str] = None
     description: Optional[str] = None

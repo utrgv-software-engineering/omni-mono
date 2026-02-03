@@ -115,7 +115,17 @@ def build_app(
             for key, value in fallback_settings.items():
                 realtime_settings.setdefault(key, value)
 
-        realtime_service = RealtimeService(realtime_spec, realtime_settings)
+        settings_resolver = getattr(realtime_spec, "resolve_realtime_settings", None)
+        realtime_service = RealtimeService(
+            realtime_spec,
+            realtime_settings,
+            settings_resolver=settings_resolver if callable(settings_resolver) else None,
+        )
+        app.state.realtime_service = realtime_service
+        try:
+            service.realtime_service = realtime_service
+        except Exception:
+            pass
         realtime_endpoint = JsonRpcEndpoint(realtime_service)
 
         if auth_token:

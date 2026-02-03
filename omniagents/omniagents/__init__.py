@@ -20,6 +20,7 @@ _LAZY_IMPORTS = {
     "GuardrailFunctionOutput": ".core",
     "context_factory": ".core.context",
     "model_config_resolver": ".core.context",
+    "realtime_settings_resolver": ".core.context",
 }
 
 
@@ -53,6 +54,7 @@ __all__ = [
     "GuardrailFunctionOutput",
     "context_factory",
     "model_config_resolver",
+    "realtime_settings_resolver",
 ]
 
 

@@ -816,10 +816,10 @@ def test_resolve_realtime_url_builds_from_azure_base_url(monkeypatch, realtime_s
         spec=realtime_spec,
         settings={},
     )
-    # Now builds a realtime URL directly from base_url with model param
+    # Azure OpenAI-compatible /openai/v1 uses standard /realtime?model=...
     assert (
         resolved
-        == "wss://cs-hackr.openai.azure.com/openai/v1/realtime?model=gpt-realtime"
+        == "wss://cs-hackr.openai.azure.com/openai/v1/realtime?model=gpt-4o-realtime-preview"
     )
 
 

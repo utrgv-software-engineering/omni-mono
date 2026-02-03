@@ -23,7 +23,12 @@ class RealtimeService(RpcMethodsBase):
     - Session lifecycle management
     """
 
-    def __init__(self, spec: AgentSpec, settings: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        spec: AgentSpec,
+        settings: Optional[Dict[str, Any]] = None,
+        settings_resolver: Optional[Any] = None,
+    ):
         """Initialize the realtime service.
 
         Args:
@@ -39,6 +44,7 @@ class RealtimeService(RpcMethodsBase):
 
         self.spec = spec
         self.settings = settings or {}
+        self.settings_resolver = settings_resolver
 
         # Active sessions: session_id -> RealtimeSession
         self._sessions: Dict[str, RealtimeSession] = {}
@@ -64,10 +70,21 @@ class RealtimeService(RpcMethodsBase):
         if session_id in self._sessions:
             raise RuntimeError(f"Session {session_id} already exists")
 
+        resolved_settings = None
+        if callable(self.settings_resolver):
+            try:
+                resolved_settings = self.settings_resolver()
+            except Exception:
+                resolved_settings = None
+
+        effective_settings = (
+            resolved_settings if resolved_settings is not None else self.settings
+        )
+
         # Create session
         session = RealtimeSession(
             spec=self.spec,
-            settings=self.settings,
+            settings=effective_settings,
             session_id=session_id,
         )
 

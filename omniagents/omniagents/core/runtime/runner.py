@@ -430,7 +430,7 @@ class Runner:
             runner.run_notebook(input="Hello!")  # Starts with a message
         """
         try:
-            from IPython.display import IFrame, display
+            from IPython.display import IFrame, HTML, display
         except ImportError:
             raise ImportError(
                 "IPython is required for notebook mode. "
@@ -450,6 +450,41 @@ class Runner:
         # Find available port
         if port is None:
             port = self._find_available_port(8080)
+
+        try:
+            from omniagents.core.agents.specs import RealtimeSettings
+
+            realtime_spec = getattr(self.spec, "voice_spec", None) or self.spec
+            if not getattr(realtime_spec, "realtime_mode", False):
+                realtime_spec.realtime_mode = True
+            if not getattr(realtime_spec, "realtime_settings", None):
+                realtime_spec.realtime_settings = RealtimeSettings()
+            rs = realtime_spec.realtime_settings
+            if not rs.modalities or ("audio" not in rs.modalities):
+                rs.modalities = ["audio"]
+            if not rs.model_name:
+                rs.model_name = "gpt-realtime"
+            if not rs.voice:
+                rs.voice = "alloy"
+            if not rs.input_audio_format:
+                rs.input_audio_format = "pcm16"
+            if not rs.output_audio_format:
+                rs.output_audio_format = "pcm16"
+            if not rs.turn_detection:
+                rs.turn_detection = {
+                    "type": "server_vad",
+                    "threshold": 0.3,
+                    "prefix_padding_ms": 100,
+                    "silence_duration_ms": 200,
+                }
+            if rs.temperature is None:
+                rs.temperature = 0.8
+            if rs.max_output_tokens is None:
+                rs.max_output_tokens = 4096
+            if not rs.input_audio_transcription:
+                rs.input_audio_transcription = {"model": "whisper-1"}
+        except Exception:
+            pass
 
         # Build the FastAPI app (registers /ws WebSocket route)
         app = build_app(spec=self.spec, auth_token=auth_token)
@@ -543,6 +578,7 @@ class Runner:
         # Create and display IFrame (only use display(), don't return to avoid double display)
         iframe = IFrame(url, width=width, height=height)
         display(iframe)
+        display(HTML(f'<div style="margin: 8px 0;"><a href="{url}" target="_blank" rel="noopener">Open in new tab</a></div>'))
 
     @staticmethod
     def _find_available_port(start_port: int, max_attempts: int = 20) -> int:

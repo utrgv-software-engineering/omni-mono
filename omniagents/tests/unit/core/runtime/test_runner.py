@@ -154,6 +154,94 @@ def test_from_agent_without_build_context_uses_variables_as_context(monkeypatch)
     assert spec.build_context is None
 
 
+def test_run_notebook_enables_realtime_for_voice_spec(monkeypatch):
+    class DummyIFrame:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+    class DummyHTML:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+    display_calls = []
+
+    ipy_display = types.SimpleNamespace(
+        IFrame=DummyIFrame,
+        HTML=DummyHTML,
+        display=lambda x: display_calls.append(x),
+    )
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "IPython.display",
+        ipy_display,
+    )
+
+    class DummyStaticFiles:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+    monkeypatch.setitem(__import__("sys").modules, "fastapi.staticfiles", types.SimpleNamespace(StaticFiles=DummyStaticFiles))
+    monkeypatch.setitem(__import__("sys").modules, "uvicorn", types.SimpleNamespace(run=lambda **kwargs: None))
+
+    class DummyApp:
+        def add_middleware(self, *args, **kwargs):
+            return None
+
+        def mount(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr("omniagents.backends.server.app.build_app", lambda **kwargs: DummyApp())
+    monkeypatch.setattr(Runner, "_resolve_web_ui_dist", lambda self: None)
+    monkeypatch.setattr(Runner, "_find_available_port", lambda *args, **kwargs: 8123)
+
+    class DummySocket:
+        def __init__(self, *args, **kwargs):
+            self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def settimeout(self, *args, **kwargs):
+            return None
+
+        def connect(self, *args, **kwargs):
+            return None
+
+        def bind(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr("socket.socket", lambda *args, **kwargs: DummySocket())
+    monkeypatch.setattr("time.sleep", lambda *args, **kwargs: None)
+
+    class DummyThread:
+        def __init__(self, target=None, daemon=None):
+            self._target = target
+
+        def start(self):
+            if self._target:
+                self._target()
+
+    monkeypatch.setattr("omniagents.core.runtime.runner.Thread", DummyThread)
+
+    spec = make_spec()
+    spec.voice_spec = make_spec(name="Voice")
+    assert spec.voice_spec.realtime_mode is False
+
+    runner = Runner(spec=spec)
+    runner.run_notebook()
+
+    assert runner.spec.voice_spec.realtime_mode is True
+    assert runner.spec.voice_spec.realtime_settings is not None
+    assert "audio" in (runner.spec.voice_spec.realtime_settings.modalities or [])
+    assert len(display_calls) == 2
+
+
 def test_from_remote_uses_env_token(monkeypatch):
     monkeypatch.setenv("REMOTE_TOKEN", "token-value")
 

@@ -31,6 +31,21 @@ def model_config_resolver(func: Callable) -> Callable:
     return func
 
 
+def realtime_settings_resolver(func: Callable) -> Callable:
+    """Decorator to mark a function as a realtime settings resolver.
+
+    Realtime settings resolvers are used to provide settings dicts for
+    realtime voice connections (e.g. API keys, base URLs, Azure deployment).
+
+    The resolver should return a dict of settings, or an empty dict to
+    intentionally disable realtime connections. Returning None indicates
+    fallback to environment-based settings.
+    """
+
+    func._is_realtime_settings_resolver = True
+    return func
+
+
 def discover_context_factories(agent_dir: Path) -> Dict[str, Callable]:
     """
     Discover context factory functions in an agent directory.
@@ -234,6 +249,96 @@ def discover_model_config_resolvers(agent_dir: Path) -> Dict[str, Callable]:
                 sys.path.remove(path)
 
         # Clean up any 'tools' module to prevent conflicts with builtin tools
+        if "tools" in sys.modules and "tools" not in modules_before:
+            tools_module = sys.modules.get("tools")
+            if tools_module:
+                tools_file = getattr(tools_module, "__file__", "") or ""
+                if project_root_str in tools_file or agent_dir_str in tools_file:
+                    del sys.modules["tools"]
+                    for mod_name in list(sys.modules.keys()):
+                        if mod_name.startswith("tools."):
+                            mod = sys.modules.get(mod_name)
+                            if mod:
+                                mod_file = getattr(mod, "__file__", "") or ""
+                                if (
+                                    project_root_str in mod_file
+                                    or agent_dir_str in mod_file
+                                ):
+                                    del sys.modules[mod_name]
+
+    return discovered
+
+
+def discover_realtime_settings_resolvers(agent_dir: Path) -> Dict[str, Callable]:
+    """Discover realtime settings resolver functions in an agent directory."""
+
+    discovered: Dict[str, Callable] = {}
+
+    if not agent_dir.is_dir():
+        return discovered
+
+    modules_before = set(sys.modules.keys())
+    agent_dir_str = str(agent_dir)
+
+    project_root = agent_dir
+    current = agent_dir
+    while current != current.parent:
+        if (current / "project.yml").is_file():
+            project_root = current
+            break
+        current = current.parent
+
+    project_root_str = str(project_root)
+    paths_added = []
+
+    if project_root_str not in sys.path:
+        sys.path.insert(0, project_root_str)
+        paths_added.append(project_root_str)
+
+    if agent_dir_str not in sys.path:
+        sys.path.insert(0, agent_dir_str)
+        paths_added.append(agent_dir_str)
+
+    try:
+        for py_file in agent_dir.glob("*.py"):
+            if py_file.name.startswith("_"):
+                continue
+
+            try:
+                spec = importlib.util.spec_from_file_location(
+                    f"_realtime_settings_discovery_{py_file.stem}", str(py_file)
+                )
+                if spec is None or spec.loader is None:
+                    continue
+
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+
+                for name in dir(module):
+                    if name.startswith("_"):
+                        continue
+                    obj = getattr(module, name)
+                    if callable(obj) and getattr(
+                        obj, "_is_realtime_settings_resolver", False
+                    ):
+                        discovered[name] = obj
+                        if Debug.enabled():
+                            print(
+                                f"Discovered realtime settings resolver: {name} from {py_file}"
+                            )
+
+            except Exception as e:
+                if Debug.enabled():
+                    print(
+                        f"Warning: Error loading {py_file} for realtime settings resolver discovery: {e}"
+                    )
+                continue
+
+    finally:
+        for path in paths_added:
+            if path in sys.path:
+                sys.path.remove(path)
+
         if "tools" in sys.modules and "tools" not in modules_before:
             tools_module = sys.modules.get("tools")
             if tools_module:
