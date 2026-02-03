@@ -43,6 +43,11 @@ DEFAULT_PROVIDERS: Dict[str, Dict[str, Any]] = {
                 "max_output_tokens": 128000,
                 "model_settings": _REASONING_MODEL_SETTINGS,
             },
+            "gpt-realtime": {
+                "model": "gpt-realtime",
+                "label": "GPT Realtime",
+                "realtime": True,
+            },
         },
     }
 }

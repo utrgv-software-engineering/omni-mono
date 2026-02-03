@@ -49,7 +49,10 @@ server_functions:
   - notes
   - models
   - model
+  - voice-models
+  - voice-model
   - reasoning
 
 context: build_voice_context
+realtime_settings_resolver: resolve_voice_realtime_settings
 variables: {}

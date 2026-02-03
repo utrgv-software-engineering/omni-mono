@@ -46,7 +46,7 @@ async def _ensure_session(service, session: Session | None) -> Session | None:
 @server_function(description="List available models", strict=True, name_override="models")
 async def list_models(session: Session) -> dict:
     """List all configured models with current session state."""
-    from omni_code.models import list_models as get_all_models, get_default_model_name
+    from omni_code.models import list_text_models as get_all_models, get_default_model_name
 
     models = get_all_models()
     default_name = get_default_model_name()
@@ -109,7 +109,7 @@ async def switch_model(session: Session, text: str) -> dict:
 
     Usage: /model <name>
     """
-    from omni_code.models import get_model_config, list_models as get_all_models, normalize_model_ref
+    from omni_code.models import get_model_config, list_text_models as get_all_models, normalize_model_ref
 
     name = text.strip()
 
@@ -162,7 +162,7 @@ async def switch_model(session: Session, text: str) -> dict:
     # Look up the requested model
     normalized = normalize_model_ref(name)
     model_config = get_model_config(normalized) if normalized else None
-    if not model_config:
+    if not model_config or model_config.get("realtime"):
         available = get_all_models()
         names = [m["name"] for m in available]
         return {

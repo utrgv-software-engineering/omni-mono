@@ -51,6 +51,8 @@ server_functions:
   - compact
   - models
   - model
+  - voice-models
+  - voice-model
   - reasoning
 
 context: build_coding_context

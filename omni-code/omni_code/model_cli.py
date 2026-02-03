@@ -210,17 +210,21 @@ def cmd_setup(args):
 
 
 def cmd_list(args):
-    from omni_code.models import get_default_model_name, list_models
+    from omni_code.models import get_default_model_name, get_voice_default_model_name, list_models
 
     models = list_models()
     default_name = get_default_model_name()
+    voice_default = get_voice_default_model_name()
 
     if not models:
         print("No models available.")
         return
 
-    user_models = [m for m in models if m.get("is_user_defined")]
-    builtin_models = [m for m in models if not m.get("is_user_defined")]
+    text_models = [m for m in models if not m.get("realtime")]
+    voice_models = [m for m in models if m.get("realtime")]
+
+    user_models = [m for m in text_models if m.get("is_user_defined")]
+    builtin_models = [m for m in text_models if not m.get("is_user_defined")]
 
     def print_model(m):
         marker = "*" if m["name"] == default_name else " "
@@ -245,6 +249,15 @@ def cmd_list(args):
         print("User-defined models:")
         for m in user_models:
             print_model(m)
+
+    if voice_models:
+        print()
+        print("Voice models:")
+        for m in voice_models:
+            marker = "*" if m["name"] == voice_default else " "
+            default_label = " (voice default)" if m.get("is_voice_default") else ""
+            key_indicator = " [key]" if m.get("has_api_key") else ""
+            print(f"  {marker} {m['name']} - {m['label']} [{m['provider']}]{default_label}{key_indicator}")
 
 
 def cmd_add(args):
@@ -326,11 +339,13 @@ def cmd_add(args):
         provider_api_key=provider_api_key if provider_api_key else None,
         provider_base_url=provider_base_url,
         provider_api_version=provider_api_version,
+        realtime=args.realtime,
         reasoning=args.reasoning,
         max_input_tokens=args.max_input_tokens,
         max_output_tokens=args.max_output_tokens,
         model_settings=model_settings,
         set_default=args.set_default,
+        set_voice_default=args.set_voice_default,
     )
 
     print(f"Saved model '{target_ref}'")
@@ -361,6 +376,20 @@ def cmd_default(args):
         print(f"Set '{args.name}' as default model")
     else:
         print(f"Model '{args.name}' not found")
+        sys.exit(1)
+
+
+def cmd_voice_default(args):
+    from omni_code.models import set_voice_default_model
+
+    if not args.name:
+        print("Usage: omni model voice-default <ref>")
+        sys.exit(1)
+
+    if set_voice_default_model(args.name):
+        print(f"Set '{args.name}' as voice default model")
+    else:
+        print(f"Voice model '{args.name}' not found or not realtime-enabled")
         sys.exit(1)
 
 
@@ -535,7 +564,18 @@ def main(argv=None):
         type=int,
         help="Maximum output tokens",
     )
+    add_parser.add_argument(
+        "--realtime",
+        action="store_true",
+        help="Mark this model as voice/realtime-capable",
+    )
     add_parser.add_argument("--default", dest="set_default", action="store_true", help="Set as default")
+    add_parser.add_argument(
+        "--voice-default",
+        dest="set_voice_default",
+        action="store_true",
+        help="Set as voice default model",
+    )
     add_parser.add_argument("--force", action="store_true", help="Overwrite if model already exists")
 
     remove_parser = subparsers.add_parser("remove", help="Remove a model")
@@ -543,6 +583,13 @@ def main(argv=None):
 
     default_parser = subparsers.add_parser("default", help="Set default model")
     default_parser.add_argument("name", nargs="?", help="Model reference to set as default")
+
+    voice_default_parser = subparsers.add_parser(
+        "voice-default", help="Set voice default model"
+    )
+    voice_default_parser.add_argument(
+        "name", nargs="?", help="Realtime model reference to set as voice default"
+    )
 
     test_parser = subparsers.add_parser("test", help="Test model connection")
     test_parser.add_argument("name", nargs="?", help="Model reference to test (default: current)")
@@ -562,6 +609,7 @@ def main(argv=None):
         "add": cmd_add,
         "remove": cmd_remove,
         "default": cmd_default,
+        "voice-default": cmd_voice_default,
         "test": cmd_test,
         "show": cmd_show,
     }

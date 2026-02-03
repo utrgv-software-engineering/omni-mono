@@ -9,6 +9,8 @@ async def help_function() -> dict:
         "*Model:*\n"
         " `/models` - List available models and current settings.\n"
         " `/model <name>` - Switch to a different model for this session.\n"
+        " `/voice-models` - List available voice models.\n"
+        " `/voice-model <name>` - Set the voice model (reconnect voice to apply).\n"
         " `/reasoning <low|medium|high>` - Set reasoning effort level.\n"
         "\n"
         "*Feedback:*\n"

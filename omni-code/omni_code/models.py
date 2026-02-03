@@ -10,6 +10,7 @@ Config schema (models.json):
 {
   "version": 3,
   "default": "gpt-5.1" | "azure-prod/gpt-5.2" | null,
+  "voice_default": "gpt-realtime" | "azure-prod/gpt" | null,
   "providers": {
     "openai": {
       "type": "openai",
@@ -85,21 +86,36 @@ def load_models_config() -> Dict[str, Any]:
     models_path = get_models_config_path()
 
     if not models_path.exists():
-        return {"version": MODELS_CONFIG_VERSION, "default": None, "providers": {}}
+        return {
+            "version": MODELS_CONFIG_VERSION,
+            "default": None,
+            "voice_default": None,
+            "providers": {},
+        }
 
     try:
         content = models_path.read_text(encoding="utf-8")
         raw = json.loads(content)
     except (json.JSONDecodeError, IOError) as e:
         print(f"Warning: Failed to load {models_path}: {e}")
-        return {"version": MODELS_CONFIG_VERSION, "default": None, "providers": {}}
+        return {
+            "version": MODELS_CONFIG_VERSION,
+            "default": None,
+            "voice_default": None,
+            "providers": {},
+        }
 
     if raw.get("version") != MODELS_CONFIG_VERSION:
         print(
             f"Warning: Unsupported models.json version {raw.get('version')}. "
             f"Expected version {MODELS_CONFIG_VERSION}."
         )
-        return {"version": MODELS_CONFIG_VERSION, "default": None, "providers": {}}
+        return {
+            "version": MODELS_CONFIG_VERSION,
+            "default": None,
+            "voice_default": None,
+            "providers": {},
+        }
 
     providers = raw.get("providers")
     if not isinstance(providers, dict):
@@ -108,9 +124,14 @@ def load_models_config() -> Dict[str, Any]:
     if default_value is not None and not isinstance(default_value, str):
         default_value = None
 
+    voice_default_value = raw.get("voice_default")
+    if voice_default_value is not None and not isinstance(voice_default_value, str):
+        voice_default_value = None
+
     return {
         "version": MODELS_CONFIG_VERSION,
         "default": default_value,
+        "voice_default": voice_default_value,
         "providers": providers,
     }
 
@@ -123,6 +144,7 @@ def save_models_config(config: Dict[str, Any]) -> None:
     to_write = {
         "version": MODELS_CONFIG_VERSION,
         "default": config.get("default"),
+        "voice_default": config.get("voice_default"),
         "providers": config.get("providers") or {},
     }
 
@@ -240,6 +262,9 @@ def get_model_config(ref: str) -> Optional[Dict[str, Any]]:
         "api_key",
         "base_url",
         "api_version",
+        "realtime_url",
+        "realtime_base_url",
+        "realtime",
         "reasoning",
         "max_input_tokens",
         "max_output_tokens",
@@ -263,12 +288,35 @@ def get_default_model_name() -> Optional[str]:
     config = load_models_config()
     user_default = config.get("default")
 
+    if user_default:
+        merged = get_model_config(user_default)
+        if merged and not merged.get("realtime"):
+            normalized = normalize_model_ref(user_default)
+            if normalized:
+                return normalized
+
+    return get_default_model_name_fallback()
+
+
+def get_voice_default_model_name() -> Optional[str]:
+    """Get the name of the default voice (realtime) model."""
+
+    config = load_models_config()
+    user_default = config.get("voice_default")
     if user_default and get_model_config(user_default):
         normalized = normalize_model_ref(user_default)
         if normalized:
-            return normalized
+            merged = get_model_config(normalized) or {}
+            if merged.get("realtime"):
+                return normalized
+    return None
 
-    return get_default_model_name_fallback()
+
+def get_voice_default_model_config() -> Optional[Dict[str, Any]]:
+    name = get_voice_default_model_name()
+    if not name:
+        return None
+    return get_model_config(name)
 
 
 def get_default_model_config() -> Optional[Dict[str, Any]]:
@@ -303,6 +351,7 @@ def list_models() -> List[Dict[str, Any]]:
     """List all available models (merged from project defaults and user config)."""
     providers = get_merged_providers()
     default_name = get_default_model_name()
+    voice_default_name = get_voice_default_model_name()
     results: List[Dict[str, Any]] = []
 
     for provider_name, provider_config in providers.items():
@@ -324,7 +373,9 @@ def list_models() -> List[Dict[str, Any]]:
                 "provider_name": provider_name,
                 "model": merged.get("model"),
                 "is_default": ref == default_name,
+                "is_voice_default": ref == voice_default_name,
                 "is_user_defined": is_user_model(ref),
+                "realtime": bool(merged.get("realtime")),
                 "reasoning": merged.get("reasoning"),
                 "max_input_tokens": merged.get("max_input_tokens"),
                 "max_output_tokens": merged.get("max_output_tokens"),
@@ -348,12 +399,18 @@ def add_model(
     provider_api_key: Optional[str] = None,
     provider_base_url: Optional[str] = None,
     provider_api_version: Optional[str] = None,
+    provider_realtime_url: Optional[str] = None,
+    provider_realtime_base_url: Optional[str] = None,
     model_api_key: Optional[str] = None,
+    realtime: Optional[bool] = None,
+    realtime_url: Optional[str] = None,
+    realtime_base_url: Optional[str] = None,
     reasoning: Optional[str] = None,
     max_input_tokens: Optional[int] = None,
     max_output_tokens: Optional[int] = None,
     model_settings: Optional[Dict[str, Any]] = None,
     set_default: bool = False,
+    set_voice_default: bool = False,
 ) -> None:
     """Add or update a model under a provider profile."""
     config = load_models_config()
@@ -370,6 +427,10 @@ def add_model(
         provider_obj["base_url"] = provider_base_url
     if provider_api_version is not None:
         provider_obj["api_version"] = provider_api_version
+    if provider_realtime_url is not None:
+        provider_obj["realtime_url"] = provider_realtime_url
+    if provider_realtime_base_url is not None:
+        provider_obj["realtime_base_url"] = provider_realtime_base_url
 
     models_obj = provider_obj.get("models")
     if not isinstance(models_obj, dict):
@@ -381,6 +442,12 @@ def add_model(
     }
     if model_api_key is not None:
         model_config["api_key"] = model_api_key
+    if realtime is not None:
+        model_config["realtime"] = bool(realtime)
+    if realtime_url is not None:
+        model_config["realtime_url"] = realtime_url
+    if realtime_base_url is not None:
+        model_config["realtime_base_url"] = realtime_base_url
     if reasoning:
         model_config["reasoning"] = reasoning
     if max_input_tokens is not None:
@@ -397,6 +464,8 @@ def add_model(
     model_ref = _format_model_ref(provider_name, model_name)
     if set_default or not config.get("default"):
         config["default"] = model_ref
+    if set_voice_default and realtime:
+        config["voice_default"] = model_ref
 
     save_models_config(config)
 
@@ -441,12 +510,80 @@ def set_default_model(name: str) -> bool:
     Works with both project default models and user-defined models.
     """
     normalized = normalize_model_ref(name)
-    if not normalized or not get_model_config(normalized):
+    config = get_model_config(normalized) if normalized else None
+    if not normalized or not config or config.get("realtime"):
         return False
     config = load_models_config()
     config["default"] = normalized
     save_models_config(config)
     return True
+
+
+def set_voice_default_model(name: str) -> bool:
+    normalized = normalize_model_ref(name)
+    if not normalized:
+        return False
+    config = get_model_config(normalized)
+    if not config or not config.get("realtime"):
+        return False
+    models_config = load_models_config()
+    models_config["voice_default"] = normalized
+    save_models_config(models_config)
+    return True
+
+
+def list_text_models() -> List[Dict[str, Any]]:
+    return [m for m in list_models() if not m.get("realtime")]
+
+
+def list_voice_models() -> List[Dict[str, Any]]:
+    return [m for m in list_models() if m.get("realtime")]
+
+
+def resolve_voice_settings_for_realtime(model_name: Optional[str] = None) -> Dict[str, Any]:
+    name = normalize_model_ref(model_name) if model_name else get_voice_default_model_name()
+    if not name:
+        return {}
+    merged = get_model_config(name)
+    if not merged or not merged.get("realtime"):
+        return {}
+    runtime = resolve_model_for_runtime(name)
+    provider = (runtime.get("provider") or "").strip().lower()
+    api_key = runtime.get("api_key") or ""
+    base_url = runtime.get("base_url")
+    settings: Dict[str, Any] = {
+        "openai_api_key": api_key,
+        "openai_realtime_url": None,
+        "openai_realtime_base_url": None,
+    }
+
+    if provider == "azure":
+        if base_url:
+            settings["openai_base_url"] = base_url
+            settings["azure_openai_endpoint"] = base_url
+        api_version = runtime.get("api_version")
+        if api_version:
+            settings["azure_openai_api_version"] = api_version
+        deployment = runtime.get("model")
+        if deployment:
+            settings["azure_openai_deployment_name"] = deployment
+    else:
+        if base_url:
+            settings["openai_base_url"] = base_url
+        else:
+            settings["openai_base_url"] = "https://api.openai.com/v1"
+        model_id = runtime.get("model")
+        if model_id:
+            settings["openai_realtime_model"] = model_id
+
+    realtime_url = merged.get("realtime_url")
+    if realtime_url:
+        settings["openai_realtime_url"] = _expand_env_vars(realtime_url)
+    realtime_base_url = merged.get("realtime_base_url")
+    if realtime_base_url:
+        settings["openai_realtime_base_url"] = _expand_env_vars(realtime_base_url)
+
+    return settings
 
 
 def resolve_model_for_runtime(
