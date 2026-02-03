@@ -17,6 +17,16 @@ interface InputState {
   draft: string;
 }
 
+const codePointLength = (value: string) => Array.from(value).length;
+
+const stripAnsi = (value: string) => {
+  return value
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b[PX^_].*?\x1b\\/g, "")
+    .replace(/\x1b/g, "");
+};
+
 type InputAction =
   | { type: "INSERT_TEXT"; text: string }
   | { type: "INSERT_CHAR"; char: string }
@@ -51,8 +61,8 @@ function inputReducer(state: InputState, action: InputAction): InputState {
   switch (action.type) {
     case "INSERT_TEXT": {
       let nextState = state;
-      const sanitized = action.text.replace(/\r/g, "");
-      for (const char of sanitized) {
+      const normalized = action.text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      for (const char of normalized) {
         if (char === "\n") {
           nextState = inputReducer(nextState, { type: "INSERT_NEWLINE" });
         } else {
@@ -65,23 +75,24 @@ function inputReducer(state: InputState, action: InputAction): InputState {
     case "INSERT_CHAR": {
       const newLines = [...state.lines];
       const currentLine = newLines[state.cursorRow] || "";
-      newLines[state.cursorRow] =
-        currentLine.slice(0, state.cursorCol) +
-        action.char +
-        currentLine.slice(state.cursorCol);
+
+      const chars = Array.from(currentLine);
+      chars.splice(state.cursorCol, 0, action.char);
+      newLines[state.cursorRow] = chars.join("");
 
       return {
         ...state,
         lines: newLines,
-        cursorCol: state.cursorCol + action.char.length,
+        cursorCol: state.cursorCol + 1,
       };
     }
 
     case "INSERT_NEWLINE": {
       const newLines = [...state.lines];
       const currentLine = newLines[state.cursorRow] || "";
-      const before = currentLine.slice(0, state.cursorCol);
-      const after = currentLine.slice(state.cursorCol);
+      const chars = Array.from(currentLine);
+      const before = chars.slice(0, state.cursorCol).join("");
+      const after = chars.slice(state.cursorCol).join("");
       newLines[state.cursorRow] = before;
       newLines.splice(state.cursorRow + 1, 0, after);
 
@@ -97,9 +108,10 @@ function inputReducer(state: InputState, action: InputAction): InputState {
       if (state.cursorCol > 0) {
         const newLines = [...state.lines];
         const currentLine = newLines[state.cursorRow] || "";
-        newLines[state.cursorRow] =
-          currentLine.slice(0, state.cursorCol - 1) +
-          currentLine.slice(state.cursorCol);
+
+        const chars = Array.from(currentLine);
+        chars.splice(state.cursorCol - 1, 1);
+        newLines[state.cursorRow] = chars.join("");
 
         return {
           ...state,
@@ -110,7 +122,7 @@ function inputReducer(state: InputState, action: InputAction): InputState {
         const newLines = [...state.lines];
         const prevLine = newLines[state.cursorRow - 1] || "";
         const currentLine = newLines[state.cursorRow] || "";
-        const newCol = prevLine.length;
+        const newCol = codePointLength(prevLine);
         newLines[state.cursorRow - 1] = prevLine + currentLine;
         newLines.splice(state.cursorRow, 1);
 
@@ -126,11 +138,11 @@ function inputReducer(state: InputState, action: InputAction): InputState {
 
     case "DELETE_CHAR_FORWARD": {
       const currentLine = state.lines[state.cursorRow] || "";
-      if (state.cursorCol < currentLine.length) {
+      const chars = Array.from(currentLine);
+      if (state.cursorCol < chars.length) {
         const newLines = [...state.lines];
-        newLines[state.cursorRow] =
-          currentLine.slice(0, state.cursorCol) +
-          currentLine.slice(state.cursorCol + 1);
+        chars.splice(state.cursorCol, 1);
+        newLines[state.cursorRow] = chars.join("");
 
         return {
           ...state,
@@ -157,7 +169,7 @@ function inputReducer(state: InputState, action: InputAction): InputState {
         return {
           ...state,
           cursorRow: newRow,
-          cursorCol: Math.min(state.cursorCol, newLine.length),
+          cursorCol: Math.min(state.cursorCol, codePointLength(newLine)),
         };
       }
       return state;
@@ -170,7 +182,7 @@ function inputReducer(state: InputState, action: InputAction): InputState {
         return {
           ...state,
           cursorRow: newRow,
-          cursorCol: Math.min(state.cursorCol, newLine.length),
+          cursorCol: Math.min(state.cursorCol, codePointLength(newLine)),
         };
       }
       return state;
@@ -187,7 +199,7 @@ function inputReducer(state: InputState, action: InputAction): InputState {
         return {
           ...state,
           cursorRow: state.cursorRow - 1,
-          cursorCol: prevLine.length,
+          cursorCol: codePointLength(prevLine),
         };
       }
       return state;
@@ -195,7 +207,7 @@ function inputReducer(state: InputState, action: InputAction): InputState {
 
     case "MOVE_RIGHT": {
       const currentLine = state.lines[state.cursorRow] || "";
-      if (state.cursorCol < currentLine.length) {
+      if (state.cursorCol < codePointLength(currentLine)) {
         return {
           ...state,
           cursorCol: state.cursorCol + 1,
@@ -221,12 +233,12 @@ function inputReducer(state: InputState, action: InputAction): InputState {
       };
 
     case "SET_VALUE": {
-      const newLines = action.value.split("\n");
+      const newLines = action.value.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
       return {
         ...state,
         lines: newLines.length > 0 ? newLines : [""],
         cursorRow: newLines.length - 1,
-        cursorCol: newLines[newLines.length - 1]?.length || 0,
+        cursorCol: codePointLength(newLines[newLines.length - 1] ?? ""),
       };
     }
 
@@ -234,7 +246,7 @@ function inputReducer(state: InputState, action: InputAction): InputState {
       return {
         ...state,
         historyIndex: action.index,
-        lines: action.value.split("\n"),
+        lines: action.value.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n"),
         cursorRow: 0,
         cursorCol: 0,
       };
@@ -388,8 +400,12 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
             handleSubmit();
           }
         }
-      } else if (key.delete || key.backspace) {
+      } else if (key.backspace) {
         dispatch({ type: "DELETE_CHAR" });
+      } else if (key.delete) {
+        dispatch({ type: "DELETE_CHAR" });
+      } else if (key.ctrl && input === "d") {
+        dispatch({ type: "DELETE_CHAR_FORWARD" });
       } else if (key.upArrow) {
         if (key.shift) {
           if (current.cursorRow > 0) {
@@ -415,28 +431,41 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
       } else if (key.rightArrow) {
         dispatch({ type: "MOVE_RIGHT" });
       } else if (input && !key.ctrl && !key.meta) {
-        if (input === "\x1b[200~") {
+        if (input === "\x1b[200~" || input === "[200~") {
           pasteModeRef.current = true;
           return;
         }
 
-        if (input === "\x1b[201~") {
+        if (input === "\x1b[201~" || input === "[201~") {
           pasteModeRef.current = false;
           return;
         }
 
-        const sanitized = input
+        const normalized = input
           .replace(/\x1b\[200~/g, "")
           .replace(/\x1b\[201~/g, "")
-          .replace(/\r/g, "");
+          .replace(/\[200~/g, "")
+          .replace(/\[201~/g, "")
+          .replace(/\r\n/g, "\n")
+          .replace(/\r/g, "\n");
 
-        const isMouseEvent =
-          !pasteModeRef.current &&
-          (/^<\d+;\d+;\d+[Mm]$/.test(sanitized) ||
-            (sanitized.startsWith("[") && sanitized.length > 1 && /[<M]/.test(sanitized)));
+        if (normalized === "\x7f" || normalized === "\b") {
+          dispatch({ type: "DELETE_CHAR" });
+          return;
+        }
 
-        if (!isMouseEvent && sanitized) {
-          insertText(sanitized);
+        const withoutMouse = normalized
+          .replace(/(?:\x1b)?\[<\d+;\d+;\d+[Mm]/g, "")
+          .replace(/(?:\x1b)?<\d+;\d+;\d+[Mm]/g, "")
+          .replace(/(?:\x1b)?\[M[\s\S]{3}/g, "");
+
+        if (!withoutMouse) {
+          return;
+        }
+
+        const clean = stripAnsi(withoutMouse);
+        if (clean) {
+          insertText(clean);
         }
       }
     });
@@ -477,15 +506,17 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
 
           let lineDisplay: string;
           if (isCurrentRow) {
-            const beforeRaw = line.slice(0, state.cursorCol);
-            const cursorRaw = line[state.cursorCol];
-            const afterRaw = cursorRaw === undefined ? "" : line.slice(state.cursorCol + 1);
+            const chars = Array.from(line);
+            const beforeRaw = chars.slice(0, state.cursorCol).join("");
+            const cursorRaw = chars[state.cursorCol];
+            const afterRaw = cursorRaw === undefined ? "" : chars.slice(state.cursorCol + 1).join("");
             const beforeColored = beforeRaw ? textColor(beforeRaw) : "";
             const cursorColored = chalk.inverse(cursorRaw ?? " ");
             const afterColored = afterRaw ? textColor(afterRaw) : "";
             lineDisplay = `${beforeColored}${cursorColored}${afterColored}`;
           } else {
-            const displayValue = line || (actualIdx === 0 && !line ? placeholder : "");
+            const showPlaceholder = state.lines.every((l) => l === "");
+            const displayValue = line || (showPlaceholder && actualIdx === 0 && !line ? placeholder : "");
             lineDisplay = displayValue ? textColor(displayValue) : "";
           }
 
