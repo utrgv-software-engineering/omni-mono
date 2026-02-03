@@ -8,8 +8,37 @@ A standalone coding agent built with OmniAgents. It gives an AI assistant safe a
 - Optional safe-guarded execution with approvals
 - Ink TUI and web runner (default mode: `ink`)
 
+## Modes
+
+The `omni` CLI defaults to `--mode ink`. You can pass through any `omniagents run` flags.
+
+Examples:
+
+```bash
+omni                     # Ink TUI
+omni --mode web          # Web runner
+omni --mode server       # Run the backend server
+```
+
+## In-session commands
+
+Type these while the assistant is running:
+
+- `/help` - Show available commands
+- `/models` - List available models and current session state
+- `/model <name>` - Switch models for this session
+- `/reasoning <low|medium|high>` - Set reasoning effort level
+- `/compact` - Compact conversation context
+- `/exit` - End the current session
+- `/good` / `/bad` / `/note` - Feedback and session notes
+
+## API keys
+
+- OpenAI: set `OPENAI_API_KEY` (or run `omni model setup` to store credentials in the global config).
+- SerpAPI (web/video/scholar search tools): set `SERPAPI_API_KEY`.
+
 ## End-User Install
-- Python 3.10+, Go 1.20+, and libgit2 must be available on your PATH.
+- Python 3.10+ and libgit2 must be available on your PATH.
 - Choose either pipx or uv to install the `omni` CLI globally, then run `omni model setup` to configure credentials.
 
 ### Option A: pipx (recommended)
@@ -84,6 +113,15 @@ omni update --yes
   - `omni model show <name>`
 - Advanced users can reference environment variables from `models.json` using `${VAR_NAME}` instead of storing keys directly.
 
+## Voice agent
+
+This project also includes a voice-optimized agent spec (`voice_agent`). How you select it depends on the OmniAgents runner/UI you use; look for an agent selection option and choose `voice_agent`.
+
+## Troubleshooting
+
+- `No model credentials configured`: run `omni model setup`.
+- `ImportError: libgit2` / `pygit2` failures: install `libgit2` (macOS: `brew install libgit2`, Debian/Ubuntu: `sudo apt-get install -y libgit2-dev`).
+
 ## Developer Setup
 
 ### Project layout
@@ -103,26 +141,9 @@ omni update --yes
 
 ### Prerequisites
 - Python 3.10+
-- Go 1.20+
 - libgit2 (e.g., `brew install libgit2`, `sudo apt-get install -y libgit2-dev`)
 - Run `omni model setup` once to capture credentials in your global config if you have not already.
 - For Azure OpenAI development, choose the Azure option inside the setup wizard to populate the required variables.
-
-### Installing Go
-- Ubuntu/WSL2:
-  ```bash
-  sudo add-apt-repository ppa:longsleep/golang-backports
-  sudo apt update
-  sudo apt install -y golang-go
-  go version
-  ```
-- macOS:
-  ```bash
-  brew install go
-  go version
-  ```
-- Windows:
-  Install via winget (`winget install -e --id GoLang.Go`) and verify with `go version`.
 
 ### Local development workflow
 ```bash
