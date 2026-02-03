@@ -42,6 +42,11 @@ def cli_main(argv=None) -> None:
         from omni_code.model_cli import main as model_main
         return model_main(args[1:])
 
+    # Handle 'omni provider' subcommand
+    if args and args[0] == "provider":
+        from omni_code.provider_cli import main as provider_main
+        return provider_main(args[1:])
+
     if args and args[0] == "update":
         from omni_code.update_cli import main as update_main
         return update_main(args[1:])

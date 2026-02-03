@@ -695,6 +695,136 @@ def apply_api_keys_to_env() -> None:
                 os.environ["OPENAI_API_KEY"] = api_key
 
 
+def is_user_provider(name: str) -> bool:
+    """Check if a provider exists in the user config."""
+    config = load_models_config()
+    providers = config.get("providers")
+    if not isinstance(providers, dict):
+        return False
+    return name in providers
+
+
+def list_providers() -> List[Dict[str, Any]]:
+    """List all providers (merged from defaults and user config) with summary info."""
+    merged = get_merged_providers()
+    user_config = load_models_config()
+    user_providers = user_config.get("providers")
+    if not isinstance(user_providers, dict):
+        user_providers = {}
+
+    results: List[Dict[str, Any]] = []
+    for name, provider in merged.items():
+        if not isinstance(provider, dict):
+            continue
+        provider_type = provider.get("type") or provider.get("provider") or "unknown"
+        models = provider.get("models")
+        model_count = len(models) if isinstance(models, dict) else 0
+        results.append({
+            "name": name,
+            "type": provider_type,
+            "base_url": provider.get("base_url"),
+            "has_api_key": bool(provider.get("api_key")),
+            "model_count": model_count,
+            "is_user_defined": name in user_providers,
+        })
+
+    results.sort(key=lambda item: item["name"])
+    return results
+
+
+def get_provider(name: str) -> Optional[Dict[str, Any]]:
+    """Get a single provider's full config from merged providers."""
+    merged = get_merged_providers()
+    provider = merged.get(name)
+    if not isinstance(provider, dict):
+        return None
+    return dict(provider)
+
+
+def add_provider(
+    name: str,
+    provider_type: str,
+    *,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    api_version: Optional[str] = None,
+    realtime_url: Optional[str] = None,
+    realtime_base_url: Optional[str] = None,
+) -> None:
+    """Create or update a provider profile in user config (without touching models)."""
+    config = load_models_config()
+    providers = config.setdefault("providers", {})
+
+    provider_obj = providers.get(name)
+    if not isinstance(provider_obj, dict):
+        provider_obj = {}
+
+    provider_obj["type"] = provider_type
+    if api_key is not None:
+        provider_obj["api_key"] = api_key
+    if base_url is not None:
+        provider_obj["base_url"] = base_url
+    if api_version is not None:
+        provider_obj["api_version"] = api_version
+    if realtime_url is not None:
+        provider_obj["realtime_url"] = realtime_url
+    if realtime_base_url is not None:
+        provider_obj["realtime_base_url"] = realtime_base_url
+
+    # Preserve existing models
+    if "models" not in provider_obj:
+        provider_obj["models"] = {}
+
+    providers[name] = provider_obj
+    save_models_config(config)
+
+
+def update_provider(name: str, **kwargs: Any) -> bool:
+    """Update specific fields on a user-defined provider. Returns False if not found."""
+    config = load_models_config()
+    providers = config.get("providers")
+    if not isinstance(providers, dict):
+        return False
+    provider_obj = providers.get(name)
+    if not isinstance(provider_obj, dict):
+        return False
+
+    allowed_keys = {"type", "api_key", "base_url", "api_version", "realtime_url", "realtime_base_url"}
+    for key, value in kwargs.items():
+        if key in allowed_keys and value is not None:
+            provider_obj[key] = value
+
+    providers[name] = provider_obj
+    save_models_config(config)
+    return True
+
+
+def remove_provider(name: str) -> bool:
+    """Remove a user-defined provider and all its models. Returns False if not found."""
+    config = load_models_config()
+    providers = config.get("providers")
+    if not isinstance(providers, dict) or name not in providers:
+        return False
+
+    del providers[name]
+
+    # Clear default/voice_default if they referenced models under this provider
+    default_ref = config.get("default")
+    if default_ref:
+        parsed = _parse_model_ref(default_ref)
+        if parsed and parsed[0] == name:
+            config["default"] = None
+
+    voice_ref = config.get("voice_default")
+    if voice_ref:
+        parsed = _parse_model_ref(voice_ref)
+        if parsed and parsed[0] == name:
+            config["voice_default"] = None
+
+    save_models_config(config)
+    return True
+
+
 def has_models_configured() -> bool:
     """Check whether a usable default model is configured."""
     resolved = resolve_model_for_runtime()

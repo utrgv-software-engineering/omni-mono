@@ -1,13 +1,20 @@
 """CLI for model management.
 
 Usage:
-    omni model setup                 Interactive setup wizard
+    omni model setup                 Interactive setup wizard (provider + model)
     omni model list                  List configured models
-    omni model add                   Add a new model (and provider profile if needed)
+    omni model add                   Add a model to an existing provider
     omni model remove <ref>          Remove a user-defined model
     omni model default <ref>         Set default model
     omni model test [ref]            Test model connection
     omni model show <ref>            Show model details
+
+Provider management is separate:
+    omni provider list               List configured providers
+    omni provider add                Add a new provider
+    omni provider show <name>        Show provider details
+    omni provider update <name>      Update provider settings
+    omni provider remove <name>      Remove a user-defined provider
 
 Model references:
     gpt-5.1              -> openai/gpt-5.1
@@ -75,91 +82,45 @@ def prompt_secret(label: str, default: Optional[str] = None, required: bool = Fa
         return raw
 
 
-def cmd_setup(args):
-    from omni_code.models import add_model, get_models_config_path, load_models_config
-
-    print("Omni Code Model Setup")
-    print("=" * 40)
-    print()
-
-    existing_config = load_models_config()
+def _setup_new_provider() -> tuple[str, str]:
+    """Interactive provider creation. Returns (provider_name, provider_type)."""
+    from omni_code.provider_cli import PROVIDER_TYPE_OPTIONS, _prompt_provider_fields
+    from omni_code.models import add_provider
 
     print("Choose provider type:")
-    providers = [
-        {"value": "openai", "label": "OpenAI (api.openai.com)"},
-        {"value": "azure", "label": "Azure OpenAI"},
-        {
-            "value": "openai-compatible",
-            "label": "OpenAI-compatible (Ollama, LM Studio, vLLM, etc.)",
-        },
-        {"value": "litellm", "label": "Other provider via LiteLLM (Anthropic, Google, etc.)"},
-    ]
-    provider_type = prompt_choice("Enter choice", providers, "openai")
+    provider_type = prompt_choice("Enter choice", PROVIDER_TYPE_OPTIONS, "openai")
     print()
 
-    provider_name_default = {
+    default_name = {
         "openai": "openai",
         "azure": "azure",
         "openai-compatible": "local",
         "litellm": "litellm",
     }.get(provider_type, "openai")
-    provider_name = prompt_text("Provider profile name", provider_name_default, required=True) or provider_name_default
 
-    provider_api_key = None
-    provider_base_url = None
-    provider_api_version = None
+    provider_name = prompt_text("Provider name", default_name, required=True) or default_name
 
-    model_key = ""
-    model_id = ""
+    fields = _prompt_provider_fields(provider_type)
+    add_provider(provider_name, provider_type, **fields)
 
-    if provider_type == "openai":
-        provider_api_key = prompt_secret("OpenAI API key", required=True)
-        model_id = prompt_text("Model identifier", "gpt-5", required=True) or "gpt-5"
-        model_key = prompt_text("Model name (for /model)", model_id, required=True) or model_id
+    print(f"Provider '{provider_name}' saved.")
+    return provider_name, provider_type
 
-    elif provider_type == "azure":
-        provider_api_key = prompt_secret("Azure OpenAI API key", required=True)
-        provider_base_url = prompt_text("Azure endpoint URL", required=True)
-        provider_api_version = prompt_text("API version", "2024-08-01-preview", required=True)
-        model_key = prompt_text("Model name (for /model)", "gpt", required=True) or "gpt"
-        model_id = prompt_text("Deployment name", required=True) or model_key
 
-    elif provider_type == "openai-compatible":
-        provider_base_url = prompt_text("Base URL (e.g., http://localhost:11434/v1)", required=True)
-        needs_key = prompt_text("Requires API key? (y/n)", "n")
-        if needs_key and needs_key.lower() in ("y", "yes"):
-            provider_api_key = prompt_secret("API key", required=True)
-        model_id = prompt_text("Model identifier", required=True) or ""
-        model_key = prompt_text("Model name (for /model)", model_id, required=True) or model_id
-
-    elif provider_type == "litellm":
-        print("\nLiteLLM supports many providers. Examples:")
+def _prompt_model_fields(provider_name: str, provider_type: str) -> dict:
+    """Prompt for model-specific fields. Returns kwargs for add_model."""
+    if provider_type == "litellm":
+        print("\nLiteLLM model identifier examples:")
         print("  anthropic/claude-3-5-sonnet-20241022")
         print("  gemini/gemini-1.5-pro")
         print("  mistral/mistral-large-latest")
-        print("  groq/llama-3.1-70b-versatile")
         print()
 
-        model_id = prompt_text("Model identifier (provider/model)", required=True) or ""
-        inferred_profile = model_id.split("/", 1)[0] if "/" in model_id else provider_name
-        provider_name = prompt_text("Provider profile name", inferred_profile, required=True) or inferred_profile
+    prompt_label = "Deployment name" if provider_type == "azure" else "Model identifier"
+    model_id = prompt_text(prompt_label, required=True) or ""
 
-        if model_id.startswith("anthropic/") or model_id.startswith("claude"):
-            key_label = "Anthropic API key"
-        elif model_id.startswith("gemini/") or model_id.startswith("google/"):
-            key_label = "Google API key"
-        elif model_id.startswith("mistral/"):
-            key_label = "Mistral API key"
-        elif model_id.startswith("groq/"):
-            key_label = "Groq API key"
-        elif model_id.startswith("deepseek/"):
-            key_label = "DeepSeek API key"
-        else:
-            key_label = "API key"
-
-        provider_api_key = prompt_secret(key_label, required=True)
-        model_key_default = model_id.split("/")[-1] if "/" in model_id else model_id
-        model_key = prompt_text("Model name (for /model)", model_key_default, required=True) or model_key_default
+    default_key = model_id.split("/")[-1] if "/" in model_id else model_id
+    model_key = prompt_text("Model name (for /model)", default_key, required=True) or default_key
 
     label = prompt_text("Display label", model_key) or model_key
 
@@ -182,25 +143,84 @@ def cmd_setup(args):
             "extra_body": {"include": ["reasoning.encrypted_content"]},
         }
 
+    return {
+        "model_name": model_key,
+        "model": model_id,
+        "label": label,
+        "reasoning": reasoning_value,
+        "model_settings": model_settings,
+    }
+
+
+def cmd_setup(args):
+    from omni_code.models import (
+        add_model, get_models_config_path, get_provider, list_providers,
+        load_models_config,
+    )
+
+    print("Omni Code Model Setup")
+    print("=" * 40)
+
+    existing_config = load_models_config()
+    providers = list_providers()
+    # Only show user-defined providers that already have credentials configured
+    usable_providers = [p for p in providers if p["has_api_key"] or p["type"] == "openai-compatible"]
+
+    # --- Phase 1: Provider ---
+    print()
+    print("Step 1: Provider")
+    print("-" * 40)
+
+    if usable_providers:
+        print()
+        print("Existing providers:")
+        options = []
+        for p in usable_providers:
+            ptype = p["type"]
+            models_n = p["model_count"]
+            suffix = f" ({models_n} model{'s' if models_n != 1 else ''})" if models_n else ""
+            options.append({"value": p["name"], "label": f"{p['name']} [{ptype}]{suffix}"})
+        options.append({"value": "__new__", "label": "Create a new provider"})
+
+        choice = prompt_choice("Select a provider", options)
+        print()
+
+        if choice == "__new__":
+            provider_name, provider_type = _setup_new_provider()
+        else:
+            provider_name = choice
+            provider_config = get_provider(provider_name)
+            provider_type = (provider_config or {}).get("type") or "openai"
+    else:
+        print()
+        provider_name, provider_type = _setup_new_provider()
+
+    # --- Phase 2: Model ---
+    print()
+    print("Step 2: Model")
+    print("-" * 40)
+    print()
+
+    fields = _prompt_model_fields(provider_name, provider_type)
+
+    model_key = fields["model_name"]
     make_default = False
     if not existing_config.get("default"):
         make_default = True
     else:
-        should_set = prompt_text(f"Set '{provider_name}/{model_key}' as default? (y/n)", "y")
+        model_ref = model_key if provider_name == "openai" else f"{provider_name}/{model_key}"
+        should_set = prompt_text(f"Set '{model_ref}' as default? (y/n)", "y")
         if should_set and should_set.lower() in ("y", "yes"):
             make_default = True
 
     add_model(
         provider_name=provider_name,
         provider_type=provider_type,
-        model_name=model_key,
-        model=model_id,
-        label=label,
-        provider_api_key=provider_api_key,
-        provider_base_url=provider_base_url,
-        provider_api_version=provider_api_version,
-        reasoning=reasoning_value,
-        model_settings=model_settings,
+        model_name=fields["model_name"],
+        model=fields["model"],
+        label=fields["label"],
+        reasoning=fields["reasoning"],
+        model_settings=fields["model_settings"],
         set_default=make_default,
     )
 
@@ -261,19 +281,17 @@ def cmd_list(args):
 
 
 def cmd_add(args):
-    from omni_code.models import add_model, get_model_config, normalize_model_ref
+    from omni_code.models import (
+        add_model, get_model_config, get_provider, list_providers, normalize_model_ref,
+    )
 
+    # --- Determine provider ---
     ref = args.name
-    if not ref:
-        ref = prompt_text(
-            "Model reference (e.g. gpt-5.1 or azure-prod/gpt-5.2)", required=True
-        )
-    ref = (ref or "").strip()
-    if not ref:
-        print("Invalid model reference.")
-        sys.exit(1)
+    provider_name = None
+    provider_type = None
+    model_name = None
 
-    if "/" in ref:
+    if ref and "/" in ref:
         target_ref = normalize_model_ref(ref)
         if not target_ref:
             print("Invalid model reference.")
@@ -281,44 +299,65 @@ def cmd_add(args):
         provider_name, model_name = (
             target_ref.split("/", 1) if "/" in target_ref else ("openai", target_ref)
         )
+    elif args.provider:
+        provider_name = args.provider.strip()
+        model_name = (ref or "").strip() if ref else None
     else:
-        provider_name = (args.provider or "openai").strip()
-        model_name = ref
-        target_ref = model_name if provider_name == "openai" else f"{provider_name}/{model_name}"
+        # Interactive: pick from existing providers
+        providers = list_providers()
+        usable = [p for p in providers if p["has_api_key"] or p["type"] == "openai-compatible"]
+        if usable:
+            print("Select a provider for this model:")
+            options = [
+                {"value": p["name"], "label": f"{p['name']} [{p['type']}]"}
+                for p in usable
+            ]
+            options.append({"value": "__new__", "label": "Create a new provider first"})
+            choice = prompt_choice("Provider", options)
+            if choice == "__new__":
+                print()
+                provider_name, provider_type = _setup_new_provider()
+            else:
+                provider_name = choice
+            print()
+
+        if not provider_name:
+            print("No providers configured. Create one first with: omni provider add")
+            sys.exit(1)
+
+        model_name = (ref or "").strip() if ref else None
+
+    if not provider_name:
+        provider_name = "openai"
+
+    # Look up provider to get its type
+    existing_provider = get_provider(provider_name)
+    if not existing_provider:
+        print(f"Provider '{provider_name}' not found. Create it first with: omni provider add")
+        sys.exit(1)
+
+    if not provider_type:
+        provider_type = existing_provider.get("type") or existing_provider.get("provider") or "openai"
+
+    # --- Model name ---
+    if not model_name:
+        model_name = prompt_text("Model name (for /model)", required=True)
+    model_name = (model_name or "").strip()
+    if not model_name:
+        print("Invalid model name.")
+        sys.exit(1)
+
+    target_ref = model_name if provider_name == "openai" else f"{provider_name}/{model_name}"
 
     if get_model_config(target_ref) and not args.force:
         print(f"Model '{target_ref}' already exists. Use --force to overwrite.")
         sys.exit(1)
 
-    provider_type = args.type
-    if not provider_type:
-        existing = get_model_config(target_ref)
-        if existing and existing.get("provider"):
-            provider_type = existing["provider"]
-    if not provider_type:
-        providers = [
-            {"value": "openai", "label": "OpenAI"},
-            {"value": "azure", "label": "Azure OpenAI"},
-            {"value": "openai-compatible", "label": "OpenAI-compatible endpoint"},
-            {"value": "litellm", "label": "LiteLLM"},
-        ]
-        provider_type = prompt_choice("Provider type", providers, "openai")
-
+    # --- Model identifier ---
     model_id = args.model
     if not model_id:
         prompt_label = "Deployment name" if provider_type == "azure" else "Model identifier"
-        model_id = prompt_text(prompt_label, required=True)
-
-    provider_base_url = args.base_url
-    provider_api_version = args.api_version
-    if provider_type in ("azure", "openai-compatible") and not provider_base_url:
-        provider_base_url = prompt_text("Base URL", required=True)
-    if provider_type == "azure" and not provider_api_version:
-        provider_api_version = prompt_text("API version", "2024-08-01-preview", required=True)
-
-    provider_api_key = args.api_key
-    if not provider_api_key and provider_type != "openai-compatible":
-        provider_api_key = prompt_secret("API key (or leave blank to use env var)")
+        model_id = prompt_text(prompt_label, model_name, required=True)
 
     label = args.label or model_name
 
@@ -336,9 +375,6 @@ def cmd_add(args):
         model_name=model_name,
         model=model_id,
         label=label,
-        provider_api_key=provider_api_key if provider_api_key else None,
-        provider_base_url=provider_base_url,
-        provider_api_version=provider_api_version,
         realtime=args.realtime,
         reasoning=args.reasoning,
         max_input_tokens=args.max_input_tokens,
@@ -535,20 +571,11 @@ def main(argv=None):
     subparsers.add_parser("setup", help="Interactive setup wizard")
     subparsers.add_parser("list", help="List configured models")
 
-    add_parser = subparsers.add_parser("add", help="Add or update a model")
+    add_parser = subparsers.add_parser("add", help="Add a model to an existing provider")
     add_parser.add_argument("--name", "-n", help="Model reference (e.g. gpt-5.1 or azure-prod/gpt-5.2)")
-    add_parser.add_argument("--provider", "-p", help="Provider profile name (default: openai)")
-    add_parser.add_argument(
-        "--type",
-        "-t",
-        choices=["openai", "azure", "openai-compatible", "litellm"],
-        help="Provider type (required when creating a new provider profile)",
-    )
+    add_parser.add_argument("--provider", "-p", help="Provider name to add the model to")
     add_parser.add_argument("--model", "-m", help="Model identifier (or Azure deployment name)")
-    add_parser.add_argument("--api-key", "-k", help="API key for this provider")
     add_parser.add_argument("--label", "-l", help="Display label")
-    add_parser.add_argument("--base-url", "-u", help="Base URL (for azure/compatible)")
-    add_parser.add_argument("--api-version", help="API version (for azure)")
     add_parser.add_argument(
         "--reasoning",
         choices=["low", "medium", "high"],
