@@ -10,6 +10,39 @@ from omniagents import server_function
 from omniagents.core.session import Session
 
 
+async def _ensure_session(service, session: Session | None) -> Session | None:
+    manager = getattr(service, "_session_manager", None)
+    ensured = session
+    if manager is not None and (ensured is None or not getattr(ensured, "id", None)):
+        ensured = manager.get_or_create(None)
+
+    if ensured is None:
+        return None
+
+    call_args = None
+    ctx = getattr(ensured, "context", None)
+    if isinstance(ctx, dict):
+        workspace_root = ctx.get("workspace_root")
+        if isinstance(workspace_root, str) and workspace_root.strip():
+            call_args = {"workspace_root": workspace_root}
+    if call_args is None:
+        variables = getattr(ensured, "variables", None)
+        if isinstance(variables, dict):
+            workspace_root = variables.get("workspace_root")
+            if isinstance(workspace_root, str) and workspace_root.strip():
+                call_args = {"workspace_root": workspace_root}
+
+    try:
+        await service.server_call(
+            "session.ensure",
+            call_args,
+            session_id=getattr(ensured, "id", None),
+        )
+    except ValueError:
+        pass
+    return ensured
+
+
 @server_function(description="List available models", strict=True, name_override="models")
 async def list_models(session: Session) -> dict:
     """List all configured models with current session state."""
@@ -230,26 +263,40 @@ async def _notify_session_state(service, session) -> None:
         pass  # UI notification is best-effort
 
 
+async def _list_models_on_invoke(service, session, args=None):
+    ensured = await _ensure_session(service, session)
+    if ensured is None:
+        raise ValueError("No session available")
+    return await list_models(ensured)
+
+
 async def _switch_model_on_invoke(service, session, args=None):
     """Custom invoke handler that notifies UI after model switch."""
+    ensured = await _ensure_session(service, session)
+    if ensured is None:
+        raise ValueError("No session available")
     text = (args or {}).get("text", "")
-    result = await switch_model(session, text)
+    result = await switch_model(ensured, text)
     # Notify UI if we switched or initialized (not just querying, and no error)
     if "error" not in result and text.strip():
-        await _notify_session_state(service, session)
+        await _notify_session_state(service, ensured)
     return result
 
 
 async def _set_reasoning_on_invoke(service, session, args=None):
     """Custom invoke handler that notifies UI after reasoning change."""
+    ensured = await _ensure_session(service, session)
+    if ensured is None:
+        raise ValueError("No session available")
     text = (args or {}).get("text", "")
-    result = await set_reasoning(session, text)
+    result = await set_reasoning(ensured, text)
     # Notify UI if we actually set a level (not just querying, and no error)
     if "error" not in result and text.strip():
-        await _notify_session_state(service, session)
+        await _notify_session_state(service, ensured)
     return result
 
 
 # Override the default invoke handlers with our custom ones
+setattr(list_models, "_server_function_on_invoke", _list_models_on_invoke)
 setattr(switch_model, "_server_function_on_invoke", _switch_model_on_invoke)
 setattr(set_reasoning, "_server_function_on_invoke", _set_reasoning_on_invoke)

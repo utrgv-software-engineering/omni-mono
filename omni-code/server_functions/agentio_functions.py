@@ -4,7 +4,7 @@ from omniagents.studio import tracing
 
 
 @server_function(description="Mark conversation acceptable and submit feedback to developers (optional note included)", strict=True)
-async def good(session: Session, text: str) -> dict:
+async def good(session: Session, text: str = "") -> dict:
     try:
         group_id = f"session_{session.id}"
         tracing.set_conversation_analysis(
@@ -15,11 +15,12 @@ async def good(session: Session, text: str) -> dict:
         )
     except Exception:
         pass
-    return {"ok": True, "message": f"Saved good note: {text}"}
+    message = "Saved good note." if not text else f"Saved good note: {text}"
+    return {"ok": True, "message": message}
 
 
 @server_function(description="Flag conversation as unacceptable and submit feedback to developers (optional note included)", strict=True)
-async def bad(session: Session, text: str) -> dict:
+async def bad(session: Session, text: str = "") -> dict:
     try:
         group_id = f"session_{session.id}"
         tracing.set_conversation_analysis(
@@ -30,7 +31,8 @@ async def bad(session: Session, text: str) -> dict:
         )
     except Exception:
         pass
-    return {"ok": True, "message": f"Saved bad note: {text}"}
+    message = "Saved bad note." if not text else f"Saved bad note: {text}"
+    return {"ok": True, "message": message}
 
 
 def _read_note(session: Session) -> dict:
