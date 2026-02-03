@@ -1,18 +1,27 @@
 """Model configuration management for Omni Code.
 
-This module handles loading, saving, and migrating model configurations.
-
 Model sources (merged at runtime):
-1. Project defaults - Built-in models shipped with omni-code (see default_models.py)
-2. User config - User-added models in ~/.config/omni_code/models.json
+1. Project defaults - Built-in providers/models shipped with omni-code
+2. User config - User providers/models in ~/.config/omni_code/models.json
 
-User config models override project defaults if they share the same name.
+User config overrides project defaults for any matching provider/model.
 
-Supports:
-- OpenAI API
-- Azure OpenAI
-- OpenAI-compatible endpoints (Ollama, LM Studio, vLLM, etc.)
-- LiteLLM providers (Anthropic, Google, Mistral, etc.)
+Config schema (models.json):
+{
+  "version": 3,
+  "default": "gpt-5.1" | "azure-prod/gpt-5.2" | null,
+  "providers": {
+    "openai": {
+      "type": "openai",
+      "api_key": "${OPENAI_API_KEY}",
+      "models": {"gpt-5.1": {"model": "gpt-5.1", "label": "GPT-5.1"}}
+    }
+  }
+}
+
+Model references:
+- Unprefixed names ("gpt-5.1") imply the default provider profile "openai".
+- Other providers use "<provider_name>/<model_name>" ("azure-prod/gpt-5.2").
 """
 
 import json
@@ -22,7 +31,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from omni_code.config import PROJECT_NAME, PROJECT_NAME_WINDOWS
-from omni_code.default_models import get_default_models, get_default_model_name_fallback
+
+from omni_code.default_models import get_default_model_name_fallback, get_default_providers
+
+
+MODELS_CONFIG_VERSION = 3
+DEFAULT_PROVIDER_NAME = "openai"
 
 
 def get_config_dir() -> Path:
@@ -70,15 +84,35 @@ def load_models_config() -> Dict[str, Any]:
     """Load models config from models.json."""
     models_path = get_models_config_path()
 
-    if models_path.exists():
-        try:
-            content = models_path.read_text(encoding="utf-8")
-            return json.loads(content)
-        except (json.JSONDecodeError, IOError) as e:
-            print(f"Warning: Failed to load {models_path}: {e}")
-            return {"version": 2, "models": {}}
+    if not models_path.exists():
+        return {"version": MODELS_CONFIG_VERSION, "default": None, "providers": {}}
 
-    return {"version": 2, "models": {}}
+    try:
+        content = models_path.read_text(encoding="utf-8")
+        raw = json.loads(content)
+    except (json.JSONDecodeError, IOError) as e:
+        print(f"Warning: Failed to load {models_path}: {e}")
+        return {"version": MODELS_CONFIG_VERSION, "default": None, "providers": {}}
+
+    if raw.get("version") != MODELS_CONFIG_VERSION:
+        print(
+            f"Warning: Unsupported models.json version {raw.get('version')}. "
+            f"Expected version {MODELS_CONFIG_VERSION}."
+        )
+        return {"version": MODELS_CONFIG_VERSION, "default": None, "providers": {}}
+
+    providers = raw.get("providers")
+    if not isinstance(providers, dict):
+        providers = {}
+    default_value = raw.get("default")
+    if default_value is not None and not isinstance(default_value, str):
+        default_value = None
+
+    return {
+        "version": MODELS_CONFIG_VERSION,
+        "default": default_value,
+        "providers": providers,
+    }
 
 
 def save_models_config(config: Dict[str, Any]) -> None:
@@ -86,41 +120,137 @@ def save_models_config(config: Dict[str, Any]) -> None:
     path = get_models_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    content = json.dumps(config, indent=2)
+    to_write = {
+        "version": MODELS_CONFIG_VERSION,
+        "default": config.get("default"),
+        "providers": config.get("providers") or {},
+    }
+
+    content = json.dumps(to_write, indent=2)
 
     if os.name == "nt":
         path.write_text(content, encoding="utf-8")
         return
 
-    # Unix: write with 0600 permissions for security (contains API keys)
     fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         handle.write(content)
 
 
-def get_merged_models() -> Dict[str, Dict[str, Any]]:
-    """Get all models merged from project defaults and user config.
+def _merge_provider_config(
+    base_provider: Dict[str, Any],
+    override_provider: Dict[str, Any],
+) -> Dict[str, Any]:
+    merged: Dict[str, Any] = dict(base_provider)
+    base_models = base_provider.get("models")
+    if not isinstance(base_models, dict):
+        base_models = {}
 
-    User config models override project defaults with the same name.
-    """
-    # Start with project defaults
-    merged = get_default_models()
+    override_models = override_provider.get("models")
+    if not isinstance(override_models, dict):
+        override_models = {}
 
-    # Override with user config
+    merged_models = dict(base_models)
+    merged_models.update(override_models)
+
+    for key, value in override_provider.items():
+        if key == "models":
+            continue
+        merged[key] = value
+
+    merged["models"] = merged_models
+    return merged
+
+
+def get_merged_providers() -> Dict[str, Dict[str, Any]]:
+    """Get all providers merged from project defaults and user config."""
+    merged = get_default_providers()
     user_config = load_models_config()
-    for name, model_config in user_config.get("models", {}).items():
-        merged[name] = model_config
+    user_providers = user_config.get("providers")
+    if not isinstance(user_providers, dict):
+        return merged
+
+    for provider_name, provider_config in user_providers.items():
+        if not isinstance(provider_config, dict):
+            continue
+        existing = merged.get(provider_name) or {}
+        merged[provider_name] = _merge_provider_config(existing, provider_config)
 
     return merged
 
 
-def get_model_config(name: str) -> Optional[Dict[str, Any]]:
-    """Get configuration for a specific model by name.
+def _format_model_ref(provider_name: str, model_name: str) -> str:
+    if provider_name == DEFAULT_PROVIDER_NAME:
+        return model_name
+    return f"{provider_name}/{model_name}"
 
-    Checks both user config and project defaults.
-    """
-    merged = get_merged_models()
-    return merged.get(name)
+
+def _parse_model_ref(ref: str) -> Optional[tuple[str, str]]:
+    if not isinstance(ref, str):
+        return None
+    name = (ref or "").strip()
+    if not name:
+        return None
+    if "/" in name:
+        provider_name, model_name = name.split("/", 1)
+        provider_name = provider_name.strip()
+        model_name = model_name.strip()
+        if not provider_name or not model_name:
+            return None
+        return provider_name, model_name
+    return DEFAULT_PROVIDER_NAME, name
+
+
+def normalize_model_ref(ref: str) -> Optional[str]:
+    parsed = _parse_model_ref(ref)
+    if not parsed:
+        return None
+    provider_name, model_name = parsed
+    return _format_model_ref(provider_name, model_name)
+
+
+def get_model_config(ref: str) -> Optional[Dict[str, Any]]:
+    """Get the merged (provider + model) configuration for a model reference."""
+    parsed = _parse_model_ref(ref)
+    if not parsed:
+        return None
+
+    provider_name, model_name = parsed
+    providers = get_merged_providers()
+    provider_config = providers.get(provider_name)
+    if not isinstance(provider_config, dict):
+        return None
+    provider_models = provider_config.get("models")
+    if not isinstance(provider_models, dict):
+        return None
+    model_config = provider_models.get(model_name)
+    if not isinstance(model_config, dict):
+        return None
+
+    provider_type = provider_config.get("type") or provider_config.get("provider") or "unknown"
+    merged: Dict[str, Any] = {
+        "name": _format_model_ref(provider_name, model_name),
+        "provider": provider_type,
+        "provider_name": provider_name,
+        "model": model_config.get("model") or model_name,
+        "label": model_config.get("label") or model_name,
+    }
+
+    for key in [
+        "api_key",
+        "base_url",
+        "api_version",
+        "reasoning",
+        "max_input_tokens",
+        "max_output_tokens",
+        "model_settings",
+    ]:
+        if key in provider_config:
+            merged[key] = provider_config.get(key)
+        if key in model_config:
+            merged[key] = model_config.get(key)
+
+    return merged
 
 
 def get_default_model_name() -> Optional[str]:
@@ -133,13 +263,11 @@ def get_default_model_name() -> Optional[str]:
     config = load_models_config()
     user_default = config.get("default")
 
-    if user_default:
-        # Verify it exists in merged models
-        merged = get_merged_models()
-        if user_default in merged:
-            return user_default
+    if user_default and get_model_config(user_default):
+        normalized = normalize_model_ref(user_default)
+        if normalized:
+            return normalized
 
-    # Fall back to project default
     return get_default_model_name_fallback()
 
 
@@ -151,85 +279,108 @@ def get_default_model_config() -> Optional[Dict[str, Any]]:
     return None
 
 
-def is_user_model(name: str) -> bool:
+def is_user_model(ref: str) -> bool:
     """Check if a model is user-defined (vs project default)."""
+    parsed = _parse_model_ref(ref)
+    if not parsed:
+        return False
+
+    provider_name, model_name = parsed
     config = load_models_config()
-    return name in config.get("models", {})
+    providers = config.get("providers")
+    if not isinstance(providers, dict):
+        return False
+    provider = providers.get(provider_name)
+    if not isinstance(provider, dict):
+        return False
+    models = provider.get("models")
+    if not isinstance(models, dict):
+        return False
+    return model_name in models
 
 
 def list_models() -> List[Dict[str, Any]]:
     """List all available models (merged from project defaults and user config)."""
-    merged = get_merged_models()
+    providers = get_merged_providers()
     default_name = get_default_model_name()
-    models = []
+    results: List[Dict[str, Any]] = []
 
-    for name, model_config in merged.items():
-        entry = {
-            "name": name,
-            "label": model_config.get("label", name),
-            "provider": model_config.get("provider", "unknown"),
-            "model": model_config.get("model"),
-            "is_default": name == default_name,
-            "is_user_defined": is_user_model(name),
-            "reasoning": model_config.get("reasoning"),
-            "max_input_tokens": model_config.get("max_input_tokens"),
-            "max_output_tokens": model_config.get("max_output_tokens"),
-            "has_api_key": bool(model_config.get("api_key")),
-        }
-        # Include model_settings if present (for reasoning models, etc.)
-        if model_config.get("model_settings"):
-            entry["model_settings"] = model_config["model_settings"]
-        models.append(entry)
+    for provider_name, provider_config in providers.items():
+        if not isinstance(provider_config, dict):
+            continue
+        provider_type = provider_config.get("type") or provider_config.get("provider") or "unknown"
+        provider_models = provider_config.get("models")
+        if not isinstance(provider_models, dict):
+            continue
+        for model_name, model_config in provider_models.items():
+            if not isinstance(model_config, dict):
+                continue
+            ref = _format_model_ref(provider_name, model_name)
+            merged = get_model_config(ref) or {}
+            entry = {
+                "name": ref,
+                "label": merged.get("label", ref),
+                "provider": provider_type,
+                "provider_name": provider_name,
+                "model": merged.get("model"),
+                "is_default": ref == default_name,
+                "is_user_defined": is_user_model(ref),
+                "reasoning": merged.get("reasoning"),
+                "max_input_tokens": merged.get("max_input_tokens"),
+                "max_output_tokens": merged.get("max_output_tokens"),
+                "has_api_key": bool(merged.get("api_key")),
+            }
+            if merged.get("model_settings"):
+                entry["model_settings"] = merged["model_settings"]
+            results.append(entry)
 
-    return models
+    results.sort(key=lambda item: item["name"])
+    return results
 
 
 def add_model(
-    name: str,
-    provider: str,
+    *,
+    provider_name: str,
+    provider_type: str,
+    model_name: str,
     model: str,
-    api_key: Optional[str] = None,
     label: Optional[str] = None,
-    base_url: Optional[str] = None,
-    api_version: Optional[str] = None,
+    provider_api_key: Optional[str] = None,
+    provider_base_url: Optional[str] = None,
+    provider_api_version: Optional[str] = None,
+    model_api_key: Optional[str] = None,
     reasoning: Optional[str] = None,
     max_input_tokens: Optional[int] = None,
     max_output_tokens: Optional[int] = None,
     model_settings: Optional[Dict[str, Any]] = None,
     set_default: bool = False,
 ) -> None:
-    """Add a new model configuration.
-
-    Args:
-        name: Unique identifier for this model configuration
-        provider: Provider type ("openai", "azure", "openai-compatible", "litellm")
-        model: Model identifier (e.g., "gpt-5.1", "claude-3-5-sonnet")
-        api_key: API key for this model (can use ${ENV_VAR} syntax)
-        label: Display name for the model
-        base_url: Custom API endpoint URL
-        api_version: API version (for Azure)
-        reasoning: Default reasoning effort ("low", "medium", "high")
-        max_input_tokens: Maximum input context tokens
-        max_output_tokens: Maximum output tokens
-        model_settings: Model-specific settings dict (store, extra_body, etc.)
-            For reasoning models, you may need:
-            {"store": False, "extra_body": {"include": ["reasoning.encrypted_content"]}}
-        set_default: Whether to set this as the default model
-    """
+    """Add or update a model under a provider profile."""
     config = load_models_config()
+    providers = config.setdefault("providers", {})
+
+    provider_obj = providers.get(provider_name)
+    if not isinstance(provider_obj, dict):
+        provider_obj = {}
+
+    provider_obj["type"] = provider_type
+    if provider_api_key is not None:
+        provider_obj["api_key"] = provider_api_key
+    if provider_base_url is not None:
+        provider_obj["base_url"] = provider_base_url
+    if provider_api_version is not None:
+        provider_obj["api_version"] = provider_api_version
+
+    models_obj = provider_obj.get("models")
+    if not isinstance(models_obj, dict):
+        models_obj = {}
 
     model_config: Dict[str, Any] = {
-        "provider": provider,
         "model": model,
-        "label": label or name,
+        "label": label or model_name,
     }
-
-    if api_key:
-        model_config["api_key"] = api_key
-    if base_url:
-        model_config["base_url"] = base_url
-    if api_version:
-        model_config["api_version"] = api_version
+    if model_api_key is not None:
+        model_config["api_key"] = model_api_key
     if reasoning:
         model_config["reasoning"] = reasoning
     if max_input_tokens is not None:
@@ -239,12 +390,13 @@ def add_model(
     if model_settings is not None:
         model_config["model_settings"] = model_settings
 
-    if "models" not in config:
-        config["models"] = {}
-    config["models"][name] = model_config
+    models_obj[model_name] = model_config
+    provider_obj["models"] = models_obj
+    providers[provider_name] = provider_obj
 
+    model_ref = _format_model_ref(provider_name, model_name)
     if set_default or not config.get("default"):
-        config["default"] = name
+        config["default"] = model_ref
 
     save_models_config(config)
 
@@ -255,15 +407,29 @@ def remove_model(name: str) -> bool:
     Note: Cannot remove project default models, only user-defined ones.
     """
     config = load_models_config()
-
-    if name not in config.get("models", {}):
+    parsed = _parse_model_ref(name)
+    if not parsed:
         return False
 
-    del config["models"][name]
+    provider_name, model_name = parsed
+    providers = config.get("providers")
+    if not isinstance(providers, dict):
+        return False
+    provider = providers.get(provider_name)
+    if not isinstance(provider, dict):
+        return False
+    models_obj = provider.get("models")
+    if not isinstance(models_obj, dict) or model_name not in models_obj:
+        return False
 
-    # If we removed the default, reset to project default
-    if config.get("default") == name:
-        config["default"] = None  # Will fall back to project default
+    del models_obj[model_name]
+    provider["models"] = models_obj
+    providers[provider_name] = provider
+    config["providers"] = providers
+
+    normalized = normalize_model_ref(name)
+    if normalized and config.get("default") == normalized:
+        config["default"] = None
 
     save_models_config(config)
     return True
@@ -274,13 +440,11 @@ def set_default_model(name: str) -> bool:
 
     Works with both project default models and user-defined models.
     """
-    # Check if model exists in merged models
-    merged = get_merged_models()
-    if name not in merged:
+    normalized = normalize_model_ref(name)
+    if not normalized or not get_model_config(normalized):
         return False
-
     config = load_models_config()
-    config["default"] = name
+    config["default"] = normalized
     save_models_config(config)
     return True
 
@@ -305,45 +469,44 @@ def resolve_model_for_runtime(
     Expands environment variables in api_key and base_url.
     Uses merged models (project defaults + user config).
     """
-    merged = get_merged_models()
-
-    # Determine which model to use
-    name = model_name or get_default_model_name()
-    if not name or name not in merged:
-        # No model configured
+    name = normalize_model_ref(model_name) if model_name else get_default_model_name()
+    if not name:
         return {}
 
-    model_config = merged[name]
-    provider = model_config.get("provider", "openai")
+    merged = get_model_config(name)
+    if not merged:
+        return {}
+
+    provider = (merged.get("provider") or "openai").strip().lower()
 
     result: Dict[str, Any] = {
         "name": name,
         "provider": provider,
-        "model": _expand_env_vars(model_config.get("model", "")),
-        "label": model_config.get("label", name),
-        "reasoning": model_config.get("reasoning"),
-        "max_input_tokens": model_config.get("max_input_tokens"),
-        "max_output_tokens": model_config.get("max_output_tokens"),
+        "provider_name": merged.get("provider_name"),
+        "model": _expand_env_vars(merged.get("model", "")),
+        "label": merged.get("label", name),
+        "reasoning": merged.get("reasoning"),
+        "max_input_tokens": merged.get("max_input_tokens"),
+        "max_output_tokens": merged.get("max_output_tokens"),
     }
 
-    # Include model_settings if present
-    if model_config.get("model_settings"):
-        result["model_settings"] = model_config["model_settings"]
+    if merged.get("model_settings"):
+        result["model_settings"] = merged["model_settings"]
 
-    # Resolve base_url
-    if model_config.get("base_url"):
-        result["base_url"] = _expand_env_vars(model_config["base_url"])
+    if merged.get("base_url"):
+        result["base_url"] = _expand_env_vars(merged["base_url"])
 
-    # Resolve API version (Azure)
-    if model_config.get("api_version"):
-        result["api_version"] = model_config["api_version"]
+    if merged.get("api_version"):
+        result["api_version"] = merged["api_version"]
 
-    # Resolve API key: model config first, then environment fallback
-    api_key = model_config.get("api_key")
-    if api_key:
-        result["api_key"] = _expand_env_vars(api_key)
+    api_key_value = merged.get("api_key")
+    if api_key_value:
+        resolved_key = _expand_env_vars(api_key_value)
+        result["api_key"] = resolved_key
     else:
-        # Fallback to environment variable based on provider
+        result["api_key"] = None
+
+    if not result.get("api_key"):
         if provider == "azure":
             result["api_key"] = os.getenv("AZURE_OPENAI_API_KEY")
         elif provider == "litellm":

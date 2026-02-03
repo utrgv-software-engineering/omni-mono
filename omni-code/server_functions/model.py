@@ -19,8 +19,10 @@ async def list_models(session: Session) -> dict:
     default_name = get_default_model_name()
 
     # Get session state
+    from omni_code.models import normalize_model_ref
+
     active_model = getattr(session, "active_model", None)
-    current = active_model or default_name
+    current = normalize_model_ref(active_model) if active_model else default_name
     reasoning_effort = getattr(session, "reasoning_effort", None)
 
     # Mark current model
@@ -74,13 +76,16 @@ async def switch_model(session: Session, text: str) -> dict:
 
     Usage: /model <name>
     """
-    from omni_code.models import get_model_config, list_models as get_all_models
+    from omni_code.models import get_model_config, list_models as get_all_models, normalize_model_ref
 
     name = text.strip()
 
     # No argument = show current model (and initialize session if needed)
     if not name:
+        from omni_code.models import normalize_model_ref
+
         active = getattr(session, "active_model", None)
+        active = normalize_model_ref(active) if active else None
         model_config = getattr(session, "model_config", None)
         reasoning = getattr(session, "reasoning_effort", None)
 
@@ -122,7 +127,8 @@ async def switch_model(session: Session, text: str) -> dict:
             }
 
     # Look up the requested model
-    model_config = get_model_config(name)
+    normalized = normalize_model_ref(name)
+    model_config = get_model_config(normalized) if normalized else None
     if not model_config:
         available = get_all_models()
         names = [m["name"] for m in available]
@@ -133,7 +139,7 @@ async def switch_model(session: Session, text: str) -> dict:
         }
 
     # Update session state
-    session.active_model = name
+    session.active_model = normalized
     session.model_config = model_config
 
     # Apply model's default reasoning if set and not already overridden
@@ -151,13 +157,13 @@ async def switch_model(session: Session, text: str) -> dict:
         tokens = f" [{input_t}/{output_t}]"
 
     return {
-        "model": name,
-        "label": model_config.get("label", name),
+        "model": normalized,
+        "label": model_config.get("label", normalized),
         "provider": model_config.get("provider"),
         "max_input_tokens": model_config.get("max_input_tokens"),
         "max_output_tokens": model_config.get("max_output_tokens"),
         "reasoning_effort": reasoning,
-        "message": f"Switched to **{model_config.get('label', name)}** [{model_config.get('provider')}]{tokens}",
+        "message": f"Switched to **{model_config.get('label', normalized)}** [{model_config.get('provider')}]{tokens}",
     }
 
 

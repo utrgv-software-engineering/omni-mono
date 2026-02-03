@@ -23,7 +23,7 @@ def _load_models_config() -> None:
         resolve_model_for_runtime,
     )
 
-    # Load config (auto-migrates from legacy if needed)
+    # Load config
     load_models_config()
 
     # Set MODEL_NAME so the framework knows the default model identifier.
@@ -46,7 +46,7 @@ def cli_main(argv=None) -> None:
         from omni_code.update_cli import main as update_main
         return update_main(args[1:])
 
-    # Load models config (with auto-migration from legacy)
+    # Load models config
     _load_models_config()
 
     # Check if a usable model is configured, prompt setup if not
