@@ -128,6 +128,9 @@ async def test_start_session(realtime_spec, settings_with_key):
         assert "tools" in call_kwargs
         assert "handoffs" in call_kwargs
         assert "output_guardrails" in call_kwargs
+        assert "mcp_servers" in call_kwargs
+        assert call_kwargs["mcp_servers"] == []
+        assert "mcp_config" in call_kwargs
         # Model/voice settings are NOT passed to RealtimeAgent
         assert "model" not in call_kwargs
         assert "voice" not in call_kwargs
@@ -139,6 +142,52 @@ async def test_start_session(realtime_spec, settings_with_key):
 
         # Verify session registered
         mock_register.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_start_session_with_mcp_servers(realtime_spec, settings_with_key):
+    realtime_spec.mcp_servers = [Mock(name="mcp_cfg")]
+
+    fake_server = AsyncMock()
+    fake_server.__aenter__ = AsyncMock(return_value=fake_server)
+    fake_server.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("agents.realtime.RealtimeAgent", create=True) as MockAgent,
+        patch("agents.realtime.RealtimeRunner", create=True),
+        patch("omniagents.rpc.realtime_session.history_db.register_session"),
+        patch(
+            "omniagents.core.agents.mcp.build_mcp_servers",
+            return_value=[fake_server],
+        ),
+    ):
+        session = RealtimeSession(realtime_spec, settings=settings_with_key)
+        await session.start()
+
+        call_kwargs = MockAgent.call_args[1]
+        assert call_kwargs["mcp_servers"] == [fake_server]
+
+
+@pytest.mark.asyncio
+async def test_agents_sdk_realtime_agent_includes_mcp_tools_in_get_all_tools():
+    pytest.importorskip("agents.realtime")
+
+    from agents.realtime import RealtimeAgent
+    from agents.run_context import RunContextWrapper
+
+    fake_server = Mock(name="mcp_server")
+    mcp_tool = Mock(name="mcp_tool")
+
+    agent = RealtimeAgent(name="rt", instructions="hi", mcp_servers=[fake_server])
+    ctx = RunContextWrapper(context=None)
+
+    async def _fake_get_all_function_tools(servers, convert_schemas_to_strict, run_context, agent):
+        assert servers == [fake_server]
+        return [mcp_tool]
+
+    with patch("agents.agent.MCPUtil.get_all_function_tools", new=_fake_get_all_function_tools):
+        tools = await agent.get_all_tools(ctx)
+        assert tools == [mcp_tool]
 
 
 @pytest.mark.asyncio

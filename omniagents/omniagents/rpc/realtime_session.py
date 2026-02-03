@@ -13,6 +13,7 @@ import os
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from typing import Optional, Dict, Any, AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack
 
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.session.audio_storage import AudioStorage
@@ -304,6 +305,62 @@ class RealtimeSession:
         self._active = False
         self._event_task: Optional[asyncio.Task] = None
 
+        self._mcp_shutdown: Optional[asyncio.Event] = None
+        self._mcp_lifecycle_task: Optional[asyncio.Task] = None
+        self._mcp_servers_active: list[Any] = []
+
+    async def _ensure_mcp_servers(self) -> list[Any]:
+        if self._mcp_servers_active:
+            return self._mcp_servers_active
+
+        if not getattr(self.spec, "mcp_servers", None):
+            return []
+
+        from omniagents.core.agents.mcp import build_mcp_servers
+
+        servers_ready = asyncio.Event()
+        active_servers_holder: dict[str, list[Any]] = {"servers": []}
+
+        async def mcp_lifecycle_manager():
+            settings = dict(self.settings)
+            async with AsyncExitStack() as stack:
+                active_servers: list[Any] = []
+                try:
+                    servers = build_mcp_servers(self.spec, settings)
+                    for server in servers:
+                        server_name = getattr(server, "name", "unknown")
+                        try:
+                            if hasattr(server, "__aenter__") and hasattr(server, "__aexit__"):
+                                active = await stack.enter_async_context(server)
+                            else:
+                                await server.connect()
+                                stack.push_async_callback(server.cleanup)
+                                active = server
+                            active_servers.append(active)
+                        except Exception as server_err:
+                            logger.debug(
+                                "MCP server '%s' failed to connect: %s",
+                                server_name,
+                                server_err,
+                            )
+
+                    self._mcp_servers_active = active_servers
+                    active_servers_holder["servers"] = active_servers
+                    servers_ready.set()
+
+                    shutdown_event = self._mcp_shutdown
+                    if shutdown_event:
+                        await shutdown_event.wait()
+                finally:
+                    self._mcp_servers_active = []
+
+        self._mcp_shutdown = asyncio.Event()
+        self._mcp_lifecycle_task = asyncio.create_task(
+            mcp_lifecycle_manager(), name=f"realtime_mcp_lifecycle_{self.session_id[:8]}"
+        )
+        await servers_ready.wait()
+        return active_servers_holder["servers"]
+
     async def start(self) -> str:
         """Start the realtime session.
 
@@ -339,6 +396,8 @@ class RealtimeSession:
 
         # Build tools if available
         tools = self.spec.available_tools if self.spec.available_tools else []
+
+        mcp_servers = await self._ensure_mcp_servers()
 
         # Build handoffs if configured
         handoffs = []
@@ -394,6 +453,8 @@ class RealtimeSession:
             tools=tools,
             handoffs=handoffs,
             output_guardrails=output_guardrails,
+            mcp_servers=list(mcp_servers),
+            mcp_config=self.spec.mcp_config or {},
         )
 
         # Create runner with agent
@@ -742,6 +803,21 @@ class RealtimeSession:
     async def stop(self) -> None:
         """Stop the realtime session and clean up resources."""
         self._active = False
+
+        shutdown_event = self._mcp_shutdown
+        if shutdown_event:
+            shutdown_event.set()
+        lifecycle_task = self._mcp_lifecycle_task
+        if lifecycle_task:
+            try:
+                await lifecycle_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+        self._mcp_shutdown = None
+        self._mcp_lifecycle_task = None
+        self._mcp_servers_active = []
 
         # Cancel event streaming task if running
         if self._event_task and not self._event_task.done():
