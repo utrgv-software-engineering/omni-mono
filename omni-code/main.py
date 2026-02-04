@@ -69,7 +69,7 @@ def cli_main(argv=None) -> None:
     # Run omniagents
     from omniagents.cli import main as omni_main
 
-    project_path = Path(__file__).resolve().parent / "project.yml"
+    project_path = Path(__file__).resolve().parent / "omni_code" / "project.yml"
     new_args = ["omniagents", "run", "--project", str(project_path), "--mode", "ink"]
     new_args.extend(args)
 
