@@ -6,6 +6,7 @@ welcome_text: |
   Welcome to Omni Code! I'm here to help you with your coding needs.
 
 tools:
+  - read_image
   - dispatch
   - list_directory
   - read_file
@@ -31,6 +32,7 @@ safe_agent_options:
   skip_approvals: false
   halt_on_rejection: true
   safe_tool_names:
+    - read_image
     - list_directory
     - glob_files
     - grep_files
