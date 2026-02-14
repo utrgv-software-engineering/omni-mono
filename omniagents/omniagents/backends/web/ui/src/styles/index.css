@@ -8,6 +8,11 @@ html, body, #root { height: 100%; overflow: hidden; }
 
 .container-chat { width: 100%; margin-left: auto; margin-right: auto; }
 
+body.resizing {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
 .prose pre code { background: transparent; }
 
 @keyframes shimmer-text {

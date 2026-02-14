@@ -360,6 +360,7 @@ class AgentService(RpcMethodsBase):
                             # Log at debug level to avoid TUI interference
                             # Users can enable debug logging to see MCP connection failures
                             from omniagents.core.utils.logging import get_logger
+
                             _mcp_logger = get_logger(__name__)
                             _mcp_logger.debug(
                                 f"MCP server '{server_name}' failed to connect: {server_err}. "
@@ -809,7 +810,10 @@ class AgentService(RpcMethodsBase):
             session.active_run_status_payload = data
         elif method == "client_request" and data.get("function") == "ui.set_status":
             session.active_run_set_status_payload = data
-        elif method == "client_request" and data.get("function") == "ui.set_session_state":
+        elif (
+            method == "client_request"
+            and data.get("function") == "ui.set_session_state"
+        ):
             session.active_session_state_payload = data
 
     def _clear_live_state(self, session: Session | None) -> None:
@@ -1000,7 +1004,12 @@ class AgentService(RpcMethodsBase):
             session.active_session_state_payload = dict(payload)
 
         # Broadcast to all known channels for the session, or current channel if none provided
-        channels = list(session.channels) if session is not None else [self.channel]
+        if session is not None:
+            channels = list(session.channels)
+            if not channels and self.channel is not None:
+                channels = [self.channel]
+        else:
+            channels = [self.channel]
 
         delivered_any = False
         for ch in channels:
@@ -1238,8 +1247,12 @@ class AgentService(RpcMethodsBase):
                                 "model": sess.active_model,
                                 "label": default_config.get("label"),
                                 "provider": default_config.get("provider"),
-                                "max_input_tokens": default_config.get("max_input_tokens"),
-                                "max_output_tokens": default_config.get("max_output_tokens"),
+                                "max_input_tokens": default_config.get(
+                                    "max_input_tokens"
+                                ),
+                                "max_output_tokens": default_config.get(
+                                    "max_output_tokens"
+                                ),
                             },
                             session=sess,
                             expect_result=False,
@@ -1457,7 +1470,12 @@ class AgentService(RpcMethodsBase):
 
                             # Expand env var references like ${VAR}
                             def _expand(val):
-                                if val and isinstance(val, str) and val.startswith("${") and val.endswith("}"):
+                                if (
+                                    val
+                                    and isinstance(val, str)
+                                    and val.startswith("${")
+                                    and val.endswith("}")
+                                ):
                                     return os.getenv(val[2:-1])
                                 return val
 
@@ -1498,7 +1516,9 @@ class AgentService(RpcMethodsBase):
                                 model_provider = OpenAIProvider(openai_client=client)
                             # else: leave model_provider=None, fall through to defaults
                         except Exception as e:
-                            logger.warning(f"Failed to create model provider for session model: {e}")
+                            logger.warning(
+                                f"Failed to create model provider for session model: {e}"
+                            )
 
                 while True:
                     try:
@@ -1626,7 +1646,9 @@ class AgentService(RpcMethodsBase):
                     if final_details.get("model") is not None:
                         payload["model"] = final_details.get("model")
                     if final_details.get("max_input_tokens") is not None:
-                        payload["max_input_tokens"] = final_details.get("max_input_tokens")
+                        payload["max_input_tokens"] = final_details.get(
+                            "max_input_tokens"
+                        )
                     if final_details.get("max_output_tokens") is not None:
                         payload["max_output_tokens"] = final_details.get(
                             "max_output_tokens"
@@ -1730,13 +1752,17 @@ class AgentService(RpcMethodsBase):
         _debug_rpc("get_session_history result", {"history": result})
         return result
 
-    async def fork_session(self, session_id: str, *, new_session_id: str | None = None) -> dict:  # noqa: D401
+    async def fork_session(
+        self, session_id: str, *, new_session_id: str | None = None
+    ) -> dict:  # noqa: D401
         _debug_rpc(
             "fork_session",
             {"session_id": session_id, "new_session_id": new_session_id},
         )
         sess: Session = self._session_manager.get_or_create(session_id)
-        new_sess = self._session_manager.fork_session(sess, new_session_id=new_session_id)
+        new_sess = self._session_manager.fork_session(
+            sess, new_session_id=new_session_id
+        )
         try:
             await self._broadcast_session(
                 sess,

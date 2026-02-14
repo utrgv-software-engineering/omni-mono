@@ -8,6 +8,10 @@ from typing import AsyncGenerator, Optional, Any
 from agents import RunConfig, ItemHelpers
 from openai.types.responses import ResponseCompletedEvent
 from omniagents.core.debug import Debug
+from omniagents.core.tools.artifacts import (
+    reset_artifact_callback,
+    set_artifact_callback,
+)
 
 # Setup logging
 logger = logging.getLogger("omniagents.runtime")
@@ -330,12 +334,14 @@ def _filter_history_for_api(history: list[dict]) -> list[dict]:
     return reordered
 
 
-_STATUS_STRIP_TYPES = frozenset({
-    "reasoning",
-    "message",
-    "function_call",
-    "function_call_output",
-})
+_STATUS_STRIP_TYPES = frozenset(
+    {
+        "reasoning",
+        "message",
+        "function_call",
+        "function_call_output",
+    }
+)
 
 
 def _strip_internal_keys_for_api(items: list[dict]) -> list[dict]:
@@ -387,17 +393,72 @@ async def stream_agent(
     server-to-client notifications.
     """
 
+    token = None
+    if service is not None and session is not None:
+        loop = asyncio.get_running_loop()
+
+        async def _send_artifact(payload: dict, *, run_id: str | None) -> None:
+            try:
+                await asyncio.wait_for(
+                    service.request_client_function(
+                        "ui.add_artifact",
+                        payload,
+                        session=session,
+                        run_id=run_id,
+                        expect_result=False,
+                    ),
+                    timeout=2.0,
+                )
+            except Exception:
+                pass
+
+        def _artifact_callback(
+            title: str,
+            content: str,
+            mode: str = "markdown",
+            artifact_id: str | None = None,
+        ) -> None:
+            # Determine run_id if we're inside an asyncio task.  This will
+            # fail with RuntimeError when called from a worker thread (sync
+            # tools run via asyncio.to_thread), so default to None.
+            run_id = None
+            try:
+                task = asyncio.current_task()
+                if task is not None:
+                    run_id = task.get_name()
+            except RuntimeError:
+                pass
+
+            try:
+                # Use run_coroutine_threadsafe because the callback may be
+                # invoked from a worker thread (sync tools run via
+                # asyncio.to_thread in _wrap_sync_function).
+                asyncio.run_coroutine_threadsafe(
+                    _send_artifact(
+                        {
+                            "title": title,
+                            "content": content,
+                            "mode": mode,
+                            "artifact_id": artifact_id,
+                        },
+                        run_id=run_id,
+                    ),
+                    loop,
+                )
+            except Exception:
+                pass
+
+        token = set_artifact_callback(_artifact_callback)
+
     # ------------------------------------------------------------------
     # Build input preserving session history; persist **user** message so
     # future runs see it as part of the context as well.
     # ------------------------------------------------------------------
     if include_user_message:
-        # Filter history to remove tool call items before passing to API
         windowed_history = _apply_compaction_window(session.history)
         clean_history = _strip_internal_keys_for_api(
             _filter_history_for_api(windowed_history)
         )
-        # Include prompt at end and persist to session history on first attempt
         if user_content is not None:
             agent_input = clean_history + [{"role": "user", "content": user_content}]
             user_msg = {"role": "user", "content": user_content}
@@ -406,8 +467,6 @@ async def stream_agent(
             user_msg = {"role": "user", "content": prompt}
         session.append_message(user_msg)
     else:
-        # For retries, avoid re-adding the user message; keep context identical
-        # Still need to filter history
         agent_input = _strip_internal_keys_for_api(
             _filter_history_for_api(list(session.history))
         )
@@ -782,7 +841,12 @@ async def stream_agent(
                 f"[srv] ◀ end_run    session={session.id[:8]} hist={len(session.history)})"
             )
 
-    # Return final details for inclusion in run_end
+        if token is not None:
+            try:
+                reset_artifact_callback(token)
+            except Exception:
+                pass
+
     return {
         "usage": last_usage_totals,
         "model": last_model_info.get("model"),

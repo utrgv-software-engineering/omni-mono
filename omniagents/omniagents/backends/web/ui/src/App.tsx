@@ -4,6 +4,8 @@ import { MessageList, type MessageItem } from './components/MessageList'
 import { Input } from './components/Input'
 import { SessionList, type SessionItem } from './components/SessionList'
 import { Sidebar } from './components/Sidebar'
+import { ArtifactsPanel, type ArtifactItem } from './components/ArtifactsPanel'
+import { ResizableDivider } from './components/ResizableDivider'
 import { RPCClient } from './rpc/client'
 
 type UIState = 'connecting' | 'resume' | 'chat' | 'error'
@@ -22,6 +24,7 @@ export function App() {
   const [connected, setConnected] = useState(false)
   const [voiceEnabled, setVoiceEnabled] = useState(false)
   const [items, setItems] = useState<MessageItem[]>([])
+  const [artifacts, setArtifacts] = useState<ArtifactItem[]>([])
   const [thinking, setThinking] = useState(false)
   const [status, setStatus] = useState<string | undefined>(undefined)
   const [statusSpinner, setStatusSpinner] = useState<boolean>(false)
@@ -49,6 +52,16 @@ export function App() {
   const pendingApprovalsRef = useRef(new Map<string, (MessageItem & { session_id?: string })>())
   const urlSessionHandledRef = useRef(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [artifactsPanelOpen, setArtifactsPanelOpen] = useState(false)
+  const [artifactsPanelWidth, setArtifactsPanelWidth] = useState(() => {
+    try {
+      const stored = localStorage.getItem('artifacts-panel-width')
+      return stored ? parseInt(stored, 10) : 480
+    } catch {
+      return 480
+    }
+  })
+  const [isLargeScreen, setIsLargeScreen] = useState(() => window.innerWidth >= 1024)
   const [minimalMode] = useState(() => {
     try {
       const url = new URL(window.location.href)
@@ -90,10 +103,10 @@ export function App() {
   }, [client])
 
   useEffect(() => {
-    client.connect()
-      .then(async () => {
-        setConnected(true)
-        try { await client.clientFunctions(1, [{ name: 'ui.request_tool_approval' }, { name: 'ui.set_status' }]) } catch {}
+      client.connect()
+        .then(async () => {
+          setConnected(true)
+        try { await client.clientFunctions(1, [{ name: 'ui.request_tool_approval' }, { name: 'ui.set_status' }, { name: 'ui.add_artifact' }]) } catch {}
         try {
           const info = await client.getAgentInfo()
           const agentName = normalizeAgentName(String(info?.name || 'OmniAgent'))
@@ -221,6 +234,28 @@ export function App() {
     })
     const offClientRequest = client.on('client_request', (p: any) => {
       const fn = String(p?.function ?? '')
+      if (fn === 'ui.add_artifact') {
+        const request_id = String(p?.request_id ?? '')
+        const args = p?.args || {}
+        const title = typeof args?.title === 'string' ? args.title : ''
+        const content = typeof args?.content === 'string' ? args.content : ''
+        const mode = typeof args?.mode === 'string' ? args.mode : 'markdown'
+        const artifact_id = typeof args?.artifact_id === 'string' ? args.artifact_id : undefined
+        const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
+        const updated_at = Date.now()
+        setArtifacts(prev => {
+          const next = prev.slice()
+          const idx = artifact_id ? next.findIndex(a => a.artifact_id === artifact_id && (!eventSessionId || a.session_id === eventSessionId)) : -1
+          const entry: ArtifactItem = { title, content, mode, artifact_id, session_id: eventSessionId, updated_at }
+          if (idx >= 0) next[idx] = entry
+          else next.push(entry)
+          return next
+        })
+        if (request_id) {
+          client.clientResponse(request_id, true, { ack: true }).catch(() => {})
+        }
+        return
+      }
       if (fn === 'ui.request_tool_approval') {
         const args = p?.args || {}
         const request_id = String(p?.request_id ?? '')
@@ -263,6 +298,27 @@ export function App() {
       client.disconnect()
     }
   }, [client, normalizeAgentName, refreshSessions])
+
+  const visibleArtifacts = useMemo(() => {
+    if (!sessionId) return artifacts.filter(a => !a.session_id)
+    return artifacts.filter(a => !a.session_id || a.session_id === sessionId)
+  }, [artifacts, sessionId])
+
+  useEffect(() => {
+    const handler = () => setIsLargeScreen(window.innerWidth >= 1024)
+    window.addEventListener('resize', handler)
+    return () => window.removeEventListener('resize', handler)
+  }, [])
+
+  useEffect(() => {
+    try { localStorage.setItem('artifacts-panel-width', String(artifactsPanelWidth)) } catch {}
+  }, [artifactsPanelWidth])
+
+  useEffect(() => {
+    if (visibleArtifacts.length > 0 && !artifactsPanelOpen) {
+      setArtifactsPanelOpen(true)
+    }
+  }, [visibleArtifacts.length])
 
   // moved below handleSubmit
 
@@ -565,6 +621,8 @@ export function App() {
       </div>
     )
   }
+  const hasArtifacts = visibleArtifacts.length > 0
+
   return (
     <div className="app h-full flex flex-row min-w-0">
       {!minimalMode && (
@@ -583,12 +641,42 @@ export function App() {
           agentName={agentName}
           connected={connected}
           onMenu={minimalMode ? undefined : () => setSidebarOpen(v => !v)}
+          onArtifactsToggle={hasArtifacts ? () => setArtifactsPanelOpen(v => !v) : undefined}
+          showArtifactsButton={hasArtifacts}
         />
-        <div className="flex-1 flex flex-col min-h-0 min-w-0">
-          <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} statusItalic={statusItalic} />
-          <Input disabled={!connected} thinking={thinking} onStop={handleStop} onSubmit={handleSubmit} voiceEnabled={voiceEnabled} />
+        <div className="flex-1 flex flex-row min-h-0 min-w-0">
+          <div className="flex-1 flex flex-col min-h-0 min-w-0">
+            <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} statusItalic={statusItalic} />
+            <Input disabled={!connected} thinking={thinking} onStop={handleStop} onSubmit={handleSubmit} voiceEnabled={voiceEnabled} />
+          </div>
+          {isLargeScreen && artifactsPanelOpen && hasArtifacts && (
+            <>
+              <ResizableDivider
+                onResize={setArtifactsPanelWidth}
+                currentWidth={artifactsPanelWidth}
+                minWidth={320}
+                maxWidth={800}
+              />
+              <div
+                className="flex-shrink-0 min-h-0 border-l border-bgCardAlt"
+                style={{ width: artifactsPanelWidth }}
+              >
+                <ArtifactsPanel
+                  artifacts={visibleArtifacts}
+                  onClose={() => setArtifactsPanelOpen(false)}
+                />
+              </div>
+            </>
+          )}
         </div>
       </div>
+      {!isLargeScreen && artifactsPanelOpen && hasArtifacts && (
+        <ArtifactsPanel
+          artifacts={visibleArtifacts}
+          onClose={() => setArtifactsPanelOpen(false)}
+          asOverlay
+        />
+      )}
     </div>
   )
 }

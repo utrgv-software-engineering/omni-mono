@@ -3,6 +3,7 @@ import importlib
 import inspect
 import sys
 import asyncio
+import contextvars
 import functools
 from pathlib import Path
 from typing import Dict, Callable, Optional, Any, Tuple
@@ -11,7 +12,6 @@ from omniagents.core.debug import Debug
 
 # Import the original decorator from the agents library
 from agents.tool import function_tool as original_function_tool, FunctionTool
-
 
 
 # --- Rich Tool Output Class --- #
@@ -53,7 +53,8 @@ def _wrap_sync_function(func: Callable) -> tuple[Callable, bool]:
 
     @functools.wraps(func)
     async def async_wrapper(*args, **kw):
-        return await asyncio.to_thread(func, *args, **kw)
+        ctx = contextvars.copy_context()
+        return await asyncio.to_thread(ctx.run, func, *args, **kw)
 
     async_wrapper.__signature__ = sig
     return async_wrapper, True
