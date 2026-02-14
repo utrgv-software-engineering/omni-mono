@@ -51,6 +51,10 @@ def cli_main(argv=None) -> None:
         from omni_code.update_cli import main as update_main
         return update_main(args[1:])
 
+    if args and args[0] == "sandbox":
+        from omni_code.sandbox_cli import main as sandbox_main
+        return sandbox_main(args[1:])
+
     # Load models config
     _load_models_config()
 

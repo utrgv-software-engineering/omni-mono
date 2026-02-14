@@ -3,6 +3,7 @@ from omni_agents.omni.context import format_agents_md_block
 
 def test_format_agents_md_block_without_agents(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PWD", str(tmp_path))
     result = format_agents_md_block()
     assert "[Workspace]" in result
     assert "# Repository AGENTS" not in result
@@ -17,6 +18,7 @@ def test_format_agents_md_block_with_agents(monkeypatch, tmp_path):
     nested_agents.write_text("nested instructions", encoding="utf-8")
 
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PWD", str(tmp_path))
 
     result = format_agents_md_block()
 

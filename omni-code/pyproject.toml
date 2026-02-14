@@ -10,6 +10,7 @@ dependencies = [
     "markitdown[all,docx,pdf]>=0.1.1",
     "pygit2>=1.13.0",
     "litellm>=1.0.0",  # For non-OpenAI model support
+    "strictyaml>=1.7.3",
 ]
 
 [tool.pytest.ini_options]
@@ -43,10 +44,11 @@ packages = [
     "omni_agents.omni",
     "omni_agents.voice_agent",
     "omni_agents.init_agent",
+    "skills_ref",
 ]
 
 [tool.setuptools.package-data]
-"omni_code" = ["project.yml"]
+"omni_code" = ["project.yml", "sandbox/*"]
 "omni_agents.omni" = ["*.yml", "*.md"]
 "omni_agents.voice_agent" = ["*.yml", "*.md"]
 "omni_agents.init_agent" = ["*.yml", "*.md"]

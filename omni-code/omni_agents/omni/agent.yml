@@ -10,6 +10,7 @@ tools:
   - dispatch
   - list_directory
   - read_file
+  - display_artifact
   - apply_patch
   - write_file
   - execute_bash
@@ -37,6 +38,7 @@ safe_agent_options:
     - glob_files
     - grep_files
     - read_file
+    - display_artifact
     - dispatch
     - web_fetch
     - web_search
@@ -46,6 +48,7 @@ safe_agent_options:
 
 server_functions:
   - help
+  - artifact
   - good
   - bad
   - note
@@ -56,6 +59,8 @@ server_functions:
   - voice-models
   - voice-model
   - reasoning
+  - terminal.create
+  - terminal.close
 
 context: build_coding_context
 model_config_resolver: resolve_default_model

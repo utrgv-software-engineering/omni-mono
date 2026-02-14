@@ -103,6 +103,7 @@ def _resolve_workspace_root(session: Session, override: Optional[str]) -> Option
     strict=True,
 )
 async def terminal_create(
+    service,
     session: Session,
     shell: Optional[str] = None,
     cwd: Optional[str] = None,
@@ -110,6 +111,11 @@ async def terminal_create(
     rows: Optional[int] = None,
 ) -> dict:
     manager = _get_terminal_manager()
+    try:
+        if getattr(service, "terminal_manager", None) is None:
+            setattr(service, "terminal_manager", manager)
+    except Exception:
+        pass
     width = _coerce_positive_int(cols)
     height = _coerce_positive_int(rows)
     resolved_cwd = _resolve_workspace_root(session, cwd)
@@ -143,11 +149,15 @@ async def terminal_create(
     },
     strict=True,
 )
-async def terminal_close(session: Session, terminal_id: str) -> dict:
-    manager = _get_terminal_manager()
+async def terminal_close(service, session: Session, terminal_id: str) -> dict:
+    manager = getattr(service, "terminal_manager", None) or _get_terminal_manager()
+    try:
+        if getattr(service, "terminal_manager", None) is None:
+            setattr(service, "terminal_manager", manager)
+    except Exception:
+        pass
     await manager.close_terminal(session.id, terminal_id)
     return {"ok": True}
 
 
 TERMINAL_SERVER_FUNCTIONS = [terminal_create, terminal_close]
-

@@ -20,6 +20,7 @@ async def help_function() -> dict:
         "\n"
         "*Session:*\n"
         " `/compact` - Compact conversation context.\n"
+        " `/artifact {\"title\": \"...\", \"content\": \"...\"}` - Show a rich artifact in the UI.\n"
         " `/exit` - End the current session and exit.\n"
         "\n"
         "*CLI:*\n"

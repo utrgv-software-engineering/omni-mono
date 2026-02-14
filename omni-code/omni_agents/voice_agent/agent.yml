@@ -2,6 +2,8 @@ name: voice_agent
 label: Omni Code Voice
 description: "Voice-optimized coding agent"
 instructions_file: instructions.md
+realtime_mode: true
+voice_backend: pipeline
 welcome_text: |
   Welcome to Omni Code Voice! I'm ready to help with your coding needs.
 
@@ -54,5 +56,6 @@ server_functions:
   - reasoning
 
 context: build_voice_context
+model_config_resolver: resolve_default_model
 realtime_settings_resolver: resolve_voice_realtime_settings
 variables: {}

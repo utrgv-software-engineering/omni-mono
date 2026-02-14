@@ -12,10 +12,11 @@ from datetime import datetime
 from typing import Any, Dict
 
 from omniagents import context_factory
+from omniagents import model_config_resolver
 from omniagents import realtime_settings_resolver
 
 # Import shared utilities from omni agent
-from omni_agents.omni.context import format_agents_md_block
+from omni_agents.omni.context import build_available_skills_block, format_agents_md_block
 
 
 @context_factory
@@ -36,6 +37,7 @@ def build_voice_context(variables: Dict[str, Any] = None) -> Dict[str, Any]:
         "current_date": now.strftime("%Y-%m-%d"),
         "current_time": now.strftime("%H:%M %Z"),
         "agents_md_block": format_agents_md_block(),
+        "available_skills_block": build_available_skills_block(variables),
     }
 
     # Merge any input variables into context
@@ -49,3 +51,10 @@ def resolve_voice_realtime_settings() -> Dict[str, Any]:
     from omni_code.models import resolve_voice_settings_for_realtime
 
     return resolve_voice_settings_for_realtime()
+
+
+@model_config_resolver
+def resolve_default_model() -> Dict[str, Any] | None:
+    from omni_agents.omni.context import resolve_default_model as resolve
+
+    return resolve()

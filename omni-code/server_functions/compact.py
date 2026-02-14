@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -333,7 +335,127 @@ def _extract_response_text(resp: Any) -> str:
     return "".join(out).strip()
 
 
-async def _run_compaction_agent(*, model: str | None, prompt: str) -> str:
+@contextlib.contextmanager
+def _temporary_environ(overrides: dict[str, str | None]):
+    prior: dict[str, str | None] = {}
+    for key, value in (overrides or {}).items():
+        prior[key] = os.environ.get(key)
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+    try:
+        yield
+    finally:
+        for key, value in prior.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def _litellm_env_overrides(*, model: str | None, api_key: str | None) -> dict[str, str | None]:
+    if not api_key:
+        return {}
+
+    model_name = (model or "").lower()
+    if model_name.startswith("anthropic/") or model_name.startswith("claude"):
+        return {"ANTHROPIC_API_KEY": api_key}
+    if model_name.startswith("gemini/") or model_name.startswith("google/"):
+        return {"GOOGLE_API_KEY": api_key}
+    return {"OPENAI_API_KEY": api_key}
+
+
+def _build_model_provider(runtime: dict[str, Any]) -> tuple[Any | None, dict[str, str | None]]:
+    provider = (runtime.get("provider") or "").strip().lower()
+    model = runtime.get("model")
+    api_key = runtime.get("api_key")
+    base_url = runtime.get("base_url")
+
+    if provider == "litellm":
+        from agents.extensions.models.litellm_provider import LitellmProvider
+
+        return LitellmProvider(), _litellm_env_overrides(model=model, api_key=api_key)
+
+    if provider in {"openai", "openai-compatible", "azure"}:
+        from openai import AsyncOpenAI
+        from agents.models.openai_provider import OpenAIProvider
+
+        resolved_base_url = base_url or "https://api.openai.com/v1"
+        resolved_api_key = api_key
+        if not resolved_api_key:
+            if provider == "azure":
+                resolved_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+            else:
+                resolved_api_key = os.getenv("OPENAI_API_KEY")
+
+        is_azure = resolved_base_url and (
+            "openai.azure.com" in resolved_base_url
+            or "services.ai.azure.com" in resolved_base_url
+        )
+
+        if is_azure:
+            if not resolved_api_key:
+                return None, {}
+            client = AsyncOpenAI(
+                api_key="dummy",
+                base_url=resolved_base_url,
+                default_headers={"api-key": resolved_api_key},
+            )
+            return OpenAIProvider(openai_client=client), {}
+
+        if not resolved_api_key and resolved_base_url != "https://api.openai.com/v1":
+            resolved_api_key = "dummy"
+
+        if not resolved_api_key:
+            return None, {}
+
+        client = AsyncOpenAI(
+            api_key=resolved_api_key,
+            base_url=resolved_base_url,
+        )
+        return OpenAIProvider(openai_client=client), {}
+
+    return None, {}
+
+
+def _resolve_compaction_runtime(service: Any, session: Session) -> tuple[str | None, dict[str, Any]]:
+    candidates: list[str] = []
+    active_model = getattr(session, "active_model", None)
+    if isinstance(active_model, str) and active_model.strip():
+        candidates.append(active_model.strip())
+    spec_model = getattr(getattr(service, "spec", None), "model_name", None)
+    if isinstance(spec_model, str) and spec_model.strip():
+        candidates.append(spec_model.strip())
+
+    from omni_code.models import resolve_model_for_runtime
+
+    for ref in candidates:
+        runtime = resolve_model_for_runtime(ref)
+        if runtime:
+            return ref, runtime
+
+    model_config = getattr(session, "model_config", None)
+    if isinstance(model_config, dict) and model_config.get("model"):
+        runtime = {
+            "provider": (model_config.get("provider") or "").strip().lower(),
+            "model": model_config.get("model"),
+            "api_key": model_config.get("api_key"),
+            "base_url": model_config.get("base_url"),
+            "api_version": model_config.get("api_version"),
+        }
+        return candidates[0] if candidates else None, runtime
+
+    return candidates[0] if candidates else None, {}
+
+
+async def _run_compaction_agent(
+    *,
+    model: str | None,
+    runtime: dict[str, Any] | None,
+    prompt: str,
+    session: Session | None,
+) -> str:
     agent_yaml = (
         Path(__file__).resolve().parent.parent
         / "omni_agents"
@@ -343,9 +465,16 @@ async def _run_compaction_agent(*, model: str | None, prompt: str) -> str:
     spec = load_agent_spec_from_yaml(str(agent_yaml))
     if model:
         spec.model_name = model
-    agent = await _default_build_agent(settings={}, mcp_servers=None, spec=spec)
-    result = await Runner.run(agent, prompt, max_turns=1)
-    return result.final_output_as(str)
+    agent = await _default_build_agent(settings={}, mcp_servers=None, spec=spec, session=session)
+
+    model_provider, env_overrides = _build_model_provider(runtime or {})
+
+    from agents import RunConfig
+
+    run_config = RunConfig(model_provider=model_provider) if model_provider is not None else None
+    with _temporary_environ(env_overrides):
+        result = await Runner.run(agent, prompt, max_turns=1, run_config=run_config)
+        return result.final_output_as(str)
 
 
 @server_function(
@@ -364,9 +493,18 @@ async def compact(service: Any, session: Session) -> dict:
         full_history = list(getattr(session, "history", []) or [])
         window = _summarization_window(full_history)
 
-        model_name = getattr(session, "active_model", None) or getattr(
-            service.spec, "model_name", None
-        )
+        model_ref, runtime = _resolve_compaction_runtime(service, session)
+        model_name = runtime.get("model") if isinstance(runtime, dict) else None
+
+        if (not isinstance(model_name, str) or not model_name.strip()) and isinstance(
+            model_ref, str
+        ):
+            model_name = model_ref.strip()
+
+        if isinstance(model_name, str) and "/" in model_name and runtime.get("provider") != "litellm":
+            prefix = model_name.split("/", 1)[0]
+            if prefix not in {"openai", "litellm"}:
+                model_name = model_name.split("/", 1)[1]
 
         while True:
             transcript = _extract_transcript(window)
@@ -382,7 +520,9 @@ async def compact(service: Any, session: Session) -> dict:
             try:
                 summary_body = await _run_compaction_agent(
                     model=model_name,
+                    runtime=runtime,
                     prompt=prompt,
+                    session=session,
                 )
                 break
             except Exception as e:

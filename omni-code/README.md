@@ -20,6 +20,32 @@ omni --mode web          # Web runner
 omni --mode server       # Run the backend server
 ```
 
+## Sandbox (Docker)
+
+If you have Docker installed, you can run Omni Code inside a container while mounting your current workspace and your Omni Code config directory (models/MCP/skills):
+
+```bash
+omni sandbox --mode web
+```
+
+To persist credentials or tool state between runs, mount a persistent Docker volume into the container:
+
+```bash
+omni sandbox --persist-volume omni-cred-azure:/home/user/.azure
+```
+
+For Electron-style launching, you can run in the background and print only the URL:
+
+```bash
+omni sandbox --mode web --detach --print-url --port 0
+```
+
+By default it will pass `<workspace>/.env` to Docker if present. You can override it with:
+
+```bash
+omni sandbox --env-file /path/to/.env
+```
+
 ## In-session commands
 
 Type these while the assistant is running:
@@ -36,6 +62,13 @@ Type these while the assistant is running:
 
 - OpenAI: set `OPENAI_API_KEY` (or run `omni model setup` to store credentials in the global config).
 - SerpAPI (web/video/scholar search tools): set `SERPAPI_API_KEY`.
+
+## Skills
+
+Omni Code supports Agent Skills by injecting discovered skills into the system prompt.
+
+- Global: `~/.config/omni_code/skills/` (Windows: `%APPDATA%\OmniCode\skills\`)
+- Per-workspace: `<workspace_root>/.omni_code/skills/`
 
 ## End-User Install
 - Python 3.10+ and libgit2 must be available on your PATH.
