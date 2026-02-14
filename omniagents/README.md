@@ -57,6 +57,8 @@ omniagents run -P path/to/project.yml --mode web
 
 Use `--dev` to run with hot reload during development.
 
+Voice mode is available in web UI. To switch the server-side voice implementation, set `voice_backend` in your agent YAML (`realtime` (default) or `pipeline`). Pipeline voice requires `omniagents[voice]`.
+
 ### Ink TUI mode
 
 Terminal UI using React Ink:

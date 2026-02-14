@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import asyncio
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from typing import Optional, Dict, Any
 
 from fastapi import FastAPI, WebSocket, Depends, HTTPException, status
@@ -14,6 +15,110 @@ from omniagents.core.agents.service import AgentService
 from omniagents.rpc.realtime_service import RealtimeService
 
 __all__ = ["build_app"]
+
+
+def _derive_remote_ws_url(remote_ws_url: str, *, suffix: str) -> str:
+    parsed = urlparse(remote_ws_url)
+    path = parsed.path or ""
+
+    if path.endswith("/ws"):
+        new_path = path + suffix
+    else:
+        trimmed = path.rstrip("/")
+        if not trimmed:
+            new_path = "/ws" + suffix
+        else:
+            new_path = trimmed + "/ws" + suffix
+
+    return urlunparse(parsed._replace(path=new_path))
+
+
+def _compose_remote_ws_url(
+    base_url: str,
+    *,
+    suffix: str,
+    websocket: WebSocket,
+    remote_token: str | None,
+) -> str:
+    target = _derive_remote_ws_url(base_url, suffix=suffix)
+    parsed = urlparse(target)
+
+    query: dict[str, str] = {}
+    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+        if key == "token" and remote_token:
+            continue
+        query[key] = value
+    for key, value in websocket.query_params.multi_items():
+        if key == "token":
+            continue
+        query[key] = value
+    if remote_token:
+        query["token"] = remote_token
+
+    return urlunparse(parsed._replace(query=urlencode(query)))
+
+
+async def _proxy_websocket(websocket: WebSocket, *, remote_url: str) -> None:
+    try:
+        import websockets
+        from websockets.exceptions import ConnectionClosed
+    except Exception:
+        await websocket.close(code=4404)
+        return
+
+    await websocket.accept()
+
+    try:
+        async with websockets.connect(remote_url) as remote:
+
+            async def _client_to_remote() -> None:
+                while True:
+                    try:
+                        message = await websocket.receive()
+                    except WebSocketDisconnect:
+                        break
+                    if message.get("type") == "websocket.disconnect":
+                        break
+                    text = message.get("text")
+                    if text is not None:
+                        await remote.send(text)
+                        continue
+                    data = message.get("bytes")
+                    if data is not None:
+                        await remote.send(data)
+
+            async def _remote_to_client() -> None:
+                while True:
+                    try:
+                        data = await remote.recv()
+                    except ConnectionClosed:
+                        break
+                    if isinstance(data, bytes):
+                        await websocket.send_bytes(data)
+                    else:
+                        await websocket.send_text(str(data))
+
+            forward_task = asyncio.create_task(_client_to_remote())
+            reverse_task = asyncio.create_task(_remote_to_client())
+            done, pending = await asyncio.wait(
+                {forward_task, reverse_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in pending:
+                task.cancel()
+            for task in done:
+                try:
+                    await task
+                except Exception:
+                    pass
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+    except Exception:
+        try:
+            await websocket.close(code=1011)
+        except Exception:
+            pass
 
 
 def _token_dependency(required_token: Optional[str] = None):  # noqa: D401
@@ -60,6 +165,51 @@ def build_app(
 
     app = FastAPI()
 
+    remote_ws_url = getattr(spec, "remote_ws_url", None)
+    if remote_ws_url:
+        remote_token = None
+        remote_token_key = getattr(spec, "remote_auth_token_key", None)
+        if remote_token_key:
+            remote_token = os.getenv(remote_token_key) or None
+
+        deps = [_token_dependency(auth_token)] if auth_token else None
+
+        async def _ws_proxy(websocket: WebSocket):
+            url = _compose_remote_ws_url(
+                remote_ws_url,
+                suffix="",
+                websocket=websocket,
+                remote_token=remote_token,
+            )
+            await _proxy_websocket(websocket, remote_url=url)
+
+        async def _ws_realtime_proxy(websocket: WebSocket):
+            url = _compose_remote_ws_url(
+                remote_ws_url,
+                suffix="/realtime",
+                websocket=websocket,
+                remote_token=remote_token,
+            )
+            await _proxy_websocket(websocket, remote_url=url)
+
+        async def _ws_terminal_proxy(websocket: WebSocket):
+            url = _compose_remote_ws_url(
+                remote_ws_url,
+                suffix="/terminal",
+                websocket=websocket,
+                remote_token=remote_token,
+            )
+            await _proxy_websocket(websocket, remote_url=url)
+
+        app.add_api_websocket_route("/ws", _ws_proxy, dependencies=deps)
+        app.add_api_websocket_route(
+            "/ws/realtime", _ws_realtime_proxy, dependencies=deps
+        )
+        app.add_api_websocket_route(
+            "/ws/terminal", _ws_terminal_proxy, dependencies=deps
+        )
+        return app
+
     # ------------------------------------------------------------------
     # Create AgentService instance and register RPC endpoint
     # ------------------------------------------------------------------
@@ -105,7 +255,8 @@ def build_app(
         return settings
 
     realtime_spec = getattr(spec, "voice_spec", None)
-    if realtime_spec is None and spec.realtime_mode:
+    spec_voice_backend = getattr(spec, "voice_backend", "realtime")
+    if realtime_spec is None and (spec.realtime_mode or spec_voice_backend == "pipeline"):
         realtime_spec = spec
 
     if realtime_spec:
@@ -116,11 +267,21 @@ def build_app(
                 realtime_settings.setdefault(key, value)
 
         settings_resolver = getattr(realtime_spec, "resolve_realtime_settings", None)
-        realtime_service = RealtimeService(
-            realtime_spec,
-            realtime_settings,
-            settings_resolver=settings_resolver if callable(settings_resolver) else None,
-        )
+        voice_backend = getattr(realtime_spec, "voice_backend", "realtime")
+        if voice_backend == "pipeline":
+            from omniagents.rpc.voice_pipeline_service import VoicePipelineService
+
+            realtime_service = VoicePipelineService(
+                realtime_spec,
+                realtime_settings,
+                settings_resolver=settings_resolver if callable(settings_resolver) else None,
+            )
+        else:
+            realtime_service = RealtimeService(
+                realtime_spec,
+                realtime_settings,
+                settings_resolver=settings_resolver if callable(settings_resolver) else None,
+            )
         app.state.realtime_service = realtime_service
         try:
             service.realtime_service = realtime_service

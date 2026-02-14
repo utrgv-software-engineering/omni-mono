@@ -21,6 +21,9 @@ dependencies = [
 omniagents = "omniagents.cli:main"
 
 [project.optional-dependencies]
+voice = [
+    "openai-agents[voice]==0.4.2",
+]
 studio = [
     "httpx>=0.27.0",
 ]
@@ -39,7 +42,7 @@ studio-server = [
 docs = [
     "mkdocs-material>=9.5.0",
 ]
-all = ["omniagents[server,web,studio,studio-server]"]
+all = ["omniagents[server,web,studio,studio-server,voice]"]
 dev = [
     "pytest",
     "pytest-asyncio",

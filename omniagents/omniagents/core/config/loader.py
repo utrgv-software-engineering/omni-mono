@@ -718,8 +718,21 @@ def load_agent_spec_from_yaml(
         )
         realtime_mode = False
 
+    voice_backend = config.get("voice_backend", "realtime")
+    if not isinstance(voice_backend, str):
+        print(
+            f"Warning: 'voice_backend' should be a string. Got {type(voice_backend).__name__}. Using 'realtime'."
+        )
+        voice_backend = "realtime"
+    voice_backend = voice_backend.strip().lower() or "realtime"
+    if voice_backend not in {"realtime", "pipeline"}:
+        print(
+            f"Warning: Invalid voice_backend '{voice_backend}'. Using 'realtime'."
+        )
+        voice_backend = "realtime"
+
     realtime_settings = None
-    if realtime_mode:
+    if realtime_mode or voice_backend == "pipeline":
         realtime_config = config.get("realtime_settings", {})
         if not isinstance(realtime_config, dict):
             print(
@@ -1342,6 +1355,7 @@ def load_agent_spec_from_yaml(
         model_settings=model_settings_config if model_settings_config else None,
         realtime_mode=realtime_mode,
         realtime_settings=realtime_settings,
+        voice_backend=voice_backend,
         mcp_config=mcp_config_from_yaml if mcp_config_from_yaml else None,
         mcp_servers=mcp_servers,
         output_type=output_type,

@@ -1,0 +1,11 @@
+name: voice_pipeline_openai_compatible
+welcome_text: "Voice pipeline demo (openai-compatible)"
+instructions_file: instructions.md
+
+voice_backend: pipeline
+
+realtime_settings:
+  voice: alloy
+  tts_instructions: "Speak clearly and naturally and quickly. Keep responses concise."
+
+model_config_resolver: openai_compatible_model

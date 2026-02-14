@@ -1,4 +1,5 @@
 import asyncio
+import os
 import socket
 import pytest
 from unittest.mock import patch, AsyncMock
@@ -180,3 +181,85 @@ async def _integration_flow():
 
 def test_server_client_integration():
     asyncio.run(_integration_flow())
+
+
+@patch("omniagents.core.agents.service.stream_agent", new=fake_stream_agent)
+async def _proxy_flow():
+    remote_token_env = "OMNIAGENTS_TEST_REMOTE_TOKEN"
+    remote_token_value = "remote-secret"
+    os.environ[remote_token_env] = remote_token_value
+
+    remote_spec = AgentSpec(
+        name="A",
+        welcome_text="hi",
+        get_agent_instructions=lambda: "instr",
+        build_agent=dummy_build_agent,
+    )
+
+    remote_app = server_app.build_app(spec=remote_spec, auth_token=remote_token_value)
+    remote_port = _get_free_port()
+    remote_server, remote_task = await _run_server(remote_app, remote_port)
+
+    proxy = None
+    gateway_port = None
+    gateway_server = None
+    gateway_task = None
+
+    try:
+        gateway_spec = AgentSpec(
+            name="Gateway",
+            welcome_text="hi",
+            get_agent_instructions=lambda: "",
+            build_agent=dummy_build_agent,
+            remote_ws_url=f"ws://127.0.0.1:{remote_port}/ws",
+            remote_auth_token_key=remote_token_env,
+        )
+
+        gateway_app = server_app.build_app(spec=gateway_spec)
+        gateway_port = _get_free_port()
+        gateway_server, gateway_task = await _run_server(gateway_app, gateway_port)
+
+        proxy = RemoteAgent(f"ws://127.0.0.1:{gateway_port}/ws")
+        events = {"msg": [], "tool_call": [], "tool_out": []}
+        run = proxy.run_streamed([{"role": "user", "content": "ping"}])
+        async for event in run.stream_events():
+            if event.type == "run_item_stream_event":
+                item = event.item
+                item_type = getattr(item, "type", "")
+                if item_type == "message_output_item":
+                    events["msg"].append(item.to_input_item()["content"])
+                elif item_type == "tool_call_item":
+                    events["tool_call"].append((item.name, item.arguments))
+                elif item_type == "tool_call_output_item":
+                    events["tool_out"].append(item.output)
+            elif event.type == "client_request":
+                payload = event.item if isinstance(event.item, dict) else {}
+                if payload.get("function") == "ui.request_tool_approval":
+                    await proxy._client.other.client_response(
+                        request_id=payload.get("request_id"),
+                        ok=True,
+                        result={
+                            "approved": True,
+                            "always_approve": False,
+                            "error_message": None,
+                        },
+                        error=None,
+                    )
+
+        assert events["msg"] == ["pong"]
+        assert events["tool_call"] == [("echo", "{}")]
+        assert events["tool_out"] == ["ok"]
+    finally:
+        if gateway_server is not None:
+            gateway_server.should_exit = True
+        if gateway_task is not None:
+            await gateway_task
+        remote_server.should_exit = True
+        await remote_task
+        if proxy and proxy._client:
+            await proxy._client.__aexit__(None, None, None)
+        os.environ.pop(remote_token_env, None)
+
+
+def test_server_proxy_gateway():
+    asyncio.run(_proxy_flow())

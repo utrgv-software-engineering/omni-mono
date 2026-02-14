@@ -147,6 +147,8 @@ class RealtimeSettings:
     max_output_tokens: Optional[int] = 4096
     """Maximum tokens to generate in a single response."""
 
+    tts_instructions: Optional[str] = None
+
 
 @dataclass
 class AgentSpec:
@@ -180,6 +182,8 @@ class AgentSpec:
     realtime_settings: Optional[RealtimeSettings] = (
         None  # Realtime-specific configuration (voice, audio formats, VAD, etc.)
     )
+
+    voice_backend: str = "realtime"
 
     mcp_config: Optional[Dict[str, Any]] = None  # MCP configuration
     mcp_servers: List[MCPServerConfig] = field(default_factory=list)
@@ -241,7 +245,9 @@ class AgentSpec:
     # A callable that returns the default model config dict (with keys like
     # 'model', 'provider', 'max_input_tokens', 'max_output_tokens') for a session.
     # Used to initialize session.model_config before the first run if not already set.
-    resolve_default_model_config: Optional[Callable[[], Optional[Dict[str, Any]]]] = None
+    resolve_default_model_config: Optional[Callable[[], Optional[Dict[str, Any]]]] = (
+        None
+    )
 
     resolve_realtime_settings: Optional[Callable[[], Optional[Dict[str, Any]]]] = None
 

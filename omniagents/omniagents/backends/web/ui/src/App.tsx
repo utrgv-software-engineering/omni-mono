@@ -566,7 +566,7 @@ export function App() {
     )
   }
   return (
-    <div className="app h-full flex flex-row">
+    <div className="app h-full flex flex-row min-w-0">
       {!minimalMode && (
         <Sidebar
           open={sidebarOpen}
@@ -578,13 +578,13 @@ export function App() {
           onDelete={handleDeleteSession}
         />
       )}
-      <div className="flex-1 flex flex-col min-h-0">
+      <div className="flex-1 flex flex-col min-h-0 min-w-0">
         <Header
           agentName={agentName}
           connected={connected}
           onMenu={minimalMode ? undefined : () => setSidebarOpen(v => !v)}
         />
-        <div className="flex-1 flex flex-col min-h-0">
+        <div className="flex-1 flex flex-col min-h-0 min-w-0">
           <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} statusItalic={statusItalic} />
           <Input disabled={!connected} thinking={thinking} onStop={handleStop} onSubmit={handleSubmit} voiceEnabled={voiceEnabled} />
         </div>

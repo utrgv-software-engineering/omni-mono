@@ -94,7 +94,9 @@ class WebBackend:
                 pass
 
         realtime_spec = getattr(spec, "voice_spec", None) or spec
-        _ensure_realtime_defaults(realtime_spec)
+        voice_backend = getattr(realtime_spec, "voice_backend", "realtime")
+        if voice_backend == "realtime":
+            _ensure_realtime_defaults(realtime_spec)
 
         config_path = kwargs.get("config_path")
         auth_token = kwargs.get("auth_token")

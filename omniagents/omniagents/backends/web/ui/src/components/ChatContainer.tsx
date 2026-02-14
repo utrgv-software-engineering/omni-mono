@@ -9,7 +9,7 @@ type ChatContainerScrollAnchorProps = React.HTMLAttributes<HTMLDivElement>
 
 export function ChatContainerRoot({ className, resize = 'smooth', initial = 'instant', role = 'log', children, ...rest }: StickToBottomProps) {
   return (
-    <StickToBottom className={cn('flex overflow-y-auto', className)} resize={resize} initial={initial} role={role} {...rest}>
+    <StickToBottom className={cn('flex w-full min-w-0 overflow-y-auto', className)} resize={resize} initial={initial} role={role} {...rest}>
       {children}
     </StickToBottom>
   )
@@ -17,7 +17,7 @@ export function ChatContainerRoot({ className, resize = 'smooth', initial = 'ins
 
 export function ChatContainerContent({ className, children, ...rest }: StickToBottomContentProps) {
   return (
-    <StickToBottom.Content className={cn('flex w-full flex-col', className)} {...rest}>
+    <StickToBottom.Content className={cn('flex w-full min-w-0 flex-col', className)} {...rest}>
       {children}
     </StickToBottom.Content>
   )

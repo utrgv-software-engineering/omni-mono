@@ -30,6 +30,21 @@ agents:
 ```
 When `--mode web` runs without `--agent`, the voice entrypoint is used.
 
+### Voice Backends
+
+`/ws/realtime` supports two server-side implementations:
+
+- `voice_backend: realtime` (default) uses OpenAI realtime sessions (`agents.realtime.*`).
+- `voice_backend: pipeline` uses the voice pipeline (`agents.voice.VoicePipeline`) with STT → agent run → TTS.
+
+Pipeline voice requires extra dependencies:
+
+```bash
+pip install "omniagents[voice]"
+```
+
+To use an OpenAI-compatible endpoint for both the agent calls and the voice pipeline STT/TTS, provide a `model_config_resolver` that returns `provider: openai-compatible` with `base_url` and `api_key`.
+
 ## Ink Mode
 
 Terminal UI built with React:
