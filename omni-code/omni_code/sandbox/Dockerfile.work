@@ -110,8 +110,8 @@ ENV POSTGRES_HOST=127.0.0.1
 ENV POSTGRES_PORT=5432
 ENV POSTGRES_USER=postgres
 ENV POSTGRES_PASSWORD=password
-ENV POSTGRES_DB=som-facultyportal_dev
-ENV POSTGRES_TEST_DB=som-facultyportal_test
+ENV POSTGRES_DB=app_dev
+ENV POSTGRES_TEST_DB=app_test
 ENV REDIS_URL=redis://127.0.0.1:6379
 
 ENTRYPOINT ["/usr/local/bin/omni-sandbox-work-entrypoint"]

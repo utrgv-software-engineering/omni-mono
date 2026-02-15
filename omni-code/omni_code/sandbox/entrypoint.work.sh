@@ -66,10 +66,10 @@ END
 SQL
 
 gosu postgres "${postgres_bin_dir}/psql" -v ON_ERROR_STOP=1 -d postgres <<SQL
-SELECT 'CREATE DATABASE ${POSTGRES_DB:-som-facultyportal_dev} OWNER ${POSTGRES_USER:-postgres}'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${POSTGRES_DB:-som-facultyportal_dev}')\gexec
-SELECT 'CREATE DATABASE ${POSTGRES_TEST_DB:-som-facultyportal_test} OWNER ${POSTGRES_USER:-postgres}'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${POSTGRES_TEST_DB:-som-facultyportal_test}')\gexec
+SELECT 'CREATE DATABASE "' || '${POSTGRES_DB:-app_dev}' || '" OWNER ${POSTGRES_USER:-postgres}'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${POSTGRES_DB:-app_dev}')\gexec
+SELECT 'CREATE DATABASE "' || '${POSTGRES_TEST_DB:-app_test}' || '" OWNER ${POSTGRES_USER:-postgres}'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${POSTGRES_TEST_DB:-app_test}')\gexec
 SQL
 
 redis-server --bind 127.0.0.1 --port 6379 --protected-mode yes --daemonize yes
@@ -77,7 +77,7 @@ redis-server --bind 127.0.0.1 --port 6379 --protected-mode yes --daemonize yes
 export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
 
 if [[ -z "${DATABASE_URL:-}" ]]; then
-  export DATABASE_URL="postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@${POSTGRES_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-som-facultyportal_dev}"
+  export DATABASE_URL="postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@${POSTGRES_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-app_dev}"
 fi
 
 exec gosu "${uid}:${gid}" "$@"

@@ -72,8 +72,12 @@ def _parse_persist_volume(value: str) -> tuple[str, str]:
     return name, container_path
 
 
-def _build_sandbox_image(tag: str) -> None:
-    _run_process(["docker", "build", "-t", tag, str(_sandbox_assets_dir())])
+def _build_sandbox_image(tag: str, dockerfile: Optional[str] = None) -> None:
+    cmd = ["docker", "build", "--no-cache", "-t", tag]
+    if dockerfile:
+        cmd.extend(["-f", dockerfile])
+    cmd.append(str(_sandbox_assets_dir()))
+    _run_process(cmd)
 
 
 def _pick_free_port() -> int:
@@ -160,13 +164,18 @@ def _run_sandbox(
     container_name: Optional[str],
     print_url: bool,
     persist_volumes: list[tuple[str, str]],
+    image: Optional[str] = None,
+    dockerfile: Optional[str] = None,
 ) -> Optional[str]:
     if not _docker_available():
         raise RuntimeError("Docker not found on PATH. Install Docker Desktop or docker-ce.")
 
-    tag = _sandbox_image_tag()
-    if rebuild or not _docker_image_exists(tag):
-        _build_sandbox_image(tag)
+    if image:
+        tag = image
+    else:
+        tag = _sandbox_image_tag()
+        if rebuild or not _docker_image_exists(tag):
+            _build_sandbox_image(tag, dockerfile=dockerfile)
 
     config_dir = get_config_dir()
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -176,7 +185,6 @@ def _run_sandbox(
     args: List[str] = [
         "docker",
         "run",
-        "--rm",
         "-p",
         f"{host_port}:{CONTAINER_PORT}",
         "-v",
@@ -201,7 +209,7 @@ def _run_sandbox(
     )
 
     if detach:
-        args.insert(3, "-d")
+        args.insert(2, "-d")
 
     if container_name:
         args.extend(["--name", container_name])
@@ -381,6 +389,16 @@ def main(argv=None) -> None:
         action="store_true",
         help="Force rebuilding the sandbox image",
     )
+    parser.add_argument(
+        "--image",
+        default=None,
+        help="Use a custom Docker image instead of the default sandbox image",
+    )
+    parser.add_argument(
+        "--dockerfile",
+        default=None,
+        help="Path to a custom Dockerfile to build the sandbox image from",
+    )
 
     parser.add_argument(
         "--persist-volume",
@@ -433,6 +451,8 @@ def main(argv=None) -> None:
             container_name=(str(args.name) if args.name else None),
             print_url=bool(args.print_url),
             persist_volumes=list(args.persist_volume),
+            image=str(args.image) if args.image else None,
+            dockerfile=str(args.dockerfile) if args.dockerfile else None,
         )
 
         if args.ui != "local":
