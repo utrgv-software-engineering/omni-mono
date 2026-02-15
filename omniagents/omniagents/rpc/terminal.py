@@ -43,6 +43,7 @@ class TerminalDescriptor:
     exit_code: Optional[int] = None
     consumer_attached: bool = False
     closed: bool = False
+    _fd_closed: bool = False
 
 
 class TerminalManager:
@@ -205,10 +206,12 @@ class TerminalManager:
                 pass
         except Exception:
             pass
-        try:
-            os.close(terminal.master_fd)
-        except Exception:
-            pass
+        if not terminal._fd_closed:
+            terminal._fd_closed = True
+            try:
+                os.close(terminal.master_fd)
+            except Exception:
+                pass
         await terminal.output_queue.put(None)
 
     async def _reader_loop(self, terminal: TerminalDescriptor) -> None:
@@ -234,10 +237,12 @@ class TerminalManager:
             terminal.closed = True
             await terminal.output_queue.put(None)
             await self._discard_terminal(terminal)
-            try:
-                os.close(terminal.master_fd)
-            except Exception:
-                pass
+            if not terminal._fd_closed:
+                terminal._fd_closed = True
+                try:
+                    os.close(terminal.master_fd)
+                except Exception:
+                    pass
 
     async def _discard_terminal(self, terminal: TerminalDescriptor) -> None:
         async with self._lock:

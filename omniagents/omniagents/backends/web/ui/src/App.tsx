@@ -6,6 +6,7 @@ import { SessionList, type SessionItem } from './components/SessionList'
 import { Sidebar } from './components/Sidebar'
 import { ArtifactsPanel, type ArtifactItem } from './components/ArtifactsPanel'
 import { ResizableDivider } from './components/ResizableDivider'
+import { TerminalPanel } from './components/TerminalPanel'
 import { RPCClient } from './rpc/client'
 
 type UIState = 'connecting' | 'resume' | 'chat' | 'error'
@@ -53,6 +54,7 @@ export function App() {
   const urlSessionHandledRef = useRef(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [artifactsPanelOpen, setArtifactsPanelOpen] = useState(false)
+  const [terminalPanelOpen, setTerminalPanelOpen] = useState(false)
   const [artifactsPanelWidth, setArtifactsPanelWidth] = useState(() => {
     try {
       const stored = localStorage.getItem('artifacts-panel-width')
@@ -642,7 +644,9 @@ export function App() {
           connected={connected}
           onMenu={minimalMode ? undefined : () => setSidebarOpen(v => !v)}
           onArtifactsToggle={hasArtifacts ? () => setArtifactsPanelOpen(v => !v) : undefined}
+          onTerminalToggle={minimalMode ? undefined : () => setTerminalPanelOpen(v => !v)}
           showArtifactsButton={hasArtifacts}
+          showTerminalButton={!minimalMode}
         />
         <div className="flex-1 flex flex-row min-h-0 min-w-0">
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
@@ -675,6 +679,15 @@ export function App() {
           artifacts={visibleArtifacts}
           onClose={() => setArtifactsPanelOpen(false)}
           asOverlay
+        />
+      )}
+      {!minimalMode && (
+        <TerminalPanel
+          open={terminalPanelOpen}
+          client={client}
+          sessionId={sessionId}
+          onSessionId={setSessionId}
+          onClose={() => setTerminalPanelOpen(false)}
         />
       )}
     </div>

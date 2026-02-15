@@ -4,9 +4,44 @@ import base64
 import contextvars
 import mimetypes
 import os
+import subprocess
+import tempfile
 from typing import Callable, Optional
 
 from .discovery import function_tool
+
+
+class OfficeConversionError(Exception):
+    """Raised when LibreOffice conversion to PDF fails."""
+
+
+def _convert_office_to_pdf(path: str) -> str:
+    """Convert a docx/pptx file to a base64-encoded PDF data URI via LibreOffice."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result = subprocess.run(
+            [
+                "libreoffice",
+                "--headless",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                tmpdir,
+                path,
+            ],
+            capture_output=True,
+            timeout=60,
+        )
+        pdf_name = os.path.splitext(os.path.basename(path))[0] + ".pdf"
+        pdf_path = os.path.join(tmpdir, pdf_name)
+        if not os.path.isfile(pdf_path):
+            stderr = result.stderr.decode(errors="replace").strip()
+            raise OfficeConversionError(
+                f"LibreOffice failed to convert {os.path.basename(path)} to PDF"
+                + (f": {stderr}" if stderr else "")
+            )
+        with open(pdf_path, "rb") as f:
+            encoded = base64.b64encode(f.read()).decode()
+        return f"data:application/pdf;base64,{encoded}"
 
 
 def _resolve_file_content(content: str, mode: str) -> str:
@@ -42,6 +77,9 @@ def _resolve_file_content(content: str, mode: str) -> str:
     if mode in ("html", "markdown"):
         with open(path, "r", encoding="utf-8") as f:
             return f.read()
+
+    if mode in ("docx", "pptx"):
+        return _convert_office_to_pdf(path)
 
     # For unknown modes, try reading as text
     try:
@@ -109,6 +147,10 @@ def display_artifact(
         - ``"pdf"`` – Base-64 encoded PDF data, a ``data:`` URI, or a **file
           path** to a ``.pdf`` file. Rendered in an embedded ``<iframe>``
           via a blob URL.
+        - ``"docx"`` – **File path** to a ``.docx`` file. Converted to PDF
+          via LibreOffice and rendered in the PDF viewer.
+        - ``"pptx"`` – **File path** to a ``.pptx`` file. Converted to PDF
+          via LibreOffice and rendered in the PDF viewer.
         - Any other value – rendered as plain text (or read from a file path
           if one is provided).
 
@@ -125,6 +167,17 @@ def display_artifact(
         Always ``{"success": True}``. Included for consistency with other
         tools.
     """
-    resolved = _resolve_file_content(content, mode)
-    emit_artifact(title, resolved, mode, artifact_id)
+    try:
+        resolved = _resolve_file_content(content, mode)
+    except OfficeConversionError as e:
+        return {"success": False, "error": str(e)}
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "LibreOffice conversion timed out"}
+    except FileNotFoundError:
+        return {
+            "success": False,
+            "error": "LibreOffice is not installed — cannot convert office documents to PDF",
+        }
+    emit_mode = "pdf" if mode in ("docx", "pptx") else mode
+    emit_artifact(title, resolved, emit_mode, artifact_id)
     return {"success": True}
