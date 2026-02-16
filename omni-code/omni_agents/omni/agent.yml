@@ -20,6 +20,8 @@ tools:
   - scholar_search
   - download_file
   - convert_to_markdown
+  - read_notebook
+  - edit_notebook
 
 model_settings:
   reasoning:
@@ -45,6 +47,7 @@ safe_agent_options:
     - youtube_search
     - scholar_search
     - convert_to_markdown
+    - read_notebook
 
 server_functions:
   - help

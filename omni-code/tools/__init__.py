@@ -15,6 +15,7 @@ from omniagents.builtin.tools import (
     apply_patch,
 )
 from .conversion_tools import convert_to_markdown
+from .notebook_tools import read_notebook, edit_notebook
 from .slash_command import dispatch
 
 __all__ = [
@@ -32,6 +33,8 @@ __all__ = [
     'edit_file',
     'write_file',
     'apply_patch',
+    'read_notebook',
+    'edit_notebook',
     'dispatch',
     'display_artifact',
 ]
