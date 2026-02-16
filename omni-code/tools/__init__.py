@@ -1,4 +1,5 @@
 from omniagents.builtin.tools import (
+    display_artifact,
     web_fetch,
     youtube_search,
     web_search,
@@ -15,7 +16,6 @@ from omniagents.builtin.tools import (
 )
 from .conversion_tools import convert_to_markdown
 from .slash_command import dispatch
-from .display_artifact import display_artifact
 
 __all__ = [
     'web_fetch',
