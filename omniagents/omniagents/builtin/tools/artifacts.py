@@ -14,6 +14,27 @@ def display_artifact(
     mode: str = "markdown",
     artifact_id: str | None = None,
 ) -> dict:
+    """Display content as a rich artifact in the UI.
+
+    Provide either ``content`` (raw string) or ``path`` (filesystem path), not both.
+
+    When using ``path``, the file is read according to ``mode``:
+    - ``"markdown"`` / ``"html"``: read as UTF-8 text.
+    - ``"image"``: base64-encoded with its MIME type.
+    - ``"pdf"``: base64-encoded as application/pdf.
+    - ``"docx"`` / ``"pptx"``: converted to PDF via LibreOffice, then base64-encoded.
+
+    When using ``content``, the string is emitted directly with no processing.
+
+    Args:
+        title: Display label shown in the artifact UI.
+        content: Raw string content to display.
+        path: Filesystem path to a file to display.
+        mode: Content type — one of "markdown", "html", "image", "pdf", "docx", or "pptx".
+              Defaults to "markdown". "docx" and "pptx" are emitted as "pdf".
+        artifact_id: Optional identifier. Pass an existing ID to update an artifact in place;
+                     omit to create a new one.
+    """
     if content is not None and path is not None:
         return {"success": False, "error": "Provide only one of content or path"}
 

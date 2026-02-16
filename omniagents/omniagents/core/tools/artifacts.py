@@ -19,6 +19,7 @@ def convert_office_to_pdf(path: str) -> str:
             [
                 "libreoffice",
                 "--headless",
+                "-env:UserInstallation=file:///tmp/libreoffice-user",
                 "--convert-to",
                 "pdf",
                 "--outdir",
