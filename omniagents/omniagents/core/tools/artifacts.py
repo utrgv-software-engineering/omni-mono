@@ -12,7 +12,7 @@ class OfficeConversionError(Exception):
     """Raised when LibreOffice conversion to PDF fails."""
 
 
-def _convert_office_to_pdf(path: str) -> str:
+def convert_office_to_pdf(path: str) -> str:
     """Convert a docx/pptx file to a base64-encoded PDF data URI via LibreOffice."""
     with tempfile.TemporaryDirectory() as tmpdir:
         result = subprocess.run(
@@ -41,23 +41,13 @@ def _convert_office_to_pdf(path: str) -> str:
         return f"data:application/pdf;base64,{encoded}"
 
 
-def resolve_file_content(content: str, mode: str) -> str:
-    """If *content* looks like a file path that exists, read it inline.
+_convert_office_to_pdf = convert_office_to_pdf
 
-    Returns the original *content* unchanged when it is not a readable path.
-    """
-    # Quick heuristics: skip URLs, data URIs, and anything that looks like
-    # actual inline content (HTML tags, markdown, multi-line text, base64 blocks).
-    if (
-        content.startswith(("http://", "https://", "data:"))
-        or "\n" in content
-        or len(content) > 1024
-    ):
-        return content
 
-    path = os.path.expanduser(content.strip())
+def resolve_file_content(path: str, mode: str) -> str:
+    path = os.path.expanduser(path.strip())
     if not os.path.isfile(path):
-        return content
+        raise FileNotFoundError(path)
 
     if mode == "image":
         mime, _ = mimetypes.guess_type(path)
@@ -76,14 +66,14 @@ def resolve_file_content(content: str, mode: str) -> str:
             return f.read()
 
     if mode in ("docx", "pptx"):
-        return _convert_office_to_pdf(path)
+        return convert_office_to_pdf(path)
 
     # For unknown modes, try reading as text
     try:
         with open(path, "r", encoding="utf-8") as f:
             return f.read()
     except (UnicodeDecodeError, OSError):
-        return content
+        raise
 
 
 _resolve_file_content = resolve_file_content
@@ -118,5 +108,4 @@ def emit_artifact(
             callback(title, content, mode, artifact_id)
         except Exception as e:
             print(f"Error during artifact callback: {e}")
-
 
