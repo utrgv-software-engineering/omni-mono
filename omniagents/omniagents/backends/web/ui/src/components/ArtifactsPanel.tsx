@@ -1,6 +1,14 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Document, Page as PdfPage, pdfjs } from 'react-pdf'
+import 'react-pdf/dist/Page/AnnotationLayer.css'
+import 'react-pdf/dist/Page/TextLayer.css'
 import { Markdown } from './promptkit/markdown'
 import { ImageLightbox } from './ImageLightbox'
+
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url,
+).toString()
 
 export type ArtifactItem = {
   title: string
@@ -43,9 +51,15 @@ function HtmlPreview({ content }: { content: string }) {
 }
 
 function PdfViewer({ content }: { content: string }) {
-  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+  const [numPages, setNumPages] = useState(0)
+  const [pageNumber, setPageNumber] = useState(1)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [containerWidth, setContainerWidth] = useState<number | undefined>(undefined)
 
-  useEffect(() => {
+  // Decode base64 content once and keep a stable reference.
+  // pdf.js transfers the ArrayBuffer to a worker which empties the original
+  // Uint8Array, so we must give Document a fresh copy on every render.
+  const pdfData = useMemo(() => {
     let raw = content
     const prefix = 'data:application/pdf;base64,'
     if (raw.startsWith(prefix)) raw = raw.slice(prefix.length)
@@ -53,21 +67,67 @@ function PdfViewer({ content }: { content: string }) {
       const bytes = atob(raw)
       const arr = new Uint8Array(bytes.length)
       for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i)
-      const url = URL.createObjectURL(new Blob([arr], { type: 'application/pdf' }))
-      setBlobUrl(url)
-      return () => URL.revokeObjectURL(url)
+      return arr
     } catch {
-      setBlobUrl(null)
+      return null
     }
   }, [content])
 
-  if (!blobUrl) return <pre className="whitespace-pre-wrap break-words text-red-400">Invalid PDF data</pre>
+  // Return a fresh copy so pdf.js can transfer without destroying our source.
+  const file = useMemo(() => (pdfData ? { data: pdfData.slice() } : null), [pdfData])
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const ro = new ResizeObserver(([entry]) => {
+      setContainerWidth(entry.contentRect.width)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const onDocumentLoadSuccess = useCallback(({ numPages: n }: { numPages: number }) => {
+    setNumPages(n)
+    setPageNumber(1)
+  }, [])
+
+  if (!pdfData) return <pre className="whitespace-pre-wrap break-words text-red-400">Invalid PDF data</pre>
 
   return (
-    <iframe
-      src={blobUrl}
-      style={{ width: '100%', height: 600, border: 'none', borderRadius: 6 }}
-    />
+    <div ref={containerRef}>
+      <div className="flex items-center justify-center gap-3 py-2 border-b border-bgCardAlt mb-2">
+        <button
+          className="px-2 py-1 rounded text-sm hover:bg-bgCardAlt text-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+          disabled={pageNumber <= 1}
+          onClick={() => setPageNumber(p => p - 1)}
+        >
+          Prev
+        </button>
+        <span className="text-sm text-gray-300">
+          Page {pageNumber} of {numPages || '...'}
+        </span>
+        <button
+          className="px-2 py-1 rounded text-sm hover:bg-bgCardAlt text-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+          disabled={pageNumber >= numPages}
+          onClick={() => setPageNumber(p => p + 1)}
+        >
+          Next
+        </button>
+      </div>
+      <Document
+        file={file}
+        onLoadSuccess={onDocumentLoadSuccess}
+        loading={<div className="text-sm text-gray-400 py-4 text-center">Loading PDF...</div>}
+        error={<pre className="whitespace-pre-wrap break-words text-red-400">Failed to load PDF</pre>}
+      >
+        <PdfPage
+          pageNumber={pageNumber}
+          width={containerWidth}
+          renderTextLayer={true}
+          renderAnnotationLayer={true}
+        />
+      </Document>
+    </div>
   )
 }
 
