@@ -1,4 +1,4 @@
-from omniagents.core.tools.artifacts import display_artifact
+from .artifacts import display_artifact
 from .bash_tool import execute_bash
 from .download_file import download_file
 from .file_tools import (

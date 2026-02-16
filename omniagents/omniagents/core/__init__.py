@@ -42,7 +42,8 @@ except Exception:
     register_runtime_hooks_from_dir = None  # type: ignore
 
 try:
-    from .tools.artifacts import display_artifact, set_artifact_callback, emit_artifact  # type: ignore
+    from omniagents.builtin.tools.artifacts import display_artifact  # type: ignore
+    from .tools.artifacts import set_artifact_callback, emit_artifact  # type: ignore
 except Exception:
     display_artifact = set_artifact_callback = emit_artifact = None  # type: ignore
 # Optionally expose other useful components like SafeAgentOptions etc.
