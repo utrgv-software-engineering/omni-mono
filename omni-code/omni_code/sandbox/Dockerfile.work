@@ -49,6 +49,9 @@ RUN apt-get update && apt-get install -y \
     libsqlite3-dev \
     liblzma-dev \
     tk-dev \
+    libreoffice-core \
+    libreoffice-writer \
+    libreoffice-impress \
     && rm -rf /var/lib/apt/lists/*
 
 RUN git lfs install --system

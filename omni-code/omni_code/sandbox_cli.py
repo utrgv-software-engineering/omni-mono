@@ -185,6 +185,7 @@ def _run_sandbox(
     args: List[str] = [
         "docker",
         "run",
+        "--rm",
         "-p",
         f"{host_port}:{CONTAINER_PORT}",
         "-v",
@@ -209,7 +210,7 @@ def _run_sandbox(
     )
 
     if detach:
-        args.insert(2, "-d")
+        args.insert(3, "-d")
 
     if container_name:
         args.extend(["--name", container_name])
