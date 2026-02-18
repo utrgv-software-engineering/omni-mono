@@ -36,6 +36,7 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     libvips42 \
     poppler-utils \
+    locales \
     libssl-dev \
     libreadline-dev \
     zlib1g-dev \
@@ -52,6 +53,7 @@ RUN apt-get update && apt-get install -y \
     libreoffice-core \
     libreoffice-writer \
     libreoffice-impress \
+    && (apt-get install -y postgresql-16-pgvector || apt-get install -y postgresql-pgvector) \
     && rm -rf /var/lib/apt/lists/*
 
 RUN git lfs install --system
@@ -67,7 +69,7 @@ ENV PATH="/opt/nvm/versions/node/v${NODE_VERSION}/bin:${PATH}"
 
 ENV RBENV_ROOT=/opt/rbenv
 ENV PATH="${RBENV_ROOT}/bin:${RBENV_ROOT}/shims:${PATH}"
-ENV RUBY_VERSION=3.2.2
+ENV RUBY_VERSION=3.3.7
 
 RUN git clone --depth 1 https://github.com/rbenv/rbenv.git "${RBENV_ROOT}" \
     && mkdir -p "${RBENV_ROOT}/plugins" \
@@ -75,7 +77,11 @@ RUN git clone --depth 1 https://github.com/rbenv/rbenv.git "${RBENV_ROOT}" \
     && rbenv install "${RUBY_VERSION}" \
     && rbenv global "${RUBY_VERSION}" \
     && gem update --system \
-    && gem install bundler foreman
+    && gem install bundler -v 2.4.22 \
+    && gem install foreman
+
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
 
 ENV PYENV_ROOT=/opt/pyenv
 ENV PATH="${PYENV_ROOT}/bin:${PYENV_ROOT}/shims:${PATH}"
@@ -83,6 +89,16 @@ ENV PYTHON_VERSION=3.11.8
 
 RUN git clone --depth 1 https://github.com/pyenv/pyenv.git "${PYENV_ROOT}" \
     && bash -lc "pyenv install ${PYTHON_VERSION} && pyenv global ${PYTHON_VERSION}"
+
+RUN bash -lc "python -m pip install --no-cache-dir --upgrade pip \
+    && python -m pip install --no-cache-dir \
+      'pandas>=2.2.3' \
+      'databricks-sql-connector>=4.0.5' \
+      'databricks-sdk>=0.57.0' \
+      'python-dotenv>=1.1.1' \
+      'panel>=1.7.2' \
+      'duckdb>=1.3.1' \
+      'sqlglot>=26.33.0'"
 
 RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg \
     && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ noble main" > /etc/apt/sources.list.d/azure-cli.list \
