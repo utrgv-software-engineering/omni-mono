@@ -25,13 +25,23 @@ omni --mode server       # Run the backend server
 If you have Docker installed, you can run Omni Code inside a container while mounting your current workspace and your Omni Code config directory (models/MCP/skills):
 
 ```bash
-omni sandbox --mode web
+omni sandbox --ui container
 ```
 
 To persist credentials or tool state between runs, mount a persistent Docker volume into the container:
 
 ```bash
 omni sandbox --persist-volume omni-cred-azure:/home/user/.azure
+```
+
+By default the sandbox persists OmniAgents state (sessions + Studio traces) in an isolated directory so sandbox history is not mixed with your local OmniAgents history:
+
+- Host: `~/.config/omni_code/sandbox/omniagents/` → Container: `/home/user/.omniagents/`
+
+You can override this location (or intentionally share your local OmniAgents state) with:
+
+```bash
+omni sandbox --omniagents-home ~/.omniagents
 ```
 
 For Electron-style launching, you can run in the background and print only the URL:

@@ -15,6 +15,7 @@ def test_sandbox_cli_builds_when_missing_and_runs(monkeypatch, tmp_path, capsys)
     monkeypatch.setattr(sandbox_cli.os, "getgid", lambda: 456)
     monkeypatch.setattr(sandbox_cli, "_assert_port_available", lambda _: None)
     monkeypatch.setenv("OPENAI_API_KEY", "abc")
+    monkeypatch.delenv("OMNI_CODE_SANDBOX_OMNIAGENTS_HOME", raising=False)
 
     calls = []
 
@@ -49,7 +50,7 @@ def test_sandbox_cli_builds_when_missing_and_runs(monkeypatch, tmp_path, capsys)
     assert "http://localhost:7777" in out
 
     assert calls[0][0][:3] == ["docker", "image", "inspect"]
-    assert calls[1][0][:3] == ["docker", "build", "-t"]
+    assert calls[1][0][:3] == ["docker", "build", "--no-cache"]
     assert calls[-1][0][:2] == ["docker", "run"]
 
     run_cmd = calls[-1][0]
@@ -59,13 +60,16 @@ def test_sandbox_cli_builds_when_missing_and_runs(monkeypatch, tmp_path, capsys)
     assert "LOCAL_UID=123" in run_cmd
     assert "LOCAL_GID=456" in run_cmd
     assert "HOME=/home/user" in run_cmd
+    assert "OMNIAGENTS_HOME=/home/user/.omniagents" in run_cmd
     assert "XDG_CONFIG_HOME=/home/user/.config" in run_cmd
+    assert f"{config_dir / 'sandbox' / 'omniagents'}:/home/user/.omniagents" in run_cmd
     assert "omni" in run_cmd
 
 
 def test_sandbox_cli_skips_build_when_image_exists(monkeypatch, tmp_path):
     from omni_code import sandbox_cli
     monkeypatch.setenv("OPENAI_API_KEY", "abc")
+    monkeypatch.delenv("OMNI_CODE_SANDBOX_OMNIAGENTS_HOME", raising=False)
 
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -121,6 +125,7 @@ def test_sandbox_cli_rejects_missing_workspace(monkeypatch, tmp_path):
 def test_sandbox_cli_detach_print_url(monkeypatch, tmp_path, capsys):
     from omni_code import sandbox_cli
     monkeypatch.setenv("OPENAI_API_KEY", "abc")
+    monkeypatch.delenv("OMNI_CODE_SANDBOX_OMNIAGENTS_HOME", raising=False)
 
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -174,6 +179,7 @@ def test_sandbox_cli_local_ui_runs_proxy(monkeypatch, tmp_path, capsys):
     from omni_code import sandbox_cli
 
     monkeypatch.setenv("OPENAI_API_KEY", "abc")
+    monkeypatch.delenv("OMNI_CODE_SANDBOX_OMNIAGENTS_HOME", raising=False)
 
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -249,4 +255,52 @@ def test_sandbox_cli_local_ui_runs_proxy(monkeypatch, tmp_path, capsys):
     assert "--auth-token" in docker_run
     assert "secret" in docker_run
 
+    assert f"{config_dir / 'sandbox' / 'omniagents'}:/home/user/.omniagents" in docker_run
+
     assert any(cmd[:2] == ["docker", "stop"] and cmd[2] == "abc123" for cmd, _ in docker_calls)
+
+
+def test_sandbox_cli_ui_container_forces_web_mode(monkeypatch, tmp_path):
+    from omni_code import sandbox_cli
+
+    monkeypatch.setenv("OPENAI_API_KEY", "abc")
+    monkeypatch.delenv("OMNI_CODE_SANDBOX_OMNIAGENTS_HOME", raising=False)
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    config_dir = tmp_path / "cfg"
+    monkeypatch.setattr(sandbox_cli, "get_config_dir", lambda: config_dir)
+    monkeypatch.setattr(sandbox_cli.shutil, "which", lambda _: "/usr/bin/docker")
+    monkeypatch.setattr(sandbox_cli, "_assert_port_available", lambda _: None)
+    monkeypatch.setattr(sandbox_cli, "_docker_image_exists", lambda _: True)
+    monkeypatch.setattr(sandbox_cli, "_sandbox_image_tag", lambda: "omni-code-sandbox:test")
+
+    calls = []
+
+    def fake_run(args, check=True, capture_output=False):
+        calls.append(list(args))
+
+        class Result:
+            def __init__(self, returncode=0):
+                self.returncode = returncode
+
+        return Result(returncode=0)
+
+    monkeypatch.setattr(sandbox_cli, "_run_process", fake_run)
+
+    sandbox_cli.main(
+        [
+            "--workspace",
+            str(workspace),
+            "--ui",
+            "container",
+            "--mode",
+            "server",
+            "--port",
+            "7777",
+        ]
+    )
+
+    docker_run = next(cmd for cmd in calls if cmd[:2] == ["docker", "run"])
+    assert ["--mode", "web"] == docker_run[docker_run.index("omni") + 1 : docker_run.index("omni") + 3]

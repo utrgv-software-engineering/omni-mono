@@ -2,6 +2,7 @@ def test_sandbox_cli_persist_volume_mounts_and_creates(monkeypatch, tmp_path):
     from omni_code import sandbox_cli
 
     monkeypatch.setenv("OPENAI_API_KEY", "abc")
+    monkeypatch.delenv("OMNI_CODE_SANDBOX_OMNIAGENTS_HOME", raising=False)
 
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -48,4 +49,4 @@ def test_sandbox_cli_persist_volume_mounts_and_creates(monkeypatch, tmp_path):
 
     docker_run = next(cmd for cmd in calls if cmd[:2] == ["docker", "run"])
     assert "omni-test-creds:/home/user/.azure" in docker_run
-
+    assert f"{config_dir / 'sandbox' / 'omniagents'}:/home/user/.omniagents" in docker_run

@@ -152,6 +152,16 @@ def _host_uid_gid() -> tuple[int, int]:
     return uid, gid
 
 
+def _resolve_host_omniagents_home(config_dir: Path) -> Path:
+    override = os.getenv("OMNI_CODE_SANDBOX_OMNIAGENTS_HOME")
+    if override:
+        resolved = Path(override).expanduser().resolve()
+    else:
+        resolved = (config_dir / "sandbox" / "omniagents").resolve()
+    resolved.mkdir(parents=True, exist_ok=True)
+    return resolved
+
+
 def _run_sandbox(
     *,
     mode: str,
@@ -181,6 +191,7 @@ def _run_sandbox(
     config_dir.mkdir(parents=True, exist_ok=True)
 
     uid, gid = _host_uid_gid()
+    host_omniagents_home = _resolve_host_omniagents_home(config_dir)
 
     args: List[str] = [
         "docker",
@@ -192,6 +203,8 @@ def _run_sandbox(
         f"{str(workspace)}:/home/user/workspace",
         "-v",
         f"{str(config_dir)}:/home/user/.config/omni_code",
+        "-v",
+        f"{str(host_omniagents_home)}:/home/user/.omniagents",
         "-w",
         "/home/user/workspace",
         "-e",
@@ -200,6 +213,8 @@ def _run_sandbox(
         f"LOCAL_GID={gid}",
         "-e",
         "HOME=/home/user",
+        "-e",
+        "OMNIAGENTS_HOME=/home/user/.omniagents",
         "-e",
         "XDG_CONFIG_HOME=/home/user/.config",
     ]
@@ -270,6 +285,25 @@ def _format_ui_url(ui_host: str, ui_port: int) -> str:
     return f"http://{display_host}:{ui_port}"
 
 
+def _ensure_websockets_unlimited() -> None:
+    try:
+        import websockets
+    except Exception:
+        return
+
+    if getattr(websockets, "_omni_code_unlimited", False):
+        return
+
+    original_connect = websockets.connect
+
+    def patched_connect(*args, **kwargs):
+        kwargs.setdefault("max_size", None)
+        return original_connect(*args, **kwargs)
+
+    websockets.connect = patched_connect
+    websockets._omni_code_unlimited = True
+
+
 
 
 def _run_local_ui(
@@ -281,6 +315,8 @@ def _run_local_ui(
     auth_token_env: Optional[str],
 ) -> None:
     from omniagents.core.runtime.runner import Runner
+
+    _ensure_websockets_unlimited()
 
     previous_token = None
     if auth_token and auth_token_env:
@@ -402,6 +438,15 @@ def main(argv=None) -> None:
     )
 
     parser.add_argument(
+        "--omniagents-home",
+        default=None,
+        help=(
+            "Host directory to persist OmniAgents state for the sandbox (sessions/traces). "
+            "Defaults to <omni config dir>/sandbox/omniagents"
+        ),
+    )
+
+    parser.add_argument(
         "--persist-volume",
         action="append",
         default=[],
@@ -410,6 +455,12 @@ def main(argv=None) -> None:
     )
 
     args = parser.parse_args(argv)
+
+    effective_mode = str(args.mode)
+    if args.ui == "local":
+        effective_mode = "server"
+    elif args.ui == "container":
+        effective_mode = "web"
 
     workspace = Path(args.workspace).expanduser().resolve()
     if not workspace.exists() or not workspace.is_dir():
@@ -437,12 +488,13 @@ def main(argv=None) -> None:
         if args.print_url and args.ui == "local":
             raise RuntimeError("--print-url is only supported with --ui container/none")
 
-        if args.ui == "local" and args.mode != "server":
-            raise RuntimeError("--ui local requires --mode server")
-
         docker_detach = bool(args.detach) or args.ui == "local"
+
+        if args.omniagents_home:
+            os.environ["OMNI_CODE_SANDBOX_OMNIAGENTS_HOME"] = str(args.omniagents_home)
+
         container_id = _run_sandbox(
-            mode=str(args.mode),
+            mode=effective_mode,
             workspace=workspace,
             host_port=host_port,
             env_file=env_file,
