@@ -55,6 +55,11 @@ def cli_main(argv=None) -> None:
         from omni_code.sandbox_cli import main as sandbox_main
         return sandbox_main(args[1:])
 
+    if args and args[0] == "sessions":
+        from omni_code.sessions_cli import main as sessions_main
+
+        return sessions_main(args[1:])
+
     # Load models config
     _load_models_config()
 

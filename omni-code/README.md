@@ -68,6 +68,21 @@ Type these while the assistant is running:
 - `/exit` - End the current session
 - `/good` / `/bad` / `/note` - Feedback and session notes
 
+## Sessions (CLI)
+
+Inspect prior conversations stored in the OmniAgents sessions database:
+
+```bash
+omni sessions list --pretty
+omni sessions list --after 2026-02-01 --limit 20 --offset 0 --pretty
+omni sessions list --after 2026-02-01 --limit 20 --offset 20 --pretty
+omni sessions list --stats --limit 20 --pretty
+omni sessions search "kubernetes" --role user --pretty
+omni sessions search "kubernetes" --after 2026-02-01 --limit 20 --offset 0 --pretty
+omni sessions export <session_id> --format jsonl
+omni sessions summarize <session_id> --pretty
+```
+
 ## API keys
 
 - OpenAI: set `OPENAI_API_KEY` (or run `omni model setup` to store credentials in the global config).

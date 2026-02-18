@@ -1,0 +1,13 @@
+name: session_summarizer
+label: Session Summarizer
+description: "Summarizes a past OmniAgents session for fast recall"
+instructions_file: instructions.md
+
+tools: []
+
+model_settings:
+  tool_choice: none
+
+max_turns: 1
+
+variables: {}

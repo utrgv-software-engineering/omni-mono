@@ -49,6 +49,7 @@ packages = [
 
 [tool.setuptools.package-data]
 "omni_code" = ["project.yml", "sandbox/*"]
+"omni_agents" = ["*/*.yml", "*/*.md"]
 "omni_agents.omni" = ["*.yml", "*.md"]
 "omni_agents.voice_agent" = ["*.yml", "*.md"]
 "omni_agents.init_agent" = ["*.yml", "*.md"]
