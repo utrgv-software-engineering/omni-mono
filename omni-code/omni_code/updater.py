@@ -14,7 +14,7 @@ import requests
 from omni_code.config import get_config_dir
 
 
-GEMFURY_SIMPLE_INDEX_URL = "https://pypi.fury.io/ericmichael/simple/omni-code/"
+GEMFURY_SIMPLE_INDEX_URL = "https://pypi.fury.io/ericmichael/omni-code/"
 PIPX_PACKAGE_NAME = "omni-code"
 DEFAULT_CHECK_INTERVAL_SECONDS = 60 * 60 * 24
 DEFAULT_FAILURE_RETRY_SECONDS = 15 * 60
@@ -58,9 +58,16 @@ def _extract_versions_from_simple_index(html: str) -> list[str]:
 
     for match in re.finditer(r"href=[\"']([^\"']+)[\"']", html, flags=re.IGNORECASE):
         href = match.group(1)
+        href = href.split("#", 1)[0].split("?", 1)[0]
         filename = href.rsplit("/", 1)[-1]
 
         if filename.startswith("omni_code-") and filename.endswith(".whl"):
+            parts = filename.split("-")
+            if len(parts) >= 2:
+                versions.add(parts[1])
+            continue
+
+        if filename.startswith("omni-code-") and filename.endswith(".whl"):
             parts = filename.split("-")
             if len(parts) >= 2:
                 versions.add(parts[1])

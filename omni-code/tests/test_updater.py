@@ -8,9 +8,9 @@ from omni_code import updater
 def test_extract_versions_from_simple_index_parses_wheels_and_sdist():
     html = """
     <html>
-      <a href='omni_code-0.4.2-py3-none-any.whl'>wheel</a>
-      <a href='omni_code-0.4.10-py3-none-any.whl'>wheel</a>
-      <a href='omni-code-0.4.3.tar.gz'>sdist</a>
+      <a href='omni_code-0.4.2-py3-none-any.whl#sha256=abc'>wheel</a>
+      <a href='omni_code-0.4.10-py3-none-any.whl#sha256=def'>wheel</a>
+      <a href='omni-code-0.4.3.tar.gz#sha256=ghi'>sdist</a>
       <a href='unrelated-1.0.0-py3-none-any.whl'>nope</a>
     </html>
     """
