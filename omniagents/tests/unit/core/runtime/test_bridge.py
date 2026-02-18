@@ -78,32 +78,36 @@ def test_stream_event_payload_variants(monkeypatch):
         types.SimpleNamespace(text_message_output=lambda item: item.text),
     )
     run_id = "run-1"
+    session_id = "session-1"
     call_item = types.SimpleNamespace(
         type="tool_call_item",
         to_input_item=lambda: {"name": "alpha", "arguments": "{}", "call_id": "c1"},
     )
-    method, payload = bridge._stream_event_payload(call_item, run_id)
+    method, payload = bridge._stream_event_payload(call_item, run_id, session_id=session_id)
     assert method == "tool_called"
     assert payload["call_id"] == "c1"
+    assert payload["session_id"] == session_id
     output_item = types.SimpleNamespace(
         type="tool_call_output_item",
         name="alpha",
         output=RichToolOutput("done", ui_metadata={"hint": "ok"}),
         to_input_item=lambda: {"call_id": "c1"},
     )
-    method2, payload2 = bridge._stream_event_payload(output_item, run_id)
+    method2, payload2 = bridge._stream_event_payload(output_item, run_id, session_id=session_id)
     assert method2 == "tool_result"
     assert payload2["metadata"] == {"hint": "ok"}
+    assert payload2["session_id"] == session_id
     message_item = types.SimpleNamespace(
         type="message_output_item",
         text="hello",
         to_input_item=lambda: {"role": "assistant", "content": "hello"},
     )
-    method3, payload3 = bridge._stream_event_payload(message_item, run_id)
+    method3, payload3 = bridge._stream_event_payload(message_item, run_id, session_id=session_id)
     assert method3 == "message_output"
     assert payload3["content"] == "hello"
+    assert payload3["session_id"] == session_id
     unknown_item = types.SimpleNamespace(type="other")
-    method4, payload4 = bridge._stream_event_payload(unknown_item, run_id)
+    method4, payload4 = bridge._stream_event_payload(unknown_item, run_id, session_id=session_id)
     assert method4 is None
     assert payload4 is None
 
@@ -124,7 +128,9 @@ def test_stream_event_payload_handles_input_error(monkeypatch):
         def to_input_item(self):
             raise RuntimeError("bad item")
 
-    method, payload = bridge._stream_event_payload(BadItem(), "run-x")
+    method, payload = bridge._stream_event_payload(
+        BadItem(), "run-x", session_id="session-x"
+    )
     assert method == "tool_result"
     assert payload["output"] == "plain"
     assert "call_id" not in payload

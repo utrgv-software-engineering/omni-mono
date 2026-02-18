@@ -1606,6 +1606,7 @@ class AgentService(RpcMethodsBase):
                                     "run_status",
                                     {
                                         "run_id": run_name,
+                                        "session_id": sess.id,
                                         "status": "retrying",
                                         "message": str(e),
                                         "attempt": attempt,
@@ -1636,6 +1637,7 @@ class AgentService(RpcMethodsBase):
                 # Inform client the run finished
                 payload = {
                     "run_id": run_name,
+                    "session_id": sess.id,
                     "end_reason": end_reason,
                 }
                 if error_info is not None:

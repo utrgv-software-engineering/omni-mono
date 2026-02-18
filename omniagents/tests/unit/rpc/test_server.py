@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock
 
@@ -163,3 +165,68 @@ async def test_endpoint_accepts_args_field():
     payload = transport.send_json.await_args.args[0]
     assert payload["result"] == "ok"
     assert methods.calls == ["ok"]
+
+
+class ChannelContextMethods(RpcMethodsBase):
+    def __init__(self, ready_a: asyncio.Event, ready_b: asyncio.Event, go: asyncio.Event):
+        super().__init__()
+        self._ready_a = ready_a
+        self._ready_b = ready_b
+        self._go = go
+
+    async def check_channel(self, label: str):
+        first = self.channel
+        if label == "a":
+            self._ready_a.set()
+        else:
+            self._ready_b.set()
+        await self._go.wait()
+        second = self.channel
+        return first is second
+
+
+@pytest.mark.asyncio
+async def test_endpoint_channel_is_task_local():
+    ready_a = asyncio.Event()
+    ready_b = asyncio.Event()
+    go = asyncio.Event()
+    methods = ChannelContextMethods(ready_a, ready_b, go)
+    endpoint = JsonRpcEndpoint(methods)
+
+    transport_a = TransportStub()
+    transport_b = TransportStub()
+    channel_a = JsonRpcChannel(transport_a)
+    channel_b = JsonRpcChannel(transport_b)
+
+    task_a = asyncio.create_task(
+        endpoint._process_message(
+            channel_a,
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "check_channel",
+                "params": {"label": "a"},
+            },
+        )
+    )
+    task_b = asyncio.create_task(
+        endpoint._process_message(
+            channel_b,
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "check_channel",
+                "params": {"label": "b"},
+            },
+        )
+    )
+
+    await ready_a.wait()
+    await ready_b.wait()
+    go.set()
+    await asyncio.gather(task_a, task_b)
+
+    payload_a = transport_a.send_json.await_args.args[0]
+    payload_b = transport_b.send_json.await_args.args[0]
+    assert payload_a["result"] is True
+    assert payload_b["result"] is True

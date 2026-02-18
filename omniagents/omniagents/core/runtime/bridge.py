@@ -85,7 +85,7 @@ async def _broadcast(session, method: str, payload: dict) -> bool:  # noqa: D401
 # Event mapping helper ----------------------------------------------------
 
 
-def _stream_event_payload(item, run_id: str):
+def _stream_event_payload(item, run_id: str, *, session_id: str):
     """Map agent stream *item* into a notification name + payload.
 
     Returns (method_name, payload) or (None, None) if the item shouldn't
@@ -97,6 +97,7 @@ def _stream_event_payload(item, run_id: str):
         call_id = inp.get("call_id")
         return "tool_called", {
             "run_id": run_id,
+            "session_id": session_id,
             "tool": name,
             "input": inp.get("arguments", ""),
             **({"call_id": call_id} if call_id else {}),
@@ -124,6 +125,7 @@ def _stream_event_payload(item, run_id: str):
 
         payload = {
             "run_id": run_id,
+            "session_id": session_id,
             "tool": getattr(item, "name", "<tool>"),
             "output": str(output),  # This calls __str__ for RichToolOutput
             **({"call_id": call_id} if call_id else {}),
@@ -136,7 +138,12 @@ def _stream_event_payload(item, run_id: str):
         return "tool_result", payload
     elif item.type == "message_output_item":
         text = ItemHelpers.text_message_output(item)
-        return "message_output", {"run_id": run_id, "content": text, "is_final": False}
+        return "message_output", {
+            "run_id": run_id,
+            "session_id": session_id,
+            "content": text,
+            "is_final": False,
+        }
     return None, None
 
 
@@ -157,6 +164,25 @@ def _apply_compaction_window(history: list[dict]) -> list[dict]:
     if last_summary_idx is None:
         return list(history)
     return list(history[last_summary_idx:])
+
+
+def _is_context_length_exceeded(err: Exception) -> bool:
+    if err.__class__.__name__ == "ContextWindowExceededError":
+        return True
+    body = getattr(err, "body", None)
+    if isinstance(body, dict):
+        error_obj = body.get("error")
+        if isinstance(error_obj, dict) and error_obj.get("code") == "context_length_exceeded":
+            return True
+    code = getattr(err, "code", None)
+    if code == "context_length_exceeded":
+        return True
+    msg = str(err).lower()
+    if "context window" in msg and "exceed" in msg:
+        return True
+    if "maximum context length" in msg:
+        return True
+    return False
 
 
 def _filter_history_for_api(history: list[dict]) -> list[dict]:
@@ -380,6 +406,7 @@ async def stream_agent(
     max_input_tokens: Optional[int] = None,
     max_output_tokens: Optional[int] = None,
     include_user_message: bool = True,
+    context_error_retry: bool = False,
     workflow_name: Optional[str] = None,
     group_id: Optional[str] = None,
     user_content: Optional[Any] = None,
@@ -524,10 +551,16 @@ async def stream_agent(
     turn_counter = 0
 
     # Track latest model info seen during the run (can change across turns)
+    resolved_max_output_tokens = max_output_tokens
+    if resolved_max_output_tokens is None:
+        resolved_max_output_tokens = getattr(
+            getattr(agent, "model_settings", None), "max_tokens", None
+        )
+
     last_model_info = {
         "model": model_label or getattr(agent, "model", None),
         "max_input_tokens": max_input_tokens,
-        "max_output_tokens": max_output_tokens,
+        "max_output_tokens": resolved_max_output_tokens,
         "truncation": getattr(
             getattr(agent, "model_settings", None), "truncation", None
         ),
@@ -629,6 +662,7 @@ async def stream_agent(
                     turn_counter += 1
                     usage_payload = {
                         "run_id": asyncio.current_task().get_name(),
+                        "session_id": session.id,
                         "turn": turn_counter,
                         "delta": delta,
                         "totals": current_totals,
@@ -671,7 +705,9 @@ async def stream_agent(
 
             item = event.item
             method, payload = _stream_event_payload(
-                item, run_id=asyncio.current_task().get_name()
+                item,
+                run_id=asyncio.current_task().get_name(),
+                session_id=session.id,
             )
 
             # Track tool calls that need results
@@ -754,6 +790,53 @@ async def stream_agent(
         # Re-raise to let the caller handle it
         raise
     except Exception as e:
+        if (
+            not context_error_retry
+            and service is not None
+            and session is not None
+            and include_user_message
+        ):
+            try:
+                invoke = getattr(service, "invoke_runtime_hooks", None)
+                if invoke is not None:
+                    hook_result = await invoke(
+                        "error",
+                        session=session,
+                        run_id=(
+                            asyncio.current_task().get_name()
+                            if asyncio.current_task()
+                            else ""
+                        ),
+                        params={
+                            "prompt": prompt,
+                            "error": e,
+                            "is_context_length_exceeded": _is_context_length_exceeded(
+                                e
+                            ),
+                        },
+                    )
+                    if isinstance(hook_result, dict) and hook_result.get("retry") is True:
+                        return await stream_agent(
+                            agent,
+                            prompt,
+                            session,
+                            rpc_channel,
+                            service=service,
+                            max_turns=max_turns,
+                            context=context,
+                            max_input_tokens=max_input_tokens,
+                            max_output_tokens=max_output_tokens,
+                            include_user_message=False,
+                            context_error_retry=True,
+                            workflow_name=workflow_name,
+                            group_id=group_id,
+                            user_content=user_content,
+                            model_provider=model_provider,
+                            model_label=model_label,
+                        )
+            except Exception:
+                pass
+
         # Any other exception - the finally block will handle pending tool calls
         if Debug.enabled():
             print(f"[srv] ✗ Error during run: {e}")
@@ -825,6 +908,7 @@ async def stream_agent(
                         if asyncio.current_task()
                         else ""
                     ),
+                    "session_id": session.id,
                     "tool": tool_name,
                     "output": "[Cancelled by user]",
                     "call_id": call_id,

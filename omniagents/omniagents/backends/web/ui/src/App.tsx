@@ -85,6 +85,11 @@ export function App() {
   useEffect(() => {
     sessionIdRef.current = sessionId
   }, [sessionId])
+  const runIdRef = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    runIdRef.current = runId
+  }, [runId])
+  const startingRunRef = useRef(false)
   const appendPendingApprovals = useCallback((base: MessageItem[], targetSession?: string) => {
     if (!targetSession) return base
     const additions: MessageItem[] = []
@@ -154,6 +159,11 @@ export function App() {
       .catch(() => setUI('error'))
 
     const offMessageOutput = client.on('message_output', (p: any) => {
+      const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
+      if (eventSessionId) {
+        if (sessionIdRef.current && sessionIdRef.current !== eventSessionId) return
+        if (!sessionIdRef.current && !startingRunRef.current) return
+      }
       const content = String(p?.content ?? '')
       if (!content) return
       preambleBufferRef.current.push({ content, timestamp: new Date(), superseded: false })
@@ -162,8 +172,14 @@ export function App() {
       setStatusItalic(false)
     })
     const offRunStarted = client.on('run_started', (p: any) => {
+      const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
+      if (eventSessionId) {
+        if (sessionIdRef.current && sessionIdRef.current !== eventSessionId) return
+        if (!sessionIdRef.current && !startingRunRef.current) return
+      }
+      startingRunRef.current = false
       setRunId(String(p?.run_id ?? ''))
-      setSessionId(String(p?.session_id ?? ''))
+      if (eventSessionId) setSessionId(eventSessionId)
       setThinking(true)
       preambleBufferRef.current = []
       setPreamble(undefined)
@@ -173,6 +189,8 @@ export function App() {
       refreshSessions()
     })
     const offRunEnd = client.on('run_end', (p: any) => {
+      const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
+      if (eventSessionId && sessionIdRef.current && sessionIdRef.current !== eventSessionId) return
       setThinking(false)
       const nonSuperseded = preambleBufferRef.current.filter(m => !m.superseded)
       if (nonSuperseded.length) {
@@ -198,12 +216,16 @@ export function App() {
       refreshSessions()
     })
     const offRunStatus = client.on('run_status', (p: any) => {
+      const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
+      if (eventSessionId && sessionIdRef.current && sessionIdRef.current !== eventSessionId) return
       const msg = [p?.status, p?.message].filter(Boolean).join(': ')
       setStatus(msg)
       setStatusSpinner(true)
       setStatusItalic(false)
     })
     const offToken = client.on('token', (p: any) => {
+      const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
+      if (eventSessionId && sessionIdRef.current && sessionIdRef.current !== eventSessionId) return
       try {
         setUsageDelta(p?.delta)
         setUsageTotals(p?.totals)
@@ -211,6 +233,11 @@ export function App() {
       } catch {}
     })
     const offToolCalled = client.on('tool_called', (p: any) => {
+      const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
+      if (eventSessionId) {
+        if (sessionIdRef.current && sessionIdRef.current !== eventSessionId) return
+        if (!sessionIdRef.current && !startingRunRef.current) return
+      }
       const tool = String(p?.tool ?? '')
       const input = typeof p?.input === 'string' ? p?.input : JSON.stringify(p?.input)
       const call_id = String(p?.call_id ?? '')
@@ -218,6 +245,11 @@ export function App() {
       setItems(prev => [...prev, { type: 'tool', tool, input, call_id, status: 'called' }])
     })
     const offToolResult = client.on('tool_result', (p: any) => {
+      const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
+      if (eventSessionId) {
+        if (sessionIdRef.current && sessionIdRef.current !== eventSessionId) return
+        if (!sessionIdRef.current && !startingRunRef.current) return
+      }
       const tool = String(p?.tool ?? '')
       const output = typeof p?.output === 'string' ? p?.output : JSON.stringify(p?.output)
       const call_id = String(p?.call_id ?? '')
@@ -282,6 +314,13 @@ export function App() {
       }
       if (fn === 'ui.set_status') {
         const request_id = String(p?.request_id ?? '')
+        const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
+        if (eventSessionId && sessionIdRef.current && sessionIdRef.current !== eventSessionId) {
+          if (request_id) {
+            client.clientResponse(request_id, true, { ack: true }).catch(() => {})
+          }
+          return
+        }
         const args = p?.args || {}
         const text = typeof args?.text === 'string' ? args.text : undefined
         const showSpinner = typeof args?.show_spinner === 'boolean' ? !!args.show_spinner : true
@@ -360,6 +399,7 @@ export function App() {
       }
     }
     try {
+      startingRunRef.current = true
       let content: any | undefined = undefined
       let attachments: Array<{ type: 'image' | 'file'; url?: string; filename?: string; mime?: string; size?: number }> = []
       if (files && files.length > 0) {
@@ -409,6 +449,7 @@ export function App() {
       setItems(prev => [...prev, { type: 'chat', role: 'user', content: text, attachments }])
       await client.startRun(text, sessionId, undefined, content)
     } catch (e) {
+      startingRunRef.current = false
       setStatus(String((e as Error)?.message || 'Failed to start run'))
       setStatusItalic(false)
     }

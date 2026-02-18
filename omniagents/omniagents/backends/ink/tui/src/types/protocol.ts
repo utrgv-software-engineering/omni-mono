@@ -51,6 +51,8 @@ export interface ToolCalledEvent {
   jsonrpc: "2.0";
   method: "tool_called";
   params: {
+    run_id: string;
+    session_id: string;
     tool: string;
     input: string; // JSON string of arguments
     call_id: string;
@@ -61,6 +63,8 @@ export interface ToolResultEvent {
   jsonrpc: "2.0";
   method: "tool_result";
   params: {
+    run_id: string;
+    session_id: string;
     tool: string;
     output: string;
     call_id: string;
@@ -72,6 +76,8 @@ export interface MessageOutputEvent {
   jsonrpc: "2.0";
   method: "message_output";
   params: {
+    run_id: string;
+    session_id: string;
     content: string; // Note: No role field in actual protocol!
   };
 }
@@ -90,6 +96,7 @@ export interface RunEndEvent {
   method: "run_end";
   params: {
     run_id: string;
+    session_id: string;
     end_reason: string;
     usage?: {
       input_tokens: number;
@@ -113,6 +120,7 @@ export interface TokenEvent {
   method: "token";
   params: {
     run_id: string;
+    session_id: string;
     turn: number;
     response_id: string;
     model?: string;
@@ -137,6 +145,7 @@ export interface RunStatusEvent {
   method: "run_status";
   params: {
     run_id: string;
+    session_id: string;
     status: string;
     message: string;
     attempt: number;
