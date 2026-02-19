@@ -14,6 +14,7 @@ from omni_code.config import get_config_dir
 
 
 CONTAINER_PORT = 7681
+CODE_SERVER_CONTAINER_PORT = 8080
 
 
 def _run_process(args: List[str], *, check: bool = True, capture_output: bool = False) -> subprocess.CompletedProcess:
@@ -167,6 +168,8 @@ def _run_sandbox(
     mode: str,
     workspace: Path,
     host_port: int,
+    enable_code_server: bool,
+    code_server_port: Optional[int],
     env_file: Optional[Path],
     auth_token: Optional[str],
     rebuild: bool,
@@ -218,6 +221,14 @@ def _run_sandbox(
         "-e",
         "XDG_CONFIG_HOME=/home/user/.config",
     ]
+
+    if enable_code_server:
+        if code_server_port is None:
+            raise RuntimeError("Missing code-server port")
+        args.extend(["-p", f"{code_server_port}:{CODE_SERVER_CONTAINER_PORT}"])
+        args.extend(["-e", "OMNI_CODE_CODE_SERVER=1"])
+        args.extend(["-e", f"CODE_SERVER_PORT={CODE_SERVER_CONTAINER_PORT}"])
+        args.extend(["-e", "CODE_SERVER_AUTH=none"])
 
     workspace_project = workspace / "omni_code" / "project.yml"
     container_project_path = (
@@ -401,6 +412,18 @@ def main(argv=None) -> None:
         default=7681,
         help="Host port to bind (use 0 to auto-pick)",
     )
+
+    parser.add_argument(
+        "--enable-code-server",
+        action="store_true",
+        help="Run code-server inside the sandbox and expose it over Docker",
+    )
+    parser.add_argument(
+        "--code-server-port",
+        type=int,
+        default=8080,
+        help="Host port to bind for code-server (use 0 to auto-pick)",
+    )
     parser.add_argument(
         "--detach",
         action="store_true",
@@ -485,8 +508,35 @@ def main(argv=None) -> None:
         else:
             _assert_port_available(host_port)
 
+        code_server_port: Optional[int] = None
+        if args.enable_code_server:
+            code_server_port = int(args.code_server_port)
+            if code_server_port == 0:
+                code_server_port = _pick_free_port()
+            else:
+                _assert_port_available(code_server_port)
+            if code_server_port == host_port:
+                raise RuntimeError("code-server port must differ from sandbox port")
+
         if args.print_url and args.ui == "local":
             raise RuntimeError("--print-url is only supported with --ui container/none")
+
+        ui_port: Optional[int] = None
+        if args.ui == "local":
+            ui_port = int(args.ui_port)
+            reserved = {host_port}
+            if code_server_port is not None:
+                reserved.add(code_server_port)
+            if ui_port == 0:
+                while True:
+                    candidate = _pick_free_port()
+                    if candidate not in reserved:
+                        ui_port = candidate
+                        break
+            else:
+                _assert_port_available(ui_port)
+                if ui_port in reserved:
+                    raise RuntimeError("UI port must differ from other bound ports")
 
         docker_detach = bool(args.detach) or args.ui == "local"
 
@@ -497,6 +547,8 @@ def main(argv=None) -> None:
             mode=effective_mode,
             workspace=workspace,
             host_port=host_port,
+            enable_code_server=bool(args.enable_code_server),
+            code_server_port=code_server_port,
             env_file=env_file,
             auth_token=str(args.auth_token) if args.auth_token else None,
             rebuild=bool(args.rebuild),
@@ -508,14 +560,14 @@ def main(argv=None) -> None:
             dockerfile=str(args.dockerfile) if args.dockerfile else None,
         )
 
+        if args.enable_code_server and not bool(args.print_url) and code_server_port is not None:
+            print(f"code-server: http://localhost:{code_server_port}")
+
         if args.ui != "local":
             return
 
-        ui_port = int(args.ui_port)
-        if ui_port == 0:
-            ui_port = _pick_free_port()
-        else:
-            _assert_port_available(ui_port)
+        if ui_port is None:
+            raise RuntimeError("UI port not resolved")
 
         container_ref = str(args.name) if args.name else (container_id or "")
         cleanup = not bool(args.detach) and bool(container_ref)

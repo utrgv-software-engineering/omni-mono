@@ -102,4 +102,18 @@ if [[ -z "${DATABASE_URL:-}" ]]; then
   export DATABASE_URL="postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@${POSTGRES_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-app_dev}"
 fi
 
+code_server_enabled="${OMNI_CODE_CODE_SERVER:-0}"
+if [[ "${code_server_enabled}" == "1" || "${code_server_enabled}" == "true" ]]; then
+  code_server_port="${CODE_SERVER_PORT:-8080}"
+  code_server_auth="${CODE_SERVER_AUTH:-password}"
+  code_server_workspace="${CODE_SERVER_WORKSPACE:-/home/user/workspace}"
+  code_server_log_dir="${CODE_SERVER_LOG_DIR:-/home/user/.local/share/code-server}"
+  mkdir -p "${code_server_log_dir}" >/dev/null 2>&1 || true
+  chown -R "${uid}:${gid}" "${code_server_log_dir}" >/dev/null 2>&1 || true
+  mkdir -p "${HOME}/.config" >/dev/null 2>&1 || true
+  chown -R "${uid}:${gid}" "${HOME}/.config" >/dev/null 2>&1 || true
+
+  gosu "${uid}:${gid}" bash -lc "nohup code-server --bind-addr 0.0.0.0:${code_server_port} --auth ${code_server_auth} ${code_server_workspace} > '${code_server_log_dir}/omni-code.log' 2>&1 &" || true
+fi
+
 exec gosu "${uid}:${gid}" "$@"

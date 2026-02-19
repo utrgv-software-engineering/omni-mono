@@ -34,6 +34,12 @@ To persist credentials or tool state between runs, mount a persistent Docker vol
 omni sandbox --persist-volume omni-cred-azure:/home/user/.azure
 ```
 
+To run `code-server` inside the sandbox and expose it on a host port:
+
+```bash
+omni sandbox --ui container --enable-code-server --code-server-port 8080
+```
+
 By default the sandbox persists OmniAgents state (sessions + Studio traces) in an isolated directory so sandbox history is not mixed with your local OmniAgents history:
 
 - Host: `~/.config/omni_code/sandbox/omniagents/` → Container: `/home/user/.omniagents/`
