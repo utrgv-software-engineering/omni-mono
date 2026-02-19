@@ -55,8 +55,8 @@ export function MessageList({ items, statusText, thinking, statusSpinner, preamb
         {items.length === 0 ? (
           <div className="py-8">
             <div className="mx-auto max-w-xl text-center rounded-xl border border-bgCardAlt bg-bgCard px-4 py-6 shadow-sm">
-              <div className="text-lg font-medium text-textHeading">{welcomeText || 'Welcome'}</div>
-              <div className="mt-1 text-sm text-textSubtle">Start by typing a message below.</div>
+              <div className="text-sm font-medium text-textHeading">{welcomeText || 'Welcome'}</div>
+              <div className="mt-1 text-xs text-textSubtle">Start by typing a message below.</div>
             </div>
           </div>
         ) : (
