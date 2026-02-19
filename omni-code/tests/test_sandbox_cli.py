@@ -1,6 +1,94 @@
 import pytest
 
 
+def test_sandbox_cli_local_ui_json_output(monkeypatch, tmp_path, capsys):
+    import json
+
+    from omni_code import sandbox_cli
+
+    monkeypatch.setenv("OPENAI_API_KEY", "abc")
+    monkeypatch.delenv("OMNI_CODE_SANDBOX_OMNIAGENTS_HOME", raising=False)
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    config_dir = tmp_path / "cfg"
+    monkeypatch.setattr(sandbox_cli, "get_config_dir", lambda: config_dir)
+    monkeypatch.setattr(sandbox_cli.shutil, "which", lambda _: "/usr/bin/docker")
+    monkeypatch.setattr(sandbox_cli, "_assert_port_available", lambda _: None)
+    monkeypatch.setattr(sandbox_cli, "_docker_image_exists", lambda _: True)
+    monkeypatch.setattr(sandbox_cli, "_sandbox_image_tag", lambda: "omni-code-sandbox:test")
+
+    docker_calls = []
+
+    def fake_run_process(args, check=True, capture_output=False):
+        docker_calls.append((list(args), capture_output))
+
+        class Result:
+            def __init__(self, stdout=""):
+                self.returncode = 0
+                self.stdout = stdout
+
+        if args[:2] == ["docker", "run"] and capture_output:
+            return Result(stdout="abc123\n")
+        return Result()
+
+    monkeypatch.setattr(sandbox_cli, "_run_process", fake_run_process)
+
+    ui_calls = []
+
+    def fake_run_local_ui(*, ws_url, ui_host, ui_port, auth_token, auth_token_env):
+        ui_calls.append(
+            {
+                "ws_url": ws_url,
+                "ui_host": ui_host,
+                "ui_port": ui_port,
+                "auth_token": auth_token,
+                "auth_token_env": auth_token_env,
+            }
+        )
+
+    monkeypatch.setattr(sandbox_cli, "_run_local_ui", fake_run_local_ui)
+
+    sandbox_cli.main(
+        [
+            "--workspace",
+            str(workspace),
+            "--ui",
+            "local",
+            "--mode",
+            "server",
+            "--port",
+            "7777",
+            "--ui-port",
+            "8888",
+            "--enable-code-server",
+            "--code-server-port",
+            "9999",
+            "--enable-vnc",
+            "--vnc-port",
+            "9998",
+            "--output",
+            "json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out.strip())
+
+    assert payload["sandbox_url"] == "http://localhost:7777"
+    assert payload["ws_url"] == "ws://localhost:7777/ws"
+    assert payload["ui_url"] == "http://localhost:8888"
+    assert payload["code_server_url"] == "http://localhost:9999"
+    assert payload["novnc_url"].startswith("http://localhost:9998/")
+    assert payload["container_id"] == "abc123"
+
+    assert ui_calls
+    assert ui_calls[0]["ws_url"] == "ws://localhost:7777/ws"
+    assert ui_calls[0]["ui_host"] == "0.0.0.0"
+    assert ui_calls[0]["ui_port"] == 8888
+
+
 def test_sandbox_cli_builds_when_missing_and_runs(monkeypatch, tmp_path, capsys):
     from omni_code import sandbox_cli
 

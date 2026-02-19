@@ -102,6 +102,17 @@ if [[ -z "${DATABASE_URL:-}" ]]; then
   export DATABASE_URL="postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@${POSTGRES_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-app_dev}"
 fi
 
+vnc_enabled="${OMNI_CODE_VNC:-0}"
+if [[ "${vnc_enabled}" == "1" || "${vnc_enabled}" == "true" ]]; then
+  # Create directories needed by X11/ICE session management
+  mkdir -p /tmp/.ICE-unix /tmp/.X11-unix
+  chmod 1777 /tmp/.ICE-unix /tmp/.X11-unix
+
+  # Run the entire VNC stack as the mapped user (dbus, Xvfb, XFCE, x11vnc,
+  # noVNC all in one user context — avoids privilege-switching dbus issues)
+  gosu "${uid}:${gid}" bash /usr/local/bin/start-vnc.sh
+fi
+
 code_server_enabled="${OMNI_CODE_CODE_SERVER:-0}"
 if [[ "${code_server_enabled}" == "1" || "${code_server_enabled}" == "true" ]]; then
   code_server_port="${CODE_SERVER_PORT:-8080}"

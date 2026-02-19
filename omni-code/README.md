@@ -56,6 +56,14 @@ For Electron-style launching, you can run in the background and print only the U
 omni sandbox --mode web --detach --print-url --port 0
 ```
 
+For programmatic launching (e.g. an Electron wrapper), you can emit a machine-readable JSON payload:
+
+```bash
+omni sandbox --ui local --enable-code-server --enable-vnc --code-server-port 0 --vnc-port 0 --ui-port 0 --output json
+```
+
+For `--ui container/none`, JSON output requires `--detach`.
+
 By default it will pass `<workspace>/.env` to Docker if present. You can override it with:
 
 ```bash

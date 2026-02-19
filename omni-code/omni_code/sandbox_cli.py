@@ -1,10 +1,11 @@
 import argparse
+import json
 import os
 import shutil
 import socket
 import subprocess
 import sys
-from contextlib import suppress
+from contextlib import redirect_stdout, suppress
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterable, List, Optional
@@ -15,6 +16,7 @@ from omni_code.config import get_config_dir
 
 CONTAINER_PORT = 7681
 CODE_SERVER_CONTAINER_PORT = 8080
+VNC_CONTAINER_PORT = 6080
 
 
 def _run_process(args: List[str], *, check: bool = True, capture_output: bool = False) -> subprocess.CompletedProcess:
@@ -73,8 +75,10 @@ def _parse_persist_volume(value: str) -> tuple[str, str]:
     return name, container_path
 
 
-def _build_sandbox_image(tag: str, dockerfile: Optional[str] = None) -> None:
-    cmd = ["docker", "build", "--no-cache", "-t", tag]
+def _build_sandbox_image(tag: str, dockerfile: Optional[str] = None, no_cache: bool = False) -> None:
+    cmd = ["docker", "build", "-t", tag]
+    if no_cache:
+        cmd.append("--no-cache")
     if dockerfile:
         cmd.extend(["-f", dockerfile])
     cmd.append(str(_sandbox_assets_dir()))
@@ -170,15 +174,19 @@ def _run_sandbox(
     host_port: int,
     enable_code_server: bool,
     code_server_port: Optional[int],
+    enable_vnc: bool,
+    vnc_port: Optional[int],
     env_file: Optional[Path],
     auth_token: Optional[str],
     rebuild: bool,
+    no_cache: bool,
     detach: bool,
     container_name: Optional[str],
     print_url: bool,
     persist_volumes: list[tuple[str, str]],
     image: Optional[str] = None,
     dockerfile: Optional[str] = None,
+    output: str = "human",
 ) -> Optional[str]:
     if not _docker_available():
         raise RuntimeError("Docker not found on PATH. Install Docker Desktop or docker-ce.")
@@ -188,7 +196,7 @@ def _run_sandbox(
     else:
         tag = _sandbox_image_tag()
         if rebuild or not _docker_image_exists(tag):
-            _build_sandbox_image(tag, dockerfile=dockerfile)
+            _build_sandbox_image(tag, dockerfile=dockerfile, no_cache=no_cache)
 
     config_dir = get_config_dir()
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -229,6 +237,13 @@ def _run_sandbox(
         args.extend(["-e", "OMNI_CODE_CODE_SERVER=1"])
         args.extend(["-e", f"CODE_SERVER_PORT={CODE_SERVER_CONTAINER_PORT}"])
         args.extend(["-e", "CODE_SERVER_AUTH=none"])
+
+    if enable_vnc:
+        if vnc_port is None:
+            raise RuntimeError("Missing VNC port")
+        args.extend(["-p", f"{vnc_port}:{VNC_CONTAINER_PORT}"])
+        args.extend(["-e", "OMNI_CODE_VNC=1"])
+        args.extend(["-e", f"VNC_PORT={VNC_CONTAINER_PORT}"])
 
     workspace_project = workspace / "omni_code" / "project.yml"
     container_project_path = (
@@ -273,15 +288,16 @@ def _run_sandbox(
     args.extend([tag, *container_cmd])
 
     url = f"http://localhost:{host_port}"
-    if print_url:
-        print(url)
-    else:
-        print(f"Omni Code sandbox: {url}")
+    if output == "human":
+        if print_url:
+            print(url)
+        else:
+            print(f"Omni Code sandbox: {url}")
 
     if detach:
         result = _run_process(args, capture_output=True)
         container_id = (result.stdout or "").strip()
-        if container_id and not print_url:
+        if output == "human" and container_id and not print_url:
             print(f"Container: {container_id}")
         return container_id or None
 
@@ -367,6 +383,41 @@ def _stop_container(container_ref: str) -> None:
         _run_process(["docker", "stop", container_ref], check=False, capture_output=True)
 
 
+def _sandbox_urls_payload(
+    *,
+    host_port: int,
+    ui_host: str,
+    ui_port: Optional[int],
+    code_server_port: Optional[int],
+    vnc_port: Optional[int],
+    container_id: Optional[str],
+    container_name: Optional[str],
+) -> dict:
+    payload: dict = {
+        "sandbox_url": f"http://localhost:{host_port}",
+        "ws_url": f"ws://localhost:{host_port}/ws",
+        "container_id": container_id,
+        "container_name": container_name,
+        "ui_url": _format_ui_url(ui_host, ui_port) if ui_port is not None else None,
+        "code_server_url": f"http://localhost:{code_server_port}" if code_server_port is not None else None,
+        "novnc_url": (
+            f"http://localhost:{vnc_port}/vnc.html?autoconnect=true&resize=scale" if vnc_port is not None else None
+        ),
+        "ports": {
+            "sandbox": host_port,
+            "ui": ui_port,
+            "code_server": code_server_port,
+            "vnc": vnc_port,
+        },
+    }
+    return payload
+
+
+def _print_json(payload: dict) -> None:
+    sys.stdout.write(json.dumps(payload, sort_keys=True) + "\n")
+    sys.stdout.flush()
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(
         prog="omni sandbox",
@@ -383,6 +434,12 @@ def main(argv=None) -> None:
         choices=["local", "container", "none"],
         default="local",
         help="Where to run the web UI: local (default), container, or none",
+    )
+    parser.add_argument(
+        "--output",
+        choices=["human", "json"],
+        default="human",
+        help="Output format. json emits a single JSON payload on stdout.",
     )
     parser.add_argument(
         "--ui-host",
@@ -424,6 +481,19 @@ def main(argv=None) -> None:
         default=8080,
         help="Host port to bind for code-server (use 0 to auto-pick)",
     )
+
+    parser.add_argument(
+        "--enable-vnc",
+        action="store_true",
+        help="Run a graphical desktop (XFCE + noVNC) inside the sandbox and expose it over Docker",
+    )
+    parser.add_argument(
+        "--vnc-port",
+        type=int,
+        default=6080,
+        help="Host port to bind for noVNC web client (use 0 to auto-pick)",
+    )
+
     parser.add_argument(
         "--detach",
         action="store_true",
@@ -448,6 +518,11 @@ def main(argv=None) -> None:
         "--rebuild",
         action="store_true",
         help="Force rebuilding the sandbox image",
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Disable Docker build cache when rebuilding (only applies with --rebuild)",
     )
     parser.add_argument(
         "--image",
@@ -518,8 +593,24 @@ def main(argv=None) -> None:
             if code_server_port == host_port:
                 raise RuntimeError("code-server port must differ from sandbox port")
 
+        vnc_port: Optional[int] = None
+        if args.enable_vnc:
+            vnc_port = int(args.vnc_port)
+            if vnc_port == 0:
+                vnc_port = _pick_free_port()
+            else:
+                _assert_port_available(vnc_port)
+            taken = {host_port}
+            if code_server_port is not None:
+                taken.add(code_server_port)
+            if vnc_port in taken:
+                raise RuntimeError("VNC port must differ from other bound ports")
+
         if args.print_url and args.ui == "local":
             raise RuntimeError("--print-url is only supported with --ui container/none")
+
+        if args.output == "json" and args.ui != "local" and not bool(args.detach):
+            raise RuntimeError("--output json requires --detach unless --ui local")
 
         ui_port: Optional[int] = None
         if args.ui == "local":
@@ -527,6 +618,8 @@ def main(argv=None) -> None:
             reserved = {host_port}
             if code_server_port is not None:
                 reserved.add(code_server_port)
+            if vnc_port is not None:
+                reserved.add(vnc_port)
             if ui_port == 0:
                 while True:
                     candidate = _pick_free_port()
@@ -549,21 +642,40 @@ def main(argv=None) -> None:
             host_port=host_port,
             enable_code_server=bool(args.enable_code_server),
             code_server_port=code_server_port,
+            enable_vnc=bool(args.enable_vnc),
+            vnc_port=vnc_port,
             env_file=env_file,
             auth_token=str(args.auth_token) if args.auth_token else None,
             rebuild=bool(args.rebuild),
+            no_cache=bool(args.no_cache),
             detach=docker_detach,
             container_name=(str(args.name) if args.name else None),
             print_url=bool(args.print_url),
             persist_volumes=list(args.persist_volume),
             image=str(args.image) if args.image else None,
             dockerfile=str(args.dockerfile) if args.dockerfile else None,
+            output=str(args.output),
         )
 
-        if args.enable_code_server and not bool(args.print_url) and code_server_port is not None:
-            print(f"code-server: http://localhost:{code_server_port}")
+        if args.output == "human":
+            if args.enable_code_server and not bool(args.print_url) and code_server_port is not None:
+                print(f"code-server: http://localhost:{code_server_port}")
+
+            if args.enable_vnc and not bool(args.print_url) and vnc_port is not None:
+                print(f"noVNC desktop: http://localhost:{vnc_port}/vnc.html?autoconnect=true&resize=scale")
 
         if args.ui != "local":
+            if args.output == "json":
+                payload = _sandbox_urls_payload(
+                    host_port=host_port,
+                    ui_host="localhost",
+                    ui_port=(host_port if args.ui == "container" else None),
+                    code_server_port=code_server_port,
+                    vnc_port=vnc_port,
+                    container_id=container_id,
+                    container_name=(str(args.name) if args.name else None),
+                )
+                _print_json(payload)
             return
 
         if ui_port is None:
@@ -573,14 +685,34 @@ def main(argv=None) -> None:
         cleanup = not bool(args.detach) and bool(container_ref)
         try:
             ws_url = f"ws://localhost:{host_port}/ws"
-            print(f"Omni Code web UI: {_format_ui_url(str(args.ui_host), ui_port)}")
-            _run_local_ui(
-                ws_url=ws_url,
-                ui_host=str(args.ui_host),
-                ui_port=ui_port,
-                auth_token=str(args.auth_token) if args.auth_token else None,
-                auth_token_env=("OMNI_SANDBOX_REMOTE_TOKEN" if args.auth_token else None),
-            )
+            if args.output == "json":
+                payload = _sandbox_urls_payload(
+                    host_port=host_port,
+                    ui_host=str(args.ui_host),
+                    ui_port=ui_port,
+                    code_server_port=code_server_port,
+                    vnc_port=vnc_port,
+                    container_id=container_id,
+                    container_name=(str(args.name) if args.name else None),
+                )
+                _print_json(payload)
+                with redirect_stdout(sys.stderr):
+                    _run_local_ui(
+                        ws_url=ws_url,
+                        ui_host=str(args.ui_host),
+                        ui_port=ui_port,
+                        auth_token=str(args.auth_token) if args.auth_token else None,
+                        auth_token_env=("OMNI_SANDBOX_REMOTE_TOKEN" if args.auth_token else None),
+                    )
+            else:
+                print(f"Omni Code web UI: {_format_ui_url(str(args.ui_host), ui_port)}")
+                _run_local_ui(
+                    ws_url=ws_url,
+                    ui_host=str(args.ui_host),
+                    ui_port=ui_port,
+                    auth_token=str(args.auth_token) if args.auth_token else None,
+                    auth_token_env=("OMNI_SANDBOX_REMOTE_TOKEN" if args.auth_token else None),
+                )
         finally:
             if cleanup:
                 _stop_container(container_ref)
