@@ -2,6 +2,30 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --color-tweetBlue: 29 161 242;
+  --color-bgMain: 21 32 43;
+  --color-bgColumn: 25 39 52;
+  --color-bgCard: 30 39 50;
+  --color-bgCardAlt: 37 51 65;
+  --color-textSubtle: 136 153 166;
+  --color-successGreen: 23 191 99;
+  --color-warningOrange: 255 165 52;
+  --color-errorRed: 224 36 94;
+}
+
+[data-theme="tokyo-night"] {
+  --color-tweetBlue: 122 162 247;
+  --color-bgMain: 26 27 38;
+  --color-bgColumn: 31 35 53;
+  --color-bgCard: 36 40 59;
+  --color-bgCardAlt: 59 66 97;
+  --color-textSubtle: 86 95 137;
+  --color-successGreen: 158 206 106;
+  --color-warningOrange: 224 175 104;
+  --color-errorRed: 247 118 142;
+}
+
 /* Basic layout */
 html, body, #root { height: 100%; overflow: hidden; }
 .app { height: 100%; display: flex; }
@@ -21,7 +45,7 @@ body.resizing {
 }
 
 .text-shimmer {
-  background: linear-gradient(90deg, #8899A6 0%, #cbd5e1 50%, #8899A6 100%);
+  background: linear-gradient(90deg, rgb(var(--color-textSubtle)) 0%, #cbd5e1 50%, rgb(var(--color-textSubtle)) 100%);
   background-size: 200% 100%;
   -webkit-background-clip: text;
   background-clip: text;
