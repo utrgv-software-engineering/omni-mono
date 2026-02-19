@@ -22,15 +22,15 @@ export function Header({
       <div className="container-chat px-3 h-12 flex items-center justify-between">
         <div className="flex items-center gap-2">
           {onMenu ? (
-            <button className="w-8 h-8 rounded hover:bg-bgCardAlt text-gray-100" onClick={onMenu} aria-label="Menu">☰</button>
+            <button className="w-8 h-8 rounded hover:bg-bgCardAlt text-textPrimary" onClick={onMenu} aria-label="Menu">☰</button>
           ) : null}
           <span className={["inline-block w-2 h-2 rounded-full", connected ? 'bg-successGreen' : 'bg-errorRed'].join(' ')} />
-          <div className="text-base font-semibold text-white">{agentName || 'OmniAgent'}</div>
+          <div className="text-base font-semibold text-textHeading">{agentName || 'OmniAgent'}</div>
         </div>
         <div className="flex items-center gap-1">
           {showTerminalButton && onTerminalToggle ? (
             <button
-              className="w-8 h-8 rounded hover:bg-bgCardAlt text-gray-100 flex items-center justify-center"
+              className="w-8 h-8 rounded hover:bg-bgCardAlt text-textPrimary flex items-center justify-center"
               onClick={onTerminalToggle}
               aria-label="Toggle terminal"
             >
@@ -42,7 +42,7 @@ export function Header({
           ) : null}
           {showArtifactsButton && onArtifactsToggle ? (
             <button
-              className="w-8 h-8 rounded hover:bg-bgCardAlt text-gray-100 flex items-center justify-center"
+              className="w-8 h-8 rounded hover:bg-bgCardAlt text-textPrimary flex items-center justify-center"
               onClick={onArtifactsToggle}
               aria-label="Toggle artifacts"
             >

@@ -97,17 +97,17 @@ function PdfViewer({ content }: { content: string }) {
     <div ref={containerRef}>
       <div className="flex items-center justify-center gap-3 py-2 border-b border-bgCardAlt mb-2">
         <button
-          className="px-2 py-1 rounded text-sm hover:bg-bgCardAlt text-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+          className="px-2 py-1 rounded text-sm hover:bg-bgCardAlt text-textPrimary disabled:opacity-30 disabled:cursor-not-allowed"
           disabled={pageNumber <= 1}
           onClick={() => setPageNumber(p => p - 1)}
         >
           Prev
         </button>
-        <span className="text-sm text-gray-300">
+        <span className="text-sm text-textSecondary">
           Page {pageNumber} of {numPages || '...'}
         </span>
         <button
-          className="px-2 py-1 rounded text-sm hover:bg-bgCardAlt text-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+          className="px-2 py-1 rounded text-sm hover:bg-bgCardAlt text-textPrimary disabled:opacity-30 disabled:cursor-not-allowed"
           disabled={pageNumber >= numPages}
           onClick={() => setPageNumber(p => p + 1)}
         >
@@ -117,7 +117,7 @@ function PdfViewer({ content }: { content: string }) {
       <Document
         file={file}
         onLoadSuccess={onDocumentLoadSuccess}
-        loading={<div className="text-sm text-gray-400 py-4 text-center">Loading PDF...</div>}
+        loading={<div className="text-sm text-textSecondary py-4 text-center">Loading PDF...</div>}
         error={<pre className="whitespace-pre-wrap break-words text-red-400">Failed to load PDF</pre>}
       >
         <PdfPage
@@ -173,10 +173,10 @@ function ArtifactList({ items }: { items: ArtifactItem[] }) {
     <>
       {items.map((a, idx) => (
         <details key={a.artifact_id || idx} className="rounded-lg border border-bgCardAlt bg-bgCardAlt" open>
-          <summary className="cursor-pointer select-none px-3 py-2 text-sm text-white">
+          <summary className="cursor-pointer select-none px-3 py-2 text-sm text-textHeading">
             {a.title || 'Artifact'}
           </summary>
-          <div className="px-3 pb-3 text-sm text-gray-100">
+          <div className="px-3 pb-3 text-sm text-textPrimary">
             <ArtifactContent artifact={a} />
           </div>
         </details>
@@ -208,9 +208,9 @@ export function ArtifactsPanel({
         <div className="absolute inset-0 bg-black/40" onClick={onClose} />
         <div className="absolute right-0 top-0 bottom-0 w-full max-w-lg bg-bgColumn border-l border-bgCardAlt flex flex-col">
           <div className="px-4 py-3 border-b border-bgCardAlt flex items-center justify-between flex-shrink-0">
-            <div className="text-base font-semibold text-white">Artifacts</div>
+            <div className="text-base font-semibold text-textHeading">Artifacts</div>
             <button
-              className="w-8 h-8 rounded hover:bg-bgCardAlt text-gray-100"
+              className="w-8 h-8 rounded hover:bg-bgCardAlt text-textPrimary"
               onClick={onClose}
               aria-label="Close"
             >
@@ -228,9 +228,9 @@ export function ArtifactsPanel({
   return (
     <div className="h-full flex flex-col bg-bgColumn">
       <div className="px-4 py-3 border-b border-bgCardAlt flex items-center justify-between flex-shrink-0">
-        <div className="text-base font-semibold text-white">Artifacts</div>
+        <div className="text-base font-semibold text-textHeading">Artifacts</div>
         <button
-          className="w-8 h-8 rounded hover:bg-bgCardAlt text-gray-100"
+          className="w-8 h-8 rounded hover:bg-bgCardAlt text-textPrimary"
           onClick={onClose}
           aria-label="Close panel"
         >

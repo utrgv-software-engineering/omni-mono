@@ -524,9 +524,9 @@ export function TerminalPanel({
       >
         <div className="px-4 py-3 border-b border-bgCardAlt flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-3">
-            <div className="text-base font-semibold text-white">Terminal</div>
+            <div className="text-base font-semibold text-textHeading">Terminal</div>
             {activeTab ? (
-              <div className="text-xs text-gray-300">
+              <div className="text-xs text-textSecondary">
                 {activeTab.connected
                   ? 'connected'
                   : activeTab.connecting
@@ -537,7 +537,7 @@ export function TerminalPanel({
               </div>
             ) : null}
             {activeTab?.cwd ? (
-              <div className="text-xs text-gray-400">{activeTab.cwd}</div>
+              <div className="text-xs text-textSecondary">{activeTab.cwd}</div>
             ) : null}
             {activeTab?.error ? (
               <div className="text-xs text-errorRed">{activeTab.error}</div>
@@ -545,13 +545,13 @@ export function TerminalPanel({
           </div>
           <div className="flex items-center gap-2">
             <button
-              className="px-3 py-1.5 rounded bg-bgCardAlt hover:bg-bgCardAlt/80 text-gray-100 text-sm"
+              className="px-3 py-1.5 rounded bg-bgCardAlt hover:bg-bgCardAlt/80 text-textPrimary text-sm"
               onClick={() => addTab()}
             >
               New
             </button>
             <button
-              className="w-8 h-8 rounded hover:bg-bgCardAlt text-gray-100"
+              className="w-8 h-8 rounded hover:bg-bgCardAlt text-textPrimary"
               onClick={onClose}
               aria-label="Close"
             >
@@ -568,15 +568,15 @@ export function TerminalPanel({
                 className={[
                   'flex items-center gap-1 px-2 py-1 rounded text-xs whitespace-nowrap border',
                   active
-                    ? 'bg-bgCardAlt text-white border-bgCardAlt'
-                    : 'bg-transparent text-gray-300 border-bgCardAlt/60 hover:bg-bgCardAlt/40',
+                    ? 'bg-bgCardAlt text-textHeading border-bgCardAlt'
+                    : 'bg-transparent text-textSecondary border-bgCardAlt/60 hover:bg-bgCardAlt/40',
                 ].join(' ')}
               >
                 <button className="text-left" onClick={() => setActiveId(t.id)}>
                   {t.label}
                 </button>
                 <button
-                  className="ml-1 text-gray-300 hover:text-white"
+                  className="ml-1 text-textSecondary hover:text-textHeading"
                   aria-label="Close tab"
                   onClick={() => closeTab(t.id)}
                 >

@@ -3,7 +3,7 @@ import clsx from 'clsx'
 
 export function Avatar({ className, children, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className={clsx('relative inline-flex h-8 w-8 shrink-0 rounded-full overflow-hidden bg-bgCardAlt text-gray-100 items-center justify-center', className)} {...props}>
+    <div className={clsx('relative inline-flex h-8 w-8 shrink-0 rounded-full overflow-hidden bg-bgCardAlt text-textPrimary items-center justify-center', className)} {...props}>
       {children}
     </div>
   )

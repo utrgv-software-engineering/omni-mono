@@ -12,18 +12,68 @@
   --color-successGreen: 23 191 99;
   --color-warningOrange: 255 165 52;
   --color-errorRed: 224 36 94;
+  --color-textPrimary: 243 244 246;
+  --color-textHeading: 255 255 255;
+  --color-textSecondary: 209 213 219;
 }
 
 [data-theme="tokyo-night"] {
-  --color-tweetBlue: 122 162 247;
-  --color-bgMain: 26 27 38;
-  --color-bgColumn: 31 35 53;
-  --color-bgCard: 36 40 59;
-  --color-bgCardAlt: 59 66 97;
-  --color-textSubtle: 86 95 137;
-  --color-successGreen: 158 206 106;
-  --color-warningOrange: 224 175 104;
-  --color-errorRed: 247 118 142;
+  --color-tweetBlue: 61 89 161;       /* #3d59a1  button.background */
+  --color-bgMain: 26 27 38;           /* #1a1b26  editor.background */
+  --color-bgColumn: 22 22 30;         /* #16161e  sideBar.background */
+  --color-bgCard: 28 29 41;           /* #1c1d29  list.inactiveSelectionBackground */
+  --color-bgCardAlt: 41 46 66;        /* #292e42  bg_highlight */
+  --color-textSubtle: 84 92 126;      /* #545c7e  disabledForeground */
+  --color-successGreen: 158 206 106;  /* #9ece6a  green */
+  --color-warningOrange: 224 175 104; /* #e0af68  yellow */
+  --color-errorRed: 247 118 142;      /* #f7768e  terminal.ansiRed */
+  --color-textPrimary: 169 177 214;   /* #a9b1d6  foreground */
+  --color-textHeading: 192 202 245;   /* #c0caf5  editor.foreground */
+  --color-textSecondary: 120 124 153; /* #787c99  comment */
+}
+
+[data-theme="vscode-dark"] {
+  --color-tweetBlue: 0 120 212;       /* #0078D4  button.background */
+  --color-bgMain: 31 31 31;           /* #1F1F1F  editor.background */
+  --color-bgColumn: 24 24 24;         /* #181818  sideBar.background */
+  --color-bgCard: 43 43 43;           /* #2B2B2B  panel.border */
+  --color-bgCardAlt: 49 49 49;        /* #313131  input.background */
+  --color-textSubtle: 157 157 157;    /* #9D9D9D  descriptionForeground */
+  --color-successGreen: 13 188 121;   /* #0DBC79  terminal.ansiGreen */
+  --color-warningOrange: 204 167 0;   /* #CCA700  list.warningForeground */
+  --color-errorRed: 248 81 73;        /* #F85149  errorForeground */
+}
+
+[data-theme="vscode-light"] {
+  --color-tweetBlue: 0 95 184;        /* #005FB8  button.background */
+  --color-bgMain: 255 255 255;        /* #FFFFFF  editor.background */
+  --color-bgColumn: 248 248 248;      /* #F8F8F8  sideBar.background */
+  --color-bgCard: 243 243 243;        /* #F3F3F3  welcomePage.tileBackground */
+  --color-bgCardAlt: 229 229 229;     /* #E5E5E5  sideBar.border */
+  --color-textSubtle: 118 118 118;    /* #767676  input.placeholderForeground */
+  --color-successGreen: 46 160 67;    /* #2EA043  editorGutter.addedBackground */
+  --color-warningOrange: 204 167 0;   /* #CCA700  list.warningForeground */
+  --color-errorRed: 248 81 73;        /* #F85149  errorForeground */
+  --color-textPrimary: 59 59 59;      /* #3B3B3B  editor.foreground */
+  --color-textHeading: 31 31 31;      /* #1F1F1F  foreground */
+  --color-textSecondary: 97 97 97;    /* #616161  descriptionForeground */
+}
+
+[data-theme="vscode-light"] .prose-invert {
+  --tw-prose-body: rgb(var(--color-textPrimary));
+  --tw-prose-headings: rgb(var(--color-textHeading));
+  --tw-prose-bold: rgb(var(--color-textHeading));
+  --tw-prose-links: rgb(var(--color-tweetBlue));
+  --tw-prose-code: rgb(var(--color-textPrimary));
+  --tw-prose-pre-code: rgb(var(--color-textPrimary));
+  --tw-prose-counters: rgb(var(--color-textSecondary));
+  --tw-prose-bullets: rgb(var(--color-textSecondary));
+  --tw-prose-hr: rgb(var(--color-bgCardAlt));
+  --tw-prose-quotes: rgb(var(--color-textPrimary));
+  --tw-prose-quote-borders: rgb(var(--color-bgCardAlt));
+  --tw-prose-captions: rgb(var(--color-textSecondary));
+  --tw-prose-th-borders: rgb(var(--color-bgCardAlt));
+  --tw-prose-td-borders: rgb(var(--color-bgCardAlt));
 }
 
 /* Basic layout */

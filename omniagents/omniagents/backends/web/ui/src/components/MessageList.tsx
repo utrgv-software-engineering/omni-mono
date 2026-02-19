@@ -55,7 +55,7 @@ export function MessageList({ items, statusText, thinking, statusSpinner, preamb
         {items.length === 0 ? (
           <div className="py-8">
             <div className="mx-auto max-w-xl text-center rounded-xl border border-bgCardAlt bg-bgCard px-4 py-6 shadow-sm">
-              <div className="text-lg font-medium text-white">{welcomeText || 'Welcome'}</div>
+              <div className="text-lg font-medium text-textHeading">{welcomeText || 'Welcome'}</div>
               <div className="mt-1 text-sm text-textSubtle">Start by typing a message below.</div>
             </div>
           </div>
@@ -110,7 +110,7 @@ function MessageBubble({ index, role, content, attachments, reactions, onReact }
             </div>
           ) : null}
           <Message>
-            <MessageContent markdown className="rounded-[8px] bg-bgCardAlt text-gray-100 border border-bgCardAlt">
+            <MessageContent markdown className="rounded-[8px] bg-bgCardAlt text-textPrimary border border-bgCardAlt">
               {content}
             </MessageContent>
           </Message>
@@ -137,7 +137,7 @@ function MessageBubble({ index, role, content, attachments, reactions, onReact }
               <MessageAction tooltip="Copy">
                 <button
                   onClick={() => handleCopy(content)}
-                  className="hover:bg-bgCardAlt rounded p-1 text-textSubtle hover:text-gray-200"
+                  className="hover:bg-bgCardAlt rounded p-1 text-textSubtle hover:text-textHeading"
                   aria-label="Copy"
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
@@ -149,7 +149,7 @@ function MessageBubble({ index, role, content, attachments, reactions, onReact }
               <MessageAction tooltip="Like">
                 <button
                   onClick={() => onReact && onReact(index, 'like')}
-                  className={[reactions && reactions[index] === 'like' ? 'text-successGreen' : 'text-textSubtle', 'hover:bg-bgCardAlt rounded p-1 hover:text-gray-200'].join(' ')}
+                  className={[reactions && reactions[index] === 'like' ? 'text-successGreen' : 'text-textSubtle', 'hover:bg-bgCardAlt rounded p-1 hover:text-textHeading'].join(' ')}
                   aria-label="Like"
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
@@ -160,7 +160,7 @@ function MessageBubble({ index, role, content, attachments, reactions, onReact }
               <MessageAction tooltip="Dislike">
                 <button
                   onClick={() => onReact && onReact(index, 'dislike')}
-                  className={[reactions && reactions[index] === 'dislike' ? 'text-errorRed' : 'text-textSubtle', 'hover:bg-bgCardAlt rounded p-1 hover:text-gray-200'].join(' ')}
+                  className={[reactions && reactions[index] === 'dislike' ? 'text-errorRed' : 'text-textSubtle', 'hover:bg-bgCardAlt rounded p-1 hover:text-textHeading'].join(' ')}
                   aria-label="Dislike"
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
@@ -247,9 +247,9 @@ function ToolCard({ item }: { item: ToolItem }) {
         <div className="rounded-md border border-bgCardAlt bg-bgCardAlt p-3">
           <div className="flex items-center gap-2">
             <span className={["inline-block w-2 h-2 rounded-full flex-shrink-0", iconFill].join(' ')} />
-            <div className="flex-1 min-w-0 text-sm text-gray-100">{titleNode}</div>
+            <div className="flex-1 min-w-0 text-sm text-textPrimary">{titleNode}</div>
             <button
-              className="w-6 h-6 flex items-center justify-center rounded hover:bg-bgColumn text-textSubtle hover:text-gray-200"
+              className="w-6 h-6 flex items-center justify-center rounded hover:bg-bgColumn text-textSubtle hover:text-textHeading"
               aria-label="Toggle details"
               onClick={() => setOpen(v => !v)}
             >
@@ -276,7 +276,7 @@ function ApprovalCard({ item, onDecision }: { item: ApprovalItem; onDecision?: (
         <div className="text-sm font-semibold text-warningOrange">Approve {item.tool}</div>
       </div>
       {item.argumentsText ? (
-        <pre className="mt-2 text-xs overflow-x-auto whitespace-pre-wrap bg-bgColumn rounded p-2 border border-bgCardAlt text-gray-100">{item.argumentsText}</pre>
+        <pre className="mt-2 text-xs overflow-x-auto whitespace-pre-wrap bg-bgColumn rounded p-2 border border-bgCardAlt text-textPrimary">{item.argumentsText}</pre>
       ) : (
         <div className="text-xs text-textSubtle mt-1">No parameters</div>
       )}
@@ -393,7 +393,7 @@ function tableView(metadata: any) {
 function codeBlock(content: string) {
   return (
     <div className="w-full overflow-x-auto p-2 rounded border border-bgCardAlt bg-bgColumn">
-      <pre className="whitespace-pre-wrap text-[12px] text-gray-100"><code>{content}</code></pre>
+      <pre className="whitespace-pre-wrap text-[12px] text-textPrimary"><code>{content}</code></pre>
     </div>
   )
 }
@@ -401,7 +401,7 @@ function codeBlock(content: string) {
 function preText(content: string) {
   return (
     <div className="w-full overflow-x-auto p-2 rounded border border-bgCardAlt bg-bgColumn">
-      <pre className="whitespace-pre-wrap text-[12px] text-gray-100"><code>{content}</code></pre>
+      <pre className="whitespace-pre-wrap text-[12px] text-textPrimary"><code>{content}</code></pre>
     </div>
   )
 }
@@ -456,7 +456,7 @@ function fileContentView(metadata: any, plainOutput: string) {
     <div className="space-y-2">
       {stats.length ? <div className="text-[12px] text-textSubtle">{stats.join(' • ')}</div> : null}
       <div className="w-full overflow-x-auto p-2 rounded border border-bgCardAlt bg-bgColumn">
-        <pre className="whitespace-pre-wrap text-[12px] text-gray-100 font-mono"><code>{preview}</code></pre>
+        <pre className="whitespace-pre-wrap text-[12px] text-textPrimary font-mono"><code>{preview}</code></pre>
       </div>
     </div>
   )
@@ -516,7 +516,7 @@ function searchResultsView(metadata: any, plainOutput: string) {
     if (line.includes(': ') && (line.includes('match') || line.match(/:\s*\d+\s*$/))) {
       return <div key={i} className="font-mono text-[12px] font-semibold text-tweetBlue">{line}</div>
     }
-    return <div key={i} className="font-mono text-[12px] text-gray-100">{line}</div>
+    return <div key={i} className="font-mono text-[12px] text-textPrimary">{line}</div>
   })
 
   return (
@@ -544,7 +544,7 @@ function webContentView(metadata: any, plainOutput: string) {
     <div className="space-y-2">
       {stats.length ? <div className="text-[12px] text-textSubtle">{stats.join(' • ')}</div> : null}
       <div className="w-full overflow-x-auto p-2 rounded border border-bgCardAlt bg-bgColumn">
-        <pre className="whitespace-pre-wrap text-[12px] text-gray-100"><code>{preview}</code></pre>
+        <pre className="whitespace-pre-wrap text-[12px] text-textPrimary"><code>{preview}</code></pre>
       </div>
     </div>
   )

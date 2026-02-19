@@ -41,7 +41,7 @@ export type MessageContentProps = {
 } & React.ComponentProps<typeof Markdown> & React.HTMLProps<HTMLDivElement>
 
 export function MessageContent({ children, markdown = false, className, ...props }: MessageContentProps) {
-  const classNames = cn('rounded-lg p-2 text-gray-100 bg-bgCardAlt prose break-words whitespace-normal', className)
+  const classNames = cn('rounded-lg p-2 text-textPrimary bg-bgCardAlt prose break-words whitespace-normal', className)
   if (markdown) {
     return (
       <Markdown className={classNames} {...props}>

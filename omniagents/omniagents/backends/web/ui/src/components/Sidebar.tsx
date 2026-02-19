@@ -54,7 +54,7 @@ export function Sidebar({ open, sessions, selectedId, onClose, onNewChat, onSele
         >
           <div className="flex items-start justify-between gap-2">
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-gray-100 truncate mb-1">{title}</div>
+              <div className="text-sm font-medium text-textPrimary truncate mb-1">{title}</div>
               <div className="text-xs text-textSubtle flex items-center gap-2">
                 <span>{timestamp}</span>
                 {s.message_count > 0 && (
@@ -102,12 +102,12 @@ export function Sidebar({ open, sessions, selectedId, onClose, onNewChat, onSele
       <div className="p-2 border-b border-bgCardAlt flex-shrink-0">
         <div className="flex items-center justify-between mb-2">
           <span className="text-xs font-semibold text-textSubtle uppercase tracking-wide px-1">Conversations</span>
-          <button className="w-8 h-8 rounded hover:bg-bgCardAlt text-gray-100" onClick={onClose} aria-label="Close">
+          <button className="w-8 h-8 rounded hover:bg-bgCardAlt text-textPrimary" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </div>
         <button
-          className="w-full h-10 rounded-lg flex items-center justify-center gap-2 text-sm font-medium text-gray-100 bg-bgCardAlt hover:bg-bgCard border border-transparent hover:border-textSubtle/30 transition-all"
+          className="w-full h-10 rounded-lg flex items-center justify-center gap-2 text-sm font-medium text-textPrimary bg-bgCardAlt hover:bg-bgCard border border-transparent hover:border-textSubtle/30 transition-all"
           onClick={onNewChat}
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -125,12 +125,12 @@ export function Sidebar({ open, sessions, selectedId, onClose, onNewChat, onSele
               placeholder="Search conversations..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full h-8 px-3 pr-8 rounded-md bg-bgCardAlt text-sm text-gray-100 placeholder-textSubtle border border-transparent focus:border-tweetBlue focus:outline-none"
+              className="w-full h-8 px-3 pr-8 rounded-md bg-bgCardAlt text-sm text-textPrimary placeholder-textSubtle border border-transparent focus:border-tweetBlue focus:outline-none"
             />
             {searchQuery && (
               <button
                 onClick={() => setSearchQuery('')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-textSubtle hover:text-gray-100"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-textSubtle hover:text-textPrimary"
                 aria-label="Clear search"
               >
                 ✕

@@ -10,8 +10,8 @@ export function Button({ variant = 'default', size = 'default', className, ...pr
   const base = 'inline-flex items-center justify-center font-medium transition-colors focus:outline-none disabled:pointer-events-none'
   const variants = {
     default: 'bg-tweetBlue text-white hover:brightness-110 disabled:bg-bgCardAlt disabled:text-textSubtle',
-    secondary: 'bg-bgCard text-white hover:brightness-110',
-    ghost: 'bg-transparent text-gray-100 hover:bg-bgCardAlt',
+    secondary: 'bg-bgCard text-textHeading hover:brightness-110',
+    ghost: 'bg-transparent text-textPrimary hover:bg-bgCardAlt',
   } as const
   const sizes = {
     default: 'h-9 px-3 rounded-md text-sm',

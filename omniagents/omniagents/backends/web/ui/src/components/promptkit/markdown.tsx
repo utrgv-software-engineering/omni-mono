@@ -16,7 +16,7 @@ type Props = {
 export function Markdown({ className, children, highlight = true, inheritTextColor = false }: Props) {
   const rehypePlugins: any[] = [[rehypeKatex, { strict: false }]]
   if (highlight) rehypePlugins.push(rehypeHighlight)
-  const colorClass = inheritTextColor ? '' : 'text-gray-100'
+  const colorClass = inheritTextColor ? '' : 'text-textPrimary'
 
   // Convert LaTeX-style math delimiters to KaTeX format
   // \( \) -> $ $ (inline math)

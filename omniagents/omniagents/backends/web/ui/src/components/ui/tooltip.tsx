@@ -34,7 +34,7 @@ export function TooltipContent({ side = 'top', className, children, ...props }: 
         ? 'right-full top-1/2 -translate-y-1/2 mr-1'
         : 'left-full top-1/2 -translate-y-1/2 ml-1'
   return (
-    <div className={clsx('pointer-events-none absolute hidden rounded bg-bgCardAlt px-2 py-1 text-xs text-gray-100 shadow-sm group-hover:block', pos, className)} {...props}>
+    <div className={clsx('pointer-events-none absolute hidden rounded bg-bgCardAlt px-2 py-1 text-xs text-textPrimary shadow-sm group-hover:block', pos, className)} {...props}>
       {children}
     </div>
   )
