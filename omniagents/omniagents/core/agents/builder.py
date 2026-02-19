@@ -263,7 +263,7 @@ async def _default_build_agent(
                 base_url=base_url,
                 default_headers={"api-key": api_key_from_settings},
             )
-            set_default_openai_client(client)
+            set_default_openai_client(client, use_for_tracing=False)
         except ImportError:
             logger.warning(
                 "Could not import AsyncOpenAI/set_default_openai_client from agents. "
