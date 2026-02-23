@@ -75,13 +75,14 @@ def make_ctx(tmp_path):
 def test_execute_bash_success(monkeypatch, tmp_path):
     ctx = make_ctx(tmp_path)
 
-    def fake_run(command, shell, capture_output, text, timeout, cwd):
+    def fake_run(command, shell, capture_output, text, timeout, cwd, executable=None, **_kwargs):
         assert command == "echo ok"
         assert shell is True
         assert capture_output is True
         assert text is True
         assert timeout == 30
         assert cwd == str(tmp_path)
+        assert executable is None or executable.endswith("bash")
         return types.SimpleNamespace(stdout="ok\n", stderr="", returncode=0)
 
     monkeypatch.setattr(bash_tool.subprocess, "run", fake_run)
@@ -98,7 +99,7 @@ def test_execute_bash_success(monkeypatch, tmp_path):
 def test_execute_bash_failure(monkeypatch, tmp_path):
     ctx = make_ctx(tmp_path)
 
-    def fake_run(command, shell, capture_output, text, timeout, cwd):
+    def fake_run(command, shell, capture_output, text, timeout, cwd, executable=None, **_kwargs):
         return types.SimpleNamespace(stdout="out", stderr="err", returncode=2)
 
     monkeypatch.setattr(bash_tool.subprocess, "run", fake_run)
@@ -113,7 +114,7 @@ def test_execute_bash_failure(monkeypatch, tmp_path):
 def test_execute_bash_timeout(monkeypatch, tmp_path):
     ctx = make_ctx(tmp_path)
 
-    def fake_run(command, shell, capture_output, text, timeout, cwd):
+    def fake_run(command, shell, capture_output, text, timeout, cwd, executable=None, **_kwargs):
         raise subprocess.TimeoutExpired(command, timeout)
 
     monkeypatch.setattr(bash_tool.subprocess, "run", fake_run)
@@ -128,7 +129,7 @@ def test_execute_bash_timeout(monkeypatch, tmp_path):
 def test_execute_bash_unexpected_error(monkeypatch, tmp_path):
     ctx = make_ctx(tmp_path)
 
-    def fake_run(command, shell, capture_output, text, timeout, cwd):
+    def fake_run(command, shell, capture_output, text, timeout, cwd, executable=None, **_kwargs):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(bash_tool.subprocess, "run", fake_run)
@@ -150,7 +151,7 @@ def test_execute_bash_truncates_large_output(monkeypatch, tmp_path):
     # Use multiple lines so line truncation doesn't interfere
     large_output = "\n".join(["A" * 50] * 20 + ["B" * 50] * 20 + ["C" * 50] * 20)
 
-    def fake_run(command, shell, capture_output, text, timeout, cwd):
+    def fake_run(command, shell, capture_output, text, timeout, cwd, executable=None, **_kwargs):
         return types.SimpleNamespace(stdout=large_output, stderr="", returncode=0)
 
     monkeypatch.setattr(bash_tool.subprocess, "run", fake_run)
@@ -172,7 +173,7 @@ def test_execute_bash_truncates_long_lines(monkeypatch, tmp_path):
 
     long_line = "x" * 600  # Exceeds 500 char limit
 
-    def fake_run(command, shell, capture_output, text, timeout, cwd):
+    def fake_run(command, shell, capture_output, text, timeout, cwd, executable=None, **_kwargs):
         return types.SimpleNamespace(stdout=long_line, stderr="", returncode=0)
 
     monkeypatch.setattr(bash_tool.subprocess, "run", fake_run)
@@ -189,7 +190,7 @@ def test_execute_bash_reports_wall_time(monkeypatch, tmp_path):
     """Test that wall time is reported in output."""
     ctx = make_ctx(tmp_path)
 
-    def fake_run(command, shell, capture_output, text, timeout, cwd):
+    def fake_run(command, shell, capture_output, text, timeout, cwd, executable=None, **_kwargs):
         return types.SimpleNamespace(stdout="done", stderr="", returncode=0)
 
     monkeypatch.setattr(bash_tool.subprocess, "run", fake_run)
@@ -205,7 +206,7 @@ def test_execute_bash_no_output(monkeypatch, tmp_path):
     """Test handling of commands with no output."""
     ctx = make_ctx(tmp_path)
 
-    def fake_run(command, shell, capture_output, text, timeout, cwd):
+    def fake_run(command, shell, capture_output, text, timeout, cwd, executable=None, **_kwargs):
         return types.SimpleNamespace(stdout="", stderr="", returncode=0)
 
     monkeypatch.setattr(bash_tool.subprocess, "run", fake_run)
@@ -223,7 +224,7 @@ def test_execute_bash_truncation_notice_with_stats(monkeypatch, tmp_path):
     # Generate multi-line output
     output = "\n".join([f"line {i}" for i in range(100)])
 
-    def fake_run(command, shell, capture_output, text, timeout, cwd):
+    def fake_run(command, shell, capture_output, text, timeout, cwd, executable=None, **_kwargs):
         return types.SimpleNamespace(stdout=output, stderr="", returncode=0)
 
     monkeypatch.setattr(bash_tool.subprocess, "run", fake_run)

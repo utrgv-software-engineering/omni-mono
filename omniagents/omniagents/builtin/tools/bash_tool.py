@@ -1,3 +1,5 @@
+import os
+import shutil
 import subprocess
 import time
 from typing import Dict, Any, Optional
@@ -131,6 +133,18 @@ def execute_bash(
     start_time = time.monotonic()
 
     try:
+        run_kwargs: Dict[str, Any] = {}
+        if os.name != "nt":
+            shell_executable = None
+            for candidate in ("/bin/bash", "/usr/bin/bash"):
+                if os.path.exists(candidate):
+                    shell_executable = candidate
+                    break
+            if shell_executable is None:
+                shell_executable = shutil.which("bash")
+            if shell_executable:
+                run_kwargs["executable"] = shell_executable
+
         process = subprocess.run(
             command,
             shell=True,
@@ -138,6 +152,7 @@ def execute_bash(
             text=True,
             timeout=timeout,
             cwd=cwd,
+            **run_kwargs,
         )
 
         wall_time_ms = int((time.monotonic() - start_time) * 1000)
