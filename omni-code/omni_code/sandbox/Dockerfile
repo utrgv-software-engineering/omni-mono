@@ -57,6 +57,8 @@ ENV PIPX_BIN_DIR=/usr/local/bin
 
 RUN pipx install omni-code --pip-args='--extra-index-url https://pypi.fury.io/ericmichael/'
 
+RUN npm install -g @playwright/cli@0.1.1
+
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 
 RUN mkdir -p "${PLAYWRIGHT_BROWSERS_PATH}" \
@@ -110,6 +112,10 @@ SH
 RUN chmod +x /usr/local/bin/chrome-binary
 
 ENV CHROME_BINARY=/usr/local/bin/chrome-binary
+
+ENV PLAYWRIGHT_MCP_BROWSER=chromium
+ENV PLAYWRIGHT_MCP_EXECUTABLE_PATH=/usr/local/bin/chrome-binary
+ENV PLAYWRIGHT_MCP_SANDBOX=false
 
 COPY entrypoint.sh /usr/local/bin/omni-sandbox-entrypoint
 RUN chmod +x /usr/local/bin/omni-sandbox-entrypoint

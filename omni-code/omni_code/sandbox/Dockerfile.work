@@ -179,6 +179,10 @@ RUN chmod +x /usr/local/bin/chrome-binary
 
 ENV CHROME_BINARY=/usr/local/bin/chrome-binary
 
+ENV PLAYWRIGHT_MCP_BROWSER=chromium
+ENV PLAYWRIGHT_MCP_EXECUTABLE_PATH=/usr/local/bin/chrome-binary
+ENV PLAYWRIGHT_MCP_SANDBOX=false
+
 RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg \
     && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ noble main" > /etc/apt/sources.list.d/azure-cli.list \
     && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/ubuntu/24.04/prod noble main" > /etc/apt/sources.list.d/microsoft-prod.list \
@@ -194,6 +198,8 @@ ENV PIPX_HOME=/opt/pipx
 ENV PIPX_BIN_DIR=/usr/local/bin
 
 RUN pipx install omni-code --pip-args='--extra-index-url https://pypi.fury.io/ericmichael/'
+
+RUN npm install -g @playwright/cli@0.1.1
 
 COPY entrypoint.sh /usr/local/bin/omni-sandbox-entrypoint
 RUN chmod +x /usr/local/bin/omni-sandbox-entrypoint
