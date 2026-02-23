@@ -13,6 +13,14 @@ _BASH_DEFAULT_MAX_OUTPUT_CHARS = 40000  # ~40KB, reasonable for most commands
 _BASH_MAX_LINE_LENGTH = 500
 
 
+def _command_summary(exit_code: int, wall_time_ms: int, truncated: bool) -> str:
+    """Build a concise summary string for the ToolCard header."""
+    parts = [f"exit {exit_code}", f"{wall_time_ms}ms"]
+    if truncated:
+        parts.append("truncated")
+    return f"Ran command ({', '.join(parts)})"
+
+
 def _truncate_output_head_tail(
     text: str, max_chars: int
 ) -> tuple[str, int, bool]:
@@ -215,7 +223,7 @@ def execute_bash(
         ui_metadata = {
             "value": combined_output,
             "display_type": "command",
-            "summary": f"$ {command}" + (" (truncated)" if was_truncated else ""),
+            "summary": _command_summary(process.returncode, wall_time_ms, was_truncated),
             "preview": preview,
             "truncated": ui_truncated or was_truncated,
             "metadata": {

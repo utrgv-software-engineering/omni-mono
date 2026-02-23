@@ -270,16 +270,22 @@ function ToolCard({ item }: { item: ToolItem }) {
 }
 
 function ApprovalCard({ item, onDecision }: { item: ApprovalItem; onDecision?: (request_id: string, value: 'yes' | 'always' | 'no') => void }) {
+  const meta = item.metadata
+  const summary = meta && typeof meta === 'object' && typeof meta.summary === 'string' ? meta.summary : ''
+  const richBody = renderMetadata(meta, item.argumentsText || '')
   return (
     <div className="rounded-md border border-warningOrange bg-bgCardAlt p-3">
       <div className="flex items-center gap-2">
         <div className="text-sm font-semibold text-warningOrange">Approve {item.tool}</div>
+        {summary ? <div className="text-xs text-textSubtle">{summary}</div> : null}
       </div>
-      {item.argumentsText ? (
-        <pre className="mt-2 text-xs overflow-x-auto whitespace-pre-wrap bg-bgColumn rounded p-2 border border-bgCardAlt text-textPrimary">{item.argumentsText}</pre>
-      ) : (
-        <div className="text-xs text-textSubtle mt-1">No parameters</div>
-      )}
+      <div className="mt-2">
+        {richBody || (item.argumentsText ? (
+          <pre className="text-xs overflow-x-auto whitespace-pre-wrap bg-bgColumn rounded p-2 border border-bgCardAlt text-textPrimary">{item.argumentsText}</pre>
+        ) : (
+          <div className="text-xs text-textSubtle">No parameters</div>
+        ))}
+      </div>
       <div className="mt-3 flex gap-2 justify-end">
         <button className="px-3 py-1.5 text-xs rounded-md border border-errorRed text-errorRed bg-transparent hover:bg-errorRed/20" onClick={() => onDecision && onDecision(item.request_id, 'no')}>Reject</button>
         <button className="px-3 py-1.5 text-xs rounded-md border border-tweetBlue text-tweetBlue bg-transparent hover:bg-bgColumn" onClick={() => onDecision && onDecision(item.request_id, 'always')}>Always</button>
@@ -319,30 +325,29 @@ function formatArgsPreview(args: string, maxLen: number) {
   return text
 }
 
-function renderToolBody(item: ToolItem) {
-  const sections: React.ReactNode[] = []
-  const meta = item.metadata
-  const out = item.output || ''
-  const hasOut = out.trim().length > 0
-  if (hasOut) {
-    if (meta && typeof meta === 'object' && meta.display_type) {
-      const dt = meta.display_type as string
-      if (dt === 'diff') sections.push(diffView(linesFromDiff(meta)))
-      else if (dt === 'table') sections.push(tableView(meta))
-      else if (dt === 'file_write') sections.push(codeBlock((meta.value as string) || out))
-      else if (dt === 'command') sections.push(commandView(meta, out))
-      else if (dt === 'file_content') sections.push(fileContentView(meta, out))
-      else if (dt === 'directory_listing') sections.push(directoryListingView(meta, out))
-      else if (dt === 'search_results') sections.push(searchResultsView(meta, out))
-      else if (dt === 'web_content') sections.push(webContentView(meta, out))
-      else if (dt === 'error') sections.push(errorView(meta, out))
-      else if (typeof meta.preview === 'string' && meta.preview.trim().length > 0) sections.push(preText(meta.preview))
-      else sections.push(preText(out))
-    } else {
-      sections.push(preText(out))
-    }
+function renderMetadata(meta: any, fallbackText: string): React.ReactNode | null {
+  if (meta && typeof meta === 'object' && meta.display_type) {
+    const dt = meta.display_type as string
+    if (dt === 'diff') return diffView(linesFromDiff(meta))
+    if (dt === 'table') return tableView(meta)
+    if (dt === 'file_write') return codeBlock((meta.value as string) || fallbackText)
+    if (dt === 'command') return commandView(meta, fallbackText)
+    if (dt === 'file_content') return fileContentView(meta, fallbackText)
+    if (dt === 'directory_listing') return directoryListingView(meta, fallbackText)
+    if (dt === 'search_results') return searchResultsView(meta, fallbackText)
+    if (dt === 'web_content') return webContentView(meta, fallbackText)
+    if (dt === 'error') return errorView(meta, fallbackText)
+    if (typeof meta.preview === 'string' && meta.preview.trim().length > 0) return preText(meta.preview)
   }
-  return sections.length ? <div className="space-y-3">{sections}</div> : null
+  return null
+}
+
+function renderToolBody(item: ToolItem) {
+  const out = item.output || ''
+  if (!out.trim().length) return null
+  const richView = renderMetadata(item.metadata, out)
+  if (richView) return <div className="space-y-3">{richView}</div>
+  return <div className="space-y-3">{preText(out)}</div>
 }
 
 function linesFromDiff(metadata: any): string[] {
