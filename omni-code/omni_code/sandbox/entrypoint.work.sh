@@ -98,10 +98,6 @@ export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
 export BUNDLE_PATH="${BUNDLE_PATH:-${HOME}/.bundle}"
 mkdir -p "${BUNDLE_PATH}" >/dev/null 2>&1 || true
 
-if [[ -z "${DATABASE_URL:-}" ]]; then
-  export DATABASE_URL="postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@${POSTGRES_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-app_dev}"
-fi
-
 vnc_enabled="${OMNI_CODE_VNC:-0}"
 if [[ "${vnc_enabled}" == "1" || "${vnc_enabled}" == "true" ]]; then
   # Create directories needed by X11/ICE session management

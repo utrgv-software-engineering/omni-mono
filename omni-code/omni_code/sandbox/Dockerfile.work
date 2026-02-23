@@ -112,6 +112,7 @@ ENV LC_ALL=C.UTF-8
 ENV PYENV_ROOT=/opt/pyenv
 ENV PATH="${PYENV_ROOT}/bin:${PYENV_ROOT}/shims:${PATH}"
 ENV PYTHON_VERSION=3.11.8
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 
 RUN git clone --depth 1 https://github.com/pyenv/pyenv.git "${PYENV_ROOT}" \
     && bash -lc "pyenv install ${PYTHON_VERSION} && pyenv global ${PYTHON_VERSION}"
@@ -122,9 +123,61 @@ RUN bash -lc "python -m pip install --no-cache-dir --upgrade pip \
       'databricks-sql-connector>=4.0.5' \
       'databricks-sdk>=0.57.0' \
       'python-dotenv>=1.1.1' \
+      'playwright' \
       'panel>=1.7.2' \
       'duckdb>=1.3.1' \
       'sqlglot>=26.33.0'"
+
+RUN mkdir -p "${PLAYWRIGHT_BROWSERS_PATH}" \
+    && bash -lc "python -m playwright install --with-deps chromium" \
+    && chmod -R a+rX "${PLAYWRIGHT_BROWSERS_PATH}" \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN cat > /usr/local/bin/chrome-binary <<'SH'
+#!/bin/sh
+
+set -eu
+
+if [ -n "${CHROME_BINARY_REAL:-}" ] && [ -x "${CHROME_BINARY_REAL}" ]; then
+  exec "${CHROME_BINARY_REAL}" "$@"
+fi
+
+PLAYWRIGHT_CHROME=""
+if [ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ]; then
+  PLAYWRIGHT_CHROME=$(ls -1 "${PLAYWRIGHT_BROWSERS_PATH}"/chromium-*/chrome-linux64/chrome 2>/dev/null | tail -n 1 || true)
+fi
+
+if [ -n "${PLAYWRIGHT_CHROME}" ] && [ -x "${PLAYWRIGHT_CHROME}" ]; then
+  exec "${PLAYWRIGHT_CHROME}" "$@"
+fi
+
+if [ -n "${HOME:-}" ]; then
+  PLAYWRIGHT_CHROME=$(ls -1 "${HOME}/.cache/ms-playwright"/chromium-*/chrome-linux64/chrome 2>/dev/null | tail -n 1 || true)
+fi
+
+if [ -n "${PLAYWRIGHT_CHROME}" ] && [ -x "${PLAYWRIGHT_CHROME}" ]; then
+  exec "${PLAYWRIGHT_CHROME}" "$@"
+fi
+
+for candidate in \
+  /usr/bin/google-chrome \
+  /usr/bin/google-chrome-stable \
+  /opt/google/chrome/chrome \
+  /usr/bin/chromium \
+  /usr/bin/chromium-browser \
+  ; do
+  if [ -x "${candidate}" ]; then
+    exec "${candidate}" "$@"
+  fi
+done
+
+echo "No Chrome/Chromium binary found" >&2
+exit 1
+SH
+
+RUN chmod +x /usr/local/bin/chrome-binary
+
+ENV CHROME_BINARY=/usr/local/bin/chrome-binary
 
 RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg \
     && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ noble main" > /etc/apt/sources.list.d/azure-cli.list \
@@ -155,14 +208,6 @@ ENV OMNI_WEB_AUTO_OPEN=false
 EXPOSE 7681
 EXPOSE 8080
 EXPOSE 6080
-
-ENV POSTGRES_HOST=127.0.0.1
-ENV POSTGRES_PORT=5432
-ENV POSTGRES_USER=postgres
-ENV POSTGRES_PASSWORD=password
-ENV POSTGRES_DB=app_dev
-ENV POSTGRES_TEST_DB=app_test
-ENV REDIS_URL=redis://127.0.0.1:6379
 
 ENTRYPOINT ["/usr/local/bin/omni-sandbox-work-entrypoint"]
 CMD ["omni", "--mode", "server", "--host", "0.0.0.0", "--port", "7681"]

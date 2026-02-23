@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -38,8 +39,15 @@ def _docker_available() -> bool:
     return shutil.which("docker") is not None
 
 
-def _sandbox_image_tag() -> str:
-    return f"omni-code-sandbox:{__version__}"
+def _sandbox_image_tag(dockerfile: Optional[str] = None) -> str:
+    dockerfile_path = Path(dockerfile).expanduser().resolve() if dockerfile else (_sandbox_assets_dir() / "Dockerfile")
+    suffix = ""
+    try:
+        digest = hashlib.sha256(dockerfile_path.read_bytes()).hexdigest()[:12]
+        suffix = f"-{digest}"
+    except OSError:
+        suffix = ""
+    return f"omni-code-sandbox:{__version__}{suffix}"
 
 
 def _sandbox_assets_dir() -> Path:
@@ -113,6 +121,53 @@ def _resolve_env_file(explicit_path: Optional[str], workspace: Path) -> Optional
         return candidate
 
     return None
+
+
+def _detect_worktree(workspace: Path) -> Optional[Path]:
+    """If *workspace* is a git worktree, return the parent repo's .git directory.
+
+    A worktree contains a `.git` **file** (not directory) with a line like::
+
+        gitdir: /home/user/project/.git/worktrees/bold-fox
+
+    We resolve the gitdir path and walk up to the main `.git` directory so it
+    can be bind-mounted into the container at the same absolute path — making
+    all internal git references resolve without any path rewriting.
+
+    Returns ``None`` for normal repos, submodules, or anything unexpected.
+    """
+    dot_git = workspace / ".git"
+
+    if not dot_git.is_file():
+        return None
+
+    try:
+        content = dot_git.read_text().strip()
+    except OSError:
+        return None
+
+    if not content.startswith("gitdir:"):
+        return None
+
+    gitdir_value = content[len("gitdir:"):].strip()
+    gitdir_path = Path(gitdir_value)
+
+    # Resolve relative paths against the workspace
+    if not gitdir_path.is_absolute():
+        gitdir_path = (workspace / gitdir_path).resolve()
+    else:
+        gitdir_path = gitdir_path.resolve()
+
+    # Expect: …/.git/worktrees/<name>  — parent must be "worktrees"
+    if gitdir_path.parent.name != "worktrees":
+        return None
+
+    parent_git_dir = gitdir_path.parent.parent  # the main .git directory
+
+    if not parent_git_dir.is_dir():
+        return None
+
+    return parent_git_dir
 
 
 def _apply_env_file_to_process(path: Optional[Path]) -> None:
@@ -194,7 +249,7 @@ def _run_sandbox(
     if image:
         tag = image
     else:
-        tag = _sandbox_image_tag()
+        tag = _sandbox_image_tag(dockerfile)
         if rebuild or not _docker_image_exists(tag):
             _build_sandbox_image(tag, dockerfile=dockerfile, no_cache=no_cache)
 
@@ -212,6 +267,16 @@ def _run_sandbox(
         f"{host_port}:{CONTAINER_PORT}",
         "-v",
         f"{str(workspace)}:/home/user/workspace",
+    ]
+
+    # If the workspace is a git worktree, mount the parent repo's .git
+    # directory at the same absolute host path so internal gitdir references
+    # resolve without any path rewriting.
+    worktree_git_dir = _detect_worktree(workspace)
+    if worktree_git_dir is not None:
+        args.extend(["-v", f"{str(worktree_git_dir)}:{str(worktree_git_dir)}"])
+
+    args.extend([
         "-v",
         f"{str(config_dir)}:/home/user/.config/omni_code",
         "-v",
@@ -228,7 +293,7 @@ def _run_sandbox(
         "OMNIAGENTS_HOME=/home/user/.omniagents",
         "-e",
         "XDG_CONFIG_HOME=/home/user/.config",
-    ]
+    ])
 
     if enable_code_server:
         if code_server_port is None:

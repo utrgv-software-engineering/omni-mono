@@ -57,6 +57,60 @@ ENV PIPX_BIN_DIR=/usr/local/bin
 
 RUN pipx install omni-code --pip-args='--extra-index-url https://pypi.fury.io/ericmichael/'
 
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+
+RUN mkdir -p "${PLAYWRIGHT_BROWSERS_PATH}" \
+    && python3 -m pip install --no-cache-dir playwright \
+    && python3 -m playwright install --with-deps chromium \
+    && chmod -R a+rX "${PLAYWRIGHT_BROWSERS_PATH}" \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN cat > /usr/local/bin/chrome-binary <<'SH'
+#!/bin/sh
+
+set -eu
+
+if [ -n "${CHROME_BINARY_REAL:-}" ] && [ -x "${CHROME_BINARY_REAL}" ]; then
+  exec "${CHROME_BINARY_REAL}" "$@"
+fi
+
+PLAYWRIGHT_CHROME=""
+if [ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ]; then
+  PLAYWRIGHT_CHROME=$(ls -1 "${PLAYWRIGHT_BROWSERS_PATH}"/chromium-*/chrome-linux64/chrome 2>/dev/null | tail -n 1 || true)
+fi
+
+if [ -n "${PLAYWRIGHT_CHROME}" ] && [ -x "${PLAYWRIGHT_CHROME}" ]; then
+  exec "${PLAYWRIGHT_CHROME}" "$@"
+fi
+
+if [ -n "${HOME:-}" ]; then
+  PLAYWRIGHT_CHROME=$(ls -1 "${HOME}/.cache/ms-playwright"/chromium-*/chrome-linux64/chrome 2>/dev/null | tail -n 1 || true)
+fi
+
+if [ -n "${PLAYWRIGHT_CHROME}" ] && [ -x "${PLAYWRIGHT_CHROME}" ]; then
+  exec "${PLAYWRIGHT_CHROME}" "$@"
+fi
+
+for candidate in \
+  /usr/bin/google-chrome \
+  /usr/bin/google-chrome-stable \
+  /opt/google/chrome/chrome \
+  /usr/bin/chromium \
+  /usr/bin/chromium-browser \
+  ; do
+  if [ -x "${candidate}" ]; then
+    exec "${candidate}" "$@"
+  fi
+done
+
+echo "No Chrome/Chromium binary found" >&2
+exit 1
+SH
+
+RUN chmod +x /usr/local/bin/chrome-binary
+
+ENV CHROME_BINARY=/usr/local/bin/chrome-binary
+
 COPY entrypoint.sh /usr/local/bin/omni-sandbox-entrypoint
 RUN chmod +x /usr/local/bin/omni-sandbox-entrypoint
 

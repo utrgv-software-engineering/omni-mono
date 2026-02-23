@@ -152,6 +152,12 @@ def _prompt_model_fields(provider_name: str, provider_type: str) -> dict:
     }
 
 
+def cmd_check(args):
+    from omni_code.models import has_models_configured
+
+    sys.exit(0 if has_models_configured() else 1)
+
+
 def cmd_setup(args):
     from omni_code.models import (
         add_model, get_models_config_path, get_provider, list_providers,
@@ -570,6 +576,7 @@ def main(argv=None):
 
     subparsers.add_parser("setup", help="Interactive setup wizard")
     subparsers.add_parser("list", help="List configured models")
+    subparsers.add_parser("check", help="Check if models are configured (exit 0=yes, 1=no)")
 
     add_parser = subparsers.add_parser("add", help="Add a model to an existing provider")
     add_parser.add_argument("--name", "-n", help="Model reference (e.g. gpt-5.1 or azure-prod/gpt-5.2)")
@@ -633,6 +640,7 @@ def main(argv=None):
     commands = {
         "setup": cmd_setup,
         "list": cmd_list,
+        "check": cmd_check,
         "add": cmd_add,
         "remove": cmd_remove,
         "default": cmd_default,
