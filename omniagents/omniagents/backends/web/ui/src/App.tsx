@@ -7,6 +7,7 @@ import { Sidebar } from './components/Sidebar'
 import { ArtifactsPanel, type ArtifactItem } from './components/ArtifactsPanel'
 import { ResizableDivider } from './components/ResizableDivider'
 import { TerminalPanel } from './components/TerminalPanel'
+import { WorkspacePicker } from './components/WorkspacePicker'
 import { RPCClient } from './rpc/client'
 
 type UIState = 'connecting' | 'resume' | 'chat' | 'error'
@@ -72,6 +73,10 @@ export function App() {
       return false
     }
   })
+  const [workspaceSupported, setWorkspaceSupported] = useState(false)
+  const [workspacePath, setWorkspacePath] = useState<string | null>(null)
+  const [workspaceLocked, setWorkspaceLocked] = useState(false)
+  const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false)
   const [initialSessionParam] = useState<string | undefined>(() => {
     try {
       const url = new URL(window.location.href)
@@ -121,6 +126,18 @@ export function App() {
           const wt = info?.welcome_text ? String(info.welcome_text) : undefined
           setWelcomeText(wt)
           document.title = agentName
+        } catch {}
+        try {
+          const funcs = await client.listServerFunctions()
+          const names = new Set(funcs.map(f => f.name))
+          if (names.has('fs_list_dir') && names.has('fs_get_workspace_root')) {
+            setWorkspaceSupported(true)
+            // Get initial workspace (cwd)
+            try {
+              const res = await client.serverCall('fs_get_cwd') as any
+              if (res?.path) setWorkspacePath(res.path)
+            } catch {}
+          }
         } catch {}
         try {
           const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
@@ -447,13 +464,18 @@ export function App() {
         content = parts
       }
       setItems(prev => [...prev, { type: 'chat', role: 'user', content: text, attachments }])
-      await client.startRun(text, sessionId, undefined, content)
+      // Always pass workspace_root as variables so the context factory picks it up
+      const variables = (workspacePath && workspaceSupported)
+        ? { workspace_root: workspacePath }
+        : undefined
+      await client.startRun(text, sessionId, variables, content)
+      if (workspaceSupported) setWorkspaceLocked(true)
     } catch (e) {
       startingRunRef.current = false
       setStatus(String((e as Error)?.message || 'Failed to start run'))
       setStatusItalic(false)
     }
-  }, [client, sessionId])
+  }, [client, sessionId, workspacePath, workspaceSupported])
 
   const handleStop = useCallback(() => {
     if (!runId) return
@@ -511,6 +533,17 @@ export function App() {
     setStatusSpinner(false)
     setStatusItalic(false)
     setRunId(undefined)
+    // Reset or restore workspace state
+    if (!id) {
+      // New chat — unlock workspace, restore default (cwd)
+      setWorkspaceLocked(false)
+      if (workspaceSupported) {
+        try {
+          const res = await client.serverCall('fs_get_cwd') as any
+          if (res?.path) setWorkspacePath(res.path)
+        } catch {}
+      }
+    }
     if (id) {
       try {
         const history = await client.getSessionHistory(id)
@@ -591,12 +624,20 @@ export function App() {
         }
         const merged = appendPendingApprovals(msgs, id)
         setItems(merged)
+        // Restore workspace from session and lock it
+        if (workspaceSupported) {
+          try {
+            const res = await client.serverCall('fs_get_workspace_root', {}, id) as any
+            if (res?.path) setWorkspacePath(res.path)
+          } catch {}
+          setWorkspaceLocked(true)
+        }
       } catch {}
     } else {
       setItems([])
     }
     setUI('chat')
-  }, [client, appendPendingApprovals])
+  }, [client, appendPendingApprovals, workspaceSupported])
 
   useEffect(() => {
     if (urlSessionHandledRef.current) return
@@ -692,7 +733,16 @@ export function App() {
         <div className="flex-1 flex flex-row min-h-0 min-w-0">
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
             <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} statusItalic={statusItalic} />
-            <Input disabled={!connected} thinking={thinking} onStop={handleStop} onSubmit={handleSubmit} voiceEnabled={voiceEnabled} />
+            <Input
+              disabled={!connected}
+              thinking={thinking}
+              onStop={handleStop}
+              onSubmit={handleSubmit}
+              voiceEnabled={voiceEnabled}
+              workspacePath={workspaceSupported ? workspacePath : undefined}
+              workspaceLocked={workspaceLocked}
+              onWorkspaceClick={() => setWorkspacePickerOpen(true)}
+            />
           </div>
           {isLargeScreen && artifactsPanelOpen && hasArtifacts && (
             <>
@@ -729,6 +779,18 @@ export function App() {
           sessionId={sessionId}
           onSessionId={setSessionId}
           onClose={() => setTerminalPanelOpen(false)}
+        />
+      )}
+      {workspacePickerOpen && (
+        <WorkspacePicker
+          client={client}
+          sessionId={sessionId}
+          initialPath={workspacePath || undefined}
+          onSelect={(path) => {
+            setWorkspacePath(path)
+            setWorkspacePickerOpen(false)
+          }}
+          onClose={() => setWorkspacePickerOpen(false)}
         />
       )}
     </div>

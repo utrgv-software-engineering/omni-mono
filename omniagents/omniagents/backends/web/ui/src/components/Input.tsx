@@ -2,8 +2,8 @@ import React, { useCallback, useMemo, useRef, useState } from 'react'
 import { PromptInput, PromptInputTextarea, PromptInputActions } from './promptkit/PromptInput'
 import { VoiceModal } from './VoiceModal'
 
-export function Input({ disabled, thinking, onStop, onSubmit, voiceEnabled }:
-  { disabled?: boolean; thinking?: boolean; onStop?: () => void; onSubmit: (text: string, files?: File[]) => void; voiceEnabled?: boolean }) {
+export function Input({ disabled, thinking, onStop, onSubmit, voiceEnabled, workspacePath, workspaceLocked, onWorkspaceClick }:
+  { disabled?: boolean; thinking?: boolean; onStop?: () => void; onSubmit: (text: string, files?: File[]) => void; voiceEnabled?: boolean; workspacePath?: string | null; workspaceLocked?: boolean; onWorkspaceClick?: () => void }) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [history, setHistory] = useState<string[]>([])
@@ -136,24 +136,52 @@ export function Input({ disabled, thinking, onStop, onSubmit, voiceEnabled }:
           />
 
           <PromptInputActions className="flex items-center justify-between gap-2 pt-2 px-2">
-            <label
-              htmlFor="file-upload"
-              onClick={(e) => e.stopPropagation()}
-              className="hover:bg-bgCardAlt/50 flex h-8 w-8 cursor-pointer items-center justify-center rounded-2xl"
-              aria-label="Attach files"
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                onChange={handleFilesSelected}
-                className="hidden"
-                id="file-upload"
-              />
-              <svg width="20" height="20" viewBox="0 0 24 24" className="text-white" aria-hidden="true">
-                <path d="M21.44 11.05l-8.49 8.49a5.5 5.5 0 11-7.78-7.78l8.49-8.49a3.5 3.5 0 114.95 4.95l-8.49 8.49a1.5 1.5 0 11-2.12-2.12l8.49-8.49" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </label>
+            <div className="flex items-center gap-1">
+              <label
+                htmlFor="file-upload"
+                onClick={(e) => e.stopPropagation()}
+                className="hover:bg-bgCardAlt/50 flex h-8 w-8 cursor-pointer items-center justify-center rounded-2xl"
+                aria-label="Attach files"
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  onChange={handleFilesSelected}
+                  className="hidden"
+                  id="file-upload"
+                />
+                <svg width="20" height="20" viewBox="0 0 24 24" className="text-white" aria-hidden="true">
+                  <path d="M21.44 11.05l-8.49 8.49a5.5 5.5 0 11-7.78-7.78l8.49-8.49a3.5 3.5 0 114.95 4.95l-8.49 8.49a1.5 1.5 0 11-2.12-2.12l8.49-8.49" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </label>
+
+              {workspacePath !== undefined && (
+                <button
+                  onClick={workspaceLocked ? undefined : onWorkspaceClick}
+                  disabled={workspaceLocked}
+                  className={`flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition-colors ${
+                    workspaceLocked
+                      ? 'text-textSubtle cursor-default'
+                      : 'text-textHeading hover:bg-bgCardAlt/50 cursor-pointer'
+                  }`}
+                  title={workspacePath || 'Select workspace'}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" className={workspaceLocked ? 'text-textSubtle' : 'text-tweetBlue'} fill="currentColor" aria-hidden="true">
+                    <path d="M2 6a2 2 0 012-2h5l2 2h9a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+                  </svg>
+                  <span className="max-w-[200px] truncate">
+                    {workspacePath ? workspacePath.split('/').pop() || workspacePath : 'Select workspace'}
+                  </span>
+                  {workspaceLocked && (
+                    <svg width="10" height="10" viewBox="0 0 24 24" className="text-textSubtle flex-shrink-0" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                      <path d="M7 11V7a5 5 0 0110 0v4" />
+                    </svg>
+                  )}
+                </button>
+              )}
+            </div>
 
             <div className="flex items-center gap-2">
               {voiceEnabled ? (
