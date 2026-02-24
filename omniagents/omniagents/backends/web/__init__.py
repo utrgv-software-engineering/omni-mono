@@ -232,7 +232,11 @@ class WebBackend:
         elif dev_flag and minimal_ui and open_url:
             if "minimal=" not in open_url:
                 open_url = self._append_query_param(open_url, "minimal", "true")
-        if auto_open:
+        output_format = getattr(args, "output", "text") if args else "text"
+        if output_format == "json":
+            import json
+            print(json.dumps({"url": open_url, "port": port}), flush=True)
+        elif auto_open:
             try:
                 webbrowser.open(open_url)
             except Exception:

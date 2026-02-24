@@ -295,6 +295,12 @@ def main():
         help="Hide the sidebar when launching the web UI (adds minimal=true param)",
     )
     run_parser.add_argument(
+        "--output",
+        choices=["text", "json"],
+        default="text",
+        help="Output format: 'text' (default) for human-readable, 'json' for structured JSON lines.",
+    )
+    run_parser.add_argument(
         "prompt",
         nargs="*",
         help="Optional message to send immediately after startup.",
