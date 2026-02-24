@@ -60,20 +60,31 @@ def cli_main(argv=None) -> None:
 
         return sessions_main(args[1:])
 
+    # Check for --embedded flag (used by launcher for structured integration)
+    embedded = "--embedded" in args
+    if embedded:
+        args = [a for a in args if a != "--embedded"]
+        os.environ["OMNI_WEB_AUTO_OPEN"] = "false"
+
     # Load models config
     _load_models_config()
 
     # Check if a usable model is configured, prompt setup if not
     from omni_code.models import has_models_configured
     if not has_models_configured():
+        if embedded:
+            import json
+            print(json.dumps({"error": "No model credentials configured"}))
+            sys.exit(1)
         print("No model credentials configured. Starting setup wizard...\n")
         from omni_code.model_cli import main as model_main
         model_main(["setup"])
         print()  # Blank line before starting
 
-    from omni_code.updater import maybe_print_update_notice
+    if not embedded:
+        from omni_code.updater import maybe_print_update_notice
 
-    maybe_print_update_notice()
+        maybe_print_update_notice()
 
     # Run omniagents
     from omniagents.cli import main as omni_main
