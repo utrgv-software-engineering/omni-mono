@@ -160,9 +160,14 @@ def collect_agents_md(start_dir: str) -> List[Tuple[str, str]]:
     return found
 
 
-def format_agents_md_block() -> str:
+def format_agents_md_block(variables: Dict[str, Any] = None) -> str:
     """Format AGENTS.md files into an instruction block."""
-    base_dir = str(_resolve_invocation_dir())
+    variables = variables or {}
+    workspace_root = variables.get("workspace_root")
+    if isinstance(workspace_root, str) and workspace_root.strip():
+        base_dir = str(Path(workspace_root).expanduser().resolve())
+    else:
+        base_dir = str(_resolve_invocation_dir())
     agents_files = collect_agents_md(base_dir)
 
     if not agents_files:
@@ -195,7 +200,7 @@ def build_coding_context(variables: Dict[str, Any] = None) -> Dict[str, Any]:
     context: Dict[str, Any] = {
         "current_date": now.strftime("%Y-%m-%d"),
         "current_time": now.strftime("%H:%M %Z"),
-        "agents_md_block": format_agents_md_block(),
+        "agents_md_block": format_agents_md_block(variables),
         "available_skills_block": build_available_skills_block(variables),
     }
 

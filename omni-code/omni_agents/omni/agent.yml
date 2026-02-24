@@ -64,6 +64,11 @@ server_functions:
   - reasoning
   - terminal.create
   - terminal.close
+  - fs_get_cwd
+  - fs_get_workspace_root
+  - fs_get_home
+  - fs_list_dir
+  - session_ensure
 
 context: build_coding_context
 model_config_resolver: resolve_default_model
