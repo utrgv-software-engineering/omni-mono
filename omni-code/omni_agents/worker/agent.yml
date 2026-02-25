@@ -1,0 +1,26 @@
+name: worker
+label: Worker
+description: "Autonomous coding worker for parallel subtasks"
+instructions_file: instructions.md
+
+additional_tools_dirs:
+  - ../../tools
+
+tools:
+  - list_directory
+  - glob_files
+  - grep_files
+  - read_file
+  - read_notebook
+  - convert_to_markdown
+  - apply_patch
+  - write_file
+  - edit_notebook
+  - execute_bash
+
+model_settings:
+  reasoning:
+    effort: low
+  parallel_tool_calls: true
+
+max_turns: 200

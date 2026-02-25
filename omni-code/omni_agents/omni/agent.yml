@@ -8,6 +8,7 @@ welcome_text: |
 tools:
   - read_image
   - dispatch
+  - explore
   - list_directory
   - read_file
   - display_artifact
@@ -22,6 +23,11 @@ tools:
   - convert_to_markdown
   - read_notebook
   - edit_notebook
+  - spawn_worker
+  - wait_for_workers
+  - send_worker_message
+  - close_worker
+  - resume_worker
 
 model_settings:
   reasoning:
@@ -48,6 +54,11 @@ safe_agent_options:
     - scholar_search
     - convert_to_markdown
     - read_notebook
+    - explore
+    - wait_for_workers
+    - send_worker_message
+    - close_worker
+    - resume_worker
 
 server_functions:
   - help

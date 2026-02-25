@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from omniagents.core.tools import function_tool
+from omniagents.core.tools import rich_function_tool, RichToolOutput
 
 
 @contextlib.contextmanager
@@ -144,8 +144,8 @@ async def run_init_agent(max_turns: int = 1000) -> str:
     return status
 
 
-@function_tool(client_status="Running command...")
-async def dispatch(command: str, arg: Optional[str] = None) -> str:
+@rich_function_tool(client_status="Running command...")
+async def dispatch(command: str, arg: Optional[str] = None) -> RichToolOutput:
     """Invoke a slash command with optional args.
 
     Called when the user's input starts with "/". Runs inside the agent's
@@ -154,6 +154,22 @@ async def dispatch(command: str, arg: Optional[str] = None) -> str:
     norm = (command or "").strip().lower()
 
     if norm == "init":
-        return await run_init_agent()
+        output = await run_init_agent()
+    else:
+        output = f"Unknown command: {command}"
 
-    return f"Unknown command: {command}"
+    is_error = output.startswith("Unknown command:") or output.startswith("Failed to")
+    preview = output[:1500] if output else ""
+    truncated = len(output) > 1500 if output else False
+
+    return RichToolOutput(output, {
+        "display_type": "error" if is_error else "command",
+        "summary": f"/{norm}" + (f" {arg}" if arg else "") + (" failed" if is_error else ""),
+        "preview": preview,
+        "truncated": truncated,
+        "metadata": {
+            "success": not is_error,
+            "command": norm,
+            "output_length": len(output) if output else 0,
+        },
+    })

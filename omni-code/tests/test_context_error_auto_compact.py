@@ -45,6 +45,20 @@ class FakeLiteLLMContextError(Exception):
     pass
 
 
+class FakeLiteLLMProxyContextError(Exception):
+    """Mimics the actual LiteLLM proxy error: code="400", real error buried in message."""
+    def __init__(self):
+        super().__init__("error code: 400")
+        self.body = {
+            "error": {
+                "message": "litellm.ContextWindowExceededError: context_length_exceeded: This model's maximum context length is 128000 tokens.",
+                "type": None,
+                "param": None,
+                "code": "400",
+            }
+        }
+
+
 class FakeStream:
     async def stream_events(self):
         if False:
@@ -81,6 +95,37 @@ def test_stream_agent_triggers_compact_and_retries(monkeypatch):
     assert result is not None
     assert service.calls == [{"function": "compact", "args": {}, "session_id": "sess-1"}]
     assert [item.get("role") for item in session.history].count("user") == 1
+
+
+def test_stream_agent_triggers_compact_for_litellm_proxy_context_error(monkeypatch):
+    """LiteLLM proxy wraps context_length_exceeded inside the message string with code='400'."""
+    calls = {"count": 0}
+
+    def fake_run_streamed(*_args, **_kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise FakeLiteLLMProxyContextError()
+        return FakeStream()
+
+    monkeypatch.setattr(agents.Runner, "run_streamed", fake_run_streamed)
+
+    service = FakeService()
+    session = FakeSession()
+    session.variables = {}
+    rpc = FakeRpcChannel()
+
+    async def run():
+        return await stream_agent(
+            agent=object(),
+            prompt="hello",
+            session=session,
+            rpc_channel=rpc,
+            service=service,
+        )
+
+    asyncio.run(run())
+    assert calls["count"] == 2
+    assert service.calls == [{"function": "compact", "args": {}, "session_id": "sess-1"}]
 
 
 def test_stream_agent_triggers_compact_for_litellm_context_error(monkeypatch):

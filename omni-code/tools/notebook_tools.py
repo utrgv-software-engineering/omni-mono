@@ -1,8 +1,10 @@
+import difflib
 import json
 import os
 from typing import Optional
 
 from omniagents.core.tools import rich_function_tool, RichToolOutput
+from omniagents.core.tools import approval_metadata
 
 
 def _load_notebook(file_path: str) -> dict:
@@ -317,3 +319,127 @@ def edit_notebook(
             "truncated": False,
             "metadata": {"success": False, "error_type": "edit_error"},
         })
+
+
+# ---------------------------------------------------------------------------
+# Approval metadata
+# ---------------------------------------------------------------------------
+
+
+@approval_metadata()
+def edit_notebook_approval(
+    file_path: str,
+    cell_number: int,
+    new_source: str,
+    edit_mode: str = "replace",
+    cell_type: Optional[str] = None,
+) -> dict:
+    """Generate approval metadata for edit_notebook showing a diff of changes."""
+
+    basename = os.path.basename(file_path) if file_path else "notebook"
+
+    # Try to load the notebook and show a meaningful diff
+    try:
+        if not os.path.exists(file_path):
+            return {
+                "display_type": "file_write",
+                "summary": f"Edit {basename} (file not found yet)",
+                "value": new_source,
+                "preview": new_source[:500],
+                "truncated": len(new_source) > 500,
+                "metadata": {"file_path": file_path, "operation": edit_mode},
+            }
+
+        nb = _load_notebook(file_path)
+        cells = _get_cells(nb)
+
+        if edit_mode == "insert":
+            # No old content to diff against — show the new cell
+            return {
+                "display_type": "file_write",
+                "summary": f"Insert {cell_type or 'cell'} at index {cell_number} in {basename}",
+                "value": new_source,
+                "preview": new_source[:500],
+                "truncated": len(new_source) > 500,
+                "metadata": {
+                    "file_path": file_path,
+                    "operation": "insert",
+                    "cell_number": cell_number,
+                    "cell_type": cell_type,
+                },
+            }
+
+        if edit_mode == "delete":
+            if 0 <= cell_number < len(cells):
+                old_source = "".join(cells[cell_number].get("source", []))
+                old_type = cells[cell_number].get("cell_type", "unknown")
+            else:
+                old_source = ""
+                old_type = "unknown"
+
+            diff_lines = list(difflib.unified_diff(
+                old_source.splitlines(keepends=True),
+                [],
+                fromfile=f"{basename} cell {cell_number}",
+                tofile="/dev/null",
+                lineterm="",
+                n=3,
+            ))
+            preview = "".join(diff_lines[:20])
+            return {
+                "display_type": "diff",
+                "summary": f"Delete {old_type} cell {cell_number} from {basename}",
+                "value": {"diff_lines": diff_lines},
+                "preview": preview,
+                "truncated": len(diff_lines) > 20,
+                "metadata": {
+                    "file_path": file_path,
+                    "operation": "delete",
+                    "cell_number": cell_number,
+                    "deletions": sum(1 for l in diff_lines if l.startswith("-") and not l.startswith("---")),
+                },
+            }
+
+        # replace mode — diff old cell vs new content
+        if 0 <= cell_number < len(cells):
+            old_source = "".join(cells[cell_number].get("source", []))
+        else:
+            old_source = ""
+
+        diff_lines = list(difflib.unified_diff(
+            old_source.splitlines(keepends=True),
+            new_source.splitlines(keepends=True),
+            fromfile=f"{basename} cell {cell_number}",
+            tofile=f"{basename} cell {cell_number}",
+            lineterm="",
+            n=3,
+        ))
+        preview = "".join(diff_lines[:20])
+        additions = sum(1 for l in diff_lines if l.startswith("+") and not l.startswith("+++"))
+        deletions = sum(1 for l in diff_lines if l.startswith("-") and not l.startswith("---"))
+
+        return {
+            "display_type": "diff",
+            "summary": f"Replace cell {cell_number} in {basename}",
+            "value": {"old_text": old_source, "new_text": new_source, "diff_lines": diff_lines},
+            "preview": preview,
+            "truncated": len(diff_lines) > 20,
+            "metadata": {
+                "file_path": file_path,
+                "operation": "replace",
+                "cell_number": cell_number,
+                "additions": additions,
+                "deletions": deletions,
+            },
+        }
+
+    except Exception:
+        # Fallback: just show the new source
+        return {
+            "display_type": "file_write",
+            "summary": f"{edit_mode.title()} cell {cell_number} in {basename}",
+            "value": new_source,
+            "preview": new_source[:500] if new_source else "(empty)",
+            "truncated": len(new_source) > 500 if new_source else False,
+            "metadata": {"file_path": file_path, "operation": edit_mode},
+        }

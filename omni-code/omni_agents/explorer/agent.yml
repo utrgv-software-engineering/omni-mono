@@ -1,0 +1,22 @@
+name: explorer
+label: Explorer
+description: "Fast read-only codebase exploration sub-agent"
+instructions_file: instructions.md
+
+additional_tools_dirs:
+  - ../../tools
+
+tools:
+  - list_directory
+  - glob_files
+  - grep_files
+  - read_file
+  - read_notebook
+  - convert_to_markdown
+
+model_settings:
+  reasoning:
+    effort: low
+  parallel_tool_calls: true
+
+max_turns: 50
