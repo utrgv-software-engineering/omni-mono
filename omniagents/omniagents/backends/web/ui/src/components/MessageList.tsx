@@ -40,15 +40,34 @@ export type ApprovalItem = {
 
 export type MessageItem = ChatMessage | ToolItem | ApprovalItem
 
-export function MessageList({ items, statusText, thinking, statusSpinner, preambleText, welcomeText, onApprovalDecision, statusItalic }:
-  { items: MessageItem[]; statusText?: string; thinking?: boolean; statusSpinner?: boolean; preambleText?: string; welcomeText?: string; onApprovalDecision?: (request_id: string, value: 'yes' | 'always' | 'no') => void; statusItalic?: boolean }) {
-  const handleCopy = React.useCallback((text: string) => {
-    try { navigator.clipboard.writeText(text) } catch {}
-  }, [])
+export function MessageList({ items, statusText, thinking, statusSpinner, preambleText, welcomeText, onApprovalDecision, statusItalic, onReaction }:
+  { items: MessageItem[]; statusText?: string; thinking?: boolean; statusSpinner?: boolean; preambleText?: string; welcomeText?: string; onApprovalDecision?: (request_id: string, value: 'yes' | 'always' | 'no') => void; statusItalic?: boolean; onReaction?: (type: 'like' | 'dislike', text?: string) => void }) {
   const [reactions, setReactions] = useState<Record<number, 'like' | 'dislike' | undefined>>({})
+  const [feedbackIndex, setFeedbackIndex] = useState<number | undefined>(undefined)
   const handleReaction = React.useCallback((index: number, type: 'like' | 'dislike') => {
-    setReactions(prev => ({ ...prev, [index]: prev[index] === type ? undefined : type }))
+    setReactions(prev => {
+      const toggled = prev[index] === type ? undefined : type
+      if (toggled) {
+        setFeedbackIndex(index)
+      } else {
+        setFeedbackIndex(undefined)
+      }
+      return { ...prev, [index]: toggled }
+    })
   }, [])
+  const handleFeedbackSubmit = React.useCallback((index: number, text: string) => {
+    const type = reactions[index]
+    if (type) onReaction?.(type, text)
+    setFeedbackIndex(undefined)
+  }, [reactions, onReaction])
+  const handleFeedbackDismiss = React.useCallback(() => {
+    const idx = feedbackIndex
+    if (idx !== undefined) {
+      const type = reactions[idx]
+      if (type) onReaction?.(type)
+    }
+    setFeedbackIndex(undefined)
+  }, [feedbackIndex, reactions, onReaction])
   return (
     <ChatContainerRoot className="flex-1">
       <ChatContainerContent className="container-chat px-3 py-3 space-y-3 md:space-y-4">
@@ -61,7 +80,7 @@ export function MessageList({ items, statusText, thinking, statusSpinner, preamb
           </div>
         ) : (
           items.map((m, i) => {
-            if (m.type === 'chat') return <MessageBubble key={i} index={i} role={m.role} content={m.content} attachments={(m as ChatMessage).attachments} reactions={reactions} onReact={handleReaction} />
+            if (m.type === 'chat') return <MessageBubble key={i} index={i} role={m.role} content={m.content} attachments={(m as ChatMessage).attachments} reactions={reactions} onReact={handleReaction} feedbackIndex={feedbackIndex} onFeedbackSubmit={handleFeedbackSubmit} onFeedbackDismiss={handleFeedbackDismiss} />
             if (m.type === 'tool') return <ToolCard key={m.call_id || i} item={m} />
             if (m.type === 'approval') return <ApprovalCard key={m.request_id} item={m} onDecision={onApprovalDecision} />
             return null
@@ -77,7 +96,9 @@ export function MessageList({ items, statusText, thinking, statusSpinner, preamb
   )
 }
 
-function MessageBubble({ index, role, content, attachments, reactions, onReact }: { index: number; role: ChatMessage['role']; content: string; attachments?: Attachment[]; reactions?: Record<number, 'like' | 'dislike' | undefined>; onReact?: (index: number, type: 'like' | 'dislike') => void }) {
+function MessageBubble({ index, role, content, attachments, reactions, onReact, feedbackIndex, onFeedbackSubmit, onFeedbackDismiss }: { index: number; role: ChatMessage['role']; content: string; attachments?: Attachment[]; reactions?: Record<number, 'like' | 'dislike' | undefined>; onReact?: (index: number, type: 'like' | 'dislike') => void; feedbackIndex?: number; onFeedbackSubmit?: (index: number, text: string) => void; onFeedbackDismiss?: () => void }) {
+  const [feedbackText, setFeedbackText] = useState('')
+  const showFeedback = feedbackIndex === index
   if (role === 'user') {
     return (
       <div className="flex justify-end">
@@ -136,8 +157,8 @@ function MessageBubble({ index, role, content, attachments, reactions, onReact }
             <MessageActions className="mt-1">
               <MessageAction tooltip="Copy">
                 <button
-                  onClick={() => handleCopy(content)}
-                  className="hover:bg-bgCardAlt rounded p-1 text-textSubtle hover:text-textHeading"
+                  onClick={() => { try { navigator.clipboard.writeText(content) } catch {} }}
+                  className="hover:bg-bgCardAlt rounded p-1 text-textSubtle hover:text-textHeading active:opacity-50"
                   aria-label="Copy"
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
@@ -169,6 +190,39 @@ function MessageBubble({ index, role, content, attachments, reactions, onReact }
                 </button>
               </MessageAction>
             </MessageActions>
+            {showFeedback && (
+              <div className="mt-2 flex items-center gap-2 w-full">
+                <input
+                  type="text"
+                  autoFocus
+                  value={feedbackText}
+                  onChange={(e) => setFeedbackText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      onFeedbackSubmit?.(index, feedbackText)
+                      setFeedbackText('')
+                    } else if (e.key === 'Escape') {
+                      onFeedbackDismiss?.()
+                      setFeedbackText('')
+                    }
+                  }}
+                  placeholder="Add a note (optional)…"
+                  className="flex-1 h-7 px-2 rounded-md bg-bgCardAlt text-xs text-textPrimary placeholder-textSubtle border border-transparent focus:border-tweetBlue focus:outline-none"
+                />
+                <button
+                  onClick={() => { onFeedbackSubmit?.(index, feedbackText); setFeedbackText('') }}
+                  className="h-7 px-2 rounded-md bg-tweetBlue text-white text-xs hover:brightness-110"
+                >
+                  Submit
+                </button>
+                <button
+                  onClick={() => { onFeedbackDismiss?.(); setFeedbackText('') }}
+                  className="h-7 px-2 rounded-md text-textSubtle text-xs hover:text-textHeading hover:bg-bgCardAlt"
+                >
+                  Skip
+                </button>
+              </div>
+            )}
           </div>
         </Message>
       </div>

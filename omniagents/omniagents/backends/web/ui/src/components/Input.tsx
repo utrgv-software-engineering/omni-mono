@@ -87,6 +87,26 @@ export function Input({ disabled, thinking, onStop, onSubmit, voiceEnabled, work
     }
   }, [text, history, historyIndex, historyDraft, handleSubmit, insertNewlineAtCursor, thinking, onStop])
 
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    const imageFiles: File[] = []
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile()
+        if (file) {
+          const ext = file.type.split('/')[1] || 'png'
+          const named = new File([file], `paste-${Date.now()}.${ext}`, { type: file.type })
+          imageFiles.push(named)
+        }
+      }
+    }
+    if (imageFiles.length > 0) {
+      e.preventDefault()
+      setFiles(prev => [...prev, ...imageFiles])
+    }
+  }, [])
+
   const openFilePicker = useCallback(() => {
     fileInputRef.current?.click()
   }, [])
@@ -110,20 +130,34 @@ export function Input({ disabled, thinking, onStop, onSubmit, voiceEnabled, work
           {files.length > 0 && (
             <div className="flex flex-wrap gap-2 pb-2 px-2" onClick={(e) => e.stopPropagation()}>
               {files.map((f, i) => (
-                <div key={i} className="bg-bgCard flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
-                  <svg width="16" height="16" viewBox="0 0 24 24" className="text-white" aria-hidden="true">
-                    <path d="M21.44 11.05l-8.49 8.49a5.5 5.5 0 11-7.78-7.78l8.49-8.49a3.5 3.5 0 114.95 4.95l-8.49 8.49a1.5 1.5 0 11-2.12-2.12l8.49-8.49" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                  <span className="max-w-[120px] truncate text-white" title={f.name}>{f.name}</span>
-                  <button onClick={() => {
-                    setFiles(prev => prev.filter((_, idx) => idx !== i))
-                    if (fileInputRef.current) fileInputRef.current.value = ''
-                  }} className="hover:bg-bgCardAlt rounded-full p-1">
+                f.type.startsWith('image/') ? (
+                  <div key={i} className="relative group">
+                    <img src={URL.createObjectURL(f)} alt="" className="h-20 max-w-[160px] rounded-lg object-cover border border-bgCardAlt" />
+                    <button onClick={() => {
+                      setFiles(prev => prev.filter((_, idx) => idx !== i))
+                      if (fileInputRef.current) fileInputRef.current.value = ''
+                    }} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-bgCard border border-bgCardAlt text-textSubtle hover:text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M18 6L6 18M6 6l12 12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </button>
+                  </div>
+                ) : (
+                  <div key={i} className="bg-bgCard flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
                     <svg width="16" height="16" viewBox="0 0 24 24" className="text-white" aria-hidden="true">
-                      <path d="M18 6L6 18M6 6l12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      <path d="M21.44 11.05l-8.49 8.49a5.5 5.5 0 11-7.78-7.78l8.49-8.49a3.5 3.5 0 114.95 4.95l-8.49 8.49a1.5 1.5 0 11-2.12-2.12l8.49-8.49" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                     </svg>
-                  </button>
-                </div>
+                    <span className="max-w-[120px] truncate text-white" title={f.name}>{f.name}</span>
+                    <button onClick={() => {
+                      setFiles(prev => prev.filter((_, idx) => idx !== i))
+                      if (fileInputRef.current) fileInputRef.current.value = ''
+                    }} className="hover:bg-bgCardAlt rounded-full p-1">
+                      <svg width="16" height="16" viewBox="0 0 24 24" className="text-white" aria-hidden="true">
+                        <path d="M18 6L6 18M6 6l12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </button>
+                  </div>
+                )
               ))}
             </div>
           )}
@@ -131,6 +165,7 @@ export function Input({ disabled, thinking, onStop, onSubmit, voiceEnabled, work
           <PromptInputTextarea
             placeholder="Type a message…"
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             className="max-h-[50vh]"
             disabled={disabled}
           />

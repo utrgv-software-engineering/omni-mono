@@ -123,6 +123,10 @@ export class RPCClient {
     return this.call('list_sessions', {})
   }
 
+  async deleteSession(sessionId: string): Promise<boolean> {
+    return this.call('delete_session', { session_id: sessionId })
+  }
+
   async clientResponse(requestId: string, ok: boolean, result?: Record<string, unknown>, error?: Record<string, unknown>): Promise<void> {
     const params: Record<string, unknown> = { request_id: requestId, ok }
     if (result) params.result = result

@@ -23,15 +23,17 @@ export function Sidebar({ open, sessions, selectedId, onClose, onNewChat, onSele
     return sessions.slice().sort((a: any, b: any) => ts(b) - ts(a))
   }, [sessions])
 
+  const nonEmpty = useMemo(() => ordered.filter(s => s.message_count > 0), [ordered])
+
   const filtered = useMemo(() => {
-    if (!searchQuery.trim()) return ordered
+    if (!searchQuery.trim()) return nonEmpty
     const query = searchQuery.toLowerCase()
-    return ordered.filter(s => {
+    return nonEmpty.filter(s => {
       const title = generateSessionTitle(s).toLowerCase()
       const id = s.id.toLowerCase()
       return title.includes(query) || id.includes(query)
     })
-  }, [ordered, searchQuery])
+  }, [nonEmpty, searchQuery])
 
   const renderSessionItem = (s: SessionItem, closeOnClick: boolean = false) => {
     const title = generateSessionTitle(s)
@@ -117,7 +119,7 @@ export function Sidebar({ open, sessions, selectedId, onClose, onNewChat, onSele
         </button>
       </div>
 
-      {sessions.length > 0 && (
+      {nonEmpty.length > 0 && (
         <div className="px-2 pt-2 pb-1 border-b border-bgCardAlt flex-shrink-0">
           <div className="relative">
             <input
@@ -146,7 +148,7 @@ export function Sidebar({ open, sessions, selectedId, onClose, onNewChat, onSele
       )}
 
       <div className="flex-1 p-2 space-y-2 overflow-y-auto min-h-0">
-        {filtered.length === 0 && sessions.length > 0 ? (
+        {filtered.length === 0 && nonEmpty.length > 0 ? (
           <div className="text-center text-textSubtle text-sm py-4">
             No matching conversations
           </div>

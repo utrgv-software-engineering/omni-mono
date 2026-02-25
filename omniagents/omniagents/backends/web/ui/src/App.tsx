@@ -679,7 +679,7 @@ export function App() {
 
   const handleDeleteSession = useCallback(async (id: string) => {
     try {
-      await client.serverCall('delete_session', { session_id: id })
+      await client.deleteSession(id)
       setSessions(prev => prev.filter(s => s.id !== id))
       if (sessionId === id) {
         handleSelectSession(undefined)
@@ -688,6 +688,15 @@ export function App() {
       console.error('Failed to delete session:', e)
     }
   }, [client, sessionId, handleSelectSession])
+
+  const handleReaction = useCallback(async (type: 'like' | 'dislike', text?: string) => {
+    try {
+      const func = type === 'like' ? 'good' : 'bad'
+      const args: Record<string, unknown> = {}
+      if (text) args.text = text
+      await client.serverCall(func, args, sessionId)
+    } catch {}
+  }, [client, sessionId])
 
   if (ui === 'connecting') {
     return <div className="app flex-col"><Header agentName={agentName} connected={false} /><div className="container-chat px-3 py-3 text-sm text-textSubtle">Connecting…</div></div>
@@ -732,7 +741,7 @@ export function App() {
         />
         <div className="flex-1 flex flex-row min-h-0 min-w-0">
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
-            <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} statusItalic={statusItalic} />
+            <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} statusItalic={statusItalic} onReaction={handleReaction} />
             <Input
               disabled={!connected}
               thinking={thinking}
