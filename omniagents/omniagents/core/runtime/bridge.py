@@ -172,8 +172,15 @@ def _is_context_length_exceeded(err: Exception) -> bool:
     body = getattr(err, "body", None)
     if isinstance(body, dict):
         error_obj = body.get("error")
-        if isinstance(error_obj, dict) and error_obj.get("code") == "context_length_exceeded":
-            return True
+        if isinstance(error_obj, dict):
+            if error_obj.get("code") == "context_length_exceeded":
+                return True
+            # LiteLLM proxy wraps the real error code inside the message string
+            error_message = str(error_obj.get("message", "")).lower()
+            if "context_length_exceeded" in error_message:
+                return True
+            if "context window" in error_message and "exceed" in error_message:
+                return True
     code = getattr(err, "code", None)
     if code == "context_length_exceeded":
         return True

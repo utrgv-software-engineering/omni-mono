@@ -2,7 +2,7 @@ import os
 import tempfile
 import requests
 from typing import Dict, Any, Optional
-from omniagents.core.tools import rich_function_tool, RichToolOutput
+from omniagents.core.tools import rich_function_tool, RichToolOutput, approval_metadata
 
 
 @rich_function_tool(client_status="Downloading file...")
@@ -188,3 +188,28 @@ def download_file(url: str, output_path: Optional[str] = None) -> RichToolOutput
             },
         }
         return RichToolOutput(error_msg, ui_metadata)
+
+
+@approval_metadata()
+def download_file_approval(url: str, output_path: Optional[str] = None) -> dict:
+    """Generate approval metadata for download_file showing URL and destination."""
+    if output_path:
+        dest = output_path
+    else:
+        filename = url.split("/")[-1].split("?")[0] or "unknown"
+        dest = f"(temporary) {filename}"
+
+    preview = f"URL: {url}\nSave to: {dest}"
+
+    return {
+        "display_type": "command",
+        "summary": f"Download {os.path.basename(dest) if output_path else url.split('/')[-1].split('?')[0] or 'file'}",
+        "value": url,
+        "preview": preview,
+        "truncated": False,
+        "metadata": {
+            "url": url,
+            "output_path": output_path,
+            "command": f"download {url}",
+        },
+    }
