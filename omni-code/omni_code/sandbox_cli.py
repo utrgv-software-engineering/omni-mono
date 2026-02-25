@@ -242,6 +242,7 @@ def _run_sandbox(
     image: Optional[str] = None,
     dockerfile: Optional[str] = None,
     output: str = "human",
+    network_allowlist: Optional[str] = None,
 ) -> Optional[str]:
     if not _docker_available():
         raise RuntimeError("Docker not found on PATH. Install Docker Desktop or docker-ce.")
@@ -331,6 +332,10 @@ def _run_sandbox(
     for key in _iter_passthrough_env_keys():
         if os.getenv(key):
             args.extend(["-e", key])
+
+    if network_allowlist:
+        args.extend(["--cap-add", "NET_ADMIN"])
+        args.extend(["-e", f"OMNI_SANDBOX_NETWORK_ALLOWLIST={network_allowlist}"])
 
     container_cmd: List[str] = ["omni"]
     if container_project_path:
@@ -617,6 +622,16 @@ def main(argv=None) -> None:
         help="Mount a persistent Docker volume at a container path (repeatable): <volume_name>:<container_path>",
     )
 
+    parser.add_argument(
+        "--network-allowlist",
+        default=None,
+        help=(
+            "Comma-separated list of hosts, IPs, or CIDRs the sandbox is allowed to reach. "
+            "When set, all other outbound traffic is blocked via iptables. "
+            "Example: your-tenant.openai.azure.com,10.0.0.0/16"
+        ),
+    )
+
     args = parser.parse_args(argv)
 
     effective_mode = str(args.mode)
@@ -720,6 +735,7 @@ def main(argv=None) -> None:
             image=str(args.image) if args.image else None,
             dockerfile=str(args.dockerfile) if args.dockerfile else None,
             output=str(args.output),
+            network_allowlist=str(args.network_allowlist) if args.network_allowlist else None,
         )
 
         if args.output == "human":

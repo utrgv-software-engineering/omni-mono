@@ -123,4 +123,7 @@ if [[ "${code_server_enabled}" == "1" || "${code_server_enabled}" == "true" ]]; 
   gosu "${uid}:${gid}" bash -lc "nohup code-server --bind-addr 0.0.0.0:${code_server_port} --auth ${code_server_auth} ${code_server_workspace} > '${code_server_log_dir}/omni-code.log' 2>&1 &" || true
 fi
 
+# Apply network isolation rules (if OMNI_SANDBOX_NETWORK_ALLOWLIST is set)
+source /usr/local/bin/apply-network-isolation.sh
+
 exec gosu "${uid}:${gid}" "$@"

@@ -17,7 +17,7 @@ def test_sandbox_cli_local_ui_json_output(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(sandbox_cli.shutil, "which", lambda _: "/usr/bin/docker")
     monkeypatch.setattr(sandbox_cli, "_assert_port_available", lambda _: None)
     monkeypatch.setattr(sandbox_cli, "_docker_image_exists", lambda _: True)
-    monkeypatch.setattr(sandbox_cli, "_sandbox_image_tag", lambda: "omni-code-sandbox:test")
+    monkeypatch.setattr(sandbox_cli, "_sandbox_image_tag", lambda *_a, **_kw: "omni-code-sandbox:test")
 
     docker_calls = []
 
@@ -119,7 +119,7 @@ def test_sandbox_cli_builds_when_missing_and_runs(monkeypatch, tmp_path, capsys)
         return Result(returncode=0)
 
     monkeypatch.setattr(sandbox_cli, "_run_process", fake_run)
-    monkeypatch.setattr(sandbox_cli, "_sandbox_image_tag", lambda: "omni-code-sandbox:test")
+    monkeypatch.setattr(sandbox_cli, "_sandbox_image_tag", lambda *_a, **_kw: "omni-code-sandbox:test")
 
     sandbox_cli.main(
         [
@@ -138,7 +138,7 @@ def test_sandbox_cli_builds_when_missing_and_runs(monkeypatch, tmp_path, capsys)
     assert "http://localhost:7777" in out
 
     assert calls[0][0][:3] == ["docker", "image", "inspect"]
-    assert calls[1][0][:3] == ["docker", "build", "--no-cache"]
+    assert calls[1][0][:3] == ["docker", "build", "-t"]
     assert calls[-1][0][:2] == ["docker", "run"]
 
     run_cmd = calls[-1][0]
@@ -179,7 +179,7 @@ def test_sandbox_cli_skips_build_when_image_exists(monkeypatch, tmp_path):
         return Result(returncode=0)
 
     monkeypatch.setattr(sandbox_cli, "_run_process", fake_run)
-    monkeypatch.setattr(sandbox_cli, "_sandbox_image_tag", lambda: "omni-code-sandbox:test")
+    monkeypatch.setattr(sandbox_cli, "_sandbox_image_tag", lambda *_a, **_kw: "omni-code-sandbox:test")
 
     sandbox_cli.main(
         [
@@ -223,7 +223,7 @@ def test_sandbox_cli_detach_print_url(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(sandbox_cli.shutil, "which", lambda _: "/usr/bin/docker")
     monkeypatch.setattr(sandbox_cli, "_assert_port_available", lambda _: None)
     monkeypatch.setattr(sandbox_cli, "_docker_image_exists", lambda _: True)
-    monkeypatch.setattr(sandbox_cli, "_sandbox_image_tag", lambda: "omni-code-sandbox:test")
+    monkeypatch.setattr(sandbox_cli, "_sandbox_image_tag", lambda *_a, **_kw: "omni-code-sandbox:test")
 
     calls = []
 
@@ -277,7 +277,7 @@ def test_sandbox_cli_local_ui_runs_proxy(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(sandbox_cli.shutil, "which", lambda _: "/usr/bin/docker")
     monkeypatch.setattr(sandbox_cli, "_assert_port_available", lambda _: None)
     monkeypatch.setattr(sandbox_cli, "_docker_image_exists", lambda _: True)
-    monkeypatch.setattr(sandbox_cli, "_sandbox_image_tag", lambda: "omni-code-sandbox:test")
+    monkeypatch.setattr(sandbox_cli, "_sandbox_image_tag", lambda *_a, **_kw: "omni-code-sandbox:test")
 
     docker_calls = []
 
@@ -362,7 +362,7 @@ def test_sandbox_cli_ui_container_forces_web_mode(monkeypatch, tmp_path):
     monkeypatch.setattr(sandbox_cli.shutil, "which", lambda _: "/usr/bin/docker")
     monkeypatch.setattr(sandbox_cli, "_assert_port_available", lambda _: None)
     monkeypatch.setattr(sandbox_cli, "_docker_image_exists", lambda _: True)
-    monkeypatch.setattr(sandbox_cli, "_sandbox_image_tag", lambda: "omni-code-sandbox:test")
+    monkeypatch.setattr(sandbox_cli, "_sandbox_image_tag", lambda *_a, **_kw: "omni-code-sandbox:test")
 
     calls = []
 
@@ -407,7 +407,7 @@ def test_sandbox_cli_enable_code_server_adds_port_and_env(monkeypatch, tmp_path)
     monkeypatch.setattr(sandbox_cli, "get_config_dir", lambda: config_dir)
     monkeypatch.setattr(sandbox_cli.shutil, "which", lambda _: "/usr/bin/docker")
     monkeypatch.setattr(sandbox_cli, "_docker_image_exists", lambda _: True)
-    monkeypatch.setattr(sandbox_cli, "_sandbox_image_tag", lambda: "omni-code-sandbox:test")
+    monkeypatch.setattr(sandbox_cli, "_sandbox_image_tag", lambda *_a, **_kw: "omni-code-sandbox:test")
 
     asserted = []
 

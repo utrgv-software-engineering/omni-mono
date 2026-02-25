@@ -26,6 +26,7 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     libgit2-dev \
     gosu \
+    iptables \
     # VNC desktop support (activated via OMNI_CODE_VNC=1)
     xvfb \
     xfce4 \
@@ -119,6 +120,9 @@ ENV PLAYWRIGHT_MCP_SANDBOX=false
 
 COPY entrypoint.sh /usr/local/bin/omni-sandbox-entrypoint
 RUN chmod +x /usr/local/bin/omni-sandbox-entrypoint
+
+COPY apply-network-isolation.sh /usr/local/bin/apply-network-isolation.sh
+RUN chmod +x /usr/local/bin/apply-network-isolation.sh
 
 COPY start-vnc.sh /usr/local/bin/start-vnc.sh
 RUN chmod +x /usr/local/bin/start-vnc.sh

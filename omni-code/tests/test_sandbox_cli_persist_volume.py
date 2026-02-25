@@ -12,7 +12,7 @@ def test_sandbox_cli_persist_volume_mounts_and_creates(monkeypatch, tmp_path):
     monkeypatch.setattr(sandbox_cli.shutil, "which", lambda _: "/usr/bin/docker")
     monkeypatch.setattr(sandbox_cli, "_assert_port_available", lambda _: None)
     monkeypatch.setattr(sandbox_cli, "_docker_image_exists", lambda _: True)
-    monkeypatch.setattr(sandbox_cli, "_sandbox_image_tag", lambda: "omni-code-sandbox:test")
+    monkeypatch.setattr(sandbox_cli, "_sandbox_image_tag", lambda *_a, **_kw: "omni-code-sandbox:test")
 
     calls = []
 
