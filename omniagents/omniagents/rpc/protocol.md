@@ -93,7 +93,7 @@ result = agent.run_streamed([{"role": "user", "content": "Hello"}])
 
 ## RPC Methods
 
-### start_run(prompt: str, session_id?: str, variables?: dict, content?: array)
+### start_run(prompt: str, session_id?: str, variables?: dict, content?: array, safe_tool_overrides?: dict)
 Start a new agent run with the given prompt and optional initial variables.
 
 **Parameters:**
@@ -101,6 +101,9 @@ Start a new agent run with the given prompt and optional initial variables.
 - `session_id` (string, optional): ID of existing session to continue
 - `variables` (dict, optional): Initial variables for context construction. Only sent on first run (when session_id is not provided). The server uses these variables to construct the typed context and maintains state after initialization
 - `content` (array, optional): A list of input content parts for multimodal messages. When provided, the server uses this as the user's message content instead of `prompt`. Supported parts include `{"type":"input_text","text":"..."}`, `{"type":"input_image","image_url":"data:..."}`, `{"type":"input_file","file_data":"<base64>","filename":"name"}`, and `{"type":"input_audio",...}` supported by the model.
+- `safe_tool_overrides` (dict, optional): Per-session override for tool approval policy. Merges into the session's allow list on each call. Contains:
+  - `safe_tool_names` (array of string): Tool names to auto-approve without user confirmation
+  - `safe_tool_patterns` (array of string): Regex patterns matching tool names to auto-approve
 
 **Returns:**
 ```json

@@ -443,9 +443,7 @@ class SafeAgent(Agent):
 
             if approved:
                 if always_approve:
-                    # Add to both instance and global safe lists
-                    self.add_safe_tool(tool.name)  # Instance level
-                    self.add_global_safe_tool(tool.name)  # Global level for all agents
+                    self.add_safe_tool(tool.name)  # Instance level only
                 return await original_on_invoke(context, params_json)
 
             # --- Rejected path ---------------------------------------------------

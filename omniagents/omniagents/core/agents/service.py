@@ -525,20 +525,29 @@ class AgentService(RpcMethodsBase):
 
     def _apply_session_tool_policy(self, session: Session, agent: Any) -> None:
         names = getattr(session, "always_allow_tools", None)
-        if not names:
+        patterns = getattr(session, "always_allow_patterns", None)
+
+        if not names and not patterns:
             return
 
         if isinstance(agent, SafeAgent):
-            for tool_name in names:
-                try:
-                    agent.add_safe_tool(tool_name)
-                except Exception:
-                    pass
+            if names:
+                for tool_name in names:
+                    try:
+                        agent.add_safe_tool(tool_name)
+                    except Exception:
+                        pass
+            if patterns:
+                for pattern in patterns:
+                    try:
+                        agent.add_safe_tool_pattern(pattern)
+                    except Exception:
+                        pass
             return
 
         try:
             existing = set(getattr(agent, "always_allow_tools", set()))
-            merged = existing | set(names)
+            merged = existing | set(names or [])
             setattr(agent, "always_allow_tools", merged)
         except Exception:
             pass
@@ -1211,6 +1220,7 @@ class AgentService(RpcMethodsBase):
         content: Any | None = None,
         workflow_name: str | None = None,
         group_id: str | None = None,
+        safe_tool_overrides: dict | None = None,
     ) -> dict:  # noqa: D401
         sess: Session = self._session_manager.get_or_create(session_id)
         channel = getattr(self, "channel", None)
@@ -1224,6 +1234,15 @@ class AgentService(RpcMethodsBase):
             sess.variables = variables
         if context is not None:
             sess.context = context
+
+        # Apply per-session safe tool overrides
+        if safe_tool_overrides is not None:
+            override_names = safe_tool_overrides.get("safe_tool_names", [])
+            override_patterns = safe_tool_overrides.get("safe_tool_patterns", [])
+            if override_names:
+                sess.always_allow_tools.update(override_names)
+            if override_patterns:
+                sess.always_allow_patterns.update(override_patterns)
 
         # Store workflow_name and group_id for tracing
         if workflow_name is not None:

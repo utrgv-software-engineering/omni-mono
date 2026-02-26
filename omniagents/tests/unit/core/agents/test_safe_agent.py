@@ -91,7 +91,8 @@ async def test_safe_agent_always_approve_marks_tool_safe():
     decoded = json.loads(response)
     assert decoded["result"] == "initial"
     assert agent.is_tool_safe(wrapped) is True
-    assert "tool_one" in _global_safe_tool_names.get()
+    # always_approve should only add to instance level, not global (per-session isolation)
+    assert "tool_one" not in _global_safe_tool_names.get()
     assert calls
 
 
