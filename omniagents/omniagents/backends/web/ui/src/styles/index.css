@@ -59,6 +59,52 @@
   --color-textSecondary: 97 97 97;    /* #616161  descriptionForeground */
 }
 
+[data-theme="utrgv"] {
+  --color-tweetBlue: 240 80 35;         /* #F05023  UTRGV brand orange */
+  --color-bgMain: 247 247 248;          /* #F7F7F8  soft off-white page */
+  --color-bgColumn: 241 241 243;        /* #F1F1F3  sidebar */
+  --color-bgCard: 255 255 255;          /* #FFFFFF  white cards */
+  --color-bgCardAlt: 255 255 255;       /* #FFFFFF  white input/surfaces */
+  --color-textSubtle: 142 142 147;      /* #8E8E93  subtle/placeholder text */
+  --color-successGreen: 26 127 55;      /* #1A7F37  green */
+  --color-warningOrange: 180 120 0;     /* #B47800  warm amber warning */
+  --color-errorRed: 200 30 30;          /* #C81E1E  strong red */
+  --color-textPrimary: 36 36 40;        /* #242428  body text */
+  --color-textHeading: 26 26 30;        /* #1A1A1E  heading text */
+  --color-textSecondary: 100 100 105;   /* #646469  UTRGV gray */
+}
+
+/* UTRGV: give the input container a visible border on the off-white page */
+[data-theme="utrgv"] .border-bgCardAlt {
+  border-color: rgb(210 210 215) !important;
+}
+
+/* UTRGV: fix white icons/text on white input — except on colored button backgrounds */
+[data-theme="utrgv"] .bg-bgCardAlt .text-white {
+  color: rgb(var(--color-textSecondary)) !important;
+}
+[data-theme="utrgv"] .bg-bgCardAlt .bg-tweetBlue.text-white,
+[data-theme="utrgv"] .bg-bgCardAlt .bg-errorRed.text-white {
+  color: #ffffff !important;
+}
+
+[data-theme="utrgv"] .prose-invert {
+  --tw-prose-body: rgb(var(--color-textPrimary));
+  --tw-prose-headings: rgb(var(--color-textHeading));
+  --tw-prose-bold: rgb(var(--color-textHeading));
+  --tw-prose-links: rgb(var(--color-tweetBlue));
+  --tw-prose-code: rgb(var(--color-textPrimary));
+  --tw-prose-pre-code: rgb(var(--color-textPrimary));
+  --tw-prose-counters: rgb(var(--color-textSecondary));
+  --tw-prose-bullets: rgb(var(--color-textSecondary));
+  --tw-prose-hr: rgb(var(--color-bgCardAlt));
+  --tw-prose-quotes: rgb(var(--color-textPrimary));
+  --tw-prose-quote-borders: rgb(var(--color-bgCardAlt));
+  --tw-prose-captions: rgb(var(--color-textSecondary));
+  --tw-prose-th-borders: rgb(var(--color-bgCardAlt));
+  --tw-prose-td-borders: rgb(var(--color-bgCardAlt));
+}
+
 [data-theme="vscode-light"] .prose-invert {
   --tw-prose-body: rgb(var(--color-textPrimary));
   --tw-prose-headings: rgb(var(--color-textHeading));
