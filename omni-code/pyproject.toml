@@ -1,6 +1,6 @@
 [project]
 name = "omni-code"
-version = "0.4.23"
+version = "0.4.24"
 description = "Omni Code: a full‑stack coding agent built with OmniAgents"
 readme = "README.md"
 requires-python = ">=3.10"
