@@ -405,6 +405,25 @@ def _strip_internal_keys_for_api(items: list[dict]) -> list[dict]:
     return cleaned
 
 
+def _strip_phase_from_model_input(data):
+    """RunConfig.call_model_input_filter that strips ``phase`` from all input items.
+
+    The OpenAI Responses API returns ``phase`` on assistant messages (used by
+    gpt-5.3-codex+).  When the agents SDK re-serialises output items for the
+    next model turn (tool-call loop), ``phase`` leaks into the request body.
+    Non-OpenAI providers (Azure via litellm proxy) reject it as an unknown
+    parameter.  Stripping here catches both session-history replay *and*
+    intra-run tool-call loops.
+    """
+    cleaned: list = []
+    for item in data.model_data.input:
+        if isinstance(item, dict) and "phase" in item:
+            item = {k: v for k, v in item.items() if k != "phase"}
+        cleaned.append(item)
+    data.model_data.input = cleaned
+    return data.model_data
+
+
 async def stream_agent(
     agent,
     prompt: str,
@@ -584,6 +603,7 @@ async def stream_agent(
         run_config_kwargs = {
             "group_id": group_id or f"session_{session.id}",
             "workflow_name": workflow_name or "omniagents_conversation",
+            "call_model_input_filter": _strip_phase_from_model_input,
         }
         if model_provider is not None:
             run_config_kwargs["model_provider"] = model_provider
