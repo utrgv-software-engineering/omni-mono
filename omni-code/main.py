@@ -86,10 +86,16 @@ def cli_main(argv=None) -> None:
 
         maybe_print_update_notice()
 
+    # Start network isolation proxy if configured
+    project_path = Path(__file__).resolve().parent / "omni_code" / "project.yml"
+    try:
+        from omni_code.proxy import maybe_start_proxy
+        maybe_start_proxy(str(project_path))
+    except Exception as e:
+        print(f"Warning: Network proxy failed to start: {e}", file=sys.stderr)
+
     # Run omniagents
     from omniagents.cli import main as omni_main
-
-    project_path = Path(__file__).resolve().parent / "omni_code" / "project.yml"
     new_args = ["omniagents", "run", "--project", str(project_path), "--mode", "ink"]
     new_args.extend(args)
 

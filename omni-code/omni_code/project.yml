@@ -17,6 +17,17 @@ settings:
     default: gpt-5
     hint: "Model to use (e.g., gpt-5, gpt-4o)"
 
+# Network isolation proxy (disabled by default).
+# When enabled, routes all outbound traffic through a local proxy
+# that enforces the domain allowlist. No root/admin required.
+# Override at runtime with OMNI_NETWORK_ALLOWLIST env var (comma-separated).
+network:
+  enabled: false
+  allowlist: []
+  denylist: []
+  allow_private_ips: false
+  enable_socks5: true
+
 tracing:
   provider: studio
   project: omni_code
