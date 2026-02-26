@@ -41,6 +41,7 @@ packages = [
     "tools",
     "server_functions",
     "omni_code",
+    "omni_code.proxy",
     "omni_agents",
     "omni_agents.omni",
     "omni_agents.voice_agent",
