@@ -384,6 +384,10 @@ def _strip_internal_keys_for_api(items: list[dict]) -> list[dict]:
             continue
         copied = dict(item)
         copied.pop("omniagents", None)
+        # The API returns `phase` on assistant messages (gpt-5.3-codex+),
+        # but non-OpenAI providers (Azure, litellm) reject it as unknown.
+        # Safe to strip unconditionally — the SDK re-adds it when needed.
+        copied.pop("phase", None)
         # The API returns `status` on output items (reasoning, message, etc.)
         # but may reject it when those items are sent back as input.
         # Strip it from types where it's output-only metadata.
