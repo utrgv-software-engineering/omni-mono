@@ -87,6 +87,10 @@
 [data-theme="utrgv"] .bg-bgCardAlt .bg-errorRed.text-white {
   color: #ffffff !important;
 }
+[data-theme="utrgv"] .bg-bgCardAlt button:disabled {
+  background-color: rgb(230 230 233) !important;
+  color: rgb(160 160 168) !important;
+}
 
 [data-theme="utrgv"] .prose-invert {
   --tw-prose-body: rgb(var(--color-textPrimary));
