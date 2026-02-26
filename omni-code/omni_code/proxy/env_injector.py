@@ -40,11 +40,6 @@ def build_proxy_env_vars(http_port: int, socks5_port: int = 0) -> dict[str, str]
         if key not in os.environ:
             env[key] = val
 
-    # WebSocket proxies
-    for key in ("WS_PROXY", "WSS_PROXY"):
-        if key not in os.environ:
-            env[key] = http_url
-
     return env
 
 

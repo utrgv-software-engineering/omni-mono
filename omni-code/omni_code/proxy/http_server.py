@@ -82,9 +82,11 @@ async def _handle_connect(
     await _drain_headers(reader)
 
     if not policy.is_allowed(host, port):
+
         writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
         await writer.drain()
         return
+
 
     try:
         upstream_reader, upstream_writer = await asyncio.wait_for(
@@ -130,6 +132,7 @@ async def _handle_plain_http(
         return
 
     if not policy.is_allowed(host, port):
+
         writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
         await writer.drain()
         return

@@ -11,6 +11,7 @@ dependencies = [
     "pygit2>=1.13.0",
     "litellm>=1.0.0",  # For non-OpenAI model support
     "strictyaml>=1.7.3",
+    "socksio>=1.0.0",
 ]
 
 [tool.pytest.ini_options]
