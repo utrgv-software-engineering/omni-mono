@@ -24,6 +24,7 @@ tools:
   - read_notebook
   - edit_notebook
   - spawn_worker
+  - get_worker_status
   - wait_for_workers
   - send_worker_message
   - close_worker
@@ -55,6 +56,7 @@ safe_agent_options:
     - convert_to_markdown
     - read_notebook
     - explore
+    - get_worker_status
     - wait_for_workers
     - send_worker_message
     - close_worker

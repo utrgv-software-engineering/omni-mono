@@ -46,6 +46,23 @@ def _load_and_configure_spec(model: Optional[str]):
 
     spec = load_agent_spec_from_yaml(str(_WORKER_AGENT_YAML))
 
+    # Inherit project context so worker sessions/traces land under omni_code
+    spec.project_slug = "omni_code"
+
+    if not getattr(spec, "tracing_config", None):
+        project_yml = Path(__file__).resolve().parent.parent / "project.yml"
+        if project_yml.exists():
+            try:
+                import yaml
+
+                with open(project_yml) as f:
+                    project_raw = yaml.safe_load(f) or {}
+                tracing_raw = project_raw.get("tracing")
+                if isinstance(tracing_raw, dict):
+                    spec.tracing_config = tracing_raw
+            except Exception:
+                pass
+
     resolved_model = model_runtime.get("model") if isinstance(model_runtime, dict) else None
     if isinstance(resolved_model, str) and resolved_model.strip():
         spec.model_name = resolved_model
@@ -80,6 +97,18 @@ async def _monitor_worker(entry: _WorkerEntry) -> None:
 
         method = msg.get("method", "")
         params = msg.get("params", {})
+
+        if method == "client_request":
+            # Auto-approve tool calls — workers run autonomously
+            request_id = params.get("request_id")
+            if request_id:
+                try:
+                    await agent._client.other.client_response(
+                        request_id=request_id, ok=True, result={"approved": True}
+                    )
+                except Exception:
+                    pass
+            continue
 
         if method == "message_output":
             entry.result = params.get("content", "")
@@ -280,6 +309,85 @@ async def wait_for_workers(
             "completed_count": len(completed),
             "still_running_count": len(still_running),
             "not_found_count": len(not_found),
+        },
+    })
+
+
+@rich_function_tool(client_status="Checking worker status...")
+async def get_worker_status(
+    worker_id: str,
+    tail: int = 5,
+) -> RichToolOutput:
+    """Check a worker's current status and optionally retrieve recent history.
+
+    Non-blocking — returns immediately with whatever state the worker is in.
+
+    Args:
+        worker_id: The worker ID returned by spawn_worker.
+        tail: Number of recent history items to include (default: 5).
+              Each item is a message dict (role, content, tool calls, etc.).
+    """
+    entry = _WORKERS.get(worker_id)
+    if entry is None:
+        llm_output = json.dumps({"worker_id": worker_id, "status": "not_found"})
+        return RichToolOutput(llm_output, {
+            "display_type": "error",
+            "summary": f"Worker {worker_id} not found",
+            "preview": llm_output,
+            "truncated": False,
+            "metadata": {"success": False, "worker_id": worker_id},
+        })
+
+    result_data: dict = {
+        "worker_id": worker_id,
+        "status": entry.status,
+    }
+    if entry.error is not None:
+        result_data["error"] = entry.error
+
+    # Fetch recent history
+    history_items: list[dict] = []
+    n = tail
+    if n > 0 and entry.session_id:
+        try:
+            from omniagents.core.session.history_db import load_history
+
+            spec = getattr(entry.agent, "spec", None)
+            project = getattr(spec, "project_slug", None) or "omni_code"
+            agent = getattr(spec, "agent_slug", None) or getattr(spec, "name", None) or "worker"
+            all_history = [
+                item for item in load_history(
+                    entry.session_id,
+                    project_slug=project,
+                    agent_slug=agent,
+                )
+                if item.get("type") != "reasoning"
+            ]
+            history_items = all_history[-n:] if len(all_history) > n else all_history
+        except Exception:
+            pass
+
+    if history_items:
+        result_data["history"] = history_items
+
+    llm_output = json.dumps(result_data)
+
+    # Build preview
+    preview_lines = [f"Status: {entry.status}"]
+    if history_items:
+        preview_lines.append(f"History: {len(history_items)} items")
+    preview = "\n".join(preview_lines)
+
+    return RichToolOutput(llm_output, {
+        "display_type": "search_results",
+        "summary": f"Worker {worker_id}: {entry.status}",
+        "preview": preview,
+        "truncated": False,
+        "metadata": {
+            "success": True,
+            "worker_id": worker_id,
+            "status": entry.status,
+            "history_count": len(history_items),
         },
     })
 

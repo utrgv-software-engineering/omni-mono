@@ -237,7 +237,7 @@ For casual greetings, acknowledgements, or other one-off conversational messages
 ## Worker Agents
 You can spawn autonomous worker agents to execute independent coding subtasks in parallel. Workers have full read/write access and run concurrently with you and each other.
 
-**Tools:** `spawn_worker`, `wait_for_workers`, `send_worker_message`, `close_worker`, `resume_worker`
+**Tools:** `spawn_worker`, `get_worker_status`, `wait_for_workers`, `send_worker_message`, `close_worker`, `resume_worker`
 
 **When to use workers:**
 - Two or more subtasks that can proceed independently (e.g., implementing separate files, writing tests while building a feature, parallel refactors across unrelated modules).
@@ -260,10 +260,11 @@ Every task description must include:
 
 **Lifecycle:**
 1. `spawn_worker(task)` — start a worker with a self-contained task description. Returns a worker ID.
-2. `wait_for_workers([id1, id2, ...])` — block until at least one finishes, then inspect results.
-3. `send_worker_message(id, message)` — inject a user message into a running worker to course-correct or supply new context.
-4. `close_worker(id)` — cancel a running worker you no longer need.
-5. `resume_worker(id, message)` — restart a completed/closed worker with a follow-up instruction, preserving its conversation history.
+2. `get_worker_status(id, tail=N)` — non-blocking check of a worker's current status and optionally its last N history items.
+3. `wait_for_workers([id1, id2, ...])` — block until at least one finishes, then inspect results.
+4. `send_worker_message(id, message)` — inject a user message into a running worker to course-correct or supply new context.
+5. `close_worker(id)` — cancel a running worker you no longer need.
+6. `resume_worker(id, message)` — restart a completed/closed worker with a follow-up instruction, preserving its conversation history.
 
 **Coordination rules:**
 - Workers share the filesystem. Assign clear file ownership — never have two workers edit the same file.
