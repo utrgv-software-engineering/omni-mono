@@ -225,8 +225,12 @@ def _filter_history_for_api(history: list[dict]) -> list[dict]:
             reasoning = item
             j = i + 1
 
-            # Collect all parallel function calls that follow the reasoning
+            # Collect all parallel function calls that follow the reasoning.
+            # Calls and outputs may be interleaved (fc → fc_output → fc → fc_output)
+            # or grouped (fc → fc → fc_output → fc_output).  Handle both by
+            # skipping over outputs while scanning for calls.
             function_calls = []
+            interleaved_outputs = []
             while j < len(history):
                 next_item = history[j]
                 next_type = next_item.get("type", "")
@@ -237,8 +241,25 @@ def _filter_history_for_api(history: list[dict]) -> list[dict]:
                 ):
                     function_calls.append(next_item)
                     j += 1
+                elif isinstance(next_type, str) and next_type.endswith("_call_output"):
+                    # Output interleaved between calls – collect and skip
+                    interleaved_outputs.append((j, next_item))
+                    j += 1
                 else:
                     break
+
+            # A second reasoning may sit between the last output and the
+            # message (the model emitted reasoning before the preamble text).
+            # Skip over it so we can still find the paired message.
+            trailing_reasoning = None
+            if (
+                j < len(history)
+                and history[j].get("type") == "reasoning"
+                and j + 1 < len(history)
+                and history[j + 1].get("type") == "message"
+            ):
+                trailing_reasoning = history[j]
+                j += 1
 
             # Find the message that pairs with this reasoning
             message = None
@@ -246,9 +267,23 @@ def _filter_history_for_api(history: list[dict]) -> list[dict]:
                 message = history[j]
                 j += 1
 
-            # Collect outputs for the function calls
+            # Collect outputs for the function calls.
+            # Start from interleaved outputs already gathered, then scan
+            # forward for any remaining (the grouped layout).
             outputs = []
             call_ids = {fc.get("call_id") for fc in function_calls if fc.get("call_id")}
+
+            unmatched_interleaved = []
+            for idx, out_item in interleaved_outputs:
+                out_cid = out_item.get("call_id")
+                if out_cid in call_ids:
+                    outputs.append(out_item)
+                    consumed_indices.add(idx)
+                    call_ids.discard(out_cid)
+                else:
+                    # Output doesn't belong to any call in this group —
+                    # preserve it so it isn't silently dropped.
+                    unmatched_interleaved.append(out_item)
 
             if call_ids:
                 for k in range(j, len(history)):
@@ -266,6 +301,10 @@ def _filter_history_for_api(history: list[dict]) -> list[dict]:
                         call_ids.remove(output_call_id)
                         if not call_ids:
                             break
+
+            # Emit any interleaved outputs that didn't match a call in this
+            # group before the group itself, so they aren't silently lost.
+            reordered.extend(unmatched_interleaved)
 
             if message:
                 # Valid reasoning group: reorder to reasoning → message → function_calls → outputs
@@ -846,7 +885,10 @@ async def stream_agent(
                             ),
                         },
                     )
-                    if isinstance(hook_result, dict) and hook_result.get("retry") is True:
+                    if (
+                        isinstance(hook_result, dict)
+                        and hook_result.get("retry") is True
+                    ):
                         return await stream_agent(
                             agent,
                             prompt,
