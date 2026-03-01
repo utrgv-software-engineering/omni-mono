@@ -2,6 +2,9 @@ import React, { useMemo, useState } from 'react'
 import { Markdown } from './promptkit/markdown'
 import { Message, MessageContent, MessageActions, MessageAction } from './promptkit/Message'
 import { ChatContainerContent, ChatContainerRoot, ChatContainerScrollAnchor } from './ChatContainer'
+import { groupItems } from './activityGroup'
+import type { ActivityGroupData } from './activityGroup'
+import { ActivityGroup as ActivityGroupComponent } from './ActivityGroup'
 
 export type ChatMessage = {
   type: 'chat'
@@ -27,6 +30,7 @@ export type ToolItem = {
   output?: string
   status: 'called' | 'result'
   metadata?: any
+  runId?: string
 }
 
 export type ApprovalItem = {
@@ -40,8 +44,8 @@ export type ApprovalItem = {
 
 export type MessageItem = ChatMessage | ToolItem | ApprovalItem
 
-export function MessageList({ items, statusText, thinking, statusSpinner, preambleText, welcomeText, onApprovalDecision, statusItalic, onReaction }:
-  { items: MessageItem[]; statusText?: string; thinking?: boolean; statusSpinner?: boolean; preambleText?: string; welcomeText?: string; onApprovalDecision?: (request_id: string, value: 'yes' | 'always' | 'no') => void; statusItalic?: boolean; onReaction?: (type: 'like' | 'dislike', text?: string) => void }) {
+export function MessageList({ items, statusText, thinking, statusSpinner, preambleText, welcomeText, onApprovalDecision, statusItalic, onReaction, currentRunId }:
+  { items: MessageItem[]; statusText?: string; thinking?: boolean; statusSpinner?: boolean; preambleText?: string; welcomeText?: string; onApprovalDecision?: (request_id: string, value: 'yes' | 'always' | 'no') => void; statusItalic?: boolean; onReaction?: (type: 'like' | 'dislike', text?: string) => void; currentRunId?: string }) {
   const [reactions, setReactions] = useState<Record<number, 'like' | 'dislike' | undefined>>({})
   const [feedbackIndex, setFeedbackIndex] = useState<number | undefined>(undefined)
   const handleReaction = React.useCallback((index: number, type: 'like' | 'dislike') => {
@@ -68,6 +72,7 @@ export function MessageList({ items, statusText, thinking, statusSpinner, preamb
     }
     setFeedbackIndex(undefined)
   }, [feedbackIndex, reactions, onReaction])
+  const displayItems = useMemo(() => groupItems(items, currentRunId, !!thinking), [items, currentRunId, thinking])
   return (
     <ChatContainerRoot className="flex-1">
       <ChatContainerContent className="container-chat px-3 py-3 space-y-3 md:space-y-4">
@@ -79,10 +84,11 @@ export function MessageList({ items, statusText, thinking, statusSpinner, preamb
             </div>
           </div>
         ) : (
-          items.map((m, i) => {
-            if (m.type === 'chat') return <MessageBubble key={i} index={i} role={m.role} content={m.content} attachments={(m as ChatMessage).attachments} reactions={reactions} onReact={handleReaction} feedbackIndex={feedbackIndex} onFeedbackSubmit={handleFeedbackSubmit} onFeedbackDismiss={handleFeedbackDismiss} />
-            if (m.type === 'tool') return <ToolCard key={m.call_id || i} item={m} />
-            if (m.type === 'approval') return <ApprovalCard key={m.request_id} item={m} onDecision={onApprovalDecision} />
+          displayItems.map((m, i) => {
+            if (m.type === 'activity_group') return <ActivityGroupComponent key={(m as any).runId + '-' + i} group={m as any} />
+            if (m.type === 'chat') return <MessageBubble key={i} index={i} role={(m as ChatMessage).role} content={(m as ChatMessage).content} attachments={(m as ChatMessage).attachments} reactions={reactions} onReact={handleReaction} feedbackIndex={feedbackIndex} onFeedbackSubmit={handleFeedbackSubmit} onFeedbackDismiss={handleFeedbackDismiss} />
+            if (m.type === 'tool') return <ToolCard key={(m as ToolItem).call_id || i} item={m as ToolItem} />
+            if (m.type === 'approval') return <ApprovalCard key={(m as ApprovalItem).request_id} item={m as ApprovalItem} onDecision={onApprovalDecision} />
             return null
           })
         )}
@@ -273,7 +279,7 @@ function StatusRow({ text, spinner, italic }: { text?: string; spinner?: boolean
   )
 }
 
-function ToolCard({ item }: { item: ToolItem }) {
+export function ToolCard({ item }: { item: ToolItem }) {
   const [open, setOpen] = useState(false)
   const hasResult = item.status === 'result'
   const iconFill = hasResult ? 'bg-successGreen' : 'bg-warningOrange'
@@ -355,7 +361,7 @@ function buildToolHeader(tool: string, args?: string) {
   return `${tool}(${preview})`
 }
 
-function formatArgsPreview(args: string, maxLen: number) {
+export function formatArgsPreview(args: string, maxLen: number) {
   if (!args) return ''
   let parsed: any
   try { parsed = JSON.parse(args) } catch {}

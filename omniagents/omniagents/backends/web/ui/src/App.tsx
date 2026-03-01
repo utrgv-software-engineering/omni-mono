@@ -259,7 +259,7 @@ export function App() {
       const input = typeof p?.input === 'string' ? p?.input : JSON.stringify(p?.input)
       const call_id = String(p?.call_id ?? '')
       preambleBufferRef.current.forEach(m => { m.superseded = true })
-      setItems(prev => [...prev, { type: 'tool', tool, input, call_id, status: 'called' }])
+      setItems(prev => [...prev, { type: 'tool', tool, input, call_id, status: 'called', runId: runIdRef.current }])
     })
     const offToolResult = client.on('tool_result', (p: any) => {
       const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
@@ -280,7 +280,7 @@ export function App() {
           next[idx] = { ...it, output, status: 'result', metadata }
           return next
         }
-        return [...prev, { type: 'tool', tool, output, call_id, status: 'result', metadata }]
+        return [...prev, { type: 'tool', tool, output, call_id, status: 'result', metadata, runId: runIdRef.current }]
       })
     })
     const offClientRequest = client.on('client_request', (p: any) => {
@@ -741,7 +741,7 @@ export function App() {
         />
         <div className="flex-1 flex flex-row min-h-0 min-w-0">
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
-            <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} statusItalic={statusItalic} onReaction={handleReaction} />
+            <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} statusItalic={statusItalic} onReaction={handleReaction} currentRunId={runId} />
             <Input
               disabled={!connected}
               thinking={thinking}
