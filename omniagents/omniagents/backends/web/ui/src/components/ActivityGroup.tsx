@@ -5,16 +5,16 @@ import { computeGroupSummary, formatGroupSummary } from './activityGroup'
 import { ToolCard, formatArgsPreview } from './MessageList'
 import type { ToolItem } from './MessageList'
 
-export function ActivityGroup({ group }: { group: ActivityGroupData }) {
+export function ActivityGroup({ group, statusText }: { group: ActivityGroupData; statusText?: string }) {
   // Singleton without grouping — render as plain ToolCard
   if (group.tools.length === 1 && !group.runId) {
     return <ToolCard item={group.tools[0]} />
   }
 
-  return <GroupCard group={group} />
+  return <GroupCard group={group} statusText={statusText} />
 }
 
-function GroupCard({ group }: { group: ActivityGroupData }) {
+function GroupCard({ group, statusText }: { group: ActivityGroupData; statusText?: string }) {
   const [expanded, setExpanded] = useState(false)
   const summary = useMemo(() => computeGroupSummary(group.tools), [group.tools])
   const summaryText = useMemo(() => formatGroupSummary(summary), [summary])
@@ -32,17 +32,30 @@ function GroupCard({ group }: { group: ActivityGroupData }) {
             <span className="inline-block w-2 h-2 rounded-full bg-warningOrange animate-pulse flex-shrink-0" />
             <div className="flex-1 min-w-0 overflow-hidden">
               <AnimatePresence mode="wait">
-                <motion.span
-                  key={latest?.call_id || group.tools.length}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -8 }}
-                  transition={{ duration: 0.2 }}
-                  className="inline-flex items-center gap-1 text-textSubtle truncate"
-                >
-                  <span className="font-medium text-textPrimary">{latest?.tool}</span>
-                  {preview ? <span className="truncate">({preview})</span> : null}
-                </motion.span>
+                {statusText ? (
+                  <motion.span
+                    key={'status-' + statusText}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    transition={{ duration: 0.2 }}
+                    className="text-textSubtle truncate"
+                  >
+                    {statusText}
+                  </motion.span>
+                ) : (
+                  <motion.span
+                    key={latest?.call_id || group.tools.length}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    transition={{ duration: 0.2 }}
+                    className="inline-flex items-center gap-1 text-textSubtle truncate"
+                  >
+                    <span className="font-medium text-textPrimary">{latest?.tool}</span>
+                    {preview ? <span className="truncate">({preview})</span> : null}
+                  </motion.span>
+                )}
               </AnimatePresence>
             </div>
             <span className="text-xs text-textSubtle flex-shrink-0 tabular-nums">{group.tools.length}</span>

@@ -44,8 +44,8 @@ export type ApprovalItem = {
 
 export type MessageItem = ChatMessage | ToolItem | ApprovalItem
 
-export function MessageList({ items, statusText, thinking, statusSpinner, preambleText, welcomeText, onApprovalDecision, statusItalic, onReaction, currentRunId }:
-  { items: MessageItem[]; statusText?: string; thinking?: boolean; statusSpinner?: boolean; preambleText?: string; welcomeText?: string; onApprovalDecision?: (request_id: string, value: 'yes' | 'always' | 'no') => void; statusItalic?: boolean; onReaction?: (type: 'like' | 'dislike', text?: string) => void; currentRunId?: string }) {
+export function MessageList({ items, statusText, thinking, statusSpinner, preambleText, welcomeText, onApprovalDecision, statusItalic, onReaction, currentRunId, toolStatusText }:
+  { items: MessageItem[]; statusText?: string; thinking?: boolean; statusSpinner?: boolean; preambleText?: string; welcomeText?: string; onApprovalDecision?: (request_id: string, value: 'yes' | 'always' | 'no') => void; statusItalic?: boolean; onReaction?: (type: 'like' | 'dislike', text?: string) => void; currentRunId?: string; toolStatusText?: string }) {
   const [reactions, setReactions] = useState<Record<number, 'like' | 'dislike' | undefined>>({})
   const [feedbackIndex, setFeedbackIndex] = useState<number | undefined>(undefined)
   const handleReaction = React.useCallback((index: number, type: 'like' | 'dislike') => {
@@ -73,6 +73,12 @@ export function MessageList({ items, statusText, thinking, statusSpinner, preamb
     setFeedbackIndex(undefined)
   }, [feedbackIndex, reactions, onReaction])
   const displayItems = useMemo(() => groupItems(items, currentRunId, !!thinking), [items, currentRunId, thinking])
+  const lastDisplay = displayItems[displayItems.length - 1]
+  const hasRunningGroup = lastDisplay?.type === 'activity_group' && (lastDisplay as ActivityGroupData).isRunning
+  // When a running group is active, show toolStatusText in the ticker (persists across fast tool_result clears)
+  const tickerStatus = hasRunningGroup ? toolStatusText : undefined
+  const fallbackStatus = thinking ? (hasRunningGroup ? 'Working…' : 'Thinking…') : ''
+  const statusRowText = hasRunningGroup ? undefined : statusText
   return (
     <ChatContainerRoot className="flex-1">
       <ChatContainerContent className="container-chat px-3 py-3 space-y-3 md:space-y-4">
@@ -85,7 +91,7 @@ export function MessageList({ items, statusText, thinking, statusSpinner, preamb
           </div>
         ) : (
           displayItems.map((m, i) => {
-            if (m.type === 'activity_group') return <ActivityGroupComponent key={(m as any).runId + '-' + i} group={m as any} />
+            if (m.type === 'activity_group') return <ActivityGroupComponent key={(m as any).runId + '-' + i} group={m as any} statusText={tickerStatus} />
             if (m.type === 'chat') return <MessageBubble key={i} index={i} role={(m as ChatMessage).role} content={(m as ChatMessage).content} attachments={(m as ChatMessage).attachments} reactions={reactions} onReact={handleReaction} feedbackIndex={feedbackIndex} onFeedbackSubmit={handleFeedbackSubmit} onFeedbackDismiss={handleFeedbackDismiss} />
             if (m.type === 'tool') return <ToolCard key={(m as ToolItem).call_id || i} item={m as ToolItem} />
             if (m.type === 'approval') return <ApprovalCard key={(m as ApprovalItem).request_id} item={m as ApprovalItem} onDecision={onApprovalDecision} />
@@ -93,8 +99,8 @@ export function MessageList({ items, statusText, thinking, statusSpinner, preamb
           })
         )}
         {preambleText ? <PreambleRow text={preambleText} /> : null}
-        {(thinking || statusText) ? (
-          <StatusRow text={statusText || (thinking ? 'Thinking…' : '')} spinner={!!statusSpinner || !!thinking} italic={!!statusItalic && !thinking} />
+        {(thinking || statusRowText) ? (
+          <StatusRow text={statusRowText || fallbackStatus} spinner={!!statusSpinner || !!thinking} italic={!!statusItalic && !thinking} />
         ) : null}
         <ChatContainerScrollAnchor />
       </ChatContainerContent>

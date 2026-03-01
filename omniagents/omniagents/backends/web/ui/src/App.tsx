@@ -32,6 +32,7 @@ export function App() {
   const [statusSpinner, setStatusSpinner] = useState<boolean>(false)
   const [statusItalic, setStatusItalic] = useState<boolean>(false)
   const [preamble, setPreamble] = useState<string | undefined>(undefined)
+  const [toolStatus, setToolStatus] = useState<string | undefined>(undefined)
   const [runId, setRunId] = useState<string | undefined>(undefined)
   const [sessionId, setSessionId] = useState<string | undefined>(undefined)
   const [sessions, setSessions] = useState<SessionItem[]>([])
@@ -201,6 +202,7 @@ export function App() {
       preambleBufferRef.current = []
       setPreamble(undefined)
       setStatus(undefined)
+      setToolStatus(undefined)
       setStatusSpinner(false)
       setStatusItalic(false)
       refreshSessions()
@@ -218,6 +220,7 @@ export function App() {
       }
       preambleBufferRef.current = []
       setPreamble(undefined)
+      setToolStatus(undefined)
       try {
         const usage = p?.usage || {}
         const info = {
@@ -344,6 +347,7 @@ export function App() {
         setStatus(text)
         setStatusSpinner(showSpinner)
         setStatusItalic(false)
+        if (text && text.trim()) setToolStatus(text)
         if (request_id) {
           client.clientResponse(request_id, true, { ack: true }).catch(() => {})
         }
@@ -741,7 +745,7 @@ export function App() {
         />
         <div className="flex-1 flex flex-row min-h-0 min-w-0">
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
-            <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} statusItalic={statusItalic} onReaction={handleReaction} currentRunId={runId} />
+            <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} statusItalic={statusItalic} onReaction={handleReaction} currentRunId={runId} toolStatusText={toolStatus} />
             <Input
               disabled={!connected}
               thinking={thinking}
