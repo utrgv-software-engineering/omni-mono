@@ -1,4 +1,4 @@
 """Version information for OmniAgents."""
 
-__version__ = "0.6.30"
+__version__ = "0.6.31"
 __version_info__ = tuple(int(x) for x in __version__.split("."))
