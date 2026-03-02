@@ -24,3 +24,6 @@ model_settings:
   parallel_tool_calls: true
 
 max_turns: 200
+
+context: build_worker_context
+variables: {}
