@@ -261,3 +261,163 @@ async def test_build_agent_failure_closes_mcp_stack(monkeypatch):
     # Check for new lifecycle attributes - should be cleaned up
     assert getattr(session, "_mcp_lifecycle_task") is None
     assert getattr(session, "_mcp_servers_active") == []
+
+
+@pytest.mark.asyncio
+async def test_start_run_merges_variables_with_existing(monkeypatch):
+    """When a session already has variables, start_run should merge new variables
+    into existing ones rather than replacing them entirely."""
+
+    async def success_stream(*args, **kwargs):
+        return {"usage": {"input_tokens": 1}, "model": "m"}
+
+    monkeypatch.setattr(service_module, "stream_agent", success_stream)
+
+    spec = make_spec()
+    service = AgentService(spec)
+    service.channel = object()
+    attach_capture(service)
+
+    # Pre-set variables on a session via session.ensure
+    result = await service.server_call(
+        "session.ensure",
+        {"variables": {"additional_instructions": "Do X", "context_key": "val"}},
+    )
+    session_id = result["session_id"]
+
+    # Now start_run with workspace_root variable — should merge, not replace
+    run_info = await service.start_run(
+        "hello",
+        session_id=session_id,
+        variables={"workspace_root": "/workspace"},
+    )
+    sess = service._session_manager.get_or_create(run_info["session_id"])
+    await asyncio.wait_for(sess.current_task, timeout=1)
+
+    # Both old and new variables should be present
+    assert sess.variables["additional_instructions"] == "Do X"
+    assert sess.variables["context_key"] == "val"
+    assert sess.variables["workspace_root"] == "/workspace"
+
+
+@pytest.mark.asyncio
+async def test_start_run_new_variables_override_existing_keys(monkeypatch):
+    """When start_run passes a variable that already exists on the session,
+    the new value should win (dict.update semantics)."""
+
+    async def success_stream(*args, **kwargs):
+        return {"usage": {"input_tokens": 1}, "model": "m"}
+
+    monkeypatch.setattr(service_module, "stream_agent", success_stream)
+
+    spec = make_spec()
+    service = AgentService(spec)
+    service.channel = object()
+    attach_capture(service)
+
+    result = await service.server_call(
+        "session.ensure",
+        {"variables": {"workspace_root": "/old", "keep_me": "yes"}},
+    )
+    session_id = result["session_id"]
+
+    run_info = await service.start_run(
+        "hello",
+        session_id=session_id,
+        variables={"workspace_root": "/new"},
+    )
+    sess = service._session_manager.get_or_create(run_info["session_id"])
+    await asyncio.wait_for(sess.current_task, timeout=1)
+
+    assert sess.variables["workspace_root"] == "/new"
+    assert sess.variables["keep_me"] == "yes"
+
+
+@pytest.mark.asyncio
+async def test_start_run_replaces_variables_when_existing_not_dict(monkeypatch):
+    """When existing session variables are not a dict, start_run should replace them."""
+
+    async def success_stream(*args, **kwargs):
+        return {"usage": {"input_tokens": 1}, "model": "m"}
+
+    monkeypatch.setattr(service_module, "stream_agent", success_stream)
+
+    spec = make_spec()
+    service = AgentService(spec)
+    service.channel = object()
+    attach_capture(service)
+
+    # Create session and manually set non-dict variables
+    sess = service._session_manager.get_or_create()
+    sess.variables = "not-a-dict"
+
+    run_info = await service.start_run(
+        "hello",
+        session_id=sess.id,
+        variables={"workspace_root": "/workspace"},
+    )
+    await asyncio.wait_for(sess.current_task, timeout=1)
+
+    assert sess.variables == {"workspace_root": "/workspace"}
+
+
+@pytest.mark.asyncio
+async def test_start_run_no_variables_preserves_existing(monkeypatch):
+    """When start_run is called without variables, existing session variables
+    should remain untouched."""
+
+    async def success_stream(*args, **kwargs):
+        return {"usage": {"input_tokens": 1}, "model": "m"}
+
+    monkeypatch.setattr(service_module, "stream_agent", success_stream)
+
+    spec = make_spec()
+    service = AgentService(spec)
+    service.channel = object()
+    attach_capture(service)
+
+    result = await service.server_call(
+        "session.ensure",
+        {"variables": {"additional_instructions": "Do X"}},
+    )
+    session_id = result["session_id"]
+
+    run_info = await service.start_run("hello", session_id=session_id)
+    sess = service._session_manager.get_or_create(run_info["session_id"])
+    await asyncio.wait_for(sess.current_task, timeout=1)
+
+    assert sess.variables == {"additional_instructions": "Do X"}
+
+
+@pytest.mark.asyncio
+async def test_start_run_merges_context_with_existing(monkeypatch):
+    """When a session already has context, start_run should merge new context
+    into existing context rather than replacing it."""
+
+    async def success_stream(*args, **kwargs):
+        return {"usage": {"input_tokens": 1}, "model": "m"}
+
+    monkeypatch.setattr(service_module, "stream_agent", success_stream)
+
+    spec = make_spec()
+    service = AgentService(spec)
+    service.channel = object()
+    attach_capture(service)
+
+    result = await service.server_call(
+        "session.ensure",
+        {"context": {"workspace_root": "/ws", "custom_key": "abc"}},
+    )
+    session_id = result["session_id"]
+
+    run_info = await service.start_run(
+        "hello",
+        session_id=session_id,
+        context={"new_key": "new_val"},
+    )
+    sess = service._session_manager.get_or_create(run_info["session_id"])
+    await asyncio.wait_for(sess.current_task, timeout=1)
+
+    assert sess.context["workspace_root"] == "/ws"
+    assert sess.context["custom_key"] == "abc"
+    assert sess.context["new_key"] == "new_val"

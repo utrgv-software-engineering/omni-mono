@@ -1229,11 +1229,23 @@ class AgentService(RpcMethodsBase):
         sess.cancel_end_reason = None
         sess.current_stream_result = None
 
-        # Store variables and/or context in session
+        # Merge variables and/or context into session (preserve existing keys)
         if variables is not None:
-            sess.variables = variables
+            existing = getattr(sess, "variables", None)
+            if isinstance(existing, dict) and isinstance(variables, dict):
+                merged = dict(existing)
+                merged.update(variables)
+                sess.variables = merged
+            else:
+                sess.variables = variables
         if context is not None:
-            sess.context = context
+            existing_ctx = getattr(sess, "context", None)
+            if isinstance(existing_ctx, dict) and isinstance(context, dict):
+                merged_ctx = dict(existing_ctx)
+                merged_ctx.update(context)
+                sess.context = merged_ctx
+            else:
+                sess.context = context
 
         # Apply per-session safe tool overrides
         if safe_tool_overrides is not None:
