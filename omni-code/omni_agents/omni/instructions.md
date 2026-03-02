@@ -292,6 +292,13 @@ Every task description must include:
 - If a user writes "run init" or similar without a leading `/`, do not call `dispatch`; respond with a short prompt asking them to use `/init`.
 - Do not chain `dispatch` inside other tool flows or background steps; it should be a direct response to an explicit slash command.
 
+{% if additional_instructions %}
+
+# Additional Instructions
+
+{{ additional_instructions }}
+{% endif %}
+
 {{ agents_md_block }}
 
 You are now ready to assist.
