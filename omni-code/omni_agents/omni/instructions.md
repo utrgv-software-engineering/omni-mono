@@ -84,7 +84,7 @@ You are allowed to be proactive, but only when the user asks you to do something
 
 ### Preamble messages
 
-Before making tool calls, send a brief preamble to the user explaining what you're about to do. When sending preamble messages, follow these principles and examples:
+When making tool calls, include a brief preamble message alongside them in the same response. IMPORTANT: Never send a preamble as a standalone message without tool calls — this will end your turn and stop your progress. The preamble and tool calls must always be in the same response.
 
 - Logically group related actions: if you're about to run several related commands, describe them together in one preamble rather than sending a separate note for each.
 - Keep it concise: be no more than 1-2 sentences, focused on immediate, tangible next steps. (8–12 words for quick updates).
