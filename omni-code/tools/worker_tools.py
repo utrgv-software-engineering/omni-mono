@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import uuid
+import random
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -11,6 +11,59 @@ from omniagents.core.tools import rich_function_tool, RichToolOutput, approval_m
 
 
 _WORKER_AGENT_YAML = Path(__file__).resolve().parent.parent / "omni_agents" / "worker" / "agent.yml"
+
+# ---------------------------------------------------------------------------
+# Whimsical worker name generator
+# ---------------------------------------------------------------------------
+
+_NAMES = [
+    "blix", "coda", "nyx", "zeph", "remo", "tavi", "wren", "juno", "kip",
+    "arlo", "miko", "vex", "pip", "zuri", "echo", "bolt", "nova", "rue",
+    "otto", "dex", "sage", "flux", "cleo", "hex", "finn", "lux", "gus",
+    "ivy", "rox", "ziggy",
+]
+
+_ADJECTIVES = [
+    "lil", "big", "old", "tiny", "mad", "wee",
+]
+
+_TITLES = [
+    "the swift", "the steady", "the bold", "the keen",
+]
+
+_SUFFIXES = [
+    "jr", "mk2", "prime", "redux", "lite",
+]
+
+
+def _generate_worker_name() -> str:
+    """Generate a whimsical worker name.
+
+    ~80% of the time returns a bare name (e.g. ``pip``).
+    ~20% of the time adds flair via an adjective, title, or suffix.
+    On collision with an existing worker, appends ``-2``, ``-3``, etc.
+    """
+    name = random.choice(_NAMES)
+
+    # 20% chance of flair
+    if random.random() < 0.2:
+        style = random.choice(["adj", "title", "suffix"])
+        if style == "adj":
+            name = f"{random.choice(_ADJECTIVES)}-{name}"
+        elif style == "title":
+            title = random.choice(_TITLES).replace(" ", "-")
+            name = f"{name}-{title}"
+        else:
+            name = f"{name}-{random.choice(_SUFFIXES)}"
+
+    # Handle collisions
+    if name not in _WORKERS:
+        return name
+    n = 2
+    while f"{name}-{n}" in _WORKERS:
+        n += 1
+    return f"{name}-{n}"
+
 
 # ---------------------------------------------------------------------------
 # Worker registry
@@ -137,11 +190,17 @@ async def _monitor_worker(entry: _WorkerEntry) -> None:
 
 
 async def _create_and_start_worker(
-    task_description: str, model: Optional[str], session_id: Optional[str] = None
+    task_description: str, model: Optional[str], session_id: Optional[str] = None,
+    worker_name: Optional[str] = None,
 ) -> _WorkerEntry:
     from omniagents.rpc.agents.local import LocalAgent
 
     spec, _ = _load_and_configure_spec(model)
+
+    if worker_name:
+        if spec.variables is None:
+            spec.variables = {}
+        spec.variables["worker_name"] = worker_name
 
     agent = LocalAgent(spec=spec, settings={})
     await agent.initialize()
@@ -200,8 +259,8 @@ async def spawn_worker(task: str, model: Optional[str] = None) -> RichToolOutput
               because the worker has no access to conversation history.
         model: Optional model override. Defaults to the session's current model.
     """
-    worker_id = uuid.uuid4().hex[:8]
-    entry = await _create_and_start_worker(task, model)
+    worker_id = _generate_worker_name()
+    entry = await _create_and_start_worker(task, model, worker_name=worker_id)
     _WORKERS[worker_id] = entry
     llm_output = json.dumps({"worker_id": worker_id, "status": "spawned"})
     task_summary = task[:80] + "..." if len(task) > 80 else task
@@ -532,7 +591,7 @@ async def resume_worker(worker_id: str, message: str) -> RichToolOutput:
     await old_agent.cleanup()
 
     new_entry = await _create_and_start_worker(
-        message, model=None, session_id=old_session_id,
+        message, model=None, session_id=old_session_id, worker_name=worker_id,
     )
     new_entry.result = None
     _WORKERS[worker_id] = new_entry
