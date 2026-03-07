@@ -247,6 +247,17 @@ def test_run_command_resume_invalid_mode_exits(monkeypatch, stub_runtime, capsys
     assert kwargs.get("resume") is True
 
 
+def test_sessions_db_path_command(monkeypatch, capsys):
+    argv = ["omniagents", "sessions", "db-path"]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_main()
+
+    assert excinfo.value.code == 0
+    assert capsys.readouterr().out.strip().endswith("history.db")
+
+
 def test_save_command_invokes_save_agent(monkeypatch, stub_runtime, tmp_path, capsys):
     saved = {}
 

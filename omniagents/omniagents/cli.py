@@ -23,6 +23,7 @@ from omniagents.core.eval.annotate import annotate_scenarios, write_annotation_o
 from omniagents.core.eval.results import save_evaluation_run
 from omniagents.core.runtime.runner import Runner
 from omniagents.core.debug import Debug
+from omniagents.core.session.cli import add_sessions_subparser, handle_sessions_command
 
 
 CODESPACES_ENV = any(
@@ -746,6 +747,8 @@ def main():
         help="Project name to show (defaults to active project)",
     )
 
+    add_sessions_subparser(subparsers)
+
     agent_parser = subparsers.add_parser("agent", help="Agent-level operations")
     agent_sub = agent_parser.add_subparsers(dest="agent_cmd")
     agent_run = agent_sub.add_parser("run", help="Run an agent (agent-level)")
@@ -1404,6 +1407,8 @@ def main():
         else:
             studio_parser.print_help()
             sys.exit(1)
+    elif args.command == "sessions":
+        sys.exit(handle_sessions_command(args))
     elif args.command == "agent":
         if args.agent_cmd == "run":
             runner = None
