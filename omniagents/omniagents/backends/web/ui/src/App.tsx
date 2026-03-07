@@ -734,15 +734,17 @@ export function App() {
         />
       )}
       <div className="flex-1 flex flex-col min-h-0 min-w-0">
-        <Header
-          agentName={agentName}
-          connected={connected}
-          onMenu={minimalMode ? undefined : () => setSidebarOpen(v => !v)}
-          onArtifactsToggle={hasArtifacts ? () => setArtifactsPanelOpen(v => !v) : undefined}
-          onTerminalToggle={minimalMode ? undefined : () => setTerminalPanelOpen(v => !v)}
-          showArtifactsButton={hasArtifacts}
-          showTerminalButton={!minimalMode}
-        />
+        {!minimalMode && (
+          <Header
+            agentName={agentName}
+            connected={connected}
+            onMenu={() => setSidebarOpen(v => !v)}
+            onArtifactsToggle={hasArtifacts ? () => setArtifactsPanelOpen(v => !v) : undefined}
+            onTerminalToggle={() => setTerminalPanelOpen(v => !v)}
+            showArtifactsButton={hasArtifacts}
+            showTerminalButton
+          />
+        )}
         <div className="flex-1 flex flex-row min-h-0 min-w-0">
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
             <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} statusItalic={statusItalic} onReaction={handleReaction} currentRunId={runId} toolStatusText={toolStatus} />

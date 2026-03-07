@@ -1688,13 +1688,9 @@ class AgentService(RpcMethodsBase):
                         )
                     if final_details.get("truncation") is not None:
                         payload["truncation"] = final_details.get("truncation")
-                # Debug log the payload for visibility when debugging (single source)
-                _debug_rpc("run_end", payload)
-                # Best-effort notify; avoid raising if socket is gone
-                await self._broadcast_session(
-                    sess, "run_end", payload, queue_if_unseen=True
-                )
-
+                # Clear task state BEFORE broadcasting run_end so that
+                # clients can immediately start a new run without hitting
+                # "Run already active in this session".
                 if run_name:
                     try:
                         sess.run_channels.pop(run_name, None)
@@ -1707,6 +1703,13 @@ class AgentService(RpcMethodsBase):
                 if sess.current_stream_result is not None:
                     sess.current_stream_result = None
                 self._clear_live_state(sess)
+
+                # Debug log the payload for visibility when debugging (single source)
+                _debug_rpc("run_end", payload)
+                # Best-effort notify; avoid raising if socket is gone
+                await self._broadcast_session(
+                    sess, "run_end", payload, queue_if_unseen=True
+                )
 
         task_name = f"run_{uuid.uuid4().hex}"
         _debug_rpc(
