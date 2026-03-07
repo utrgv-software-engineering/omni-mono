@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from omniagents import server_function
+from omniagents.core.server_functions.helpers import invoke_artifact_bridge
 from omniagents.core.session import Session
 
 
@@ -39,42 +40,7 @@ async def artifact(
 
 
 async def _artifact_on_invoke(service, session, args=None):
-    ensured = session
-    if ensured is None:
-        try:
-            sess = getattr(service, "_session_manager", None)
-            if sess is not None:
-                ensured = sess.get_or_create(None)
-        except Exception:
-            ensured = None
-
-    if ensured is None:
-        raise ValueError("No session available")
-
-    payload = args or {}
-    title = str(payload.get("title") or "")
-    content = str(payload.get("content") or "")
-    mode = str(payload.get("mode") or "markdown")
-    artifact_id = payload.get("artifact_id")
-    if artifact_id is not None:
-        artifact_id = str(artifact_id)
-
-    try:
-        await service.request_client_function(
-            "ui.add_artifact",
-            {
-                "title": title,
-                "content": content,
-                "mode": mode,
-                "artifact_id": artifact_id,
-            },
-            session=ensured,
-            expect_result=False,
-        )
-    except Exception:
-        pass
-
-    return {"ok": True}
+    return await invoke_artifact_bridge(service, session, args)
 
 
 setattr(artifact, "_server_function_on_invoke", _artifact_on_invoke)

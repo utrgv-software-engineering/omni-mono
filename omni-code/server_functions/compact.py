@@ -12,6 +12,16 @@ from agents import Runner
 from omniagents import server_function
 from omniagents.core.agents.builder import _default_build_agent
 from omniagents.core.config.loader import load_agent_spec_from_yaml
+from omniagents.core.runtime.compaction import (
+    build_resume_protocol_block,
+    extract_tool_events,
+    extract_transcript,
+    extract_user_messages,
+    format_tool_events_block,
+    format_user_messages_block,
+    history_since_last_summary,
+    is_context_length_exceeded,
+)
 from omniagents.core.session.manager import Session
 from openai import APIStatusError, BadRequestError
 
@@ -26,114 +36,33 @@ def _last_user_message(history: list[dict]) -> str | None:
 
 
 def _is_context_length_exceeded(err: Exception) -> bool:
-    if not isinstance(err, (BadRequestError, APIStatusError)):
-        return False
-    body = getattr(err, "body", None)
-    if isinstance(body, dict):
-        error_obj = body.get("error")
-        if isinstance(error_obj, dict):
-            if error_obj.get("code") == "context_length_exceeded":
-                return True
-            # LiteLLM proxy wraps the real error code inside the message string
-            error_message = str(error_obj.get("message", "")).lower()
-            if "context_length_exceeded" in error_message:
-                return True
-            if "context window" in error_message and "exceed" in error_message:
-                return True
+    if isinstance(err, (BadRequestError, APIStatusError)):
+        return is_context_length_exceeded(err)
     return False
 
 
 def _summarization_window(history: list[dict]) -> list[dict]:
-    if not history:
-        return []
-    last_summary_idx: int | None = None
-    for idx in range(len(history) - 1, -1, -1):
-        item = history[idx]
-        if (
-            isinstance(item, dict)
-            and item.get("role") == "assistant"
-            and isinstance(item.get("omniagents"), dict)
-            and item["omniagents"].get("kind") == "context_summary"
-        ):
-            last_summary_idx = idx
-            break
-    start = (last_summary_idx + 1) if last_summary_idx is not None else 0
-    return list(history[start:])
+    return history_since_last_summary(history, include_summary=False)
 
 
 def _extract_transcript(history: list[dict]) -> str:
-    parts: list[str] = []
-    for item in history or []:
-        if not isinstance(item, dict):
-            continue
-        parts.append(json.dumps(item, ensure_ascii=False, default=str))
-    return "\n".join(parts)
+    return extract_transcript(history)
 
 
 def _extract_user_messages(history: list[dict]) -> list[str]:
-    messages: list[str] = []
-    for item in history or []:
-        if not isinstance(item, dict):
-            continue
-        if item.get("role") != "user":
-            continue
-        content = item.get("content")
-        if isinstance(content, str) and content:
-            messages.append(content)
-    return messages
+    return extract_user_messages(history)
 
 
 def _format_user_messages_block(messages: list[str]) -> str:
-    if not messages:
-        return "(none)"
-
-    parts: list[str] = []
-    last_idx = len(messages) - 1
-    for idx, msg in enumerate(messages):
-        label = f"#{idx + 1}"
-        if idx == last_idx:
-            label += " (LAST)"
-        parts.append(f"- {label}:\n```\n{msg}\n```")
-    return "\n".join(parts)
+    return format_user_messages_block(messages)
 
 
 def _extract_tool_events(history: list[dict]) -> list[dict]:
-    events: list[dict] = []
-    for item in history or []:
-        if not isinstance(item, dict):
-            continue
-
-        role = item.get("role")
-        if role in {"tool", "function"}:
-            events.append(item)
-            continue
-
-        tool_calls = item.get("tool_calls")
-        if isinstance(tool_calls, list) and tool_calls:
-            events.append({"role": role, "tool_calls": tool_calls})
-            continue
-
-        omni = item.get("omniagents")
-        if isinstance(omni, dict) and any(
-            key in omni for key in ("tool_name", "tool_call", "tool_result")
-        ):
-            events.append(item)
-
-    return events
+    return extract_tool_events(history)
 
 
 def _format_tool_events_block(events: list[dict], *, max_items: int = 5) -> str:
-    if not events:
-        return "(none)"
-
-    tail = events[-max_items:]
-    parts: list[str] = []
-    for idx, ev in enumerate(tail, start=max(1, len(events) - len(tail) + 1)):
-        safe_ev = _sanitize_tool_event(ev)
-        parts.append(
-            f"- #{idx}:\n```json\n{json.dumps(safe_ev, ensure_ascii=False, default=str)}\n```"
-        )
-    return "\n".join(parts)
+    return format_tool_events_block(events, max_items=max_items)
 
 
 def _trim_text_head(text: str, max_chars: int) -> str:
@@ -182,13 +111,20 @@ def _trim_large_strings(value: Any, *, max_chars: int) -> Any:
     if isinstance(value, list):
         return [_trim_large_strings(v, max_chars=max_chars) for v in value]
     if isinstance(value, dict):
-        return {k: _trim_large_strings(v, max_chars=max_chars) for k, v in value.items()}
+        return {
+            k: _trim_large_strings(v, max_chars=max_chars) for k, v in value.items()
+        }
     return value
 
 
 def _trim_exec_bash_fields(value: Any, *, stdout_chars: int, stderr_chars: int) -> Any:
     if isinstance(value, list):
-        return [_trim_exec_bash_fields(v, stdout_chars=stdout_chars, stderr_chars=stderr_chars) for v in value]
+        return [
+            _trim_exec_bash_fields(
+                v, stdout_chars=stdout_chars, stderr_chars=stderr_chars
+            )
+            for v in value
+        ]
     if isinstance(value, dict):
         out: dict = {}
         for k, v in value.items():
@@ -198,7 +134,9 @@ def _trim_exec_bash_fields(value: Any, *, stdout_chars: int, stderr_chars: int) 
             if isinstance(v, str) and k.lower() in {"stderr", "err"}:
                 out[k] = _trim_text_tail(v, stderr_chars)
                 continue
-            out[k] = _trim_exec_bash_fields(v, stdout_chars=stdout_chars, stderr_chars=stderr_chars)
+            out[k] = _trim_exec_bash_fields(
+                v, stdout_chars=stdout_chars, stderr_chars=stderr_chars
+            )
         return out
     return value
 
@@ -289,42 +227,7 @@ def _extract_file_paths_from_tool_event(event: dict) -> list[str]:
 
 
 def _resume_protocol_block(*, history: list[dict], tool_events: list[dict]) -> str:
-    user_messages = _extract_user_messages(history)
-    has_user_intent = bool(user_messages and user_messages[-1].strip())
-    has_tool_activity = bool(tool_events)
-    active = has_user_intent and (has_tool_activity or len(user_messages) > 1)
-
-    touched: list[str] = []
-    for ev in tool_events[-5:]:
-        touched.extend(_extract_file_paths_from_tool_event(ev))
-
-    touched_unique: list[str] = []
-    seen: set[str] = set()
-    for p in touched:
-        if p in seen:
-            continue
-        seen.add(p)
-        touched_unique.append(p)
-
-    if not active:
-        return (
-            "Resume Protocol:\n"
-            "- No active task detected (manual compaction or idle).\n"
-            "- Ask the user what to do next.\n"
-        )
-
-    if touched_unique:
-        files_block = "\n".join(f"- {p}" for p in touched_unique)
-    else:
-        files_block = "- UNKNOWN (no file paths detected; re-scan or ask user)"
-
-    return (
-        "Resume Protocol (do this first):\n"
-        "1) Re-read the relevant files to confirm current state:\n"
-        f"{files_block}\n"
-        "2) Review the last 5 tool events and reproduce any failing command if applicable.\n"
-        "3) Continue with the pending tasks / next steps from the summary.\n"
-    )
+    return build_resume_protocol_block(history=history, tool_events=tool_events)
 
 
 def _extract_response_text(resp: Any) -> str:
@@ -361,7 +264,9 @@ def _temporary_environ(overrides: dict[str, str | None]):
                 os.environ[key] = value
 
 
-def _litellm_env_overrides(*, model: str | None, api_key: str | None) -> dict[str, str | None]:
+def _litellm_env_overrides(
+    *, model: str | None, api_key: str | None
+) -> dict[str, str | None]:
     if not api_key:
         return {}
 
@@ -373,7 +278,9 @@ def _litellm_env_overrides(*, model: str | None, api_key: str | None) -> dict[st
     return {"OPENAI_API_KEY": api_key}
 
 
-def _build_model_provider(runtime: dict[str, Any]) -> tuple[Any | None, dict[str, str | None]]:
+def _build_model_provider(
+    runtime: dict[str, Any],
+) -> tuple[Any | None, dict[str, str | None]]:
     provider = (runtime.get("provider") or "").strip().lower()
     model = runtime.get("model")
     api_key = runtime.get("api_key")
@@ -426,7 +333,9 @@ def _build_model_provider(runtime: dict[str, Any]) -> tuple[Any | None, dict[str
     return None, {}
 
 
-def _resolve_compaction_runtime(service: Any, session: Session) -> tuple[str | None, dict[str, Any]]:
+def _resolve_compaction_runtime(
+    service: Any, session: Session
+) -> tuple[str | None, dict[str, Any]]:
     candidates: list[str] = []
     active_model = getattr(session, "active_model", None)
     if isinstance(active_model, str) and active_model.strip():
@@ -472,13 +381,17 @@ async def _run_compaction_agent(
     spec = load_agent_spec_from_yaml(str(agent_yaml))
     if model:
         spec.model_name = model
-    agent = await _default_build_agent(settings={}, mcp_servers=None, spec=spec, session=session)
+    agent = await _default_build_agent(
+        settings={}, mcp_servers=None, spec=spec, session=session
+    )
 
     model_provider, env_overrides = _build_model_provider(runtime or {})
 
     from agents import RunConfig
 
-    run_config = RunConfig(model_provider=model_provider) if model_provider is not None else None
+    run_config = (
+        RunConfig(model_provider=model_provider) if model_provider is not None else None
+    )
     with _temporary_environ(env_overrides):
         result = await Runner.run(agent, prompt, max_turns=1, run_config=run_config)
         return result.final_output_as(str)
@@ -508,7 +421,11 @@ async def compact(service: Any, session: Session) -> dict:
         ):
             model_name = model_ref.strip()
 
-        if isinstance(model_name, str) and "/" in model_name and runtime.get("provider") != "litellm":
+        if (
+            isinstance(model_name, str)
+            and "/" in model_name
+            and runtime.get("provider") != "litellm"
+        ):
             prefix = model_name.split("/", 1)[0]
             if prefix not in {"openai", "litellm"}:
                 model_name = model_name.split("/", 1)[1]
@@ -543,7 +460,9 @@ async def compact(service: Any, session: Session) -> dict:
         user_messages_block = _format_user_messages_block(user_messages)
         tool_events = _extract_tool_events(full_history)
         tool_events_block = _format_tool_events_block(tool_events, max_items=5)
-        resume_protocol = _resume_protocol_block(history=full_history, tool_events=tool_events)
+        resume_protocol = _resume_protocol_block(
+            history=full_history, tool_events=tool_events
+        )
         summary_text = (
             "Another language model started to solve this problem and produced a summary of its thinking process. "
             "This message is a checkpoint to help you continue the work without duplicating effort. "

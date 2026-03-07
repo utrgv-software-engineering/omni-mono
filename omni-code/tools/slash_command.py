@@ -5,7 +5,11 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from omniagents.core.tools import rich_function_tool, RichToolOutput
+from omniagents.core.tools import (
+    rich_function_tool,
+    RichToolOutput,
+    SlashCommandRegistry,
+)
 
 
 @contextlib.contextmanager
@@ -27,7 +31,9 @@ def _temporary_environ(overrides: dict[str, str | None]):
                 os.environ[key] = value
 
 
-def _litellm_env_overrides(*, model: str | None, api_key: str | None) -> dict[str, str | None]:
+def _litellm_env_overrides(
+    *, model: str | None, api_key: str | None
+) -> dict[str, str | None]:
     if not api_key:
         return {}
     model_name = (model or "").lower()
@@ -105,14 +111,23 @@ async def run_init_agent(max_turns: int = 1000) -> str:
 
     # Load the init_agent spec directly from YAML
     # Builtin tools are auto-discovered when no tool_registry is provided
-    agent_yaml = Path(__file__).resolve().parent.parent / "omni_agents" / "init_agent" / "agent.yml"
+    agent_yaml = (
+        Path(__file__).resolve().parent.parent
+        / "omni_agents"
+        / "init_agent"
+        / "agent.yml"
+    )
     spec = load_agent_spec_from_yaml(str(agent_yaml))
 
-    resolved_model = model_runtime.get("model") if isinstance(model_runtime, dict) else None
+    resolved_model = (
+        model_runtime.get("model") if isinstance(model_runtime, dict) else None
+    )
     if isinstance(resolved_model, str) and resolved_model.strip():
         spec.model_name = resolved_model
 
-    resolved_model_settings = model_runtime.get("model_settings") if isinstance(model_runtime, dict) else None
+    resolved_model_settings = (
+        model_runtime.get("model_settings") if isinstance(model_runtime, dict) else None
+    )
     if isinstance(resolved_model_settings, dict) and resolved_model_settings:
         spec.model_settings = resolved_model_settings
 
@@ -120,11 +135,15 @@ async def run_init_agent(max_turns: int = 1000) -> str:
     agent = await _default_build_agent(settings={}, mcp_servers=None, spec=spec)
 
     model_provider, env_overrides = _build_model_provider(model_runtime or {})
-    run_config = RunConfig(model_provider=model_provider) if model_provider is not None else None
+    run_config = (
+        RunConfig(model_provider=model_provider) if model_provider is not None else None
+    )
 
     # Run the agent
     with _temporary_environ(env_overrides):
-        result = await Runner.run(agent, "begin", max_turns=max_turns, run_config=run_config)
+        result = await Runner.run(
+            agent, "begin", max_turns=max_turns, run_config=run_config
+        )
 
     try:
         status = result.final_output_as(str)
@@ -144,6 +163,10 @@ async def run_init_agent(max_turns: int = 1000) -> str:
     return status
 
 
+_REGISTRY = SlashCommandRegistry()
+_REGISTRY.register("init", lambda _arg=None: run_init_agent())
+
+
 @rich_function_tool(client_status="Running command...")
 async def dispatch(command: str, arg: Optional[str] = None) -> RichToolOutput:
     """Invoke a slash command with optional args.
@@ -151,25 +174,5 @@ async def dispatch(command: str, arg: Optional[str] = None) -> RichToolOutput:
     Called when the user's input starts with "/". Runs inside the agent's
     current run so the TUI can stream progress and avoid separate RPC timeouts.
     """
-    norm = (command or "").strip().lower()
-
-    if norm == "init":
-        output = await run_init_agent()
-    else:
-        output = f"Unknown command: {command}"
-
-    is_error = output.startswith("Unknown command:") or output.startswith("Failed to")
-    preview = output[:1500] if output else ""
-    truncated = len(output) > 1500 if output else False
-
-    return RichToolOutput(output, {
-        "display_type": "error" if is_error else "command",
-        "summary": f"/{norm}" + (f" {arg}" if arg else "") + (" failed" if is_error else ""),
-        "preview": preview,
-        "truncated": truncated,
-        "metadata": {
-            "success": not is_error,
-            "command": norm,
-            "output_length": len(output) if output else 0,
-        },
-    })
+    output = await _REGISTRY.execute(command, arg)
+    return _REGISTRY.create_rich_output(command=command, arg=arg, output=output)

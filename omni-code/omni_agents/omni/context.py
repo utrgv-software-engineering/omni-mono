@@ -54,51 +54,16 @@ def _default_skill_roots(variables: Dict[str, Any]) -> List[Path]:
 
 def _discover_skill_dirs(skill_roots: List[Path]) -> List[Path]:
     try:
-        from skills_ref import find_skill_md
+        from omniagents.core.skills import discover_skill_dirs
     except Exception:
         return []
 
-    candidates: List[Path] = []
-    for root in skill_roots:
-        try:
-            if not root.exists() or not root.is_dir():
-                continue
-        except Exception:
-            continue
-
-        if find_skill_md(root) is not None:
-            candidates.append(root)
-
-        try:
-            children = sorted(root.iterdir(), key=lambda entry: entry.name)
-        except Exception:
-            continue
-
-        for child in children:
-            if not child.is_dir():
-                continue
-            if find_skill_md(child) is not None:
-                candidates.append(child)
-
-    seen: set[str] = set()
-    unique: List[Path] = []
-    for candidate in candidates:
-        try:
-            key = str(candidate.resolve())
-        except Exception:
-            key = str(candidate)
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(candidate)
-
-    unique.sort(key=lambda entry: str(entry))
-    return unique
+    return discover_skill_dirs(skill_roots)
 
 
 def build_available_skills_block(variables: Dict[str, Any]) -> str:
     try:
-        from skills_ref import to_prompt, validate
+        from omniagents.core.skills import merge_skill_dirs, to_prompt, validate
     except Exception:
         return "<available_skills>\n</available_skills>"
 
@@ -116,15 +81,7 @@ def build_available_skills_block(variables: Dict[str, Any]) -> str:
 
     local_dirs = [d for d in valid_skill_dirs if ".omni_code" in str(d)]
     global_dirs = [d for d in valid_skill_dirs if d not in local_dirs]
-
-    merged: List[Path] = []
-    seen_names: set[str] = set()
-    for candidate in local_dirs + global_dirs:
-        name = candidate.name
-        if name in seen_names:
-            continue
-        seen_names.add(name)
-        merged.append(candidate)
+    merged = merge_skill_dirs(local_dirs + global_dirs)
 
     try:
         return to_prompt(merged)
@@ -146,11 +103,7 @@ def collect_agents_md(start_dir: str) -> List[Tuple[str, str]]:
     found.sort(
         key=lambda entry: (
             (
-                len(
-                    os.path.relpath(
-                        os.path.dirname(entry[0]), start_dir
-                    ).split(os.sep)
-                )
+                len(os.path.relpath(os.path.dirname(entry[0]), start_dir).split(os.sep))
                 if os.path.dirname(entry[0]) != start_dir
                 else 0
             ),

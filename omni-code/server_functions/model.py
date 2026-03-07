@@ -7,14 +7,15 @@ Provides runtime commands:
 """
 
 from omniagents import server_function
+from omniagents.core.server_functions.helpers import (
+    ensure_server_session,
+    notify_session_state,
+)
 from omniagents.core.session import Session
 
 
 async def _ensure_session(service, session: Session | None) -> Session | None:
-    manager = getattr(service, "_session_manager", None)
-    ensured = session
-    if manager is not None and (ensured is None or not getattr(ensured, "id", None)):
-        ensured = manager.get_or_create(None)
+    ensured = await ensure_server_session(service, session)
 
     if ensured is None:
         return None
@@ -43,10 +44,15 @@ async def _ensure_session(service, session: Session | None) -> Session | None:
     return ensured
 
 
-@server_function(description="List available models", strict=True, name_override="models")
+@server_function(
+    description="List available models", strict=True, name_override="models"
+)
 async def list_models(session: Session) -> dict:
     """List all configured models with current session state."""
-    from omni_code.models import list_text_models as get_all_models, get_default_model_name
+    from omni_code.models import (
+        list_text_models as get_all_models,
+        get_default_model_name,
+    )
 
     models = get_all_models()
     default_name = get_default_model_name()
@@ -75,8 +81,16 @@ async def list_models(session: Session) -> dict:
             default_marker = " (default)" if m["is_default"] else ""
             tokens = ""
             if m.get("max_input_tokens") or m.get("max_output_tokens"):
-                input_t = f"{m['max_input_tokens']//1000}k" if m.get("max_input_tokens") else "?"
-                output_t = f"{m['max_output_tokens']//1000}k" if m.get("max_output_tokens") else "?"
+                input_t = (
+                    f"{m['max_input_tokens']//1000}k"
+                    if m.get("max_input_tokens")
+                    else "?"
+                )
+                output_t = (
+                    f"{m['max_output_tokens']//1000}k"
+                    if m.get("max_output_tokens")
+                    else "?"
+                )
                 tokens = f" [{input_t}/{output_t}]"
             return f"  {marker} `{m['name']}` - {m['label']} [{m['provider']}]{default_marker}{tokens}"
 
@@ -109,7 +123,11 @@ async def switch_model(session: Session, text: str) -> dict:
 
     Usage: /model <name>
     """
-    from omni_code.models import get_model_config, list_text_models as get_all_models, normalize_model_ref
+    from omni_code.models import (
+        get_model_config,
+        list_text_models as get_all_models,
+        normalize_model_ref,
+    )
 
     name = text.strip()
 
@@ -124,9 +142,19 @@ async def switch_model(session: Session, text: str) -> dict:
 
         if active and model_config:
             tokens = ""
-            if model_config.get("max_input_tokens") or model_config.get("max_output_tokens"):
-                input_t = f"{model_config['max_input_tokens']//1000}k" if model_config.get("max_input_tokens") else "?"
-                output_t = f"{model_config['max_output_tokens']//1000}k" if model_config.get("max_output_tokens") else "?"
+            if model_config.get("max_input_tokens") or model_config.get(
+                "max_output_tokens"
+            ):
+                input_t = (
+                    f"{model_config['max_input_tokens']//1000}k"
+                    if model_config.get("max_input_tokens")
+                    else "?"
+                )
+                output_t = (
+                    f"{model_config['max_output_tokens']//1000}k"
+                    if model_config.get("max_output_tokens")
+                    else "?"
+                )
                 tokens = f" [{input_t}/{output_t}]"
             return {
                 "model": active,
@@ -139,7 +167,10 @@ async def switch_model(session: Session, text: str) -> dict:
             }
         else:
             # No active model - initialize from default
-            from omni_code.models import get_default_model_name, get_default_model_config
+            from omni_code.models import (
+                get_default_model_name,
+                get_default_model_config,
+            )
 
             default_name = get_default_model_name()
             default_config = get_default_model_config()
@@ -185,8 +216,16 @@ async def switch_model(session: Session, text: str) -> dict:
 
     tokens = ""
     if model_config.get("max_input_tokens") or model_config.get("max_output_tokens"):
-        input_t = f"{model_config['max_input_tokens']//1000}k" if model_config.get("max_input_tokens") else "?"
-        output_t = f"{model_config['max_output_tokens']//1000}k" if model_config.get("max_output_tokens") else "?"
+        input_t = (
+            f"{model_config['max_input_tokens']//1000}k"
+            if model_config.get("max_input_tokens")
+            else "?"
+        )
+        output_t = (
+            f"{model_config['max_output_tokens']//1000}k"
+            if model_config.get("max_output_tokens")
+            else "?"
+        )
         tokens = f" [{input_t}/{output_t}]"
 
     return {
@@ -242,25 +281,7 @@ async def set_reasoning(session: Session, text: str) -> dict:
 
 # Custom invoke handlers that notify UI after state changes
 async def _notify_session_state(service, session) -> None:
-    """Notify UI of session state change via client function."""
-    model_config = getattr(session, "model_config", None) or {}
-    payload = {
-        "model": getattr(session, "active_model", None),
-        "label": model_config.get("label"),
-        "provider": model_config.get("provider"),
-        "max_input_tokens": model_config.get("max_input_tokens"),
-        "max_output_tokens": model_config.get("max_output_tokens"),
-        "reasoning_effort": getattr(session, "reasoning_effort", None),
-    }
-    try:
-        await service.request_client_function(
-            "ui.set_session_state",
-            payload,
-            session=session,
-            expect_result=False,
-        )
-    except Exception:
-        pass  # UI notification is best-effort
+    await notify_session_state(service, session)
 
 
 async def _list_models_on_invoke(service, session, args=None):

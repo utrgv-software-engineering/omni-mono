@@ -1,3 +1,2 @@
 include project.yml
-include skills_ref/LICENSE
 recursive-include omni_code/sandbox *

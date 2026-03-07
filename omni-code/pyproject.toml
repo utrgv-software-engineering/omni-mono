@@ -46,7 +46,6 @@ packages = [
     "omni_agents.omni",
     "omni_agents.voice_agent",
     "omni_agents.init_agent",
-    "skills_ref",
 ]
 
 [tool.setuptools.package-data]
