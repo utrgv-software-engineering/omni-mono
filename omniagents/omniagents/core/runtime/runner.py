@@ -66,10 +66,10 @@ class Runner:
         # Handle context construction once for all specs
         final_context = context
         final_variables = variables
-        if variables and build_context:
+        if build_context and variables is not None:
             final_context = build_context(variables)
             # When build_context is used, keep variables stored as-is
-        elif variables and not build_context:
+        elif variables is not None and not build_context:
             # If variables provided but no factory, use variables as context (dict mode)
             final_context = variables
             final_variables = None  # Don't store variables separately in this case

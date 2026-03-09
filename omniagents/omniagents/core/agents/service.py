@@ -1377,19 +1377,30 @@ class AgentService(RpcMethodsBase):
             sess.approval_callback = run_scoped_approval
 
             # Resolve runtime context once
-            if hasattr(sess, "context") and sess.context is not None:
+            # When a build_context factory exists, always call it so that
+            # dynamic template variables (skills, date, etc.) are generated.
+            # Merge any session-level context/variables into the factory input.
+            if self.spec.build_context:
+                # Determine the variables to pass to the factory
+                factory_vars = dict(self.spec.variables or {})
+                if hasattr(sess, "variables") and isinstance(sess.variables, dict):
+                    factory_vars.update(sess.variables)
+                # Also pull workspace_root from sess.context if set
+                if hasattr(sess, "context") and isinstance(sess.context, dict):
+                    for k, v in sess.context.items():
+                        factory_vars.setdefault(k, v)
+                runtime_context = self.spec.build_context(factory_vars)
+                # Merge any extra session context keys the factory didn't produce
+                if hasattr(sess, "context") and isinstance(sess.context, dict):
+                    if isinstance(runtime_context, dict):
+                        for k, v in sess.context.items():
+                            runtime_context.setdefault(k, v)
+            elif hasattr(sess, "context") and sess.context is not None:
                 runtime_context = sess.context
             elif hasattr(sess, "variables") and sess.variables is not None:
-                if self.spec.build_context:
-                    runtime_context = self.spec.build_context(sess.variables)
-                else:
-                    runtime_context = sess.variables
+                runtime_context = sess.variables
             else:
-                # Fall back to spec-level context, building from factory if available
-                if self.spec.build_context and self.spec.variables is not None:
-                    runtime_context = self.spec.build_context(self.spec.variables)
-                else:
-                    runtime_context = self.spec.context
+                runtime_context = self.spec.context
 
             # Retry policy (env configurable)
             import math
