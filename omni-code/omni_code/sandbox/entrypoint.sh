@@ -21,11 +21,16 @@ if ! getent group "${group_name}" >/dev/null 2>&1; then
 fi
 
 if [[ -z "${existing_user_name}" ]]; then
+  # No user with this uid exists yet
   if id -u user >/dev/null 2>&1; then
     usermod -u "${uid}" -g "${gid}" user >/dev/null 2>&1 || true
   else
     useradd -m -u "${uid}" -g "${gid}" -s /bin/bash user
   fi
+elif [[ "${existing_user_name}" != "user" ]]; then
+  # A user with this uid exists but isn't named "user" (e.g. "ubuntu" from
+  # the base image). Rename it so everything uses /home/user consistently.
+  usermod -l user -d /home/user -m "${existing_user_name}" >/dev/null 2>&1 || true
 fi
 
 export HOME=/home/user
@@ -34,12 +39,8 @@ chown "${uid}:${gid}" "${HOME}" >/dev/null 2>&1 || true
 
 vnc_enabled="${OMNI_CODE_VNC:-0}"
 if [[ "${vnc_enabled}" == "1" || "${vnc_enabled}" == "true" ]]; then
-  # Create directories needed by X11/ICE session management
   mkdir -p /tmp/.ICE-unix /tmp/.X11-unix
   chmod 1777 /tmp/.ICE-unix /tmp/.X11-unix
-
-  # Run the entire VNC stack as the mapped user (dbus, Xvfb, XFCE, x11vnc,
-  # noVNC all in one user context — avoids privilege-switching dbus issues)
   gosu "${uid}:${gid}" bash /usr/local/bin/start-vnc.sh
 fi
 
@@ -56,6 +57,19 @@ if [[ "${code_server_enabled}" == "1" || "${code_server_enabled}" == "true" ]]; 
 
   gosu "${uid}:${gid}" bash -lc "nohup code-server --bind-addr 0.0.0.0:${code_server_port} --auth ${code_server_auth} ${code_server_workspace} > '${code_server_log_dir}/omni-code.log' 2>&1 &" || true
 fi
+
+# Restore persisted gitconfig from volume directory
+if [[ -f "${HOME}/.gitconfig.d/gitconfig" ]]; then
+  cp "${HOME}/.gitconfig.d/gitconfig" "${HOME}/.gitconfig"
+  chown "${uid}:${gid}" "${HOME}/.gitconfig" >/dev/null 2>&1 || true
+fi
+
+# Ensure git trusts the bind-mounted workspace
+gosu "${uid}:${gid}" git config --global --add safe.directory /home/user/workspace
+
+# Persist gitconfig back to the volume for next restart
+mkdir -p "${HOME}/.gitconfig.d" >/dev/null 2>&1 || true
+cp "${HOME}/.gitconfig" "${HOME}/.gitconfig.d/gitconfig" 2>/dev/null || true
 
 # Apply network isolation rules (if OMNI_SANDBOX_NETWORK_ALLOWLIST is set)
 source /usr/local/bin/apply-network-isolation.sh

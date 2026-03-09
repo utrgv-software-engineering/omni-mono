@@ -12,6 +12,9 @@ dist/
 .env
 .env.*
 
+# Node
+node_modules/
+
 # OS/IDE
 .DS_Store
 .idea/
