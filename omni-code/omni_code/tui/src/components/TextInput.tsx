@@ -1,5 +1,6 @@
 import React from "react";
 import { Box, Text, useInput, type Key } from "ink";
+import { useTheme } from "../ThemeContext.js";
 
 type Props = {
   value: string;
@@ -11,6 +12,8 @@ type Props = {
 };
 
 export function TextInput({ value, onChange, onSubmit, onCancel, placeholder, prompt }: Props) {
+  const t = useTheme();
+
   useInput((input: string, key: Key) => {
     if (key.escape) {
       onCancel();
@@ -31,9 +34,9 @@ export function TextInput({ value, onChange, onSubmit, onCancel, placeholder, pr
 
   return (
     <Box>
-      {prompt ? <Text color="cyan">{prompt} </Text> : null}
-      <Text>{value || (placeholder ? <Text color="gray">{placeholder}</Text> : "")}</Text>
-      <Text color="cyan">_</Text>
+      {prompt ? <Text color={t.accent}>{prompt} </Text> : null}
+      <Text color={t.fg}>{value || (placeholder ? <Text color={t.fgSubtle}>{placeholder}</Text> : "")}</Text>
+      <Text color={t.accent}>_</Text>
     </Box>
   );
 }

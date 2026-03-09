@@ -1,5 +1,6 @@
 import React from "react";
 import { Box, Text, useInput, useStdout, type Key } from "ink";
+import { useTheme } from "../ThemeContext.js";
 
 export type Hint = { key: string; label: string };
 
@@ -10,6 +11,7 @@ type Props = {
 };
 
 export function HelpOverlay({ title, hints, onClose }: Props) {
+  const t = useTheme();
   const { stdout } = useStdout();
   const cols = stdout?.columns ?? 80;
   const maxKeyLen = Math.max(...hints.map((h) => h.key.length));
@@ -24,28 +26,28 @@ export function HelpOverlay({ title, hints, onClose }: Props) {
     <Box
       flexDirection="column"
       borderStyle="round"
-      borderColor="cyan"
+      borderColor={t.accent}
       paddingX={2}
       paddingY={1}
       width={Math.min(cols - 4, 60)}
     >
       <Box marginBottom={1}>
-        <Text bold color="cyan">
+        <Text bold color={t.accent}>
           {title} — Keybindings
         </Text>
       </Box>
 
       {hints.map((h, i) => (
         <Box key={i}>
-          <Text color="yellow" bold>
+          <Text color={t.warning} bold>
             {h.key.padEnd(maxKeyLen + 2)}
           </Text>
-          <Text>{h.label}</Text>
+          <Text color={t.fg}>{h.label}</Text>
         </Box>
       ))}
 
       <Box marginTop={1}>
-        <Text color="gray">Press ? or esc to close</Text>
+        <Text color={t.fgSubtle}>Press ? or esc to close</Text>
       </Box>
     </Box>
   );

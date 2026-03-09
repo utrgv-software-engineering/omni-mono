@@ -6,11 +6,11 @@ import { Panel } from "./components/Panel.js";
 import { TitleBar } from "./components/TitleBar.js";
 import { StatusBar, type InputMode } from "./components/StatusBar.js";
 import type { Hint } from "./components/KeyHint.js";
+import { useTheme } from "./ThemeContext.js";
 import { Board } from "./views/Board.js";
 import { ProjectHome } from "./views/ProjectHome.js";
 import { TicketDetail } from "./views/TicketDetail.js";
 import { Settings } from "./views/Settings.js";
-import { Containers } from "./views/Containers.js";
 import { Onboarding } from "./views/Onboarding.js";
 import { TextInput } from "./components/TextInput.js";
 import { ConfirmDialog } from "./components/ConfirmDialog.js";
@@ -39,7 +39,7 @@ const TICKET_SPLIT_OPTIONS_MAP: Record<string, TileType> = {
 
 // --- Types ---
 
-type Overlay = "settings" | "containers" | null;
+type Overlay = "settings" | null;
 
 type ContentView =
   | { type: "home" }
@@ -112,11 +112,13 @@ function computeUnifiedRects(
   const contentX = sidebarW;
   const contentW = Math.max(10, totalCols - sidebarW);
 
-  // Sidebar: 60/40 split
-  const projH = Math.floor(totalH * 0.6);
-  const supH = totalH - projH;
+  // Sidebar: 3-way split
+  const projH = Math.floor(totalH * 0.4);
+  const supH = Math.floor(totalH * 0.35);
+  const contH = totalH - projH - supH;
   rects.set("projects", { x: 0, y: 0, w: sidebarW, h: projH });
   rects.set("supervisors", { x: 0, y: projH, w: sidebarW, h: supH });
+  rects.set("containers", { x: 0, y: projH + supH, w: sidebarW, h: contH });
 
   // Content area — tiles for home or ticket views
   if (contentView.type === "home" && tilingRoot) {
@@ -139,6 +141,7 @@ function computeUnifiedRects(
 // --- Main App ---
 
 export function App() {
+  const th = useTheme();
   const { exit } = useApp();
   const { stdout } = useStdout();
   const { stdin, setRawMode } = useStdin();
@@ -159,9 +162,40 @@ export function App() {
   const [mode, setMode] = useState<InputMode>("NORMAL");
   const lastSidebarRegion = useRef<string>("projects");
 
-  // Track which sidebar panel the user was last on
+  // Remember last content view per sidebar section
+  const lastProjectsView = useRef<ContentView>({ type: "home" });
+  const lastSupervisorsView = useRef<ContentView>({ type: "home" });
+
+  // Track which sidebar panel the user was last on & save/restore content views
   useEffect(() => {
-    if (focusedRegion === "projects" || focusedRegion === "supervisors") {
+    if (focusedRegion === "projects" || focusedRegion === "supervisors" || focusedRegion === "containers") {
+      // Save current content view for the section we're leaving
+      if (lastSidebarRegion.current === "projects" && focusedRegion !== "projects") {
+        lastProjectsView.current = contentView;
+      } else if (lastSidebarRegion.current === "supervisors" && focusedRegion !== "supervisors") {
+        lastSupervisorsView.current = contentView;
+      }
+      // Restore content view for the section we're entering (default to first item)
+      if (focusedRegion === "projects" && lastSidebarRegion.current !== "projects") {
+        if (lastProjectsView.current.type === "home" && projects[projectListIndex]) {
+          setContentView({ type: "home" });
+        } else {
+          setContentView(lastProjectsView.current);
+        }
+      } else if (focusedRegion === "supervisors" && lastSidebarRegion.current !== "supervisors") {
+        let view = lastSupervisorsView.current;
+        if (view.type === "home" && activeTickets.length > 0) {
+          const ticket = activeTickets[supervisorIndex] ?? activeTickets[0];
+          view = { type: "ticket", ticket };
+          lastSupervisorsView.current = view;
+        }
+        setContentView(view);
+        // Sync project index so supervisor PTY sessions resolve correctly
+        if (view.type === "ticket") {
+          const projIdx = projects.findIndex((p) => p.id === view.ticket.project_id);
+          if (projIdx >= 0) setProjectListIndex(projIdx);
+        }
+      }
       lastSidebarRegion.current = focusedRegion;
     }
   }, [focusedRegion]);
@@ -169,6 +203,7 @@ export function App() {
   // Navigation
   const [projectListIndex, setProjectListIndex] = useState(0);
   const [supervisorIndex, setSupervisorIndex] = useState(0);
+  const [containerIndex, setContainerIndex] = useState(0);
   const [contentView, setContentView] = useState<ContentView>({ type: "home" });
 
   // Data
@@ -269,7 +304,7 @@ export function App() {
 
       setPickerOpen(false);
       setMode("NORMAL");
-      if (prevProjectId.current !== null) {
+      if (prevProjectId.current !== null && focusedRegion === "projects") {
         setFocusedRegion("projects");
       }
       prevProjectId.current = newId;
@@ -434,15 +469,18 @@ export function App() {
   }, [ticketTilingState.root, focusedRegion, contentView.type]);
 
   // Auto-focus first ticket tile when entering ticket view (one-shot per ticket)
+  // Only auto-focus if the user isn't browsing from the sidebar
   const ticketAutoFocused = useRef<string | null>(null);
   useEffect(() => {
     const ticketId = contentView.type === "ticket" ? contentView.ticket.id : null;
     if (!ticketId) { ticketAutoFocused.current = null; return; }
     if (ticketAutoFocused.current === ticketId) return; // already auto-focused this ticket
     if (!ticketTilingState.root || !ticketTilingState.focusedId) return;
+    // Don't steal focus from sidebar — only auto-focus if already on tiles/content
+    if (focusedRegion === "projects" || focusedRegion === "supervisors" || focusedRegion === "containers") return;
     ticketAutoFocused.current = ticketId;
     setFocusedRegion(`tile:${ticketTilingState.focusedId}`);
-  }, [contentView, ticketTilingState.root, ticketTilingState.focusedId]);
+  }, [contentView, ticketTilingState.root, ticketTilingState.focusedId, focusedRegion]);
 
   // Clean up ticket sessions on unmount
   useEffect(() => {
@@ -497,7 +535,7 @@ export function App() {
         try {
           const tickets = await api.listTickets(p.id);
           for (const t of tickets) {
-            if (t.task && t.task.status?.type === "running") {
+            if (t.supervisor_session_id || (t.task && t.task.status?.type === "running")) {
               allActive.push({ ...t, project_label: p.label });
             }
           }
@@ -626,13 +664,77 @@ export function App() {
 
   const navigateDirection = useCallback(
     (dir: "up" | "down" | "left" | "right") => {
-      const rects = computeUnifiedRects(SIDEBAR_WIDTH, totalCols, availH, tilingState.root, contentView, ticketTilingState.root);
-      const neighbor = findNeighbor(rects, focusedRegion, dir);
-      if (neighbor) {
-        setFocusedRegion(neighbor);
-        if (neighbor.startsWith("tile:")) {
-          const dispatch = contentView.type === "ticket" ? ticketTilingDispatch : tilingDispatch;
-          dispatch({ type: "FOCUS_TILE", id: neighbor.slice(5) });
+      const sidebarRegions = ["projects", "supervisors", "containers"];
+      const isSidebar = sidebarRegions.includes(focusedRegion);
+      const sidebarIdx = sidebarRegions.indexOf(focusedRegion);
+
+      if (isSidebar) {
+        if (dir === "up" && sidebarIdx > 0) {
+          setFocusedRegion(sidebarRegions[sidebarIdx - 1]);
+          return;
+        }
+        if (dir === "down" && sidebarIdx < sidebarRegions.length - 1) {
+          setFocusedRegion(sidebarRegions[sidebarIdx + 1]);
+          return;
+        }
+        if (dir === "right") {
+          // Jump to first tile or content
+          const isTicket = contentView.type === "ticket";
+          const root = isTicket ? ticketTilingState.root : tilingState.root;
+          if (root) {
+            const leaves = getLeaves(root);
+            if (leaves.length > 0) {
+              const id = leaves[0].id;
+              setFocusedRegion(`tile:${id}`);
+              const dispatch = isTicket ? ticketTilingDispatch : tilingDispatch;
+              dispatch({ type: "FOCUS_TILE", id });
+              return;
+            }
+          }
+          if (contentView.type !== "home") {
+            setFocusedRegion("content");
+          }
+        }
+        return;
+      }
+
+      // From tiles/content: left goes to sidebar, up/down/right use spatial nav within tiles
+      if (dir === "left" && focusedRegion.startsWith("tile:")) {
+        // Check if there's a tile further left first
+        const isTicket = contentView.type === "ticket";
+        const root = isTicket ? ticketTilingState.root : tilingState.root;
+        if (root) {
+          const tileRects = computeRects(root, 0, 0, totalCols, availH);
+          const neighbor = findNeighbor(tileRects, focusedRegion.slice(5), "left");
+          if (neighbor) {
+            setFocusedRegion(`tile:${neighbor}`);
+            const dispatch = isTicket ? ticketTilingDispatch : tilingDispatch;
+            dispatch({ type: "FOCUS_TILE", id: neighbor });
+            return;
+          }
+        }
+        // No tile to the left — go to sidebar
+        setFocusedRegion(lastSidebarRegion.current);
+        return;
+      }
+
+      if (dir === "left" && focusedRegion === "content") {
+        setFocusedRegion(lastSidebarRegion.current);
+        return;
+      }
+
+      // Within tiles: use spatial navigation
+      if (focusedRegion.startsWith("tile:")) {
+        const isTicket = contentView.type === "ticket";
+        const root = isTicket ? ticketTilingState.root : tilingState.root;
+        if (root) {
+          const tileRects = computeRects(root, 0, 0, totalCols, availH);
+          const neighbor = findNeighbor(tileRects, focusedRegion.slice(5), dir);
+          if (neighbor) {
+            setFocusedRegion(`tile:${neighbor}`);
+            const dispatch = isTicket ? ticketTilingDispatch : tilingDispatch;
+            dispatch({ type: "FOCUS_TILE", id: neighbor });
+          }
         }
       }
     },
@@ -667,14 +769,6 @@ export function App() {
     setMode("NORMAL");
   }, []);
 
-  /** Navigate back one level in the view hierarchy (sidebar only). */
-  const handleViewBack = useCallback(() => {
-    if (contentView.type === "board") {
-      setContentView({ type: "home" });
-    } else if (contentView.type === "ticket") {
-      setContentView({ type: "board" });
-    }
-  }, [contentView]);
 
   // Add project handler
   const handleAddProject = useCallback(
@@ -819,7 +913,7 @@ export function App() {
   // --- NORMAL mode input handling ---
   useInput((input: string, key: Key) => {
     // Double Ctrl+C to quit — must be first to prevent "c" from triggering other shortcuts
-    if (key.ctrl && input === "c" && !focusedRegion.startsWith("tile:")) {
+    if (key.ctrl && input === "c") {
       if (ctrlCPending) {
         if (ctrlCTimerRef.current) clearTimeout(ctrlCTimerRef.current);
         exit();
@@ -952,7 +1046,7 @@ export function App() {
     }
 
     // --- "H" to enter hotkey assign mode ---
-    if (input === "H" && !key.ctrl && !key.meta) {
+    if (input === "H" && !key.ctrl && !key.meta && focusedRegion === "projects") {
       if (selectedProject) {
         setAssigningHotkey(true);
         if (assignTimerRef.current) clearTimeout(assignTimerRef.current);
@@ -964,7 +1058,7 @@ export function App() {
 
     // Global overlays
     if (input === "S" && !key.ctrl && !key.meta) { setOverlay("settings"); return; }
-    if (input === "C" && !key.ctrl && !key.meta) { setOverlay("containers"); return; }
+    if (input === "C" && !key.ctrl && !key.meta) { setFocusedRegion("containers"); return; }
 
     // Ctrl+arrows: unified spatial navigation
     if (key.ctrl && key.leftArrow) { navigateDirection("left"); return; }
@@ -974,7 +1068,7 @@ export function App() {
 
     // Tab cycles through all regions
     if (key.tab) {
-      const regionOrder: string[] = ["projects", "supervisors"];
+      const regionOrder: string[] = ["projects", "supervisors", "containers"];
       if (contentView.type === "home" && tilingState.root) {
         const leaves = getLeaves(tilingState.root);
         for (const leaf of leaves) regionOrder.push(`tile:${leaf.id}`);
@@ -1040,9 +1134,8 @@ export function App() {
 
     // --- Projects section ---
     if (focusedRegion === "projects") {
-      if (key.escape && contentView.type !== "home") { handleViewBack(); return; }
       const totalRows = projects.length;
-      if (key.upArrow || input === "k") {
+      if ((key.upArrow && !key.ctrl) || input === "k") {
         setProjectListIndex((prev) => {
           const next = clamp(prev - 1, totalRows);
           if (next !== prev && contentView.type !== "home") {
@@ -1052,7 +1145,7 @@ export function App() {
         });
         return;
       }
-      if (key.downArrow || input === "j") {
+      if ((key.downArrow && !key.ctrl) || input === "j") {
         setProjectListIndex((prev) => {
           const next = clamp(prev + 1, totalRows);
           if (next !== prev && contentView.type !== "home") {
@@ -1107,20 +1200,61 @@ export function App() {
 
     // --- Supervisors section ---
     if (focusedRegion === "supervisors") {
-      if (key.escape && contentView.type !== "home") { handleViewBack(); return; }
-      if (key.upArrow || input === "k") { setSupervisorIndex((v) => clamp(v - 1, activeTickets.length)); return; }
-      if (key.downArrow || input === "j") { setSupervisorIndex((v) => clamp(v + 1, activeTickets.length)); return; }
-
-      const selectedSupervisor = activeTickets[supervisorIndex];
-      if (key.return && selectedSupervisor) {
-        const projIdx = projects.findIndex((p) => p.id === selectedSupervisor.project_id);
-        if (projIdx >= 0) {
-          setProjectListIndex(projIdx);
-          setContentView({ type: "ticket", ticket: selectedSupervisor });
-          // Stay on supervisors — auto-focus effect will move to tile once ready
-          setFocusedRegion("supervisors");
-        }
+      if ((key.upArrow && !key.ctrl) || input === "k") {
+        setSupervisorIndex((v) => {
+          const next = clamp(v - 1, activeTickets.length);
+          const ticket = activeTickets[next];
+          if (ticket) {
+            const projIdx = projects.findIndex((p) => p.id === ticket.project_id);
+            if (projIdx >= 0) setProjectListIndex(projIdx);
+            setContentView({ type: "ticket", ticket });
+          }
+          return next;
+        });
         return;
+      }
+      if ((key.downArrow && !key.ctrl) || input === "j") {
+        setSupervisorIndex((v) => {
+          const next = clamp(v + 1, activeTickets.length);
+          const ticket = activeTickets[next];
+          if (ticket) {
+            const projIdx = projects.findIndex((p) => p.id === ticket.project_id);
+            if (projIdx >= 0) setProjectListIndex(projIdx);
+            setContentView({ type: "ticket", ticket });
+          }
+          return next;
+        });
+        return;
+      }
+    }
+
+    // --- Containers section ---
+    if (focusedRegion === "containers") {
+      if ((key.upArrow && !key.ctrl) || input === "k") { setContainerIndex((v) => clamp(v - 1, containers.length)); return; }
+      if ((key.downArrow && !key.ctrl) || input === "j") { setContainerIndex((v) => clamp(v + 1, containers.length)); return; }
+      const currentContainer = containers[containerIndex];
+      if (currentContainer) {
+        if (input === "s") {
+          setStatus(`Starting ${currentContainer.name}...`);
+          api.startContainer(currentContainer.name)
+            .then(() => { setStatus(`Started ${currentContainer.name}`); refreshProjects(); })
+            .catch((err) => setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`));
+          return;
+        }
+        if (input === "x") {
+          setStatus(`Stopping ${currentContainer.name}...`);
+          api.stopContainer(currentContainer.name)
+            .then(() => { setStatus(`Stopped ${currentContainer.name}`); refreshProjects(); })
+            .catch((err) => setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`));
+          return;
+        }
+        if (input === "R") {
+          setStatus(`Removing ${currentContainer.name}...`);
+          api.rebuildContainer(currentContainer.name)
+            .then(() => { setStatus(`Removed ${currentContainer.name}`); refreshProjects(); })
+            .catch((err) => setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`));
+          return;
+        }
       }
     }
 
@@ -1132,7 +1266,6 @@ export function App() {
 
       if (key.ctrl && input === "n") { openPicker(true); return; }
       if (input === "x") { closeCurrentTile(); return; }
-      if (key.escape) { handleReleaseFocus(); return; }
 
       // Resize in NORMAL mode
       if (input === "-") { dispatch({ type: "RESIZE", axis: "horizontal", delta: -1, availCols: contentCols, availRows: contentRows }); return; }
@@ -1152,7 +1285,7 @@ export function App() {
   // --- Breadcrumbs ---
   const breadcrumbs: string[] = [];
   if (overlay) {
-    breadcrumbs.push(overlay === "settings" ? "Settings" : "Containers");
+    breadcrumbs.push("Settings");
   } else {
     breadcrumbs.push("Projects");
     if (selectedProject) {
@@ -1207,7 +1340,6 @@ export function App() {
         { key: "C-n", label: "new split" },
         { key: "-/=", label: "resize" },
         { key: "x", label: "close" },
-        { key: "esc", label: "sidebar" },
       ];
     }
 
@@ -1217,8 +1349,6 @@ export function App() {
       { key: "tab", label: "cycle" },
     ];
 
-    const canGoBack = contentView.type !== "home";
-
     if (focusedRegion === "projects") {
       return [
         ...base,
@@ -1227,26 +1357,61 @@ export function App() {
         { key: "space", label: "actions" },
         { key: "H", label: "assign hotkey" },
         { key: "S", label: "settings" },
-        ...(canGoBack ? [{ key: "esc", label: "back" }] : []),
       ];
     }
-    // supervisors
+    if (focusedRegion === "supervisors") {
+      return [
+        ...base,
+        { key: "enter", label: "view ticket" },
+        { key: "S", label: "settings" },
+      ];
+    }
+
+    // containers
     return [
       ...base,
-      { key: "enter", label: "view ticket" },
+      { key: "s", label: "start" },
+      { key: "x", label: "stop" },
+      { key: "R", label: "remove" },
       { key: "S", label: "settings" },
-      ...(canGoBack ? [{ key: "esc", label: "back" }] : []),
-      { key: "C-c C-c", label: "quit" },
     ];
   };
 
   // --- Render main content ---
+  const selectedContainer = containers[containerIndex] ?? null;
+
   const renderMain = () => {
+    if (focusedRegion === "containers") {
+      if (!selectedContainer) {
+        return (
+          <Panel title="Containers" focused={false} flexGrow={1}>
+            <Box flexDirection="column" paddingX={1}>
+              <Text color={th.fgSubtle}>No containers found.</Text>
+            </Box>
+          </Panel>
+        );
+      }
+      const sc = selectedContainer;
+      const stateColor = sc.state === "running" ? th.success : sc.state === "exited" ? th.error : sc.state === "created" ? th.warning : sc.state === "paused" ? th.info : th.fgSubtle;
+      return (
+        <Panel title={`Container \u203A ${sc.name}`} focused={false} flexGrow={1}>
+          <Box flexDirection="column" paddingX={1}>
+            <Box><Text color={th.fgSubtle}>Name     </Text><Text color={th.fg}>{sc.name}</Text></Box>
+            <Box><Text color={th.fgSubtle}>Image    </Text><Text color={th.fg}>{sc.image}</Text></Box>
+            <Box><Text color={th.fgSubtle}>State    </Text><Text color={stateColor} bold>{sc.state}</Text></Box>
+            <Box><Text color={th.fgSubtle}>Status   </Text><Text color={th.fg}>{sc.status}</Text></Box>
+            <Box><Text color={th.fgSubtle}>Created  </Text><Text color={th.fg}>{sc.created}</Text></Box>
+            {sc.ports ? <Box><Text color={th.fgSubtle}>Ports    </Text><Text color={th.fg}>{sc.ports}</Text></Box> : null}
+          </Box>
+        </Panel>
+      );
+    }
+
     if (!selectedProject) {
       return (
         <Panel title="Projects" focused={false} flexGrow={1}>
           <Box flexDirection="column" paddingX={1}>
-            <Text color="gray">No projects configured. Press <Text color="cyan" bold>a</Text> to add one.</Text>
+            <Text color={th.fgSubtle}>No projects configured. Press <Text color={th.accent} bold>a</Text> to add one.</Text>
           </Box>
         </Panel>
       );
@@ -1258,12 +1423,12 @@ export function App() {
         <Panel title={`${selectedProject.label} \u203A Actions`} focused flexGrow={1}>
           <Box flexDirection="column" paddingX={1}>
             {projectActions.actions.map((action, i) => (
-              <Text key={action.key} color={i === projectActions.selectedIndex ? "cyan" : undefined}>
+              <Text key={action.key} color={i === projectActions.selectedIndex ? th.accent : undefined}>
                 {i === projectActions.selectedIndex ? "\u25B8 " : "  "}{action.label}
               </Text>
             ))}
             <Box marginTop={1}>
-              <Text color="gray">enter select · esc cancel</Text>
+              <Text color={th.fgSubtle}>enter select · esc cancel</Text>
             </Box>
           </Box>
         </Panel>
@@ -1276,7 +1441,7 @@ export function App() {
         <Panel title={`${selectedProject.label} \u203A Sandbox`} focused flexGrow={1}>
           <Box flexDirection="column" paddingX={1}>
             {sandboxPicker.current ? (
-              <Text color="gray">
+              <Text color={th.fgSubtle}>
                 Current: {sandboxPicker.current.image
                   ? `image: ${sandboxPicker.current.image}`
                   : sandboxPicker.current.dockerfile
@@ -1284,25 +1449,25 @@ export function App() {
                     : "none"}
               </Text>
             ) : (
-              <Text color="gray">Current: none (running locally)</Text>
+              <Text color={th.fgSubtle}>Current: none (running locally)</Text>
             )}
             {sandboxPicker.inputMode ? (
               <Box marginTop={1}>
-                <Text color="cyan">{sandboxPicker.inputMode === "image" ? "Image:" : "Dockerfile:"} </Text>
-                <Text>{sandboxPicker.inputValue || <Text color="gray">{sandboxPicker.inputMode === "image" ? "ubuntu:24.04" : "Dockerfile"}</Text>}</Text>
-                <Text color="cyan">_</Text>
+                <Text color={th.accent}>{sandboxPicker.inputMode === "image" ? "Image:" : "Dockerfile:"} </Text>
+                <Text color={th.fg}>{sandboxPicker.inputValue || <Text color={th.fgSubtle}>{sandboxPicker.inputMode === "image" ? "ubuntu:24.04" : "Dockerfile"}</Text>}</Text>
+                <Text color={th.accent}>_</Text>
               </Box>
             ) : (
               <Box flexDirection="column" marginTop={1}>
                 {SANDBOX_OPTIONS.map((opt, i) => (
-                  <Text key={opt.key} color={i === sandboxPicker.selectedIndex ? "cyan" : undefined}>
+                  <Text key={opt.key} color={i === sandboxPicker.selectedIndex ? th.accent : undefined}>
                     {i === sandboxPicker.selectedIndex ? "\u25B8 " : "  "}{opt.label}
                   </Text>
                 ))}
               </Box>
             )}
             <Box marginTop={1}>
-              <Text color="gray">enter select · esc cancel</Text>
+              <Text color={th.fgSubtle}>enter select · esc cancel</Text>
             </Box>
           </Box>
         </Panel>
@@ -1377,7 +1542,7 @@ export function App() {
   if (needsOnboarding === null) {
     return (
       <Box flexDirection="column" height={totalRows}>
-        <Text color="gray">Loading...</Text>
+        <Text color={th.fgSubtle}>Loading...</Text>
       </Box>
     );
   }
@@ -1394,8 +1559,6 @@ export function App() {
 
       {overlay === "settings" ? (
         <Settings onQuit={handleCloseOverlay} />
-      ) : overlay === "containers" ? (
-        <Containers onQuit={handleCloseOverlay} />
       ) : (
         <>
           <Box flexDirection="row" flexGrow={1}>
@@ -1409,11 +1572,11 @@ export function App() {
               >
                 <Box flexDirection="column">
                   {projects.length === 0 ? (
-                    <Text color="gray"> no projects</Text>
+                    <Text color={th.fgSubtle}> no projects</Text>
                   ) : (
                     projects.map((project, i) => {
-                      const isCursor = i === projectListIndex;
                       const isProjectsFocused = focusedRegion === "projects";
+                      const isCursor = i === projectListIndex;
                       const hk = hotkeyByProject[project.id];
                       const hkPrefix = hk !== undefined ? `[${hk}]` : "   ";
                       const suffix =
@@ -1423,18 +1586,18 @@ export function App() {
                       const label = `${hkPrefix} ${truncate(project.label, w - 8)} ${project.ticket_count}${suffix}`;
                       if (isCursor) {
                         return (
-                          <Text key={project.id} inverse={isProjectsFocused} color={!isProjectsFocused ? "cyan" : undefined}>
+                          <Text key={project.id} inverse={isProjectsFocused} color={!isProjectsFocused ? th.accent : undefined}>
                             {padRow(label)}
                           </Text>
                         );
                       }
                       return (
-                        <Text key={project.id}>
-                          {hk !== undefined ? <Text color="yellow">[{hk}]</Text> : "   "}{" "}{truncate(project.label, w - 8)}
-                          <Text color="gray"> {project.ticket_count}</Text>
-                          {project.sandbox ? <Text color="blue"> D</Text> : null}
-                          {project.active_count > 0 ? <Text color="green"> {"\u25CF"}</Text> : null}
-                          {autoDispatchMap[project.id] ? <Text color="magenta"> A</Text> : null}
+                        <Text key={project.id} color={th.fg}>
+                          {hk !== undefined ? <Text color={th.warning}>[{hk}]</Text> : "   "}{" "}{truncate(project.label, w - 8)}
+                          <Text color={th.fgSubtle}> {project.ticket_count}</Text>
+                          {project.sandbox ? <Text color={th.info}> D</Text> : null}
+                          {project.active_count > 0 ? <Text color={th.success}> {"\u25CF"}</Text> : null}
+                          {autoDispatchMap[project.id] ? <Text color={th.accentSecondary}> A</Text> : null}
                         </Text>
                       );
                     })
@@ -1449,11 +1612,11 @@ export function App() {
               >
                 <Box flexDirection="column">
                   {activeTickets.length === 0 ? (
-                    <Text color="gray"> no active supervisors</Text>
+                    <Text color={th.fgSubtle}> no active supervisors</Text>
                   ) : (
                     activeTickets.map((t, i) => {
-                      const isCursor = focusedRegion === "supervisors" && i === supervisorIndex;
-                      const isViewing = contentView.type === "ticket" && contentView.ticket.id === t.id;
+                      const isSupervisorsFocused = focusedRegion === "supervisors";
+                      const isCursor = i === supervisorIndex;
                       const elapsed = t.task ? formatTimeAgo(new Date(t.task.status.timestamp).toISOString()) : "";
                       const line1 = ` \u25CF ${truncate(t.title, w - 4)}`;
                       const meta = `${t.project_label}${elapsed ? ` ${elapsed}` : ""}${t.phase ? ` [${t.phase}]` : ""}`;
@@ -1461,18 +1624,18 @@ export function App() {
                       if (isCursor) {
                         return (
                           <Box key={t.id} flexDirection="column">
-                            <Text inverse>{padRow(line1)}</Text>
-                            <Text inverse>{padRow(line2)}</Text>
+                            <Text inverse={isSupervisorsFocused} color={!isSupervisorsFocused ? th.accent : undefined}>{padRow(line1)}</Text>
+                            <Text inverse={isSupervisorsFocused} color={!isSupervisorsFocused ? th.accent : undefined}>{padRow(line2)}</Text>
                           </Box>
                         );
                       }
                       return (
                         <Box key={t.id} flexDirection="column">
-                          <Text color={isViewing ? "cyan" : undefined}>
+                          <Text color={th.fg}>
                             {" "}
-                            <Text color={isViewing ? "cyan" : "green"}>{"\u25CF"}</Text> {truncate(t.title, w - 4)}
+                            <Text color={th.success}>{"\u25CF"}</Text> {truncate(t.title, w - 4)}
                           </Text>
-                          <Text color={isViewing ? "cyan" : "gray"}>{"   "}{meta}</Text>
+                          <Text color={th.fgSubtle}>{"   "}{meta}</Text>
                         </Box>
                       );
                     })
@@ -1481,20 +1644,32 @@ export function App() {
               </Panel>
 
               {/* Containers panel */}
-              <Panel title={`Containers (${containers.length})`}>
+              <Panel title={`Containers (${containers.length})`} focused={focusedRegion === "containers"}>
                 <Box flexDirection="column">
                   {containers.length === 0 ? (
-                    <Text color="gray"> none</Text>
+                    <Text color={th.fgSubtle}> none</Text>
                   ) : (
-                    containers.map((c) => (
-                      <Text key={c.name} wrap="truncate">
-                        {" "}
-                        <Text color={c.state === "running" ? "green" : c.state === "exited" ? "red" : "yellow"}>
-                          {c.state === "running" ? "\u25CF" : "\u25CB"}
+                    containers.map((c, i) => {
+                      const isContainersFocused = focusedRegion === "containers";
+                      const isCursor = i === containerIndex;
+                      const stateColor = c.state === "running" ? th.success : c.state === "exited" ? th.error : th.warning;
+                      const dot = c.state === "running" ? "\u25CF" : "\u25CB";
+                      const label = ` ${dot} ${truncate(c.name.replace(/^omni-work-/, ""), w - 5)}`;
+                      if (isCursor) {
+                        return (
+                          <Text key={c.name} inverse={isContainersFocused} color={!isContainersFocused ? th.accent : undefined} wrap="truncate">
+                            {padRow(label)}
+                          </Text>
+                        );
+                      }
+                      return (
+                        <Text key={c.name} color={th.fg} wrap="truncate">
+                          {" "}
+                          <Text color={stateColor}>{dot}</Text>
+                          {" "}{truncate(c.name.replace(/^omni-work-/, ""), w - 5)}
                         </Text>
-                        {" "}{truncate(c.name.replace(/^omni-work-/, ""), w - 5)}
-                      </Text>
-                    ))
+                      );
+                    })
                   )}
                 </Box>
               </Panel>

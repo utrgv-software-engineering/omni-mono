@@ -12,6 +12,7 @@ import { Panel } from "../components/Panel.js";
 import type { TileNode } from "./tree.js";
 import type { PtySession } from "./PtySession.js";
 import { TerminalView } from "./TerminalView.js";
+import { useTheme } from "../ThemeContext.js";
 
 // --- TileTree ---
 
@@ -27,6 +28,7 @@ type Props = {
 };
 
 export function TileTree({ node, availCols, availRows, focusedId, active = false, rawFocused = false, sessions }: Props) {
+  const t = useTheme();
   if (node.type === "leaf") {
     const isFocused = node.id === focusedId;
     const isRawFocused = isFocused && rawFocused;
@@ -51,7 +53,7 @@ export function TileTree({ node, availCols, availRows, focusedId, active = false
         {lines.length > 0 ? (
           <TerminalView lines={lines} cols={innerCols} rows={innerRows} />
         ) : (
-          <Text color="gray"> starting...</Text>
+          <Text color={t.fgSubtle}> starting...</Text>
         )}
       </Panel>
     );

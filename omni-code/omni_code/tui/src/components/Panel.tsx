@@ -1,5 +1,6 @@
 import React, { type ReactNode } from "react";
 import { Box, Text, useStdout } from "ink";
+import { useTheme } from "../ThemeContext.js";
 
 type Props = {
   title?: string;
@@ -17,7 +18,7 @@ type Props = {
 export function Panel({
   title,
   focused = false,
-  focusedColor = "cyan",
+  focusedColor,
   rawFocused = false,
   height,
   width,
@@ -26,7 +27,8 @@ export function Panel({
   children,
   badge,
 }: Props) {
-  const borderColor = rawFocused ? "green" : focused ? focusedColor : "gray";
+  const t = useTheme();
+  const borderColor = rawFocused ? t.borderRaw : focused ? (focusedColor ?? t.borderFocused) : t.border;
   const borderStyle = "single";
 
   return (
@@ -46,7 +48,7 @@ export function Panel({
             {title}
           </Text>
           {rawFocused ? (
-            <Text color="gray"> esc release</Text>
+            <Text color={t.fgSubtle}> esc release</Text>
           ) : null}
           {badge ? (
             <>

@@ -12,53 +12,55 @@ import { PTY_TILE_TYPES, type TileNode, type TileType } from "./tree.js";
 import type { PtySession } from "./PtySession.js";
 import { TerminalView } from "./TerminalView.js";
 import type { Ticket, Column } from "../rpc.js";
+import { useTheme } from "../ThemeContext.js";
 
 // --- Content tile renderers (inline, lightweight) ---
 
 function InfoTile({ ticket, columns, innerCols }: { ticket: Ticket; columns: Column[]; innerCols: number }) {
+  const t = useTheme();
   const currentColumn = columns.find((c) => c.id === ticket.column_id);
   return (
     <Box flexDirection="column" paddingX={1} width={innerCols}>
-      <Text bold>{ticket.title}</Text>
+      <Text color={t.fg} bold>{ticket.title}</Text>
       <Box marginTop={1} flexDirection="column">
-        <Box><Text color="gray">Column   </Text><Text>{currentColumn?.label ?? ticket.column_id}</Text></Box>
-        <Box><Text color="gray">Priority </Text><Text color={
-          ticket.priority === "critical" ? "red" :
-          ticket.priority === "high" ? "yellow" :
-          ticket.priority === "low" ? "gray" : undefined
+        <Box><Text color={t.fgSubtle}>Column   </Text><Text color={t.fg}>{currentColumn?.label ?? ticket.column_id}</Text></Box>
+        <Box><Text color={t.fgSubtle}>Priority </Text><Text color={
+          ticket.priority === "critical" ? t.priorityCritical :
+          ticket.priority === "high" ? t.priorityHigh :
+          ticket.priority === "low" ? t.priorityLow : undefined
         } bold>{ticket.priority}</Text></Box>
         {ticket.branch ? (
-          <Box><Text color="gray">Branch   </Text><Text color="magenta">{ticket.branch}</Text>{ticket.worktree_path ? <Text color="gray"> (wt)</Text> : null}</Box>
+          <Box><Text color={t.fgSubtle}>Branch   </Text><Text color={t.accentSecondary}>{ticket.branch}</Text>{ticket.worktree_path ? <Text color={t.fgSubtle}> (wt)</Text> : null}</Box>
         ) : null}
-        <Box><Text color="gray">Worktree </Text>{ticket.use_worktree ? <Text color="green">on</Text> : <Text color="gray">off</Text>}</Box>
+        <Box><Text color={t.fgSubtle}>Worktree </Text>{ticket.use_worktree ? <Text color={t.success}>on</Text> : <Text color={t.fgSubtle}>off</Text>}</Box>
         {ticket.phase ? (
-          <Box><Text color="gray">Phase    </Text><Text color="cyan">{ticket.phase}</Text></Box>
+          <Box><Text color={t.fgSubtle}>Phase    </Text><Text color={t.info}>{ticket.phase}</Text></Box>
         ) : null}
         {ticket.blocked_by.length > 0 ? (
-          <Box><Text color="gray">Blocked  </Text><Text>{ticket.blocked_by.join(", ")}</Text></Box>
+          <Box><Text color={t.fgSubtle}>Blocked  </Text><Text color={t.fg}>{ticket.blocked_by.join(", ")}</Text></Box>
         ) : null}
         {ticket.token_usage ? (
           <Box>
-            <Text color="gray">Tokens   </Text>
-            <Text color="cyan">{formatTokens(ticket.token_usage.input_tokens ?? ticket.token_usage.inputTokens ?? 0)}</Text>
-            <Text color="gray"> in </Text>
-            <Text color="cyan">{formatTokens(ticket.token_usage.output_tokens ?? ticket.token_usage.outputTokens ?? 0)}</Text>
-            <Text color="gray"> out</Text>
+            <Text color={t.fgSubtle}>Tokens   </Text>
+            <Text color={t.info}>{formatTokens(ticket.token_usage.input_tokens ?? ticket.token_usage.inputTokens ?? 0)}</Text>
+            <Text color={t.fgSubtle}> in </Text>
+            <Text color={t.info}>{formatTokens(ticket.token_usage.output_tokens ?? ticket.token_usage.outputTokens ?? 0)}</Text>
+            <Text color={t.fgSubtle}> out</Text>
           </Box>
         ) : null}
-        <Box><Text color="gray">ID       </Text><Text color="gray">{ticket.id}</Text></Box>
+        <Box><Text color={t.fgSubtle}>ID       </Text><Text color={t.fgSubtle}>{ticket.id}</Text></Box>
       </Box>
       {ticket.description ? (
         <Box marginTop={1} flexDirection="column">
-          <Text color="gray" bold>Description</Text>
-          <Text>{ticket.description}</Text>
+          <Text color={t.fgSubtle} bold>Description</Text>
+          <Text color={t.fg}>{ticket.description}</Text>
         </Box>
       ) : null}
       {ticket.task?.last_urls ? (
         <Box marginTop={1} flexDirection="column">
-          <Text color="gray" bold>URLs</Text>
+          <Text color={t.fgSubtle} bold>URLs</Text>
           {Object.entries(ticket.task.last_urls).map(([key, url]) => (
-            <Text key={key}>{key}: {url}</Text>
+            <Text key={key} color={t.fg}>{key}: {url}</Text>
           ))}
         </Box>
       ) : null}
@@ -105,6 +107,7 @@ export function TicketTileTree({
   node, availCols, availRows, focusedId, active = false, rawFocused = false,
   sessions, ticket, projectId, columns, renderContentTile,
 }: Props) {
+  const t = useTheme();
   if (node.type === "leaf") {
     const isFocused = node.id === focusedId;
     const isRawFocused = isFocused && rawFocused;
@@ -125,13 +128,13 @@ export function TicketTileTree({
       const lines = session ? session.readBuffer(innerCols, innerRows) : [];
       content = lines.length > 0
         ? <TerminalView lines={lines} cols={innerCols} rows={innerRows} />
-        : <Text color="gray"> starting...</Text>;
+        : <Text color={t.fgSubtle}> starting...</Text>;
     } else if (node.tileType === "info") {
       content = <InfoTile ticket={ticket} columns={columns} innerCols={innerCols} />;
     } else if (renderContentTile) {
       content = renderContentTile(node.tileType, innerCols, innerRows, showFocused);
     } else {
-      content = <Text color="gray"> {label}</Text>;
+      content = <Text color={t.fgSubtle}> {label}</Text>;
     }
 
     return (

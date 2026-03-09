@@ -10,6 +10,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import { FilterInput, fuzzyMatch } from "../components/FilterInput.js";
 import { Terminal } from "../components/Terminal.js";
 import type { Hint } from "../components/KeyHint.js";
+import { useTheme } from "../ThemeContext.js";
 
 type Props = {
   project: Project;
@@ -67,6 +68,7 @@ const BAR_HINTS: Hint[] = [
 ];
 
 export function Board({ project, onSelectTicket, onBack, onQuit, active = true, onInputActive, onHints, onStatus }: Props) {
+  const t = useTheme();
   const { stdout } = useStdout();
   const rows = stdout?.rows ?? 24;
   const cols = stdout?.columns ?? 80;
@@ -324,7 +326,7 @@ export function Board({ project, onSelectTicket, onBack, onQuit, active = true, 
         </Panel>
         {!termFocused ? (
           <Box paddingX={1}>
-            <Text color="gray">Press any key to re-focus terminal · esc to close</Text>
+            <Text color={t.fgSubtle}>Press any key to re-focus terminal · esc to close</Text>
           </Box>
         ) : null}
       </Box>
@@ -351,13 +353,13 @@ export function Board({ project, onSelectTicket, onBack, onQuit, active = true, 
             >
               <Box flexDirection="column">
                 {colTickets.length === 0 ? (
-                  <Text color="gray"> --</Text>
+                  <Text color={t.fgSubtle}> --</Text>
                 ) : (
                   colTickets.map((ticket, ti) => {
                     const isSelected = isActive && ti === rowIndex;
                     return (
                       <Box key={ticket.id} flexDirection="column">
-                        <Text color={isSelected ? "cyan" : undefined} wrap="truncate">
+                        <Text color={isSelected ? t.accent : undefined} wrap="truncate">
                           {isSelected ? "\u25B8 " : "  "}
                           {ticket.title}
                         </Text>
@@ -383,14 +385,14 @@ export function Board({ project, onSelectTicket, onBack, onQuit, active = true, 
       {/* Column picker overlay */}
       {columnPicker ? (
         <Box flexDirection="column" paddingX={1}>
-          <Text color="cyan">Move "{columnPicker.ticket.title}" to:</Text>
+          <Text color={t.accent}>Move "{columnPicker.ticket.title}" to:</Text>
           {columnPicker.columns.map((col, i) => (
-            <Text key={col.id} color={i === columnPicker.selectedIndex ? "cyan" : undefined}>
+            <Text key={col.id} color={i === columnPicker.selectedIndex ? t.accent : undefined}>
               {i === columnPicker.selectedIndex ? "\u25B8 " : "  "}{col.label}
               {col.id === columnPicker.ticket.column_id ? " (current)" : ""}
             </Text>
           ))}
-          <Text color="gray">enter select · esc cancel</Text>
+          <Text color={t.fgSubtle}>enter select · esc cancel</Text>
         </Box>
       ) : null}
 
@@ -401,7 +403,7 @@ export function Board({ project, onSelectTicket, onBack, onQuit, active = true, 
         </Box>
       ) : adding === "description" ? (
         <Box paddingX={1} flexDirection="column">
-          <Text color="cyan">Title: {addTitle}</Text>
+          <Text color={t.accent}>Title: {addTitle}</Text>
           <TextInput value={addDescription} onChange={setAddDescription} onSubmit={handleDescriptionSubmit} onCancel={() => { setAdding(false); onInputActive?.(false); }} prompt="Desc:" placeholder="optional (enter to skip)" />
         </Box>
       ) : null}

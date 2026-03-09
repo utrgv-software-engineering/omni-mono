@@ -18,6 +18,7 @@ import { LogViewer } from "./LogViewer.js";
 import { ArtifactBrowser } from "./ArtifactBrowser.js";
 import { DiffViewer } from "./DiffViewer.js";
 import type { Hint } from "../components/KeyHint.js";
+import { useTheme } from "../ThemeContext.js";
 
 // --- Split picker for ticket tiles ---
 
@@ -39,27 +40,28 @@ const TICKET_SPLIT_OPTIONS: TicketSplitOption[] = [
 ];
 
 function TicketSplitPicker({ isEmpty, tilingRoot }: { isEmpty: boolean; tilingRoot: TileNode | null }) {
+  const t = useTheme();
   const existingTypes = new Set(tilingRoot ? getLeaves(tilingRoot).map((l) => l.tileType) : []);
 
   return (
-    <Panel title="New Split" focused={true} focusedColor="green" flexGrow={1}>
+    <Panel title="New Split" focused={true} focusedColor={t.success} flexGrow={1}>
       <Box flexDirection="column" paddingX={1} paddingY={1}>
         <Box marginBottom={1}>
-          <Text bold>{isEmpty ? "Choose what to open:" : "Split with:"}</Text>
+          <Text color={t.fg} bold>{isEmpty ? "Choose what to open:" : "Split with:"}</Text>
         </Box>
         {TICKET_SPLIT_OPTIONS.map((opt) => {
           const disabled = opt.singleton && existingTypes.has(opt.tileType);
           return (
             <Box key={opt.tileType}>
-              <Text color={disabled ? "gray" : undefined}>
-                {"  "}<Text color={disabled ? "gray" : "cyan"} bold>{opt.key}</Text>{" "}{opt.label}
-                {disabled ? <Text color="gray"> (active)</Text> : null}
+              <Text color={disabled ? t.fgSubtle : undefined}>
+                {"  "}<Text color={disabled ? t.fgSubtle : t.accent} bold>{opt.key}</Text>{" "}{opt.label}
+                {disabled ? <Text color={t.fgSubtle}> (active)</Text> : null}
               </Text>
             </Box>
           );
         })}
         <Box marginTop={1}>
-          <Text color="gray">
+          <Text color={t.fgSubtle}>
             {isEmpty
               ? "Press a key to open, or Esc to go back."
               : "Press a key to split, or Esc to cancel."}
@@ -98,6 +100,7 @@ export function TicketDetail({
   availCols, availRows,
   onBack: _onBack, onQuit: _onQuit, onInputActive: _onInputActive, onHints: _onHints, onStatus,
 }: Props) {
+  const t = useTheme();
   const [ticket, setTicket] = useState<Ticket>(initialTicket);
   const [columns, setColumns] = useState<Column[]>([]);
   const [status, setStatus] = useState<string | null>(null);
@@ -172,7 +175,7 @@ export function TicketDetail({
             />
           );
         default:
-          return <Text color="gray"> {tileType}</Text>;
+          return <Text color={t.fgSubtle}> {tileType}</Text>;
       }
     },
     [ticket.id, ticket.title, projectId],

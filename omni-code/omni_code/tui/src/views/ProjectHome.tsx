@@ -4,6 +4,7 @@ import { Panel } from "../components/Panel.js";
 import { TileTree } from "../tiling/TileTree.js";
 import type { PtySession } from "../tiling/PtySession.js";
 import type { TileNode } from "../tiling/tree.js";
+import { useTheme } from "../ThemeContext.js";
 
 // --- Split picker options ---
 
@@ -21,19 +22,20 @@ const SPLIT_OPTIONS: SplitOption[] = [
 // --- SplitPicker component ---
 
 function SplitPicker({ isEmpty }: { isEmpty: boolean }) {
+  const t = useTheme();
   return (
-    <Panel title="New Split" focused={true} focusedColor="green" flexGrow={1}>
+    <Panel title="New Split" focused={true} focusedColor={t.success} flexGrow={1}>
       <Box flexDirection="column" paddingX={1} paddingY={1}>
         <Box marginBottom={1}>
-          <Text bold>{isEmpty ? "Welcome — choose what to open:" : "Split with:"}</Text>
+          <Text color={t.fg} bold>{isEmpty ? "Welcome — choose what to open:" : "Split with:"}</Text>
         </Box>
         {SPLIT_OPTIONS.map((opt) => (
           <Box key={opt.id}>
-            <Text>  <Text color="cyan" bold>{opt.key}</Text> {opt.label}</Text>
+            <Text color={t.fg}>  <Text color={t.accent} bold>{opt.key}</Text> {opt.label}</Text>
           </Box>
         ))}
         <Box marginTop={1}>
-          <Text color="gray">
+          <Text color={t.fgSubtle}>
             {isEmpty
               ? "Press a key to open, or Esc to go back."
               : "Press a key to split, or Esc to cancel."}

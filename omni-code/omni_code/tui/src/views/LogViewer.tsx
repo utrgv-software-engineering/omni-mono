@@ -4,6 +4,7 @@ import { api } from "../rpc.js";
 import { Panel } from "../components/Panel.js";
 import { HelpOverlay } from "../components/HelpOverlay.js";
 import type { Hint } from "../components/KeyHint.js";
+import { useTheme } from "../ThemeContext.js";
 
 type HistoryMessage = {
   index: number;
@@ -21,13 +22,6 @@ type Props = {
   embedded?: boolean;
   onHints?: (hints: Hint[]) => void;
   onStatus?: (status: string | null) => void;
-};
-
-const ROLE_COLORS: Record<string, string> = {
-  user: "cyan",
-  assistant: "green",
-  tool: "yellow",
-  system: "magenta",
 };
 
 const HELP_HINTS: Hint[] = [
@@ -48,6 +42,14 @@ const BAR_HINTS: Hint[] = [
 ];
 
 export function LogViewer({ ticketId, ticketTitle, projectId, onBack, onQuit, active = true, embedded = false, onHints, onStatus }: Props) {
+  const t = useTheme();
+  const roleColors: Record<string, string> = {
+    user: t.roleUser,
+    assistant: t.roleAssistant,
+    tool: t.roleTool,
+    system: t.roleSystem,
+  };
+
   const [messages, setMessages] = useState<HistoryMessage[]>([]);
   const [selected, setSelected] = useState(0);
   const [scrollOffset, setScrollOffset] = useState(0);
@@ -80,7 +82,6 @@ export function LogViewer({ ticketId, ticketTitle, projectId, onBack, onQuit, ac
     return () => clearTimeout(timer);
   }, [status]);
 
-  // Report status/hints to parent for app-level StatusBar
   useEffect(() => { onStatus?.(status ?? null); }, [status]);
   useEffect(() => { onHints?.(BAR_HINTS); }, []);
 
@@ -129,14 +130,14 @@ export function LogViewer({ ticketId, ticketTitle, projectId, onBack, onQuit, ac
   const content = (
     <Box flexDirection="column" paddingX={1} flexGrow={1}>
       {loading && messages.length === 0 ? (
-        <Text color="gray">Loading history...</Text>
+        <Text color={t.fgSubtle}>Loading history...</Text>
       ) : messages.length === 0 ? (
-        <Text color="gray">No history found.</Text>
+        <Text color={t.fgSubtle}>No history found.</Text>
       ) : (
         visibleMessages.map((msg, i) => {
           const actualIndex = scrollOffset + i;
           const isSelected = actualIndex === selected;
-          const roleColor = ROLE_COLORS[msg.role] ?? "white";
+          const roleColor = roleColors[msg.role] ?? t.fg;
           const preview = isSelected
             ? msg.content
             : msg.content.length > 120 ? msg.content.slice(0, 120) + "\u2026" : msg.content;
@@ -144,7 +145,7 @@ export function LogViewer({ ticketId, ticketTitle, projectId, onBack, onQuit, ac
           const displayContent = isSelected ? lines.join("\n") : lines[0] + (lines.length > 1 ? " \u2026" : "");
 
           return (
-            <Text key={msg.index} color={isSelected ? "cyan" : undefined} wrap="truncate">
+            <Text key={msg.index} color={isSelected ? t.accent : undefined} wrap="truncate">
               {isSelected ? "\u25B8 " : "  "}
               <Text color={roleColor} bold>[{msg.role}]</Text>
               {" "}{displayContent}

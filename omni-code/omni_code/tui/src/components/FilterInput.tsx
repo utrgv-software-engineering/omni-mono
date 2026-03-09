@@ -1,5 +1,6 @@
 import React from "react";
 import { Box, Text, useInput, type Key } from "ink";
+import { useTheme } from "../ThemeContext.js";
 
 type Props = {
   value: string;
@@ -8,6 +9,8 @@ type Props = {
 };
 
 export function FilterInput({ value, onChange, onClose }: Props) {
+  const t = useTheme();
+
   useInput((input: string, key: Key) => {
     if (key.escape) {
       onClose();
@@ -24,9 +27,9 @@ export function FilterInput({ value, onChange, onClose }: Props) {
 
   return (
     <Box>
-      <Text color="cyan">/</Text>
-      <Text>{value}</Text>
-      <Text color="cyan">_</Text>
+      <Text color={t.accent}>/</Text>
+      <Text color={t.fg}>{value}</Text>
+      <Text color={t.accent}>_</Text>
     </Box>
   );
 }

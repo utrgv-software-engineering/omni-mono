@@ -2,6 +2,7 @@ import React, { useCallback, useState } from "react";
 import { Box, Text, useInput, type Key } from "ink";
 import { api } from "../rpc.js";
 import { TextInput } from "../components/TextInput.js";
+import { useTheme } from "../ThemeContext.js";
 
 type Props = {
   onComplete: () => void;
@@ -10,6 +11,7 @@ type Props = {
 type Step = "welcome" | "provider_name" | "provider_type" | "api_key" | "base_url" | "model_name" | "model_id" | "testing" | "done";
 
 export function Onboarding({ onComplete }: Props) {
+  const t = useTheme();
   const [step, setStep] = useState<Step>("welcome");
   const [providerName, setProviderName] = useState("");
   const [providerType, setProviderType] = useState("");
@@ -125,24 +127,24 @@ export function Onboarding({ onComplete }: Props) {
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box marginBottom={1}>
-        <Text bold color="cyan">Omni Code Setup</Text>
+        <Text bold color={t.accent}>Omni Code Setup</Text>
       </Box>
 
       {step === "welcome" ? (
         <Box flexDirection="column">
-          <Text>No model credentials configured yet.</Text>
+          <Text color={t.fg}>No model credentials configured yet.</Text>
           <Text />
-          <Text>This wizard will help you set up your first LLM provider and model.</Text>
-          <Text>You can add more later in <Text color="cyan">Settings → Models</Text>.</Text>
+          <Text color={t.fg}>This wizard will help you set up your first LLM provider and model.</Text>
+          <Text color={t.fg}>You can add more later in <Text color={t.accent}>Settings → Models</Text>.</Text>
           <Text />
-          <Text>Press <Text color="cyan" bold>enter</Text> to begin, or <Text color="gray">q</Text> to skip.</Text>
+          <Text color={t.fg}>Press <Text color={t.accent} bold>enter</Text> to begin, or <Text color={t.fgSubtle}>q</Text> to skip.</Text>
         </Box>
       ) : null}
 
       {step === "provider_type" ? (
         <Box flexDirection="column">
-          <Text color="gray">Step 1/4</Text>
-          <Text bold>Provider type</Text>
+          <Text color={t.fgSubtle}>Step 1/4</Text>
+          <Text color={t.fg} bold>Provider type</Text>
           <Text />
           <TextInput
             value={inputValue}
@@ -157,8 +159,8 @@ export function Onboarding({ onComplete }: Props) {
 
       {step === "api_key" ? (
         <Box flexDirection="column">
-          <Text color="gray">Step 2/4 — Provider: {providerType}</Text>
-          <Text bold>API Key</Text>
+          <Text color={t.fgSubtle}>Step 2/4 — Provider: {providerType}</Text>
+          <Text color={t.fg} bold>API Key</Text>
           <Text />
           <TextInput
             value={inputValue}
@@ -173,8 +175,8 @@ export function Onboarding({ onComplete }: Props) {
 
       {step === "base_url" ? (
         <Box flexDirection="column">
-          <Text color="gray">Step 2b/4 — Provider: {providerType}</Text>
-          <Text bold>Base URL</Text>
+          <Text color={t.fgSubtle}>Step 2b/4 — Provider: {providerType}</Text>
+          <Text color={t.fg} bold>Base URL</Text>
           <Text />
           <TextInput
             value={inputValue}
@@ -189,8 +191,8 @@ export function Onboarding({ onComplete }: Props) {
 
       {step === "model_name" ? (
         <Box flexDirection="column">
-          <Text color="gray">Step 3/4 — Provider: {providerType}</Text>
-          <Text bold>Model name (your label)</Text>
+          <Text color={t.fgSubtle}>Step 3/4 — Provider: {providerType}</Text>
+          <Text color={t.fg} bold>Model name (your label)</Text>
           <Text />
           <TextInput
             value={inputValue}
@@ -205,8 +207,8 @@ export function Onboarding({ onComplete }: Props) {
 
       {step === "model_id" ? (
         <Box flexDirection="column">
-          <Text color="gray">Step 4/4 — Model: {modelName}</Text>
-          <Text bold>Model ID (enter to use name as ID)</Text>
+          <Text color={t.fgSubtle}>Step 4/4 — Model: {modelName}</Text>
+          <Text color={t.fg} bold>Model ID (enter to use name as ID)</Text>
           <Text />
           <TextInput
             value={inputValue}
@@ -221,23 +223,23 @@ export function Onboarding({ onComplete }: Props) {
 
       {step === "testing" ? (
         <Box flexDirection="column">
-          <Text color="yellow">{status}</Text>
+          <Text color={t.warning}>{status}</Text>
         </Box>
       ) : null}
 
       {step === "done" ? (
         <Box flexDirection="column">
           {error ? (
-            <Text color="red">{error}</Text>
+            <Text color={t.error}>{error}</Text>
           ) : (
             <>
-              <Text color="green" bold>Setup complete!</Text>
+              <Text color={t.success} bold>Setup complete!</Text>
               <Text />
-              <Text>{status}</Text>
+              <Text color={t.fg}>{status}</Text>
             </>
           )}
           <Text />
-          <Text>Press <Text color="cyan" bold>enter</Text> to continue.</Text>
+          <Text color={t.fg}>Press <Text color={t.accent} bold>enter</Text> to continue.</Text>
         </Box>
       ) : null}
     </Box>

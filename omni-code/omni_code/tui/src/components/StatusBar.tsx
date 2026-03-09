@@ -1,13 +1,9 @@
 import React from "react";
 import { Box, Text } from "ink";
 import type { Hint } from "./KeyHint.js";
+import { useTheme } from "../ThemeContext.js";
 
 export type InputMode = "NORMAL" | "INSERT";
-
-const MODE_COLORS: Record<InputMode, string> = {
-  NORMAL: "blue",
-  INSERT: "green",
-};
 
 type Props = {
   hints: Hint[];
@@ -16,12 +12,18 @@ type Props = {
 };
 
 export function StatusBar({ hints, status, mode }: Props) {
+  const t = useTheme();
+  const modeColors: Record<InputMode, string> = {
+    NORMAL: t.modeNormal,
+    INSERT: t.modeInsert,
+  };
+
   return (
     <Box flexDirection="column">
       <Box flexWrap="wrap">
         {mode ? (
           <>
-            <Text color="black" backgroundColor={MODE_COLORS[mode]} bold>
+            <Text color="black" backgroundColor={modeColors[mode]} bold>
               {" "}{mode}{" "}
             </Text>
             <Text> </Text>
@@ -30,10 +32,10 @@ export function StatusBar({ hints, status, mode }: Props) {
         {hints.map((h, i) => (
           <React.Fragment key={i}>
             {i > 0 ? <Text> </Text> : null}
-            <Text color="cyan" bold>
+            <Text color={t.accent} bold>
               {h.key}
             </Text>
-            <Text color="gray">
+            <Text color={t.fgSubtle}>
               {" "}
               {h.label}
             </Text>
@@ -41,7 +43,7 @@ export function StatusBar({ hints, status, mode }: Props) {
         ))}
       </Box>
       <Box height={1}>
-        {status ? <Text color="yellow">{status}</Text> : <Text> </Text>}
+        {status ? <Text color={t.warning}>{status}</Text> : <Text> </Text>}
       </Box>
     </Box>
   );

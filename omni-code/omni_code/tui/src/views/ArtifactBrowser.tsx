@@ -4,6 +4,7 @@ import { api } from "../rpc.js";
 import { Panel } from "../components/Panel.js";
 import { HelpOverlay } from "../components/HelpOverlay.js";
 import type { Hint } from "../components/KeyHint.js";
+import { useTheme } from "../ThemeContext.js";
 
 type ArtifactEntry = {
   name: string;
@@ -50,6 +51,7 @@ function formatSize(bytes: number): string {
 }
 
 export function ArtifactBrowser({ ticketId, ticketTitle, onBack, onQuit, active = true, embedded = false, onHints, onStatus }: Props) {
+  const t = useTheme();
   const [entries, setEntries] = useState<ArtifactEntry[]>([]);
   const [selected, setSelected] = useState(0);
   const [currentDir, setCurrentDir] = useState<string | undefined>(undefined);
@@ -152,17 +154,17 @@ export function ArtifactBrowser({ ticketId, ticketTitle, onBack, onQuit, active 
   const fileList = (
     <Box flexDirection="column" paddingX={1} flexGrow={1}>
       {loading ? (
-        <Text color="gray">Loading...</Text>
+        <Text color={t.fgSubtle}>Loading...</Text>
       ) : entries.length === 0 ? (
-        <Text color="gray">No artifacts found.</Text>
+        <Text color={t.fgSubtle}>No artifacts found.</Text>
       ) : (
         entries.map((entry, i) => {
           const isSelected = i === selected;
           return (
-            <Text key={entry.path} color={isSelected ? "cyan" : undefined} wrap="truncate">
+            <Text key={entry.path} color={isSelected ? t.accent : undefined} wrap="truncate">
               {isSelected ? "\u25B8 " : "  "}
               {entry.is_dir ? `${entry.name}/` : entry.name}
-              {!entry.is_dir ? <Text color="gray"> ({formatSize(entry.size)})</Text> : null}
+              {!entry.is_dir ? <Text color={t.fgSubtle}> ({formatSize(entry.size)})</Text> : null}
             </Text>
           );
         })
@@ -175,9 +177,9 @@ export function ArtifactBrowser({ ticketId, ticketTitle, onBack, onQuit, active 
       <Box flexDirection="row" flexGrow={1}>
         {fileList}
         {preview !== null ? (
-          <Box flexDirection="column" paddingX={1} flexGrow={2} borderStyle="single" borderColor="gray" borderLeft borderTop={false} borderBottom={false} borderRight={false}>
-            <Text bold color="gray">Preview: {entries[selected]?.name}</Text>
-            <Text>{preview}</Text>
+          <Box flexDirection="column" paddingX={1} flexGrow={2} borderStyle="single" borderColor={t.border} borderLeft borderTop={false} borderBottom={false} borderRight={false}>
+            <Text bold color={t.fgSubtle}>Preview: {entries[selected]?.name}</Text>
+            <Text color={t.fg}>{preview}</Text>
           </Box>
         ) : null}
       </Box>
@@ -193,7 +195,7 @@ export function ArtifactBrowser({ ticketId, ticketTitle, onBack, onQuit, active 
         {preview !== null ? (
           <Panel title={`Preview: ${entries[selected]?.name}`} focused flexGrow={2}>
             <Box flexDirection="column" paddingX={1}>
-              <Text>{preview}</Text>
+              <Text color={t.fg}>{preview}</Text>
             </Box>
           </Panel>
         ) : null}

@@ -8,6 +8,7 @@ import { TextInput } from "../components/TextInput.js";
 import { HelpOverlay } from "../components/HelpOverlay.js";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import { FilterInput, fuzzyMatch } from "../components/FilterInput.js";
+import { useTheme } from "../ThemeContext.js";
 
 type Props = {
   onSelectProject: (project: Project) => void;
@@ -36,6 +37,7 @@ const HINTS: Hint[] = [
 ];
 
 export function Dashboard({ onSelectProject, onQuit, onInputActive }: Props) {
+  const t = useTheme();
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [activeTickets, setActiveTickets] = useState<ActiveTicket[]>([]);
@@ -59,7 +61,7 @@ export function Dashboard({ onSelectProject, onQuit, onInputActive }: Props) {
       for (const project of projectList) {
         const tickets = await api.listTickets(project.id);
         for (const ticket of tickets) {
-          if (ticket.task && ticket.task.status?.type === "running") {
+          if (ticket.supervisor_session_id || (ticket.task && ticket.task.status?.type === "running")) {
             allActive.push({ ...ticket, project_label: project.label });
           }
         }
@@ -225,30 +227,30 @@ export function Dashboard({ onSelectProject, onQuit, onInputActive }: Props) {
   return (
     <Box flexDirection="column" paddingX={1}>
       <Box marginBottom={1}>
-        <Text bold>Omni Projects</Text>
-        <Text color="gray"> — dashboard</Text>
+        <Text color={t.fg} bold>Omni Projects</Text>
+        <Text color={t.fgSubtle}> — dashboard</Text>
       </Box>
 
       <Box>
         {/* Left pane: projects */}
         <Box width="40%" flexDirection="column" marginRight={2}>
-          <Text color={pane === "projects" ? "cyan" : "gray"} bold>
+          <Text color={pane === "projects" ? t.accent : t.fgSubtle} bold>
             Projects
           </Text>
           {filteredProjects.length === 0 ? (
-            <Text color="gray">{projects.length === 0 ? "No projects. Press a to add one." : "No matches."}</Text>
+            <Text color={t.fgSubtle}>{projects.length === 0 ? "No projects. Press a to add one." : "No matches."}</Text>
           ) : (
             filteredProjects.map((project, index) => {
               const isSelected = pane === "projects" && index === selectedIndex;
               const activeLabel =
                 project.active_count > 0 ? (
-                  <Text color="green"> {project.active_count} active</Text>
+                  <Text color={t.success}> {project.active_count} active</Text>
                 ) : null;
               return (
-                <Text key={project.id} color={isSelected ? "cyan" : undefined}>
+                <Text key={project.id} color={isSelected ? t.accent : undefined}>
                   {isSelected ? "> " : "  "}
                   {project.label} ({project.ticket_count}){activeLabel}
-                  {autoDispatchMap[project.id] ? <Text color="magenta"> [A]</Text> : null}
+                  {autoDispatchMap[project.id] ? <Text color={t.accentSecondary}> [A]</Text> : null}
                 </Text>
               );
             })
@@ -257,26 +259,26 @@ export function Dashboard({ onSelectProject, onQuit, onInputActive }: Props) {
 
         {/* Right pane: active work */}
         <Box width="60%" flexDirection="column">
-          <Text color={pane === "active" ? "cyan" : "gray"} bold>
+          <Text color={pane === "active" ? t.accent : t.fgSubtle} bold>
             Active Work
           </Text>
           {activeTickets.length === 0 ? (
-            <Text color="gray">No active tasks.</Text>
+            <Text color={t.fgSubtle}>No active tasks.</Text>
           ) : (
             activeTickets.map((ticket, index) => {
               const isSelected = pane === "active" && index === activeIndex;
               return (
                 <Box key={ticket.id}>
-                  <Text color={isSelected ? "cyan" : undefined}>
+                  <Text color={isSelected ? t.accent : undefined}>
                     {isSelected ? "> " : "  "}
-                    <Text color="yellow">{index + 1}</Text> {ticket.title}
+                    <Text color={t.warning}>{index + 1}</Text> {ticket.title}
                   </Text>
                   <Text> </Text>
                   <TaskStatusBadge status={ticket.task?.status} />
                   <Text> </Text>
-                  <Text color="gray">{ticket.column_id}</Text>
+                  <Text color={t.fgSubtle}>{ticket.column_id}</Text>
                   <Text> </Text>
-                  <Text color="gray">{ticket.project_label}</Text>
+                  <Text color={t.fgSubtle}>{ticket.project_label}</Text>
                 </Box>
               );
             })
@@ -323,7 +325,7 @@ export function Dashboard({ onSelectProject, onQuit, onInputActive }: Props) {
 
       {status ? (
         <Box>
-          <Text color="yellow">{status}</Text>
+          <Text color={t.warning}>{status}</Text>
         </Box>
       ) : null}
     </Box>

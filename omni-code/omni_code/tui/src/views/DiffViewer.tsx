@@ -5,6 +5,7 @@ import { api } from "../rpc.js";
 import { Panel } from "../components/Panel.js";
 import { HelpOverlay } from "../components/HelpOverlay.js";
 import type { Hint } from "../components/KeyHint.js";
+import { useTheme } from "../ThemeContext.js";
 
 type Props = {
   ticketId: string;
@@ -40,6 +41,7 @@ const BAR_HINTS: Hint[] = [
 ];
 
 export function DiffViewer({ ticketId, ticketTitle, projectId, onBack, onQuit, active = true, embedded = false, onHints, onStatus }: Props) {
+  const t = useTheme();
   const [diff, setDiff] = useState<DiffResponse | null>(null);
   const [selected, setSelected] = useState(0);
   const [patch, setPatch] = useState<string | null>(null);
@@ -129,9 +131,9 @@ export function DiffViewer({ ticketId, ticketTitle, projectId, onBack, onQuit, a
     <Box flexDirection="column" paddingX={1} flexGrow={1}>
       {patch.split("\n").slice(patchScroll, patchScroll + visibleRows).map((line, i) => {
         let color: string | undefined;
-        if (line.startsWith("+") && !line.startsWith("+++")) color = "green";
-        else if (line.startsWith("-") && !line.startsWith("---")) color = "red";
-        else if (line.startsWith("@@")) color = "cyan";
+        if (line.startsWith("+") && !line.startsWith("+++")) color = t.diffAdd;
+        else if (line.startsWith("-") && !line.startsWith("---")) color = t.diffDelete;
+        else if (line.startsWith("@@")) color = t.diffHunk;
         return <Text key={i} color={color} wrap="truncate">{line}</Text>;
       })}
     </Box>
@@ -140,21 +142,21 @@ export function DiffViewer({ ticketId, ticketTitle, projectId, onBack, onQuit, a
   const fileListContent = (
     <Box flexDirection="column" paddingX={1} flexGrow={1}>
       {loading ? (
-        <Text color="gray">Loading diff...</Text>
+        <Text color={t.fgSubtle}>Loading diff...</Text>
       ) : !diff || diff.files.length === 0 ? (
-        <Text color="gray">No changes detected.</Text>
+        <Text color={t.fgSubtle}>No changes detected.</Text>
       ) : (
         diff.files.map((file, i) => {
           const isSelected = i === selected;
           return (
-            <Text key={file.path} color={isSelected ? "cyan" : undefined} wrap="truncate">
+            <Text key={file.path} color={isSelected ? t.accent : undefined} wrap="truncate">
               {isSelected ? "\u25B8 " : "  "}
-              {file.untracked ? <Text color="yellow">? </Text> : file.staged ? <Text color="green">S </Text> : <Text color="blue">M </Text>}
+              {file.untracked ? <Text color={t.warning}>? </Text> : file.staged ? <Text color={t.success}>S </Text> : <Text color={t.info}>M </Text>}
               {file.path}
               {file.is_binary ? (
-                <Text color="gray"> (binary)</Text>
+                <Text color={t.fgSubtle}> (binary)</Text>
               ) : (
-                <Text color="gray"> <Text color="green">+{file.additions}</Text> <Text color="red">-{file.deletions}</Text></Text>
+                <Text color={t.fgSubtle}> <Text color={t.diffAdd}>+{file.additions}</Text> <Text color={t.diffDelete}>-{file.deletions}</Text></Text>
               )}
             </Text>
           );
@@ -176,7 +178,7 @@ export function DiffViewer({ ticketId, ticketTitle, projectId, onBack, onQuit, a
       ) : (
         <Panel
           title={`Diff \u2014 ${ticketTitle}`}
-          badge={diffSummary ? <Text color="gray">{diffSummary}</Text> : undefined}
+          badge={diffSummary ? <Text color={t.fgSubtle}>{diffSummary}</Text> : undefined}
           focused
           flexGrow={1}
         >

@@ -7,6 +7,8 @@ import { StatusBar } from "../components/StatusBar.js";
 import { HelpOverlay } from "../components/HelpOverlay.js";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import type { Hint } from "../components/KeyHint.js";
+import { useTheme } from "../ThemeContext.js";
+import type { Theme } from "../theme.js";
 
 type Props = {
   onQuit: () => void;
@@ -17,12 +19,12 @@ function clamp(value: number, max: number): number {
   return Math.max(0, Math.min(value, max - 1));
 }
 
-function stateColor(state: string): string {
-  if (state === "running") return "green";
-  if (state === "exited") return "red";
-  if (state === "created") return "yellow";
-  if (state === "paused") return "blue";
-  return "gray";
+function stateColor(state: string, t: Theme): string {
+  if (state === "running") return t.success;
+  if (state === "exited") return t.error;
+  if (state === "created") return t.warning;
+  if (state === "paused") return t.info;
+  return t.fgSubtle;
 }
 
 const HELP_HINTS: Hint[] = [
@@ -46,6 +48,7 @@ const BAR_HINTS: Hint[] = [
 ];
 
 export function Containers({ onQuit }: Props) {
+  const t = useTheme();
   const [containers, setContainers] = useState<Container[]>([]);
   const [selected, setSelected] = useState(0);
   const [status, setStatus] = useState<string | null>(null);
@@ -135,16 +138,16 @@ export function Containers({ onQuit }: Props) {
         <Panel title={`Containers (${containers.length})`} focused flexGrow={1}>
           <Box flexDirection="column" paddingX={1}>
             {loading ? (
-              <Text color="gray">Loading containers...</Text>
+              <Text color={t.fgSubtle}>Loading containers...</Text>
             ) : containers.length === 0 ? (
-              <Text color="gray">No omni containers found.</Text>
+              <Text color={t.fgSubtle}>No omni containers found.</Text>
             ) : (
               containers.map((c, i) => {
                 const isSelected = i === selected;
                 return (
-                  <Text key={c.name} color={isSelected ? "cyan" : undefined} wrap="truncate">
+                  <Text key={c.name} color={isSelected ? t.accent : undefined} wrap="truncate">
                     {isSelected ? "\u25B8 " : "  "}
-                    <Text color={stateColor(c.state)} bold>{c.state.padEnd(8)}</Text>
+                    <Text color={stateColor(c.state, t)} bold>{c.state.padEnd(8)}</Text>
                     {"  "}{c.name}
                   </Text>
                 );
@@ -157,11 +160,11 @@ export function Containers({ onQuit }: Props) {
         {current && !loading ? (
           <Panel title="Detail" flexGrow={1}>
             <Box flexDirection="column" paddingX={1}>
-              <Box><Text color="gray">Name    </Text><Text>{current.name}</Text></Box>
-              <Box><Text color="gray">Image   </Text><Text>{current.image}</Text></Box>
-              <Box><Text color="gray">Status  </Text><Text>{current.status}</Text></Box>
-              <Box><Text color="gray">Created </Text><Text>{current.created}</Text></Box>
-              {current.ports ? <Box><Text color="gray">Ports   </Text><Text>{current.ports}</Text></Box> : null}
+              <Box><Text color={t.fgSubtle}>Name    </Text><Text color={t.fg}>{current.name}</Text></Box>
+              <Box><Text color={t.fgSubtle}>Image   </Text><Text color={t.fg}>{current.image}</Text></Box>
+              <Box><Text color={t.fgSubtle}>Status  </Text><Text color={t.fg}>{current.status}</Text></Box>
+              <Box><Text color={t.fgSubtle}>Created </Text><Text color={t.fg}>{current.created}</Text></Box>
+              {current.ports ? <Box><Text color={t.fgSubtle}>Ports   </Text><Text color={t.fg}>{current.ports}</Text></Box> : null}
             </Box>
           </Panel>
         ) : null}

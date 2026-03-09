@@ -1,5 +1,6 @@
 import React from "react";
 import { Box, Text, useInput, type Key } from "ink";
+import { useTheme } from "../ThemeContext.js";
 
 type Props = {
   message: string;
@@ -8,6 +9,8 @@ type Props = {
 };
 
 export function ConfirmDialog({ message, onConfirm, onCancel }: Props) {
+  const t = useTheme();
+
   useInput((input: string, key: Key) => {
     if (input === "y" || input === "Y") {
       onConfirm();
@@ -22,17 +25,17 @@ export function ConfirmDialog({ message, onConfirm, onCancel }: Props) {
   return (
     <Box
       borderStyle="round"
-      borderColor="yellow"
+      borderColor={t.warning}
       paddingX={2}
       paddingY={0}
       flexDirection="column"
     >
-      <Text color="yellow">{message}</Text>
+      <Text color={t.warning}>{message}</Text>
       <Text>
-        <Text color="green" bold>y</Text>
-        <Text color="gray">es / </Text>
-        <Text color="red" bold>n</Text>
-        <Text color="gray">o</Text>
+        <Text color={t.success} bold>y</Text>
+        <Text color={t.fgSubtle}>es / </Text>
+        <Text color={t.error} bold>n</Text>
+        <Text color={t.fgSubtle}>o</Text>
       </Text>
     </Box>
   );
