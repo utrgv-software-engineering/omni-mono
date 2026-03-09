@@ -13,10 +13,11 @@ import type { ApprovalInfo, Message } from "../store/appStore.js";
 export interface UseMessagesOptions {
   client: RPCClient | null;
   sessionId?: string;
+  rpcReady?: boolean;
 }
 
 export function useMessagesOptimized(options: UseMessagesOptions) {
-  const { client, sessionId } = options;
+  const { client, sessionId, rpcReady } = options;
   const actions = useActions();
   const batcher = useRef(new EventBatcher()).current;
   const approvalResolversRef = useRef<
@@ -40,7 +41,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
   }>>([]);
 
   useEffect(() => {
-    if (!client) return;
+    if (!client || !rpcReady) return;
 
     // Load history if we have a session ID
     if (sessionId) {
@@ -436,7 +437,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       client.unregisterClientFunction("ui.set_session_state");
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, sessionId, batcher]);
+  }, [client, sessionId, rpcReady, batcher]);
 
   // Return approval handler function
   const approveToolCall = async (approved: boolean, alwaysApprove: boolean) => {

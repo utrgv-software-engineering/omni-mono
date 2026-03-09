@@ -84,9 +84,17 @@ def query_sessions(
 
     conn = sqlite3.connect(str(db_path))
     try:
+        # Check if context_json column exists
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
+        has_context = "context_json" in cols
+
+        select_cols = "s.session_id, s.archived, s.created_at"
+        if has_context:
+            select_cols += ", s.context_json"
+
         cur = conn.execute(
             f"""
-            SELECT s.session_id, s.archived, s.created_at
+            SELECT {select_cols}
             FROM sessions s
             {where_sql}
             ORDER BY s.created_at DESC
@@ -98,15 +106,27 @@ def query_sessions(
     finally:
         conn.close()
 
-    return [
-        {
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        session_id, archived, created_at = row[0], row[1], row[2]
+        workspace_root = None
+        if has_context and len(row) > 3 and row[3]:
+            try:
+                ctx = json.loads(row[3])
+                if isinstance(ctx, dict):
+                    workspace_root = ctx.get("workspace_root")
+            except Exception:
+                pass
+        entry: dict[str, Any] = {
             "id": session_id,
             "archived": bool(archived),
             "created_at": created_at,
             "message_count": None,
         }
-        for session_id, archived, created_at in rows
-    ]
+        if workspace_root:
+            entry["workspace_root"] = workspace_root
+        results.append(entry)
+    return results
 
 
 def count_sessions(

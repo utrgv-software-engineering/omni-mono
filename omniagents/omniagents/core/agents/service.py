@@ -1247,6 +1247,25 @@ class AgentService(RpcMethodsBase):
             else:
                 sess.context = context
 
+        # Ensure workspace_root is set on session context (for session grouping)
+        ctx = getattr(sess, "context", None)
+        if not isinstance(ctx, dict) or "workspace_root" not in ctx:
+            cwd = os.getcwd()
+            if not isinstance(ctx, dict):
+                ctx = {}
+            ctx["workspace_root"] = cwd
+            sess.context = ctx
+            vrs = getattr(sess, "variables", None)
+            if isinstance(vrs, dict):
+                vrs.setdefault("workspace_root", cwd)
+                sess.variables = vrs
+            try:
+                self._session_manager.persist_metadata(
+                    sess, context=sess.context, variables=sess.variables
+                )
+            except Exception:
+                pass
+
         # Apply per-session safe tool overrides
         if safe_tool_overrides is not None:
             override_names = safe_tool_overrides.get("safe_tool_names", [])

@@ -258,6 +258,7 @@ export const App: React.FC<AppProps> = ({
   const { approveToolCall, cancelRun } = useMessagesOptimized({
     client,
     sessionId: sessionId ?? initialSessionId,
+    rpcReady,
   });
 
   // Set initial session ID
