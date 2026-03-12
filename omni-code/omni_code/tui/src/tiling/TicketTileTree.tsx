@@ -83,6 +83,7 @@ const TILE_LABELS: Record<TileType, string> = {
   log: "Log",
   artifacts: "Artifacts",
   diff: "Diff",
+  picker: "New Split",
 };
 
 // --- Main component ---

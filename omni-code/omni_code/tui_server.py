@@ -262,8 +262,12 @@ class TuiRpcServer:
             _record_task_state,
         )
 
+        ticket = self._runtime.resolve_ticket(ticket_id, project_id)
+        project = self._runtime.resolve_project(ticket.project_id) if ticket else None
+        dockerfile = self._resolve_dockerfile(sandbox, project.workspace_dir if project else None)
+
         workspace = _resolve_ticket_workspace(ticket_id, project_id)
-        container_name = _ensure_started(workspace, rebuild=False)
+        container_name = _ensure_started(workspace, rebuild=False, dockerfile=dockerfile)
         details = _inspect_container(container_name)
         _record_task_state(workspace, details, ticket_ref=ticket_id)
         urls = _work_urls(details)
@@ -512,8 +516,9 @@ class TuiRpcServer:
 
         custom_dockerfile = sandbox.get("dockerfile")
         if custom_dockerfile:
-            # Resolve relative to workspace
-            dockerfile = str(Path(project.workspace_dir) / custom_dockerfile)
+            # Use as-is if absolute, otherwise resolve relative to workspace
+            p = Path(custom_dockerfile)
+            dockerfile = str(p) if p.is_absolute() else str(Path(project.workspace_dir) / custom_dockerfile)
         else:
             from omni_code.work_cli import _work_dockerfile_path
             dockerfile = _work_dockerfile_path()
@@ -722,6 +727,20 @@ class TuiRpcServer:
             return None
         return self._get_project_sandbox(ticket.project_id)
 
+    def _resolve_dockerfile(self, sandbox: dict | None, workspace_dir: str | None = None) -> str | None:
+        """Resolve custom dockerfile path from sandbox config, or None for default."""
+        if not sandbox:
+            return None
+        custom = sandbox.get("dockerfile")
+        if not custom:
+            return None
+        p = Path(custom)
+        if p.is_absolute():
+            return str(p)
+        if workspace_dir:
+            return str(Path(workspace_dir) / custom)
+        return None
+
     # --- Phase 7: Better artifact browsing ---
 
     def _ticket_artifact_open(self, params: dict) -> None:
@@ -859,7 +878,9 @@ class TuiRpcServer:
 
         if sandbox:
             from omni_code.work_cli import _ensure_started
-            container_name = _ensure_started(workspace, rebuild=False)
+            project = self._runtime.resolve_project(ticket.project_id) if ticket else None
+            dockerfile = self._resolve_dockerfile(sandbox, project.workspace_dir if project else None)
+            container_name = _ensure_started(workspace, rebuild=False, dockerfile=dockerfile)
             return {"command": ["docker", "exec", "-it", container_name, shell], "label": label}
         else:
             return {"command": [shell], "cwd": str(workspace), "label": label}
@@ -877,7 +898,9 @@ class TuiRpcServer:
 
         if sandbox:
             from omni_code.work_cli import _ensure_started
-            container_name = _ensure_started(workspace, rebuild=False)
+            project = self._runtime.resolve_project(ticket.project_id) if ticket else None
+            dockerfile = self._resolve_dockerfile(sandbox, project.workspace_dir if project else None)
+            container_name = _ensure_started(workspace, rebuild=False, dockerfile=dockerfile)
             return {"command": ["docker", "exec", "-it", container_name, "omni"], "label": label}
         else:
             return {"command": ["omni"], "cwd": str(workspace), "label": label}
@@ -917,6 +940,7 @@ class TuiRpcServer:
 
         workspace = _resolve_ticket_workspace(ticket_id, project_id)
         sandbox = self._get_sandbox_for_ticket(ticket_id, project_id)
+        dockerfile = self._resolve_dockerfile(sandbox, project.workspace_dir if project else None)
 
         # If no session exists yet, create one with supervisor context so the
         # agent knows about its ticket, pipeline, artifacts dir, etc.
@@ -924,7 +948,7 @@ class TuiRpcServer:
             import asyncio
             from omni_code.work_cli import _rpc_call
 
-            container_name = _ensure_started(workspace, rebuild=False)
+            container_name = _ensure_started(workspace, rebuild=False, dockerfile=dockerfile)
             details = _inspect_container(container_name)
             ws_url = _work_urls(details).get("ws_url")
             if ws_url:
@@ -946,7 +970,7 @@ class TuiRpcServer:
             cmd.extend(["--session-id", session_id])
 
         if sandbox:
-            container_name = _ensure_started(workspace, rebuild=False)
+            container_name = _ensure_started(workspace, rebuild=False, dockerfile=dockerfile)
             return {"command": ["docker", "exec", "-it", container_name] + cmd, "label": label}
         else:
             return {"command": cmd, "cwd": str(workspace), "label": label}
@@ -966,7 +990,8 @@ class TuiRpcServer:
 
         if sandbox:
             from omni_code.work_cli import _ensure_started
-            container_name = _ensure_started(workspace, rebuild=False)
+            dockerfile = self._resolve_dockerfile(sandbox, project.workspace_dir)
+            container_name = _ensure_started(workspace, rebuild=False, dockerfile=dockerfile)
             return {"command": ["docker", "exec", "-it", container_name, shell], "label": label}
         else:
             return {"command": [shell], "cwd": str(workspace), "label": label}
@@ -983,7 +1008,8 @@ class TuiRpcServer:
 
         if sandbox:
             from omni_code.work_cli import _ensure_started
-            container_name = _ensure_started(workspace, rebuild=False)
+            dockerfile = self._resolve_dockerfile(sandbox, project.workspace_dir)
+            container_name = _ensure_started(workspace, rebuild=False, dockerfile=dockerfile)
             return {"command": ["docker", "exec", "-it", container_name, "omni"], "label": label}
         else:
             return {"command": ["omni"], "cwd": str(workspace), "label": label}

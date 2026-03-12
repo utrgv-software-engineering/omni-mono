@@ -300,6 +300,10 @@ export function App() {
         for (const s of sessionsRef.current.values()) s.kill();
         sessionsRef.current.clear();
         tilingDispatch({ type: "RESET" });
+        // Insert a picker tile so the empty state is a focusable tile
+        if (newId) {
+          tilingDispatch({ type: "SPLIT", tileType: "picker", command: [] });
+        }
       }
 
       setPickerOpen(false);
@@ -316,6 +320,7 @@ export function App() {
     if (!tilingState.root) return;
     const leaves = getLeaves(tilingState.root);
     for (const leaf of leaves) {
+      if (!PTY_TILE_TYPES.has(leaf.tileType)) continue;
       if (!sessionsRef.current.has(leaf.id)) {
         const session = new PtySession(leaf.command, {
           cols: Math.max(10, Math.floor(contentCols / 2)),
@@ -349,13 +354,13 @@ export function App() {
     };
   }, []);
 
-  // When tiling tree becomes empty, return focus to sidebar
+  // When tiling tree becomes empty, re-insert a picker tile
   useEffect(() => {
-    if (!tilingState.root && focusedRegion.startsWith("tile:") && contentView.type === "home") {
-      setFocusedRegion(lastSidebarRegion.current);
+    if (!tilingState.root && contentView.type === "home" && selectedProject) {
+      tilingDispatch({ type: "SPLIT", tileType: "picker", command: [] });
       setMode("NORMAL");
     }
-  }, [tilingState.root, focusedRegion, contentView.type]);
+  }, [tilingState.root, contentView.type, selectedProject]);
 
   // --- Ticket tiling: save/restore on ticket switch ---
   const prevTicketId = useRef<string | null>(null);
@@ -577,22 +582,29 @@ export function App() {
   const doSplit = useCallback(
     (tileType: "chat" | "terminal") => {
       if (!selectedProject) return;
-      const newId = String(tilingState.nextId + 1);
+      // Check if the focused tile is a picker — if so, replace in-place
+      const pickerLeaf = tilingState.root && tilingState.focusedId
+        ? getLeaves(tilingState.root).find((l) => l.id === tilingState.focusedId && l.tileType === "picker")
+        : null;
       const resolve = tileType === "chat"
         ? api.projectResolveOmni(selectedProject.id)
         : api.projectResolveShell(selectedProject.id);
       resolve
         .then((resolved) => {
-          tilingDispatch({ type: "SPLIT", tileType, command: resolved.command, cwd: resolved.cwd ?? selectedProject.workspace_dir });
+          if (pickerLeaf) {
+            tilingDispatch({ type: "REPLACE_TILE", id: pickerLeaf.id, tileType, command: resolved.command, cwd: resolved.cwd ?? selectedProject.workspace_dir });
+          } else {
+            tilingDispatch({ type: "SPLIT", tileType, command: resolved.command, cwd: resolved.cwd ?? selectedProject.workspace_dir });
+            setFocusedRegion(`tile:${String(tilingState.nextId + 1)}`);
+          }
           setContentView({ type: "home" });
-          setFocusedRegion(`tile:${newId}`);
           setPickerOpen(false);
         })
         .catch((err) => {
           setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`);
         });
     },
-    [selectedProject, tilingState.nextId],
+    [selectedProject, tilingState.nextId, tilingState.root, tilingState.focusedId],
   );
 
   // Ticket tile split helper
@@ -1159,8 +1171,6 @@ export function App() {
       if (!selectedProject) {
         if (input === "a") { setAddingProject(true); setAddPath(""); return; }
       } else {
-        if (input === "c") { doSplit("chat"); return; }
-        if (input === "t") { doSplit("terminal"); return; }
         if (input === "b") { setContentView({ type: "board" }); setFocusedRegion("content"); return; }
         if (input === "a") { setAddingProject(true); setAddPath(""); return; }
         if (input === "d") { setConfirmDelete(selectedProject); return; }
@@ -1263,6 +1273,19 @@ export function App() {
       const isTicket = contentView.type === "ticket";
       const dispatch = isTicket ? ticketTilingDispatch : tilingDispatch;
       const openPicker = isTicket ? setTicketPickerOpen : setPickerOpen;
+      const root = isTicket ? ticketTilingState.root : tilingState.root;
+      const focusedTileId = isTicket ? ticketTilingState.focusedId : tilingState.focusedId;
+
+      // Picker tile: c/t to open, Esc to go back to sidebar
+      if (root && focusedTileId) {
+        const focusedLeaf = getLeaves(root).find((l) => l.id === focusedTileId);
+        if (focusedLeaf?.tileType === "picker") {
+          if (input === "c") { doSplit("chat"); return; }
+          if (input === "t") { doSplit("terminal"); return; }
+          if (key.escape) { setFocusedRegion(lastSidebarRegion.current); return; }
+          return; // No other keys on picker tile
+        }
+      }
 
       if (key.ctrl && input === "n") { openPicker(true); return; }
       if (input === "x") { closeCurrentTile(); return; }
@@ -1333,6 +1356,20 @@ export function App() {
     if (focusedRegion === "content") return subViewHints;
 
     if (focusedRegion.startsWith("tile:")) {
+      // Check if focused tile is a picker
+      const isTicket = contentView.type === "ticket";
+      const root = isTicket ? ticketTilingState.root : tilingState.root;
+      const focusedTileId = isTicket ? ticketTilingState.focusedId : tilingState.focusedId;
+      if (root && focusedTileId) {
+        const focusedLeaf = getLeaves(root).find((l) => l.id === focusedTileId);
+        if (focusedLeaf?.tileType === "picker") {
+          return [
+            { key: "c", label: "chat" },
+            { key: "t", label: "terminal" },
+            { key: "esc", label: "back" },
+          ];
+        }
+      }
       return [
         { key: "enter", label: "focus PTY" },
         { key: "C-\u2190\u2191\u2192\u2193", label: "navigate" },

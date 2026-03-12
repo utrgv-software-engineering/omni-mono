@@ -9,7 +9,7 @@
 
 export type SplitDirection = "horizontal" | "vertical";
 
-export type TileType = "chat" | "terminal" | "supervisor" | "ssh" | "info" | "log" | "artifacts" | "diff";
+export type TileType = "chat" | "terminal" | "supervisor" | "ssh" | "info" | "log" | "artifacts" | "diff" | "picker";
 
 /** Tile types that are backed by a PTY session. */
 export const PTY_TILE_TYPES: Set<TileType> = new Set(["chat", "terminal", "supervisor", "ssh"]);
@@ -44,6 +44,7 @@ export type TilingState = {
 
 export type TilingAction =
   | { type: "SPLIT"; tileType: TileType; command: string[]; cwd?: string; ticketId?: string }
+  | { type: "REPLACE_TILE"; id: string; tileType: TileType; command: string[]; cwd?: string }
   | { type: "CLOSE_TILE"; id: string }
   | { type: "FOCUS_TILE"; id: string }
   | { type: "NAVIGATE"; direction: "up" | "down" | "left" | "right"; availCols: number; availRows: number }
@@ -268,6 +269,14 @@ function swapLeaves(root: TileNode, idA: string, idB: string): TileNode {
   return visit(root);
 }
 
+/** Replace a leaf in-place with new leaf data, preserving its position in the tree. */
+function replaceLeaf(root: TileNode, id: string, newLeaf: TileLeaf): TileNode {
+  if (root.type === "leaf") {
+    return root.id === id ? newLeaf : root;
+  }
+  return { ...root, a: replaceLeaf(root.a, id, newLeaf), b: replaceLeaf(root.b, id, newLeaf) };
+}
+
 // --- Reducer ---
 
 export const INITIAL_STATE: TilingState = {
@@ -312,6 +321,22 @@ export function tilingReducer(state: TilingState, action: TilingAction): TilingS
         root: newRoot,
         focusedId: id,
         nextId: state.nextId + 1,
+      };
+    }
+
+    case "REPLACE_TILE": {
+      if (!state.root) return state;
+      const newLeaf: TileLeaf = {
+        type: "leaf",
+        id: action.id,
+        tileType: action.tileType,
+        command: action.command,
+        cwd: action.cwd,
+      };
+      return {
+        ...state,
+        root: replaceLeaf(state.root, action.id, newLeaf),
+        focusedId: action.id,
       };
     }
 

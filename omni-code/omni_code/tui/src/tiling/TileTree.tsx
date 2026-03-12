@@ -32,6 +32,27 @@ export function TileTree({ node, availCols, availRows, focusedId, active = false
   if (node.type === "leaf") {
     const isFocused = node.id === focusedId;
     const isRawFocused = isFocused && rawFocused;
+    // Only show as focused if the tile area is the active region
+    const showFocused = isFocused && active;
+
+    // Picker tile — welcome / split chooser
+    if (node.tileType === "picker") {
+      return (
+        <Panel title="New Split" focused={showFocused} focusedColor={t.success} flexGrow={1}>
+          <Box flexDirection="column" paddingX={1} paddingY={1}>
+            <Box marginBottom={1}>
+              <Text color={t.fg} bold>Welcome — choose what to open:</Text>
+            </Box>
+            <Box><Text color={t.fg}>  <Text color={t.accent} bold>c</Text> Chat</Text></Box>
+            <Box><Text color={t.fg}>  <Text color={t.accent} bold>t</Text> Terminal</Text></Box>
+            <Box marginTop={1}>
+              <Text color={t.fgSubtle}>Press a key to open, or Esc to go back.</Text>
+            </Box>
+          </Box>
+        </Panel>
+      );
+    }
+
     const session = sessions.get(node.id);
     // Panel borders consume 2 cols and 2 rows, title line consumes 1 row
     const innerCols = Math.max(10, availCols - 2);
@@ -44,9 +65,6 @@ export function TileTree({ node, availCols, availRows, focusedId, active = false
 
     const lines = session ? session.readBuffer(innerCols, innerRows) : [];
     const label = node.tileType === "chat" ? "Chat" : "Term";
-
-    // Only show as focused if the tile area is the active region
-    const showFocused = isFocused && active;
 
     return (
       <Panel title={`${label} [${node.id}]`} focused={showFocused} rawFocused={isRawFocused} flexGrow={1}>

@@ -400,6 +400,24 @@ async def _rpc_call(ws_url: str, method: str, params: dict[str, object]) -> dict
             return payload
 
 
+def _resolve_project_dockerfile(runtime: "ProjectsRuntime", project_id: str) -> Optional[str]:
+    """Resolve the custom dockerfile path from a project's sandbox config."""
+    config = runtime._load()
+    for raw in config.get("fleetProjects", []):
+        if raw.get("id") == project_id:
+            sandbox = raw.get("sandbox")
+            if sandbox:
+                custom = sandbox.get("dockerfile")
+                if custom:
+                    p = Path(custom)
+                    if p.is_absolute():
+                        return str(p)
+                    workspace_dir = raw.get("workspaceDir") or raw.get("workspace_dir")
+                    if workspace_dir:
+                        return str(Path(workspace_dir) / custom)
+    return None
+
+
 def _ensure_ticket_rpc_context(ticket_ref: str, project_ref: str | None = None) -> tuple[ProjectsRuntime, object, object, object | None, str]:
     runtime = ProjectsRuntime()
     ticket = runtime.resolve_ticket(ticket_ref, project_ref)
@@ -409,7 +427,8 @@ def _ensure_ticket_rpc_context(ticket_ref: str, project_ref: str | None = None) 
     if project is None:
         raise RuntimeError(f"Project not found for ticket: {ticket_ref}")
     workspace = _resolve_ticket_workspace(ticket_ref, project_ref)
-    container_name = _ensure_started(workspace, rebuild=False)
+    dockerfile = _resolve_project_dockerfile(runtime, project.id)
+    container_name = _ensure_started(workspace, rebuild=False, dockerfile=dockerfile)
     details = _inspect_container(container_name)
     _record_task_state(workspace, details, ticket_ref=ticket_ref)
     task = runtime.resolve_task_for_ticket(ticket.id, project.id)
@@ -715,7 +734,8 @@ async def _supervisor_auto_async(
         raise RuntimeError(f"Project not found for ticket: {ticket_ref}")
 
     workspace = _resolve_ticket_workspace(ticket_ref, project_ref)
-    container_name = _ensure_started(workspace, rebuild=False)
+    dockerfile = _resolve_project_dockerfile(runtime, project.id)
+    container_name = _ensure_started(workspace, rebuild=False, dockerfile=dockerfile)
     details = _inspect_container(container_name)
     _record_task_state(workspace, details, ticket_ref=ticket_ref)
     task = runtime.resolve_task_for_ticket(ticket.id, project.id)
@@ -1044,7 +1064,8 @@ def supervisor_log(ticket_ref: str, project_ref: str | None = None) -> None:
     if project is None:
         raise RuntimeError(f"Project not found for ticket: {ticket_ref}")
     workspace = _resolve_ticket_workspace(ticket_ref, project_ref)
-    container_name = _ensure_started(workspace, rebuild=False)
+    dockerfile = _resolve_project_dockerfile(runtime, project.id)
+    container_name = _ensure_started(workspace, rebuild=False, dockerfile=dockerfile)
     details = _inspect_container(container_name)
     ws_url = _work_urls(details).get("ws_url")
     if not ws_url:
@@ -1055,7 +1076,7 @@ def supervisor_log(ticket_ref: str, project_ref: str | None = None) -> None:
         pass
 
 
-def _ensure_started(workspace: Path, *, rebuild: bool = False) -> str:
+def _ensure_started(workspace: Path, *, rebuild: bool = False, dockerfile: Optional[str] = None) -> str:
     container_name = _container_name_for_workspace(workspace)
     existing = _inspect_container(container_name)
     if existing and bool((existing.get("State") or {}).get("Running")):
@@ -1081,7 +1102,7 @@ def _ensure_started(workspace: Path, *, rebuild: bool = False) -> str:
         container_name=container_name,
         print_url=False,
         persist_volumes=list(WORK_PERSIST_VOLUMES),
-        dockerfile=_work_dockerfile_path(),
+        dockerfile=dockerfile or _work_dockerfile_path(),
         output="human",
         network_allowlist=_network_allowlist_from_config(),
     )
@@ -1092,9 +1113,19 @@ def _exec_shell(container_name: str, shell: str) -> int:
     return subprocess.run(["docker", "exec", "-it", container_name, shell], check=False).returncode
 
 
+def _resolve_dockerfile_for_workspace(workspace: Path) -> Optional[str]:
+    """Try to find a project matching this workspace and return its custom dockerfile."""
+    runtime = ProjectsRuntime()
+    for project in runtime.list_projects():
+        if Path(project.workspace_dir).resolve() == workspace.resolve():
+            return _resolve_project_dockerfile(runtime, project.id)
+    return None
+
+
 def cmd_start(args: argparse.Namespace) -> None:
     workspace = _resolve_workspace(args.project)
-    container_name = _ensure_started(workspace, rebuild=bool(args.rebuild))
+    dockerfile = _resolve_dockerfile_for_workspace(workspace)
+    container_name = _ensure_started(workspace, rebuild=bool(args.rebuild), dockerfile=dockerfile)
     details = _inspect_container(container_name)
     urls = _work_urls(details)
     print(f"Started work sandbox for {workspace}")
@@ -1107,7 +1138,8 @@ def cmd_start(args: argparse.Namespace) -> None:
 
 def cmd_ssh(args: argparse.Namespace) -> None:
     workspace = _resolve_workspace(args.project)
-    container_name = _ensure_started(workspace, rebuild=bool(args.rebuild))
+    dockerfile = _resolve_dockerfile_for_workspace(workspace)
+    container_name = _ensure_started(workspace, rebuild=bool(args.rebuild), dockerfile=dockerfile)
     exit_code = _exec_shell(container_name, args.shell)
     raise SystemExit(exit_code)
 
@@ -1156,7 +1188,8 @@ def cmd_open(args: argparse.Namespace) -> None:
     details = _inspect_container(container_name)
     if not details or not bool((details.get("State") or {}).get("Running")):
         if args.ensure:
-            container_name = _ensure_started(workspace, rebuild=False)
+            dockerfile = _resolve_dockerfile_for_workspace(workspace)
+            container_name = _ensure_started(workspace, rebuild=False, dockerfile=dockerfile)
             details = _inspect_container(container_name)
         else:
             raise RuntimeError("Work sandbox is not running")
