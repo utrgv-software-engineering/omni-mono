@@ -11,13 +11,14 @@ from omni_code.fleet_workflow import FleetWorkflow, FleetWorkflowConfig, parse_f
 
 @dataclass(frozen=True)
 class SandboxConfig:
-    """Sandbox configuration for a project.
+    """Global sandbox configuration.
 
-    If a project has no sandbox config (None), commands run locally.
-    If present, commands run inside a Docker container.
+    When enabled, supervisor commands run inside a Docker container.
+    When disabled (default), everything runs locally — no Docker needed.
     """
+    enabled: bool = False
     image: str | None = None       # Pre-built Docker image (e.g. "ubuntu:24.04")
-    dockerfile: str | None = None  # Path to a Dockerfile (relative to workspace)
+    dockerfile: str | None = None  # Path to a Dockerfile (absolute)
 
 
 @dataclass(frozen=True)
@@ -27,7 +28,6 @@ class ProjectRecord:
     workspace_dir: str
     created_at: int
     updated_at: int
-    sandbox: SandboxConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -112,7 +112,11 @@ class ProjectsRuntime:
             self._migrate_legacy_store_if_needed()
 
     def _load(self) -> dict[str, Any]:
-        return self._load_from_path(self._config_path)
+        config = self._load_from_path(self._config_path)
+        if "fleetSandbox" not in config:
+            config = self._migrate_per_project_sandbox(config)
+            self._save(config)
+        return config
 
     def _save(self, config: dict[str, Any]) -> None:
         self._save_to_path(self._config_path, config)
@@ -191,6 +195,36 @@ class ProjectsRuntime:
     def _normalize_workspace_dir(workspace_dir: str | Path) -> str:
         return str(Path(workspace_dir).expanduser().resolve())
 
+    def get_sandbox(self) -> SandboxConfig:
+        """Get the global sandbox configuration."""
+        config = self._load()
+        raw = config.get("fleetSandbox")
+        if not isinstance(raw, dict):
+            return SandboxConfig()
+        return SandboxConfig(
+            enabled=bool(raw.get("enabled", False)),
+            image=raw.get("image"),
+            dockerfile=raw.get("dockerfile"),
+        )
+
+    def set_sandbox(self, sandbox: SandboxConfig) -> None:
+        """Set the global sandbox configuration."""
+        config = self._load()
+        config["fleetSandbox"] = asdict(sandbox)
+        self._save(config)
+
+    def _migrate_per_project_sandbox(self, config: dict[str, Any]) -> dict[str, Any]:
+        """One-time migration: promote per-project sandbox to global fleetSandbox."""
+        if "fleetSandbox" in config:
+            return config
+        global_sandbox: dict[str, Any] = {"enabled": False, "image": None, "dockerfile": None}
+        for raw in config.get("fleetProjects", []):
+            sb = raw.pop("sandbox", None)
+            if sb and not global_sandbox["enabled"]:
+                global_sandbox = {"enabled": True, **sb}
+        config["fleetSandbox"] = global_sandbox
+        return config
+
     def list_projects(self) -> list[ProjectRecord]:
         config = self._load()
         projects: list[ProjectRecord] = []
@@ -198,13 +232,6 @@ class ProjectsRuntime:
             if not isinstance(raw, dict):
                 continue
             try:
-                sandbox_raw = raw.get("sandbox")
-                sandbox = None
-                if isinstance(sandbox_raw, dict):
-                    sandbox = SandboxConfig(
-                        image=sandbox_raw.get("image"),
-                        dockerfile=sandbox_raw.get("dockerfile"),
-                    )
                 projects.append(
                     ProjectRecord(
                         id=str(raw["id"]),
@@ -212,7 +239,6 @@ class ProjectsRuntime:
                         workspace_dir=str(raw.get("workspaceDir", raw.get("workspace_dir", ""))),
                         created_at=int(raw.get("createdAt", raw.get("created_at", 0))),
                         updated_at=int(raw.get("updatedAt", raw.get("updated_at", raw.get("createdAt", raw.get("created_at", 0))))),
-                        sandbox=sandbox,
                     )
                 )
             except (KeyError, TypeError, ValueError):
@@ -355,8 +381,6 @@ class ProjectsRuntime:
             "workspaceDir": created.workspace_dir,
             "createdAt": created.created_at,
         }
-        if created.sandbox is not None:
-            project_payload["sandbox"] = asdict(created.sandbox)
         config["fleetProjects"] = [
             *config.get("fleetProjects", []),
             project_payload,

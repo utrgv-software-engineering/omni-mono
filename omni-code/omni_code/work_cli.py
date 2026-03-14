@@ -401,20 +401,15 @@ async def _rpc_call(ws_url: str, method: str, params: dict[str, object]) -> dict
 
 
 def _resolve_project_dockerfile(runtime: "ProjectsRuntime", project_id: str) -> Optional[str]:
-    """Resolve the custom dockerfile path from a project's sandbox config."""
-    config = runtime._load()
-    for raw in config.get("fleetProjects", []):
-        if raw.get("id") == project_id:
-            sandbox = raw.get("sandbox")
-            if sandbox:
-                custom = sandbox.get("dockerfile")
-                if custom:
-                    p = Path(custom)
-                    if p.is_absolute():
-                        return str(p)
-                    workspace_dir = raw.get("workspaceDir") or raw.get("workspace_dir")
-                    if workspace_dir:
-                        return str(Path(workspace_dir) / custom)
+    """Resolve the custom dockerfile path from the global sandbox config."""
+    sandbox = runtime.get_sandbox()
+    if not sandbox.enabled:
+        return None
+    custom = sandbox.dockerfile
+    if custom:
+        p = Path(custom)
+        if p.is_absolute():
+            return str(p)
     return None
 
 

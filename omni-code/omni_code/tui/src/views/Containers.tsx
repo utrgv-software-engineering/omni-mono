@@ -32,6 +32,7 @@ const HELP_HINTS: Hint[] = [
   { key: "s", label: "start container" },
   { key: "x", label: "stop container" },
   { key: "R", label: "rebuild (remove) container" },
+  { key: "P", label: "prune (cleanup docker)" },
   { key: "r", label: "refresh" },
   { key: "?", label: "help" },
   { key: "q", label: "back" },
@@ -42,6 +43,7 @@ const BAR_HINTS: Hint[] = [
   { key: "s", label: "start" },
   { key: "x", label: "stop" },
   { key: "R", label: "remove" },
+  { key: "P", label: "prune" },
   { key: "r", label: "refresh" },
   { key: "?", label: "help" },
   { key: "esc/q", label: "back" },
@@ -116,6 +118,18 @@ export function Containers({ onQuit }: Props) {
           setStatus(`Removing ${c.name}...`);
           api.rebuildContainer(c.name)
             .then(() => { setStatus(`Removed ${c.name}`); refresh(); })
+            .catch((err) => setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`));
+        },
+      });
+      return;
+    }
+    if (input === "P") {
+      setConfirmAction({
+        message: "Prune stopped containers, dangling images, unused networks, and build cache?",
+        action: () => {
+          setStatus("Pruning...");
+          api.pruneContainers()
+            .then(() => { setStatus("Prune complete"); refresh(); })
             .catch((err) => setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`));
         },
       });

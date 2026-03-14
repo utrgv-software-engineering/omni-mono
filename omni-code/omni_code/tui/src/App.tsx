@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdin, useStdout, type Key } from "ink";
-import type { Project, Ticket, OmniSession, SandboxConfig, Container } from "./rpc.js";
+import type { Project, Ticket, OmniSession, Container } from "./rpc.js";
 import { api } from "./rpc.js";
 import { Panel } from "./components/Panel.js";
 import { TitleBar } from "./components/TitleBar.js";
@@ -47,19 +47,6 @@ type ContentView =
   | { type: "ticket"; ticket: Ticket };
 
 type ActiveTicket = Ticket & { project_label: string };
-
-type SandboxPicker = {
-  selectedIndex: number;
-  inputMode: "image" | "dockerfile" | null;
-  inputValue: string;
-  current: SandboxConfig | null;
-};
-
-const SANDBOX_OPTIONS = [
-  { label: "Set Docker image", key: "image" as const },
-  { label: "Set Dockerfile path", key: "dockerfile" as const },
-  { label: "Clear (run locally)", key: "clear" as const },
-];
 
 type ProjectAction = {
   label: string;
@@ -251,9 +238,8 @@ export function App() {
   const [addPath, setAddPath] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<Project | null>(null);
 
-  // Project actions menu + sandbox picker
+  // Project actions menu
   const [projectActions, setProjectActions] = useState<ProjectActionsMenu | null>(null);
-  const [sandboxPicker, setSandboxPicker] = useState<SandboxPicker | null>(null);
 
   // Sub-view hints/status (for Board/TicketDetail)
   const [subViewHints, setSubViewHints] = useState<Hint[]>([]);
@@ -966,61 +952,6 @@ export function App() {
     }
 
     // --- Sandbox picker mode ---
-    if (sandboxPicker) {
-      if (sandboxPicker.inputMode) {
-        if (key.escape) {
-          setSandboxPicker((prev) => prev ? { ...prev, inputMode: null, inputValue: "" } : null);
-          return;
-        }
-        if (key.return) {
-          const value = sandboxPicker.inputValue.trim();
-          if (value && selectedProject) {
-            const config: SandboxConfig = sandboxPicker.inputMode === "image"
-              ? { image: value }
-              : { dockerfile: value };
-            api.setSandbox(selectedProject.id, config)
-              .then(() => { setStatus(`Sandbox set to ${sandboxPicker.inputMode}: ${value}`); setSandboxPicker(null); refreshProjects(); })
-              .catch((err) => { setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`); setSandboxPicker(null); });
-          } else {
-            setSandboxPicker((prev) => prev ? { ...prev, inputMode: null, inputValue: "" } : null);
-          }
-          return;
-        }
-        if (key.backspace || key.delete) {
-          setSandboxPicker((prev) => prev ? { ...prev, inputValue: prev.inputValue.slice(0, -1) } : null);
-          return;
-        }
-        if (!key.ctrl && !key.meta && input) {
-          setSandboxPicker((prev) => prev ? { ...prev, inputValue: prev.inputValue + input } : null);
-        }
-        return;
-      }
-      if (key.escape) { setSandboxPicker(null); return; }
-      if (key.upArrow || input === "k") {
-        setSandboxPicker((prev) => prev ? { ...prev, selectedIndex: clamp(prev.selectedIndex - 1, SANDBOX_OPTIONS.length) } : null);
-        return;
-      }
-      if (key.downArrow || input === "j") {
-        setSandboxPicker((prev) => prev ? { ...prev, selectedIndex: clamp(prev.selectedIndex + 1, SANDBOX_OPTIONS.length) } : null);
-        return;
-      }
-      if (key.return) {
-        const option = SANDBOX_OPTIONS[sandboxPicker.selectedIndex];
-        if (option.key === "clear" && selectedProject) {
-          api.setSandbox(selectedProject.id, null)
-            .then(() => { setStatus("Sandbox cleared (running locally)"); setSandboxPicker(null); refreshProjects(); })
-            .catch((err) => { setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`); setSandboxPicker(null); });
-        } else if (option.key === "image" || option.key === "dockerfile") {
-          const prefill = option.key === "image"
-            ? (sandboxPicker.current?.image || "")
-            : (sandboxPicker.current?.dockerfile || "");
-          setSandboxPicker((prev) => prev ? { ...prev, inputMode: option.key, inputValue: prefill } : null);
-        }
-        return;
-      }
-      return;
-    }
-
     // --- Hotkey assignment mode: waiting for user to press a key ---
     if (assigningHotkey) {
       if (assignTimerRef.current) { clearTimeout(assignTimerRef.current); assignTimerRef.current = null; }
@@ -1178,30 +1109,7 @@ export function App() {
           const project = selectedProject;
           setProjectActions({
             selectedIndex: 0,
-            actions: [
-              {
-                label: "Configure sandbox",
-                key: "sandbox",
-                action: () => {
-                  api.getSandbox(project.id)
-                    .then((r) => setSandboxPicker({ selectedIndex: 0, inputMode: null, inputValue: "", current: r.sandbox }))
-                    .catch((err) => setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`));
-                },
-              },
-              ...(project.sandbox ? [{
-                label: "Rebuild sandbox image",
-                key: "rebuild",
-                action: () => {
-                  setStatus(`Rebuilding sandbox image for ${project.label}...`);
-                  api.sandboxRebuildImage(project.id)
-                    .then((result) => {
-                      setStatus(result.note ?? `Image rebuilt: ${result.image}`);
-                      refreshProjects();
-                    })
-                    .catch((err) => setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`));
-                },
-              }] : []),
-            ],
+            actions: [],
           });
           return;
         }
@@ -1211,29 +1119,20 @@ export function App() {
     // --- Supervisors section ---
     if (focusedRegion === "supervisors") {
       if ((key.upArrow && !key.ctrl) || input === "k") {
-        setSupervisorIndex((v) => {
-          const next = clamp(v - 1, activeTickets.length);
-          const ticket = activeTickets[next];
-          if (ticket) {
-            const projIdx = projects.findIndex((p) => p.id === ticket.project_id);
-            if (projIdx >= 0) setProjectListIndex(projIdx);
-            setContentView({ type: "ticket", ticket });
-          }
-          return next;
-        });
+        setSupervisorIndex((v) => clamp(v - 1, activeTickets.length));
         return;
       }
       if ((key.downArrow && !key.ctrl) || input === "j") {
-        setSupervisorIndex((v) => {
-          const next = clamp(v + 1, activeTickets.length);
-          const ticket = activeTickets[next];
-          if (ticket) {
-            const projIdx = projects.findIndex((p) => p.id === ticket.project_id);
-            if (projIdx >= 0) setProjectListIndex(projIdx);
-            setContentView({ type: "ticket", ticket });
-          }
-          return next;
-        });
+        setSupervisorIndex((v) => clamp(v + 1, activeTickets.length));
+        return;
+      }
+      if (key.return) {
+        const ticket = activeTickets[supervisorIndex];
+        if (ticket) {
+          const projIdx = projects.findIndex((p) => p.id === ticket.project_id);
+          if (projIdx >= 0) setProjectListIndex(projIdx);
+          setContentView({ type: "ticket", ticket });
+        }
         return;
       }
     }
@@ -1472,44 +1371,7 @@ export function App() {
       );
     }
 
-    // Sandbox picker takes over the content area
-    if (sandboxPicker) {
-      return (
-        <Panel title={`${selectedProject.label} \u203A Sandbox`} focused flexGrow={1}>
-          <Box flexDirection="column" paddingX={1}>
-            {sandboxPicker.current ? (
-              <Text color={th.fgSubtle}>
-                Current: {sandboxPicker.current.image
-                  ? `image: ${sandboxPicker.current.image}`
-                  : sandboxPicker.current.dockerfile
-                    ? `dockerfile: ${sandboxPicker.current.dockerfile}`
-                    : "none"}
-              </Text>
-            ) : (
-              <Text color={th.fgSubtle}>Current: none (running locally)</Text>
-            )}
-            {sandboxPicker.inputMode ? (
-              <Box marginTop={1}>
-                <Text color={th.accent}>{sandboxPicker.inputMode === "image" ? "Image:" : "Dockerfile:"} </Text>
-                <Text color={th.fg}>{sandboxPicker.inputValue || <Text color={th.fgSubtle}>{sandboxPicker.inputMode === "image" ? "ubuntu:24.04" : "Dockerfile"}</Text>}</Text>
-                <Text color={th.accent}>_</Text>
-              </Box>
-            ) : (
-              <Box flexDirection="column" marginTop={1}>
-                {SANDBOX_OPTIONS.map((opt, i) => (
-                  <Text key={opt.key} color={i === sandboxPicker.selectedIndex ? th.accent : undefined}>
-                    {i === sandboxPicker.selectedIndex ? "\u25B8 " : "  "}{opt.label}
-                  </Text>
-                ))}
-              </Box>
-            )}
-            <Box marginTop={1}>
-              <Text color={th.fgSubtle}>enter select · esc cancel</Text>
-            </Box>
-          </Box>
-        </Panel>
-      );
-    }
+
 
     if (contentView.type === "home") {
       return (
@@ -1617,7 +1479,6 @@ export function App() {
                       const hk = hotkeyByProject[project.id];
                       const hkPrefix = hk !== undefined ? `[${hk}]` : "   ";
                       const suffix =
-                        (project.sandbox ? " D" : "") +
                         (project.active_count > 0 ? " \u25CF" : "") +
                         (autoDispatchMap[project.id] ? " A" : "");
                       const label = `${hkPrefix} ${truncate(project.label, w - 8)} ${project.ticket_count}${suffix}`;
@@ -1632,7 +1493,6 @@ export function App() {
                         <Text key={project.id} color={th.fg}>
                           {hk !== undefined ? <Text color={th.warning}>[{hk}]</Text> : "   "}{" "}{truncate(project.label, w - 8)}
                           <Text color={th.fgSubtle}> {project.ticket_count}</Text>
-                          {project.sandbox ? <Text color={th.info}> D</Text> : null}
                           {project.active_count > 0 ? <Text color={th.success}> {"\u25CF"}</Text> : null}
                           {autoDispatchMap[project.id] ? <Text color={th.accentSecondary}> A</Text> : null}
                         </Text>

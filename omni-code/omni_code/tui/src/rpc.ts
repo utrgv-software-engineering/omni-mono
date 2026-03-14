@@ -101,7 +101,6 @@ export type Project = {
   updated_at: number;
   ticket_count: number;
   active_count: number;
-  sandbox: SandboxConfig | null;
 };
 
 export type Column = {
@@ -144,8 +143,9 @@ export type Ticket = {
 };
 
 export type SandboxConfig = {
-  image?: string;
-  dockerfile?: string;
+  enabled: boolean;
+  image?: string | null;
+  dockerfile?: string | null;
 };
 
 export type Container = {
@@ -290,8 +290,10 @@ export const api = {
     call<void>("containers.stop", { name }),
   rebuildContainer: (name: string) =>
     call<Record<string, unknown>>("containers.rebuild", { name }),
-  sandboxRebuildImage: (project_id: string) =>
-    call<{ image: string; note?: string }>("sandbox.rebuild_image", { project_id }),
+  pruneContainers: () =>
+    call<Record<string, string>>("containers.prune"),
+  sandboxRebuildImage: () =>
+    call<{ image: string; note?: string }>("sandbox.rebuild_image", {}),
 
   gitDiff: (ticket_id: string, project_id?: string) =>
     call<DiffResponse>("git.diff", { ticket_id, project_id }),
@@ -306,10 +308,10 @@ export const api = {
   getAutoDispatch: (project_id: string) =>
     call<{ enabled: boolean }>("projects.get_auto_dispatch", { project_id }),
 
-  setSandbox: (project_id: string, sandbox: SandboxConfig | null) =>
-    call<void>("projects.set_sandbox", { project_id, sandbox }),
-  getSandbox: (project_id: string) =>
-    call<{ sandbox: SandboxConfig | null }>("projects.get_sandbox", { project_id }),
+  getSandboxConfig: () =>
+    call<{ sandbox: SandboxConfig }>("sandbox.get_config"),
+  setSandboxConfig: (sandbox: SandboxConfig) =>
+    call<void>("sandbox.set_config", { sandbox }),
 
   mcpList: () =>
     call<{ mcpServers: Record<string, { type?: string; command?: string; args?: string[]; url?: string; env?: Record<string, string>; headers?: Record<string, string> }> }>("mcp.list"),

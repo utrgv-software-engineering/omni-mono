@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Box, Text, useInput, useStdout, type Key } from "ink";
 import { api } from "../rpc.js";
-import type { NetworkConfig } from "../rpc.js";
+import type { NetworkConfig, SandboxConfig } from "../rpc.js";
 import { Panel } from "../components/Panel.js";
 import { StatusBar } from "../components/StatusBar.js";
 import { HelpOverlay } from "../components/HelpOverlay.js";
@@ -49,7 +49,7 @@ type McpServer = {
   headers?: Record<string, string>;
 };
 
-type Section = "overview" | "display" | "models" | "providers" | "network" | "env" | "mcp";
+type Section = "overview" | "display" | "models" | "providers" | "sandbox" | "network" | "env" | "mcp";
 
 type AddingModel = {
   step: "provider_name" | "provider_type" | "model_name" | "model_id";
@@ -68,11 +68,14 @@ type AddingProvider = {
 type AddingEnvVar = { step: "key" | "value"; key: string };
 type AddingMcp = { step: "name" | "type" | "command" | "args" | "url"; name: string; type: string; command: string };
 
+type SandboxEditMode = "image" | "dockerfile" | null;
+
 const SECTIONS: { id: Section; label: string; key: string }[] = [
   { id: "overview", label: "Overview", key: "o" },
   { id: "display", label: "Display", key: "i" },
   { id: "models", label: "Models", key: "m" },
   { id: "providers", label: "Providers", key: "p" },
+  { id: "sandbox", label: "Sandbox", key: "s" },
   { id: "mcp", label: "MCP Servers", key: "M" },
   { id: "network", label: "Network", key: "n" },
   { id: "env", label: "Environment", key: "e" },
@@ -105,6 +108,8 @@ export function Settings({ onQuit }: Props) {
   const [networkConfig, setNetworkConfig] = useState<NetworkConfig>({});
   const [envVars, setEnvVars] = useState<Record<string, string>>({});
   const [mcpServers, setMcpServers] = useState<Record<string, McpServer>>({});
+  const [sandboxConfig, setSandboxConfig] = useState<SandboxConfig>({ enabled: false });
+  const [sandboxEditMode, setSandboxEditMode] = useState<SandboxEditMode>(null);
   const [section, setSection] = useState<Section>("overview");
   const [scrollIndex, setScrollIndex] = useState(0);
   const [status, setStatus] = useState<string | null>(null);
@@ -119,7 +124,7 @@ export function Settings({ onQuit }: Props) {
   const { stdout } = useStdout();
   const visibleRows = (stdout?.rows ?? 24) - 10;
 
-  const isInputActive = addingModel !== null || addingProvider !== null || addingEnvVar !== null || addingMcp !== null;
+  const isInputActive = addingModel !== null || addingProvider !== null || addingEnvVar !== null || addingMcp !== null || sandboxEditMode !== null;
 
   const refresh = useCallback(async () => {
     try {
@@ -151,8 +156,11 @@ export function Settings({ onQuit }: Props) {
   const refreshMcp = useCallback(async () => {
     try { const c = await api.mcpList(); setMcpServers(c.mcpServers ?? {}); } catch {}
   }, []);
+  const refreshSandbox = useCallback(async () => {
+    try { const r = await api.getSandboxConfig(); setSandboxConfig(r.sandbox); } catch {}
+  }, []);
 
-  useEffect(() => { refresh(); refreshNetwork(); refreshEnv(); refreshMcp(); }, [refresh, refreshNetwork, refreshEnv, refreshMcp]);
+  useEffect(() => { refresh(); refreshNetwork(); refreshEnv(); refreshMcp(); refreshSandbox(); }, [refresh, refreshNetwork, refreshEnv, refreshMcp, refreshSandbox]);
 
   useEffect(() => {
     if (!status) return;
@@ -265,6 +273,29 @@ export function Settings({ onQuit }: Props) {
         .catch((err) => setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`));
       return;
     }
+
+    // Sandbox section
+    if (section === "sandbox") {
+      if (input === "t") {
+        const updated: SandboxConfig = { ...sandboxConfig, enabled: !sandboxConfig.enabled };
+        api.setSandboxConfig(updated).then(() => { setSandboxConfig(updated); setStatus(`Sandbox ${updated.enabled ? "enabled" : "disabled"}`); })
+          .catch((err) => setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`));
+        return;
+      }
+      if (input === "I") {
+        setSandboxEditMode("image"); setInputValue(sandboxConfig.image ?? ""); return;
+      }
+      if (input === "F") {
+        setSandboxEditMode("dockerfile"); setInputValue(sandboxConfig.dockerfile ?? ""); return;
+      }
+      if (input === "R") {
+        setStatus("Rebuilding sandbox image...");
+        api.sandboxRebuildImage()
+          .then((r) => setStatus(r.note ?? `Image rebuilt: ${r.image}`))
+          .catch((err) => setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`));
+        return;
+      }
+    }
   });
 
   // Multi-step add flows (keep same logic, just condensed)
@@ -336,7 +367,18 @@ export function Settings({ onQuit }: Props) {
     }
   }, [addingMcp, mcpServers]);
 
-  const cancelInput = useCallback(() => { setAddingModel(null); setAddingProvider(null); setAddingEnvVar(null); setAddingMcp(null); }, []);
+  const handleSandboxEdit = useCallback((value: string) => {
+    if (!sandboxEditMode) return;
+    const trimmed = value.trim() || null;
+    const updated: SandboxConfig = sandboxEditMode === "image"
+      ? { ...sandboxConfig, image: trimmed, dockerfile: trimmed ? null : sandboxConfig.dockerfile }
+      : { ...sandboxConfig, dockerfile: trimmed, image: trimmed ? null : sandboxConfig.image };
+    api.setSandboxConfig(updated)
+      .then(() => { setSandboxConfig(updated); setStatus(`Sandbox ${sandboxEditMode} ${trimmed ? "set to " + trimmed : "cleared"}`); setSandboxEditMode(null); })
+      .catch((err) => { setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`); setSandboxEditMode(null); });
+  }, [sandboxEditMode, sandboxConfig]);
+
+  const cancelInput = useCallback(() => { setAddingModel(null); setAddingProvider(null); setAddingEnvVar(null); setAddingMcp(null); setSandboxEditMode(null); }, []);
 
   if (showHelp) {
     return (
@@ -383,6 +425,11 @@ export function Settings({ onQuit }: Props) {
       const p = prompts[addingMcp.step];
       return <TextInput value={inputValue} onChange={setInputValue} onSubmit={handleMcpStep} onCancel={cancelInput} prompt={p.prompt} placeholder={p.placeholder} />;
     }
+    if (sandboxEditMode) {
+      const prompt = sandboxEditMode === "image" ? "Docker image:" : "Dockerfile path:";
+      const placeholder = sandboxEditMode === "image" ? "ubuntu:24.04 (empty to clear)" : "/absolute/path/to/Dockerfile (empty to clear)";
+      return <TextInput value={inputValue} onChange={setInputValue} onSubmit={handleSandboxEdit} onCancel={cancelInput} prompt={prompt} placeholder={placeholder} />;
+    }
     return null;
   };
 
@@ -396,6 +443,7 @@ export function Settings({ onQuit }: Props) {
     }
     if (section === "models") base.push({ key: "D", label: "default" }, { key: "T", label: "test" });
     if (section === "network") base.push({ key: "t", label: "toggle" });
+    if (section === "sandbox") base.push({ key: "t", label: "toggle" }, { key: "I", label: "set image" }, { key: "F", label: "set dockerfile" }, { key: "R", label: "rebuild" });
     base.push({ key: "r", label: "refresh" }, { key: "?", label: "help" }, { key: "q", label: "quit" });
     return base;
   };
@@ -498,6 +546,33 @@ export function Settings({ onQuit }: Props) {
                   );
                 })
               )
+            ) : null}
+
+            {section === "sandbox" ? (
+              <>
+                <Box>
+                  <Text color={t.fgSubtle}>Enabled       </Text>
+                  <Text color={sandboxConfig.enabled ? t.success : t.error} bold>{sandboxConfig.enabled ? "YES" : "NO"}</Text>
+                  <Text color={t.fgSubtle}>  (t to toggle)</Text>
+                </Box>
+                <Box>
+                  <Text color={t.fgSubtle}>Image         </Text>
+                  <Text color={t.fg}>{sandboxConfig.image ?? <Text color={t.fgSubtle}>default</Text>}</Text>
+                  <Text color={t.fgSubtle}>  (I to set)</Text>
+                </Box>
+                <Box>
+                  <Text color={t.fgSubtle}>Dockerfile    </Text>
+                  <Text color={t.fg}>{sandboxConfig.dockerfile ?? <Text color={t.fgSubtle}>default</Text>}</Text>
+                  <Text color={t.fgSubtle}>  (F to set)</Text>
+                </Box>
+                <Box marginTop={1}>
+                  <Text color={t.fgSubtle}>When enabled, supervisors run inside Docker containers.</Text>
+                </Box>
+                <Box>
+                  <Text color={t.fgSubtle}>When disabled, everything runs locally — no Docker needed.</Text>
+                </Box>
+                {renderInput()}
+              </>
             ) : null}
 
             {section === "network" ? (

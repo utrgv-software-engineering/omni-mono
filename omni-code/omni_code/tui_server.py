@@ -54,14 +54,15 @@ class TuiRpcServer:
             "containers.start": self._containers_start,
             "containers.stop": self._containers_stop,
             "containers.rebuild": self._containers_rebuild,
+            "containers.prune": self._containers_prune,
             "sandbox.rebuild_image": self._sandbox_rebuild_image,
             "git.diff": self._git_diff,
             "git.diff_file": self._git_diff_file,
             "ticket.artifact_open": self._ticket_artifact_open,
             "projects.set_auto_dispatch": self._projects_set_auto_dispatch,
             "projects.get_auto_dispatch": self._projects_get_auto_dispatch,
-            "projects.set_sandbox": self._projects_set_sandbox,
-            "projects.get_sandbox": self._projects_get_sandbox,
+            "sandbox.get_config": self._sandbox_get_config,
+            "sandbox.set_config": self._sandbox_set_config,
             "mcp.list": self._mcp_list,
             "mcp.save": self._mcp_save,
             "models.test": self._models_test,
@@ -239,7 +240,7 @@ class TuiRpcServer:
     def _sandbox_start(self, params: dict) -> dict:
         ticket_id = params["ticket_id"]
         project_id = params.get("project_id")
-        sandbox = self._get_sandbox_for_ticket(ticket_id, project_id)
+        sandbox = self._get_global_sandbox()
 
         if not sandbox:
             # No sandbox configured — running locally, nothing to start
@@ -284,12 +285,12 @@ class TuiRpcServer:
         ticket_id = params["ticket_id"]
         project_id = params.get("project_id")
         prompt = params.get("prompt", "Begin working on this ticket.")
-        sandbox = self._get_sandbox_for_ticket(ticket_id, project_id)
+        sandbox = self._get_global_sandbox()
 
         if not sandbox:
             raise ValueError(
                 "Supervisor mode requires a sandbox. "
-                "Configure a sandbox for this project, or use the Chat tab to interact with the agent locally."
+                "Enable the sandbox in Settings (S), or use the Chat tab to interact with the agent locally."
             )
 
         from omni_code.work_cli import supervisor_start
@@ -298,10 +299,10 @@ class TuiRpcServer:
     def _supervisor_stop(self, params: dict) -> None:
         ticket_id = params["ticket_id"]
         project_id = params.get("project_id")
-        sandbox = self._get_sandbox_for_ticket(ticket_id, project_id)
+        sandbox = self._get_global_sandbox()
 
         if not sandbox:
-            raise ValueError("No sandbox configured — supervisor is not running.")
+            raise ValueError("Sandbox is not enabled — supervisor is not running.")
 
         from omni_code.work_cli import supervisor_stop
         supervisor_stop(ticket_id, project_id)
@@ -311,9 +312,9 @@ class TuiRpcServer:
         ticket_id = params["ticket_id"]
         project_id = params.get("project_id")
         prompt = params.get("prompt", "Begin working on this ticket.")
-        sandbox = self._get_sandbox_for_ticket(ticket_id, project_id)
+        sandbox = self._get_global_sandbox()
         if not sandbox:
-            raise ValueError("Supervisor auto mode requires a sandbox.")
+            raise ValueError("Supervisor auto mode requires a sandbox. Enable it in Settings (S).")
         from omni_code.work_cli import supervisor_auto_start
         return supervisor_auto_start(ticket_id, prompt, project_id)
 
@@ -502,23 +503,62 @@ class TuiRpcServer:
         sp.run(["docker", "rm", name], capture_output=True, text=True, timeout=30)
         return {"removed": name, "note": "Container removed. Start a ticket sandbox to recreate."}
 
+    def _containers_prune(self, params: dict) -> dict:
+        """Remove stopped containers, dangling images, unused networks, and build cache."""
+        import subprocess as sp
+        results = {}
+        # Stopped containers
+        try:
+            r = sp.run(
+                ["docker", "container", "prune", "-f", "--filter", "label!=keep"],
+                capture_output=True, text=True, timeout=60,
+            )
+            results["containers"] = r.stdout.strip()
+        except Exception as exc:
+            results["containers"] = f"error: {exc}"
+        # Dangling images
+        try:
+            r = sp.run(
+                ["docker", "image", "prune", "-f"],
+                capture_output=True, text=True, timeout=60,
+            )
+            results["images"] = r.stdout.strip()
+        except Exception as exc:
+            results["images"] = f"error: {exc}"
+        # Unused networks
+        try:
+            r = sp.run(
+                ["docker", "network", "prune", "-f"],
+                capture_output=True, text=True, timeout=60,
+            )
+            results["networks"] = r.stdout.strip()
+        except Exception as exc:
+            results["networks"] = f"error: {exc}"
+        # Build cache
+        try:
+            r = sp.run(
+                ["docker", "builder", "prune", "-f"],
+                capture_output=True, text=True, timeout=120,
+            )
+            results["build_cache"] = r.stdout.strip()
+        except Exception as exc:
+            results["build_cache"] = f"error: {exc}"
+        return results
+
     def _sandbox_rebuild_image(self, params: dict) -> dict:
-        """Rebuild the Docker image for a project's sandbox."""
+        """Rebuild the Docker image for the global sandbox."""
         from omni_code.sandbox_cli import _sandbox_image_tag, _build_sandbox_image
 
-        project_id = params["project_id"]
-        project = self._runtime.resolve_project(project_id)
-        if not project:
-            raise ValueError(f"Project not found: {project_id}")
-        sandbox = self._get_project_sandbox(project_id)
+        sandbox = self._get_global_sandbox()
         if not sandbox:
-            raise ValueError("No sandbox configured for this project")
+            raise ValueError("Sandbox is not enabled. Enable it in settings first.")
 
         custom_dockerfile = sandbox.get("dockerfile")
         if custom_dockerfile:
-            # Use as-is if absolute, otherwise resolve relative to workspace
             p = Path(custom_dockerfile)
-            dockerfile = str(p) if p.is_absolute() else str(Path(project.workspace_dir) / custom_dockerfile)
+            dockerfile = str(p) if p.is_absolute() else None
+            if not dockerfile:
+                raise ValueError(f"Sandbox dockerfile must be an absolute path: {custom_dockerfile}")
         else:
             from omni_code.work_cli import _work_dockerfile_path
             dockerfile = _work_dockerfile_path()
@@ -679,53 +719,32 @@ class TuiRpcServer:
                 return {"enabled": bool(raw.get("autoDispatch", False))}
         return {"enabled": False}
 
-    # --- Sandbox config ---
+    # --- Global sandbox config ---
 
-    def _projects_set_sandbox(self, params: dict) -> None:
-        """Set or clear the sandbox config for a project.
+    def _sandbox_get_config(self, params: dict) -> dict:
+        """Get the global sandbox configuration."""
+        from dataclasses import asdict as _asdict
+        sandbox = self._runtime.get_sandbox()
+        return {"sandbox": _asdict(sandbox)}
 
-        params.sandbox can be:
-          - null / None  → remove sandbox (run locally)
-          - {"image": "..."} → use a pre-built Docker image
-          - {"dockerfile": "..."} → use a Dockerfile (relative to workspace)
-        """
-        project_id = params["project_id"]
-        sandbox = params.get("sandbox")  # None means remove
-        config = self._runtime._load()
-        for raw in config.get("fleetProjects", []):
-            if raw.get("id") == project_id:
-                if sandbox is None:
-                    raw.pop("sandbox", None)
-                else:
-                    raw["sandbox"] = sandbox
-                break
-        self._runtime._save(config)
+    def _sandbox_set_config(self, params: dict) -> None:
+        """Set the global sandbox configuration."""
+        from omni_code.projects_runtime import SandboxConfig
+        raw = params.get("sandbox", {})
+        sandbox = SandboxConfig(
+            enabled=bool(raw.get("enabled", False)),
+            image=raw.get("image"),
+            dockerfile=raw.get("dockerfile"),
+        )
+        self._runtime.set_sandbox(sandbox)
         return None
 
-    def _projects_get_sandbox(self, params: dict) -> dict:
-        project_id = params["project_id"]
-        config = self._runtime._load()
-        for raw in config.get("fleetProjects", []):
-            if raw.get("id") == project_id:
-                return {"sandbox": raw.get("sandbox")}
-        return {"sandbox": None}
-
-    def _get_project_sandbox(self, project_id: str | None) -> dict | None:
-        """Helper: resolve the sandbox config dict for a project, or None if local."""
-        if not project_id:
+    def _get_global_sandbox(self) -> dict | None:
+        """Helper: return sandbox config dict if enabled, else None."""
+        sandbox = self._runtime.get_sandbox()
+        if not sandbox.enabled:
             return None
-        config = self._runtime._load()
-        for raw in config.get("fleetProjects", []):
-            if raw.get("id") == project_id:
-                return raw.get("sandbox")
-        return None
-
-    def _get_sandbox_for_ticket(self, ticket_id: str, project_id: str | None) -> dict | None:
-        """Helper: resolve sandbox config for a ticket's project."""
-        ticket = self._runtime.resolve_ticket(ticket_id, project_id)
-        if ticket is None:
-            return None
-        return self._get_project_sandbox(ticket.project_id)
+        return {"image": sandbox.image, "dockerfile": sandbox.dockerfile}
 
     def _resolve_dockerfile(self, sandbox: dict | None, workspace_dir: str | None = None) -> str | None:
         """Resolve custom dockerfile path from sandbox config, or None for default."""
@@ -873,7 +892,7 @@ class TuiRpcServer:
         ticket = self._runtime.resolve_ticket(ticket_id, project_id)
         label = f"SSH: {ticket.title[:30]}" if ticket else f"SSH: {ticket_id[:8]}"
         workspace = _resolve_ticket_workspace(ticket_id, project_id)
-        sandbox = self._get_sandbox_for_ticket(ticket_id, project_id)
+        sandbox = self._get_global_sandbox()
         shell = os.environ.get("SHELL", "/bin/bash")
 
         if sandbox:
@@ -894,7 +913,7 @@ class TuiRpcServer:
         ticket = self._runtime.resolve_ticket(ticket_id, project_id)
         label = f"Omni: {ticket.title[:30]}" if ticket else f"Omni: {ticket_id[:8]}"
         workspace = _resolve_ticket_workspace(ticket_id, project_id)
-        sandbox = self._get_sandbox_for_ticket(ticket_id, project_id)
+        sandbox = self._get_global_sandbox()
 
         if sandbox:
             from omni_code.work_cli import _ensure_started
@@ -939,7 +958,7 @@ class TuiRpcServer:
                 session_id = task.session_id
 
         workspace = _resolve_ticket_workspace(ticket_id, project_id)
-        sandbox = self._get_sandbox_for_ticket(ticket_id, project_id)
+        sandbox = self._get_global_sandbox()
         dockerfile = self._resolve_dockerfile(sandbox, project.workspace_dir if project else None)
 
         # If no session exists yet, create one with supervisor context so the
@@ -984,7 +1003,7 @@ class TuiRpcServer:
         if not project:
             raise ValueError(f"Project not found: {project_id}")
         workspace = Path(project.workspace_dir)
-        sandbox = self._get_project_sandbox(project_id)
+        sandbox = self._get_global_sandbox()
         shell = os.environ.get("SHELL", "/bin/bash")
         label = f"Shell: {project.label}"
 
@@ -1003,7 +1022,7 @@ class TuiRpcServer:
         if not project:
             raise ValueError(f"Project not found: {project_id}")
         workspace = Path(project.workspace_dir)
-        sandbox = self._get_project_sandbox(project_id)
+        sandbox = self._get_global_sandbox()
         label = f"Omni: {project.label}"
 
         if sandbox:
