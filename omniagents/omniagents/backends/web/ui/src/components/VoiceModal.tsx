@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import Orb from './Orb'
 import { RealtimeRPCClient } from '../rpc/realtime'
+import { VoiceNotificationCenter, type VoiceNotification } from './VoiceNotificationCenter'
 
 /**
  * Orb visual states for voice interaction
@@ -14,7 +15,7 @@ enum OrbState {
   SPEAKING = 'speaking',   // Playing back audio - expressive, large, dynamic
 }
 
-export function VoiceModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+export function VoiceModal({ isOpen, onClose, sessionId, onSessionCreated }: { isOpen: boolean; onClose: () => void; sessionId?: string; onSessionCreated?: (id: string) => void }) {
   const [isMuted, setIsMuted] = useState(true)
   const [audioLevel, setAudioLevel] = useState(0)
   const [orbState, setOrbState] = useState<OrbState>(OrbState.IDLE)
@@ -38,6 +39,7 @@ export function VoiceModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
   const workletUrlRef = useRef<string | null>(null)
   const animationRafRef = useRef<number | null>(null)
   const [, forceUpdate] = useState({})
+  const [notifications, setNotifications] = useState<VoiceNotification[]>([])
   const activeAudioSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set())
   const playbackCheckIntervalRef = useRef<number | null>(null)
   const toolUseEndTimeRef = useRef<number>(0)  // When the last tool finished
@@ -430,6 +432,61 @@ export function VoiceModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
         // Tool overlay will fade out automatically after linger period
       }
 
+      // Agent events forwarded from the bridge channel
+      if (t === 'agent_event') {
+        const eventType = String(p?.event_type || '')
+        const data = p?.data || {}
+
+        if (eventType === 'tool_called') {
+          setIsUsingTool(true)
+          toolUseEndTimeRef.current = 0
+          setNotifications(prev => [{
+            id: `tc_${data.call_id || Date.now()}`,
+            type: 'tool_called' as const,
+            tool: data.tool || 'tool',
+            input: typeof data.input === 'string' ? data.input : JSON.stringify(data.input),
+            call_id: data.call_id,
+            timestamp: Date.now(),
+          }, ...prev].slice(0, 10))
+        }
+
+        if (eventType === 'tool_result') {
+          toolUseEndTimeRef.current = Date.now()
+          setNotifications(prev => {
+            const idx = prev.findIndex(n => n.call_id === data.call_id && n.type === 'tool_called')
+            if (idx >= 0) {
+              const next = [...prev]
+              next[idx] = { ...next[idx], type: 'tool_result', output: typeof data.output === 'string' ? data.output : JSON.stringify(data.output), metadata: data.metadata, timestamp: Date.now() }
+              return next
+            }
+            return [{ id: `tr_${data.call_id || Date.now()}`, type: 'tool_result' as const, tool: data.tool || 'tool', output: typeof data.output === 'string' ? data.output : JSON.stringify(data.output), call_id: data.call_id, metadata: data.metadata, timestamp: Date.now() }, ...prev].slice(0, 10)
+          })
+        }
+
+        if (eventType === 'client_request') {
+          const fn = String(data?.function || '')
+          if (fn === 'ui.request_tool_approval') {
+            const args = data?.args || {}
+            setNotifications(prev => [{
+              id: `ap_${data.request_id || Date.now()}`,
+              type: 'tool_approval' as const,
+              tool: args.tool || 'tool',
+              input: typeof args.arguments === 'string' ? args.arguments : JSON.stringify(args.arguments),
+              request_id: data.request_id,
+              metadata: args.metadata,
+              timestamp: Date.now(),
+            }, ...prev].slice(0, 10))
+          }
+        }
+
+        if (eventType === 'client_request_resolved') {
+          const reqId = String(data?.request_id || '')
+          if (reqId) {
+            setNotifications(prev => prev.filter(n => n.request_id !== reqId))
+          }
+        }
+      }
+
       if (t === 'realtime_response_start' || t === 'realtime_audio') {
         duplexHoldRef.current = true
         try {
@@ -505,8 +562,10 @@ export function VoiceModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
       .then(async () => {
         if (!active) return
         try {
-          const res = await client.startSession()
-          sessionIdRef.current = String(res?.session_id || '')
+          const res = await client.startSession(sessionId)
+          const newSid = String(res?.session_id || '')
+          sessionIdRef.current = newSid
+          if (!sessionId && newSid && onSessionCreated) onSessionCreated(newSid)
           if (debugEnabled) console.log('[ui] session started', res)
         } catch {}
       })
@@ -528,8 +587,23 @@ export function VoiceModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
       })
       activeAudioSourcesRef.current.clear()
       setIsActuallyPlayingAudio(false)
+      setNotifications([])
     }
   }, [isOpen])
+
+  const handleApprove = useCallback((requestId: string) => {
+    clientRef.current?.clientResponse(requestId, true, { approved: true })
+    setNotifications(prev => prev.filter(n => n.request_id !== requestId))
+  }, [])
+
+  const handleReject = useCallback((requestId: string) => {
+    clientRef.current?.clientResponse(requestId, true, { approved: false })
+    setNotifications(prev => prev.filter(n => n.request_id !== requestId))
+  }, [])
+
+  const handleDismissNotification = useCallback((id: string) => {
+    setNotifications(prev => prev.filter(n => n.id !== id))
+  }, [])
 
   if (!isOpen) return null
 
@@ -675,6 +749,14 @@ export function VoiceModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
 
   return (
     <div className="fixed inset-0 z-50 bg-black/95 flex flex-col items-center justify-center">
+      {/* Notification center */}
+      <VoiceNotificationCenter
+        notifications={notifications}
+        onApprove={handleApprove}
+        onReject={handleReject}
+        onDismiss={handleDismissNotification}
+      />
+
       {/* Center orb */}
       <div className="flex-1 flex items-center justify-center w-full max-w-2xl px-8">
         <div

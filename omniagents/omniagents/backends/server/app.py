@@ -256,7 +256,9 @@ def build_app(
 
     realtime_spec = getattr(spec, "voice_spec", None)
     spec_voice_backend = getattr(spec, "voice_backend", "realtime")
-    if realtime_spec is None and (spec.realtime_mode or spec_voice_backend == "pipeline"):
+    if realtime_spec is None and (
+        spec.realtime_mode or spec_voice_backend == "pipeline"
+    ):
         realtime_spec = spec
 
     if realtime_spec:
@@ -274,13 +276,18 @@ def build_app(
             realtime_service = VoicePipelineService(
                 realtime_spec,
                 realtime_settings,
-                settings_resolver=settings_resolver if callable(settings_resolver) else None,
+                settings_resolver=(
+                    settings_resolver if callable(settings_resolver) else None
+                ),
+                agent_service=service,
             )
         else:
             realtime_service = RealtimeService(
                 realtime_spec,
                 realtime_settings,
-                settings_resolver=settings_resolver if callable(settings_resolver) else None,
+                settings_resolver=(
+                    settings_resolver if callable(settings_resolver) else None
+                ),
             )
         app.state.realtime_service = realtime_service
         try:
@@ -319,7 +326,9 @@ def build_app(
             await websocket.close(code=4403)
             return
         try:
-            terminal = await terminal_manager.authorize(session_id, terminal_id, term_token)
+            terminal = await terminal_manager.authorize(
+                session_id, terminal_id, term_token
+            )
         except Exception:
             await websocket.close(code=4403)
             return

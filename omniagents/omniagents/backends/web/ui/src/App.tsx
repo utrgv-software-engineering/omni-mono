@@ -355,8 +355,16 @@ export function App() {
       }
     })
 
+    const offClientRequestResolved = client.on('client_request_resolved', (p: any) => {
+      const request_id = String(p?.request_id ?? '')
+      if (request_id) {
+        pendingApprovalsRef.current.delete(request_id)
+        setItems(prev => prev.filter(it => !(it.type === 'approval' && (it as any).request_id === request_id)))
+      }
+    })
+
     return () => {
-      offMessageOutput(); offRunStarted(); offRunEnd(); offRunStatus(); offClientRequest(); offToken(); offToolCalled(); offToolResult()
+      offMessageOutput(); offRunStarted(); offRunEnd(); offRunStatus(); offClientRequest(); offClientRequestResolved(); offToken(); offToolCalled(); offToolResult()
       client.disconnect()
     }
   }, [client, normalizeAgentName, refreshSessions])
@@ -757,6 +765,9 @@ export function App() {
               workspacePath={workspaceSupported ? workspacePath : undefined}
               workspaceLocked={workspaceLocked}
               onWorkspaceClick={() => setWorkspacePickerOpen(true)}
+              sessionId={sessionId}
+              onVoiceSessionCreated={(id: string) => setSessionId(id)}
+              onVoiceClose={() => { if (sessionIdRef.current) handleSelectSession(sessionIdRef.current); refreshSessions(); }}
             />
           </div>
           {isLargeScreen && artifactsPanelOpen && hasArtifacts && (

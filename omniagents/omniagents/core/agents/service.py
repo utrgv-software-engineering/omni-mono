@@ -966,11 +966,25 @@ class AgentService(RpcMethodsBase):
         error: dict | None = None,
     ) -> bool:  # noqa: D401
         _debug_rpc("client_response", {"request_id": request_id, "ok": ok})
+        # Look up the session BEFORE forgetting the request so we can
+        # broadcast a dismissal event to all channels (voice + chat).
+        sess = self._client_request_sessions.get(request_id)
         fut = self._pending_client_requests.pop(request_id, None)
         if fut and not fut.done():
             # Store a simple envelope
             fut.set_result({"ok": ok, "result": result, "error": error})
         self._forget_pending_request(request_id)
+        # Notify all channels that this approval request was resolved
+        # so any UI showing it can dismiss the dialog.
+        if sess is not None:
+            try:
+                await self._broadcast_session(
+                    sess,
+                    "client_request_resolved",
+                    {"request_id": request_id},
+                )
+            except Exception:
+                pass
         return True
 
     # ------------------------------------------------------------------

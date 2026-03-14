@@ -7,6 +7,12 @@ export default {
   ],
   theme: {
     extend: {
+      keyframes: {
+        slideInRight: {
+          from: { opacity: '0', transform: 'translateX(100%)' },
+          to: { opacity: '1', transform: 'translateX(0)' },
+        },
+      },
       colors: {
         tweetBlue: 'rgb(var(--color-tweetBlue) / <alpha-value>)',
         bgMain: 'rgb(var(--color-bgMain) / <alpha-value>)',

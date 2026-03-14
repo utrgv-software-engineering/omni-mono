@@ -143,4 +143,8 @@ export class RealtimeRPCClient {
   async interrupt(sessionId: string): Promise<boolean> {
     return this.call('interrupt', { session_id: sessionId })
   }
+
+  async clientResponse(requestId: string, ok: boolean, result?: Record<string, unknown>): Promise<boolean> {
+    return this.call('client_response', { request_id: requestId, ok, result })
+  }
 }

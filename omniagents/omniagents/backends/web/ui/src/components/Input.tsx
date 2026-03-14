@@ -2,8 +2,8 @@ import React, { useCallback, useMemo, useRef, useState } from 'react'
 import { PromptInput, PromptInputTextarea, PromptInputActions } from './promptkit/PromptInput'
 import { VoiceModal } from './VoiceModal'
 
-export function Input({ disabled, thinking, onStop, onSubmit, voiceEnabled, workspacePath, workspaceLocked, onWorkspaceClick }:
-  { disabled?: boolean; thinking?: boolean; onStop?: () => void; onSubmit: (text: string, files?: File[]) => void; voiceEnabled?: boolean; workspacePath?: string | null; workspaceLocked?: boolean; onWorkspaceClick?: () => void }) {
+export function Input({ disabled, thinking, onStop, onSubmit, voiceEnabled, workspacePath, workspaceLocked, onWorkspaceClick, sessionId, onVoiceSessionCreated, onVoiceClose }:
+  { disabled?: boolean; thinking?: boolean; onStop?: () => void; onSubmit: (text: string, files?: File[]) => void; voiceEnabled?: boolean; workspacePath?: string | null; workspaceLocked?: boolean; onWorkspaceClick?: () => void; sessionId?: string; onVoiceSessionCreated?: (id: string) => void; onVoiceClose?: () => void }) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [history, setHistory] = useState<string[]>([])
@@ -264,7 +264,12 @@ export function Input({ disabled, thinking, onStop, onSubmit, voiceEnabled, work
         </PromptInput>
       </div>
 
-      <VoiceModal isOpen={isVoiceModalOpen} onClose={() => setIsVoiceModalOpen(false)} />
+      <VoiceModal
+        isOpen={isVoiceModalOpen}
+        sessionId={sessionId}
+        onSessionCreated={onVoiceSessionCreated}
+        onClose={() => { setIsVoiceModalOpen(false); onVoiceClose?.(); }}
+      />
     </div>
   )
 }
