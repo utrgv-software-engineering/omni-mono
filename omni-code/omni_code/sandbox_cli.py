@@ -83,10 +83,17 @@ def _parse_persist_volume(value: str) -> tuple[str, str]:
     return name, container_path
 
 
-def _build_sandbox_image(tag: str, dockerfile: Optional[str] = None, no_cache: bool = False) -> None:
+def _build_sandbox_image(
+    tag: str,
+    dockerfile: Optional[str] = None,
+    no_cache: bool = False,
+    build_args: Optional[list[str]] = None,
+) -> None:
     cmd = ["docker", "build", "-t", tag]
     if no_cache:
         cmd.append("--no-cache")
+    for build_arg in build_args or []:
+        cmd.extend(["--build-arg", build_arg])
     if dockerfile:
         cmd.extend(["-f", dockerfile])
     cmd.append(str(_sandbox_assets_dir()))
@@ -241,6 +248,7 @@ def _run_sandbox(
     persist_volumes: list[tuple[str, str]],
     image: Optional[str] = None,
     dockerfile: Optional[str] = None,
+    build_args: Optional[list[str]] = None,
     output: str = "human",
     network_allowlist: Optional[str] = None,
     memory_limit: Optional[str] = None,
@@ -255,7 +263,7 @@ def _run_sandbox(
     else:
         tag = _sandbox_image_tag(dockerfile)
         if rebuild or not _docker_image_exists(tag):
-            _build_sandbox_image(tag, dockerfile=dockerfile, no_cache=no_cache)
+            _build_sandbox_image(tag, dockerfile=dockerfile, no_cache=no_cache, build_args=build_args)
 
     config_dir = get_config_dir()
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -615,6 +623,12 @@ def main(argv=None) -> None:
         default=None,
         help="Path to a custom Dockerfile to build the sandbox image from",
     )
+    parser.add_argument(
+        "--build-arg",
+        action="append",
+        default=[],
+        help="Docker build arg to pass through when building an image (format: KEY=VALUE)",
+    )
 
     parser.add_argument(
         "--omniagents-home",
@@ -761,6 +775,7 @@ def main(argv=None) -> None:
             persist_volumes=list(args.persist_volume),
             image=str(args.image) if args.image else None,
             dockerfile=str(args.dockerfile) if args.dockerfile else None,
+            build_args=list(args.build_arg),
             output=str(args.output),
             network_allowlist=str(args.network_allowlist) if args.network_allowlist else None,
             memory_limit=args.memory_limit,

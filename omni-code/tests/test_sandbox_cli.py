@@ -154,6 +154,57 @@ def test_sandbox_cli_builds_when_missing_and_runs(monkeypatch, tmp_path, capsys)
     assert "omni" in run_cmd
 
 
+def test_sandbox_cli_passes_build_args_to_docker_build(monkeypatch, tmp_path):
+    from omni_code import sandbox_cli
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / ".env").write_text("OPENAI_API_KEY=x\n", encoding="utf-8")
+
+    config_dir = tmp_path / "cfg"
+    monkeypatch.setattr(sandbox_cli, "get_config_dir", lambda: config_dir)
+    monkeypatch.setattr(sandbox_cli.shutil, "which", lambda _: "/usr/bin/docker")
+    monkeypatch.setattr(sandbox_cli, "_assert_port_available", lambda _: None)
+    monkeypatch.setenv("OPENAI_API_KEY", "abc")
+    monkeypatch.delenv("OMNI_CODE_SANDBOX_OMNIAGENTS_HOME", raising=False)
+
+    calls = []
+
+    def fake_run(args, check=True, capture_output=False):
+        calls.append(list(args))
+
+        class Result:
+            def __init__(self, returncode=0):
+                self.returncode = returncode
+
+        if args[:3] == ["docker", "image", "inspect"]:
+            return Result(returncode=1)
+        return Result(returncode=0)
+
+    monkeypatch.setattr(sandbox_cli, "_run_process", fake_run)
+    monkeypatch.setattr(sandbox_cli, "_sandbox_image_tag", lambda *_a, **_kw: "omni-code-sandbox:test")
+
+    sandbox_cli.main(
+        [
+            "--workspace",
+            str(workspace),
+            "--ui",
+            "none",
+            "--mode",
+            "server",
+            "--port",
+            "7777",
+            "--build-arg",
+            "OMNI_CODE_VERSION=0.4.36",
+        ]
+    )
+
+    build_cmd = next(cmd for cmd in calls if cmd[:3] == ["docker", "build", "-t"])
+    assert "--build-arg" in build_cmd
+    build_arg_index = build_cmd.index("--build-arg")
+    assert build_cmd[build_arg_index + 1] == "OMNI_CODE_VERSION=0.4.36"
+
+
 def test_sandbox_cli_skips_build_when_image_exists(monkeypatch, tmp_path):
     from omni_code import sandbox_cli
     monkeypatch.setenv("OPENAI_API_KEY", "abc")
