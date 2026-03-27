@@ -243,6 +243,9 @@ def _run_sandbox(
     dockerfile: Optional[str] = None,
     output: str = "human",
     network_allowlist: Optional[str] = None,
+    memory_limit: Optional[str] = None,
+    cpu_limit: Optional[str] = None,
+    pids_limit: Optional[int] = None,
 ) -> Optional[str]:
     if not _docker_available():
         raise RuntimeError("Docker not found on PATH. Install Docker Desktop or docker-ce.")
@@ -336,6 +339,14 @@ def _run_sandbox(
     if network_allowlist:
         args.extend(["--cap-add", "NET_ADMIN"])
         args.extend(["-e", f"OMNI_SANDBOX_NETWORK_ALLOWLIST={network_allowlist}"])
+
+    # Resource limits
+    if memory_limit:
+        args.extend(["--memory", memory_limit])
+    if cpu_limit:
+        args.extend(["--cpus", cpu_limit])
+    if pids_limit is not None:
+        args.extend(["--pids-limit", str(pids_limit)])
 
     container_cmd: List[str] = ["omni"]
     if container_project_path:
@@ -631,6 +642,22 @@ def main(argv=None) -> None:
             "Example: your-tenant.openai.azure.com,10.0.0.0/16"
         ),
     )
+    parser.add_argument(
+        "--memory-limit",
+        default=None,
+        help="Docker memory limit (e.g. '4g', '512m'). Passed as --memory to docker run.",
+    )
+    parser.add_argument(
+        "--cpu-limit",
+        default=None,
+        help="Docker CPU limit (e.g. '2', '0.5'). Passed as --cpus to docker run.",
+    )
+    parser.add_argument(
+        "--pids-limit",
+        default=None,
+        type=int,
+        help="Docker PID limit. Passed as --pids-limit to docker run.",
+    )
 
     args = parser.parse_args(argv)
 
@@ -736,6 +763,9 @@ def main(argv=None) -> None:
             dockerfile=str(args.dockerfile) if args.dockerfile else None,
             output=str(args.output),
             network_allowlist=str(args.network_allowlist) if args.network_allowlist else None,
+            memory_limit=args.memory_limit,
+            cpu_limit=args.cpu_limit,
+            pids_limit=args.pids_limit,
         )
 
         if args.output == "human":

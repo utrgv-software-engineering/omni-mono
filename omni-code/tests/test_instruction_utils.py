@@ -6,7 +6,7 @@ def test_format_agents_md_block_without_agents(monkeypatch, tmp_path):
     monkeypatch.setenv("PWD", str(tmp_path))
     result = format_agents_md_block()
     assert "[Workspace]" in result
-    assert "# Repository AGENTS" not in result
+    assert "<agents_md_files>" not in result
 
 
 def test_format_agents_md_block_with_agents(monkeypatch, tmp_path):
@@ -22,6 +22,11 @@ def test_format_agents_md_block_with_agents(monkeypatch, tmp_path):
 
     result = format_agents_md_block()
 
-    assert "# Repository AGENTS" in result
-    assert f"[AGENTS.md at {tmp_path}]" in result
-    assert f"[AGENTS.md at {nested_dir}]" in result
+    assert "<agents_md_files>" in result
+    assert f"<location>{root_agents}</location>" in result
+    assert f"<location>{nested_agents}</location>" in result
+    assert f"<scope>{tmp_path}</scope>" in result
+    assert f"<scope>{nested_dir}</scope>" in result
+    # Content should NOT be in the block
+    assert "root instructions" not in result
+    assert "nested instructions" not in result

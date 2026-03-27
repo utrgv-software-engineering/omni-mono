@@ -3,6 +3,13 @@ import sys
 from pathlib import Path
 
 
+def _get_arg_value(args: list[str], *flags: str) -> str | None:
+    for i, arg in enumerate(args):
+        if arg in flags and i + 1 < len(args):
+            return args[i + 1]
+    return None
+
+
 def _print_top_level_help() -> None:
     print(
         "usage: omni [work|projects|lazyomni|model|provider|update|sandbox|sessions] [args]\n\n"
@@ -91,6 +98,10 @@ def cli_main(argv=None) -> None:
         args = [a for a in args if a != "--embedded"]
         os.environ["OMNI_WEB_AUTO_OPEN"] = "false"
 
+    selected_mode = _get_arg_value(args, "--mode", "-m")
+    if embedded and selected_mode == "web" and _get_arg_value(args, "--output") is None:
+        args.extend(["--output", "json"])
+
     _load_models_config()
 
     from omni_code.models import has_models_configured
@@ -112,7 +123,11 @@ def cli_main(argv=None) -> None:
 
         maybe_print_update_notice()
 
+    # Wheel installs bundle project.yml inside the package directory;
+    # editable installs keep a single copy at the repo root.
     project_path = Path(__file__).resolve().parent / "project.yml"
+    if not project_path.is_file():
+        project_path = Path(__file__).resolve().parent.parent / "project.yml"
     try:
         from omni_code.proxy import maybe_start_proxy
 

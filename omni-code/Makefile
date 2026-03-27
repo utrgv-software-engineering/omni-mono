@@ -5,6 +5,7 @@ clean:
 	rm -rf dist/ build/ *.egg-info
 
 build:
+	cp project.yml omni_code/project.yml
 	python -m build
 
 publish: clean build

@@ -20,6 +20,14 @@ omni --mode web          # Web runner
 omni --mode server       # Run the backend server
 ```
 
+For launcher/embed scenarios, use:
+
+```bash
+omni --embedded --mode web --ui-minimal
+```
+
+In this mode Omni Code does not auto-open a browser and emits a machine-readable JSON line from the web backend with the resolved `url` and `port`.
+
 ## Sandbox (Docker)
 
 If you have Docker installed, you can run Omni Code inside a container while mounting your current workspace and your Omni Code config directory (models/MCP/skills):

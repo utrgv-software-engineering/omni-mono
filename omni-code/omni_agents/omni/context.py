@@ -89,49 +89,67 @@ def build_available_skills_block(variables: Dict[str, Any]) -> str:
         return to_prompt([])
 
 
-def collect_agents_md(start_dir: str) -> List[Tuple[str, str]]:
-    """Collect all AGENTS.md files from the workspace, ordered parent → child."""
-    found: List[Tuple[str, str]] = []
-    for root, dirs, files in os.walk(start_dir):
+_SKIP_DIRS = frozenset({
+    ".git", ".hg", ".svn",
+    "node_modules", "__pycache__", ".venv", "venv",
+    ".tox", ".mypy_cache", ".pytest_cache",
+    "dist", "build", ".next", ".nuxt",
+    "target", ".cargo",
+})
+
+_MAX_WALK_DEPTH = 5
+
+
+def discover_agents_md(start_dir: str) -> List[str]:
+    """Discover AGENTS.md file paths from the workspace, ordered parent -> child.
+
+    Skips hidden directories, common dependency/build directories, and
+    limits depth to avoid slow walks near the filesystem root.
+    """
+    found: List[str] = []
+    start = os.path.abspath(start_dir)
+    start_depth = start.count(os.sep)
+
+    for root, dirs, files in os.walk(start):
+        depth = root.count(os.sep) - start_depth
+        if depth >= _MAX_WALK_DEPTH:
+            dirs.clear()
+            continue
+
+        dirs[:] = [
+            d for d in dirs
+            if d not in _SKIP_DIRS and not d.startswith(".")
+        ]
+
         if "AGENTS.md" in files:
-            path = os.path.join(root, "AGENTS.md")
-            try:
-                with open(path, "r", encoding="utf-8") as handle:
-                    found.append((path, handle.read()))
-            except Exception:
-                pass
-    found.sort(
-        key=lambda entry: (
-            (
-                len(os.path.relpath(os.path.dirname(entry[0]), start_dir).split(os.sep))
-                if os.path.dirname(entry[0]) != start_dir
-                else 0
-            ),
-            entry[0],
-        )
-    )
+            found.append(os.path.join(root, "AGENTS.md"))
+
+    found.sort(key=lambda path: (path.count(os.sep), path))
     return found
 
 
 def format_agents_md_block(variables: Dict[str, Any] = None) -> str:
-    """Format AGENTS.md files into an instruction block."""
+    """Format AGENTS.md references into an instruction block.
+
+    Only file locations are injected — content is never embedded in the
+    system prompt. The agent reads files via ``read_file`` at runtime.
+    """
     variables = variables or {}
     workspace_root = variables.get("workspace_root")
     if isinstance(workspace_root, str) and workspace_root.strip():
         base_dir = str(Path(workspace_root).expanduser().resolve())
     else:
         base_dir = str(_resolve_invocation_dir())
-    agents_files = collect_agents_md(base_dir)
+    agents_paths = discover_agents_md(base_dir)
 
-    if not agents_files:
-        return f"\n\n[Workspace]\n{base_dir}\n"
+    parts = [f"\n\n[Workspace]\n{base_dir}\n"]
 
-    parts = [
-        f"\n\n[Workspace]\n{base_dir}\n",
-        "\n\n# Repository AGENTS.md (parent → child)\n",
-    ]
-    for path, body in agents_files:
-        parts.append(f"\n[AGENTS.md at {os.path.dirname(path)}]\n{body}")
+    if agents_paths:
+        parts.append("\n<agents_md_files>")
+        for path in agents_paths:
+            scope = os.path.dirname(path)
+            parts.append(f"\n<file>\n<location>{path}</location>\n<scope>{scope}</scope>\n</file>")
+        parts.append("\n</agents_md_files>\n")
 
     return "".join(parts)
 

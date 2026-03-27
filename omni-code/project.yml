@@ -5,6 +5,7 @@ paths:
   agents: omni_agents
   tools: tools
   server_functions: server_functions
+  evaluations: evaluations
   target: target
 agents:
   entrypoint: omni
@@ -14,8 +15,8 @@ settings:
   - key: model_name
     label: Model Name
     group: OpenAI API
-    default: gpt-5
-    hint: "Model to use (e.g., gpt-5, gpt-4o)"
+    default: gpt-5.2
+    hint: "Model to use (e.g., gpt-5.2, gpt-4o)"
 
 tracing:
   provider: studio
