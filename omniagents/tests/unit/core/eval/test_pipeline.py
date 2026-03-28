@@ -35,7 +35,7 @@ def test_run_evaluation_async_handles_failure_categories(monkeypatch, tmp_path):
     cfg_path = tmp_path / "compiled.yaml"
     cfg_path.write_text(config_text)
 
-    monkeypatch.setattr(pipeline, "_load_local_measures", lambda cfg: None)
+    monkeypatch.setattr(pipeline, "_load_local_measures", lambda cfg, **kw: None)
     monkeypatch.setattr(
         pipeline, "compute_metrics", lambda runs, metrics_cfg: {"run_count": len(runs)}
     )
@@ -52,7 +52,7 @@ def test_run_evaluation_async_handles_failure_categories(monkeypatch, tmp_path):
     calls = []
 
     async def fake_run_scenario(
-        agent_yaml, scenario, defaults, eval_cfg, workflow_name
+        agent_yaml, scenario, defaults, eval_cfg, workflow_name, **kw
     ):
         calls.append(
             {
@@ -191,7 +191,7 @@ def test_run_evaluation_async_progress_callback_exceptions(monkeypatch, tmp_path
     cfg_path = tmp_path / "compiled.yaml"
     cfg_path.write_text(config_text)
 
-    monkeypatch.setattr(pipeline, "_load_local_measures", lambda cfg: None)
+    monkeypatch.setattr(pipeline, "_load_local_measures", lambda cfg, **kw: None)
     monkeypatch.setattr(
         pipeline, "compute_metrics", lambda runs, metrics_cfg: {"count": len(runs)}
     )
@@ -200,7 +200,7 @@ def test_run_evaluation_async_progress_callback_exceptions(monkeypatch, tmp_path
     monkeypatch.setattr(registry, "_MEASURES", registry_map)
 
     async def fake_run_scenario(
-        agent_yaml, scenario, defaults, eval_cfg, workflow_name
+        agent_yaml, scenario, defaults, eval_cfg, workflow_name, **kw
     ):
         return {
             "scenario": scenario["name"],
@@ -259,13 +259,10 @@ def test_load_local_measures_discovers_project_paths(tmp_path):
     measures_file = eval_dir / "measures.py"
     measures_file.write_text("MARKER = 'loaded'")
 
-    manifest = {"agents": [{"file": str(agent_file)}]}
-    (cfg_dir / "agents.json").write_text(json.dumps(manifest))
-
     module_name = f"eval_measures_{eval_dir.name}"
     sys.modules.pop(module_name, None)
 
-    pipeline._load_local_measures(compiled)
+    pipeline._load_local_measures(compiled, project_root=project_root)
 
     assert module_name in sys.modules
     assert getattr(sys.modules[module_name], "MARKER") == "loaded"
@@ -341,7 +338,7 @@ def test_run_scenario_traces_and_records_agent_error(monkeypatch, tmp_path):
 
     spec_holder = {}
 
-    def fake_load_spec(path):
+    def fake_load_spec(path, **kw):
         spec = types.SimpleNamespace(
             use_safe_agent=True,
             max_turns=1,
@@ -401,7 +398,7 @@ def test_run_scenario_traces_and_records_agent_error(monkeypatch, tmp_path):
         lambda ctx, measures: [{"name": m, "passed": True} for m in measures],
     )
 
-    async def fake_run_judges(cfg_path, eval_cfg, scenario, history):
+    async def fake_run_judges(cfg_path, eval_cfg, scenario, history, **kw):
         return {"quality": {"score": "ok"}}
 
     monkeypatch.setattr(pipeline, "_run_judges", fake_run_judges)
@@ -444,6 +441,16 @@ def test_run_scenario_traces_and_records_agent_error(monkeypatch, tmp_path):
     assert result["metadata"]["quality"] == {"score": "ok"}
     assert result["metadata"]["agent_error"]["error"]["message"] == "bad"
     assert any(m["name"] == "_agent_error" for m in result["measures"])
+    # Telemetry fields
+    assert "duration_seconds" in result
+    assert isinstance(result["duration_seconds"], float)
+    assert result["duration_seconds"] >= 0
+    assert "tool_call_count" in result
+    assert isinstance(result["tool_call_count"], int)
+    assert "usage" in result
+    assert "total_tokens" in result["usage"]
+    assert "error_count" in result
+    assert isinstance(result["error_count"], int)
     assert trace_calls and trace_calls[0]["name"] == "EvalFlow"
     assert trace_calls[0]["group_id"].startswith("scenario-id-")
     assert trace_calls[0]["metadata"]["omniagents"]["synthetic"]["selection"][
@@ -469,6 +476,7 @@ def test_run_evaluation_with_studio_tracing(monkeypatch, tmp_path):
         include_unmeasured=False,
         progress_cb=None,
         concurrency=5,
+        **kw,
     ):
         async_calls.append(
             {
@@ -582,7 +590,7 @@ def test_run_evaluation_with_environment_returns_error_on_failed_load(
         multi_turn, "load_environment_class", lambda env_config, base_dir: None
     )
     # _load_local_measures is imported from .pipeline inside the function
-    monkeypatch.setattr(pipeline, "_load_local_measures", lambda cfg: None)
+    monkeypatch.setattr(pipeline, "_load_local_measures", lambda cfg, **kw: None)
 
     result = asyncio.run(
         multi_turn.run_evaluation_with_environment_async(

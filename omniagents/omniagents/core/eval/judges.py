@@ -21,16 +21,23 @@ async def evaluate_split(
     replay_mode: str = "replay",
     runs_file: str | None = None,
     progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
+    eval_config: Any | None = None,
 ) -> Dict[str, Any]:
 
-    cfg = yaml.safe_load(Path(compiled_yaml).read_text(encoding="utf-8")) or {}
+    if eval_config is not None:
+        cfg = eval_config.agent_config
+        eval_cfg = eval_config.config
+        _eval_dir = eval_config.eval_dir
+    else:
+        cfg = yaml.safe_load(Path(compiled_yaml).read_text(encoding="utf-8")) or {}
+        eval_cfg = cfg.get("evaluation") or {}
+        _eval_dir = None
     agent_meta = {
         "name": cfg.get("name"),
         "label": cfg.get("label"),
         "description": cfg.get("description"),
         "tools": cfg.get("tools") or [],
     }
-    eval_cfg = cfg.get("evaluation") or {}
     judges_cfg = eval_cfg.get("judges") or {}
     jcfg = judges_cfg.get(str(judge_key))
     if not isinstance(jcfg, dict):
@@ -234,7 +241,7 @@ async def evaluate_split(
             pass
         return None
 
-    base_dir = Path(compiled_yaml).resolve().parent
+    base_dir = Path(_eval_dir) if _eval_dir else Path(compiled_yaml).resolve().parent
     judge_agent = await _build_judge_agent(jcfg.get("agent") or {}, base_dir)
     input_cfg = jcfg.get("input") or {}
     template = input_cfg.get("template") or ""

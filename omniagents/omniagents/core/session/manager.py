@@ -37,6 +37,7 @@ class Session:  # noqa: D101
         self._project_slug = project_slug
         self._agent_slug = agent_slug
         self.id: str = session_id or str(uuid.uuid4())
+        self.user_id: str | None = None  # set by service after auth
         self.history: list[dict] = (
             load_history(self.id, project_slug=project_slug, agent_slug=agent_slug)
             if session_id

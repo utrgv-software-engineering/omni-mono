@@ -95,7 +95,7 @@ def _configure_execution(monkeypatch, responses):
     def fake_setup_tracing(tracing_config):
         setup_calls.append(dict(tracing_config))
 
-    def fake_load_spec(path):
+    def fake_load_spec(path, **kw):
         return types.SimpleNamespace(
             tracing_config={"provider": "studio"},
             project_slug="proj",

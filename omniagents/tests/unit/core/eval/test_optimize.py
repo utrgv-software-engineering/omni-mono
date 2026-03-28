@@ -8,6 +8,35 @@ import pytest
 import yaml
 
 from omniagents.core.eval import optimize
+from omniagents.core.eval.loader import EvalConfig
+
+
+def _make_fake_eval_config(compiled_path, **overrides):
+    """Create a minimal EvalConfig for test mocking."""
+    p = Path(compiled_path).resolve()
+    # Read tracing/eval config from the file if it exists, for test realism
+    tracing_config = overrides.get("tracing_config", {})
+    eval_cfg = overrides.get("config", {})
+    agent_config = overrides.get("agent_config", {})
+    if p.is_file() and not (tracing_config or eval_cfg or agent_config):
+        try:
+            import yaml as _yaml
+
+            raw = _yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+            eval_cfg = raw.get("evaluation") or {}
+            tracing_config = raw.get("tracing") or {}
+            agent_config = raw
+        except Exception:
+            pass
+    return EvalConfig(
+        config=eval_cfg,
+        agent_config=agent_config,
+        agent_path=p,
+        eval_dir=p.parent,
+        project_root=p.parent,
+        tracing_config=tracing_config,
+        project_config={},
+    )
 
 
 @pytest.fixture
@@ -43,12 +72,12 @@ def configure_optimize_env(monkeypatch):
         env.max_stop_should_trigger = max_stop_should_trigger
         env.stop_callback_result = None
 
-        def fake_compile_project(*args, **kwargs):
-            return str(compiled_path), {}
+        def fake_load_eval_config(*args, **kwargs):
+            return _make_fake_eval_config(compiled_path)
 
         monkeypatch.setattr(
-            "omniagents.core.project.compiler.compile_project",
-            fake_compile_project,
+            "omniagents.core.eval.loader.load_eval_config",
+            fake_load_eval_config,
         )
 
         def fake_apply(*args, **kwargs):
@@ -323,18 +352,17 @@ def setup_optimize_stubs(
         adapter_module,
     )
 
-    compiled_path_str = str(compiled_path)
+    def fake_load_eval_config(*args, **kwargs):
+        return _make_fake_eval_config(compiled_path)
 
-    def fake_compile_project(*args, **kwargs):
-        return compiled_path_str, {}
-
-    compiler_module = types.ModuleType("omniagents.core.project.compiler")
-    compiler_module.compile_project = fake_compile_project
-    compiler_module.__package__ = "omniagents.core.project"
+    loader_module = types.ModuleType("omniagents.core.eval.loader")
+    loader_module.load_eval_config = fake_load_eval_config
+    loader_module.EvalConfig = EvalConfig
+    loader_module.__package__ = "omniagents.core.eval"
     monkeypatch.setitem(
         sys.modules,
-        "omniagents.core.project.compiler",
-        compiler_module,
+        "omniagents.core.eval.loader",
+        loader_module,
     )
 
     def fake_apply(*args, **kwargs):
@@ -566,8 +594,8 @@ evaluation:
         encoding="utf-8",
     )
 
-    def fake_compile_project(*args, **kwargs):
-        return str(compiled_path), {}
+    def fake_load_eval_config(*args, **kwargs):
+        return _make_fake_eval_config(compiled_path)
 
     dummy_gepa = types.ModuleType("gepa")
     monkeypatch.setitem(sys.modules, "gepa", dummy_gepa)
@@ -586,13 +614,14 @@ evaluation:
         adapter_module,
     )
 
-    compiler_module = types.ModuleType("omniagents.core.project.compiler")
-    compiler_module.compile_project = fake_compile_project
-    compiler_module.__package__ = "omniagents.core.project"
+    loader_module = types.ModuleType("omniagents.core.eval.loader")
+    loader_module.load_eval_config = fake_load_eval_config
+    loader_module.EvalConfig = EvalConfig
+    loader_module.__package__ = "omniagents.core.eval"
     monkeypatch.setitem(
         sys.modules,
-        "omniagents.core.project.compiler",
-        compiler_module,
+        "omniagents.core.eval.loader",
+        loader_module,
     )
 
     apply_module = types.ModuleType("omniagents.core.project.apply")

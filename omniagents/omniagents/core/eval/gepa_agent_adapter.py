@@ -51,8 +51,8 @@ class OmniAgentsAgentAdapter:
         score_mode: str = "fraction",
         optimizer_key: Optional[str] = None,
         workflow_name: Optional[str] = None,
+        eval_config: Any = None,
     ) -> None:
-        self.compiled_yaml = Path(compiled_yaml).resolve()
         self.category = str(category)
         self.agent_max_turns = (
             int(agent_max_turns) if agent_max_turns is not None else None
@@ -60,9 +60,20 @@ class OmniAgentsAgentAdapter:
         self.score_mode = score_mode
         self.optimizer_key = optimizer_key
         self.workflow_name = workflow_name
+        self._eval_config = eval_config
 
-        cfg = yaml.safe_load(self.compiled_yaml.read_text(encoding="utf-8")) or {}
-        eval_cfg = cfg.get("evaluation") or {}
+        # When EvalConfig is provided, use it directly
+        if eval_config is not None:
+            self.compiled_yaml = eval_config.agent_path
+            cfg = eval_config.agent_config
+            eval_cfg = eval_config.config
+            self._eval_dir = eval_config.eval_dir
+        else:
+            self.compiled_yaml = Path(compiled_yaml).resolve()
+            cfg = yaml.safe_load(self.compiled_yaml.read_text(encoding="utf-8")) or {}
+            eval_cfg = cfg.get("evaluation") or {}
+            self._eval_dir = None
+
         cmap = _failure_category_map(eval_cfg)
         self.category_measures: List[str] = list(cmap.get(self.category, []) or [])
         self._agent_meta = {
@@ -70,16 +81,21 @@ class OmniAgentsAgentAdapter:
             "label": cfg.get("label") or None,
             "description": cfg.get("description") or None,
         }
+        self._eval_cfg_dict = eval_cfg
 
-        _load_local_measures(self.compiled_yaml)
+        _load_local_measures(
+            self.compiled_yaml,
+            project_root=(eval_config.project_root if eval_config else None),
+            eval_dir=(eval_config.eval_dir if eval_config else None),
+        )
 
         self._optimizer_cfg: Optional[Dict[str, Any]] = None
         self._optimizer_agent = None
         if self.optimizer_key:
             try:
-                self._optimizer_cfg = (
-                    (cfg.get("evaluation") or {}).get("optimizers") or {}
-                ).get(self.optimizer_key) or None
+                self._optimizer_cfg = (eval_cfg.get("optimizers") or {}).get(
+                    self.optimizer_key
+                ) or None
             except Exception:
                 self._optimizer_cfg = None
         # Always provide proposal generation; if no optimizer configured,
@@ -91,12 +107,19 @@ class OmniAgentsAgentAdapter:
 
         self._spec_kwargs: Dict[str, Any] = {}
         self._project_root: Optional[Path] = None
-        manifest = self._locate_manifest()
-        if manifest is not None:
+
+        if eval_config is not None:
+            self._project_root = eval_config.project_root
+            manifest_path = eval_config.project_root / "project.yml"
+        else:
+            manifest_path = self._locate_manifest()
+
+        if manifest_path is not None and manifest_path.is_file():
             try:
-                ctx = load_project(str(manifest))
+                ctx = load_project(str(manifest_path))
                 self._project_root = ctx.root
                 tool_registry = dict(ctx.tool_registry or {})
+                # Agent-level tools dir (next to agent YAML)
                 agent_tools_dir = self.compiled_yaml.parent / "tools"
                 if agent_tools_dir.is_dir():
                     try:
@@ -123,7 +146,10 @@ class OmniAgentsAgentAdapter:
                 if defaults:
                     self._spec_kwargs["project_defaults"] = defaults
             except Exception:
-                self._project_root = None
+                if eval_config is not None:
+                    self._project_root = eval_config.project_root
+                else:
+                    self._project_root = None
         self._ensure_sys_path()
 
     def _locate_manifest(self) -> Optional[Path]:
@@ -143,9 +169,10 @@ class OmniAgentsAgentAdapter:
                 proj_path = str(self._project_root)
                 if proj_path not in sys.path:
                     sys.path.insert(0, proj_path)
-            compiled_parent = str(self.compiled_yaml.parent)
-            if compiled_parent not in sys.path:
-                sys.path.insert(0, compiled_parent)
+            # Add agent parent dir for agent-level Python modules
+            agent_parent = str(self.compiled_yaml.parent)
+            if agent_parent not in sys.path:
+                sys.path.insert(0, agent_parent)
         except Exception:
             pass
 
@@ -199,11 +226,16 @@ class OmniAgentsAgentAdapter:
                 if inspect.isawaitable(maybe_coro):
                     await maybe_coro  # type: ignore[arg-type]
 
-        cfg = yaml.safe_load(self.compiled_yaml.read_text(encoding="utf-8")) or {}
-        eval_cfg = cfg.get("evaluation") or {}
+        eval_cfg = self._eval_cfg_dict
         scen = {"measures": list(self.category_measures)}
         try:
-            metadata = await _run_judges(self.compiled_yaml, eval_cfg, scen, history)
+            metadata = await _run_judges(
+                self.compiled_yaml,
+                eval_cfg,
+                scen,
+                history,
+                eval_dir=self._eval_dir,
+            )
         except Exception:
             metadata = {}
         ctx = build_eval_context(
@@ -519,6 +551,11 @@ class OmniAgentsAgentAdapter:
         setattr(self, "__tools_schema_md", md)
         return md
 
+    def _resolve_base_dir(self) -> Path:
+        if self._eval_dir is not None:
+            return Path(self._eval_dir)
+        return self.compiled_yaml.resolve().parent
+
     async def _ensure_optimizer_agent(self):
         if self._optimizer_agent is not None:
             return self._optimizer_agent
@@ -527,7 +564,7 @@ class OmniAgentsAgentAdapter:
         from omniagents.core.agents.specs import AgentSpec
         from omniagents.core.agents.builder import _default_build_agent
 
-        base_dir = self.compiled_yaml.resolve().parent
+        base_dir = self._resolve_base_dir()
         instructions = agent_cfg.get("instructions") or ""
         if not instructions and agent_cfg.get("instructions_file"):
             instructions = self._read_text_file(
@@ -623,7 +660,7 @@ class OmniAgentsAgentAdapter:
     ) -> str:
         ocfg = self._optimizer_cfg or {}
         proposals = ocfg.get("proposals") or {}
-        base_dir = self.compiled_yaml.resolve().parent
+        base_dir = self._resolve_base_dir()
         if component == "instructions":
             tf = proposals.get("instructions_template_file")
             if tf:

@@ -1,5 +1,7 @@
 """Core agent building functionality."""
 
+import asyncio
+import json as _json
 import os
 from typing import Dict, Any, Optional, TYPE_CHECKING, List, Set
 from pathlib import Path
@@ -13,6 +15,59 @@ if TYPE_CHECKING:
     from agents.handoffs import Handoff
 
 logger = get_logger(__name__)
+
+
+def _apply_tool_timeouts(tools: List[Any], timeouts: Dict[str, Any]) -> List[Any]:
+    """Wrap tool invoke methods with ``asyncio.wait_for`` timeouts.
+
+    *timeouts* maps tool names to seconds.  The special key ``"default"``
+    sets the fallback for tools without an explicit entry.
+    """
+    from agents.tool import FunctionTool
+
+    default_timeout = timeouts.get("default")
+    wrapped: List[Any] = []
+    for tool in tools:
+        name = getattr(tool, "name", "")
+        timeout = timeouts.get(name, default_timeout)
+        if timeout is None or not isinstance(tool, FunctionTool):
+            wrapped.append(tool)
+            continue
+        try:
+            timeout = int(timeout)
+        except (TypeError, ValueError):
+            wrapped.append(tool)
+            continue
+
+        original_invoke = tool.on_invoke_tool
+
+        def _make_timed_invoke(orig, tname, tout):
+            async def timed_invoke(context, params_json: str):
+                try:
+                    return await asyncio.wait_for(orig(context, params_json), timeout=tout)
+                except asyncio.TimeoutError:
+                    logger.warning(f"Tool '{tname}' timed out after {tout}s")
+                    return _json.dumps({
+                        "error": "TOOL_TIMEOUT",
+                        "tool": tname,
+                        "timeout_seconds": tout,
+                    })
+            return timed_invoke
+
+        timed_tool = FunctionTool(
+            name=tool.name,
+            description=tool.description,
+            params_json_schema=dict(tool.params_json_schema),
+            on_invoke_tool=_make_timed_invoke(original_invoke, name, timeout),
+            strict_json_schema=tool.strict_json_schema,
+        )
+        # Preserve custom attributes
+        for attr in ("_is_omniagents_core_tool", "_original_func", "_client_status_text"):
+            if hasattr(tool, attr):
+                setattr(timed_tool, attr, getattr(tool, attr))
+        timed_tool._timeout_seconds = timeout
+        wrapped.append(timed_tool)
+    return wrapped
 
 
 async def _build_handoffs_from_configs(
@@ -241,12 +296,30 @@ async def _default_build_agent(
     # client may already exist) still receive the key from settings/.env.
     # If callers need a custom client, they should set it explicitly via
     # agents.set_default_openai_client() before running.
+    # Resolve secrets provider — always goes through the abstraction.
+    # Defaults to EnvSecretsProvider (wraps os.getenv) when not configured.
+    from omniagents.core.providers.secrets.env import EnvSecretsProvider
+
+    _secrets = EnvSecretsProvider()
+    try:
+        sec = getattr(spec, "security_config", None) or {}
+        provider_cfg = (sec.get("providers") or {}).get("secrets")
+        if provider_cfg:
+            from omniagents.core.providers import resolve_provider
+
+            _secrets = resolve_provider("secrets", provider_cfg)
+    except Exception:
+        pass
+
+    def _get_secret(key: str) -> str | None:
+        return _secrets.get_secret(key)
+
     api_key_from_settings = settings.get("openai_api_key")
     if not api_key_from_settings:
-        api_key_from_settings = os.getenv("OPENAI_API_KEY")
+        api_key_from_settings = _get_secret("OPENAI_API_KEY")
 
     # Check for Azure configuration to apply header injection fix
-    base_url = settings.get("openai_base_url") or os.getenv("OPENAI_BASE_URL")
+    base_url = settings.get("openai_base_url") or _get_secret("OPENAI_BASE_URL")
     is_azure = base_url and (
         "openai.azure.com" in base_url or "services.ai.azure.com" in base_url
     )
@@ -372,8 +445,15 @@ async def _default_build_agent(
         output_guardrails=output_guardrails,
     )
 
+    # Apply project-level safety mode enforcement
+    _use_safe = spec.use_safe_agent
+    _skip_approvals = spec.safe_agent_options.skip_approvals
+    if spec.security_config and spec.security_config.get("safety_mode") == "enforced":
+        _use_safe = True
+        _skip_approvals = False
+
     # Optionally wrap with SafeAgent
-    if spec.use_safe_agent and approval_callback:
+    if _use_safe and approval_callback:
         from omniagents.core.agents.safe import SafeAgent
 
         opts = spec.safe_agent_options
@@ -396,7 +476,7 @@ async def _default_build_agent(
             approval_callback=approval_callback,
             safe_tool_names=opts.safe_tool_names,
             safe_tool_patterns=opts.safe_tool_patterns,
-            skip_approvals=opts.skip_approvals,
+            skip_approvals=_skip_approvals,
             halt_on_rejection=opts.halt_on_rejection,
         )
         return safe_agent

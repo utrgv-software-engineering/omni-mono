@@ -154,6 +154,12 @@ class SafeAgent(Agent):
         self._halt_run = False
         self._halt_reason = None
 
+        # Optional audit callback: async (event_type, tool_name, details, reviewer_id=None) -> None
+        # Set by the builder/service layer when audit is enabled.
+        self._audit_emit = None
+        # Identity of the human reviewing tool approvals (from Session.user_id)
+        self._reviewer_id: str | None = None
+
         # Wrap handoffs to automatically wrap returned agents in SafeAgent
         self.handoffs = self._wrap_handoffs(handoffs)
 
@@ -444,6 +450,15 @@ class SafeAgent(Agent):
             if approved:
                 if always_approve:
                     self.add_safe_tool(tool.name)  # Instance level only
+                # Audit: tool approved (include reviewer identity)
+                if self._audit_emit is not None:
+                    try:
+                        await self._audit_emit(
+                            "tool_approved", tool.name, {},
+                            self._reviewer_id,
+                        )
+                    except Exception:
+                        pass
                 return await original_on_invoke(context, params_json)
 
             # --- Rejected path ---------------------------------------------------
@@ -456,6 +471,17 @@ class SafeAgent(Agent):
                         f"[SafeAgent] Setting halt flag due to rejection of {tool.name}",
                         file=sys.stderr,
                     )
+
+            # Audit: tool rejected (include reviewer identity)
+            if self._audit_emit is not None:
+                try:
+                    await self._audit_emit(
+                        "tool_rejected", tool.name,
+                        {"reason": rejection_reason},
+                        self._reviewer_id,
+                    )
+                except Exception:
+                    pass
 
             return json.dumps(
                 {

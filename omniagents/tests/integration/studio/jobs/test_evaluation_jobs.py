@@ -5,8 +5,31 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from omniagents.studio.server import api as studio_api
+from omniagents.core.eval.loader import EvalConfig
+
+
+def _make_fake_eval_config(compiled_path, content=None):
+    """Build a fake EvalConfig, optionally writing content to the file."""
+    p = Path(compiled_path)
+    if content is not None:
+        p.write_text(content, encoding="utf-8")
+    raw = {}
+    try:
+        raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    except Exception:
+        pass
+    return EvalConfig(
+        config=raw.get("evaluation") or {},
+        agent_config=raw,
+        agent_path=p.resolve(),
+        eval_dir=p.parent.resolve(),
+        project_root=p.parent.resolve(),
+        tracing_config=raw.get("tracing") or {},
+        project_config={},
+    )
 
 
 def _auth_header() -> dict[str, str]:
@@ -28,9 +51,10 @@ def _wait_for_completion(portal, url, client):
 def test_evaluation_suite_job_lifecycle(monkeypatch, studio_api_env):
     compiled_path = studio_api_env.project_dir / "compiled_suite.yml"
 
-    def _fake_compile_project(manifest_path, select="", exclude="", agent_key=None):
-        compiled_path.write_text("tracing:\n  provider: none\n", encoding="utf-8")
-        return str(compiled_path), {}
+    fake_cfg = _make_fake_eval_config(compiled_path, "tracing:\n  provider: none\n")
+
+    def _fake_load_eval_config(*args, **kwargs):
+        return fake_cfg
 
     def _fake_run_evaluation(
         compiled_cfg,
@@ -38,6 +62,7 @@ def test_evaluation_suite_job_lifecycle(monkeypatch, studio_api_env):
         workflow_base_name=None,
         include_unmeasured=False,
         progress_cb=None,
+        **kw,
     ):
         if progress_cb:
             progress_cb({"event": "start", "total": 2})
@@ -59,7 +84,7 @@ def test_evaluation_suite_job_lifecycle(monkeypatch, studio_api_env):
             },
         }
 
-    monkeypatch.setattr(studio_api, "compile_project", _fake_compile_project)
+    monkeypatch.setattr(studio_api, "load_eval_config", _fake_load_eval_config)
     monkeypatch.setattr(studio_api, "run_evaluation", _fake_run_evaluation)
     output_path = (
         studio_api_env.project_dir / "artifacts" / "eval" / "suite" / "run.json"
@@ -92,9 +117,10 @@ def test_evaluation_suite_job_lifecycle(monkeypatch, studio_api_env):
 def test_scenario_run_job_progress(monkeypatch, studio_api_env):
     compiled_path = studio_api_env.project_dir / "compiled_scenarios.yml"
 
-    def _fake_compile_project(manifest_path, select="", exclude="", agent_key=None):
-        compiled_path.write_text("tracing:\n  provider: none\n", encoding="utf-8")
-        return str(compiled_path), {}
+    fake_cfg = _make_fake_eval_config(compiled_path, "tracing:\n  provider: none\n")
+
+    def _fake_load_eval_config(*args, **kwargs):
+        return fake_cfg
 
     async def _fake_run_scenarios_against_agent(
         compiled_cfg,
@@ -104,6 +130,7 @@ def test_scenario_run_job_progress(monkeypatch, studio_api_env):
         workflow_name=None,
         progress_cb=None,
         scenario_source_path=None,
+        **kw,
     ):
         if progress_cb:
             progress_cb({"event": "start", "total": len(scenarios)})
@@ -112,7 +139,7 @@ def test_scenario_run_job_progress(monkeypatch, studio_api_env):
             progress_cb({"event": "done", "count": len(scenarios)})
         return [{"scenario": entry.get("id"), "measures": []} for entry in scenarios]
 
-    monkeypatch.setattr(studio_api, "compile_project", _fake_compile_project)
+    monkeypatch.setattr(studio_api, "load_eval_config", _fake_load_eval_config)
     monkeypatch.setattr(
         studio_api,
         "run_scenarios_against_agent",
@@ -218,10 +245,7 @@ def test_evaluation_suite_sets_environment_variables_from_config(
     compiled_path = studio_api_env.project_dir / "compiled_env_test.yml"
     captured_env_vars = {}
 
-    def _fake_compile_project(manifest_path, select="", exclude="", agent_key=None):
-        # Return a compiled config with environment settings
-        compiled_path.write_text(
-            """
+    env_content = """
 tracing:
   provider: none
 evaluation:
@@ -230,10 +254,11 @@ evaluation:
     config:
       api_base: "${TEST_API_BASE:-http://default-api.com}"
       api_token: "static-token-value"
-""",
-            encoding="utf-8",
-        )
-        return str(compiled_path), {}
+"""
+    fake_cfg = _make_fake_eval_config(compiled_path, env_content)
+
+    def _fake_load_eval_config(*args, **kwargs):
+        return fake_cfg
 
     def _fake_run_evaluation(
         compiled_cfg,
@@ -241,6 +266,7 @@ evaluation:
         workflow_base_name=None,
         include_unmeasured=False,
         progress_cb=None,
+        **kw,
     ):
         # Capture environment variables during evaluation
         captured_env_vars["API_BASE"] = os.environ.get("API_BASE")
@@ -250,7 +276,7 @@ evaluation:
             progress_cb({"event": "progress", "index": 1})
         return {"runs": [], "metrics": [], "stats": {"total_scenarios": 0}}
 
-    monkeypatch.setattr(studio_api, "compile_project", _fake_compile_project)
+    monkeypatch.setattr(studio_api, "load_eval_config", _fake_load_eval_config)
     monkeypatch.setattr(studio_api, "run_evaluation", _fake_run_evaluation)
 
     # Ensure env vars don't exist before test
@@ -284,9 +310,10 @@ def test_evaluation_suite_propagates_warnings_from_result(monkeypatch, studio_ap
     """Test that warnings from run_evaluation result appear in job status."""
     compiled_path = studio_api_env.project_dir / "compiled_warnings_test.yml"
 
-    def _fake_compile_project(manifest_path, select="", exclude="", agent_key=None):
-        compiled_path.write_text("tracing:\n  provider: none\n", encoding="utf-8")
-        return str(compiled_path), {}
+    fake_cfg = _make_fake_eval_config(compiled_path, "tracing:\n  provider: none\n")
+
+    def _fake_load_eval_config(*args, **kwargs):
+        return fake_cfg
 
     def _fake_run_evaluation(
         compiled_cfg,
@@ -294,6 +321,7 @@ def test_evaluation_suite_propagates_warnings_from_result(monkeypatch, studio_ap
         workflow_base_name=None,
         include_unmeasured=False,
         progress_cb=None,
+        **kw,
     ):
         if progress_cb:
             progress_cb({"event": "start", "total": 1})
@@ -307,7 +335,7 @@ def test_evaluation_suite_propagates_warnings_from_result(monkeypatch, studio_ap
             ],
         }
 
-    monkeypatch.setattr(studio_api, "compile_project", _fake_compile_project)
+    monkeypatch.setattr(studio_api, "load_eval_config", _fake_load_eval_config)
     monkeypatch.setattr(studio_api, "run_evaluation", _fake_run_evaluation)
 
     payload = {"name": "warnings-test"}

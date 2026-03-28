@@ -12,6 +12,7 @@ import fnmatch
 
 import yaml
 
+from omniagents.core.security import SecurityConfig
 from omniagents.core.tools.discovery import discover_functions_in_dir
 from omniagents.core.guardrails.discovery import discover_guardrails_in_dir
 from omniagents.core.server_functions.discovery import discover_server_functions_in_dir
@@ -61,6 +62,8 @@ class ProjectContext:
     # User-supplied MCP server support
     allow_user_mcp_servers: bool = False
     user_mcp_servers: List["MCPServerConfig"] = field(default_factory=list)
+    # Project-level security policy
+    security: SecurityConfig = field(default_factory=SecurityConfig)
 
 
 def _validate_agent_name(expected_key: str, yaml_name: Any, path: Path) -> str:
@@ -253,10 +256,20 @@ def load_project(project_path: str) -> ProjectContext:
             except Exception:
                 pass
 
+    # --- Security Configuration ---
+    security = SecurityConfig.from_dict(proj.get("security"))
+
     # --- User MCP Server Support ---
     allow_user_mcp = proj.get("allow_user_mcp_servers", False)
     if not isinstance(allow_user_mcp, bool):
         print("Warning: 'allow_user_mcp_servers' should be a boolean. Using False.")
+        allow_user_mcp = False
+
+    # MCP allowlist overrides user MCP permission
+    if security.mcp_require_allowlist and allow_user_mcp:
+        print(
+            "Security: mcp_require_allowlist is enabled — disabling user MCP servers"
+        )
         allow_user_mcp = False
 
     user_mcp_configs: List[Any] = []
@@ -291,6 +304,7 @@ def load_project(project_path: str) -> ProjectContext:
         server_functions_registry=server_functions_registry,
         allow_user_mcp_servers=allow_user_mcp,
         user_mcp_servers=user_mcp_configs,
+        security=security,
     )
 
 
@@ -323,6 +337,7 @@ def build_spec_from_project(
     pdefs = {
         "tracing": project.tracing_defaults or None,
         "settings": project.settings_defaults or [],
+        "security": project.security.to_dict(),
     }
     pdefs.update(project.ui_defaults or {})
     spec = load_agent_spec_from_yaml(

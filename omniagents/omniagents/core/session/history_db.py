@@ -1,12 +1,21 @@
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from threading import Lock
 from typing import Optional, Tuple
 
 from omniagents.core.paths import get_sessions_db_path
 
 _STORES: dict[str, Tuple[sqlite3.Connection, Lock]] = {}
+
+# Pluggable encryption provider — set via set_encryption_provider()
+_encryption_provider = None
+
+
+def set_encryption_provider(provider) -> None:
+    """Set the session encryption provider (called by AgentService on startup)."""
+    global _encryption_provider
+    _encryption_provider = provider
 
 
 _UNSET = object()
@@ -78,6 +87,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE sessions ADD COLUMN context_json TEXT")
     if "variables_json" not in columns:
         conn.execute("ALTER TABLE sessions ADD COLUMN variables_json TEXT")
+    if "hold" not in columns:
+        conn.execute("ALTER TABLE sessions ADD COLUMN hold INTEGER DEFAULT 0")
+    if "user_id" not in columns:
+        conn.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT")
 
     conn.commit()
 
@@ -90,12 +103,58 @@ def _get_store(
     store = _STORES.get(key)
     if store is None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        if _encryption_provider is not None:
+            conn = _encryption_provider.get_connection(str(db_path))
+        else:
+            conn = sqlite3.connect(str(db_path), check_same_thread=False)
         _ensure_schema(conn)
         lock = Lock()
         store = (conn, lock)
         _STORES[key] = store
     return store
+
+
+def purge_old_sessions(
+    retention_days: int,
+    *,
+    project_slug: str | None = None,
+    agent_slug: str | None = None,
+) -> int:
+    """Delete sessions older than *retention_days*.
+
+    Returns the number of sessions purged.  Does nothing if
+    *retention_days* <= 0.
+    """
+    if retention_days <= 0:
+        return 0
+    conn, lock = _get_store(project_slug, agent_slug)
+    cutoff = (datetime.utcnow() - timedelta(days=retention_days)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+    with lock:
+        # Find sessions to purge (skip sessions under legal hold)
+        cur = conn.execute(
+            "SELECT session_id FROM sessions WHERE created_at < ? AND hold = 0",
+            (cutoff,),
+        )
+        old_ids = [row[0] for row in cur.fetchall()]
+        if not old_ids:
+            return 0
+        placeholders = ",".join("?" for _ in old_ids)
+        conn.execute(
+            f"DELETE FROM audio_metadata WHERE session_id IN ({placeholders})",
+            old_ids,
+        )
+        conn.execute(
+            f"DELETE FROM history WHERE session_id IN ({placeholders})",
+            old_ids,
+        )
+        conn.execute(
+            f"DELETE FROM sessions WHERE session_id IN ({placeholders})",
+            old_ids,
+        )
+        conn.commit()
+    return len(old_ids)
 
 
 def load_history(
@@ -129,13 +188,18 @@ def append_message(
 
 
 def register_session(
-    session_id: str, *, project_slug: str | None = None, agent_slug: str | None = None
+    session_id: str,
+    *,
+    project_slug: str | None = None,
+    agent_slug: str | None = None,
+    user_id: str | None = None,
 ) -> None:
     conn, lock = _get_store(project_slug, agent_slug)
     with lock:
         conn.execute(
-            "INSERT OR IGNORE INTO sessions(session_id, created_at) VALUES (?, datetime('now'))",
-            (session_id,),
+            "INSERT OR IGNORE INTO sessions(session_id, created_at, user_id) "
+            "VALUES (?, datetime('now'), ?)",
+            (session_id, user_id),
         )
         conn.commit()
 
@@ -537,12 +601,17 @@ def delete_session(
     """
     conn, lock = _get_store(project_slug, agent_slug)
     with lock:
-        # Check if session exists
+        # Check if session exists and is not under legal hold
         cur = conn.execute(
-            "SELECT session_id FROM sessions WHERE session_id=?", (session_id,)
+            "SELECT session_id, hold FROM sessions WHERE session_id=?", (session_id,)
         )
-        if cur.fetchone() is None:
+        row = cur.fetchone()
+        if row is None:
             return False
+        if row[1]:
+            raise ValueError(
+                f"Session {session_id} is under legal hold and cannot be deleted"
+            )
 
         # Delete audio metadata (if any)
         conn.execute("DELETE FROM audio_metadata WHERE session_id=?", (session_id,))
@@ -555,3 +624,102 @@ def delete_session(
 
         conn.commit()
     return True
+
+
+# --- Legal Hold Functions ---
+
+
+def set_session_hold(
+    session_id: str,
+    hold: bool = True,
+    *,
+    project_slug: str | None = None,
+    agent_slug: str | None = None,
+) -> bool:
+    """Set or clear legal hold on a session.
+
+    Held sessions are excluded from retention purge and cannot be deleted.
+
+    Returns True if the session was found and updated, False if it doesn't exist.
+    """
+    conn, lock = _get_store(project_slug, agent_slug)
+    with lock:
+        cur = conn.execute(
+            "UPDATE sessions SET hold=? WHERE session_id=?",
+            (1 if hold else 0, session_id),
+        )
+        conn.commit()
+    return cur.rowcount > 0
+
+
+def get_session_hold(
+    session_id: str,
+    *,
+    project_slug: str | None = None,
+    agent_slug: str | None = None,
+) -> bool:
+    """Check whether a session is under legal hold."""
+    conn, lock = _get_store(project_slug, agent_slug)
+    with lock:
+        cur = conn.execute(
+            "SELECT hold FROM sessions WHERE session_id=?", (session_id,)
+        )
+        row = cur.fetchone()
+    return bool(row[0]) if row else False
+
+
+# --- User Identity Functions ---
+
+
+def update_session_user_id(
+    session_id: str,
+    user_id: str,
+    *,
+    project_slug: str | None = None,
+    agent_slug: str | None = None,
+) -> None:
+    """Associate a user_id with an existing session."""
+    conn, lock = _get_store(project_slug, agent_slug)
+    with lock:
+        conn.execute(
+            "UPDATE sessions SET user_id=? WHERE session_id=?",
+            (user_id, session_id),
+        )
+        conn.commit()
+
+
+def list_sessions_for_user(
+    user_id: str,
+    *,
+    project_slug: str | None = None,
+    agent_slug: str | None = None,
+) -> list[dict]:
+    """Like :func:`list_sessions` but filtered to sessions owned by *user_id*."""
+    conn, lock = _get_store(project_slug, agent_slug)
+    with lock:
+        cur = conn.execute(
+            """
+            SELECT
+                s.session_id,
+                s.archived,
+                s.created_at as session_created,
+                COUNT(h.id) as message_count
+            FROM sessions s
+            LEFT JOIN history h ON s.session_id = h.session_id
+            WHERE s.user_id = ?
+            GROUP BY s.session_id, s.archived, s.created_at
+            ORDER BY s.created_at DESC
+            """,
+            (user_id,),
+        )
+        sessions = cur.fetchall()
+
+    return [
+        {
+            "id": sid,
+            "archived": bool(archived),
+            "created_at": created or datetime.now().isoformat(),
+            "message_count": msg_count,
+        }
+        for sid, archived, created, msg_count in sessions
+    ]

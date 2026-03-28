@@ -38,8 +38,8 @@ class OmniAgentsJudgeAdapter:
         judge_max_turns: int = 1,
         optimizer_key: Optional[str] = None,
         workflow_name: Optional[str] = None,
+        eval_config: Any = None,
     ) -> None:
-        self.compiled_yaml = Path(compiled_yaml).resolve()
         self.judge_key = str(judge_key)
         self.runs_file = Path(runs_file).resolve()
         self.category = category
@@ -47,13 +47,26 @@ class OmniAgentsJudgeAdapter:
         self.judge_max_turns = int(judge_max_turns)
         self.optimizer_key = optimizer_key
         self.workflow_name = workflow_name
+        self._eval_config = eval_config
 
         self.debug_dir: Optional[Path] = None
         self.__debug_iter = 0
         self.__debug_last_batch_ids: List[str] = []
 
-        self._cfg = yaml.safe_load(self.compiled_yaml.read_text(encoding="utf-8")) or {}
-        self._eval_cfg = self._cfg.get("evaluation") or {}
+        # When EvalConfig is provided, use it directly
+        if eval_config is not None:
+            self.compiled_yaml = eval_config.agent_path
+            self._cfg = eval_config.agent_config
+            self._eval_cfg = eval_config.config
+            self._eval_dir = eval_config.eval_dir
+        else:
+            self.compiled_yaml = Path(compiled_yaml).resolve()
+            self._cfg = (
+                yaml.safe_load(self.compiled_yaml.read_text(encoding="utf-8")) or {}
+            )
+            self._eval_cfg = self._cfg.get("evaluation") or {}
+            self._eval_dir = None
+
         self._judge_cfg = (self._eval_cfg.get("judges") or {}).get(self.judge_key) or {}
         ag = self._judge_cfg.get("agent") or {}
         self._judge_meta = {
@@ -88,25 +101,24 @@ class OmniAgentsJudgeAdapter:
 
         self._spec_kwargs: Dict[str, Any] = {}
         self._project_root: Optional[Path] = None
-        manifest = self._locate_manifest()
-        if manifest is not None:
+
+        if eval_config is not None:
+            self._project_root = eval_config.project_root
+            manifest_path = eval_config.project_root / "project.yml"
+        else:
+            manifest_path = self._locate_manifest()
+
+        if manifest_path is not None and manifest_path.is_file():
             try:
-                ctx = load_project(str(manifest))
+                ctx = load_project(str(manifest_path))
                 self._project_root = ctx.root
                 tool_registry = dict(ctx.tool_registry or {})
+                # Agent-level tools dir (next to agent YAML)
                 agent_tools_dir = self.compiled_yaml.parent / "tools"
                 if agent_tools_dir.is_dir():
                     try:
                         tool_registry.update(
                             discover_functions_in_dir(str(agent_tools_dir))
-                        )
-                    except Exception:
-                        pass
-                project_tools_dir = self.compiled_yaml.parent / "project_tools"
-                if project_tools_dir.is_dir():
-                    try:
-                        tool_registry.update(
-                            discover_functions_in_dir(str(project_tools_dir))
                         )
                     except Exception:
                         pass
@@ -128,7 +140,10 @@ class OmniAgentsJudgeAdapter:
                 if defaults:
                     self._spec_kwargs["project_defaults"] = defaults
             except Exception:
-                self._project_root = None
+                if eval_config is not None:
+                    self._project_root = eval_config.project_root
+                else:
+                    self._project_root = None
         self._ensure_sys_path()
 
     @staticmethod
@@ -242,15 +257,21 @@ class OmniAgentsJudgeAdapter:
             current = current.parent
         return None
 
+    def _resolve_base_dir(self) -> Path:
+        if self._eval_dir is not None:
+            return Path(self._eval_dir)
+        return self.compiled_yaml.resolve().parent
+
     def _ensure_sys_path(self) -> None:
         try:
             if self._project_root:
                 proj_path = str(self._project_root)
                 if proj_path not in sys.path:
                     sys.path.insert(0, proj_path)
-            compiled_parent = str(self.compiled_yaml.parent)
-            if compiled_parent not in sys.path:
-                sys.path.insert(0, compiled_parent)
+            # Add agent parent dir for agent-level Python modules
+            agent_parent = str(self.compiled_yaml.parent)
+            if agent_parent not in sys.path:
+                sys.path.insert(0, agent_parent)
         except Exception:
             pass
 
@@ -361,7 +382,7 @@ class OmniAgentsJudgeAdapter:
     ):
         from agents import Runner as AgentsRunner
 
-        base_dir = self.compiled_yaml.resolve().parent
+        base_dir = self._resolve_base_dir()
         j_agent_cfg = self._judge_cfg.get("agent") or {}
         j_input_cfg = self._judge_cfg.get("input") or {}
 
@@ -717,7 +738,7 @@ class OmniAgentsJudgeAdapter:
         md = ""
         try:
             # Discover tool objects without building the agent
-            base_dir = self.compiled_yaml.resolve().parent
+            base_dir = self._resolve_base_dir()
             discovered: Dict[str, Any] = {}
             try:
                 t1 = base_dir / "tools"
@@ -812,7 +833,7 @@ class OmniAgentsJudgeAdapter:
         from omniagents.core.agents.specs import AgentSpec
         from omniagents.core.agents.builder import _default_build_agent
 
-        base_dir = self.compiled_yaml.resolve().parent
+        base_dir = self._resolve_base_dir()
         instructions = agent_cfg.get("instructions") or ""
         if not instructions and agent_cfg.get("instructions_file"):
             instructions = self._read_text_file(
@@ -995,7 +1016,7 @@ class OmniAgentsJudgeAdapter:
     ) -> str:
         ocfg = self._optimizer_cfg or {}
         proposals = ocfg.get("proposals") or {}
-        base_dir = self.compiled_yaml.resolve().parent
+        base_dir = self._resolve_base_dir()
         if component == "instructions":
             tf = proposals.get("instructions_template_file")
             if tf:

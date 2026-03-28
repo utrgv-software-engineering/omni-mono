@@ -53,7 +53,7 @@ from omniagents.core.project.runtime import (
     build_spec_from_project,
     resolve_agent,
 )
-from omniagents.core.project.compiler import compile_project, _filter_scenarios
+from omniagents.core.eval.loader import load_eval_config, filter_scenarios
 from omniagents.core.eval.scenarios import generate_scenarios
 from omniagents.core.eval.multi_turn import run_scenarios_against_agent
 from omniagents.core.eval.split import create_splits
@@ -3697,15 +3697,14 @@ def create_api_app(
         manager: ScenarioGenerationManager = app.state.scenario_generation_manager
         await manager.update_job(job_id, state="running", started_at=_utc_now())
         try:
-            compiled_cfg_path, _ = compile_project(
+            eval_cfg = load_eval_config(
                 str(manifest_path),
                 select=str(payload.select or ""),
                 exclude=str(payload.exclude or ""),
                 agent_key=(payload.agent or None),
             )
-            compiled_path = Path(compiled_cfg_path).resolve()
-            cfg = yaml.safe_load(compiled_path.read_text(encoding="utf-8")) or {}
-            tracing = cfg.get("tracing") or {}
+            compiled_path = eval_cfg.agent_path
+            tracing = eval_cfg.tracing_config
             workflow_name: Optional[str] = None
             tracing_module = None
             provider = str(tracing.get("provider") or "").lower()
@@ -3782,7 +3781,7 @@ def create_api_app(
                     )
 
             scenarios, out_path, _ = await generate_scenarios(
-                Path(compiled_cfg_path),
+                compiled_path,
                 count=payload.count,
                 seed=payload.seed,
                 set_name=payload.name,
@@ -3790,6 +3789,7 @@ def create_api_app(
                 workflow_name=workflow_name,
                 progress_cb=_progress_cb,
                 dimension_filters=payload.dimensions,
+                eval_config=eval_cfg,
             )
 
             final_total = progress["target"] or len(scenarios)
@@ -5024,15 +5024,14 @@ def create_api_app(
         progress_state = {"total": 0, "completed": 0}
         saved_env_vars: Dict[str, Optional[str]] = {}
         try:
-            compiled_cfg_path, _ = compile_project(
+            eval_cfg = load_eval_config(
                 str(manifest_path),
                 select=str(payload.select or ""),
                 exclude=str(payload.exclude or ""),
                 agent_key=(payload.agent or None),
             )
-            compiled_path = Path(compiled_cfg_path).resolve()
-            cfg = yaml.safe_load(compiled_path.read_text(encoding="utf-8")) or {}
-            tracing = cfg.get("tracing") or {}
+            compiled_path = eval_cfg.agent_path
+            tracing = eval_cfg.tracing_config
             workflow_name: Optional[str] = None
             tracing_module = None
             provider = str(tracing.get("provider") or "").lower()
@@ -5072,8 +5071,9 @@ def create_api_app(
 
             # Set environment variables from evaluation environment config
             # This ensures tools have access to required env vars (e.g., API keys)
-            eval_cfg = cfg.get("evaluation") or {}
-            env_config = eval_cfg.get("environment", {}).get("config", {})
+            env_config = (
+                (eval_cfg.config or {}).get("environment", {}).get("config", {})
+            )
             for key, value in env_config.items():
                 if isinstance(value, str):
                     resolved = _expand_env_template(value)
@@ -5114,6 +5114,7 @@ def create_api_app(
                     workflow_base_name=label or compiled_path.stem,
                     include_unmeasured=include_unmeasured,
                     progress_cb=_progress_cb,
+                    eval_config=eval_cfg,
                 )
 
             result = await loop.run_in_executor(None, _execute)
@@ -5219,15 +5220,14 @@ def create_api_app(
             completed=0,
         )
         try:
-            compiled_cfg_path, _ = compile_project(
+            eval_cfg = load_eval_config(
                 str(manifest_path),
                 select=str(payload.select or ""),
                 exclude=str(payload.exclude or ""),
                 agent_key=(payload.agent or None),
             )
-            compiled_path = Path(compiled_cfg_path).resolve()
-            cfg = yaml.safe_load(compiled_path.read_text(encoding="utf-8")) or {}
-            tracing = cfg.get("tracing") or {}
+            compiled_path = eval_cfg.agent_path
+            tracing = eval_cfg.tracing_config
             workflow_name: Optional[str] = None
             tracing_module = None
             provider = str(tracing.get("provider") or "").lower()
@@ -5285,6 +5285,7 @@ def create_api_app(
                 workflow_name=workflow_name,
                 progress_cb=_progress_cb,
                 scenario_source_path=Path(scenario_set.path),
+                eval_config=eval_cfg,
             )
 
             # Save results using structured storage
@@ -5446,9 +5447,7 @@ def create_api_app(
             scenarios = _ensure_scenario_ids(entries)
             # Apply select/exclude filter before running
             if payload.select or payload.exclude:
-                scenarios = _filter_scenarios(
-                    scenarios, payload.select, payload.exclude
-                )
+                scenarios = filter_scenarios(scenarios, payload.select, payload.exclude)
             if not scenarios:
                 raise HTTPException(
                     status_code=422,

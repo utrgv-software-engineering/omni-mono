@@ -6,6 +6,56 @@ from pathlib import Path
 import pytest
 
 from omniagents.cli import main as cli_main
+from omniagents.core.eval.loader import EvalConfig
+
+
+def _make_fake_loader_module(compiled_path):
+    """Create a fake loader module that returns a minimal EvalConfig."""
+    p = Path(compiled_path).resolve()
+    # Read the file if it exists to capture tracing config etc.
+    tracing_config = {}
+    eval_config_dict = {}
+    agent_config = {}
+    try:
+        import yaml
+
+        raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        eval_config_dict = raw.get("evaluation") or {}
+        tracing_config = raw.get("tracing") or {}
+        agent_config = raw
+    except Exception:
+        pass
+
+    fake_eval_config = EvalConfig(
+        config=eval_config_dict,
+        agent_config=agent_config,
+        agent_path=p,
+        eval_dir=p.parent,
+        project_root=p.parent,
+        tracing_config=tracing_config,
+        project_config={},
+    )
+
+    def fake_load_eval_config(*args, **kwargs):
+        return fake_eval_config
+
+    def fake_introspect_resources(cfg):
+        return {
+            "project_name": "test",
+            "agent_file": str(cfg.agent_path),
+            "resources": {"scenarios": [], "judges": [], "metrics": []},
+        }
+
+    def fake_filter_scenarios(items, select, exclude):
+        return items
+
+    module = types.ModuleType("omniagents.core.eval.loader")
+    module.load_eval_config = fake_load_eval_config
+    module.introspect_resources = fake_introspect_resources
+    module.filter_scenarios = fake_filter_scenarios
+    module.EvalConfig = EvalConfig
+    module.__package__ = "omniagents.core.eval"
+    return module
 
 
 class DummyRunner:
@@ -293,13 +343,8 @@ def test_compile_command_prints_output(monkeypatch, tmp_path, capsys):
     compiled_path = tmp_path / "compiled.yml"
     compiled_path.write_text("{}", encoding="utf-8")
 
-    module = types.ModuleType("omniagents.core.project.compiler")
-
-    def fake_compile_project(proj_path, select="", exclude="", agent_key=None):
-        return str(compiled_path), {"nodes": ["a"]}
-
-    module.compile_project = fake_compile_project
-    monkeypatch.setitem(sys.modules, "omniagents.core.project.compiler", module)
+    loader_module = _make_fake_loader_module(compiled_path)
+    monkeypatch.setitem(sys.modules, "omniagents.core.eval.loader", loader_module)
 
     argv = [
         "omniagents",
@@ -317,7 +362,7 @@ def test_compile_command_prints_output(monkeypatch, tmp_path, capsys):
 
     output = capsys.readouterr().out
     assert str(compiled_path) in output
-    assert "nodes" in output
+    assert "resources" in output
 
 
 def test_studio_serve_uses_manifest(monkeypatch, tmp_path):
@@ -677,15 +722,8 @@ scenarios:
         encoding="utf-8",
     )
 
-    compiler_module = types.ModuleType("omniagents.core.project.compiler")
-
-    def fake_compile_project(proj_path, select="", exclude="", agent_key=None):
-        return str(compiled_path), {"graph": []}
-
-    compiler_module.compile_project = fake_compile_project
-    monkeypatch.setitem(
-        sys.modules, "omniagents.core.project.compiler", compiler_module
-    )
+    loader_module = _make_fake_loader_module(compiled_path)
+    monkeypatch.setitem(sys.modules, "omniagents.core.eval.loader", loader_module)
 
     data = {
         "runs": [
@@ -734,6 +772,7 @@ scenarios:
         workflow_base_name=None,
         include_unmeasured=False,
         progress_cb=None,
+        **kw,
     ):
         if progress_cb:
             progress_cb({"event": "progress", "skipped": False, "failed": 0})
@@ -788,15 +827,8 @@ scenarios:
         encoding="utf-8",
     )
 
-    compiler_module = types.ModuleType("omniagents.core.project.compiler")
-
-    def fake_compile_project(proj_path, select="", exclude="", agent_key=None):
-        return str(compiled_path), {"graph": []}
-
-    compiler_module.compile_project = fake_compile_project
-    monkeypatch.setitem(
-        sys.modules, "omniagents.core.project.compiler", compiler_module
-    )
+    loader_module = _make_fake_loader_module(compiled_path)
+    monkeypatch.setitem(sys.modules, "omniagents.core.eval.loader", loader_module)
 
     data = {
         "runs": [
@@ -838,6 +870,7 @@ scenarios:
         workflow_base_name=None,
         include_unmeasured=False,
         progress_cb=None,
+        **kw,
     ):
         return data
 
@@ -880,15 +913,8 @@ scenarios:
         encoding="utf-8",
     )
 
-    compiler_module = types.ModuleType("omniagents.core.project.compiler")
-
-    def fake_compile_project(proj_path, select="", exclude="", agent_key=None):
-        return str(compiled_path), {"graph": []}
-
-    compiler_module.compile_project = fake_compile_project
-    monkeypatch.setitem(
-        sys.modules, "omniagents.core.project.compiler", compiler_module
-    )
+    loader_module = _make_fake_loader_module(compiled_path)
+    monkeypatch.setitem(sys.modules, "omniagents.core.eval.loader", loader_module)
 
     data = {
         "runs": [
@@ -941,6 +967,7 @@ scenarios:
         workflow_base_name=None,
         include_unmeasured=False,
         progress_cb=None,
+        **kw,
     ):
         if progress_cb:
             progress_cb({"event": "progress", "skipped": False, "failed": 0})
@@ -979,15 +1006,8 @@ def test_eval_scenarios_generate(monkeypatch, tmp_path, capsys):
     compiled_path = tmp_path / "compiled.yml"
     compiled_path.write_text("tracing:\n  provider: other\n", encoding="utf-8")
 
-    compiler_module = types.ModuleType("omniagents.core.project.compiler")
-
-    def fake_compile_project(proj_path, select="", exclude="", agent_key=None):
-        return str(compiled_path), {"graph": []}
-
-    compiler_module.compile_project = fake_compile_project
-    monkeypatch.setitem(
-        sys.modules, "omniagents.core.project.compiler", compiler_module
-    )
+    loader_module = _make_fake_loader_module(compiled_path)
+    monkeypatch.setitem(sys.modules, "omniagents.core.eval.loader", loader_module)
 
     async def fake_generate(
         compiled,
@@ -997,6 +1017,7 @@ def test_eval_scenarios_generate(monkeypatch, tmp_path, capsys):
         output=None,
         workflow_name=None,
         progress_cb=None,
+        **kw,
     ):
         if progress_cb:
             progress_cb({"event": "start", "target": count or 1})
@@ -1046,15 +1067,8 @@ def test_eval_scenarios_annotate(monkeypatch, tmp_path, capsys):
         "scenarios:\n  - id: case1\n    prompt: hi\n", encoding="utf-8"
     )
 
-    compiler_module = types.ModuleType("omniagents.core.project.compiler")
-
-    def fake_compile_project(proj_path, select="", exclude="", agent_key=None):
-        return str(compiled_path), {"graph": []}
-
-    compiler_module.compile_project = fake_compile_project
-    monkeypatch.setitem(
-        sys.modules, "omniagents.core.project.compiler", compiler_module
-    )
+    loader_module = _make_fake_loader_module(compiled_path)
+    monkeypatch.setitem(sys.modules, "omniagents.core.eval.loader", loader_module)
 
     runtime_module = types.ModuleType("omniagents.core.project.runtime")
 

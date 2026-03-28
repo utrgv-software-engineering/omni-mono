@@ -39,6 +39,7 @@ from omniagents.core.evaluation import (
 
 from .environment import EvalEnvironment, EnvironmentContext, NoOpEnvironment
 from .simulated_user import SimulatedUser, UserPersona
+from .telemetry import consume_stream_events, scenario_timer, build_telemetry
 
 __all__ = [
     "run_scenario",
@@ -48,6 +49,86 @@ __all__ = [
 ]
 
 _logger = logging.getLogger(__name__)
+
+
+def _build_registries_for_eval(
+    compiled_yaml_path: Path,
+    project_root: Path | None = None,
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Build tool and server function registries for evaluation.
+
+    Discovers tools from builtins, the project-level directories, and the
+    agent's own subdirectories so that ``load_agent_spec_from_yaml`` can
+    resolve every tool name and server function.
+
+    Returns:
+        Tuple of (tool_registry, server_functions_registry).
+    """
+    from omniagents.core.tools.discovery import discover_functions_in_dir
+    from omniagents.core.server_functions.discovery import (
+        discover_server_functions_in_dir,
+    )
+
+    tool_registry: Dict[str, Any] = {}
+    sf_registry: Dict[str, Any] = {}
+
+    # 1. Builtin tools (shipped with omniagents)
+    core_root = Path(__file__).resolve().parents[2]
+    builtin_dir = (core_root / "builtin" / "tools").resolve()
+    if builtin_dir.is_dir():
+        try:
+            tool_registry.update(discover_functions_in_dir(str(builtin_dir)))
+        except Exception:
+            pass
+
+    # 2. Resolve project root
+    cfg_path = Path(compiled_yaml_path).resolve()
+    if project_root is None:
+        project_root = cfg_path.parent
+        # Legacy fallback: compiled YAML in target/ subdir
+        if project_root.name == "target":
+            project_root = project_root.parent
+
+    # Read project.yml to find configured tool and server_functions directories
+    for candidate in ("project.yml", "project.yaml"):
+        project_yml = project_root / candidate
+        if project_yml.is_file():
+            try:
+                proj_cfg = yaml.safe_load(project_yml.read_text(encoding="utf-8")) or {}
+                paths = proj_cfg.get("paths", {})
+                tools_rel = paths.get("tools")
+                if tools_rel:
+                    tools_dir = (project_root / tools_rel).resolve()
+                    if tools_dir.is_dir():
+                        tool_registry.update(discover_functions_in_dir(str(tools_dir)))
+                sf_rel = paths.get("server_functions")
+                if sf_rel:
+                    sf_dir = (project_root / sf_rel).resolve()
+                    if sf_dir.is_dir():
+                        sf_registry.update(
+                            discover_server_functions_in_dir(str(sf_dir))
+                        )
+            except Exception:
+                pass
+            break
+
+    # 3. Agent-level tools dir
+    agent_tools_dir = cfg_path.parent / "tools"
+    if agent_tools_dir.is_dir():
+        try:
+            tool_registry.update(discover_functions_in_dir(str(agent_tools_dir)))
+        except Exception:
+            pass
+
+    # 4. Agent-level server_functions dir
+    agent_sf_dir = cfg_path.parent / "server_functions"
+    if agent_sf_dir.is_dir():
+        try:
+            sf_registry.update(discover_server_functions_in_dir(str(agent_sf_dir)))
+        except Exception:
+            pass
+
+    return tool_registry, sf_registry
 
 
 def _get_scenario_type(scenario: Dict[str, Any]) -> str:
@@ -72,6 +153,7 @@ async def run_scenario(
     eval_cfg: Optional[Dict[str, Any]] = None,
     workflow_name: Optional[str] = None,
     studio_trace: Optional[Any] = None,
+    project_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Run a single scenario with environment support.
 
@@ -88,6 +170,7 @@ async def run_scenario(
         eval_cfg: Full evaluation configuration.
         workflow_name: Optional workflow name for tracing.
         studio_trace: Optional studio trace context manager.
+        project_root: Optional project root for tool discovery.
 
     Returns:
         Dict with scenario results including measures, history, etc.
@@ -114,8 +197,15 @@ async def run_scenario(
         }
 
     try:
-        # Load agent spec
-        spec = load_agent_spec_from_yaml(agent_yaml)
+        # Load agent spec with project registries so all tools/server_functions resolve
+        _tool_reg, _sf_reg = _build_registries_for_eval(
+            Path(agent_yaml), project_root=project_root
+        )
+        spec = load_agent_spec_from_yaml(
+            agent_yaml,
+            tool_registry=_tool_reg if _tool_reg else None,
+            server_functions_registry=_sf_reg if _sf_reg else None,
+        )
         spec.use_safe_agent = False
 
         if "max_turns" in defaults:
@@ -155,11 +245,27 @@ async def run_scenario(
             )
         elif _is_scripted_multi_turn(scenario):
             return await _run_scripted_multi_turn(
-                agent, spec, scenario, context, env, workflow_name, studio_trace
+                agent,
+                spec,
+                scenario,
+                context,
+                env,
+                workflow_name,
+                studio_trace,
+                eval_cfg=eval_cfg,
+                agent_yaml=agent_yaml,
             )
         else:
             return await _run_scripted_single_turn(
-                agent, spec, scenario, context, env, workflow_name, studio_trace
+                agent,
+                spec,
+                scenario,
+                context,
+                env,
+                workflow_name,
+                studio_trace,
+                eval_cfg=eval_cfg,
+                agent_yaml=agent_yaml,
             )
 
     except Exception as e:
@@ -198,6 +304,27 @@ async def run_scenario(
                 _logger.warning("Environment teardown failed: %s", e)
 
 
+async def _run_judges_for_scenario(
+    agent_yaml: str,
+    eval_cfg: Dict[str, Any],
+    scenario: Dict[str, Any],
+    history: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Run LLM judges for a scenario and return metadata with results.
+
+    Delegates to the basic pipeline's ``_run_judges`` so that the
+    extended pipeline (environment-backed) gets the same judge support
+    as the basic one.
+    """
+    try:
+        from .pipeline import _run_judges
+
+        return await _run_judges(Path(agent_yaml), eval_cfg, scenario, history)
+    except Exception as exc:
+        _logger.debug("Judge execution failed: %s", exc)
+        return {}
+
+
 async def _run_scripted_single_turn(
     agent: Any,
     spec: Any,
@@ -206,45 +333,55 @@ async def _run_scripted_single_turn(
     env: EvalEnvironment,
     workflow_name: Optional[str] = None,
     studio_trace: Optional[Any] = None,
+    eval_cfg: Optional[Dict[str, Any]] = None,
+    agent_yaml: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run a scripted single-turn scenario (prompt: "...")."""
     prompt = scenario["prompt"]  # Required for single-turn
     msgs = [{"role": "user", "content": prompt}]
     run_uid = None
-
-    if workflow_name:
-        import uuid as _uuid
-
-        try:
-            _sid = scenario.get("id") or scenario.get("name") or "scenario"
-            run_uid = f"{_sid}-{_uuid.uuid4().hex[:8]}"
-        except Exception:
-            run_uid = _uuid.uuid4().hex[:8]
-        meta = {
-            "omniagents": {
-                "run_type": "evaluation",
-                "scenario_type": "scripted_single_turn",
-                "scenario": {
-                    "id": scenario.get("id"),
-                    "name": scenario.get("name"),
-                },
-                "run": {"id": run_uid},
-            }
+    stream_telemetry = {
+        "usage": {
+            "requests": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
         }
-        run_config = RunConfig(workflow_name=workflow_name, group_id=run_uid)
-        if studio_trace:
-            with studio_trace(workflow_name, group_id=run_uid, metadata=meta):
+    }
+
+    with scenario_timer() as elapsed_fn:
+        if workflow_name:
+            import uuid as _uuid
+
+            try:
+                _sid = scenario.get("id") or scenario.get("name") or "scenario"
+                run_uid = f"{_sid}-{_uuid.uuid4().hex[:8]}"
+            except Exception:
+                run_uid = _uuid.uuid4().hex[:8]
+            meta = {
+                "omniagents": {
+                    "run_type": "evaluation",
+                    "scenario_type": "scripted_single_turn",
+                    "scenario": {
+                        "id": scenario.get("id"),
+                        "name": scenario.get("name"),
+                    },
+                    "run": {"id": run_uid},
+                }
+            }
+            run_config = RunConfig(workflow_name=workflow_name, group_id=run_uid)
+            if studio_trace:
+                with studio_trace(workflow_name, group_id=run_uid, metadata=meta):
+                    result = agent.run_streamed(msgs, run_config=run_config)
+                    stream_telemetry = await consume_stream_events(
+                        result.stream_events()
+                    )
+            else:
                 result = agent.run_streamed(msgs, run_config=run_config)
-                async for _ in result.stream_events():
-                    pass
+                stream_telemetry = await consume_stream_events(result.stream_events())
         else:
-            result = agent.run_streamed(msgs, run_config=run_config)
-            async for _ in result.stream_events():
-                pass
-    else:
-        result = agent.run_streamed(msgs)
-        async for _ in result.stream_events():
-            pass
+            result = agent.run_streamed(msgs)
+            stream_telemetry = await consume_stream_events(result.stream_events())
 
     session_id = getattr(agent, "_session_id", None)
     history = (
@@ -257,13 +394,22 @@ async def _run_scripted_single_turn(
         else []
     )
 
+    # Run LLM judges before measures so judge results are available via ctx.judge_result()
+    judge_metadata = {}
+    if agent_yaml and eval_cfg:
+        judge_metadata = await _run_judges_for_scenario(
+            agent_yaml, eval_cfg, scenario, history
+        )
+
+    ctx_metadata = {
+        "environment_context": context.data if context else {},
+        "scenario": scenario,
+        **judge_metadata,
+    }
     eval_ctx = build_eval_context(
         history=history,
         tools=spec.available_tools,
-        metadata={
-            "environment_context": context.data if context else {},
-            "scenario": scenario,
-        },
+        metadata=ctx_metadata,
     )
     eval_ctx._environment = env
     eval_ctx._environment_context = context
@@ -275,9 +421,16 @@ async def _run_scripted_single_turn(
 
     result_metadata = {
         "environment_context": context.data if context else {},
+        **judge_metadata,
     }
     if run_uid:
         result_metadata["group_id"] = run_uid
+
+    telemetry = build_telemetry(
+        elapsed_fn=elapsed_fn,
+        history=history,
+        stream_result=stream_telemetry,
+    )
 
     return {
         "scenario": scenario.get("name", "scenario"),
@@ -289,6 +442,7 @@ async def _run_scripted_single_turn(
         "history_len": len(history),
         "exchanges": 1,
         "metadata": result_metadata,
+        **telemetry,
     }
 
 
@@ -300,47 +454,61 @@ async def _run_scripted_multi_turn(
     env: EvalEnvironment,
     workflow_name: Optional[str] = None,
     studio_trace: Optional[Any] = None,
+    eval_cfg: Optional[Dict[str, Any]] = None,
+    agent_yaml: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run a scripted multi-turn scenario (prompts: [...])."""
     prompts = scenario["prompts"]  # Required, validated by caller
     session_id = None
     run_uid = None
+    cumulative_usage = {
+        "requests": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+    }
 
-    if workflow_name and studio_trace:
-        import uuid as _uuid
+    def _accumulate(st):
+        u = st.get("usage", {})
+        for k in cumulative_usage:
+            cumulative_usage[k] += u.get(k, 0)
 
-        try:
-            _sid = scenario.get("id") or scenario.get("name") or "scenario"
-            run_uid = f"{_sid}-{_uuid.uuid4().hex[:8]}"
-        except Exception:
-            run_uid = _uuid.uuid4().hex[:8]
-        meta = {
-            "omniagents": {
-                "run_type": "evaluation",
-                "scenario_type": "scripted_multi_turn",
-                "scenario": {
-                    "id": scenario.get("id"),
-                    "name": scenario.get("name"),
-                },
-                "run": {"id": run_uid},
-                "exchanges": len(prompts),
+    with scenario_timer() as elapsed_fn:
+        if workflow_name and studio_trace:
+            import uuid as _uuid
+
+            try:
+                _sid = scenario.get("id") or scenario.get("name") or "scenario"
+                run_uid = f"{_sid}-{_uuid.uuid4().hex[:8]}"
+            except Exception:
+                run_uid = _uuid.uuid4().hex[:8]
+            meta = {
+                "omniagents": {
+                    "run_type": "evaluation",
+                    "scenario_type": "scripted_multi_turn",
+                    "scenario": {
+                        "id": scenario.get("id"),
+                        "name": scenario.get("name"),
+                    },
+                    "run": {"id": run_uid},
+                    "exchanges": len(prompts),
+                }
             }
-        }
-        run_config = RunConfig(workflow_name=workflow_name, group_id=run_uid)
-        with studio_trace(workflow_name, group_id=run_uid, metadata=meta):
+            run_config = RunConfig(workflow_name=workflow_name, group_id=run_uid)
+            with studio_trace(workflow_name, group_id=run_uid, metadata=meta):
+                for prompt in prompts:
+                    msgs = [{"role": "user", "content": prompt}]
+                    result = agent.run_streamed(msgs, run_config=run_config)
+                    _accumulate(await consume_stream_events(result.stream_events()))
+                    session_id = getattr(agent, "_session_id", None)
+        else:
             for prompt in prompts:
                 msgs = [{"role": "user", "content": prompt}]
-                result = agent.run_streamed(msgs, run_config=run_config)
-                async for _ in result.stream_events():
-                    pass
+                result = agent.run_streamed(msgs)
+                _accumulate(await consume_stream_events(result.stream_events()))
                 session_id = getattr(agent, "_session_id", None)
-    else:
-        for prompt in prompts:
-            msgs = [{"role": "user", "content": prompt}]
-            result = agent.run_streamed(msgs)
-            async for _ in result.stream_events():
-                pass
-            session_id = getattr(agent, "_session_id", None)
+
+    stream_telemetry = {"usage": cumulative_usage}
 
     history = (
         load_history(
@@ -352,13 +520,22 @@ async def _run_scripted_multi_turn(
         else []
     )
 
+    # Run LLM judges before measures
+    judge_metadata = {}
+    if agent_yaml and eval_cfg:
+        judge_metadata = await _run_judges_for_scenario(
+            agent_yaml, eval_cfg, scenario, history
+        )
+
+    ctx_metadata = {
+        "environment_context": context.data if context else {},
+        "scenario": scenario,
+        **judge_metadata,
+    }
     eval_ctx = build_eval_context(
         history=history,
         tools=spec.available_tools,
-        metadata={
-            "environment_context": context.data if context else {},
-            "scenario": scenario,
-        },
+        metadata=ctx_metadata,
     )
     eval_ctx._environment = env
     eval_ctx._environment_context = context
@@ -370,9 +547,16 @@ async def _run_scripted_multi_turn(
 
     result_metadata = {
         "environment_context": context.data if context else {},
+        **judge_metadata,
     }
     if run_uid:
         result_metadata["group_id"] = run_uid
+
+    telemetry = build_telemetry(
+        elapsed_fn=elapsed_fn,
+        history=history,
+        stream_result=stream_telemetry,
+    )
 
     return {
         "scenario": scenario.get("name", "scenario"),
@@ -384,6 +568,7 @@ async def _run_scripted_multi_turn(
         "history_len": len(history),
         "exchanges": len(prompts),
         "metadata": result_metadata,
+        **telemetry,
     }
 
 
@@ -435,33 +620,54 @@ async def _run_synthetic_scenario(
         run_config=user_run_config,
     )
 
-    if workflow_name and studio_trace:
-        import uuid as _uuid
+    cumulative_usage = {
+        "requests": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+    }
 
-        meta = {
-            "omniagents": {
-                "run_type": "evaluation",
-                "scenario_type": "synthetic",
-                "scenario": {
-                    "id": scenario.get("id"),
-                    "name": scenario.get("name"),
-                    "goal": scenario.get("goal"),
-                },
-                "run": {"id": agent_run_config.group_id if agent_run_config else None},
-                "max_exchanges": max_exchanges,
+    with scenario_timer() as elapsed_fn:
+        if workflow_name and studio_trace:
+            import uuid as _uuid
+
+            meta = {
+                "omniagents": {
+                    "run_type": "evaluation",
+                    "scenario_type": "synthetic",
+                    "scenario": {
+                        "id": scenario.get("id"),
+                        "name": scenario.get("name"),
+                        "goal": scenario.get("goal"),
+                    },
+                    "run": {
+                        "id": agent_run_config.group_id if agent_run_config else None
+                    },
+                    "max_exchanges": max_exchanges,
+                }
             }
-        }
-        with studio_trace(
-            workflow_name, group_id=agent_run_config.group_id, metadata=meta
-        ):
+            with studio_trace(
+                workflow_name, group_id=agent_run_config.group_id, metadata=meta
+            ):
+                history = await _run_synthetic_conversation(
+                    agent,
+                    spec,
+                    simulated_user,
+                    max_exchanges,
+                    run_config=agent_run_config,
+                    usage_accumulator=cumulative_usage,
+                )
+        else:
             history = await _run_synthetic_conversation(
-                agent, spec, simulated_user, max_exchanges, run_config=agent_run_config
+                agent,
+                spec,
+                simulated_user,
+                max_exchanges,
+                run_config=agent_run_config,
+                usage_accumulator=cumulative_usage,
             )
-    else:
-        history = await _run_synthetic_conversation(
-            agent, spec, simulated_user, max_exchanges, run_config=agent_run_config
-        )
 
+    stream_telemetry = {"usage": cumulative_usage}
     session_id = getattr(agent, "_session_id", None)
 
     eval_ctx = build_eval_context(
@@ -491,6 +697,12 @@ async def _run_synthetic_scenario(
     if agent_run_uid:
         result_metadata["group_id"] = agent_run_uid
 
+    telemetry = build_telemetry(
+        elapsed_fn=elapsed_fn,
+        history=history,
+        stream_result=stream_telemetry,
+    )
+
     return {
         "scenario": scenario.get("name", "scenario"),
         "type": "synthetic",
@@ -503,6 +715,7 @@ async def _run_synthetic_scenario(
         "user_completed": simulated_user.completed,
         "user_completion_reason": simulated_user.completion_reason,
         "metadata": result_metadata,
+        **telemetry,
     }
 
 
@@ -512,6 +725,7 @@ async def _run_synthetic_conversation(
     user: SimulatedUser,
     max_exchanges: int,
     run_config: Optional[RunConfig] = None,
+    usage_accumulator: Optional[Dict[str, int]] = None,
 ) -> List[Dict[str, Any]]:
     """Run a synthetic conversation between agent and simulated user.
 
@@ -533,8 +747,11 @@ async def _run_synthetic_conversation(
             result = agent.run_streamed(msgs, run_config=run_config)
         else:
             result = agent.run_streamed(msgs)
-        async for _ in result.stream_events():
-            pass
+        st = await consume_stream_events(result.stream_events())
+        if usage_accumulator is not None:
+            u = st.get("usage", {})
+            for k in usage_accumulator:
+                usage_accumulator[k] += u.get(k, 0)
 
         # Check if user already signaled completion
         if user.completed:
@@ -620,12 +837,7 @@ def load_environment_class(
             import importlib
             import sys
 
-            # Add base_dir to sys.path so we can import project-relative modules
-            # If base_dir is "target" subdir (from compiled yaml), use parent instead
-            effective_base = base_dir
-            if base_dir.name == "target":
-                effective_base = base_dir.parent
-            base_dir_str = str(effective_base)
+            base_dir_str = str(base_dir)
             if base_dir_str not in sys.path:
                 sys.path.insert(0, base_dir_str)
 
@@ -654,6 +866,7 @@ async def run_evaluation_with_environment_async(
     include_unmeasured: bool = False,
     progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
     concurrency: int = 5,
+    eval_config: Any | None = None,
 ) -> Dict[str, Any]:
     """Run evaluation with environment support.
 
@@ -669,13 +882,23 @@ async def run_evaluation_with_environment_async(
         include_unmeasured: Include scenarios without measures.
         progress_cb: Progress callback function.
         concurrency: Maximum concurrent scenarios.
+        eval_config: Optional EvalConfig from the runtime loader.
 
     Returns:
         Evaluation results dict.
     """
-    cfg_path = Path(compiled_yaml).resolve()
-    raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
-    eval_cfg = (raw or {}).get("evaluation") or {}
+    # When an EvalConfig is provided, use it directly
+    if eval_config is not None:
+        cfg_path = eval_config.agent_path
+        eval_cfg = eval_config.config
+        _project_root = eval_config.project_root
+        _eval_dir = eval_config.eval_dir
+    else:
+        cfg_path = Path(compiled_yaml).resolve()
+        raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+        eval_cfg = (raw or {}).get("evaluation") or {}
+        _project_root = None
+        _eval_dir = None
     defaults = eval_cfg.get("defaults") or {}
     scenarios = eval_cfg.get("scenarios") or []
 
@@ -693,13 +916,14 @@ async def run_evaluation_with_environment_async(
     # Load local measures from project
     from .pipeline import _load_local_measures
 
-    _load_local_measures(cfg_path)
+    _load_local_measures(cfg_path, project_root=_project_root, eval_dir=_eval_dir)
 
     # Try to load environment from config if not provided
     env_config = eval_cfg.get("environment")
     env_load_error: Optional[str] = None
     if environment is None and env_config:
-        environment = load_environment_class(env_config, cfg_path.parent)
+        env_base = _project_root or cfg_path.parent
+        environment = load_environment_class(env_config, env_base)
         if environment is None and env_config.get("class"):
             # Environment was configured but failed to load
             env_load_error = (
@@ -740,13 +964,19 @@ async def run_evaluation_with_environment_async(
                     eval_cfg,
                     workflow_name,
                     studio_trace,
+                    project_root=_project_root,
                 )
             else:
                 # Use existing single-turn pipeline (no environment, scripted)
                 from .pipeline import _run_scenario
 
                 r = await _run_scenario(
-                    str(cfg_path), sc, defaults, eval_cfg, workflow_name
+                    str(cfg_path),
+                    sc,
+                    defaults,
+                    eval_cfg,
+                    workflow_name,
+                    project_root=_project_root,
                 )
 
             r["scenario_config"] = sc
@@ -819,6 +1049,7 @@ async def run_scenarios_against_agent(
     progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
     scenario_source_path: Optional[Path] = None,
     concurrency: int = 5,
+    eval_config: Any | None = None,
 ) -> List[Dict[str, Any]]:
     """Run scenarios against an agent with full environment and measures support.
 
@@ -828,7 +1059,7 @@ async def run_scenarios_against_agent(
     - Synthetic: `type: synthetic` with `goal: "..."`
 
     Args:
-        agent_yaml: Path to the compiled agent YAML configuration.
+        agent_yaml: Path to the agent YAML configuration.
         scenarios: List of scenario configurations to run.
         max_turns: Optional max turns override for agent.
         include_history: Whether to include full history in results.
@@ -836,13 +1067,22 @@ async def run_scenarios_against_agent(
         progress_cb: Optional progress callback function.
         scenario_source_path: Optional path to the scenario source file.
         concurrency: Maximum number of scenarios to run in parallel (default 5).
+        eval_config: Optional EvalConfig from the runtime loader.
 
     Returns:
         List of scenario run results with measures, history, etc.
     """
-    cfg_path = Path(agent_yaml).resolve()
-    raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
-    eval_cfg = (raw or {}).get("evaluation") or {}
+    if eval_config is not None:
+        cfg_path = eval_config.agent_path
+        eval_cfg = eval_config.config
+        _project_root = eval_config.project_root
+        _eval_dir = eval_config.eval_dir
+    else:
+        cfg_path = Path(agent_yaml).resolve()
+        raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+        eval_cfg = (raw or {}).get("evaluation") or {}
+        _project_root = None
+        _eval_dir = None
     defaults = eval_cfg.get("defaults") or {}
 
     # Override max_turns if provided
@@ -863,13 +1103,14 @@ async def run_scenarios_against_agent(
     # Load local measures from project
     from .pipeline import _load_local_measures
 
-    _load_local_measures(cfg_path)
+    _load_local_measures(cfg_path, project_root=_project_root, eval_dir=_eval_dir)
 
     # Load environment from config
     environment = None
     env_config = eval_cfg.get("environment")
     if env_config:
-        environment = load_environment_class(env_config, cfg_path.parent)
+        env_base = _project_root or cfg_path.parent
+        environment = load_environment_class(env_config, env_base)
 
     total = len(scenarios)
 
@@ -903,6 +1144,7 @@ async def run_scenarios_against_agent(
                 eval_cfg,
                 workflow_name,
                 studio_trace,
+                project_root=_project_root,
             )
 
             # Transform result to match legacy format

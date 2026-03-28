@@ -307,10 +307,17 @@ async def generate_scenarios(
     workflow_name: str | None = None,
     progress_cb: Any | None = None,
     dimension_filters: Dict[str, List[str]] | None = None,
+    eval_config: Any | None = None,
 ) -> Tuple[List[Dict[str, Any]], Path, str]:
-    cfg_path = Path(compiled_yaml).resolve()
-    raw = _read_yaml(cfg_path)
-    eval_cfg = raw.get("evaluation") or {}
+    if eval_config is not None:
+        cfg_path = eval_config.agent_path
+        eval_cfg = eval_config.config
+        _project_root = eval_config.project_root
+    else:
+        cfg_path = Path(compiled_yaml).resolve()
+        raw = _read_yaml(cfg_path)
+        eval_cfg = raw.get("evaluation") or {}
+        _project_root = None
     gen_cfg = eval_cfg.get("synthetic_data_generation") or {}
     ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
 
@@ -363,11 +370,7 @@ async def generate_scenarios(
         except Exception:
             pass
     if target_count <= 0:
-        base = (
-            cfg_path.parent.parent
-            if cfg_path.name == "evaluation_compiled.yml"
-            else cfg_path.parent
-        )
+        base = _project_root or cfg_path.parent
         if output is not None:
             out_dir = Path(output).resolve().parent
             out_path = Path(output).resolve()
@@ -516,11 +519,7 @@ async def generate_scenarios(
         if len(scenarios) >= target_count:
             break
 
-    base = (
-        cfg_path.parent.parent
-        if cfg_path.name == "evaluation_compiled.yml"
-        else cfg_path.parent
-    )
+    base = _project_root or cfg_path.parent
     if output is not None:
         out_dir = Path(output).resolve().parent
         out_path = Path(output).resolve()

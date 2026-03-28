@@ -136,6 +136,23 @@ def _token_dependency(required_token: Optional[str] = None):  # noqa: D401
     return Depends(_verify_token)
 
 
+def _auth_provider_dependency(auth_provider):  # noqa: D401
+    """Return a FastAPI dependency using a pluggable AuthProvider."""
+
+    async def _verify_auth(websocket: WebSocket):  # noqa: D401
+        result = await auth_provider.authenticate(websocket)
+        if not result.authenticated:
+            await websocket.close(code=4403)
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=result.error or "Authentication failed",
+            )
+        # Store identity on websocket state for downstream use
+        websocket.state.user_identity = result.identity
+
+    return Depends(_verify_auth)
+
+
 def build_app(
     config_path: str | None = None,
     spec: "AgentSpec" | None = None,
@@ -232,10 +249,23 @@ def build_app(
         print(f"Warning: register_runtime_hooks failed: {e}")
     endpoint = JsonRpcEndpoint(service)
 
-    if auth_token:
-        endpoint.register_route(
-            app, "/ws", dependencies=[_token_dependency(auth_token)]
-        )
+    # Resolve auth dependency: provider-based or legacy token
+    _auth_deps = None
+    try:
+        sec = getattr(spec, "security_config", None) or {}
+        auth_cfg = (sec.get("providers") or {}).get("auth")
+        if auth_cfg and auth_cfg.get("type", "none") != "none":
+            from omniagents.core.providers import resolve_provider
+
+            _auth_provider = resolve_provider("auth", auth_cfg)
+            _auth_deps = [_auth_provider_dependency(_auth_provider)]
+    except Exception:
+        pass
+    if _auth_deps is None and auth_token:
+        _auth_deps = [_token_dependency(auth_token)]
+
+    if _auth_deps:
+        endpoint.register_route(app, "/ws", dependencies=_auth_deps)
     else:
         endpoint.register_route(app, "/ws")
 

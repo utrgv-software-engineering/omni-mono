@@ -67,9 +67,43 @@ async def create_unified_agent(
                     env_val if env_val not in (None, "") else field.default
                 )
 
+        # Resolve model configuration from spec's resolver if available.
+        # In the normal runtime this happens in service.py via sessions,
+        # but for headless contexts (eval runner, scripts) the factory
+        # must do it so model_name and model_settings are populated.
+        resolved_model_config = None
+        resolver = getattr(spec, "resolve_default_model_config", None)
+        if callable(resolver):
+            try:
+                resolved_model_config = resolver()
+            except Exception:
+                pass
+
         # Ensure model_name is set
         if not spec.model_name:
-            spec.model_name = settings.get("model_name", "gpt-4")
+            spec.model_name = (
+                settings.get("model_name")
+                or (resolved_model_config or {}).get("model")
+                or os.getenv("MODEL_NAME")
+                or "gpt-4"
+            )
+
+        # Merge resolved model_settings (e.g. store, extra_body) into the
+        # spec so the builder picks them up.  Agent-level settings in
+        # spec.model_settings take precedence (deep merge).
+        if resolved_model_config and resolved_model_config.get("model_settings"):
+            resolved_ms = resolved_model_config["model_settings"]
+            if spec.model_settings is None:
+                spec.model_settings = dict(resolved_ms)
+            else:
+                # resolved first, then spec on top (spec wins)
+                merged = dict(resolved_ms)
+                for k, v in spec.model_settings.items():
+                    if k in merged and isinstance(v, dict) and isinstance(merged[k], dict):
+                        merged[k] = {**merged[k], **v}
+                    else:
+                        merged[k] = v
+                spec.model_settings = merged
 
         # Create local agent adapter with settings, approval callback, and MCP servers
         adapter = LocalAgent(spec, settings, approval_callback, mcp_servers)

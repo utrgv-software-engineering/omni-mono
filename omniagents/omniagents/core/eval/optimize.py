@@ -38,15 +38,16 @@ def optimize_agent_from_project(
             "This command requires the 'gepa' package. Install with: pip install gepa[full]"
         )
     from omniagents.core.eval.gepa_agent_adapter import OmniAgentsAgentAdapter
-    from omniagents.core.project.compiler import compile_project
+    from omniagents.core.eval.loader import load_eval_config
     from omniagents.core.project.apply import apply_agent_instructions
 
-    compiled_cfg_path, _graph = compile_project(
+    _eval_config = load_eval_config(
         str(proj_path),
         select=None,
         exclude=None,
         agent_key=(str(agent_key or "") or None),
     )
+    compiled_cfg_path = _eval_config.agent_path
     _P = Path
     base = _P(proj_path).resolve()
     if base.is_file():
@@ -202,8 +203,7 @@ def optimize_agent_from_project(
     seed_candidate = {"instructions": seed_instructions}
     workflow_name = None
     try:
-        cfg_tr = yaml.safe_load(_P(compiled_cfg_path).read_text(encoding="utf-8")) or {}
-        tracing = cfg_tr.get("tracing") or {}
+        tracing = _eval_config.tracing_config or {}
         if str(tracing.get("provider", "")).lower() == "studio":
             base_name = tracing.get("name") or _P(compiled_cfg_path).stem
             if reference_split_path is not None:
@@ -222,6 +222,7 @@ def optimize_agent_from_project(
         score_mode=str(score_mode or "fraction"),
         optimizer_key=(str(optimizer_key) if optimizer_key else None),
         workflow_name=workflow_name,
+        eval_config=_eval_config,
     )
     out_dir = output_dir or ""
     if out_dir:
@@ -516,15 +517,16 @@ def optimize_judge_from_project(
         )
     from omniagents.core.eval.gepa_judge_adapter import OmniAgentsJudgeAdapter
     from omniagents.core.eval.stratified_sampler import StratifiedBatchSampler
-    from omniagents.core.project.compiler import compile_project
+    from omniagents.core.eval.loader import load_eval_config
     from omniagents.core.project.apply import apply_judge_updates
 
-    compiled_cfg_path, _graph = compile_project(
+    _eval_config = load_eval_config(
         str(proj_path),
         select=None,
         exclude=None,
         agent_key=(str(agent_key or "") or None),
     )
+    compiled_cfg_path = _eval_config.agent_path
     _P = Path
     base = _P(proj_path).resolve()
     if base.is_file():
@@ -695,8 +697,7 @@ def optimize_judge_from_project(
         seed_candidate["template"] = seed_template
     workflow_name = None
     try:
-        cfg_tr = yaml.safe_load(_P(compiled_cfg_path).read_text(encoding="utf-8")) or {}
-        tracing = cfg_tr.get("tracing") or {}
+        tracing = _eval_config.tracing_config or {}
         if str(tracing.get("provider", "")).lower() == "studio":
             import json as _json
 
@@ -733,6 +734,7 @@ def optimize_judge_from_project(
         judge_max_turns=int(max_turns or 1),
         optimizer_key=(str(optimizer_key) if optimizer_key else None),
         workflow_name=workflow_name,
+        eval_config=_eval_config,
     )
     out_dir = output_dir or ""
     if out_dir:

@@ -2,6 +2,7 @@ import yaml
 import os
 import re
 import importlib
+import fnmatch
 import sys
 
 from pathlib import Path
@@ -879,6 +880,39 @@ def load_agent_spec_from_yaml(
         )
         # Continue without missing tools
 
+    # --- Apply project-level tool blocklist ---
+    if project_defaults and isinstance(project_defaults.get("security"), dict):
+        sec = project_defaults["security"]
+        blocked_names = set(sec.get("blocked_tools") or [])
+        blocked_patterns = sec.get("blocked_tool_patterns") or []
+        if blocked_names or blocked_patterns:
+            before_count = len(selected_tool_functions)
+            filtered = []
+            for tool_func in selected_tool_functions:
+                tool_name = getattr(tool_func, "name", "")
+                if tool_name in blocked_names:
+                    print(
+                        f"Security: tool '{tool_name}' blocked by project security policy"
+                    )
+                    continue
+                if any(fnmatch.fnmatch(tool_name, p) for p in blocked_patterns):
+                    print(
+                        f"Security: tool '{tool_name}' blocked by pattern in project security policy"
+                    )
+                    continue
+                filtered.append(tool_func)
+            selected_tool_functions = filtered
+
+    # --- Apply per-tool timeouts ---
+    if project_defaults and isinstance(project_defaults.get("security"), dict):
+        tool_timeouts = project_defaults["security"].get("tool_timeouts") or {}
+        if tool_timeouts and selected_tool_functions:
+            from omniagents.core.agents.builder import _apply_tool_timeouts
+
+            selected_tool_functions = _apply_tool_timeouts(
+                selected_tool_functions, tool_timeouts
+            )
+
     # --- Server Functions Discovery and Selection ---
     server_functions_registrar = None
     if not remote_ws_url:
@@ -1079,6 +1113,25 @@ def load_agent_spec_from_yaml(
                 f"Warning: The following output guardrails listed in '{config_path}' were not found: {', '.join(missing_output_guardrails)}"
             )
 
+    # --- Content Scanner Guardrails (auto-injected from security providers) ---
+    if project_defaults and isinstance(project_defaults.get("security"), dict):
+        scanner_cfg = (
+            (project_defaults["security"].get("providers") or {}).get("content_scanner")
+        )
+        if scanner_cfg and scanner_cfg.get("type", "none") != "none":
+            try:
+                from omniagents.core.providers import resolve_provider
+                from omniagents.core.providers.content_scanner.guardrail_adapter import (
+                    make_scanner_input_guardrail,
+                    make_scanner_output_guardrail,
+                )
+
+                scanner = resolve_provider("content_scanner", scanner_cfg)
+                input_guardrails_list.insert(0, make_scanner_input_guardrail(scanner))
+                output_guardrails_list.insert(0, make_scanner_output_guardrail(scanner))
+            except Exception as e:
+                print(f"Warning: Failed to set up content scanner guardrails: {e}")
+
     # --- Handoffs Configuration ---
     handoff_configs_list = []
     if not remote_ws_url:  # Only process handoffs for local agents
@@ -1165,6 +1218,22 @@ def load_agent_spec_from_yaml(
         safe_tool_patterns=safe_options_config.get("safe_tool_patterns", []),
     )
 
+    # Apply project-level safety mode override
+    _safety_mode = None
+    if project_defaults and isinstance(project_defaults.get("security"), dict):
+        _safety_mode = project_defaults["security"].get("safety_mode")
+    if _safety_mode == "enforced":
+        if safe_options.skip_approvals:
+            print(
+                "Security: safety_mode is 'enforced' — overriding skip_approvals=True to False"
+            )
+            safe_options.skip_approvals = False
+        if not use_safe:
+            print(
+                "Security: safety_mode is 'enforced' — overriding use_safe_agent=False to True"
+            )
+            use_safe = True
+
     # --- MCP Configuration ---
     mcp_servers = _parse_mcp_servers_config(config, config_path=str(config_file))
 
@@ -1174,6 +1243,29 @@ def load_agent_spec_from_yaml(
         for user_server in user_mcp_servers:
             servers_by_name[user_server.name] = user_server
         mcp_servers = list(servers_by_name.values())
+
+    # Apply project-level MCP allowlist
+    if project_defaults and isinstance(project_defaults.get("security"), dict):
+        sec = project_defaults["security"]
+        if sec.get("mcp_require_allowlist"):
+            allowed = set(sec.get("mcp_allowed_servers") or [])
+            if allowed:
+                filtered = []
+                for srv in mcp_servers:
+                    if srv.name in allowed:
+                        filtered.append(srv)
+                    else:
+                        print(
+                            f"Security: MCP server '{srv.name}' not in allowlist — blocked"
+                        )
+                mcp_servers = filtered
+            else:
+                # Allowlist required but empty = block all MCP servers
+                if mcp_servers:
+                    print(
+                        "Security: mcp_require_allowlist is enabled but mcp_allowed_servers is empty — blocking all MCP servers"
+                    )
+                    mcp_servers = []
 
     # Extended MCP config
     mcp_config_from_yaml = config.get("mcp_config", {})
@@ -1411,6 +1503,10 @@ def load_agent_spec_from_yaml(
             spec.resolve_realtime_settings = realtime_settings_resolver_func
         except Exception:
             pass
+
+    # Store project-level security config on spec
+    if project_defaults and isinstance(project_defaults.get("security"), dict):
+        spec.security_config = project_defaults["security"]
 
     # Store registries in spec for passing to handoff agents
     spec._tool_registry = tool_registry

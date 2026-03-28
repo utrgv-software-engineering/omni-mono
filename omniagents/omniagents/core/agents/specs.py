@@ -220,6 +220,9 @@ class AgentSpec:
     # --- Tracing Configuration ---
     tracing_config: Optional[Dict[str, Any]] = None
 
+    # --- Security Configuration (project-level policy) ---
+    security_config: Optional[Dict[str, Any]] = None
+
     # --- MCP Configuration ---
 
     # --- UI/UX Configuration ---

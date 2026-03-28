@@ -20,6 +20,11 @@ from omniagents.core.evaluation import (
     link_outputs,
 )
 from omniagents.core.eval.metrics import compute_metrics
+from omniagents.core.eval.telemetry import (
+    consume_stream_events,
+    scenario_timer,
+    build_telemetry,
+)
 from omniagents.core.utils.jinja import render_template, read_text_file
 
 
@@ -47,7 +52,11 @@ def _failure_category_map(eval_cfg: Dict[str, Any]) -> Dict[str, List[str]]:
     return out
 
 
-def _load_local_measures(cfg_path: Path) -> None:
+def _load_local_measures(
+    cfg_path: Path,
+    project_root: Path | None = None,
+    eval_dir: Path | None = None,
+) -> None:
     try:
         base_dir = cfg_path.parent
         candidates = [
@@ -56,48 +65,22 @@ def _load_local_measures(cfg_path: Path) -> None:
             base_dir / "eval" / "measures.py",
         ]
 
-        # Find project root by searching upward for project.yml
-        prj_root = None
-        cur = base_dir.resolve()
-        while True:
-            if (cur / "project.yml").is_file():
-                prj_root = cur
-                break
-            if cur == cur.parent:
-                break
-            cur = cur.parent
+        prj_root = project_root
 
-        # Also try via agents.json if present (legacy path)
-        try:
-            agents_manifest = base_dir / "agents.json"
-            if agents_manifest.is_file() and prj_root is None:
-                import json as _json
+        # Fall back to upward search when project_root not provided
+        if prj_root is None:
+            cur = base_dir.resolve()
+            while True:
+                if (cur / "project.yml").is_file():
+                    prj_root = cur
+                    break
+                if cur == cur.parent:
+                    break
+                cur = cur.parent
 
-                data = _json.loads(agents_manifest.read_text(encoding="utf-8"))
-                items = data.get("agents") or []
-                agent_file = None
-                if isinstance(items, list) and items:
-                    try:
-                        agent_file = (
-                            Path((items[0] or {}).get("file"))
-                            if isinstance(items[0], dict)
-                            else None
-                        )
-                    except Exception:
-                        agent_file = None
-                if agent_file:
-                    cur = agent_file.resolve().parent
-                    while True:
-                        if (cur / "project.yml").is_file():
-                            prj_root = cur
-                            break
-                        if cur == cur.parent:
-                            break
-                        cur = cur.parent
-        except Exception:
-            pass
-
-        if prj_root:
+        if eval_dir is not None:
+            candidates.append(Path(eval_dir).resolve() / "measures.py")
+        elif prj_root:
             import yaml as _yaml
 
             proj = (
@@ -106,8 +89,10 @@ def _load_local_measures(cfg_path: Path) -> None:
             )
             paths = proj.get("paths") or {}
             eval_paths = paths.get("evaluations", "evaluations")
-            eval_dirs = eval_paths if isinstance(eval_paths, list) else [eval_paths]
-            for ed in eval_dirs:
+            eval_dirs_list = (
+                eval_paths if isinstance(eval_paths, list) else [eval_paths]
+            )
+            for ed in eval_dirs_list:
                 ep = Path(ed)
                 if not ep.is_absolute():
                     ep = (prj_root / ep).resolve()
@@ -235,6 +220,7 @@ async def _run_judges(
     eval_cfg: Dict[str, Any],
     scenario: Dict[str, Any],
     history: List[Dict[str, Any]],
+    eval_dir: Path | None = None,
 ) -> Dict[str, Any]:
     metadata: Dict[str, Any] = {}
     judges = _collect_judges_for_scenario(eval_cfg, scenario)
@@ -256,14 +242,21 @@ async def _run_judges(
         except Exception:
             text = ""
 
+        # Use eval_dir when provided; fall back to cfg_path.parent
+        eval_base = Path(eval_dir) if eval_dir else cfg_path.parent
+
         template_str = input_cfg.get("template") or ""
         template_file = input_cfg.get("template_file")
         if (not template_str) and template_file:
-            template_str = read_text_file(cfg_path.parent, str(template_file))
+            template_str = read_text_file(eval_base, str(template_file))
         if not template_str:
             template_str = "{{ text }}"
         judge_prompt = render_template(
-            template_str, text=text, history=history, history_json=json.dumps(history)
+            template_str,
+            text=text,
+            history=history,
+            history_json=json.dumps(history),
+            scenario=scenario,
         )
 
         try:
@@ -275,7 +268,7 @@ async def _run_judges(
         instructions = agent_cfg.get("instructions") or ""
         instr_file = agent_cfg.get("instructions_file")
         if (not instructions) and instr_file:
-            instructions = read_text_file(cfg_path.parent, str(instr_file))
+            instructions = read_text_file(eval_base, str(instr_file))
         if not instructions:
             instructions = "You are an evaluation agent. Return ONLY a JSON object appropriate for this judge."
         model = agent_cfg.get("model", "gpt-4.1")
@@ -297,26 +290,36 @@ async def _run_judges(
 
         if expect_dict and isinstance(agent_cfg.get("output_schema"), dict):
             try:
+                from typing import Literal
                 from typing_extensions import TypedDict
 
                 schema = agent_cfg.get("output_schema") or {}
                 props = schema.get("properties", {}) or {}
 
-                def _map_js_type(t):
-                    t = (t or "").lower()
-                    return {
-                        "string": str,
-                        "boolean": bool,
-                        "bool": bool,
-                        "number": float,
-                        "float": float,
-                        "integer": int,
-                        "int": int,
-                        "object": dict,
-                        "array": list,
-                    }.get(t, str)
+                _BASE_TYPE_MAP = {
+                    "string": str,
+                    "boolean": bool,
+                    "bool": bool,
+                    "number": float,
+                    "float": float,
+                    "integer": int,
+                    "int": int,
+                    "object": dict,
+                    "array": list,
+                }
 
-                ann = {k: _map_js_type((v or {}).get("type")) for k, v in props.items()}
+                def _map_prop(prop_schema):
+                    """Map a JSON Schema property to a Python type annotation,
+                    respecting ``enum`` when present."""
+                    prop_schema = prop_schema or {}
+                    enum_values = prop_schema.get("enum")
+                    if enum_values and isinstance(enum_values, list):
+                        # Use Literal to constrain the value set
+                        return Literal[tuple(enum_values)]
+                    base = (prop_schema.get("type") or "").lower()
+                    return _BASE_TYPE_MAP.get(base, str)
+
+                ann = {k: _map_prop(v) for k, v in props.items()}
                 td_name = (
                     f"Judge_{key.title().replace('-', '_').replace(' ', '')}_Output"
                 )
@@ -372,8 +375,19 @@ async def _run_scenario(
     defaults: Dict[str, Any],
     eval_cfg: Dict[str, Any],
     workflow_name: str | None = None,
+    eval_dir: Path | None = None,
+    project_root: Path | None = None,
 ) -> Dict[str, Any]:
-    spec = load_agent_spec_from_yaml(agent_yaml)
+    from .multi_turn import _build_registries_for_eval
+
+    _tool_reg, _sf_reg = _build_registries_for_eval(
+        Path(agent_yaml), project_root=project_root
+    )
+    spec = load_agent_spec_from_yaml(
+        agent_yaml,
+        tool_registry=_tool_reg if _tool_reg else None,
+        server_functions_registry=_sf_reg if _sf_reg else None,
+    )
     spec.use_safe_agent = False
     try:
         if "max_turns" in defaults:
@@ -384,84 +398,101 @@ async def _run_scenario(
     prompt = scenario.get("prompt", "")
     msgs = [{"role": "user", "content": prompt}]
     try:
-        if workflow_name:
-            try:
-                from omniagents.studio.tracing import trace as studio_trace
+        stream_telemetry = {
+            "usage": {
+                "requests": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+            }
+        }
 
+        with scenario_timer() as elapsed_fn:
+            if workflow_name:
                 try:
-                    import omniagents as _oa
+                    from omniagents.studio.tracing import trace as studio_trace
 
-                    _oa_version = getattr(_oa, "__version__", None)
-                except Exception:
-                    _oa_version = None
-                try:
-                    cfg = (
-                        yaml.safe_load(Path(agent_yaml).read_text(encoding="utf-8"))
-                        or {}
-                    )
-                    raw_dims = list(
-                        (
-                            (
-                                (cfg.get("evaluation") or {}).get(
-                                    "synthetic_data_generation"
-                                )
-                                or {}
-                            ).get("dimensions")
+                    try:
+                        import omniagents as _oa
+
+                        _oa_version = getattr(_oa, "__version__", None)
+                    except Exception:
+                        _oa_version = None
+                    try:
+                        cfg = (
+                            yaml.safe_load(Path(agent_yaml).read_text(encoding="utf-8"))
+                            or {}
                         )
-                        or []
-                    )
-                    dims_catalog = _catalog_with_labels(raw_dims)
-                except Exception:
-                    dims_catalog = []
-                import hashlib as _hashlib
-                import json as _json
+                        raw_dims = list(
+                            (
+                                (
+                                    (cfg.get("evaluation") or {}).get(
+                                        "synthetic_data_generation"
+                                    )
+                                    or {}
+                                ).get("dimensions")
+                            )
+                            or []
+                        )
+                        dims_catalog = _catalog_with_labels(raw_dims)
+                    except Exception:
+                        dims_catalog = []
+                    import hashlib as _hashlib
+                    import json as _json
 
-                try:
-                    _cat_blob = _json.dumps(
-                        dims_catalog, sort_keys=True, ensure_ascii=False
-                    )
-                    catalog_id = _hashlib.sha1(_cat_blob.encode("utf-8")).hexdigest()[
-                        :16
-                    ]
-                except Exception:
-                    catalog_id = None
-                import uuid as _uuid
+                    try:
+                        _cat_blob = _json.dumps(
+                            dims_catalog, sort_keys=True, ensure_ascii=False
+                        )
+                        catalog_id = _hashlib.sha1(
+                            _cat_blob.encode("utf-8")
+                        ).hexdigest()[:16]
+                    except Exception:
+                        catalog_id = None
+                    import uuid as _uuid
 
-                try:
-                    _sid = scenario.get("id") or scenario.get("name") or "scenario"
-                    run_uid = f"{_sid}-{_uuid.uuid4().hex[:8]}"
-                except Exception:
-                    run_uid = _uuid.uuid4().hex[:8]
-                meta = {
-                    "omniagents": {
-                        "run_type": "evaluation",
-                        "scenario": {
-                            "id": scenario.get("id"),
-                            "name": scenario.get("name"),
-                        },
-                        "run": {"id": run_uid},
-                        "synthetic": {
-                            "catalog_id": catalog_id,
-                            "catalog": {"dimensions": dims_catalog},
-                            "selection": {"mapping": scenario.get("dimensions", {})},
-                        },
-                        "config": {"agent_yaml": str(agent_yaml)},
-                        **({"omniagents_version": _oa_version} if _oa_version else {}),
+                    try:
+                        _sid = scenario.get("id") or scenario.get("name") or "scenario"
+                        run_uid = f"{_sid}-{_uuid.uuid4().hex[:8]}"
+                    except Exception:
+                        run_uid = _uuid.uuid4().hex[:8]
+                    meta = {
+                        "omniagents": {
+                            "run_type": "evaluation",
+                            "scenario": {
+                                "id": scenario.get("id"),
+                                "name": scenario.get("name"),
+                            },
+                            "run": {"id": run_uid},
+                            "synthetic": {
+                                "catalog_id": catalog_id,
+                                "catalog": {"dimensions": dims_catalog},
+                                "selection": {
+                                    "mapping": scenario.get("dimensions", {})
+                                },
+                            },
+                            "config": {"agent_yaml": str(agent_yaml)},
+                            **(
+                                {"omniagents_version": _oa_version}
+                                if _oa_version
+                                else {}
+                            ),
+                        }
                     }
-                }
-                gid = run_uid
-                with studio_trace(workflow_name, group_id=gid, metadata=meta):
+                    gid = run_uid
+                    with studio_trace(workflow_name, group_id=gid, metadata=meta):
+                        result = agent.run_streamed(msgs)
+                        stream_telemetry = await consume_stream_events(
+                            result.stream_events()
+                        )
+                except Exception:
                     result = agent.run_streamed(msgs)
-                    async for _ in result.stream_events():
-                        pass
-            except Exception:
+                    stream_telemetry = await consume_stream_events(
+                        result.stream_events()
+                    )
+            else:
                 result = agent.run_streamed(msgs)
-                async for _ in result.stream_events():
-                    pass
-        else:
-            result = agent.run_streamed(msgs)
-            async for _ in result.stream_events():
-                pass
+                stream_telemetry = await consume_stream_events(result.stream_events())
 
         run_error_payload = None
         get_last_run_end = getattr(agent, "get_last_run_end", None)
@@ -485,7 +516,9 @@ async def _run_scenario(
         )
 
         measures = scenario.get("measures") or []
-        metadata = await _run_judges(Path(agent_yaml), eval_cfg, scenario, history)
+        metadata = await _run_judges(
+            Path(agent_yaml), eval_cfg, scenario, history, eval_dir=eval_dir
+        )
         if run_error_payload is not None:
             metadata.setdefault("agent_error", run_error_payload)
         ctx = build_eval_context(
@@ -513,6 +546,12 @@ async def _run_scenario(
                 }
             )
 
+        telemetry = build_telemetry(
+            elapsed_fn=elapsed_fn,
+            history=history,
+            stream_result=stream_telemetry,
+        )
+
         return {
             "scenario": scenario.get("name", "scenario"),
             "prompt": prompt,
@@ -521,6 +560,7 @@ async def _run_scenario(
             "measures": measures_out,
             "history_len": len(history),
             "metadata": metadata,
+            **telemetry,
         }
     finally:
         if hasattr(agent, "cleanup"):
@@ -533,10 +573,20 @@ async def run_evaluation_async(
     include_unmeasured: bool = False,
     progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
     concurrency: int = 5,
+    eval_dir: Path | None = None,
+    project_root: Path | None = None,
+    eval_config: Any | None = None,
 ) -> Dict[str, Any]:
-    cfg_path = Path(compiled_yaml).resolve()
-    raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
-    eval_cfg = (raw or {}).get("evaluation") or {}
+    # When an EvalConfig is provided, use it directly
+    if eval_config is not None:
+        cfg_path = eval_config.agent_path
+        eval_cfg = eval_config.config
+        eval_dir = eval_dir or eval_config.eval_dir
+        project_root = project_root or eval_config.project_root
+    else:
+        cfg_path = Path(compiled_yaml).resolve()
+        raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+        eval_cfg = (raw or {}).get("evaluation") or {}
     defaults = eval_cfg.get("defaults") or {}
     runs_per = int(defaults.get("runs_per_prompt", 1))
     scenarios = eval_cfg.get("scenarios") or []
@@ -579,7 +629,7 @@ async def run_evaluation_async(
         0, original_scenarios_count - included_scenarios_count
     )
 
-    _load_local_measures(cfg_path)
+    _load_local_measures(cfg_path, project_root=project_root, eval_dir=eval_dir)
 
     from omniagents.core.evaluation.registry import _MEASURES as _REG_MEASURES
 
@@ -609,7 +659,13 @@ async def run_evaluation_async(
         nonlocal completed_count
         async with sem:
             r = await _run_scenario(
-                str(cfg_path), sc, defaults, eval_cfg, workflow_name
+                str(cfg_path),
+                sc,
+                defaults,
+                eval_cfg,
+                workflow_name,
+                eval_dir=eval_dir,
+                project_root=project_root,
             )
             r["scenario_config"] = sc
 
@@ -697,11 +753,21 @@ def run_evaluation(
     workflow_base_name: Optional[str] = None,
     include_unmeasured: bool = False,
     progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
+    eval_config: Any | None = None,
 ) -> Dict[str, Any]:
-    # Check if we need environment-aware evaluation
-    cfg_path = Path(compiled_yaml).resolve()
-    raw_cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
-    eval_cfg = raw_cfg.get("evaluation") or {}
+    # When an EvalConfig is provided, use it directly
+    if eval_config is not None:
+        cfg_path = eval_config.agent_path
+        eval_cfg = eval_config.config
+        tracing_cfg = tracing_cfg or eval_config.tracing_config
+        eval_dir = eval_config.eval_dir
+        project_root = eval_config.project_root
+    else:
+        cfg_path = Path(compiled_yaml).resolve()
+        raw_cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+        eval_cfg = raw_cfg.get("evaluation") or {}
+        eval_dir = None
+        project_root = None
 
     # Initialize tracing if configured (applies to all paths)
     workflow_name = None
@@ -710,11 +776,7 @@ def run_evaluation(
             import omniagents.studio.tracing as studio_tracing
             from datetime import datetime
 
-            base_name = (
-                workflow_base_name
-                or tracing_cfg.get("name")
-                or Path(compiled_yaml).stem
-            )
+            base_name = workflow_base_name or tracing_cfg.get("name") or cfg_path.stem
             start_suffix = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
             workflow_name = f"{base_name}_scenarios_{start_suffix}"
             project = tracing_cfg.get("project") or "agent_eval"
@@ -743,6 +805,7 @@ def run_evaluation(
                 include_unmeasured=include_unmeasured,
                 progress_cb=progress_cb,
                 concurrency=concurrency,
+                eval_config=eval_config,
             )
         )
 
@@ -753,5 +816,6 @@ def run_evaluation(
             include_unmeasured=include_unmeasured,
             progress_cb=progress_cb,
             concurrency=concurrency,
+            eval_config=eval_config,
         )
     )

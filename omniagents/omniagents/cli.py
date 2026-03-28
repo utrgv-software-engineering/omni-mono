@@ -1588,7 +1588,10 @@ def main():
             agent_parser.print_help()
     elif args.command == "compile":
         try:
-            from omniagents.core.project.compiler import compile_project
+            from omniagents.core.eval.loader import (
+                load_eval_config,
+                introspect_resources,
+            )
 
             proj_path = getattr(args, "project", None)
             if not proj_path:
@@ -1600,13 +1603,14 @@ def main():
                         "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
                     )
                     sys.exit(2)
-            compiled_cfg_path, graph = compile_project(
+            eval_cfg = load_eval_config(
                 str(proj_path),
                 select=str(getattr(args, "select", "") or ""),
                 exclude=str(getattr(args, "exclude", "") or ""),
                 agent_key=(str(getattr(args, "agent", "") or "") or None),
             )
-            print(str(compiled_cfg_path))
+            graph = introspect_resources(eval_cfg)
+            print(str(eval_cfg.agent_path))
             print(json.dumps(graph, indent=2))
         except Exception as e:
             print(f"Error compiling project: {e}")
@@ -1624,7 +1628,7 @@ def main():
         )
         if is_suite_run or is_scenarios_run:
             try:
-                from omniagents.core.project.compiler import compile_project
+                from omniagents.core.eval.loader import load_eval_config
 
                 proj_path = getattr(args, "project", None)
                 if not proj_path:
@@ -1636,7 +1640,7 @@ def main():
                             "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
                         )
                         sys.exit(2)
-                compiled_cfg_path, _graph = compile_project(
+                eval_cfg = load_eval_config(
                     str(proj_path),
                     select=str(args.select or ""),
                     exclude=str(args.exclude or ""),
@@ -1644,11 +1648,8 @@ def main():
                 )
                 from pathlib import Path as _P
 
-                cfg = (
-                    yaml.safe_load(_P(compiled_cfg_path).read_text(encoding="utf-8"))
-                    or {}
-                )
-                tracing = cfg.get("tracing") or {}
+                compiled_cfg_path = eval_cfg.agent_path
+                tracing = eval_cfg.tracing_config
                 from omniagents.core.eval.pipeline import run_evaluation
 
                 qlvl_pre = int(getattr(args, "quiet", 0) or 0)
@@ -1736,10 +1737,11 @@ def main():
                     workflow_base_name=wf_base,
                     include_unmeasured=include_unmeasured,
                     progress_cb=_progress_cb,
+                    eval_config=eval_cfg,
                 )
                 # Determine output location
                 out_arg = str(getattr(args, "output", "") or "").strip()
-                yaml_output = (cfg.get("evaluation") or {}).get("output") or ""
+                yaml_output = (eval_cfg.config or {}).get("output") or ""
                 explicit_output = out_arg or yaml_output
 
                 base_proj = _P(proj_path).resolve()
@@ -1751,8 +1753,7 @@ def main():
                     # Explicit --output flag: write raw JSON (backwards compat)
                     final_out = _P(explicit_output)
                     if not final_out.is_absolute():
-                        base = _P(compiled_cfg_path).resolve().parent
-                        final_out = (base / final_out).resolve()
+                        final_out = (eval_cfg.project_root / final_out).resolve()
                     final_out.parent.mkdir(parents=True, exist_ok=True)
                     final_out.write_text(json.dumps(data, indent=2), encoding="utf-8")
                     print(f"Wrote results: {final_out}")
@@ -2065,7 +2066,7 @@ def main():
             and getattr(args, "scen_cmd", None) == "generate"
         ):
             try:
-                from omniagents.core.project.compiler import compile_project
+                from omniagents.core.eval.loader import load_eval_config
 
                 proj_path = getattr(args, "project", None)
                 if not proj_path:
@@ -2077,7 +2078,7 @@ def main():
                             "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
                         )
                         sys.exit(2)
-                compiled_cfg_path, _graph = compile_project(
+                eval_cfg = load_eval_config(
                     str(proj_path),
                     select=str(args.select or ""),
                     exclude=str(args.exclude or ""),
@@ -2087,11 +2088,8 @@ def main():
                 from pathlib import Path as _P
                 import asyncio as _asyncio
 
-                cfg = (
-                    yaml.safe_load(_P(compiled_cfg_path).read_text(encoding="utf-8"))
-                    or {}
-                )
-                tracing = cfg.get("tracing") or {}
+                compiled_cfg_path = eval_cfg.agent_path
+                tracing = eval_cfg.tracing_config
                 name_arg = str(getattr(args, "name", "") or "").strip()
                 out_arg = str(getattr(args, "output", "") or "").strip()
                 if not name_arg and not out_arg:
@@ -2217,6 +2215,7 @@ def main():
                         output=output_path,
                         workflow_name=wf_name,
                         progress_cb=_progress_cb,
+                        eval_config=eval_cfg,
                     )
                 )
                 print(f"Wrote {len(scenarios)} scenarios to {out_path}")
@@ -2231,7 +2230,7 @@ def main():
             and getattr(args, "scen_cmd", None) == "annotate"
         ):
             try:
-                from omniagents.core.project.compiler import compile_project
+                from omniagents.core.eval.loader import load_eval_config
                 from omniagents.core.project.runtime import load_project, resolve_agent
 
                 proj_path = getattr(args, "project", None)
@@ -2280,17 +2279,13 @@ def main():
                 if not scenario_path.exists():
                     print(f"Error: Scenarios file not found: {scenario_path}")
                     sys.exit(2)
-                compiled_cfg_path, _graph = compile_project(
+                eval_cfg = load_eval_config(
                     str(proj_path),
                     select=str(getattr(args, "select", "") or ""),
                     exclude=str(getattr(args, "exclude", "") or ""),
                     agent_key=agent_key_arg,
                 )
-                cfg = (
-                    yaml.safe_load(Path(compiled_cfg_path).read_text(encoding="utf-8"))
-                    or {}
-                )
-                tracing_cfg = cfg.get("tracing") or {}
+                tracing_cfg = eval_cfg.tracing_config
                 studio_project = str(getattr(args, "studio_project") or "").strip()
                 if not studio_project:
                     candidate = tracing_cfg.get("project")
@@ -2349,7 +2344,7 @@ def main():
             sys.exit(2)
         elif args.eval_cmd == "judge" and getattr(args, "judge_cmd", None) == "run":
             try:
-                from omniagents.core.project.compiler import compile_project
+                from omniagents.core.eval.loader import load_eval_config
 
                 proj_path = getattr(args, "project", None)
                 if not proj_path:
@@ -2361,12 +2356,13 @@ def main():
                             "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
                         )
                         sys.exit(2)
-                compiled_cfg_path, _graph = compile_project(
+                eval_cfg = load_eval_config(
                     str(proj_path),
                     select=None,
                     exclude=None,
                     agent_key=(str(getattr(args, "agent", "") or "") or None),
                 )
+                compiled_cfg_path = eval_cfg.agent_path
                 from omniagents.core.eval.judges import evaluate_split
                 import asyncio as _asyncio
                 from pathlib import Path as _P
@@ -2502,12 +2498,10 @@ def main():
                             else None
                         ),
                         progress_cb=_progress_cb,
+                        eval_config=eval_cfg,
                     )
                 )
-                cfg = (
-                    yaml.safe_load(_P(compiled_cfg_path).read_text(encoding="utf-8"))
-                    or {}
-                )
+                cfg = eval_cfg.agent_config
                 yml_out = (
                     (cfg.get("evaluation") or {}).get("judge_output")
                     or (cfg.get("evaluation") or {}).get("output")
@@ -2878,7 +2872,7 @@ def main():
     elif args.command == "judge":
         if getattr(args, "judge_cmd", None) == "run":
             try:
-                from omniagents.core.project.compiler import compile_project
+                from omniagents.core.eval.loader import load_eval_config
 
                 proj_path = getattr(args, "project", None)
                 if not proj_path:
@@ -2890,12 +2884,13 @@ def main():
                             "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
                         )
                         sys.exit(2)
-                compiled_cfg_path, _graph = compile_project(
+                eval_cfg = load_eval_config(
                     str(proj_path),
                     select=None,
                     exclude=None,
                     agent_key=(str(getattr(args, "agent", "") or "") or None),
                 )
+                compiled_cfg_path = eval_cfg.agent_path
                 from omniagents.core.eval.judges import evaluate_split
                 import asyncio as _asyncio
                 from pathlib import Path as _P
@@ -3030,12 +3025,10 @@ def main():
                             else None
                         ),
                         progress_cb=_progress_cb,
+                        eval_config=eval_cfg,
                     )
                 )
-                cfg = (
-                    yaml.safe_load(_P(compiled_cfg_path).read_text(encoding="utf-8"))
-                    or {}
-                )
+                cfg = eval_cfg.agent_config
                 yml_out = (
                     (cfg.get("evaluation") or {}).get("judge_output")
                     or (cfg.get("evaluation") or {}).get("output")
@@ -3594,7 +3587,10 @@ def main():
             gen_parser.print_help()
     elif args.command == "ls":
         try:
-            from omniagents.core.project.compiler import compile_project
+            from omniagents.core.eval.loader import (
+                load_eval_config,
+                introspect_resources,
+            )
 
             proj_path = getattr(args, "project", None)
             if not proj_path:
@@ -3606,12 +3602,13 @@ def main():
                         "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
                     )
                     sys.exit(2)
-            compiled_cfg_path, graph = compile_project(
+            eval_cfg = load_eval_config(
                 str(proj_path),
                 select=None,
                 exclude=None,
                 agent_key=(str(getattr(args, "agent", "") or "") or None),
             )
+            graph = introspect_resources(eval_cfg)
             print(json.dumps(graph, indent=2))
         except Exception as e:
             print(f"Error listing resources: {e}")

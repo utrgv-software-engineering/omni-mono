@@ -1,11 +1,55 @@
+"""Runtime evaluation config loader.
+
+Replaces the compile-then-read-from-target pattern with direct loading from
+the ``evaluations/`` directory.  No files are written to disk -- the merged
+config is returned as an :class:`EvalConfig` dataclass ready for use by the
+eval pipeline, scenario generator, judges, and optimizers.
+"""
+
 from __future__ import annotations
 
-import json
+import fnmatch
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
-import shutil
+
+
+# ---------------------------------------------------------------------------
+# Data class returned to callers
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class EvalConfig:
+    """Fully resolved evaluation configuration."""
+
+    config: Dict[str, Any]
+    """Merged evaluation dict (scenarios, judges, metrics, optimizers, etc.)."""
+
+    agent_config: Dict[str, Any]
+    """The raw agent YAML dict (without injected ``evaluation`` key)."""
+
+    agent_path: Path
+    """Absolute path to the agent YAML file on disk."""
+
+    eval_dir: Path
+    """Absolute path to the ``evaluations/`` directory (base for relative paths)."""
+
+    project_root: Path
+    """Absolute path to the project root (where ``project.yml`` lives)."""
+
+    tracing_config: Dict[str, Any] = field(default_factory=dict)
+    """Project-level tracing configuration."""
+
+    project_config: Dict[str, Any] = field(default_factory=dict)
+    """Raw ``project.yml`` dict."""
+
+
+# ---------------------------------------------------------------------------
+# YAML / dict helpers (extracted from compiler.py)
+# ---------------------------------------------------------------------------
 
 
 def _read_yaml(path: Path) -> Any:
@@ -31,6 +75,11 @@ def _ensure_list(x: Any) -> List[Any]:
     if isinstance(x, list):
         return x
     return [x]
+
+
+# ---------------------------------------------------------------------------
+# Scenario collection
+# ---------------------------------------------------------------------------
 
 
 def _load_scenarios_file(base_dir: Path, rel_or_abs: str) -> List[Dict[str, Any]]:
@@ -97,6 +146,29 @@ def _collect_scenarios(paths: List[Path]) -> List[Dict[str, Any]]:
     return _expand_scenarios(Path.cwd(), all_items)
 
 
+# ---------------------------------------------------------------------------
+# Judge / optimizer / metric collection
+# ---------------------------------------------------------------------------
+
+
+def _resolve_judge_agent_ref(base: Path, jcfg: Dict[str, Any]) -> Dict[str, Any]:
+    jc = dict(jcfg or {})
+    ref = jc.get("agent_ref") or jc.get("ref")
+    if isinstance(ref, str):
+        p = Path(ref)
+        if not p.is_absolute():
+            p = (base / p).resolve()
+        data = _read_yaml(p)
+        if isinstance(data, dict):
+            if "agent" in data and isinstance(data["agent"], dict):
+                jc.setdefault("agent", data["agent"])
+            else:
+                for k in ("agent", "input"):
+                    if k in data and isinstance(data[k], dict):
+                        jc.setdefault(k, data[k])
+    return jc
+
+
 def _collect_judges(paths: List[Path]) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for p in paths:
@@ -137,12 +209,12 @@ def _collect_optimizers(paths: List[Path]) -> Dict[str, Any]:
         if p.is_file():
             data = _read_yaml(p)
             if isinstance(data, dict):
-                os = data.get("optimizers")
-                if isinstance(os, dict):
-                    for k, v in os.items():
+                os_ = data.get("optimizers")
+                if isinstance(os_, dict):
+                    for k, v in os_.items():
                         out[k] = v
-                if isinstance(os, list):
-                    for o in os:
+                if isinstance(os_, list):
+                    for o in os_:
                         key = (o or {}).get("name") or (o or {}).get("key")
                         if key:
                             out[key] = o
@@ -153,34 +225,16 @@ def _collect_optimizers(paths: List[Path]) -> Dict[str, Any]:
             data = _read_yaml(y)
             if not isinstance(data, dict):
                 continue
-            os = data.get("optimizers")
-            if isinstance(os, dict):
-                for k, v in os.items():
+            os_ = data.get("optimizers")
+            if isinstance(os_, dict):
+                for k, v in os_.items():
                     out[k] = v
-            if isinstance(os, list):
-                for o in os:
+            if isinstance(os_, list):
+                for o in os_:
                     key = (o or {}).get("name") or (o or {}).get("key")
                     if key:
                         out[key] = o
     return out
-
-
-def _resolve_judge_agent_ref(base: Path, jcfg: Dict[str, Any]) -> Dict[str, Any]:
-    jc = dict(jcfg or {})
-    ref = jc.get("agent_ref") or jc.get("ref")
-    if isinstance(ref, str):
-        p = Path(ref)
-        if not p.is_absolute():
-            p = (base / p).resolve()
-        data = _read_yaml(p)
-        if isinstance(data, dict):
-            if "agent" in data and isinstance(data["agent"], dict):
-                jc.setdefault("agent", data["agent"])
-            else:
-                for k in ("agent", "input"):
-                    if k in data and isinstance(data[k], dict):
-                        jc.setdefault(k, data[k])
-    return jc
 
 
 def _collect_metrics(paths: List[Path]) -> List[Dict[str, Any]]:
@@ -223,6 +277,11 @@ def _collect_base_eval(paths: List[Path]) -> Dict[str, Any]:
             if isinstance(data, dict) and isinstance(data.get("evaluation"), dict):
                 result = _merge_dict(result, data["evaluation"])
     return result
+
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
 
 
 def _validate_graph_resources(
@@ -278,11 +337,19 @@ def _validate_graph_resources(
     return scenario_names, metric_names, judge_keys
 
 
-def _filter_scenarios(
+# ---------------------------------------------------------------------------
+# Scenario filtering (public -- used by CLI and Studio API)
+# ---------------------------------------------------------------------------
+
+
+def filter_scenarios(
     items: List[Dict[str, Any]], select: str | None, exclude: str | None
 ) -> List[Dict[str, Any]]:
-    import fnmatch
+    """Filter a scenario list by select/exclude expressions.
 
+    Supports ``id:``, ``name:``, ``tag:``/``tags:``, ``measure:`` prefixes
+    with fnmatch glob patterns.  Multiple expressions are comma-separated.
+    """
     sel = [s.strip() for s in (select or "").split(",") if s.strip()]
     exc = [s.strip() for s in (exclude or "").split(",") if s.strip()]
     if not sel and not exc:
@@ -299,7 +366,7 @@ def _filter_scenarios(
             if typ == "name":
                 nm = str(it.get("name") or it.get("id") or "")
                 return fnmatch.fnmatch(nm, pat)
-            if typ == "tag" or typ == "tags":
+            if typ in ("tag", "tags"):
                 tags = [str(t) for t in _ensure_list(it.get("tags"))]
                 return any(fnmatch.fnmatch(t, pat) for t in tags)
             if typ == "measure":
@@ -317,17 +384,60 @@ def _filter_scenarios(
     if exc:
         for i, it in enumerate(items):
             if any(match_expr(it, e) for e in exc):
-                if i in keep:
-                    keep.remove(i)
+                keep.discard(i)
     return [items[i] for i in range(len(items)) if i in keep]
 
 
-def compile_project(
+# ---------------------------------------------------------------------------
+# De-duplication helper for source paths
+# ---------------------------------------------------------------------------
+
+
+def _uniq(ps: List[Path]) -> List[Path]:
+    seen: set[str] = set()
+    out: List[Path] = []
+    for x in ps:
+        try:
+            key = str(x.resolve())
+        except Exception:
+            key = str(x)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(x)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+
+def load_eval_config(
     project_path: str,
     select: str | None = None,
     exclude: str | None = None,
     agent_key: Optional[str] = None,
-) -> Tuple[Path, Dict[str, Any]]:
+) -> EvalConfig:
+    """Load and merge evaluation config at runtime.
+
+    This replaces ``compile_project()`` from ``compiler.py``.  Instead of
+    writing a merged YAML to ``target/``, it returns the merged config in
+    memory as an :class:`EvalConfig`.
+
+    Parameters
+    ----------
+    project_path:
+        Path to ``project.yml`` or the directory containing it.
+    select:
+        Comma-separated scenario selectors (e.g. ``"name:foo*,tag:smoke"``).
+    exclude:
+        Comma-separated scenario exclusions.
+    agent_key:
+        Agent key to resolve.  ``None`` uses the project entrypoint.
+    """
+    from omniagents.core.project.runtime import load_project, resolve_agent
+
     p = Path(project_path).resolve()
     if p.is_file() and p.name != "project.yml":
         raise FileNotFoundError(
@@ -340,31 +450,18 @@ def compile_project(
             raise FileNotFoundError(
                 f"Could not find project.yml in directory: {base_dir}"
             )
+
     proj = _read_yaml(p if p.is_file() else (base_dir / "project.yml")) or {}
     paths = proj.get("paths") or {}
-    eval_dir = base_dir / str(paths.get("evaluations", "evaluations"))
-    agents_dir = base_dir / str(paths.get("agents", "agents"))
-    target_dir = base_dir / str(paths.get("target", "target"))
-    tools_dir = base_dir / str(paths.get("tools", "tools"))
-    guardrails_dir = base_dir / str(paths.get("guardrails", "guardrails"))
-    server_functions_dir = base_dir / str(
-        paths.get("server_functions", "server_functions")
+    eval_dir = (base_dir / str(paths.get("evaluations", "evaluations"))).resolve()
+
+    # Resolve agent via the project runtime
+    prj = load_project(str(p))
+    _key, agent_path = resolve_agent(
+        prj, agent_key=(str(agent_key) if agent_key else None)
     )
 
-    def _uniq(ps: List[Path]) -> List[Path]:
-        seen = set()
-        out: List[Path] = []
-        for x in ps:
-            try:
-                key = str(x.resolve())
-            except Exception:
-                key = str(x)
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(x)
-        return out
-
+    # Source paths for each resource type
     scenarios_sources = _uniq(
         [
             base_dir / "evaluations" / "scenarios.yml",
@@ -372,16 +469,8 @@ def compile_project(
             eval_dir / "scenarios",
         ]
     )
-    judges_sources = _uniq(
-        [
-            eval_dir / "judges",
-        ]
-    )
-    optimizers_sources = _uniq(
-        [
-            eval_dir / "optimizers",
-        ]
-    )
+    judges_sources = _uniq([eval_dir / "judges"])
+    optimizers_sources = _uniq([eval_dir / "optimizers"])
     metrics_sources = _uniq(
         [
             base_dir / "evaluations" / "metrics.yml",
@@ -396,29 +485,22 @@ def compile_project(
             eval_dir,
         ]
     )
-    # Resolve agent path via discovery using runtime
-    from .runtime import load_project, resolve_agent
 
-    prj = load_project(str(p))
-    _key, agent_path = resolve_agent(
-        prj, agent_key=(str(agent_key) if agent_key else None)
-    )
-
+    # Collect everything
     base_eval = _collect_base_eval([s for s in base_eval_sources if s.exists()])
     scenarios = _collect_scenarios([s for s in scenarios_sources if s.exists()])
     judges = _collect_judges([s for s in judges_sources if s.exists()])
     optimizers = _collect_optimizers([s for s in optimizers_sources if s.exists()])
     metrics = _collect_metrics([s for s in metrics_sources if s.exists()])
 
+    # Filter
     if select or exclude:
-        scenarios = _filter_scenarios(scenarios, select, exclude)
+        scenarios = filter_scenarios(scenarios, select, exclude)
 
-    scenario_names, metric_names, judge_keys = _validate_graph_resources(
-        scenarios,
-        metrics,
-        judges,
-    )
+    # Validate
+    _validate_graph_resources(scenarios, metrics, judges)
 
+    # Merge into single eval config dict
     compiled_eval: Dict[str, Any] = {}
     compiled_eval = _merge_dict(compiled_eval, base_eval)
     if judges:
@@ -430,148 +512,63 @@ def compile_project(
     if scenarios:
         compiled_eval["scenarios"] = scenarios
 
+    # Read agent config
     agent_cfg = _read_yaml(agent_path) or {}
-    agent_out = dict(agent_cfg)
-    # Inject project-level tracing (strict project-level ownership)
+
+    # Extract tracing config
+    tracing_config: Dict[str, Any] = {}
     try:
         if isinstance(proj.get("tracing"), dict):
-            agent_out["tracing"] = dict(proj.get("tracing") or {})
+            tracing_config = dict(proj.get("tracing") or {})
     except Exception:
         pass
-    agent_out["evaluation"] = compiled_eval
 
-    target_dir.mkdir(parents=True, exist_ok=True)
-    compiled_yaml = target_dir / "evaluation_compiled.yml"
-    compiled_yaml.write_text(
-        yaml.safe_dump(agent_out, sort_keys=False), encoding="utf-8"
+    return EvalConfig(
+        config=compiled_eval,
+        agent_config=agent_cfg,
+        agent_path=agent_path.resolve(),
+        eval_dir=eval_dir,
+        project_root=base_dir.resolve(),
+        tracing_config=tracing_config,
+        project_config=proj,
     )
 
-    try:
-        instr = agent_cfg.get("instructions_file")
-        if isinstance(instr, str) and instr.strip():
-            src_instr = (agent_path.parent / instr).resolve()
-            dst_instr = target_dir / Path(instr).name
-            if src_instr.is_file():
-                if not (dst_instr.exists() or dst_instr.is_symlink()):
-                    try:
-                        dst_instr.symlink_to(src_instr)
-                    except Exception:
-                        shutil.copy2(src_instr, dst_instr)
-    except Exception:
-        pass
 
-    try:
-        src_tools = (agent_path.parent / "tools").resolve()
-        dst_tools = target_dir / "tools"
-        if src_tools.is_dir():
-            if not (dst_tools.exists() or dst_tools.is_symlink()):
-                try:
-                    dst_tools.symlink_to(src_tools)
-                except Exception:
-                    shutil.copytree(src_tools, dst_tools)
-        else:
-            # If agent-local tools not present, link project tools to standard 'tools' for loader compatibility
-            if tools_dir.is_dir() and not (
-                dst_tools.exists() or dst_tools.is_symlink()
-            ):
-                try:
-                    dst_tools.symlink_to(tools_dir.resolve())
-                except Exception:
-                    try:
-                        shutil.copytree(tools_dir.resolve(), dst_tools)
-                    except Exception:
-                        pass
-    except Exception:
-        pass
+# ---------------------------------------------------------------------------
+# Lightweight introspection (replaces graph.json generation)
+# ---------------------------------------------------------------------------
 
-    # Also link project-level shared assets if present
-    try:
-        if tools_dir.is_dir():
-            dst = target_dir / "project_tools"
-            if not (dst.exists() or dst.is_symlink()):
-                try:
-                    dst.symlink_to(tools_dir.resolve())
-                except Exception:
-                    shutil.copytree(tools_dir.resolve(), dst)
-    except Exception:
-        pass
 
-    try:
-        if guardrails_dir.is_dir():
-            dst = target_dir / "guardrails"
-            if not (dst.exists() or dst.is_symlink()):
-                try:
-                    dst.symlink_to(guardrails_dir.resolve())
-                except Exception:
-                    shutil.copytree(guardrails_dir.resolve(), dst)
-    except Exception:
-        pass
+def introspect_resources(eval_config: EvalConfig) -> Dict[str, Any]:
+    """Return a resource summary dict (equivalent to the old ``graph.json``).
 
-    try:
-        if server_functions_dir.is_dir():
-            dst = target_dir / "server_functions"
-            if not (dst.exists() or dst.is_symlink()):
-                try:
-                    dst.symlink_to(server_functions_dir.resolve())
-                except Exception:
-                    shutil.copytree(server_functions_dir.resolve(), dst)
-    except Exception:
-        pass
+    This can be used by the ``ls`` command and Studio UI to enumerate
+    scenarios, judges, and metrics without writing anything to disk.
+    """
+    cfg = eval_config.config
+    scenarios = cfg.get("scenarios") or []
+    judges = cfg.get("judges") or {}
+    metrics = cfg.get("metrics") or []
 
-    try:
-        src_measures = eval_dir / "measures.py"
-        if src_measures.is_file():
-            dst_measures = target_dir / "measures.py"
-            if not (dst_measures.exists() or dst_measures.is_symlink()):
-                try:
-                    dst_measures.symlink_to(src_measures.resolve())
-                except Exception:
-                    shutil.copy2(src_measures.resolve(), dst_measures)
-    except Exception:
-        pass
+    scenario_names = []
+    for sc in scenarios:
+        name = (sc.get("name") or sc.get("id") or "") if isinstance(sc, dict) else ""
+        if name:
+            scenario_names.append(name)
 
-    # Copy agent-level Python files (e.g., context.py for context factories)
-    try:
-        agent_dir = agent_path.parent
-        for py_file in agent_dir.glob("*.py"):
-            if py_file.name.startswith("_"):
-                continue
-            dst_py = target_dir / py_file.name
-            if not (dst_py.exists() or dst_py.is_symlink()):
-                try:
-                    dst_py.symlink_to(py_file.resolve())
-                except Exception:
-                    shutil.copy2(py_file.resolve(), dst_py)
-    except Exception:
-        pass
+    metric_names = []
+    for m in metrics:
+        name = (m.get("name") or m.get("label") or "") if isinstance(m, dict) else ""
+        if name:
+            metric_names.append(name)
 
-    # Agents manifest for runtime tooling
-    try:
-        from .runtime import load_project
-
-        prj = load_project(str(p))
-        manifest = {
-            "entrypoint": prj.entrypoint,
-            "agents": [{"key": k, "file": str(v)} for k, v in prj.agents_map.items()],
-        }
-        (target_dir / "agents.json").write_text(
-            json.dumps(manifest, indent=2), encoding="utf-8"
-        )
-    except Exception:
-        pass
-
-    graph = {
-        "project_name": proj.get("name") or base_dir.name,
-        "agent_file": str(agent_path),
-        "compiled_file": str(compiled_yaml),
+    return {
+        "project_name": eval_config.project_config.get("name")
+        or eval_config.project_root.name,
+        "agent_file": str(eval_config.agent_path),
         "resources": {
             "scenarios": scenario_names,
-            "judges": judge_keys,
+            "judges": list(judges.keys()),
             "metrics": metric_names,
         },
     }
-    (target_dir / "graph.json").write_text(
-        json.dumps(graph, indent=2), encoding="utf-8"
-    )
-
-    return compiled_yaml, graph

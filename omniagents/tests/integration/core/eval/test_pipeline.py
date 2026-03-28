@@ -8,7 +8,7 @@ from omniagents.core.evaluation import registry
 
 
 def _configure_pipeline(monkeypatch, history_text="final"):
-    def fake_load_spec(path):
+    def fake_load_spec(path, **kw):
         return types.SimpleNamespace(
             use_safe_agent=True,
             max_turns=1,
@@ -57,7 +57,7 @@ def _configure_pipeline(monkeypatch, history_text="final"):
     monkeypatch.setattr(
         pipeline, "compute_metrics", lambda runs, metrics_cfg: {"run_total": len(runs)}
     )
-    monkeypatch.setattr(pipeline, "_load_local_measures", lambda cfg: None)
+    monkeypatch.setattr(pipeline, "_load_local_measures", lambda cfg, **kw: None)
 
 
 def test_pipeline_executes_multiple_judges_per_scenario(tmp_path, monkeypatch):
@@ -90,7 +90,16 @@ def test_pipeline_executes_multiple_judges_per_scenario(tmp_path, monkeypatch):
                 final_output={"answer": "Pass", "reasoning": f"{key}-ok"}
             )
 
+    class RunConfig:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class Agent:
+        pass
+
     agents_mod.Runner = Runner
+    agents_mod.RunConfig = RunConfig
+    agents_mod.Agent = Agent
     monkeypatch.setitem(sys.modules, "agents", agents_mod)
     built_specs = []
 
@@ -173,7 +182,16 @@ def test_pipeline_judge_selection_modes(tmp_path, monkeypatch):
                 final_output={"answer": "Pass", "reasoning": key}
             )
 
+    class RunConfig:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class Agent:
+        pass
+
     agents_mod.Runner = Runner
+    agents_mod.RunConfig = RunConfig
+    agents_mod.Agent = Agent
     monkeypatch.setitem(sys.modules, "agents", agents_mod)
 
     async def fake_build_agent(

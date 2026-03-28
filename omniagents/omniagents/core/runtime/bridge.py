@@ -806,6 +806,47 @@ async def stream_agent(
                 if not delivered:
                     session.pending_events.append((method, payload))
 
+                # Emit audit events for tool_called / tool_result
+                if service is not None and method in ("tool_called", "tool_result"):
+                    try:
+                        from omniagents.core.audit.events import (
+                            make_audit_event,
+                            truncate_for_audit,
+                            TOOL_CALLED,
+                            TOOL_RESULT,
+                        )
+
+                        _et = TOOL_CALLED if method == "tool_called" else TOOL_RESULT
+                        _max = 4096
+                        if method == "tool_called":
+                            _details = {
+                                "tool": payload.get("tool"),
+                                "call_id": payload.get("call_id"),
+                                "input": truncate_for_audit(
+                                    payload.get("input", ""), _max
+                                ),
+                            }
+                        else:
+                            _details = {
+                                "tool": payload.get("tool"),
+                                "call_id": payload.get("call_id"),
+                                "output": truncate_for_audit(
+                                    payload.get("output", ""), _max
+                                ),
+                            }
+                        await service.emit_runtime_hook(
+                            "audit",
+                            **make_audit_event(
+                                _et,
+                                session_id=getattr(session, "id", None),
+                                user_id=getattr(session, "user_id", None),
+                                run_id=payload.get("run_id"),
+                                details=_details,
+                            ),
+                        )
+                    except Exception:
+                        pass
+
             # Persist item into session history
             if hasattr(item, "to_input_item"):
                 try:

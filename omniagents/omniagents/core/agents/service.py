@@ -242,6 +242,38 @@ class AgentService(RpcMethodsBase):
             setup_tracing(getattr(self.spec, "tracing_config", None))
         except Exception:
             pass
+
+        # Set up session encryption provider if configured
+        try:
+            sec = getattr(self.spec, "security_config", None) or {}
+            enc_cfg = (sec.get("providers") or {}).get("session_encryption")
+            if enc_cfg and enc_cfg.get("type", "none") != "none":
+                from omniagents.core.providers import resolve_provider
+                from omniagents.core.session.history_db import set_encryption_provider
+
+                enc_provider = resolve_provider("session_encryption", enc_cfg)
+                set_encryption_provider(enc_provider)
+        except Exception:
+            pass
+
+        # Purge old sessions if retention policy is configured
+        try:
+            sec = getattr(self.spec, "security_config", None) or {}
+            retention_days = (sec.get("sessions") or {}).get("retention_days", 0)
+            if retention_days > 0:
+                from omniagents.core.session.history_db import purge_old_sessions
+
+                purged = purge_old_sessions(
+                    retention_days,
+                    project_slug=project_slug,
+                    agent_slug=agent_slug,
+                )
+                if purged:
+                    print(
+                        f"Security: purged {purged} session(s) older than {retention_days} days"
+                    )
+        except Exception:
+            pass
         # Client-function request tracking (server→client RPC-style)
         self._pending_client_requests: dict[str, asyncio.Future] = {}
         # Optional capability registry per connected channel
@@ -251,6 +283,57 @@ class AgentService(RpcMethodsBase):
         # Map name -> {"func": callable, "description": str | None, "params_schema": dict | None, "result_schema": dict | None}
         self._server_functions: dict[str, dict] = {}
         self._runtime_hooks: dict[str, list[Any]] = {}
+
+        # Register file audit backend if enabled in security config
+        try:
+            sec = getattr(self.spec, "security_config", None) or {}
+            audit_cfg = sec.get("audit") or {}
+            if audit_cfg.get("enabled") and audit_cfg.get("backend", "file") == "file":
+                from omniagents.core.audit.file_backend import create_audit_hook
+
+                # Resolve secrets provider for HMAC signing (if configured)
+                _secrets_provider = None
+                try:
+                    _secrets_cfg = (sec.get("providers") or {}).get("secrets")
+                    from omniagents.core.providers import resolve_provider
+
+                    _secrets_provider = resolve_provider("secrets", _secrets_cfg)
+                except Exception:
+                    pass
+
+                self.register_runtime_hook(
+                    "audit",
+                    create_audit_hook(
+                        audit_cfg,
+                        project_slug=project_slug,
+                        secrets_provider=_secrets_provider,
+                    ),
+                )
+        except Exception:
+            pass
+
+        # Register notification provider as an audit hook (if configured)
+        try:
+            notif_cfg = (sec.get("providers") or {}).get("notification")
+            if notif_cfg and notif_cfg.get("type", "none") != "none":
+                # Ensure notification domain is loaded
+                import omniagents.core.providers.notification  # noqa: F401
+                from omniagents.core.providers import resolve_provider as _rp
+
+                _notif_provider = _rp("notification", notif_cfg)
+
+                async def _notification_hook(
+                    *, service: Any = None, event: str = "", **kwargs: Any
+                ) -> None:
+                    try:
+                        await _notif_provider.notify(kwargs)
+                    except Exception:
+                        pass
+
+                self.register_runtime_hook("audit", _notification_hook)
+        except Exception:
+            pass
+
         # Note: we intentionally do NOT register built-in example functions
         # like "session.get_history" so they won't surface in UIs that
         # dynamically list server functions (e.g., Bubble Tea /help).
@@ -471,6 +554,35 @@ class AgentService(RpcMethodsBase):
                     pass
 
             self._apply_session_tool_policy(session, agent)
+
+            # Wire audit emit callback on SafeAgent if audit is active
+            if hasattr(agent, "_audit_emit") and self._runtime_hooks.get("audit"):
+                _service_ref = self
+                _session_ref = session
+
+                async def _safe_agent_audit(event_type, tool_name, details, reviewer_id=None):
+                    from omniagents.core.audit.events import make_audit_event
+
+                    _uid = reviewer_id or getattr(_session_ref, "user_id", None)
+                    _extra = {"tool": tool_name, **details}
+                    if reviewer_id:
+                        _extra["reviewer_id"] = reviewer_id
+                    await _service_ref.emit_runtime_hook(
+                        "audit",
+                        **make_audit_event(
+                            event_type,
+                            session_id=getattr(_session_ref, "id", None),
+                            user_id=_uid,
+                            agent_name=getattr(_service_ref.spec, "name", None),
+                            details=_extra,
+                        ),
+                    )
+
+                agent._audit_emit = _safe_agent_audit
+                # Set reviewer identity from authenticated session
+                if hasattr(agent, "_reviewer_id"):
+                    agent._reviewer_id = getattr(session, "user_id", None)
+
             return agent
         except Exception:
             # If agent building fails, cleanup MCP lifecycle if it was just created
@@ -551,6 +663,75 @@ class AgentService(RpcMethodsBase):
             setattr(agent, "always_allow_tools", merged)
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    #  Client function → agent tool injection
+    # ------------------------------------------------------------------
+    def _inject_client_function_tools(
+        self, session: Session, agent: Any
+    ) -> None:
+        """Inject registered client functions as FunctionTools on the agent.
+
+        When the agent invokes one of these tools, the server sends a
+        ``client_request`` to the connected client and awaits the
+        ``client_response``.  This allows external systems (like the
+        launcher) to register callable tools dynamically.
+        """
+        client_tools: dict = getattr(session, "_client_tools", None) or {}
+        if not client_tools:
+            return
+
+        from agents.tool import FunctionTool
+
+        existing_names = {
+            getattr(t, "name", None) for t in getattr(agent, "tools", [])
+        }
+
+        service_ref = self
+        session_ref = session
+
+        for fn_name, fn_info in client_tools.items():
+            if fn_name in existing_names:
+                continue
+
+            description = fn_info.get("description") or fn_name
+            params_schema = fn_info.get("params_schema") or {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": True,
+            }
+
+            # Build the tool invoke closure
+            _fn_name = fn_name
+
+            async def _invoke(ctx, args_json, *, _name=_fn_name):
+                import json as _json
+
+                try:
+                    args = _json.loads(args_json) if isinstance(args_json, str) else args_json
+                except Exception:
+                    args = {}
+
+                result = await service_ref.request_client_function(
+                    _name,
+                    args,
+                    session=session_ref,
+                    expect_result=True,
+                    timeout_ms=30_000,
+                )
+                if result is None:
+                    return {"ok": False, "error": "Client function timed out"}
+                return result.get("result", result)
+
+            tool = FunctionTool(
+                name=fn_name,
+                description=description,
+                params_json_schema=params_schema,
+                on_invoke_tool=_invoke,
+                strict_json_schema=False,
+            )
+            agent.tools.append(tool)
 
     # ------------------------------------------------------------------
     #  Server Functions registry APIs (programmatic registration)
@@ -944,7 +1125,9 @@ class AgentService(RpcMethodsBase):
     ) -> bool:  # noqa: D401
         """Register client-supported functions for the current channel.
 
-        The information is stored best-effort and currently advisory only.
+        Registered functions are stored per-channel for diagnostics and also
+        merged into session-level ``_client_tools`` so that they can be injected
+        as agent tools on subsequent runs.
         """
         payload = {"version": version, "functions": functions or []}
         _debug_rpc("client_functions", payload)
@@ -953,6 +1136,24 @@ class AgentService(RpcMethodsBase):
             self._client_capabilities[self.channel] = payload
         except Exception:
             pass
+
+        # Merge into session-level tool registry so _inject_client_function_tools
+        # can create FunctionTool wrappers for the agent.
+        channel = getattr(self, "channel", None)
+        if channel is not None:
+            for sess in self._session_manager._by_id.values():
+                if channel in getattr(sess, "channels", []):
+                    if not hasattr(sess, "_client_tools"):
+                        sess._client_tools = {}
+                    for fn in (functions or []):
+                        name = fn.get("name")
+                        if name:
+                            sess._client_tools[name] = {
+                                "name": name,
+                                "description": fn.get("description", ""),
+                                "params_schema": fn.get("params_schema"),
+                            }
+                    break
         return True
 
     # ------------------------------------------------------------------
@@ -1366,6 +1567,9 @@ class AgentService(RpcMethodsBase):
 
         agent = await self._build_agent_for_session(sess, approval_callback_base)
 
+        # Inject any client-registered functions as agent tools
+        self._inject_client_function_tools(sess, agent)
+
         async def _worker():
             end_reason = "error"  # Default in case of unexpected exception
             final_details: dict | None = None
@@ -1652,6 +1856,26 @@ class AgentService(RpcMethodsBase):
                         end_reason = "guardrail_violation"
                         error_info = _build_guardrail_error_info(e)
                         logger.warning(f"Guardrail triggered: {e}")
+                        # Audit event: guardrail_triggered
+                        try:
+                            from omniagents.core.audit.events import (
+                                make_audit_event,
+                                GUARDRAIL_TRIGGERED,
+                            )
+
+                            await self.emit_runtime_hook(
+                                "audit",
+                                **make_audit_event(
+                                    GUARDRAIL_TRIGGERED,
+                                    session_id=sess.id,
+                                    user_id=getattr(sess, "user_id", None),
+                                    run_id=run_name,
+                                    agent_name=getattr(self.spec, "name", None),
+                                    details=error_info or {},
+                                ),
+                            )
+                        except Exception:
+                            pass
                         break
                     except (ModelBehaviorError, UserError) as e:
                         # Permanent failures - don't retry
@@ -1754,6 +1978,27 @@ class AgentService(RpcMethodsBase):
                 await self._broadcast_session(
                     sess, "run_end", payload, queue_if_unseen=True
                 )
+                # Audit event: run_end
+                try:
+                    from omniagents.core.audit.events import make_audit_event, RUN_END
+
+                    await self.emit_runtime_hook(
+                        "audit",
+                        **make_audit_event(
+                            RUN_END,
+                            session_id=sess.id,
+                            user_id=getattr(sess, "user_id", None),
+                            run_id=run_name,
+                            agent_name=getattr(self.spec, "name", None),
+                            details={
+                                k: payload.get(k)
+                                for k in ("end_reason", "error", "model")
+                                if payload.get(k) is not None
+                            },
+                        ),
+                    )
+                except Exception:
+                    pass
 
         task_name = f"run_{uuid.uuid4().hex}"
         _debug_rpc(
@@ -1781,6 +2026,22 @@ class AgentService(RpcMethodsBase):
             },
             track_live=True,
         )
+        # Audit event: run_started
+        try:
+            from omniagents.core.audit.events import make_audit_event, RUN_STARTED
+
+            await self.emit_runtime_hook(
+                "audit",
+                **make_audit_event(
+                    RUN_STARTED,
+                    session_id=sess.id,
+                    user_id=getattr(sess, "user_id", None),
+                    run_id=task_name,
+                    agent_name=getattr(self.spec, "name", None),
+                ),
+            )
+        except Exception:
+            pass
         return {"run_id": task_name, "session_id": sess.id}
 
     async def stop_run(self, run_id: str) -> bool:  # noqa: D401
@@ -1969,6 +2230,118 @@ class AgentService(RpcMethodsBase):
             self._session_manager._by_id.pop(session_id, None)
 
         return deleted
+
+    async def set_session_hold(
+        self, session_id: str, hold: bool = True
+    ) -> bool:  # noqa: D401
+        """Set or clear legal hold on a session.
+
+        Held sessions are excluded from retention purge and cannot be deleted.
+
+        Args:
+            session_id: The session ID
+            hold: True to place hold, False to release
+
+        Returns:
+            True if the session was found and updated, False if not found
+        """
+        from omniagents.core.session import history_db
+
+        project_slug = getattr(self._session_manager, "_project_slug", None)
+        agent_slug = getattr(self._session_manager, "_agent_slug", None)
+        return history_db.set_session_hold(
+            session_id, hold, project_slug=project_slug, agent_slug=agent_slug
+        )
+
+    def disable_tool(self, tool_name: str) -> None:
+        """Runtime kill switch: block a tool by name.
+
+        Takes effect on the next agent build (next ``start_run``).
+        """
+        sec = getattr(self.spec, "security_config", None)
+        if sec is None:
+            return
+        if isinstance(sec, dict):
+            blocked = sec.setdefault("blocked_tools", [])
+        else:
+            blocked = getattr(sec, "blocked_tools", [])
+        if tool_name not in blocked:
+            blocked.append(tool_name)
+
+    def disable_mcp_server(self, server_name: str) -> None:
+        """Runtime kill switch: remove an MCP server by name.
+
+        Takes effect on the next agent build (next ``start_run``).
+        """
+        mcp_servers = getattr(self.spec, "mcp_servers", None)
+        if mcp_servers:
+            self.spec.mcp_servers = [
+                s
+                for s in mcp_servers
+                if getattr(s, "name", None) != server_name
+            ]
+
+    async def report_incident(
+        self,
+        session_id: str,
+        description: str,
+        disable_tools: list[str] | None = None,
+        disable_mcp_servers: list[str] | None = None,
+    ) -> dict:  # noqa: D401
+        """Report a security incident and optionally disable tools/servers.
+
+        Emits an ``INCIDENT`` audit event and applies kill switches.
+        """
+        for t in disable_tools or []:
+            self.disable_tool(t)
+        for s in disable_mcp_servers or []:
+            self.disable_mcp_server(s)
+
+        from omniagents.core.audit.events import INCIDENT, make_audit_event
+
+        event = make_audit_event(
+            INCIDENT,
+            session_id=session_id,
+            agent_name=getattr(self.spec, "name", None),
+            details={
+                "description": description,
+                "disabled_tools": disable_tools or [],
+                "disabled_mcp_servers": disable_mcp_servers or [],
+            },
+        )
+        await self.emit_runtime_hook("audit", **event)
+        return {"status": "reported", "event": event}
+
+    async def export_session(
+        self, session_id: str, redact: bool = False
+    ) -> dict:  # noqa: D401
+        """Export a session transcript as structured JSON.
+
+        If *redact* is True, text content is scanned using the configured
+        content scanner before inclusion.
+        """
+        from omniagents.core.audit.export import export_session as _export
+
+        scanner = None
+        if redact:
+            try:
+                sec = getattr(self.spec, "security_config", None) or {}
+                scanner_cfg = (sec.get("providers") or {}).get("content_scanner")
+                if scanner_cfg and scanner_cfg.get("type", "none") != "none":
+                    from omniagents.core.providers import resolve_provider
+
+                    scanner = resolve_provider("content_scanner", scanner_cfg)
+            except Exception:
+                pass
+
+        project_slug = getattr(self._session_manager, "_project_slug", None)
+        agent_slug = getattr(self._session_manager, "_agent_slug", None)
+        return await _export(
+            session_id,
+            project_slug=project_slug,
+            agent_slug=agent_slug,
+            redactor=scanner,
+        )
 
     # (Removed) get_model_info: model metadata is now sent inline with usage events
 
