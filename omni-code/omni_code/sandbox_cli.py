@@ -781,7 +781,9 @@ def main(argv=None) -> None:
                         fwd_host = candidate
                         break
             else:
-                _assert_port_available(fwd_host)
+                # Don't assert availability — the caller already owns this port
+                # (e.g. the launcher's MCP server is already listening on it).
+                # Only check it doesn't collide with other sandbox-managed ports.
                 if fwd_host in taken_ports:
                     raise RuntimeError(f"Forwarded host port {fwd_host} conflicts with another bound port")
             taken_ports.add(fwd_host)
