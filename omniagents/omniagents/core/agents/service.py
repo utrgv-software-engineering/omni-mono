@@ -49,7 +49,11 @@ from omniagents.core.session import Session, SessionManager
 from omniagents.core.session.history_db import get_user_messages
 from omniagents.core.runtime.bridge import stream_agent
 from omniagents.core.agents.builder import _default_build_agent
-from omniagents.core.agents.mcp import build_mcp_servers
+from omniagents.core.agents.mcp import (
+    build_mcp_servers,
+    _instantiate_server,
+    _resolve_setting_placeholders,
+)
 from omniagents.core.debug import Debug
 
 
@@ -394,7 +398,9 @@ class AgentService(RpcMethodsBase):
         if hasattr(session, "_mcp_servers_active") and session._mcp_servers_active:
             return session._mcp_servers_active
 
-        if not self.spec.mcp_servers:
+        # Merge spec-level and session-level (dynamic) MCP server configs
+        dynamic_cfgs: list = getattr(session, "_dynamic_mcp_servers", None) or []
+        if not self.spec.mcp_servers and not dynamic_cfgs:
             return []
 
         # Create Event to signal when servers are ready
@@ -420,8 +426,31 @@ class AgentService(RpcMethodsBase):
                 active_servers = []
 
                 try:
-                    # Build all MCP servers
+                    # Build all MCP servers (spec-level + dynamic session-level)
                     servers = build_mcp_servers(self.spec, settings)
+
+                    # Build dynamic MCP servers from session (e.g. launcher-provided)
+                    for dyn_cfg in dynamic_cfgs:
+                        try:
+                            from .specs import MCPServerConfig as _MCPCfg
+
+                            cfg = _MCPCfg(
+                                name=dyn_cfg.get("name", "dynamic"),
+                                type=dyn_cfg.get("type", "streamable_http"),
+                                params=dyn_cfg.get("params", {}),
+                                options=dyn_cfg.get("options"),
+                            )
+                            resolved = _resolve_setting_placeholders(
+                                copy.deepcopy(cfg.params), settings
+                            )
+                            servers.append(_instantiate_server(cfg, resolved))
+                        except Exception as dyn_err:
+                            from omniagents.core.utils.logging import get_logger as _gl
+
+                            _gl(__name__).debug(
+                                f"Dynamic MCP server '{dyn_cfg.get('name', '?')}' "
+                                f"failed to build: {dyn_err}"
+                            )
 
                     # Enter each server into the exit stack
                     # Handle individual server failures gracefully
@@ -665,75 +694,6 @@ class AgentService(RpcMethodsBase):
             pass
 
     # ------------------------------------------------------------------
-    #  Client function → agent tool injection
-    # ------------------------------------------------------------------
-    def _inject_client_function_tools(
-        self, session: Session, agent: Any
-    ) -> None:
-        """Inject registered client functions as FunctionTools on the agent.
-
-        When the agent invokes one of these tools, the server sends a
-        ``client_request`` to the connected client and awaits the
-        ``client_response``.  This allows external systems (like the
-        launcher) to register callable tools dynamically.
-        """
-        client_tools: dict = getattr(session, "_client_tools", None) or {}
-        if not client_tools:
-            return
-
-        from agents.tool import FunctionTool
-
-        existing_names = {
-            getattr(t, "name", None) for t in getattr(agent, "tools", [])
-        }
-
-        service_ref = self
-        session_ref = session
-
-        for fn_name, fn_info in client_tools.items():
-            if fn_name in existing_names:
-                continue
-
-            description = fn_info.get("description") or fn_name
-            params_schema = fn_info.get("params_schema") or {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": True,
-            }
-
-            # Build the tool invoke closure
-            _fn_name = fn_name
-
-            async def _invoke(ctx, args_json, *, _name=_fn_name):
-                import json as _json
-
-                try:
-                    args = _json.loads(args_json) if isinstance(args_json, str) else args_json
-                except Exception:
-                    args = {}
-
-                result = await service_ref.request_client_function(
-                    _name,
-                    args,
-                    session=session_ref,
-                    expect_result=True,
-                    timeout_ms=30_000,
-                )
-                if result is None:
-                    return {"ok": False, "error": "Client function timed out"}
-                return result.get("result", result)
-
-            tool = FunctionTool(
-                name=fn_name,
-                description=description,
-                params_json_schema=params_schema,
-                on_invoke_tool=_invoke,
-                strict_json_schema=False,
-            )
-            agent.tools.append(tool)
-
-    # ------------------------------------------------------------------
     #  Server Functions registry APIs (programmatic registration)
     # ------------------------------------------------------------------
     def register_server_function(
@@ -967,6 +927,13 @@ class AgentService(RpcMethodsBase):
         target_session.context = context_value
         target_session.variables = variables_value
 
+        # Extract dynamic MCP server configs from variables and store on session
+        dynamic_mcp = None
+        if isinstance(variables_value, dict):
+            dynamic_mcp = variables_value.pop("mcp_servers", None)
+        if dynamic_mcp and isinstance(dynamic_mcp, list):
+            target_session._dynamic_mcp_servers = dynamic_mcp
+
         if updated:
             self._session_manager.persist_metadata(
                 target_session,
@@ -1125,9 +1092,7 @@ class AgentService(RpcMethodsBase):
     ) -> bool:  # noqa: D401
         """Register client-supported functions for the current channel.
 
-        Registered functions are stored per-channel for diagnostics and also
-        merged into session-level ``_client_tools`` so that they can be injected
-        as agent tools on subsequent runs.
+        The information is stored best-effort and currently advisory only.
         """
         payload = {"version": version, "functions": functions or []}
         _debug_rpc("client_functions", payload)
@@ -1136,24 +1101,6 @@ class AgentService(RpcMethodsBase):
             self._client_capabilities[self.channel] = payload
         except Exception:
             pass
-
-        # Merge into session-level tool registry so _inject_client_function_tools
-        # can create FunctionTool wrappers for the agent.
-        channel = getattr(self, "channel", None)
-        if channel is not None:
-            for sess in self._session_manager._by_id.values():
-                if channel in getattr(sess, "channels", []):
-                    if not hasattr(sess, "_client_tools"):
-                        sess._client_tools = {}
-                    for fn in (functions or []):
-                        name = fn.get("name")
-                        if name:
-                            sess._client_tools[name] = {
-                                "name": name,
-                                "description": fn.get("description", ""),
-                                "params_schema": fn.get("params_schema"),
-                            }
-                    break
         return True
 
     # ------------------------------------------------------------------
@@ -1566,9 +1513,6 @@ class AgentService(RpcMethodsBase):
         sess.approval_callback = approval_callback_base
 
         agent = await self._build_agent_for_session(sess, approval_callback_base)
-
-        # Inject any client-registered functions as agent tools
-        self._inject_client_function_tools(sess, agent)
 
         async def _worker():
             end_reason = "error"  # Default in case of unexpected exception
