@@ -123,11 +123,11 @@ def cli_main(argv=None) -> None:
 
         maybe_print_update_notice()
 
-    # Wheel installs bundle project.yml inside the package directory;
-    # editable installs keep a single copy at the repo root.
-    project_path = Path(__file__).resolve().parent / "project.yml"
-    if not project_path.is_file():
-        project_path = Path(__file__).resolve().parent.parent / "project.yml"
+    # Editable installs use the repo root project.yml (where agents/ lives);
+    # wheel installs bundle project.yml inside the package directory.
+    repo_root_project = Path(__file__).resolve().parent.parent / "project.yml"
+    pkg_project = Path(__file__).resolve().parent / "project.yml"
+    project_path = repo_root_project if repo_root_project.is_file() else pkg_project
     try:
         from omni_code.proxy import maybe_start_proxy
 
