@@ -83,6 +83,24 @@ def _parse_persist_volume(value: str) -> tuple[str, str]:
     return name, container_path
 
 
+def _parse_forward_port(value: str) -> tuple[int, int]:
+    """Parse a ``host:container`` port-forwarding spec.
+
+    Either side may be ``0`` (auto-pick for host, or caller-chosen for container).
+    """
+    if ":" not in value:
+        raise argparse.ArgumentTypeError("Expected format: <host_port>:<container_port>")
+    host_str, container_str = value.split(":", 1)
+    try:
+        host_port = int(host_str.strip())
+        container_port = int(container_str.strip())
+    except ValueError:
+        raise argparse.ArgumentTypeError("Ports must be integers")
+    if host_port < 0 or container_port <= 0:
+        raise argparse.ArgumentTypeError("Ports must be non-negative (host) / positive (container)")
+    return host_port, container_port
+
+
 def _build_sandbox_image(
     tag: str,
     dockerfile: Optional[str] = None,
@@ -251,6 +269,7 @@ def _run_sandbox(
     build_args: Optional[list[str]] = None,
     output: str = "human",
     network_allowlist: Optional[str] = None,
+    forward_ports: Optional[list[tuple[int, int]]] = None,
     memory_limit: Optional[str] = None,
     cpu_limit: Optional[str] = None,
     pids_limit: Optional[int] = None,
@@ -347,6 +366,10 @@ def _run_sandbox(
     if network_allowlist:
         args.extend(["--cap-add", "NET_ADMIN"])
         args.extend(["-e", f"OMNI_SANDBOX_NETWORK_ALLOWLIST={network_allowlist}"])
+
+    # Extra port forwards (e.g. host-side MCP server mapped into the container)
+    for fwd_host, fwd_container in (forward_ports or []):
+        args.extend(["-p", f"{fwd_host}:{fwd_container}"])
 
     # Resource limits
     if memory_limit:
@@ -481,6 +504,7 @@ def _sandbox_urls_payload(
     vnc_port: Optional[int],
     container_id: Optional[str],
     container_name: Optional[str],
+    forward_ports: Optional[list[tuple[int, int]]] = None,
 ) -> dict:
     payload: dict = {
         "sandbox_url": f"http://localhost:{host_port}",
@@ -499,6 +523,10 @@ def _sandbox_urls_payload(
             "vnc": vnc_port,
         },
     }
+    if forward_ports:
+        payload["forward_ports"] = [
+            {"host": hp, "container": cp} for hp, cp in forward_ports
+        ]
     return payload
 
 
@@ -648,6 +676,17 @@ def main(argv=None) -> None:
     )
 
     parser.add_argument(
+        "--forward-port",
+        action="append",
+        default=[],
+        type=_parse_forward_port,
+        help=(
+            "Forward an extra host port into the container (repeatable): <host_port>:<container_port>. "
+            "Use 0 for host_port to auto-pick a free port."
+        ),
+    )
+
+    parser.add_argument(
         "--network-allowlist",
         default=None,
         help=(
@@ -727,6 +766,27 @@ def main(argv=None) -> None:
             if vnc_port in taken:
                 raise RuntimeError("VNC port must differ from other bound ports")
 
+        # Resolve extra forwarded ports
+        resolved_forwards: list[tuple[int, int]] = []
+        taken_ports = {host_port}
+        if code_server_port is not None:
+            taken_ports.add(code_server_port)
+        if vnc_port is not None:
+            taken_ports.add(vnc_port)
+        for fwd_host, fwd_container in list(args.forward_port):
+            if fwd_host == 0:
+                while True:
+                    candidate = _pick_free_port()
+                    if candidate not in taken_ports:
+                        fwd_host = candidate
+                        break
+            else:
+                _assert_port_available(fwd_host)
+                if fwd_host in taken_ports:
+                    raise RuntimeError(f"Forwarded host port {fwd_host} conflicts with another bound port")
+            taken_ports.add(fwd_host)
+            resolved_forwards.append((fwd_host, fwd_container))
+
         if args.print_url and args.ui == "local":
             raise RuntimeError("--print-url is only supported with --ui container/none")
 
@@ -778,6 +838,7 @@ def main(argv=None) -> None:
             build_args=list(args.build_arg),
             output=str(args.output),
             network_allowlist=str(args.network_allowlist) if args.network_allowlist else None,
+            forward_ports=resolved_forwards,
             memory_limit=args.memory_limit,
             cpu_limit=args.cpu_limit,
             pids_limit=args.pids_limit,
@@ -800,6 +861,7 @@ def main(argv=None) -> None:
                     vnc_port=vnc_port,
                     container_id=container_id,
                     container_name=(str(args.name) if args.name else None),
+                    forward_ports=resolved_forwards or None,
                 )
                 _print_json(payload)
             return
@@ -820,6 +882,7 @@ def main(argv=None) -> None:
                     vnc_port=vnc_port,
                     container_id=container_id,
                     container_name=(str(args.name) if args.name else None),
+                    forward_ports=resolved_forwards or None,
                 )
                 _print_json(payload)
                 with redirect_stdout(sys.stderr):

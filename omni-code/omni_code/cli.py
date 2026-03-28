@@ -123,11 +123,26 @@ def cli_main(argv=None) -> None:
 
         maybe_print_update_notice()
 
-    # Editable installs use the repo root project.yml (where agents/ lives);
-    # wheel installs bundle project.yml inside the package directory.
-    repo_root_project = Path(__file__).resolve().parent.parent / "project.yml"
-    pkg_project = Path(__file__).resolve().parent / "project.yml"
-    project_path = repo_root_project if repo_root_project.is_file() else pkg_project
+    # Editable installs: repo root project.yml sits alongside omni_agents/, tools/, etc.
+    # Wheel installs: project.yml is inside omni_code/ but sibling packages
+    # (omni_agents/, tools/, server_functions/) live under site-packages/.
+    # We copy project.yml to the common parent so relative paths resolve correctly.
+    pkg_dir = Path(__file__).resolve().parent          # .../omni_code/
+    common_root = pkg_dir.parent                       # .../site-packages/ or repo root
+    repo_root_project = common_root / "project.yml"    # works for editable installs
+    pkg_project = pkg_dir / "project.yml"              # bundled in wheel
+    if repo_root_project.is_file():
+        project_path = repo_root_project
+    elif pkg_project.is_file():
+        # Wheel install: promote project.yml to site-packages root so paths like
+        # "omni_agents" resolve to sibling packages.
+        try:
+            repo_root_project.write_text(pkg_project.read_text())
+        except OSError:
+            pass
+        project_path = repo_root_project if repo_root_project.is_file() else pkg_project
+    else:
+        project_path = pkg_project
     try:
         from omni_code.proxy import maybe_start_proxy
 
