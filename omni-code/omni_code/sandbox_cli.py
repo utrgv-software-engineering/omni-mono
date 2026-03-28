@@ -367,9 +367,10 @@ def _run_sandbox(
         args.extend(["--cap-add", "NET_ADMIN"])
         args.extend(["-e", f"OMNI_SANDBOX_NETWORK_ALLOWLIST={network_allowlist}"])
 
-    # Extra port forwards (e.g. host-side MCP server mapped into the container)
-    for fwd_host, fwd_container in (forward_ports or []):
-        args.extend(["-p", f"{fwd_host}:{fwd_container}"])
+    # Always add host.docker.internal so containers can reach host services
+    # (e.g. launcher MCP servers). On Linux this requires --add-host; on
+    # Docker Desktop for Mac/Windows it is automatic but the flag is harmless.
+    args.extend(["--add-host", "host.docker.internal:host-gateway"])
 
     # Resource limits
     if memory_limit:
