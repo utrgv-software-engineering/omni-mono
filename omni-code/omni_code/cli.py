@@ -123,10 +123,11 @@ def cli_main(argv=None) -> None:
 
         maybe_print_update_notice()
 
-    # Editable installs: repo root project.yml sits alongside omni_agents/, tools/, etc.
-    # Wheel installs: project.yml is inside omni_code/ but sibling packages
-    # (omni_agents/, tools/, server_functions/) live under site-packages/.
-    # We copy project.yml to the common parent so relative paths resolve correctly.
+    # Resolve project.yml so that relative paths (omni_agents/, tools/, etc.)
+    # resolve to sibling packages.  Editable installs have project.yml at the
+    # repo root; wheel installs bundle it inside omni_code/ but sibling packages
+    # live at the site-packages root.  We promote the file to the common root so
+    # relative paths resolve correctly regardless of install mode.
     pkg_dir = Path(__file__).resolve().parent          # .../omni_code/
     common_root = pkg_dir.parent                       # .../site-packages/ or repo root
     repo_root_project = common_root / "project.yml"    # works for editable installs
@@ -134,13 +135,25 @@ def cli_main(argv=None) -> None:
     if repo_root_project.is_file():
         project_path = repo_root_project
     elif pkg_project.is_file():
-        # Wheel install: promote project.yml to site-packages root so paths like
-        # "omni_agents" resolve to sibling packages.
+        # Wheel install: promote project.yml to site-packages root.
+        # If site-packages is read-only (e.g. Docker sandbox running as
+        # non-root), fall back to a temp directory with a symlink tree so
+        # relative paths still resolve.
         try:
             repo_root_project.write_text(pkg_project.read_text())
+            project_path = repo_root_project
         except OSError:
-            pass
-        project_path = repo_root_project if repo_root_project.is_file() else pkg_project
+            import tempfile
+
+            tmp_dir = Path(tempfile.mkdtemp(prefix="omni_project_"))
+            tmp_project = tmp_dir / "project.yml"
+            tmp_project.write_text(pkg_project.read_text())
+            # Symlink sibling packages so relative paths in project.yml resolve
+            for name in ("omni_agents", "tools", "server_functions", "evaluations", "target"):
+                src = common_root / name
+                if src.exists():
+                    (tmp_dir / name).symlink_to(src)
+            project_path = tmp_project
     else:
         project_path = pkg_project
     try:
