@@ -515,6 +515,67 @@ class AgentService(RpcMethodsBase):
 
         return active_servers_holder["servers"]
 
+    def _build_client_tools(self, session: Session) -> list:
+        """Build FunctionTool proxies for client-provided tools.
+
+        Each tool, when invoked by the agent, sends a ``client_request`` with
+        ``function="tool.call"`` over the existing WebSocket and awaits the
+        ``client_response`` containing the tool result.  This avoids any
+        additional network connections between container and host.
+        """
+        from agents.tool import FunctionTool
+
+        defs: list = getattr(session, "_client_tools", None) or []
+        if not defs:
+            return []
+
+        tools: list = []
+        service_ref = self
+
+        for defn in defs:
+            tool_name = defn.get("name")
+            description = defn.get("description", "")
+            parameters = defn.get("parameters", {"type": "object", "properties": {}})
+            if not tool_name:
+                continue
+
+            # Each tool gets its own closure so the captured name is correct
+            def _make_invoker(_name: str):
+                async def _invoke(ctx, params_json: str):
+                    import json as _json
+
+                    try:
+                        args = _json.loads(params_json) if params_json else {}
+                    except Exception:
+                        args = {}
+                    resp = await service_ref.request_client_function(
+                        "tool.call",
+                        {"tool": _name, "arguments": args},
+                        session=session,
+                        expect_result=True,
+                        timeout_ms=120_000,
+                    )
+                    if resp is None:
+                        return _json.dumps({"error": "Client tool call timed out"})
+                    if not resp.get("ok"):
+                        err = resp.get("error", {})
+                        return _json.dumps({"error": err.get("message", "Client tool call failed")})
+                    return _json.dumps(resp.get("result", {}))
+
+                return _invoke
+
+            tools.append(
+                FunctionTool(
+                    name=tool_name,
+                    description=description,
+                    params_json_schema=parameters,
+                    on_invoke_tool=_make_invoker(tool_name),
+                    strict_json_schema=False,
+                )
+            )
+
+        return tools
+
     async def _build_agent_for_session(
         self, session: Session, approval_callback
     ) -> Any:
@@ -529,6 +590,9 @@ class AgentService(RpcMethodsBase):
         active_servers = await self._ensure_session_mcp_servers(session)
 
         setattr(stub_app, "mcp_servers", active_servers)
+
+        # Build client tool proxies (tools executed on the launcher via WebSocket)
+        client_tools = self._build_client_tools(session)
 
         try:
             if self.spec.build_agent:
@@ -571,6 +635,12 @@ class AgentService(RpcMethodsBase):
                 )
 
             agent = self._clone_agent(agent)
+
+            # Inject client tools (proxied to launcher via WebSocket)
+            if client_tools:
+                existing = list(getattr(agent, "tools", []) or [])
+                existing.extend(client_tools)
+                agent.tools = existing
 
             if (
                 approval_callback
@@ -933,6 +1003,14 @@ class AgentService(RpcMethodsBase):
             dynamic_mcp = variables_value.pop("mcp_servers", None)
         if dynamic_mcp and isinstance(dynamic_mcp, list):
             target_session._dynamic_mcp_servers = dynamic_mcp
+
+        # Extract client tools — tools whose execution is proxied back to the
+        # launcher (or other RPC client) via client_request/client_response.
+        client_tools_defs = None
+        if isinstance(variables_value, dict):
+            client_tools_defs = variables_value.pop("client_tools", None)
+        if client_tools_defs and isinstance(client_tools_defs, list):
+            target_session._client_tools = client_tools_defs
 
         if updated:
             self._session_manager.persist_metadata(
