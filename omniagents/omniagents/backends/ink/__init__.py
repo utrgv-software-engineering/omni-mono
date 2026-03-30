@@ -23,6 +23,7 @@ from typing import Optional
 import logging
 
 from omniagents.core.agents.specs import AgentSpec
+from omniagents.core.debug import Debug
 from omniagents.core.runtime.overrides import apply_cli_overrides
 
 
@@ -214,12 +215,15 @@ class InkBackend:
         # Launch the Ink TUI with proper stdin/stdout/stderr
         exit_code = 0
         try:
-            # Pass stdin/stdout/stderr directly so Ink can use raw mode
+            # Pass stdin/stdout/stderr directly so Ink can use raw mode.
+            # Use the original stdout (pre-redirect) so the TUI renders
+            # to the real terminal even when stdout has been captured.
+            real_stdout = Debug.original_stdout()
             proc = subprocess.Popen(
                 cmd,
                 env=env,
                 stdin=sys.stdin,
-                stdout=sys.stdout,
+                stdout=real_stdout,
                 stderr=sys.stderr,
             )
             exit_code = proc.wait()

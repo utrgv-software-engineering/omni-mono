@@ -196,10 +196,7 @@ def approval_metadata(tool: str = None):
         setattr(func, "_is_approval_metadata", True)
         setattr(func, "_tool_name", tool_name)
 
-        if Debug.enabled():
-            print(
-                f"Registered approval metadata for tool '{tool_name}' from function '{func.__name__}'"
-            )
+        Debug.log(f"Registered approval metadata for tool '{tool_name}' from function '{func.__name__}'")
 
         return func  # Return the function unchanged
 
@@ -240,17 +237,14 @@ def get_approval_metadata(tool_name: str, args: dict) -> Optional[Dict[str, Any]
         # Call the metadata generator with unpacked parameters
         metadata = func(**kwargs)
 
-        if Debug.enabled():
-            print(f"Generated approval metadata for tool '{tool_name}'")
+        Debug.log(f"Generated approval metadata for tool '{tool_name}'")
 
         return metadata
 
     except Exception as e:
-        if Debug.enabled():
-            print(f"Error generating approval metadata for tool '{tool_name}': {e}")
-            import traceback
-
-            traceback.print_exc()
+        Debug.log(f"Error generating approval metadata for tool '{tool_name}': {e}")
+        import traceback
+        Debug.log(traceback.format_exc())
         return None
 
 
@@ -279,8 +273,7 @@ def discover_functions_in_dir(
     if not base_path.is_dir():
         return {}
 
-    if Debug.enabled():
-        print(f"Starting tool discovery (looking for marker) in directory: {base_path}")
+    Debug.log(f"Starting tool discovery (looking for marker) in directory: {base_path}")
 
     parent_path = str(base_path.parent)
     base_path_str = str(base_path)
@@ -312,8 +305,7 @@ def discover_functions_in_dir(
                 )
                 continue
 
-                if Debug.enabled():
-                    print(f"Attempting to import module: {module_path} from {filepath}")
+                Debug.log(f"Attempting to import module: {module_path} from {filepath}")
 
             try:
                 module = importlib.import_module(module_path)
@@ -329,8 +321,7 @@ def discover_functions_in_dir(
                             print(
                                 f"Warning: Duplicate tool name '{name}' found (from {module_path}). Overwriting previous definition."
                             )
-                        if Debug.enabled():
-                            print(f"  Discovered marked tool: {name}")
+                        Debug.log(f"  Discovered marked tool: {name}")
                         discovered_functions[name] = obj
                     # elif inspect.isfunction(obj) and obj.__module__ == module_path and not name.startswith("_"):
                     #     print(f"  Found unmarked function: {name}")
@@ -367,8 +358,5 @@ def discover_functions_in_dir(
             except Exception:
                 pass
 
-    if Debug.enabled():
-        print(
-            f"Completed tool discovery: Found {len(discovered_functions)} marked tools in '{base_dir}'."
-        )
+    Debug.log(f"Completed tool discovery: Found {len(discovered_functions)} marked tools in '{base_dir}'.")
     return discovered_functions

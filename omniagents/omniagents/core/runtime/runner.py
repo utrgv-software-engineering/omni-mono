@@ -260,6 +260,11 @@ class Runner:
         if not backend_class:
             raise ValueError(f"Unknown backend: {mode}")
 
+        # Redirect stdout before launching TUI backends so stray print()
+        # calls never corrupt the terminal output.
+        if mode in ("ink", "web"):
+            Debug.capture_stdout()
+
         backend = backend_class()
         backend.run(spec=self.spec, **kwargs)
 

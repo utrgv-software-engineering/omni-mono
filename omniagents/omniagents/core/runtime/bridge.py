@@ -534,10 +534,9 @@ async def stream_agent(
             _filter_history_for_api(list(session.history))
         )
 
-    if Debug.enabled():
-        print(
-            f"[srv] ▶ start_run  session={session.id[:8]} prompt={prompt[:80]!r} (hist={len(session.history)})"
-        )
+    Debug.log(
+        f"[srv] ▶ start_run  session={session.id[:8]} prompt={prompt[:80]!r} (hist={len(session.history)})"
+    )
 
     # Log the input structure for debugging
     history_from_db = len(session.history)
@@ -856,15 +855,14 @@ async def stream_agent(
                 except Exception:
                     pass
 
-            if Debug.enabled() and method:
-                print(
+            if method:
+                Debug.log(
                     f"[srv]   → {method} run={payload.get('run_id','')} details={payload}"
                 )
 
     except asyncio.CancelledError:
         # Run was cancelled - the finally block will handle pending tool calls
-        if Debug.enabled():
-            print(f"[srv] ✗ Run cancelled")
+        Debug.log("[srv] ✗ Run cancelled")
         # Re-raise to let the caller handle it
         raise
     except Exception as e:
@@ -919,8 +917,7 @@ async def stream_agent(
                 pass
 
         # Any other exception - the finally block will handle pending tool calls
-        if Debug.enabled():
-            print(f"[srv] ✗ Error during run: {e}")
+        Debug.log(f"[srv] ✗ Error during run: {e}")
 
         # Log detailed error context for debugging
         logger.error(f"API request failed: {e}", exc_info=True)
@@ -932,6 +929,10 @@ async def stream_agent(
             logger.error(f"OpenAI API Error Body: {e.body}")
             logger.error(f"OpenAI API Error Type: {e.type}")
             logger.error(f"OpenAI API Error Code: {e.code}")
+            Debug.log(f"[srv] ✗ API Error body={e.body} type={e.type} code={e.code}")
+
+        import traceback
+        Debug.log(f"[srv] ✗ Traceback:\n{traceback.format_exc()}")
 
         logger.error(
             f"Error context - Session: {session.id}, "
@@ -968,10 +969,9 @@ async def stream_agent(
         # Handle any pending tool calls that didn't get results
         # This covers both cancellation and unexpected termination
         if pending_tool_calls:
-            if Debug.enabled():
-                print(
-                    f"[srv] ✗ Run ended with {len(pending_tool_calls)} pending tool calls"
-                )
+            Debug.log(
+                f"[srv] ✗ Run ended with {len(pending_tool_calls)} pending tool calls"
+            )
 
             for call_id, tool_name in pending_tool_calls.items():
                 # Add a tool result indicating the run was interrupted
@@ -996,15 +996,13 @@ async def stream_agent(
                 }
                 await _broadcast(session, "tool_result", cancelled_payload)
 
-                if Debug.enabled():
-                    print(
-                        f"[srv]   → tool_result (cancelled) call_id={call_id} tool={tool_name}"
-                    )
+                Debug.log(
+                    f"[srv]   → tool_result (cancelled) call_id={call_id} tool={tool_name}"
+                )
 
-        if Debug.enabled():
-            print(
-                f"[srv] ◀ end_run    session={session.id[:8]} hist={len(session.history)})"
-            )
+        Debug.log(
+            f"[srv] ◀ end_run    session={session.id[:8]} hist={len(session.history)})"
+        )
 
         if token is not None:
             try:

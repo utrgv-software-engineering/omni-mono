@@ -37,14 +37,10 @@ def discover_guardrails_in_dir(
     base_path = Path(base_dir).resolve()
 
     if not base_path.is_dir():
-        if Debug.enabled():
-            print(
-                f"Warning: Guardrail discovery directory '{base_dir}' not found or is not a directory."
-            )
+        Debug.log(f"Warning: Guardrail discovery directory '{base_dir}' not found or is not a directory.")
         return input_guardrails, output_guardrails
 
-    if Debug.enabled():
-        print(f"Starting guardrail discovery in directory: {base_path}")
+    Debug.log(f"Starting guardrail discovery in directory: {base_path}")
 
     parent_path = str(base_path.parent)
     base_path_str = str(base_path)
@@ -73,8 +69,7 @@ def discover_guardrails_in_dir(
                 )
                 continue
 
-            if Debug.enabled():
-                print(f"Attempting to import module: {module_path} from {filepath}")
+            Debug.log(f"Attempting to import module: {module_path} from {filepath}")
 
             try:
                 module = importlib.import_module(module_path)
@@ -93,8 +88,7 @@ def discover_guardrails_in_dir(
                             print(
                                 f"Warning: Duplicate input guardrail name '{guardrail_name}' found (from {module_path}). Overwriting previous definition."
                             )
-                        if Debug.enabled():
-                            print(f"  Discovered input guardrail: {guardrail_name}")
+                        Debug.log(f"  Discovered input guardrail: {guardrail_name}")
                         input_guardrails[guardrail_name] = obj
 
                     # Check if it's an OutputGuardrail instance
@@ -106,8 +100,7 @@ def discover_guardrails_in_dir(
                             print(
                                 f"Warning: Duplicate output guardrail name '{guardrail_name}' found (from {module_path}). Overwriting previous definition."
                             )
-                        if Debug.enabled():
-                            print(f"  Discovered output guardrail: {guardrail_name}")
+                        Debug.log(f"  Discovered output guardrail: {guardrail_name}")
                         output_guardrails[guardrail_name] = obj
 
             except ImportError as e:
@@ -124,9 +117,6 @@ def discover_guardrails_in_dir(
     finally:
         sys.path = original_sys_path
 
-    if Debug.enabled():
-        print(
-            f"Completed guardrail discovery: Found {len(input_guardrails)} input guardrails and {len(output_guardrails)} output guardrails in '{base_dir}'."
-        )
+    Debug.log(f"Completed guardrail discovery: Found {len(input_guardrails)} input guardrails and {len(output_guardrails)} output guardrails in '{base_dir}'.")
 
     return input_guardrails, output_guardrails

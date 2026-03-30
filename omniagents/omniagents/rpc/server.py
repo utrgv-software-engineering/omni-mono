@@ -26,20 +26,12 @@ class JsonRpcChannel:
         self, method: str, args: Optional[Dict[str, Any]] = None
     ) -> None:
         payload = {"jsonrpc": "2.0", "method": method, "params": args or {}}
-        if DEBUG_SERVER or Debug.enabled():
-            try:
-                print(f"[srv]   → {method} payload={args or {}}")
-            except Exception:
-                pass
+        Debug.log(f"[srv]   → {method} payload={args or {}}")
         await self.transport.send_json(payload)
 
     async def send_result(self, call_id: Any, result: Any) -> None:
         payload = {"jsonrpc": "2.0", "id": call_id, "result": result}
-        if DEBUG_SERVER or Debug.enabled():
-            try:
-                print(f"[srv]   ← result id={call_id} result={result}")
-            except Exception:
-                pass
+        Debug.log(f"[srv]   ← result id={call_id} result={result}")
         await self.transport.send_json(payload)
 
     async def send_error(
@@ -59,13 +51,7 @@ class JsonRpcChannel:
         }
         if data is not None:
             payload["error"]["data"] = data
-        if DEBUG_SERVER or Debug.enabled():
-            try:
-                print(
-                    f"[srv]   ← error id={call_id} code={code} message={message} data={data}"
-                )
-            except Exception:
-                pass
+        Debug.log(f"[srv]   ← error id={call_id} code={code} message={message} data={data}")
         await self.transport.send_json(payload)
 
     # Backward compatibility property
@@ -179,14 +165,8 @@ class JsonRpcEndpoint:
         method = data.get("method")
         params = data.get("params") if "params" in data else data.get("args")
 
-        if DEBUG_SERVER or Debug.enabled():
-            try:
-                if method:
-                    print(f"[srv] ⇐ call id={call_id} method={method} params={params}")
-                else:
-                    print(f"[srv] ⇐ message id={call_id} data={data}")
-            except Exception:
-                pass
+        Debug.log(f"[srv] ⇐ call id={call_id} method={method} params={params}")
+        Debug.log(f"[srv] ⇐ message id={call_id} data={data}")
 
         if version != "2.0":
             await channel.send_error(

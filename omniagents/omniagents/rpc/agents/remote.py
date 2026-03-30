@@ -101,8 +101,8 @@ class RemoteAgent(UnifiedAgentBase):
             # Start run on remote server
             resp = await self._client.other.start_run(**start_params)
 
-            if Debug.enabled() and run_config is None:  # First call heuristic
-                print(f"[cli] ⇢ raw start_run resp={resp!r}")
+            if run_config is None:
+                Debug.log(f"[cli] ⇢ raw start_run resp={resp!r}")
                 try:
                     print(f"[cli] ⇢ resp.result={getattr(resp, 'result', None)!r}")
                 except Exception:
@@ -111,13 +111,12 @@ class RemoteAgent(UnifiedAgentBase):
             # Extract and cache session_id if first run
             new_session_id = self._extract_session_id(resp)
             if new_session_id:
-                if Debug.enabled() and self._session_id is None:
-                    print(f"[cli] ⎆ obtained session_id={new_session_id[:8]}")
+                if self._session_id is None:
+                    Debug.log(f"[cli] ⎆ obtained session_id={new_session_id[:8]}")
                 self._session_id = new_session_id
 
             run_id = self._extract_run_id(resp)
-            if Debug.enabled():
-                print(f"[cli] ▶ run_id={run_id}  prompt={prompt[:60]!r}")
+            Debug.log(f"[cli] ▶ run_id={run_id}  prompt={prompt[:60]!r}")
 
             # Store current run_id for potential cancellation
             self._current_run_id = run_id
@@ -128,8 +127,7 @@ class RemoteAgent(UnifiedAgentBase):
                 if msg["method"] == "run_end" and (
                     run_id is None or msg["params"].get("run_id") == run_id
                 ):
-                    if Debug.enabled():
-                        print(f"[cli] ◀ run_end  run_id={run_id}")
+                    Debug.log(f"[cli] ◀ run_end  run_id={run_id}")
                     # Cache last run_end payload for UI to inspect (errors, usage, model)
                     try:
                         self._last_run_end = dict(msg.get("params") or {})
@@ -141,8 +139,7 @@ class RemoteAgent(UnifiedAgentBase):
 
                 event = map_notification_to_event(msg["method"], msg["params"])
                 if event:
-                    if Debug.enabled():
-                        print(f"[cli]   ← {msg['method']} details={msg['params']}")
+                    Debug.log(f"[cli]   ← {msg['method']} details={msg['params']}")
                     yield event
 
         class _Result:
@@ -192,8 +189,7 @@ class RemoteAgent(UnifiedAgentBase):
                 self._current_run_id = None
             return result
         except Exception as e:
-            if Debug.enabled():
-                print(f"[cli] ✗ stop_run failed: {e}")
+            Debug.log(f"[cli] ✗ stop_run failed: {e}")
             return False
 
     async def _ensure_client(self):

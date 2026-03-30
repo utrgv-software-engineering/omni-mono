@@ -82,10 +82,7 @@ def build_runtime_hooks_registrar(
                 try:
                     service.register_runtime_hook(str(event), fn)
                 except Exception as e:
-                    if Debug.enabled():
-                        print(
-                            f"Warning: Failed to register runtime hook '{event}': {e}"
-                        )
+                    Debug.log(f"Warning: Failed to register runtime hook '{event}': {e}")
 
     return registrar
 

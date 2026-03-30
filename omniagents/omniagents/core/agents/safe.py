@@ -171,12 +171,8 @@ class SafeAgent(Agent):
         # Always set our custom behavior to intercept and check halt state
         self.tool_use_behavior = self._custom_tool_use_behavior
 
-        if Debug.enabled():
-            print(
-                f"[SafeAgent] Initialized: skip={self._skip_approvals}, halt={self.halt_on_rejection}, "
-                f"safe_names={len(self._safe_tool_names)}, safe_patterns={len(self._safe_tool_patterns)}",
-                file=sys.stderr,
-            )
+        Debug.log(f"[SafeAgent] Initialized: skip={self._skip_approvals}, halt={self.halt_on_rejection}, "
+                f"safe_names={len(self._safe_tool_names)}, safe_patterns={len(self._safe_tool_patterns)}")
 
     def _wrap_handoffs(self, handoffs: List[Any]) -> List[Any]:
         """Wrap handoff agents to automatically convert them to SafeAgent when invoked.
@@ -243,8 +239,7 @@ class SafeAgent(Agent):
                 if agent and isinstance(agent, SafeAgent):
                     agent.set_approval_callback(callback)
 
-        if Debug.enabled():
-            print(f"[SafeAgent] Approval callback set for {self.name}", file=sys.stderr)
+        Debug.log(f"[SafeAgent] Approval callback set for {self.name}")
 
     def is_tool_safe(self, tool: Tool) -> bool:
         """Check if a tool is considered safe and doesn't need approval.
@@ -276,38 +271,25 @@ class SafeAgent(Agent):
     def add_safe_tool(self, tool_name: str) -> None:
         """Add a tool name to the safe list for the current session."""
         self._safe_tool_names.add(tool_name)
-        if Debug.enabled():
-            print(
-                f"[SafeAgent] Added {tool_name} to safe tools list (session)",
-                file=sys.stderr,
-            )
+        Debug.log(f"[SafeAgent] Added {tool_name} to safe tools list (session)")
 
     def add_safe_tool_pattern(self, pattern: str) -> None:
         """Add a regex pattern for tool names that are considered safe."""
         try:
             pattern_obj = re.compile(pattern)
             self._safe_tool_patterns.append(pattern_obj)
-            if Debug.enabled():
-                print(
-                    f"[SafeAgent] Added pattern '{pattern}' to safe tools patterns",
-                    file=sys.stderr,
-                )
+            Debug.log(
+                    f"[SafeAgent] Added pattern '{pattern}' to safe tools patterns")
         except re.error as e:
-            if Debug.enabled():
-                print(
-                    f"[SafeAgent] Error adding pattern '{pattern}': {e}",
-                    file=sys.stderr,
-                )
+            Debug.log(
+                    f"[SafeAgent] Error adding pattern '{pattern}': {e}")
 
     def remove_safe_tool(self, tool_name: str) -> bool:
         """Remove a tool name from the safe list."""
         if tool_name in self._safe_tool_names:
             self._safe_tool_names.remove(tool_name)
-            if Debug.enabled():
-                print(
-                    f"[SafeAgent] Removed {tool_name} from safe tools list",
-                    file=sys.stderr,
-                )
+            Debug.log(
+                    f"[SafeAgent] Removed {tool_name} from safe tools list")
             return True
         return False
 
@@ -315,8 +297,7 @@ class SafeAgent(Agent):
         """Clear all safe tool names and patterns."""
         self._safe_tool_names.clear()
         self._safe_tool_patterns.clear()
-        if Debug.enabled():
-            print("[SafeAgent] Cleared all safe tools and patterns", file=sys.stderr)
+        Debug.log("[SafeAgent] Cleared all safe tools and patterns")
 
     def _compute_approval_metadata(
         self, tool_name: str, args: Dict
@@ -334,8 +315,7 @@ class SafeAgent(Agent):
         """Custom tool use behavior that checks for the halt flag."""
         if self._halt_run:
             halt_message = self._halt_reason or "Run halted after tool rejection"
-            if Debug.enabled():
-                print(f"[SafeAgent] Halting run: {halt_message}", file=sys.stderr)
+            Debug.log(f"[SafeAgent] Halting run: {halt_message}")
             # Return final output with empty message to stop processing
             return ToolsToFinalOutputResult(is_final_output=True, final_output="")
 
@@ -383,19 +363,13 @@ class SafeAgent(Agent):
     def wrap_tool_with_approval(self, tool: Tool) -> Tool:
         """Wrap a FunctionTool with approval checks if it's not safe."""
         if not isinstance(tool, FunctionTool):
-            if Debug.enabled():
-                print(
-                    f"[SafeAgent] Tool {tool.name} is not a FunctionTool, skipping wrap",
-                    file=sys.stderr,
-                )
+            Debug.log(
+                    f"[SafeAgent] Tool {tool.name} is not a FunctionTool, skipping wrap")
             return tool
 
         if self.is_tool_safe(tool):
-            if Debug.enabled():
-                print(
-                    f"[SafeAgent] Tool {tool.name} is safe, not wrapping",
-                    file=sys.stderr,
-                )
+            Debug.log(
+                    f"[SafeAgent] Tool {tool.name} is safe, not wrapping")
             return tool
 
         if hasattr(tool, "_approval_wrapped") and tool._approval_wrapped:
@@ -466,11 +440,8 @@ class SafeAgent(Agent):
             if self.halt_on_rejection:
                 self._halt_run = True
                 self._halt_reason = f"{rejection_reason} ({tool.name})"
-                if Debug.enabled():
-                    print(
-                        f"[SafeAgent] Setting halt flag due to rejection of {tool.name}",
-                        file=sys.stderr,
-                    )
+                Debug.log(
+                        f"[SafeAgent] Setting halt flag due to rejection of {tool.name}")
 
             # Audit: tool rejected (include reviewer identity)
             if self._audit_emit is not None:
@@ -502,11 +473,8 @@ class SafeAgent(Agent):
         )
         wrapped_tool._approval_wrapped = True  # Mark as wrapped
 
-        if Debug.enabled():
-            print(
-                f"[SafeAgent] Wrapped tool {tool.name} with approval checks",
-                file=sys.stderr,
-            )
+        Debug.log(
+                f"[SafeAgent] Wrapped tool {tool.name} with approval checks")
 
         return wrapped_tool
 
@@ -533,8 +501,7 @@ class SafeAgent(Agent):
         """Resets any state related to a single run, like the halt flag."""
         self._halt_run = False
         self._halt_reason = None
-        if Debug.enabled():
-            print("[SafeAgent] Resetting run state (halt flags)", file=sys.stderr)
+        Debug.log("[SafeAgent] Resetting run state (halt flags)")
 
 
 # Optional: Add helper function or adapt Runner if reset_run_state needs explicit call

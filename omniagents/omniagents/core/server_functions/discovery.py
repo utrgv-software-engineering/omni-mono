@@ -206,14 +206,10 @@ def discover_server_functions_in_dir(
     base_path = Path(base_dir).resolve()
 
     if not base_path.is_dir():
-        if Debug.enabled():
-            print(
-                f"Warning: Server function directory '{base_dir}' not found or not a directory."
-            )
+        Debug.log(f"Warning: Server function directory '{base_dir}' not found or not a directory.")
         return discovered
 
-    if Debug.enabled():
-        print(f"Starting server function discovery in directory: {base_path}")
+    Debug.log(f"Starting server function discovery in directory: {base_path}")
 
     parent_path = str(base_path.parent)
     base_path_str = str(base_path)
@@ -233,10 +229,7 @@ def discover_server_functions_in_dir(
                 module_path = str(relative_path.with_suffix(""))
                 module_path = module_path.replace(os.sep, ".")
             except Exception:
-                if Debug.enabled():
-                    print(
-                        f"Warning: Skipping file {filepath} outside expected parent {base_path.parent}"
-                    )
+                Debug.log(f"Warning: Skipping file {filepath} outside expected parent {base_path.parent}")
                 continue
 
             try:
@@ -265,19 +258,13 @@ def discover_server_functions_in_dir(
                         "on_invoke": getattr(obj, "_server_function_on_invoke", None),
                         "strict": getattr(obj, "_server_function_strict", None),
                     }
-                    if fn_name in discovered and Debug.enabled():
-                        print(
-                            f"Warning: Duplicate server function name '{fn_name}' in {module_path}; overwriting."
-                        )
+                    Debug.log(f"Warning: Duplicate server function name '{fn_name}' in {module_path}; overwriting.")
                     discovered[fn_name] = meta
 
     finally:
         sys.path = original_sys_path
 
-    if Debug.enabled():
-        print(
-            f"Completed server function discovery: Found {len(discovered)} functions in '{base_dir}'."
-        )
+    Debug.log(f"Completed server function discovery: Found {len(discovered)} functions in '{base_dir}'.")
     return discovered
 
 

@@ -939,37 +939,36 @@ class AgentService(RpcMethodsBase):
         except Exception:
             return []
 
-    def _sf_session_ensure(
-        self, session: Session | None, args: dict | None = None
-    ) -> dict:
-        payload = args or {}
-        requested_id = payload.get("session_id")
-        workspace_root = payload.get("workspace_root")
-        provided_context = payload.get("context") if "context" in payload else None
-        provided_context_set = "context" in payload
-        provided_variables = (
-            payload.get("variables") if "variables" in payload else None
-        )
-        provided_variables_set = "variables" in payload
+    def _apply_session_metadata(
+        self,
+        session: Session,
+        *,
+        context: Any | None = None,
+        context_provided: bool = False,
+        variables: dict | None = None,
+        variables_provided: bool = False,
+        workspace_root: str | None = None,
+    ) -> None:
+        """Shared helper that applies context/variables to a session.
 
-        target_session: Session
-        if session is not None and (not requested_id or session.id == requested_id):
-            target_session = session
-        else:
-            target_session = self._session_manager.get_or_create(requested_id)
-
-        if self.channel is not None and self.channel not in target_session.channels:
-            target_session.channels.append(self.channel)
+        Handles:
+        - Merging context and variables onto the session
+        - Extracting transient keys (``client_tools``, ``mcp_servers``) before
+          they are persisted
+        - Injecting ``workspace_root`` into both context and variables
+        - Persisting metadata when anything changed
+        - Registering the current channel on the session
+        """
+        if self.channel is not None and self.channel not in session.channels:
+            session.channels.append(self.channel)
 
         context_value = (
-            provided_context
-            if provided_context_set
-            else getattr(target_session, "context", None)
+            context if context_provided else getattr(session, "context", None)
         )
         variables_value = (
-            provided_variables
-            if provided_variables_set
-            else getattr(target_session, "variables", None)
+            variables
+            if variables_provided
+            else getattr(session, "variables", None)
         )
 
         def _ensure_mapping(value):
@@ -981,7 +980,7 @@ class AgentService(RpcMethodsBase):
                 return dict(value.__dict__)
             return {}
 
-        updated = False
+        updated = context_provided or variables_provided
         if workspace_root:
             context_value = _ensure_mapping(context_value)
             context_value["workspace_root"] = workspace_root
@@ -989,47 +988,62 @@ class AgentService(RpcMethodsBase):
             variables_value["workspace_root"] = workspace_root
             updated = True
 
-        if provided_context_set:
-            updated = True
-        if provided_variables_set:
-            updated = True
+        session.context = context_value
+        session.variables = variables_value
 
-        target_session.context = context_value
-        target_session.variables = variables_value
-
-        # Extract dynamic MCP server configs from variables and store on session
-        dynamic_mcp = None
+        # Extract transient keys from variables — these are connection-scoped
+        # and must not be persisted to the database.
         if isinstance(variables_value, dict):
             dynamic_mcp = variables_value.pop("mcp_servers", None)
-        if dynamic_mcp and isinstance(dynamic_mcp, list):
-            target_session._dynamic_mcp_servers = dynamic_mcp
+            if dynamic_mcp and isinstance(dynamic_mcp, list):
+                session._dynamic_mcp_servers = dynamic_mcp
 
-        # Extract client tools — tools whose execution is proxied back to the
-        # launcher (or other RPC client) via client_request/client_response.
-        client_tools_defs = None
-        if isinstance(variables_value, dict):
             client_tools_defs = variables_value.pop("client_tools", None)
-        if client_tools_defs and isinstance(client_tools_defs, list):
-            target_session._client_tools = client_tools_defs
+            if client_tools_defs and isinstance(client_tools_defs, list):
+                session._client_tools = client_tools_defs
 
         if updated:
             self._session_manager.persist_metadata(
-                target_session,
+                session,
                 context=context_value,
                 variables=variables_value,
             )
 
+    def _sf_session_ensure(
+        self, session: Session | None, args: dict | None = None
+    ) -> dict:
+        payload = args or {}
+        requested_id = payload.get("session_id")
+
+        target_session: Session
+        if session is not None and (not requested_id or session.id == requested_id):
+            target_session = session
+        else:
+            target_session = self._session_manager.get_or_create(requested_id)
+
+        self._apply_session_metadata(
+            target_session,
+            context=payload.get("context") if "context" in payload else None,
+            context_provided="context" in payload,
+            variables=payload.get("variables") if "variables" in payload else None,
+            variables_provided="variables" in payload,
+            workspace_root=payload.get("workspace_root"),
+        )
+
         effective_workspace = None
-        if isinstance(context_value, dict):
-            effective_workspace = context_value.get("workspace_root")
-        if effective_workspace is None and isinstance(variables_value, dict):
-            effective_workspace = variables_value.get("workspace_root")
+        ctx = getattr(target_session, "context", None)
+        if isinstance(ctx, dict):
+            effective_workspace = ctx.get("workspace_root")
+        if effective_workspace is None:
+            vrs = getattr(target_session, "variables", None)
+            if isinstance(vrs, dict):
+                effective_workspace = vrs.get("workspace_root")
 
         return {
             "session_id": target_session.id,
             "workspace_root": effective_workspace,
-            "context": context_value,
-            "variables": variables_value,
+            "context": target_session.context,
+            "variables": target_session.variables,
         }
 
     def _record_live_event(
@@ -1469,42 +1483,35 @@ class AgentService(RpcMethodsBase):
         sess.cancel_end_reason = None
         sess.current_stream_result = None
 
-        # Merge variables and/or context into session (preserve existing keys)
+        # Merge caller-provided variables/context into whatever is already on
+        # the session (session.ensure may have run earlier).
+        merged_variables = getattr(sess, "variables", None)
         if variables is not None:
-            existing = getattr(sess, "variables", None)
-            if isinstance(existing, dict) and isinstance(variables, dict):
-                merged = dict(existing)
-                merged.update(variables)
-                sess.variables = merged
+            if isinstance(merged_variables, dict) and isinstance(variables, dict):
+                merged_variables = {**merged_variables, **variables}
             else:
-                sess.variables = variables
-        if context is not None:
-            existing_ctx = getattr(sess, "context", None)
-            if isinstance(existing_ctx, dict) and isinstance(context, dict):
-                merged_ctx = dict(existing_ctx)
-                merged_ctx.update(context)
-                sess.context = merged_ctx
-            else:
-                sess.context = context
+                merged_variables = variables
 
-        # Ensure workspace_root is set on session context (for session grouping)
-        ctx = getattr(sess, "context", None)
-        if not isinstance(ctx, dict) or "workspace_root" not in ctx:
-            cwd = os.getcwd()
-            if not isinstance(ctx, dict):
-                ctx = {}
-            ctx["workspace_root"] = cwd
-            sess.context = ctx
-            vrs = getattr(sess, "variables", None)
-            if isinstance(vrs, dict):
-                vrs.setdefault("workspace_root", cwd)
-                sess.variables = vrs
-            try:
-                self._session_manager.persist_metadata(
-                    sess, context=sess.context, variables=sess.variables
-                )
-            except Exception:
-                pass
+        merged_context = getattr(sess, "context", None)
+        if context is not None:
+            if isinstance(merged_context, dict) and isinstance(context, dict):
+                merged_context = {**merged_context, **context}
+            else:
+                merged_context = context
+
+        # Fall back to cwd when no workspace_root has been set yet.
+        workspace_root = None
+        if not isinstance(merged_context, dict) or "workspace_root" not in merged_context:
+            workspace_root = os.getcwd()
+
+        self._apply_session_metadata(
+            sess,
+            context=merged_context,
+            context_provided=True,
+            variables=merged_variables,
+            variables_provided=True,
+            workspace_root=workspace_root,
+        )
 
         # Apply per-session safe tool overrides
         if safe_tool_overrides is not None:
