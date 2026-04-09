@@ -133,8 +133,11 @@ def _load_update_cache(path: Path) -> dict:
 
 
 def _write_update_cache(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, sort_keys=True), encoding="utf-8")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, sort_keys=True), encoding="utf-8")
+    except OSError:
+        pass  # read-only filesystem (e.g., inside a sandbox container)
 
 
 def _get_check_interval_seconds() -> int:

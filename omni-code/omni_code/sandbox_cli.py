@@ -302,15 +302,25 @@ def _run_sandbox(
     uid, gid = _host_uid_gid()
     host_omniagents_home = _resolve_host_omniagents_home(config_dir)
 
+    runtime = container_runtime()
     args: List[str] = [
-        container_runtime(),
+        runtime,
         "run",
         "--rm",
         "-p",
         f"{host_port}:{CONTAINER_PORT}",
+    ]
+
+    # Podman: use --userns=keep-id so the container user matches the host user.
+    # This avoids permission issues with bind-mounted config directories.
+    # Docker doesn't support this flag — it uses the entrypoint UID remapping instead.
+    if runtime == "podman":
+        args.extend(["--userns=keep-id"])
+
+    args.extend([
         "-v",
         f"{str(workspace)}:/home/user/workspace",
-    ]
+    ])
 
     # If the workspace is a git worktree, mount the parent repo's .git
     # directory at the same absolute host path so internal gitdir references
