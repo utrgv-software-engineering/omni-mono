@@ -27,5 +27,8 @@ sessions.db
 # Build-time copy of project.yml (canonical copy lives at repo root)
 omni_code/project.yml
 
+# Rust
+target/
+
 # Misc
 *.log
