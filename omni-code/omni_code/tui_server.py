@@ -13,6 +13,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Optional
 
+from omni_code.config import container_runtime
 from omni_code.projects_runtime import ProjectsRuntime
 
 
@@ -465,7 +466,7 @@ class TuiRpcServer:
         import subprocess as sp
         try:
             result = sp.run(
-                ["docker", "ps", "-a", "--filter", "name=omni", "--format",
+                [container_runtime(), "ps", "-a", "--filter", "name=omni", "--format",
                  '{"name":"{{.Names}}","status":"{{.Status}}","image":"{{.Image}}","ports":"{{.Ports}}","created":"{{.CreatedAt}}","state":"{{.State}}"}'],
                 capture_output=True, text=True, timeout=10,
             )
@@ -485,22 +486,22 @@ class TuiRpcServer:
     def _containers_start(self, params: dict) -> None:
         import subprocess as sp
         name = params["name"]
-        sp.run(["docker", "start", name], capture_output=True, text=True, timeout=30, check=True)
+        sp.run([container_runtime(), "start", name], capture_output=True, text=True, timeout=30, check=True)
         return None
 
     def _containers_stop(self, params: dict) -> None:
         import subprocess as sp
         name = params["name"]
-        sp.run(["docker", "stop", name], capture_output=True, text=True, timeout=30, check=True)
+        sp.run([container_runtime(), "stop", name], capture_output=True, text=True, timeout=30, check=True)
         return None
 
     def _containers_rebuild(self, params: dict) -> dict:
         import subprocess as sp
         name = params["name"]
         # Stop if running
-        sp.run(["docker", "stop", name], capture_output=True, text=True, timeout=30)
+        sp.run([container_runtime(), "stop", name], capture_output=True, text=True, timeout=30)
         # Remove container
-        sp.run(["docker", "rm", name], capture_output=True, text=True, timeout=30)
+        sp.run([container_runtime(), "rm", name], capture_output=True, text=True, timeout=30)
         return {"removed": name, "note": "Container removed. Start a ticket sandbox to recreate."}
 
     def _containers_prune(self, params: dict) -> dict:
@@ -510,7 +511,7 @@ class TuiRpcServer:
         # Stopped containers
         try:
             r = sp.run(
-                ["docker", "container", "prune", "-f", "--filter", "label!=keep"],
+                [container_runtime(), "container", "prune", "-f", "--filter", "label!=keep"],
                 capture_output=True, text=True, timeout=60,
             )
             results["containers"] = r.stdout.strip()
@@ -519,7 +520,7 @@ class TuiRpcServer:
         # Dangling images
         try:
             r = sp.run(
-                ["docker", "image", "prune", "-f"],
+                [container_runtime(), "image", "prune", "-f"],
                 capture_output=True, text=True, timeout=60,
             )
             results["images"] = r.stdout.strip()
@@ -528,7 +529,7 @@ class TuiRpcServer:
         # Unused networks
         try:
             r = sp.run(
-                ["docker", "network", "prune", "-f"],
+                [container_runtime(), "network", "prune", "-f"],
                 capture_output=True, text=True, timeout=60,
             )
             results["networks"] = r.stdout.strip()
@@ -537,7 +538,7 @@ class TuiRpcServer:
         # Build cache
         try:
             r = sp.run(
-                ["docker", "builder", "prune", "-f"],
+                [container_runtime(), "builder", "prune", "-f"],
                 capture_output=True, text=True, timeout=120,
             )
             results["build_cache"] = r.stdout.strip()
@@ -575,7 +576,7 @@ class TuiRpcServer:
         stale: list[str] = []
         try:
             result = sp.run(
-                ["docker", "ps", "-a", "--filter", "name=omni-work-",
+                [container_runtime(), "ps", "-a", "--filter", "name=omni-work-",
                  "--format", "{{.Names}}\t{{.Image}}"],
                 capture_output=True, text=True, timeout=10,
             )
@@ -900,7 +901,7 @@ class TuiRpcServer:
             project = self._runtime.resolve_project(ticket.project_id) if ticket else None
             dockerfile = self._resolve_dockerfile(sandbox, project.workspace_dir if project else None)
             container_name = _ensure_started(workspace, rebuild=False, dockerfile=dockerfile)
-            return {"command": ["docker", "exec", "-it", container_name, shell], "label": label}
+            return {"command": [container_runtime(), "exec", "-it", container_name, shell], "label": label}
         else:
             return {"command": [shell], "cwd": str(workspace), "label": label}
 
@@ -920,7 +921,7 @@ class TuiRpcServer:
             project = self._runtime.resolve_project(ticket.project_id) if ticket else None
             dockerfile = self._resolve_dockerfile(sandbox, project.workspace_dir if project else None)
             container_name = _ensure_started(workspace, rebuild=False, dockerfile=dockerfile)
-            return {"command": ["docker", "exec", "-it", container_name, "omni"], "label": label}
+            return {"command": [container_runtime(), "exec", "-it", container_name, "omni"], "label": label}
         else:
             return {"command": ["omni"], "cwd": str(workspace), "label": label}
 
@@ -990,7 +991,7 @@ class TuiRpcServer:
 
         if sandbox:
             container_name = _ensure_started(workspace, rebuild=False, dockerfile=dockerfile)
-            return {"command": ["docker", "exec", "-it", container_name] + cmd, "label": label}
+            return {"command": [container_runtime(), "exec", "-it", container_name] + cmd, "label": label}
         else:
             return {"command": cmd, "cwd": str(workspace), "label": label}
 
@@ -1011,7 +1012,7 @@ class TuiRpcServer:
             from omni_code.work_cli import _ensure_started
             dockerfile = self._resolve_dockerfile(sandbox, project.workspace_dir)
             container_name = _ensure_started(workspace, rebuild=False, dockerfile=dockerfile)
-            return {"command": ["docker", "exec", "-it", container_name, shell], "label": label}
+            return {"command": [container_runtime(), "exec", "-it", container_name, shell], "label": label}
         else:
             return {"command": [shell], "cwd": str(workspace), "label": label}
 
@@ -1029,6 +1030,6 @@ class TuiRpcServer:
             from omni_code.work_cli import _ensure_started
             dockerfile = self._resolve_dockerfile(sandbox, project.workspace_dir)
             container_name = _ensure_started(workspace, rebuild=False, dockerfile=dockerfile)
-            return {"command": ["docker", "exec", "-it", container_name, "omni"], "label": label}
+            return {"command": [container_runtime(), "exec", "-it", container_name, "omni"], "label": label}
         else:
             return {"command": ["omni"], "cwd": str(workspace), "label": label}

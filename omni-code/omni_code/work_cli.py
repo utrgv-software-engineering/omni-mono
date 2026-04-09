@@ -16,7 +16,7 @@ from typing import Optional
 import websockets
 
 from omni_code import sandbox_cli
-from omni_code.config import get_config_dir
+from omni_code.config import container_runtime, get_config_dir
 from omni_code.projects_runtime import ProjectsRuntime
 from omniagents.core.session.history_db import load_history as oa_load_history
 
@@ -292,7 +292,7 @@ def _network_allowlist_from_config() -> Optional[str]:
 
 def _inspect_container(container_name: str) -> Optional[dict]:
     result = sandbox_cli._run_process(
-        ["docker", "inspect", container_name],
+        [container_runtime(), "inspect", container_name],
         check=False,
         capture_output=True,
     )
@@ -1105,7 +1105,7 @@ def _ensure_started(workspace: Path, *, rebuild: bool = False, dockerfile: Optio
 
 
 def _exec_shell(container_name: str, shell: str) -> int:
-    return subprocess.run(["docker", "exec", "-it", container_name, shell], check=False).returncode
+    return subprocess.run([container_runtime(), "exec", "-it", container_name, shell], check=False).returncode
 
 
 def _resolve_dockerfile_for_workspace(workspace: Path) -> Optional[str]:

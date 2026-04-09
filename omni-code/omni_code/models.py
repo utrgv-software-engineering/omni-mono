@@ -185,8 +185,37 @@ def _merge_provider_config(
 
 
 def get_merged_providers() -> Dict[str, Dict[str, Any]]:
-    """Get all providers merged from project defaults and user config."""
+    """Get all providers merged from project defaults, platform governance, and user config.
+
+    Merge order:
+    1. Project defaults (default_models.py)
+    2. Platform-governed providers (from management plane policy)
+    3. User config (models.json) — only if allow_user_models is true
+    """
     merged = get_default_providers()
+
+    # Layer 2: platform governance (if authenticated)
+    governed = None
+    try:
+        from omni_code.platform_models import load_governed_config
+        governed = load_governed_config()
+    except Exception:
+        pass
+
+    if governed:
+        platform_providers = governed.get("providers")
+        if isinstance(platform_providers, dict):
+            for provider_name, provider_config in platform_providers.items():
+                if not isinstance(provider_config, dict):
+                    continue
+                existing = merged.get(provider_name) or {}
+                merged[provider_name] = _merge_provider_config(existing, provider_config)
+
+        # If platform says no user models, skip user config
+        if not governed.get("_allow_user_models", True):
+            return merged
+
+    # Layer 3: user config
     user_config = load_models_config()
     user_providers = user_config.get("providers")
     if not isinstance(user_providers, dict):
@@ -282,9 +311,24 @@ def get_default_model_name() -> Optional[str]:
     """Get the name of the default model.
 
     Priority:
-    1. User-configured default in models.json
-    2. Project default (from default_models.py)
+    1. Platform-governed default (from management plane policy)
+    2. User-configured default in models.json
+    3. Project default (from default_models.py)
     """
+    # Platform governance takes priority
+    try:
+        from omni_code.platform_models import load_governed_config
+        governed = load_governed_config()
+        if governed and governed.get("default"):
+            gov_default = governed["default"]
+            merged = get_model_config(gov_default)
+            if merged and not merged.get("realtime"):
+                normalized = normalize_model_ref(gov_default)
+                if normalized:
+                    return normalized
+    except Exception:
+        pass
+
     config = load_models_config()
     user_default = config.get("default")
 

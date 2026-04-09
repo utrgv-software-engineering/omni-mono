@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from typing import Iterable, List, Optional
 
 from omni_code._version import __version__
-from omni_code.config import get_config_dir
+from omni_code.config import container_runtime, container_runtime_available, get_config_dir
 
 
 CONTAINER_PORT = 7681
@@ -36,7 +36,7 @@ def _run_local_process(
 
 
 def _docker_available() -> bool:
-    return shutil.which("docker") is not None
+    return container_runtime_available()
 
 
 def _sandbox_image_tag(dockerfile: Optional[str] = None) -> str:
@@ -55,19 +55,19 @@ def _sandbox_assets_dir() -> Path:
 
 
 def _docker_image_exists(tag: str) -> bool:
-    result = _run_process(["docker", "image", "inspect", tag], check=False, capture_output=True)
+    result = _run_process([container_runtime(), "image", "inspect", tag], check=False, capture_output=True)
     return result.returncode == 0
 
 
 def _docker_volume_exists(name: str) -> bool:
-    result = _run_process(["docker", "volume", "inspect", name], check=False, capture_output=True)
+    result = _run_process([container_runtime(), "volume", "inspect", name], check=False, capture_output=True)
     return result.returncode == 0
 
 
 def _ensure_docker_volume(name: str) -> None:
     if _docker_volume_exists(name):
         return
-    _run_process(["docker", "volume", "create", name])
+    _run_process([container_runtime(), "volume", "create", name])
 
 
 def _parse_persist_volume(value: str) -> tuple[str, str]:
@@ -107,7 +107,7 @@ def _build_sandbox_image(
     no_cache: bool = False,
     build_args: Optional[list[str]] = None,
 ) -> None:
-    cmd = ["docker", "build", "-t", tag]
+    cmd = [container_runtime(), "build", "-t", tag]
     if no_cache:
         cmd.append("--no-cache")
     for build_arg in build_args or []:
@@ -275,7 +275,11 @@ def _run_sandbox(
     pids_limit: Optional[int] = None,
 ) -> Optional[str]:
     if not _docker_available():
-        raise RuntimeError("Docker not found on PATH. Install Docker Desktop or docker-ce.")
+        rt = container_runtime()
+        raise RuntimeError(
+            f"{rt} not found on PATH. "
+            + ("Install Docker Desktop or docker-ce." if rt == "docker" else "Install podman and ensure podman machine is running.")
+        )
 
     if image:
         tag = image
@@ -291,7 +295,7 @@ def _run_sandbox(
     host_omniagents_home = _resolve_host_omniagents_home(config_dir)
 
     args: List[str] = [
-        "docker",
+        container_runtime(),
         "run",
         "--rm",
         "-p",
@@ -400,7 +404,7 @@ def _run_sandbox(
     )
     args.extend([tag, *container_cmd])
 
-    url = f"http://localhost:{host_port}"
+    url = f"http://127.0.0.1:{host_port}"
     if output == "human":
         if print_url:
             print(url)
@@ -493,7 +497,7 @@ def _run_local_ui(
 
 def _stop_container(container_ref: str) -> None:
     with suppress(Exception):
-        _run_process(["docker", "stop", container_ref], check=False, capture_output=True)
+        _run_process([container_runtime(), "stop", container_ref], check=False, capture_output=True)
 
 
 def _sandbox_urls_payload(
@@ -508,14 +512,14 @@ def _sandbox_urls_payload(
     forward_ports: Optional[list[tuple[int, int]]] = None,
 ) -> dict:
     payload: dict = {
-        "sandbox_url": f"http://localhost:{host_port}",
-        "ws_url": f"ws://localhost:{host_port}/ws",
+        "sandbox_url": f"http://127.0.0.1:{host_port}",
+        "ws_url": f"ws://127.0.0.1:{host_port}/ws",
         "container_id": container_id,
         "container_name": container_name,
         "ui_url": _format_ui_url(ui_host, ui_port) if ui_port is not None else None,
-        "code_server_url": f"http://localhost:{code_server_port}" if code_server_port is not None else None,
+        "code_server_url": f"http://127.0.0.1:{code_server_port}" if code_server_port is not None else None,
         "novnc_url": (
-            f"http://localhost:{vnc_port}/vnc.html?autoconnect=true&resize=scale" if vnc_port is not None else None
+            f"http://127.0.0.1:{vnc_port}/vnc.html?autoconnect=true&resize=scale" if vnc_port is not None else None
         ),
         "ports": {
             "sandbox": host_port,
@@ -875,7 +879,7 @@ def main(argv=None) -> None:
         container_ref = str(args.name) if args.name else (container_id or "")
         cleanup = not bool(args.detach) and bool(container_ref)
         try:
-            ws_url = f"ws://localhost:{host_port}/ws"
+            ws_url = f"ws://127.0.0.1:{host_port}/ws"
             if args.output == "json":
                 payload = _sandbox_urls_payload(
                     host_port=host_port,

@@ -41,6 +41,10 @@ vnc_enabled="${OMNI_CODE_VNC:-0}"
 if [[ "${vnc_enabled}" == "1" || "${vnc_enabled}" == "true" ]]; then
   mkdir -p /tmp/.ICE-unix /tmp/.X11-unix
   chmod 1777 /tmp/.ICE-unix /tmp/.X11-unix
+
+  mkdir -p "${HOME}/.config/xfce4/xfconf/xfce-perchannel-xml"
+  chown -R "${uid}:${gid}" "${HOME}/.config" 2>/dev/null || true
+
   gosu "${uid}:${gid}" bash /usr/local/bin/start-vnc.sh
 fi
 

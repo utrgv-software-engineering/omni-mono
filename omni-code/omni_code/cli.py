@@ -12,9 +12,10 @@ def _get_arg_value(args: list[str], *flags: str) -> str | None:
 
 def _print_top_level_help() -> None:
     print(
-        "usage: omni [work|projects|lazyomni|model|provider|update|sandbox|sessions] [args]\n\n"
+        "usage: omni [auth|work|projects|lazyomni|model|provider|update|sandbox|sessions] [args]\n\n"
         "Commands:\n"
         "  omni                 Launch the Omni Code chat TUI\n"
+        "  omni auth ...        Authenticate with the management plane\n"
         "  omni work ...        Manage work sandboxes\n"
         "  omni projects        Launch the projects TUI\n"
         "  omni projects ...    Manage registered projects\n"
@@ -36,6 +37,13 @@ def _load_models_config() -> None:
 
     load_models_config()
 
+    # Apply platform model governance if authenticated
+    try:
+        from omni_code.platform_models import apply_platform_model_governance
+        apply_platform_model_governance()
+    except Exception:
+        pass
+
     if "MODEL_NAME" not in os.environ:
         model_runtime = resolve_model_for_runtime()
         if model_runtime.get("model"):
@@ -52,6 +60,11 @@ def cli_main(argv=None) -> None:
     if not force_prompt_mode and args and args[0] in {"-h", "--help", "help"}:
         _print_top_level_help()
         return
+
+    if not force_prompt_mode and args and args[0] == "auth":
+        from omni_code.platform_cli import main as auth_main
+
+        return auth_main(args[1:])
 
     if not force_prompt_mode and args and args[0] == "model":
         from omni_code.model_cli import main as model_main
@@ -156,13 +169,6 @@ def cli_main(argv=None) -> None:
             project_path = tmp_project
     else:
         project_path = pkg_project
-    try:
-        from omni_code.proxy import maybe_start_proxy
-
-        maybe_start_proxy(str(project_path))
-    except Exception as e:
-        print(f"Warning: Network proxy failed to start: {e}", file=sys.stderr)
-
     from omniagents.cli import main as omni_main
 
     new_args = ["omniagents", "run", "--project", str(project_path), "--mode", "ink"]
