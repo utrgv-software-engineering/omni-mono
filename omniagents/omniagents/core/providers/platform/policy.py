@@ -125,16 +125,22 @@ class PlatformPolicyFetcher:
         if blocked_patterns:
             security["blocked_tool_patterns"] = blocked_patterns
 
-        # Apply content scanning if PHI boundary
+        # Apply content scanning from platform policy
+        scanning = policy.get("content_scanning", {})
+        if scanning.get("enabled"):
+            scanner_config = {
+                "type": scanning.get("provider", "regex"),
+            }
+            # Pass custom patterns if the provider supports them
+            custom_patterns = scanning.get("custom_patterns", [])
+            if custom_patterns:
+                scanner_config["custom_patterns"] = custom_patterns
+            security.setdefault("providers", {})
+            security["providers"]["content_scanner"] = scanner_config
+
+        # Elevate safety mode in PHI contexts
         session_info = policy.get("session", {})
         if session_info.get("phi_boundary"):
-            security.setdefault("providers", {})
-            scanning = policy.get("content_scanning", {})
-            if scanning.get("enabled"):
-                security["providers"]["content_scanner"] = {
-                    "type": scanning.get("provider", "regex"),
-                }
-            # Elevate safety mode in PHI contexts
             if security.get("safety_mode") != "enforced":
                 security["safety_mode"] = "enforced"
 

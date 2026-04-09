@@ -107,8 +107,11 @@ def maybe_inject_platform_config(spec: Any) -> None:
     providers = sec.setdefault("providers", {})
     audit = sec.setdefault("audit", {})
 
-    # Auth provider — validate tokens from the platform
-    if "auth" not in providers or providers["auth"].get("type", "none") == "none":
+    # Auth provider — only activate for container/server mode where the
+    # WebSocket is exposed externally. In local/TUI mode, the client connects
+    # to localhost without a token and auth would block it.
+    # Container mode is signaled by OMNI_SESSION_ID (set by the compute controller).
+    if session_id and ("auth" not in providers or providers["auth"].get("type", "none") == "none"):
         providers["auth"] = {
             "type": "platform",
             "platform_url": platform_url,
@@ -127,7 +130,10 @@ def maybe_inject_platform_config(spec: Any) -> None:
             "platform_url": platform_url,
         }
 
-    # Content scanning — enable baseline scanning when connected to platform
+    # Content scanning — configured by platform policy, not hardcoded
+    # The policy hook applies the full scanning config at session start.
+    # Bootstrap just sets a baseline so scanning is active before the
+    # first policy fetch completes.
     if "content_scanner" not in providers or providers["content_scanner"].get("type", "none") == "none":
         providers["content_scanner"] = {"type": "regex"}
 
