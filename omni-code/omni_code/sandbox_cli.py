@@ -286,7 +286,15 @@ def _run_sandbox(
     else:
         tag = _sandbox_image_tag(dockerfile)
         if rebuild or not _docker_image_exists(tag):
-            _build_sandbox_image(tag, dockerfile=dockerfile, no_cache=no_cache, build_args=build_args)
+            # Auto-inject OMNI_CODE_VERSION if not explicitly provided
+            effective_args = list(build_args or [])
+            if not any(a.startswith("OMNI_CODE_VERSION=") for a in effective_args):
+                try:
+                    from omni_code._version import __version__
+                    effective_args.append(f"OMNI_CODE_VERSION={__version__}")
+                except ImportError:
+                    pass
+            _build_sandbox_image(tag, dockerfile=dockerfile, no_cache=no_cache, build_args=effective_args)
 
     config_dir = get_config_dir()
     config_dir.mkdir(parents=True, exist_ok=True)

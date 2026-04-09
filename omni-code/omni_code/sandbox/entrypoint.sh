@@ -21,15 +21,12 @@ if ! getent group "${group_name}" >/dev/null 2>&1; then
 fi
 
 if [[ -z "${existing_user_name}" ]]; then
-  # No user with this uid exists yet
   if id -u user >/dev/null 2>&1; then
     usermod -u "${uid}" -g "${gid}" user >/dev/null 2>&1 || true
   else
     useradd -m -u "${uid}" -g "${gid}" -s /bin/bash user
   fi
 elif [[ "${existing_user_name}" != "user" ]]; then
-  # A user with this uid exists but isn't named "user" (e.g. "ubuntu" from
-  # the base image). Rename it so everything uses /home/user consistently.
   usermod -l user -d /home/user -m "${existing_user_name}" >/dev/null 2>&1 || true
 fi
 
@@ -39,12 +36,17 @@ chown "${uid}:${gid}" "${HOME}" >/dev/null 2>&1 || true
 
 vnc_enabled="${OMNI_CODE_VNC:-0}"
 if [[ "${vnc_enabled}" == "1" || "${vnc_enabled}" == "true" ]]; then
+  # Create directories needed by X11/ICE session management
   mkdir -p /tmp/.ICE-unix /tmp/.X11-unix
   chmod 1777 /tmp/.ICE-unix /tmp/.X11-unix
 
+  # Pre-create XFCE config dirs as root, then hand ownership to the mapped user.
+  # Rootless Podman UID remapping can prevent the user from creating these.
   mkdir -p "${HOME}/.config/xfce4/xfconf/xfce-perchannel-xml"
   chown -R "${uid}:${gid}" "${HOME}/.config" 2>/dev/null || true
 
+  # Run the entire VNC stack as the mapped user (dbus, Xvfb, XFCE, x11vnc,
+  # noVNC all in one user context — avoids privilege-switching dbus issues)
   gosu "${uid}:${gid}" bash /usr/local/bin/start-vnc.sh
 fi
 

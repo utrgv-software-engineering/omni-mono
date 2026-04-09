@@ -20,6 +20,7 @@ mkdir -p "${log_dir}"
 export DISPLAY=:0
 
 # Ensure D-Bus machine-id exists (required for session bus activation).
+# May be missing if the container was built without dbus being started.
 if [[ ! -f /var/lib/dbus/machine-id ]]; then
   dbus-uuidgen > /var/lib/dbus/machine-id 2>/dev/null || true
 fi

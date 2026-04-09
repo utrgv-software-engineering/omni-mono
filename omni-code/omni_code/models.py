@@ -315,14 +315,28 @@ def get_default_model_name() -> Optional[str]:
     2. User-configured default in models.json
     3. Project default (from default_models.py)
     """
-    # Platform governance takes priority
+    # Platform governance takes priority.
+    # Check governed config AND verify platform credentials exist —
+    # if credentials exist, governance is expected even if the local
+    # governed config was deleted.
     try:
         from omni_code.platform_models import load_governed_config
+        from omni_code.platform import is_authenticated
         governed = load_governed_config()
         if governed and governed.get("default"):
             gov_default = governed["default"]
             merged = get_model_config(gov_default)
             if merged and not merged.get("realtime"):
+                normalized = normalize_model_ref(gov_default)
+                if normalized:
+                    return normalized
+        elif is_authenticated() and not governed:
+            # Credentials exist but governed config is missing — re-apply
+            from omni_code.platform_models import apply_platform_model_governance
+            apply_platform_model_governance()
+            governed = load_governed_config()
+            if governed and governed.get("default"):
+                gov_default = governed["default"]
                 normalized = normalize_model_ref(gov_default)
                 if normalized:
                     return normalized

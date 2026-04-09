@@ -3,6 +3,7 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 ARG CODE_SERVER_VERSION=4.109.2
+ARG LEAN_VERSION=4.27.0
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \
@@ -20,6 +21,12 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     pandoc \
     imagemagick \
+    latexmk \
+    texlive-latex-base \
+    texlive-latex-recommended \
+    texlive-latex-extra \
+    texlive-fonts-recommended \
+    zstd \
     build-essential \
     pkg-config \
     libgit2-dev \
@@ -35,7 +42,8 @@ RUN apt-get update && apt-get install -y \
     xdotool \
     dbus-x11 \
     software-properties-common \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s vnc_lite.html /usr/share/novnc/index.html
 
 # Install Firefox from Mozilla PPA (Ubuntu 24.04 only has a snap stub)
 RUN add-apt-repository -y ppa:mozillateam/ppa \
@@ -51,6 +59,18 @@ RUN ARCH="$(dpkg --print-architecture)" \
     && rm -f "code-server_${CODE_SERVER_VERSION}_${ARCH}.deb" \
     && rm -rf /var/lib/apt/lists/*
 
+# Rename the default ubuntu user (uid 1000) to "user" with home /home/user.
+# All mounts, entrypoints, and gosu calls assume /home/user.
+RUN usermod -l user -d /home/user -m ubuntu 2>/dev/null \
+    && groupmod -n user ubuntu 2>/dev/null || true
+
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+    | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+    > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y gh \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV NVM_DIR=/opt/nvm
 ENV NODE_VERSION=20.18.1
 
@@ -62,8 +82,14 @@ ENV PATH="/opt/nvm/versions/node/v${NODE_VERSION}/bin:${PATH}"
 
 ENV PIPX_HOME=/opt/pipx
 ENV PIPX_BIN_DIR=/usr/local/bin
+ENV ELAN_HOME=/opt/elan
+ENV PATH="${ELAN_HOME}/bin:${PATH}"
 
-RUN pipx install omni-code --pip-args='--extra-index-url https://pypi.fury.io/ericmichael/'
+RUN curl -fsSL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+    | sh -s -- -y --default-toolchain "leanprover/lean4:v${LEAN_VERSION}" \
+    && elan --version \
+    && lean --version \
+    && lake --version
 
 RUN npm install -g @playwright/cli@0.1.1
 
@@ -124,6 +150,9 @@ ENV CHROME_BINARY=/usr/local/bin/chrome-binary
 ENV PLAYWRIGHT_MCP_BROWSER=chromium
 ENV PLAYWRIGHT_MCP_EXECUTABLE_PATH=/usr/local/bin/chrome-binary
 ENV PLAYWRIGHT_MCP_SANDBOX=false
+
+ARG OMNI_CODE_VERSION
+RUN pipx install "omni-code==${OMNI_CODE_VERSION}" --pip-args='--extra-index-url https://pypi.fury.io/ericmichael/'
 
 COPY entrypoint.sh /usr/local/bin/omni-sandbox-entrypoint
 RUN chmod +x /usr/local/bin/omni-sandbox-entrypoint

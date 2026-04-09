@@ -57,6 +57,14 @@ def cli_main(argv=None) -> None:
     if force_prompt_mode:
         args = args[1:]
 
+    # Governance: if platform policy requires sandbox, re-exec inside omni-sandbox.
+    # Must run before anything else — if it re-execs, this process is replaced.
+    # Skips for non-agent subcommands (auth, model, etc.) automatically.
+    # Fail-closed: if governance can't be enforced, this exits rather than
+    # silently running ungoverned.
+    from omni_code.governance import maybe_enforce_sandbox
+    maybe_enforce_sandbox()
+
     if not force_prompt_mode and args and args[0] in {"-h", "--help", "help"}:
         _print_top_level_help()
         return
