@@ -12,14 +12,10 @@ def _get_arg_value(args: list[str], *flags: str) -> str | None:
 
 def _print_top_level_help() -> None:
     print(
-        "usage: omni [auth|work|projects|lazyomni|model|provider|update|sandbox|sessions] [args]\n\n"
+        "usage: omni [auth|model|provider|update|sandbox|sessions] [args]\n\n"
         "Commands:\n"
         "  omni                 Launch the Omni Code chat TUI\n"
         "  omni auth ...        Authenticate with the management plane\n"
-        "  omni work ...        Manage work sandboxes\n"
-        "  omni projects        Launch the projects TUI\n"
-        "  omni projects ...    Manage registered projects\n"
-        "  omni lazyomni        Launch the lazyomni full-screen TUI\n"
         "  omni model ...       Manage model configuration\n"
         "  omni provider ...    Manage provider configuration\n"
         "  omni update ...      Manage updates\n"
@@ -27,7 +23,7 @@ def _print_top_level_help() -> None:
         "  omni sessions ...    Inspect OmniAgents sessions\n\n"
         "Prompt mode:\n"
         "  omni <words...>      Send words as the initial chat prompt\n"
-        "  omni -- <words...>   Force prompt mode even for reserved words like 'work' or 'projects'\n\n"
+        "  omni -- <words...>   Force prompt mode even for reserved words\n\n"
         "Anything not matched above falls through to the standard Omni Code chat runtime."
     )
 
@@ -98,21 +94,6 @@ def cli_main(argv=None) -> None:
         from omni_code.sessions_cli import main as sessions_main
 
         return sessions_main(args[1:])
-
-    if not force_prompt_mode and args and args[0] == "work":
-        from omni_code.work_cli import main as work_main
-
-        return work_main(args[1:])
-
-    if not force_prompt_mode and args and args[0] == "projects":
-        from omni_code.projects_cli import main as projects_main
-
-        return projects_main(args[1:])
-
-    if not force_prompt_mode and args and args[0] == "lazyomni":
-        from omni_code.lazyomni import main as lazyomni_main
-
-        return lazyomni_main(args[1:])
 
     embedded = "--embedded" in args
     if embedded:

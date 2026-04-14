@@ -194,11 +194,13 @@ def get_merged_providers() -> Dict[str, Dict[str, Any]]:
     """
     merged = get_default_providers()
 
-    # Layer 2: platform governance (if authenticated)
+    # Layer 2: platform governance (only when authenticated)
     governed = None
     try:
         from omni_code.platform_models import load_governed_config
-        governed = load_governed_config()
+        from omni_code.platform import is_authenticated
+        if is_authenticated():
+            governed = load_governed_config()
     except Exception:
         pass
 
@@ -315,31 +317,31 @@ def get_default_model_name() -> Optional[str]:
     2. User-configured default in models.json
     3. Project default (from default_models.py)
     """
-    # Platform governance takes priority.
-    # Check governed config AND verify platform credentials exist —
-    # if credentials exist, governance is expected even if the local
-    # governed config was deleted.
+    # Platform governance takes priority — but only when authenticated.
+    # A stale governed config on disk should not override user settings
+    # when the user is not connected to the management plane.
     try:
         from omni_code.platform_models import load_governed_config
         from omni_code.platform import is_authenticated
-        governed = load_governed_config()
-        if governed and governed.get("default"):
-            gov_default = governed["default"]
-            merged = get_model_config(gov_default)
-            if merged and not merged.get("realtime"):
-                normalized = normalize_model_ref(gov_default)
-                if normalized:
-                    return normalized
-        elif is_authenticated() and not governed:
-            # Credentials exist but governed config is missing — re-apply
-            from omni_code.platform_models import apply_platform_model_governance
-            apply_platform_model_governance()
+        if is_authenticated():
             governed = load_governed_config()
             if governed and governed.get("default"):
                 gov_default = governed["default"]
-                normalized = normalize_model_ref(gov_default)
-                if normalized:
-                    return normalized
+                merged = get_model_config(gov_default)
+                if merged and not merged.get("realtime"):
+                    normalized = normalize_model_ref(gov_default)
+                    if normalized:
+                        return normalized
+            elif not governed:
+                # Credentials exist but governed config is missing — re-apply
+                from omni_code.platform_models import apply_platform_model_governance
+                apply_platform_model_governance()
+                governed = load_governed_config()
+                if governed and governed.get("default"):
+                    gov_default = governed["default"]
+                    normalized = normalize_model_ref(gov_default)
+                    if normalized:
+                        return normalized
     except Exception:
         pass
 

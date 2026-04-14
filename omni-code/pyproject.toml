@@ -5,13 +5,10 @@ description = "Omni Code: a full‑stack coding agent built with OmniAgents"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "omniagents[all]>=0.6.41",
+    "omniagents[all]>=0.6.42",
     "python-dotenv",
     "markitdown[all,docx,pdf]>=0.1.1",
-    "pygit2>=1.13.0",
     "litellm>=1.0.0",  # For non-OpenAI model support
-    "strictyaml>=1.7.3",
-    "socksio>=1.0.0",
 ]
 
 [tool.pytest.ini_options]
@@ -29,7 +26,6 @@ dev = [
 [project.scripts]
 omni = "omni_code.cli:cli_main"
 omni-setup = "omni_code.model_cli:setup_entrypoint"
-lazyomni = "omni_code.lazyomni:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
@@ -42,7 +38,6 @@ packages = [
     "tools",
     "server_functions",
     "omni_code",
-    "omni_code.proxy",
     "omni_agents",
     "omni_agents.omni",
     "omni_agents.voice_agent",
@@ -53,12 +48,6 @@ packages = [
 "omni_code" = [
     "project.yml",
     "sandbox/*",
-    "tui/package.json",
-    "tui/tsconfig.json",
-    "tui/src/**/*.ts",
-    "tui/src/**/*.tsx",
-    "tui/dist/*",
-    "tui/dist/**/*",
 ]
 "omni_agents" = ["*/*.yml", "*/*.md"]
 "omni_agents.omni" = ["*.yml", "*.md"]

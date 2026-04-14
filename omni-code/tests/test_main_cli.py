@@ -3,30 +3,6 @@ import sys
 from types import ModuleType, SimpleNamespace
 
 
-def test_cli_main_dispatches_work(monkeypatch):
-    from omni_code import cli as main_mod
-
-    called = {}
-    fake_module = ModuleType("omni_code.work_cli")
-    fake_module.main = lambda argv=None: called.update({"argv": argv})
-    monkeypatch.setitem(sys.modules, "omni_code.work_cli", fake_module)
-
-    main_mod.cli_main(["work", "status"])
-    assert called["argv"] == ["status"]
-
-
-def test_cli_main_dispatches_projects(monkeypatch):
-    from omni_code import cli as main_mod
-
-    called = {}
-    fake_module = ModuleType("omni_code.projects_cli")
-    fake_module.main = lambda argv=None: called.update({"argv": argv})
-    monkeypatch.setitem(sys.modules, "omni_code.projects_cli", fake_module)
-
-    main_mod.cli_main(["projects", "list"])
-    assert called["argv"] == ["list"]
-
-
 def test_cli_main_force_prompt_mode_with_double_dash(monkeypatch):
     from omni_code import cli as main_mod
 
