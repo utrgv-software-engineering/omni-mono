@@ -234,6 +234,27 @@ def _filter_history_for_api(history: list[dict]) -> list[dict]:
                 message = history[j]
                 j += 1
 
+            # Items may be persisted in message-before-calls order
+            # (reasoning → message → function_call) instead of streaming order
+            # (reasoning → function_call → message).  Scan for calls after the
+            # message so both orderings are handled.
+            if message and not function_calls:
+                while j < len(history):
+                    next_item = history[j]
+                    next_type = next_item.get("type", "")
+                    if (
+                        isinstance(next_type, str)
+                        and next_type.endswith("_call")
+                        and not next_type.endswith("_call_output")
+                    ):
+                        function_calls.append(next_item)
+                        j += 1
+                    elif isinstance(next_type, str) and next_type.endswith("_call_output"):
+                        interleaved_outputs.append((j, next_item))
+                        j += 1
+                    else:
+                        break
+
             # Collect outputs for the function calls.
             # Start from interleaved outputs already gathered, then scan
             # forward for any remaining (the grouped layout).
@@ -384,6 +405,14 @@ _STATUS_STRIP_TYPES = frozenset(
 
 
 def _strip_internal_keys_for_api(items: list[dict]) -> list[dict]:
+    # Build set of reasoning IDs present so we can detect orphaned messages
+    reasoning_ids: set[str] = set()
+    for item in items or []:
+        if isinstance(item, dict) and item.get("type") == "reasoning":
+            rid = item.get("id")
+            if rid:
+                reasoning_ids.add(rid)
+
     cleaned: list[dict] = []
     for item in items or []:
         if not isinstance(item, dict):
@@ -399,14 +428,26 @@ def _strip_internal_keys_for_api(items: list[dict]) -> list[dict]:
         # Strip it from types where it's output-only metadata.
         if copied.get("type") in _STATUS_STRIP_TYPES:
             copied.pop("status", None)
-        # Drop reasoning items entirely.  With store=false the API does
-        # not persist them, so referencing their IDs on the next turn
-        # causes a 404.  Even with store=true, encrypted_content is
-        # model-specific and breaks after a model switch.  The model
-        # produces fresh reasoning each turn so history reasoning items
-        # add no value.
+        # Keep reasoning items (the API requires them before their paired
+        # message).  Preserve encrypted_content when present — the API
+        # requires it to associate reasoning with subsequent function_calls.
+        # Only strip status which is output-only metadata.
         if copied.get("type") == "reasoning":
-            continue
+            copied.pop("status", None)
+            # Ensure summary exists (API needs at least an empty list)
+            if "summary" not in copied:
+                copied["summary"] = []
+        # Strip id from orphaned message items whose reasoning was lost.
+        # This happens when history was saved before the reasoning-strip
+        # fix: the reasoning item was dropped but the message kept its id,
+        # so the API rejects it with "message without required reasoning".
+        # Removing the id makes the API treat it as a plain assistant turn.
+        if copied.get("type") == "message":
+            msg_id = copied.get("id", "")
+            if isinstance(msg_id, str) and msg_id.startswith("msg_"):
+                expected_reasoning_id = "rs_" + msg_id[4:]
+                if expected_reasoning_id not in reasoning_ids:
+                    copied.pop("id", None)
         cleaned.append(copied)
     return cleaned
 

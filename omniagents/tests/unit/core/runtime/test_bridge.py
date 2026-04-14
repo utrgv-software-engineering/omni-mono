@@ -1736,3 +1736,32 @@ async def test_buffers_client_status_events_until_preamble(monkeypatch):
         m == "client_request" and p.get("request_id", "").startswith("status_")
         for m, p in calls
     )
+
+
+def test_filter_history_for_api_reasoning_message_before_function_call():
+    """Test reasoning → message → function_call order (message persisted before call).
+
+    When items are persisted in API output order rather than streaming order,
+    the message appears before the function_call.  The filter must still group
+    the function_call into the reasoning group so it isn't orphaned.
+    """
+    history = [
+        {"role": "user", "content": "what ticket have you been assigned"},
+        {"type": "reasoning", "id": "rs_abc", "summary": []},
+        {"type": "message", "id": "msg_1", "role": "assistant", "content": [{"type": "output_text", "text": "I'm assigned to ticket X"}]},
+        {"type": "function_call", "id": "fc_abc", "call_id": "call_1", "name": "get_ticket", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "call_1", "output": '{"id": "X"}'},
+        {"role": "user", "content": "read the related tickets"},
+    ]
+
+    result = bridge._filter_history_for_api(history)
+
+    # Expected: user → reasoning → message → function_call → output → user
+    assert len(result) == 6
+    assert result[0]["role"] == "user"
+    assert result[1]["type"] == "reasoning"
+    assert result[2]["type"] == "message"
+    assert result[3]["type"] == "function_call"
+    assert result[3]["id"] == "fc_abc"  # original ID preserved, not synthetic
+    assert result[4]["type"] == "function_call_output"
+    assert result[5]["role"] == "user"
