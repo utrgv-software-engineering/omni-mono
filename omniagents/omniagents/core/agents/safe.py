@@ -154,6 +154,12 @@ class SafeAgent(Agent):
         self._halt_run = False
         self._halt_reason = None
 
+        # Per-tool-name approval locks to serialize approval decisions for
+        # parallel invocations of the same tool within a single run. This
+        # prevents duplicate approval prompts when the user clicks "Always"
+        # on one concurrent call while siblings are still awaiting approval.
+        self._approval_locks: Dict[str, asyncio.Lock] = {}
+
         # Optional audit callback: async (event_type, tool_name, details, reviewer_id=None) -> None
         # Set by the builder/service layer when audit is enabled.
         self._audit_emit = None
@@ -398,28 +404,46 @@ class SafeAgent(Agent):
                 # If we don't need a callback (skip_approvals=True), just execute
                 return await original_on_invoke(context, params_json)
 
-            # Otherwise, prompt for approval
-            try:
-                args_dict = json.loads(params_json) if params_json else {}
-                formatted_args = ", ".join(
-                    [
-                        f"{k}: {repr(v)[:100]}{'...' if len(repr(v)) > 100 else ''}"
-                        for k, v in args_dict.items()
-                    ]
-                )
-            except Exception:
-                formatted_args = params_json[:200] + (
-                    "..." if len(params_json) > 200 else ""
-                )
+            # Serialize approval decisions per tool name so that parallel
+            # invocations of the same tool within a single run don't each
+            # generate an independent approval prompt. Only the approval
+            # decision is serialized; the actual tool invocation runs
+            # outside the lock so approved siblings still execute in parallel.
+            lock = self._approval_locks.setdefault(tool.name, asyncio.Lock())
+            _skip_prompt = False
+            async with lock:
+                # Re-check under the lock: a sibling task may have just
+                # received an "always approve" decision that marked this
+                # tool as safe.
+                if self.is_tool_safe(tool):
+                    _skip_prompt = True
+                    approved, always_approve, error_msg = True, False, None
+                else:
+                    # Otherwise, prompt for approval
+                    try:
+                        args_dict = json.loads(params_json) if params_json else {}
+                        formatted_args = ", ".join(
+                            [
+                                f"{k}: {repr(v)[:100]}{'...' if len(repr(v)) > 100 else ''}"
+                                for k, v in args_dict.items()
+                            ]
+                        )
+                    except Exception:
+                        formatted_args = params_json[:200] + (
+                            "..." if len(params_json) > 200 else ""
+                        )
 
-            # Compute metadata for rich approval UI
-            metadata = self._compute_approval_metadata(
-                tool.name, args_dict if "args_dict" in locals() else {}
-            )
+                    # Compute metadata for rich approval UI
+                    metadata = self._compute_approval_metadata(
+                        tool.name, args_dict if "args_dict" in locals() else {}
+                    )
 
-            approved, always_approve, error_msg = await approval_callback(
-                tool.name, formatted_args, metadata
-            )
+                    approved, always_approve, error_msg = await approval_callback(
+                        tool.name, formatted_args, metadata
+                    )
+
+            if _skip_prompt:
+                return await original_on_invoke(context, params_json)
 
             if approved:
                 if always_approve:

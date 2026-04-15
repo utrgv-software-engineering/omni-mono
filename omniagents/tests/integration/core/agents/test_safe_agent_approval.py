@@ -241,6 +241,62 @@ async def test_skip_approvals_runs_without_requests(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_always_dedupes_parallel_calls_in_same_run():
+    call_count = {"n": 0}
+    approval_started = asyncio.Event()
+    release_approval = asyncio.Event()
+
+    async def callback(name, formatted, metadata):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # Signal that the first approval is in-flight, then wait so
+            # siblings enter approved_on_invoke and race the lock.
+            approval_started.set()
+            await release_approval.wait()
+            return True, True, None  # approved + always
+        return True, False, None
+
+    async def _invoke(_ctx, params_json):
+        payload = json.loads(params_json) if params_json else {}
+        return json.dumps({"result": "ok", "args": payload})
+
+    tool = FunctionTool(
+        name="dangerous",
+        description="dangerous",
+        params_json_schema={},
+        on_invoke_tool=_invoke,
+    )
+
+    agent = SafeAgent(
+        name="safe",
+        tools=[tool],
+        instructions="",
+        model="gpt",
+        approval_callback=callback,
+    )
+    wrapped = agent.wrap_tool_with_approval(tool)
+
+    async def fire(i):
+        return await wrapped.on_invoke_tool(None, json.dumps({"i": i}))
+
+    async def driver():
+        # Kick off three concurrent calls.
+        tasks = [asyncio.create_task(fire(i)) for i in range(3)]
+        # Wait until the first approval prompt is pending, then let
+        # siblings pile up on the per-tool lock before releasing it.
+        await approval_started.wait()
+        await asyncio.sleep(0.05)
+        release_approval.set()
+        return await asyncio.gather(*tasks)
+
+    results = await asyncio.wait_for(driver(), timeout=2)
+    assert call_count["n"] == 1, f"expected 1 approval prompt, got {call_count['n']}"
+    for r in results:
+        parsed = json.loads(r)
+        assert parsed.get("result") == "ok"
+
+
+@pytest.mark.asyncio
 async def test_multi_tool_rejection_halts_execution(monkeypatch):
     recorder = []
     spec = build_spec(
