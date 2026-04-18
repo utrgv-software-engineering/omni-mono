@@ -18,7 +18,7 @@ from .conversion_tools import convert_to_markdown
 from .notebook_tools import read_notebook, edit_notebook
 from .slash_command import dispatch
 from .explore_tool import explore
-from .worker_tools import spawn_worker, get_worker_status, wait_for_workers, send_worker_message, close_worker, resume_worker
+from .worker_tools import spawn_worker, get_worker_status, wait_for_workers, send_worker_message, close_worker, resume_worker, cleanup_worker_worktree
 
 __all__ = [
     'web_fetch',
@@ -46,4 +46,5 @@ __all__ = [
     'send_worker_message',
     'close_worker',
     'resume_worker',
+    'cleanup_worker_worktree',
 ]

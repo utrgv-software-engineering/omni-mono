@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import random
+import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
+from agents.run_context import RunContextWrapper
 from omniagents.core.tools import rich_function_tool, RichToolOutput, approval_metadata
 from omniagents.rpc.agents import WorkerManager
 
@@ -13,6 +16,8 @@ from omniagents.rpc.agents import WorkerManager
 _WORKER_AGENT_YAML = (
     Path(__file__).resolve().parent.parent / "omni_agents" / "worker" / "agent.yml"
 )
+
+_WORKTREES_DIR = Path.home() / "Omni" / "Worktrees"
 
 # ---------------------------------------------------------------------------
 # Whimsical worker name generator
@@ -112,6 +117,11 @@ def _generate_worker_name() -> str:
 
 _WORKERS: dict[str, object] = {}
 
+# Worktree metadata for workers spawned with isolation="worktree".
+# Maps worker_id -> {"worktree_path": str, "worktree_branch": str,
+#                     "worktree_name": str, "parent_workspace": str}
+_WORKER_WORKTREES: dict[str, dict[str, str]] = {}
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -189,13 +199,148 @@ async def _history_loader(entry, tail: int) -> list[dict]:
     return all_history[-tail:] if len(all_history) > tail else all_history
 
 
+def _workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> str:
+    """Extract workspace_root from the caller's context, falling back to cwd."""
+    caller_ctx = getattr(ctx, "context", None) if ctx else None
+    if isinstance(caller_ctx, dict):
+        wr = caller_ctx.get("workspace_root")
+        if isinstance(wr, str) and wr.strip():
+            return wr
+    elif caller_ctx is not None:
+        wr = getattr(caller_ctx, "workspace_root", None)
+        if isinstance(wr, str) and wr.strip():
+            return wr
+    return os.getcwd()
+
+
+# ---------------------------------------------------------------------------
+# Worktree helpers
+# ---------------------------------------------------------------------------
+
+
+def _is_git_repo(workspace_root: str) -> bool:
+    """Check if workspace_root is inside a git repository."""
+    try:
+        subprocess.run(
+            ["git", "-C", workspace_root, "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            timeout=5,
+            check=True,
+        )
+        return True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+def _is_git_dirty(workspace_root: str) -> bool:
+    """Check if the workspace has uncommitted changes."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", workspace_root, "status", "--porcelain"],
+            capture_output=True,
+            timeout=5,
+            check=True,
+        )
+        output = result.stdout.decode() if isinstance(result.stdout, bytes) else result.stdout
+        return bool(output.strip())
+    except Exception:
+        return False
+
+
+def _create_worker_worktree(workspace_root: str, worker_id: str) -> dict[str, str]:
+    """Create a git worktree for an isolated worker.
+
+    Works whether the supervisor is in a regular repo or an existing worktree —
+    ``git worktree add`` operates on the shared repository in both cases.
+
+    Returns dict with worktree_path, worktree_branch, worktree_name, parent_workspace.
+    """
+    # Derive a worktree name from the workspace directory name + worker id.
+    # e.g. supervisor in ~/Omni/Worktrees/bold-hawk → "bold-hawk-worker-pip"
+    # e.g. supervisor in ~/projects/my-app → "my-app-worker-pip"
+    parent_name = Path(workspace_root).name
+    worktree_name = f"{parent_name}-worker-{worker_id}"
+    worktree_branch = f"worker/{worktree_name}"
+    worktree_path = str(_WORKTREES_DIR / worktree_name)
+
+    # Handle path collision
+    if Path(worktree_path).exists():
+        n = 2
+        while Path(f"{worktree_path}-{n}").exists():
+            n += 1
+        worktree_name = f"{worktree_name}-{n}"
+        worktree_branch = f"worker/{worktree_name}"
+        worktree_path = str(_WORKTREES_DIR / worktree_name)
+
+    # Ensure parent directory exists
+    _WORKTREES_DIR.mkdir(parents=True, exist_ok=True)
+
+    subprocess.run(
+        [
+            "git", "-C", workspace_root,
+            "worktree", "add",
+            "-b", worktree_branch,
+            worktree_path,
+            "HEAD",
+        ],
+        capture_output=True,
+        timeout=30,
+        check=True,
+    )
+
+    return {
+        "worktree_path": worktree_path,
+        "worktree_branch": worktree_branch,
+        "worktree_name": worktree_name,
+        "parent_workspace": workspace_root,
+    }
+
+
+def _remove_worker_worktree(worker_id: str) -> bool:
+    """Remove a worker's worktree and branch. Returns True if cleanup succeeded."""
+    info = _WORKER_WORKTREES.get(worker_id)
+    if info is None:
+        return False
+
+    parent = info["parent_workspace"]
+    wt_path = info["worktree_path"]
+    wt_name = info["worktree_name"]
+    branch = info["worktree_branch"]
+
+    try:
+        subprocess.run(
+            ["git", "-C", parent, "worktree", "remove", "--force", wt_path],
+            capture_output=True,
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+    try:
+        subprocess.run(
+            ["git", "-C", parent, "branch", "-D", branch],
+            capture_output=True,
+            timeout=5,
+        )
+    except Exception:
+        pass
+
+    _WORKER_WORKTREES.pop(worker_id, None)
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Public tools
 # ---------------------------------------------------------------------------
 
 
 @rich_function_tool(client_status="Spawning worker...")
-async def spawn_worker(task: str, model: Optional[str] = None) -> RichToolOutput:
+async def spawn_worker(
+    ctx: RunContextWrapper[Any],
+    task: str,
+    isolation: Optional[str] = None,
+    allow_dirty: bool = False,
+) -> RichToolOutput:
     """Spawn an autonomous worker agent to execute a coding subtask in the background.
 
     Workers have full read/write access to the workspace (list_directory, glob_files,
@@ -213,11 +358,116 @@ async def spawn_worker(task: str, model: Optional[str] = None) -> RichToolOutput
         task: A precise, self-contained description of the subtask. Include all
               context the worker needs (file paths, function names, requirements)
               because the worker has no access to conversation history.
-        model: Optional model override. Defaults to the session's current model.
+        isolation: Set to "worktree" to give the worker its own git worktree
+              branching from the current HEAD. The worker can commit freely
+              without affecting the main workspace. After the worker completes,
+              merge its branch and call cleanup_worker_worktree to remove the
+              worktree. Requires the workspace to be a git repository.
+        allow_dirty: Only relevant when isolation="worktree". If the workspace
+              has uncommitted changes, worktree creation fails by default because
+              the worker would not see those changes. Set to True to proceed
+              anyway when you know the uncommitted changes are not relevant.
     """
     worker_id = _generate_worker_name()
-    await _MANAGER.spawn(worker_id=worker_id, task_description=task, model=model)
-    llm_output = json.dumps({"worker_id": worker_id, "status": "spawned"})
+    workspace_root = _workspace_root_from_ctx(ctx)
+
+    worktree_info: dict[str, str] | None = None
+    worker_workspace = workspace_root
+
+    if isolation == "worktree":
+        if not _is_git_repo(workspace_root):
+            llm_output = json.dumps({
+                "worker_id": worker_id,
+                "status": "error",
+                "error": "Cannot create worktree: workspace is not a git repository.",
+            })
+            return RichToolOutput(
+                llm_output,
+                {
+                    "display_type": "error",
+                    "summary": "Worktree isolation failed",
+                    "preview": "Workspace is not a git repository.",
+                    "truncated": False,
+                    "metadata": {"success": False, "worker_id": worker_id},
+                },
+            )
+
+        try:
+            worktree_info = _create_worker_worktree(workspace_root, worker_id)
+        except subprocess.CalledProcessError as e:
+            stderr = e.stderr.decode() if isinstance(e.stderr, bytes) else str(e.stderr)
+            llm_output = json.dumps({
+                "worker_id": worker_id,
+                "status": "error",
+                "error": f"Failed to create worktree: {stderr.strip()}",
+            })
+            return RichToolOutput(
+                llm_output,
+                {
+                    "display_type": "error",
+                    "summary": "Worktree creation failed",
+                    "preview": stderr.strip()[:200],
+                    "truncated": False,
+                    "metadata": {"success": False, "worker_id": worker_id},
+                },
+            )
+
+        _WORKER_WORKTREES[worker_id] = worktree_info
+        worker_workspace = worktree_info["worktree_path"]
+
+        # Prepend worktree context to the task so the worker knows to commit.
+        task = (
+            f"[You are working in an isolated git worktree at {worker_workspace} "
+            f"on branch {worktree_info['worktree_branch']}. "
+            f"Commit your changes to this branch when done so they can be merged.]\n\n"
+            f"{task}"
+        )
+
+        # The worker's worktree is checked out from HEAD and will not contain
+        # any uncommitted changes. Fail unless the LLM opts in with allow_dirty.
+        if not allow_dirty and _is_git_dirty(workspace_root):
+            # Roll back the worktree we just created.
+            _remove_worker_worktree(worker_id)
+            llm_output = json.dumps({
+                "worker_id": worker_id,
+                "status": "error",
+                "error": (
+                    "Workspace has uncommitted changes that would not be visible "
+                    "in the worker's worktree. Commit your changes first, or set "
+                    "allow_dirty=True if the uncommitted changes are not relevant."
+                ),
+            })
+            return RichToolOutput(
+                llm_output,
+                {
+                    "display_type": "error",
+                    "summary": "Worktree isolation failed: dirty workspace",
+                    "preview": "Uncommitted changes would not be visible to the worker.",
+                    "truncated": False,
+                    "metadata": {"success": False, "worker_id": worker_id},
+                },
+            )
+
+    await _MANAGER.spawn(
+        worker_id=worker_id,
+        task_description=task,
+        context={"workspace_root": worker_workspace},
+    )
+
+    response: dict[str, Any] = {
+        "worker_id": worker_id,
+        "status": "spawned",
+        "hint": "Use wait_for_workers to collect the result before responding.",
+    }
+    if worktree_info:
+        response["worktree_path"] = worktree_info["worktree_path"]
+        response["worktree_branch"] = worktree_info["worktree_branch"]
+        response["hint"] = (
+            "Use wait_for_workers to collect the result. "
+            "Then merge the worker branch and call cleanup_worker_worktree."
+        )
+
+    llm_output = json.dumps(response)
     task_summary = task[:80] + "..." if len(task) > 80 else task
     return RichToolOutput(
         llm_output,
@@ -230,6 +480,7 @@ async def spawn_worker(task: str, model: Optional[str] = None) -> RichToolOutput
                 "success": True,
                 "worker_id": worker_id,
                 "status": "spawned",
+                "isolation": isolation,
             },
         },
     )
@@ -254,6 +505,25 @@ async def wait_for_workers(
     completed = result_data["completed"]
     still_running = result_data["still_running"]
     not_found = result_data["not_found"]
+
+    if still_running:
+        result_data["hint"] = (
+            f"Workers still running: {', '.join(still_running)}. "
+            "Call wait_for_workers again with the remaining IDs to collect their results."
+        )
+
+    # Attach worktree info for completed workers that used isolation.
+    worktrees: dict[str, dict[str, str]] = {}
+    for wid in completed:
+        wt = _WORKER_WORKTREES.get(wid)
+        if wt:
+            worktrees[wid] = {
+                "worktree_path": wt["worktree_path"],
+                "worktree_branch": wt["worktree_branch"],
+            }
+    if worktrees:
+        result_data["worktrees"] = worktrees
+
     llm_output = json.dumps(result_data)
 
     # Build a concise preview for the UI
@@ -329,6 +599,12 @@ async def get_worker_status(
 
     if history_items:
         result_data["history"] = history_items
+
+    # Include worktree info if present
+    wt = _WORKER_WORKTREES.get(worker_id)
+    if wt:
+        result_data["worktree_path"] = wt["worktree_path"]
+        result_data["worktree_branch"] = wt["worktree_branch"]
 
     llm_output = json.dumps(result_data)
 
@@ -450,6 +726,10 @@ async def send_worker_message(worker_id: str, message: str) -> RichToolOutput:
 async def close_worker(worker_id: str) -> RichToolOutput:
     """Cancel a running worker and clean up its resources.
 
+    If the worker was spawned with isolation="worktree", the worktree is
+    preserved so you can inspect or merge partial work. Call
+    cleanup_worker_worktree when you are done with it.
+
     Args:
         worker_id: The worker ID returned by spawn_worker.
     """
@@ -486,7 +766,13 @@ async def close_worker(worker_id: str) -> RichToolOutput:
 
     status = await _MANAGER.close(worker_id)
 
-    llm_output = json.dumps({"worker_id": worker_id, "status": status})
+    response: dict[str, Any] = {"worker_id": worker_id, "status": status}
+    wt = _WORKER_WORKTREES.get(worker_id)
+    if wt:
+        response["worktree_path"] = wt["worktree_path"]
+        response["worktree_branch"] = wt["worktree_branch"]
+
+    llm_output = json.dumps(response)
     return RichToolOutput(
         llm_output,
         {
@@ -500,7 +786,7 @@ async def close_worker(worker_id: str) -> RichToolOutput:
 
 
 @rich_function_tool(client_status="Resuming worker...")
-async def resume_worker(worker_id: str, message: str) -> RichToolOutput:
+async def resume_worker(ctx: RunContextWrapper[Any], worker_id: str, message: str) -> RichToolOutput:
     """Resume a previously closed or completed worker with a new message.
 
     Restores the worker's full conversation history and starts a new run.
@@ -548,7 +834,16 @@ async def resume_worker(worker_id: str, message: str) -> RichToolOutput:
             },
         )
 
-    new_entry = await _MANAGER.resume(worker_id, message)
+    # If the worker has an existing worktree, reuse it.
+    wt = _WORKER_WORKTREES.get(worker_id)
+    if wt:
+        workspace_root = wt["worktree_path"]
+    else:
+        workspace_root = _workspace_root_from_ctx(ctx)
+
+    new_entry = await _MANAGER.resume(
+        worker_id, message, context={"workspace_root": workspace_root}
+    )
     if new_entry is None:
         llm_output = json.dumps(
             {
@@ -568,13 +863,16 @@ async def resume_worker(worker_id: str, message: str) -> RichToolOutput:
             },
         )
 
-    llm_output = json.dumps(
-        {
-            "worker_id": worker_id,
-            "status": "resumed",
-            "session_id": new_entry.session_id,
-        }
-    )
+    response: dict[str, Any] = {
+        "worker_id": worker_id,
+        "status": "resumed",
+        "session_id": new_entry.session_id,
+    }
+    if wt:
+        response["worktree_path"] = wt["worktree_path"]
+        response["worktree_branch"] = wt["worktree_branch"]
+
+    llm_output = json.dumps(response)
     msg_summary = message[:60] + "..." if len(message) > 60 else message
     return RichToolOutput(
         llm_output,
@@ -588,26 +886,79 @@ async def resume_worker(worker_id: str, message: str) -> RichToolOutput:
     )
 
 
+@rich_function_tool(client_status="Cleaning up worker worktree...")
+async def cleanup_worker_worktree(worker_id: str) -> RichToolOutput:
+    """Remove a worker's git worktree and branch after merging its changes.
+
+    Call this after you have merged the worker's branch into your workspace.
+    It removes the worktree directory and deletes the worker branch.
+
+    Args:
+        worker_id: The worker ID whose worktree should be cleaned up.
+    """
+    wt = _WORKER_WORKTREES.get(worker_id)
+    if wt is None:
+        llm_output = json.dumps({
+            "worker_id": worker_id,
+            "status": "no_worktree",
+            "error": "No worktree found for this worker.",
+        })
+        return RichToolOutput(
+            llm_output,
+            {
+                "display_type": "error",
+                "summary": f"No worktree for worker {worker_id}",
+                "preview": llm_output,
+                "truncated": False,
+                "metadata": {"success": False, "worker_id": worker_id},
+            },
+        )
+
+    worktree_path = wt["worktree_path"]
+    worktree_branch = wt["worktree_branch"]
+    _remove_worker_worktree(worker_id)
+
+    llm_output = json.dumps({
+        "worker_id": worker_id,
+        "status": "cleaned_up",
+        "removed_path": worktree_path,
+        "removed_branch": worktree_branch,
+    })
+    return RichToolOutput(
+        llm_output,
+        {
+            "display_type": "command",
+            "summary": f"Worker {worker_id} worktree cleaned up",
+            "preview": f"Removed {worktree_path} and branch {worktree_branch}",
+            "truncated": False,
+            "metadata": {"success": True, "worker_id": worker_id},
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # Approval metadata
 # ---------------------------------------------------------------------------
 
 
 @approval_metadata()
-def spawn_worker_approval(task: str, model: Optional[str] = None) -> dict:
+def spawn_worker_approval(task: str, isolation: Optional[str] = None, allow_dirty: bool = False) -> dict:
     """Generate approval metadata for spawn_worker showing the full task description."""
     lines = task.splitlines()
     preview = task
+    summary = "Spawn worker agent"
+    if isolation == "worktree":
+        summary = "Spawn worker agent (isolated worktree)"
 
     return {
         "display_type": "file_write",
-        "summary": "Spawn worker agent",
+        "summary": summary,
         "value": task,
         "preview": preview,
         "truncated": False,
         "metadata": {
             "operation": "spawn_worker",
             "line_count": len(lines),
-            "model": model,
+            "isolation": isolation,
         },
     }

@@ -8,7 +8,7 @@ welcome_text: |
 tools:
   - read_image
   - dispatch
-  - explore
+  # - explore
   - list_directory
   - read_file
   - display_artifact
@@ -23,12 +23,13 @@ tools:
   - convert_to_markdown
   - read_notebook
   - edit_notebook
-  - spawn_worker
-  - get_worker_status
-  - wait_for_workers
-  - send_worker_message
-  - close_worker
-  - resume_worker
+  # - spawn_worker
+  # - get_worker_status
+  # - wait_for_workers
+  # - send_worker_message
+  # - close_worker
+  # - resume_worker
+  # - cleanup_worker_worktree
 
 model_settings:
   reasoning:
@@ -55,12 +56,13 @@ safe_agent_options:
     - scholar_search
     - convert_to_markdown
     - read_notebook
-    - explore
-    - get_worker_status
-    - wait_for_workers
-    - send_worker_message
-    - close_worker
-    - resume_worker
+    # - explore
+    # - get_worker_status
+    # - wait_for_workers
+    # - send_worker_message
+    # - close_worker
+    # - resume_worker
+    # - cleanup_worker_worktree
 
 server_functions:
   - help
