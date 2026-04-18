@@ -6,7 +6,9 @@ is set or omniagents.core.debug.Debug is enabled.
 
 from typing import Any, Dict, Optional
 import inspect
+import json
 import os
+import time
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
@@ -220,6 +222,7 @@ class JsonRpcEndpoint:
                 )
             return
 
+        t_start = time.perf_counter()
         try:
             try:
                 self.methods.channel = channel
@@ -229,8 +232,24 @@ class JsonRpcEndpoint:
             if inspect.isawaitable(result):
                 result = await result
         except Exception as exc:
+            Debug.log(
+                f"[profile] rpc method={method} id={call_id} "
+                f"ms={(time.perf_counter() - t_start) * 1000:.1f} error=1"
+            )
             await self._handle_internal_error(channel, call_id, exc, method)
             return
+
+        t_handler = time.perf_counter()
+        result_bytes = -1
+        try:
+            result_bytes = len(json.dumps(result, default=str))
+        except Exception:
+            pass
+        Debug.log(
+            f"[profile] rpc method={method} id={call_id} "
+            f"handler_ms={(t_handler - t_start) * 1000:.1f} "
+            f"result_bytes={result_bytes}"
+        )
 
         if call_id is not None:
             await channel.send_result(call_id, result)

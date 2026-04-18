@@ -197,10 +197,13 @@ for session in sessions:
     print(f"Created: {session['created_at']}")
     print(f"Messages: {session['message_count']}")
     print(f"Archived: {session['archived']}")
+    # first_message/last_message are trimmed stubs containing only
+    # {content, timestamp, role}. content is a plain-text preview
+    # (~200 chars max) — call load_history() for the full payload.
     if 'first_message' in session:
-        print(f"First: {session['first_message']['content'][:50]}...")
+        print(f"First: {session['first_message']['content']}")
     if 'last_message' in session:
-        print(f"Last: {session['last_message']['content'][:50]}...")
+        print(f"Last: {session['last_message']['content']}")
     print()
 
 # Load conversation history

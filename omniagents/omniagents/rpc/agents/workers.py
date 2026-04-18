@@ -110,6 +110,7 @@ class WorkerManager:
         task_description: str,
         model: str | None,
         session_id: str | None = None,
+        context: dict | None = None,
     ) -> WorkerHandle:
         spec, _runtime = self._spec_loader(model)
         variables = getattr(spec, "variables", None)
@@ -123,10 +124,14 @@ class WorkerManager:
         await agent.initialize()
         await agent._ensure_client()
 
-        resp = await agent._client.other.start_run(
-            prompt=task_description,
-            session_id=session_id,
-        )
+        start_kwargs: dict[str, Any] = {
+            "prompt": task_description,
+            "session_id": session_id,
+        }
+        if context is not None:
+            start_kwargs["context"] = context
+
+        resp = await agent._client.other.start_run(**start_kwargs)
         raw = getattr(resp, "result", resp)
         if isinstance(raw, dict):
             run_id = raw.get("run_id", "")
@@ -153,11 +158,13 @@ class WorkerManager:
         worker_id: str,
         task_description: str,
         model: str | None = None,
+        context: dict | None = None,
     ) -> WorkerHandle:
         handle = await self._create_worker(
             worker_id=worker_id,
             task_description=task_description,
             model=model,
+            context=context,
         )
         self._workers[worker_id] = handle
         return handle
@@ -279,7 +286,9 @@ class WorkerManager:
         await agent.cleanup()
         return handle.status
 
-    async def resume(self, worker_id: str, message: str) -> WorkerHandle | None:
+    async def resume(
+        self, worker_id: str, message: str, context: dict | None = None
+    ) -> WorkerHandle | None:
         handle = self._workers.get(worker_id)
         if handle is None or handle.status == "running":
             return None
@@ -290,6 +299,7 @@ class WorkerManager:
             task_description=message,
             model=None,
             session_id=old_session_id,
+            context=context,
         )
         new_handle.result = None
         self._workers[worker_id] = new_handle

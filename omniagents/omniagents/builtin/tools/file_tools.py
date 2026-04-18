@@ -20,13 +20,17 @@ from agents.run_context import RunContextWrapper
 def _get_pygit2_repo(start_dir: str = "."):
     """Discover and return a pygit2.Repository for start_dir.
 
-    Returns None if start_dir is not inside a Git repository.
+    Returns None if start_dir is not inside a Git repository or if the
+    repository is malformed / cannot be opened.
     """
     abspath = os.path.abspath(start_dir)
-    gitdir = pygit2.discover_repository(abspath)
-    if not gitdir:
+    try:
+        gitdir = pygit2.discover_repository(abspath)
+        if not gitdir:
+            return None
+        return pygit2.Repository(gitdir)
+    except Exception:
         return None
-    return pygit2.Repository(gitdir)
 
 
 @lru_cache(maxsize=65536)
@@ -129,6 +133,8 @@ def _workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> Optional[str
             return None
         c = getattr(ctx, "context", None)
         if c is None:
+            from omniagents.core.debug import Debug
+            Debug.log(f"[file_tools] _workspace_root_from_ctx: ctx.context is None")
             return None
         if isinstance(c, dict):
             wr = c.get("workspace_root")
@@ -136,6 +142,8 @@ def _workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> Optional[str
             wr = getattr(c, "workspace_root", None)
         if isinstance(wr, str) and wr.strip():
             return os.path.abspath(wr)
+        from omniagents.core.debug import Debug
+        Debug.log(f"[file_tools] _workspace_root_from_ctx: no workspace_root, ctx keys={list(c.keys()) if isinstance(c, dict) else type(c).__name__}")
     except Exception:
         pass
     return None

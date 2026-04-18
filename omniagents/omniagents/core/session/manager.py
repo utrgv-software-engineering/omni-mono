@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import time
 import uuid
 from typing import Dict, Optional, Any
 
+from omniagents.core.debug import Debug
 from .history_db import (
     load_history,
     register_session,
@@ -34,6 +36,7 @@ class Session:  # noqa: D101
         agent_slug: str | None,
         session_id: str | None = None,
     ) -> None:  # noqa: D401
+        t_init = time.perf_counter()
         self._project_slug = project_slug
         self._agent_slug = agent_slug
         self.id: str = session_id or str(uuid.uuid4())
@@ -43,8 +46,10 @@ class Session:  # noqa: D101
             if session_id
             else []
         )
+        t_after_history = time.perf_counter()
         if session_id:
             self._repair_history_after_unclean_shutdown()
+        t_after_repair = time.perf_counter()
         self.current_task: Optional[asyncio.Task] = None
         self.current_stream_result: Any | None = None
         self.cancel_requested: bool = False
@@ -92,6 +97,15 @@ class Session:  # noqa: D101
         except Exception:
             self.context = None
             self.variables = None
+        t_end = time.perf_counter()
+        Debug.log(
+            f"[profile] Session.__init__ session={self.id} "
+            f"history_ms={(t_after_history - t_init) * 1000:.1f} "
+            f"repair_ms={(t_after_repair - t_after_history) * 1000:.1f} "
+            f"metadata_ms={(t_end - t_after_repair) * 1000:.1f} "
+            f"total_ms={(t_end - t_init) * 1000:.1f} "
+            f"history_items={len(self.history)}"
+        )
 
     def append_message(self, message: dict) -> None:
         """Add a message to this session and persist it."""

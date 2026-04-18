@@ -158,7 +158,7 @@ Get list of all conversation sessions with message previews.
 }]
 ```
 
-**Note:** The `first_message` and `last_message` fields include the complete message content, allowing clients to implement their own truncation strategies based on UI requirements.
+**Note:** `first_message.content` and `last_message.content` are plain-text previews truncated to ~200 characters server-side. Tool calls, reasoning blocks, and other structured fields are stripped — clients that need the full message payload should call `get_session_history()`. The `role` and `timestamp` fields are preserved for display purposes.
 
 ### get_session_history(session_id: string)
 Return the full message history for a given session.

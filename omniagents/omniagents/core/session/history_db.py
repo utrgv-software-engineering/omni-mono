@@ -1,9 +1,11 @@
 import json
 import sqlite3
+import time
 from datetime import datetime, timedelta
 from threading import Lock
 from typing import Optional, Tuple
 
+from omniagents.core.debug import Debug
 from omniagents.core.paths import get_sessions_db_path
 
 _STORES: dict[str, Tuple[sqlite3.Connection, Lock]] = {}
@@ -67,7 +69,6 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_audio_item "
         "ON audio_metadata(item_id, content_index)"
     )
-
     cursor = conn.execute("PRAGMA table_info(history)")
     columns = [col[1] for col in cursor.fetchall()]
     if "created_at" not in columns:
@@ -91,6 +92,21 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE sessions ADD COLUMN hold INTEGER DEFAULT 0")
     if "user_id" not in columns:
         conn.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT")
+
+    # Indexes that depend on columns added by the migration above must be
+    # created AFTER the ALTER TABLE statements run.
+    # Speeds up load_history, append_message, and the first/last row lookups
+    # used by list_sessions. Without this, every history query is a full scan.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_history_session_id "
+        "ON history(session_id, id)"
+    )
+    # Speeds up ORDER BY created_at DESC in list_sessions and range scans in
+    # purge_old_sessions.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_created_at "
+        "ON sessions(created_at)"
+    )
 
     conn.commit()
 
@@ -160,6 +176,7 @@ def purge_old_sessions(
 def load_history(
     session_id: str, *, project_slug: str | None = None, agent_slug: str | None = None
 ) -> list[dict]:
+    t0 = time.perf_counter()
     conn, lock = _get_store(project_slug, agent_slug)
     with lock:
         cur = conn.execute(
@@ -167,7 +184,16 @@ def load_history(
             (session_id,),
         )
         rows = cur.fetchall()
-    return [json.loads(r[0]) for r in rows]
+    t_query = time.perf_counter()
+    total_bytes = sum(len(r[0]) for r in rows)
+    result = [json.loads(r[0]) for r in rows]
+    t_end = time.perf_counter()
+    Debug.log(
+        f"[profile] load_history session={session_id} rows={len(rows)} "
+        f"bytes={total_bytes} query_ms={(t_query - t0) * 1000:.1f} "
+        f"parse_ms={(t_end - t_query) * 1000:.1f} total_ms={(t_end - t0) * 1000:.1f}"
+    )
+    return result
 
 
 def append_message(
@@ -284,74 +310,128 @@ def get_archived(
     return bool(row[0]) if row else False
 
 
+_PREVIEW_MAX_LEN = 200
+
+
+def _preview_from_message(msg: object) -> str:
+    """Extract a short plain-text preview from a persisted message dict.
+
+    Handles string content, list-of-parts content (with text/input_text/
+    output_text fields), and returns "" for tool-call-only messages.
+    """
+    if not isinstance(msg, dict):
+        return ""
+    content = msg.get("content")
+    text: str
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        parts: list[str] = []
+        for p in content:
+            if isinstance(p, str):
+                parts.append(p)
+            elif isinstance(p, dict):
+                for key in ("text", "input_text", "output_text"):
+                    v = p.get(key)
+                    if isinstance(v, str):
+                        parts.append(v)
+                        break
+        text = " ".join(parts)
+    else:
+        text = ""
+    text = text.strip()
+    if len(text) > _PREVIEW_MAX_LEN:
+        text = text[: _PREVIEW_MAX_LEN - 1] + "…"
+    return text
+
+
+def _message_stub(msg_json: str | None, created_at: str | None) -> dict | None:
+    """Build the trimmed {content, timestamp, role} stub used by list_sessions.
+
+    list_sessions used to return full message payloads here, which meant a
+    multi-MB response for users with long histories. All known consumers
+    (launcher, omniagents web/ink backends) only read .content (as a short
+    preview) and .timestamp, so we trim server-side.
+    """
+    if msg_json is None:
+        return None
+    try:
+        msg = json.loads(msg_json)
+    except Exception:
+        msg = None
+    role = msg.get("role") if isinstance(msg, dict) else None
+    return {
+        "content": _preview_from_message(msg),
+        "timestamp": created_at,
+        "role": role if isinstance(role, str) else None,
+    }
+
+
 def list_sessions(
     *, project_slug: str | None = None, agent_slug: str | None = None
 ) -> list[dict]:
+    t0 = time.perf_counter()
     conn, lock = _get_store(project_slug, agent_slug)
-    with lock:
-        cur = conn.execute(
-            """
-            SELECT 
-                s.session_id,
-                s.archived,
-                s.created_at as session_created,
-                COUNT(h.id) as message_count
-            FROM sessions s
-            LEFT JOIN history h ON s.session_id = h.session_id
-            GROUP BY s.session_id, s.archived, s.created_at
-            ORDER BY s.created_at DESC
-            """
+    # Single query: join sessions against a per-session (first_id, last_id,
+    # count) CTE, then join twice to history to get the first/last rows.
+    # The idx_history_session_id index makes the MIN/MAX aggregation cheap.
+    query = """
+        WITH bounds AS (
+            SELECT session_id,
+                   MIN(id) AS first_id,
+                   MAX(id) AS last_id,
+                   COUNT(*) AS message_count
+            FROM history
+            GROUP BY session_id
         )
-        sessions = cur.fetchall()
+        SELECT s.session_id,
+               s.archived,
+               s.created_at,
+               COALESCE(b.message_count, 0) AS message_count,
+               fh.msg_json AS first_json,
+               fh.created_at AS first_at,
+               lh.msg_json AS last_json,
+               lh.created_at AS last_at
+        FROM sessions s
+        LEFT JOIN bounds b ON b.session_id = s.session_id
+        LEFT JOIN history fh ON fh.id = b.first_id
+        LEFT JOIN history lh ON lh.id = b.last_id
+        ORDER BY s.created_at DESC
+    """
+    with lock:
+        rows = conn.execute(query).fetchall()
 
-    result = []
-    for session_id, archived, session_created, message_count in sessions:
-        session_data = {
+    result: list[dict] = []
+    for (
+        session_id,
+        archived,
+        session_created,
+        message_count,
+        first_json,
+        first_at,
+        last_json,
+        last_at,
+    ) in rows:
+        session_data: dict = {
             "id": session_id,
             "archived": bool(archived),
             "created_at": session_created or datetime.now().isoformat(),
             "message_count": message_count,
         }
-
-        if message_count > 0:
-            with lock:
-                first_cur = conn.execute(
-                    """
-                    SELECT msg_json, created_at 
-                    FROM history 
-                    WHERE session_id = ? 
-                    ORDER BY id ASC 
-                    LIMIT 1
-                    """,
-                    (session_id,),
-                )
-                first_row = first_cur.fetchone()
-                last_cur = conn.execute(
-                    """
-                    SELECT msg_json, created_at 
-                    FROM history 
-                    WHERE session_id = ? 
-                    ORDER BY id DESC 
-                    LIMIT 1
-                    """,
-                    (session_id,),
-                )
-                last_row = last_cur.fetchone()
-
-            if first_row:
-                first_msg = json.loads(first_row[0])
-                if first_row[1]:
-                    first_msg["timestamp"] = first_row[1]
-                session_data["first_message"] = first_msg
-
-            if last_row:
-                last_msg = json.loads(last_row[0])
-                if last_row[1]:
-                    last_msg["timestamp"] = last_row[1]
-                session_data["last_message"] = last_msg
-
+        if message_count and message_count > 0:
+            first_stub = _message_stub(first_json, first_at)
+            last_stub = _message_stub(last_json, last_at)
+            if first_stub is not None:
+                session_data["first_message"] = first_stub
+            if last_stub is not None:
+                session_data["last_message"] = last_stub
         result.append(session_data)
 
+    t_end = time.perf_counter()
+    Debug.log(
+        f"[profile] list_sessions sessions={len(result)} queries=1 "
+        f"total_ms={(t_end - t0) * 1000:.1f}"
+    )
     return result
 
 
