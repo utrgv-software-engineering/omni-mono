@@ -2,52 +2,8 @@
 
 This directory holds the evaluation suite for omni-code. Evals exist to
 **measure agent behavior so we can iterate on prompts and skills with
-real signal**. Read the methodology section before designing experiments.
-
-> **Designing a new scenario or measure?** The design framework lives in
-> the [`omniagents-eval-creator`](https://github.com/.../omniagents-eval-creator)
-> skill (typically at `~/code/skills/skills/omniagents-eval-creator/`).
-> See `references/eval_design.md` in the skill for the quality criteria,
-> end-state-first design procedure, and Outcome/Quality/Process/Guard
-> tier hierarchy. This file is the operator's guide; the skill is the
-> design framework. Trigger the skill via Claude ("write me an eval
-> for X") and it walks you through.
-
----
-
-## Eval-design tooling — `omniagents-eval-creator` skill
-
-Designing scenarios, validating measures, comparing iterations, and
-reviewing eval runs are handled by the **omniagents-eval-creator** skill
-(repo: `~/code/skills/skills/omniagents-eval-creator/`).
-
-The recommended path is to invoke the skill via Claude — say "validate
-my scenarios" or "compare the last two eval iterations" and the skill
-takes over. Its scripts auto-detect the project root by walking up from
-cwd looking for `evaluations/scenarios/` or `project.yml`.
-
-For direct (non-Claude) invocation in CI or scripts, the skill's tools
-are plain Python and stdlib-only:
-
-```bash
-SKILL=~/code/skills/skills/omniagents-eval-creator
-python $SKILL/scripts/validate_scenario.py                  # pre-flight
-python $SKILL/scripts/validate_scenario.py --file foo.yml   # one file
-python $SKILL/scripts/generate_review.py                    # HTML reviewer
-python $SKILL/scripts/generate_review.py --static /tmp/r.html
-python $SKILL/scripts/compare_iterations.py                 # diff latest two
-python $SKILL/scripts/compare_iterations.py PREV CURR --markdown
-```
-
-Each script takes a `--project-root` flag if you're invoking from
-outside an omniagents project root.
-
-For the specificity-validation pattern (Phase 4c of the design
-workflow), copy the harness code from
-`<skill>/references/specificity_validation_walkthrough.md` into a
-project-local script and adapt the paths + measure list to your
-scenario. The harness is scenario-specific by design — it's a template,
-not a reusable tool.
+real signal**. This file is the operator's guide for running and
+inspecting evals in this project.
 
 ---
 
@@ -153,15 +109,10 @@ the workspace filesystem).
 
 ---
 
-# Methodology
+# Methodology — operating the harness
 
-The design framework — quality criteria, end-state-first design, tier
-hierarchy, intervention discipline (one lever per round, skill-first),
-variance handling, anti-patterns — lives in the omniagents-eval-creator
-skill at `references/eval_design.md`. Read that before designing
-experiments. The two rules below are omniagents-framework-specific and
-stay here because they're about *operating* the harness, not designing
-within it.
+Two omniagents-framework-specific rules about *operating* the eval
+pipeline (not designing within it).
 
 ## Don't narrow-scope omniagents framework changes
 
@@ -198,10 +149,7 @@ already exists. The gap is usually *discoverability*, not data.
 
 ## Existing custom measures (in `measures.py`)
 
-Project-specific measures registered in `evaluations/measures.py`. For
-generic measure patterns by verifier shape (deterministic / threshold /
-subprocess / revert+rerun / tool-call-pattern / oracle), see the skill's
-`references/measures_catalog.md`.
+Project-specific measures registered in `evaluations/measures.py`.
 
 Outcome measures (success criteria for the autopilot scenario):
 - `db_row_exists` — generic SQL row check against the env-staged db
