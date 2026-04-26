@@ -12,33 +12,39 @@ real signal**. Read the methodology section before designing experiments.
 
 ---
 
-## Eval-design tooling — `scripts/eval`
+## Eval-design tooling — `omniagents-eval-creator` skill
 
-The validator, reviewer, and iteration-comparator live in the
-[`omniagents-eval-creator` skill](https://github.com/.../omniagents-eval-creator)
-(typically installed at `~/code/skills/skills/omniagents-eval-creator/`).
-A thin shim at `scripts/eval` delegates:
+Designing scenarios, validating measures, comparing iterations, and
+reviewing eval runs are handled by the **omniagents-eval-creator** skill
+(repo: `~/code/skills/skills/omniagents-eval-creator/`).
 
-```bash
-scripts/eval validate_scenario                              # pre-flight all scenarios
-scripts/eval validate_scenario --file path/to/foo.yml       # one file
-scripts/eval generate_review                                # tier-aware HTML over latest results
-scripts/eval generate_review --static /tmp/r.html           # static HTML (headless)
-scripts/eval compare_iterations                             # diff latest two runs
-scripts/eval compare_iterations PREV CURR --markdown        # PR-description format
-scripts/eval                                                # list available subcommands
-```
+The recommended path is to invoke the skill via Claude — say "validate
+my scenarios" or "compare the last two eval iterations" and the skill
+takes over. Its scripts auto-detect the project root by walking up from
+cwd looking for `evaluations/scenarios/` or `project.yml`.
 
-If the skill lives elsewhere, set `$OMNIAGENTS_EVAL_CREATOR_PATH`:
+For direct (non-Claude) invocation in CI or scripts, the skill's tools
+are plain Python and stdlib-only:
 
 ```bash
-OMNIAGENTS_EVAL_CREATOR_PATH=/path/to/skill scripts/eval validate_scenario
+SKILL=~/code/skills/skills/omniagents-eval-creator
+python $SKILL/scripts/validate_scenario.py                  # pre-flight
+python $SKILL/scripts/validate_scenario.py --file foo.yml   # one file
+python $SKILL/scripts/generate_review.py                    # HTML reviewer
+python $SKILL/scripts/generate_review.py --static /tmp/r.html
+python $SKILL/scripts/compare_iterations.py                 # diff latest two
+python $SKILL/scripts/compare_iterations.py PREV CURR --markdown
 ```
 
-For the specificity-validation pattern (Phase 4c of the design workflow),
-copy the harness from
+Each script takes a `--project-root` flag if you're invoking from
+outside an omniagents project root.
+
+For the specificity-validation pattern (Phase 4c of the design
+workflow), copy the harness code from
 `<skill>/references/specificity_validation_walkthrough.md` into a
-project-local script and adapt the paths + measure list to your scenario.
+project-local script and adapt the paths + measure list to your
+scenario. The harness is scenario-specific by design — it's a template,
+not a reusable tool.
 
 ---
 
