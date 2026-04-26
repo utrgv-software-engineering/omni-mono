@@ -12,6 +12,36 @@ real signal**. Read the methodology section before designing experiments.
 
 ---
 
+## Eval-design tooling — `scripts/eval`
+
+The validator, reviewer, and iteration-comparator live in the
+[`omniagents-eval-creator` skill](https://github.com/.../omniagents-eval-creator)
+(typically installed at `~/code/skills/skills/omniagents-eval-creator/`).
+A thin shim at `scripts/eval` delegates:
+
+```bash
+scripts/eval validate_scenario                              # pre-flight all scenarios
+scripts/eval validate_scenario --file path/to/foo.yml       # one file
+scripts/eval generate_review                                # tier-aware HTML over latest results
+scripts/eval generate_review --static /tmp/r.html           # static HTML (headless)
+scripts/eval compare_iterations                             # diff latest two runs
+scripts/eval compare_iterations PREV CURR --markdown        # PR-description format
+scripts/eval                                                # list available subcommands
+```
+
+If the skill lives elsewhere, set `$OMNIAGENTS_EVAL_CREATOR_PATH`:
+
+```bash
+OMNIAGENTS_EVAL_CREATOR_PATH=/path/to/skill scripts/eval validate_scenario
+```
+
+For the specificity-validation pattern (Phase 4c of the design workflow),
+copy the harness from
+`<skill>/references/specificity_validation_walkthrough.md` into a
+project-local script and adapt the paths + measure list to your scenario.
+
+---
+
 ## Running an eval
 
 ```bash
