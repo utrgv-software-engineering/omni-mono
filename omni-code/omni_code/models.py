@@ -293,6 +293,7 @@ def get_model_config(ref: str) -> Optional[Dict[str, Any]]:
         "api_key",
         "base_url",
         "api_version",
+        "credential_ref",
         "realtime_url",
         "realtime_base_url",
         "realtime",
@@ -696,13 +697,37 @@ def resolve_model_for_runtime(
     if merged.get("api_version"):
         result["api_version"] = merged["api_version"]
 
-    api_key_value = merged.get("api_key")
-    if api_key_value:
-        resolved_key = _expand_env_vars(api_key_value)
-        result["api_key"] = resolved_key
-    else:
-        result["api_key"] = None
+    # Priority 1: Platform credential via credential_ref
+    credential_ref = merged.get("credential_ref")
+    if credential_ref:
+        try:
+            from omni_code.platform_models import fetch_provider_credential
 
+            cred = fetch_provider_credential(credential_ref)
+            if cred:
+                cred_type = cred.get("credential_type")
+                if cred_type == "entra_token":
+                    result["api_key"] = cred["access_token"]
+                elif cred_type == "api_key":
+                    result["api_key"] = cred["api_key"]
+                # Also pick up base_url/api_version from credential if not already set
+                if not result.get("base_url") and cred.get("base_url"):
+                    result["base_url"] = cred["base_url"]
+                if not result.get("api_version") and cred.get("api_version"):
+                    result["api_version"] = cred["api_version"]
+        except Exception:
+            pass
+
+    # Priority 2: Provider config api_key
+    if not result.get("api_key"):
+        api_key_value = merged.get("api_key")
+        if api_key_value:
+            resolved_key = _expand_env_vars(api_key_value)
+            result["api_key"] = resolved_key
+        else:
+            result["api_key"] = None
+
+    # Priority 3: Environment variable fallback
     if not result.get("api_key"):
         if provider == "azure":
             result["api_key"] = os.getenv("AZURE_OPENAI_API_KEY")

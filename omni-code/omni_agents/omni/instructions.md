@@ -15,10 +15,10 @@ You may be provided an `available_skills` index (injected via the `available_ski
 
 ## When to Use Skills
 
-At the start of each new user task (and whenever the user's goal materially changes), do a quick skills scan:
+At the start of every new user task — before reading workspace files, running commands, or making a plan — do a skills scan:
 
-1. Identify which skills are relevant to the task.
-2. If one or more skills are relevant, activate them before committing to an implementation plan.
+1. Identify which skills are plausibly relevant to the task. When in doubt about relevance, activate. Reading a skill is cheap; missing one that would have applied is costly.
+2. Activate the relevant skills before committing to an implementation plan.
 
 ## How to Activate Skills
 

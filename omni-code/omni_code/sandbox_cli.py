@@ -83,6 +83,17 @@ def _parse_persist_volume(value: str) -> tuple[str, str]:
     return name, container_path
 
 
+def _parse_env_kv(value: str) -> tuple[str, str]:
+    """Parse a ``KEY=VALUE`` env-var spec passed in via ``--env``."""
+    if "=" not in value:
+        raise argparse.ArgumentTypeError("Expected format: KEY=VALUE")
+    key, val = value.split("=", 1)
+    key = key.strip()
+    if not key:
+        raise argparse.ArgumentTypeError("Env key cannot be empty")
+    return key, val
+
+
 def _parse_forward_port(value: str) -> tuple[int, int]:
     """Parse a ``host:container`` port-forwarding spec.
 
@@ -264,6 +275,7 @@ def _run_sandbox(
     container_name: Optional[str],
     print_url: bool,
     persist_volumes: list[tuple[str, str]],
+    extra_env: list[tuple[str, str]],
     image: Optional[str] = None,
     dockerfile: Optional[str] = None,
     build_args: Optional[list[str]] = None,
@@ -380,6 +392,9 @@ def _run_sandbox(
     for volume_name, container_path in persist_volumes:
         _ensure_docker_volume(volume_name)
         args.extend(["-v", f"{volume_name}:{container_path}"])
+
+    for env_key, env_val in extra_env:
+        args.extend(["-e", f"{env_key}={env_val}"])
 
     for key in _iter_passthrough_env_keys():
         if os.getenv(key):
@@ -699,6 +714,14 @@ def main(argv=None) -> None:
     )
 
     parser.add_argument(
+        "--env",
+        action="append",
+        default=[],
+        type=_parse_env_kv,
+        help="Set an environment variable inside the container (repeatable): KEY=VALUE",
+    )
+
+    parser.add_argument(
         "--forward-port",
         action="append",
         default=[],
@@ -858,6 +881,7 @@ def main(argv=None) -> None:
             container_name=(str(args.name) if args.name else None),
             print_url=bool(args.print_url),
             persist_volumes=list(args.persist_volume),
+            extra_env=list(args.env),
             image=str(args.image) if args.image else None,
             dockerfile=str(args.dockerfile) if args.dockerfile else None,
             build_args=list(args.build_arg),
