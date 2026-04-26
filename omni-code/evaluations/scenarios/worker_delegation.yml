@@ -1,0 +1,53 @@
+scenarios:
+  # ── Should NOT delegate ─────────────────────────────────────────
+
+  - name: one_liner_no_delegation
+    prompt: "add a comment at the top of src/main.py saying # Entry point"
+    fixture: python_fastapi
+    expect:
+      should_delegate: false
+    measures:
+      - appropriate_worker_delegation
+
+  - name: single_file_edit_no_delegation
+    prompt: |
+      the Post model in src/models/post.py needs a __repr__ that shows
+      the id and title. can you add that?
+    fixture: python_fastapi
+    expect:
+      should_delegate: false
+    measures:
+      - appropriate_worker_delegation
+
+  - name: exploratory_question_no_delegation
+    prompt: |
+      how is the user model structured? like what fields does it have
+      and whats the relationship to posts and comments?
+    fixture: python_fastapi
+    expect:
+      should_delegate: false
+    measures:
+      - appropriate_worker_delegation
+
+  - name: coupled_rename_no_delegation
+    prompt: |
+      we decided to rename "user" to "account" everywhere — models,
+      routes, services, and the tests. its all tightly coupled so
+      be careful about consistency
+    fixture: python_fastapi
+    expect:
+      should_delegate: false
+    measures:
+      - appropriate_worker_delegation
+
+  # ── Shared config should not be split across workers ───────────
+
+  - name: shared_config_not_split
+    prompt: |
+      add pydantic, sqlalchemy, and alembic to pyproject.toml and
+      create a starter model file for each one under src/models/
+    fixture: python_fastapi
+    expect:
+      should_delegate: true
+    measures:
+      - no_overlapping_worker_files

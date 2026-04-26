@@ -24,6 +24,14 @@ node_modules/
 .pytest_cache/
 sessions.db
 
+# Eval run outputs (regenerated each run)
+artifacts/
+evaluations/__pycache__/
+
+# playwright-cli / playwright-mcp working dirs (transient)
+.playwright-cli/
+.playwright-mcp/
+
 # Build-time copy of project.yml (canonical copy lives at repo root)
 omni_code/project.yml
 

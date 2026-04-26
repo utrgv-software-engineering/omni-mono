@@ -1,0 +1,44 @@
+# Sandbox-only scenarios: require Docker isolation because workers
+# actually execute and write to real files concurrently.
+
+scenarios:
+  - name: concurrent_workers_same_module
+    prompt: |
+      add three new methods to the User class in src/models/user.py:
+      1. to_dict() that returns all fields as a dictionary
+      2. from_dict() classmethod that creates a User from a dict
+      3. validate() that checks name and email arent empty
+    fixture: python_fastapi
+    expect:
+      # These should NOT be in separate workers since they all touch the same file
+      verify_files:
+        "src/models/user.py":
+          exists: true
+          contains: ["to_dict", "from_dict", "validate"]
+    measures:
+      - no_overlapping_worker_files
+      - no_file_corruption
+
+  - name: workers_on_independent_files
+    prompt: |
+      need three new route files following the same pattern as the
+      existing ones:
+      - src/routes/tags_routes.py with GET /tags listing all tags
+      - src/routes/search_routes.py with GET /search?q= for posts
+      - src/routes/stats_routes.py with GET /stats returning counts
+    fixture: python_fastapi
+    expect:
+      verify_files:
+        "src/routes/tags_routes.py":
+          exists: true
+          contains: ["/tags"]
+        "src/routes/search_routes.py":
+          exists: true
+          contains: ["/search"]
+        "src/routes/stats_routes.py":
+          exists: true
+          contains: ["/stats"]
+    measures:
+      - no_overlapping_worker_files
+      - no_file_corruption
+      - worker_tasks_have_file_scope

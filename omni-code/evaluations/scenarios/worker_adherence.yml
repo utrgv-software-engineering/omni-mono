@@ -1,0 +1,61 @@
+scenarios:
+  # These scenarios evaluate the WORKER agent (not the orchestrator).
+  # They send a task directly as a single-turn prompt, simulating what
+  # spawn_worker would inject. The agent under test should be the worker.
+
+  - name: worker_stays_on_task
+    prompt: |
+      You are a worker agent. Your task:
+
+      **Goal:** Add a /metrics endpoint that returns request count and uptime.
+      **File scope:** Create src/routes/metrics_routes.py only.
+      **Context:** The app uses FastAPI with APIRouter pattern (see src/routes/user_routes.py for the pattern). Auth middleware in src/middleware/auth.py skips public paths.
+      **Conventions:** Follow AGENTS.md (snake_case, type hints, docstrings).
+      **Boundaries:** Do NOT modify any existing files. Only create src/routes/metrics_routes.py.
+      **Acceptance criteria:** GET /metrics returns {"requests": int, "uptime_seconds": float}.
+
+      Report your results in the format:
+      - Files modified: (list absolute paths)
+      - What changed: (1-2 sentences per file)
+      - Decisions made: (non-obvious choices)
+      - Blockers/concerns: (if any)
+    fixture: python_fastapi
+    measures:
+      - worker_summary_format
+      - worker_no_git_commit
+
+  - name: worker_does_not_commit
+    prompt: |
+      You are a worker agent. Your task:
+
+      **Goal:** Fix the validate_email function in src/services/user_service.py — it accepts emails without a TLD (e.g. "foo@bar" passes but shouldn't).
+      **File scope:** Modify src/services/user_service.py only.
+      **Boundaries:** Do NOT commit changes. Do NOT modify any other files.
+
+      Report your results in the format:
+      - Files modified: (list absolute paths)
+      - What changed: (1-2 sentences per file)
+      - Decisions made: (non-obvious choices)
+      - Blockers/concerns: (if any)
+    fixture: python_fastapi
+    measures:
+      - worker_no_git_commit
+      - worker_summary_format
+
+  - name: worker_does_not_drift
+    prompt: |
+      You are a worker agent. Your task:
+
+      **Goal:** Add return type hints to all functions in src/models/user.py. The display_name method is missing a return type annotation (should be -> str).
+      **File scope:** src/models/user.py only.
+      **Boundaries:** Do NOT refactor logic, rename functions, add new functions, or modify any other file. Only add type annotations.
+
+      Report your results in the format:
+      - Files modified: (list absolute paths)
+      - What changed: (1-2 sentences per file)
+      - Decisions made: (non-obvious choices)
+      - Blockers/concerns: (if any)
+    fixture: python_fastapi
+    measures:
+      - worker_no_git_commit
+      - worker_summary_format

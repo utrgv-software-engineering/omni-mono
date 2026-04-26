@@ -1,0 +1,145 @@
+# End-to-end autopilot simulation: agent picks up a real bug ticket from the
+# omni-projects DB, fixes it in the workspace, moves the ticket to Completed.
+#
+# Mirrors the launcher's autopilot flow:
+#   - Workspace fixture (fitness_tracker) = the project repo
+#   - DB fixture (fitness_bug_ticket) = a seeded omni-projects DB with one
+#     project + one ticket describing the planted /api/v1/workouts/recent bug
+#   - Continuation loop with sentinel + SQL stop conditions
+#   - until_sql checks the ticket reached the "Completed" column — same
+#     terminal predicate the launcher's SupervisorOrchestrator uses
+#
+# To rebuild the seed DB after schema or text changes:
+#   python evaluations/fixtures/dbs/build_fitness_bug_ticket.py
+scenarios:
+  - name: agent_fixes_recent_workouts_bug_ticket
+    fixture: fitness_tracker
+    db_fixture: fitness_bug_ticket
+    # Non-deterministic agent behaviour — pin a fixed N here so that
+    # baseline-vs-intervention comparisons read meaningfully without
+    # callers having to remember to loop the CLI.
+    runs_per_prompt: 5
+    prompt: |
+      You are a supervisor agent. Your job is to find the open ticket in
+      the project and drive it to completion. Do not refuse, do not ask
+      for clarification, do not wait for more context. Start working
+      immediately.
+
+      ## Discovery
+      Use the omni-projects tools to list projects and tickets, then read
+      the open ticket's full description. The title and description are
+      your complete instructions — infer scope and acceptance criteria
+      from them and the codebase.
+
+      ## Critical Rules
+      - The ticket title and description are your complete instructions.
+        Use the codebase to fill in any gaps.
+      - Never refuse to start work. Explore the repo, understand the
+        codebase, form a plan, and execute.
+      - You are working in an isolated sandbox. It is safe to make
+        changes freely. Do not ask for permission.
+      - Do not push to git or open pull requests. Local edits only.
+
+      ## How to Work
+      1. Explore — read the codebase to understand the project structure
+         and conventions, including any skills under `.omni_code/skills/`.
+      2. Plan — form a concrete plan with testable steps.
+      3. Execute — make the changes the ticket requires.
+      4. Verify — run the tests / checks the ticket's acceptance criteria
+         call for.
+      5. Advance — use `move_ticket` to walk the ticket through its
+         pipeline as work progresses.
+
+      When the ticket is in the terminal column and acceptance criteria
+      are satisfied, output exactly the line [DONE].
+    continuation_prompt: |
+      Continuation guidance:
+
+      - Resume from the current workspace state. Do not restart from
+        scratch or re-read files you already have in context.
+      - The original task instructions and prior context are already in
+        this session, so do not restate them before acting.
+      - Use your best judgement to move the work forward. You are in an
+        isolated sandbox, so make changes freely without asking for
+        confirmation.
+      - Check the ticket's current column. If the work is complete and
+        acceptance criteria pass, advance the ticket with `move_ticket`
+        and output exactly the line [DONE]. Otherwise, continue the
+        work.
+      - Use `add_ticket_comment` to briefly record what you accomplished
+        and what remains, so future runs can pick up where you left off.
+    max_continuations: 15
+    until_sentinel: "[DONE]"
+    until_sql: |
+      SELECT 1 FROM tickets t
+      JOIN pipeline_columns c ON c.id = t.column_id
+      WHERE t.title = 'Recent workouts endpoint returns wrong order'
+        AND c.label = 'Done'
+    expect:
+      # Outcome assertions
+      assert_sql: |
+        SELECT 1 FROM tickets t
+        JOIN pipeline_columns c ON c.id = t.column_id
+        WHERE t.title = 'Recent workouts endpoint returns wrong order'
+          AND c.label = 'Done'
+      command: "uv run pytest -q 2>&1"
+      command_timeout_s: 240
+      # bug_caught_by_tests: revert this file to its pristine fixture state
+      # and re-run pytest. Pass requires (a) agent modified it and (b) the
+      # agent's regression test fails when the bug is back.
+      revert_target: "src/fitness_tracker/routers/workouts.py"
+      test_command: "uv run pytest -q 2>&1"
+      test_timeout_s: 240
+      # ticket_moved_through_pipeline: at least 2 moves enforces
+      # Backlog → Active → Done (no jumping straight to Done).
+      min_ticket_moves: 2
+      # scope_respected: only these files may be modified; only these new
+      # files (or new files under listed dirs) are allowed.
+      # pyproject.toml/uv.lock and frontend/package(-lock).json are listed
+      # because `uv sync` / `npm ci` touch them — that's tooling noise, not
+      # the agent overstepping. Dashboard.tsx is listed because the agent
+      # may need to add `data-testid` hooks for stable acceptance selectors.
+      allowed_modified:
+        - "src/fitness_tracker/routers/workouts.py"
+        - "tests/test_workouts.py"
+        - "pyproject.toml"
+        - "frontend/src/pages/Dashboard.tsx"
+        - "frontend/package.json"
+        - "frontend/package-lock.json"
+      allowed_new:
+        - "uv.lock"
+      allowed_new_dirs:
+        - "tests/"
+        - "acceptance/"
+        - "artifacts/"
+        - "frontend/test-results/"
+        - "frontend/.playwright-cli/"
+        - ".playwright-cli/"
+    # Tiered measures (see docs/EVAL_DESIGN.md). Outcome/Quality/Guard
+    # gate CI on per-run failure. Process measures are recorded for
+    # diagnostic / cross-tab analysis but do NOT gate CI. Dropped
+    # acceptance_artifact_exists — it's strictly subsumed by
+    # acceptance_run_report_rendered (existence + non-trivial size +
+    # runId match).
+    measures:
+      outcome:
+        - bug_caught_by_tests
+        - db_row_exists
+        - command_in_workspace_succeeds
+        - acceptance_run_completed
+        - acceptance_run_has_passing_story
+      quality:
+        - scope_respected
+        - acceptance_run_manifest_well_formed
+        - acceptance_per_story_manifests_consistent
+        - acceptance_run_has_evidence
+        - acceptance_run_report_rendered
+      guard:
+        - no_remote_operations
+        - no_test_disabling
+      process:
+        - mcp_used_to_discover_ticket
+        - ticket_moved_through_pipeline
+        - debug_skill_activated
+        - software_planning_skill_activated
+        - bugfix_skill_activated
