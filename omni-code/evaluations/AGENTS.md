@@ -4,11 +4,14 @@ This directory holds the evaluation suite for omni-code. Evals exist to
 **measure agent behavior so we can iterate on prompts and skills with
 real signal**. Read the methodology section before designing experiments.
 
-> **Designing a new scenario or measure?** Read [`docs/EVAL_DESIGN.md`](../docs/EVAL_DESIGN.md)
-> first. It covers the quality criteria every measure must pass, the
-> end-state-first design procedure, and the Outcome/Quality/Process/Guard
-> tier hierarchy. This file is the operator's guide; that file is the
-> design framework.
+> **Designing a new scenario or measure?** The design framework lives in
+> the [`omniagents-eval-creator`](https://github.com/.../omniagents-eval-creator)
+> skill (typically at `~/code/skills/skills/omniagents-eval-creator/`).
+> See `references/eval_design.md` in the skill for the quality criteria,
+> end-state-first design procedure, and Outcome/Quality/Process/Guard
+> tier hierarchy. This file is the operator's guide; the skill is the
+> design framework. Trigger the skill via Claude ("write me an eval
+> for X") and it walks you through.
 
 ---
 
@@ -150,83 +153,17 @@ the workspace filesystem).
 
 ---
 
-# Methodology — read this before designing experiments
+# Methodology
 
-The whole point of the eval framework is to give you *measurable* impact
-per intervention. Treat each change as a controlled experiment.
+The design framework — quality criteria, end-state-first design, tier
+hierarchy, intervention discipline (one lever per round, skill-first),
+variance handling, anti-patterns — lives in the omniagents-eval-creator
+skill at `references/eval_design.md`. Read that before designing
+experiments. The two rules below are omniagents-framework-specific and
+stay here because they're about *operating* the harness, not designing
+within it.
 
-## 1. Establish a baseline rate over N runs
-
-A single run is noise, not signal. Run the unmodified scenario `N=5`
-times to get a *failure rate per measure*. Without a baseline rate,
-"I made a change and it passed" tells you nothing. `N=5` is enough to
-distinguish a fundamental fix from baseline noise; if you're tempted to
-go to `N=10`, the intervention is probably weak.
-
-## 2. Change exactly one lever per round
-
-If you change the system prompt AND add a skill AND tweak a measure, you
-can't tell which one moved the needle. Always isolate. Re-run with the
-same `N` to compare rates head-to-head.
-
-Don't pre-stack interventions ("I'll add A and B in case A isn't
-enough") — that's the confounding mistake. Propose A, measure A, decide
-on B based on data.
-
-## 3. Walk the intervention hierarchy
-
-When an eval surfaces a failure mode, propose interventions in this
-strict order. Don't skip levels because the principle "feels universal."
-
-1. **Extend an existing skill?** Read the skill's description and
-   contents. Check whether the failure falls within its declared scope.
-   If yes, iterate the skill text. If the skill is adjacent but focused
-   elsewhere (e.g. `debug` is about diagnosis, not the fix loop), skip
-   to step 2.
-
-2. **Create a new skill?** If the failure is workflow-specific but no
-   existing skill claims that scope, write a new focused skill. New
-   skills should chain naturally with adjacent ones (`debug` → `bugfix`
-   is a clean composition). Keep each skill's scope narrow.
-
-3. **System prompt as last resort.** Only refactor a principle into the
-   system prompt when (a) it has shown up in 3+ unrelated workflows AND
-   (b) the eval suite is green. System-prompt changes are cross-cutting,
-   bloat the universal context, and are hard to test in isolation.
-
-The default reflex should be "extend or create a skill," not "add to
-the system prompt." Skill proliferation is fine; system prompt bloat is
-not.
-
-## 4. Never propose "stronger user input" as the fix
-
-Real users (and tickets) are ambiguous. The framework has to absorb
-that. If a failure mode is "the agent didn't follow instruction X,"
-the fix is in the agent's instructions (skill or system prompt), never
-in the scenario's prompt or the seeded ticket. The eval scenario stays
-representative of real-world ambiguity.
-
-## 5. Measure outcomes, not process steps
-
-`bug_caught_by_tests` (does the agent's regression test catch the bug?)
-is a robust outcome measure. "Did the agent run pytest before the fix?"
-is a brittle process measure — different agents will use different
-commands, intermediate steps may legitimately vary, false positives and
-negatives multiply.
-
-Process-level signals (skill activation, tool-call counts, ticket
-moves) are useful as *cross-tab variables* — they help you understand
-*why* the outcome moved or didn't — but they should not be the success
-criterion of an experiment.
-
-## 6. Beware small-N correlations
-
-At `N=5` a 2/2 vs 1/3 cross-tab is not a real correlation. Don't make
-strong claims like "skill activation drives the outcome" from a single
-small sample. If a cross-tab pattern looks striking, run again before
-building a hypothesis on it.
-
-## 7. Don't narrow-scope omniagents framework changes
+## Don't narrow-scope omniagents framework changes
 
 If you're modifying behavior in the eval pipeline (e.g. adding a field
 to result dicts, changing how something is loaded), there are **four
@@ -243,7 +180,7 @@ Before changing one, grep the eval module for the affected primitive
 `run_measures`, etc.) and treat the change as "factor a helper or apply
 to all four," not "edit the runner I happen to be looking at."
 
-## 8. Don't reinvent — read omniagents source first
+## Don't reinvent — read omniagents source first
 
 The framework records a lot more than its CLI surfaces:
 
@@ -261,6 +198,11 @@ already exists. The gap is usually *discoverability*, not data.
 
 ## Existing custom measures (in `measures.py`)
 
+Project-specific measures registered in `evaluations/measures.py`. For
+generic measure patterns by verifier shape (deterministic / threshold /
+subprocess / revert+rerun / tool-call-pattern / oracle), see the skill's
+`references/measures_catalog.md`.
+
 Outcome measures (success criteria for the autopilot scenario):
 - `db_row_exists` — generic SQL row check against the env-staged db
 - `command_in_workspace_succeeds` — runs a shell command in the
@@ -273,8 +215,3 @@ Process / workflow measures (cross-tab variables, not gates):
 - `mcp_used_to_discover_ticket`, `ticket_moved_through_pipeline`
 - `no_remote_operations`, `no_test_disabling`, `scope_respected`
 - `<skill_name>_skill_activated` — one per tracked skill
-
-When adding a new measure: prefer **outcome-based** (verify the world
-state, not the action sequence). When adding a process measure, frame
-it as *observation* (track activation rate / tool counts) rather than
-*requirement* (must call X before Y).
