@@ -53,7 +53,7 @@ class StratifiedBatchSampler:
             return [self.rng.choice(pool) for _ in range(k)]
         return self.rng.sample(pool, k)
 
-    def next_minibatch_indices(self, trainset_size: int, iteration: int) -> list[int]:
+    def _build_minibatch(self) -> list[int]:
         if not self.pos_idxs or not self.neg_idxs:
             batch = self._sample(self.pos_idxs or self.neg_idxs, self.minibatch_size)
             self.rng.shuffle(batch)
@@ -73,3 +73,15 @@ class StratifiedBatchSampler:
         batch = pos_part + neg_part
         self.rng.shuffle(batch)
         return batch
+
+    def next_minibatch_ids(self, loader: Any, state: Any) -> list[int]:
+        """gepa >= 0.1.x BatchSampler protocol.
+
+        Returns a list of DataIds (here, integer indices into the loader's
+        ordered universe). The loader and state args are unused — sampling
+        operates on the positives/negatives indexed at construction time."""
+        return self._build_minibatch()
+
+    def next_minibatch_indices(self, trainset_size: int, iteration: int) -> list[int]:
+        """Legacy gepa < 0.1.x API. Kept as an alias for backwards compat."""
+        return self._build_minibatch()

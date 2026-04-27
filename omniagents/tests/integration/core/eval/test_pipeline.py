@@ -149,7 +149,8 @@ def test_pipeline_executes_multiple_judges_per_scenario(tmp_path, monkeypatch):
     assert sorted(run["metadata"].keys()) == ["accuracy", "completeness"]
     for measure in run["measures"]:
         assert measure["passed"] is True
-        assert measure["judge_keys"] == ["accuracy", "completeness"]
+        # ctx.metadata always includes "scenario" so measures can read ctx.expect/ctx.scenario
+        assert measure["judge_keys"] == ["accuracy", "completeness", "scenario"]
 
 
 def test_pipeline_judge_selection_modes(tmp_path, monkeypatch):
@@ -249,17 +250,19 @@ def test_pipeline_judge_selection_modes(tmp_path, monkeypatch):
 
     runs_by_id = {run["scenario_config"]["id"]: run for run in result["runs"]}
 
+    # ctx.metadata always includes "scenario" so measures can read ctx.expect/ctx.scenario,
+    # but the run's "metadata" field still excludes it (keeps backward-compat with consumers).
     auto_run = runs_by_id["auto"]
     assert sorted(auto_run["metadata"].keys()) == ["consistency", "quality"]
     for measure in auto_run["measures"]:
-        assert measure["judge_keys"] == ["consistency", "quality"]
+        assert measure["judge_keys"] == ["consistency", "quality", "scenario"]
 
     none_run = runs_by_id["none"]
     assert none_run["metadata"] == {}
     for measure in none_run["measures"]:
-        assert measure["judge_keys"] == []
+        assert measure["judge_keys"] == ["scenario"]
 
     explicit_run = runs_by_id["explicit"]
     assert sorted(explicit_run["metadata"].keys()) == ["custom", "quality"]
     for measure in explicit_run["measures"]:
-        assert measure["judge_keys"] == ["custom", "quality"]
+        assert measure["judge_keys"] == ["custom", "quality", "scenario"]

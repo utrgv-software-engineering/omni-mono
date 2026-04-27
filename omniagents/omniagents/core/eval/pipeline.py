@@ -172,7 +172,8 @@ def _collect_judges_for_scenario(
     if not isinstance(judges_cfg, dict):
         judges_cfg = {}
 
-    measures = list(scenario.get("measures") or [])
+    from omniagents.core.eval.measure_tiers import measure_names
+    measures = measure_names(scenario.get("measures"))
     derived = _derive_judge_keys_from_measures(measures)
 
     wanted = scenario.get("judges", "auto")
@@ -515,16 +516,28 @@ async def _run_scenario(
             else []
         )
 
-        measures = scenario.get("measures") or []
-        metadata = await _run_judges(
+        from omniagents.core.eval.measure_tiers import parse_measures, tag_results
+        measures, tier_by_name = parse_measures(scenario.get("measures"))
+        judge_metadata = await _run_judges(
             Path(agent_yaml), eval_cfg, scenario, history, eval_dir=eval_dir
         )
+        # Two separate metadata dicts (see core/eval/multi_turn.py for the same split):
+        # - ctx_metadata includes the scenario so EvalContext.scenario / .expect resolve.
+        # - result_metadata is what we return in the run dict; it stays as just judge
+        #   results (callers check this dict's shape, e.g. tests/integration/core/eval/).
+        ctx_metadata: Dict[str, Any] = {
+            "scenario": scenario,
+            **judge_metadata,
+        }
+        result_metadata: Dict[str, Any] = dict(judge_metadata)
         if run_error_payload is not None:
-            metadata.setdefault("agent_error", run_error_payload)
+            ctx_metadata.setdefault("agent_error", run_error_payload)
+            result_metadata.setdefault("agent_error", run_error_payload)
         ctx = build_eval_context(
-            history=history, tools=spec.available_tools, metadata=metadata
+            history=history, tools=spec.available_tools, metadata=ctx_metadata
         )
         measures_out = run_measures(ctx, measures=measures) if measures else []
+        tag_results(measures_out, tier_by_name)
         if run_error_payload is not None:
             err_info = run_error_payload.get("error")
             if isinstance(err_info, dict):
@@ -543,6 +556,7 @@ async def _run_scenario(
                     "passed": False,
                     "reason": reason,
                     "details": details,
+                    "tier": "outcome",
                 }
             )
 
@@ -552,6 +566,15 @@ async def _run_scenario(
             stream_result=stream_telemetry,
         )
 
+        from .transcripts import export_transcript, resolve_project_root
+
+        transcript_path = export_transcript(
+            history,
+            scenario,
+            project_root=project_root or resolve_project_root(agent_yaml),
+            session_id=session_id,
+        )
+
         return {
             "scenario": scenario.get("name", "scenario"),
             "prompt": prompt,
@@ -559,7 +582,8 @@ async def _run_scenario(
             "final_assistant_text": final_assistant_text(history),
             "measures": measures_out,
             "history_len": len(history),
-            "metadata": metadata,
+            "metadata": result_metadata,
+            "transcript_path": transcript_path,
             **telemetry,
         }
     finally:
@@ -593,11 +617,18 @@ async def run_evaluation_async(
     metrics_cfg = eval_cfg.get("metrics") or []
     fc_map = _failure_category_map(eval_cfg)
 
+    from omniagents.core.eval.measure_tiers import (
+        DEFAULT_TIER,
+        measure_names,
+        parse_measures,
+    )
+
     original_scenarios_count = len(scenarios or [])
     if scenarios:
         for sc in scenarios:
             try:
-                sc_measures = list(sc.get("measures") or [])
+                raw = sc.get("measures")
+                flat, tier_by_name = parse_measures(raw)
                 sc_fc = sc.get("failure_categories") or []
                 fc_names: List[str] = []
                 for fc in sc_fc:
@@ -609,21 +640,26 @@ async def run_evaluation_async(
                             fc_names.append(str(nm))
                 for nm in fc_names:
                     for m in fc_map.get(nm, []):
-                        sc_measures.append(m)
-                if sc_measures:
-                    seen = set()
-                    dedup: List[str] = []
-                    for m in sc_measures:
-                        s = str(m)
-                        if s not in seen:
-                            seen.add(s)
-                            dedup.append(s)
-                    sc["measures"] = dedup
+                        sname = str(m)
+                        if sname not in tier_by_name:
+                            flat.append(sname)
+                            tier_by_name[sname] = DEFAULT_TIER
+                if flat:
+                    if isinstance(raw, dict):
+                        # Preserve the tier-keyed shape so downstream
+                        # tier-aware reads still work.
+                        rebuilt: Dict[str, List[str]] = {}
+                        for n in flat:
+                            t = tier_by_name.get(n, DEFAULT_TIER)
+                            rebuilt.setdefault(t, []).append(n)
+                        sc["measures"] = rebuilt
+                    else:
+                        sc["measures"] = flat
             except Exception:
                 continue
 
     if not include_unmeasured:
-        scenarios = [sc for sc in scenarios if (sc.get("measures") or [])]
+        scenarios = [sc for sc in scenarios if measure_names(sc.get("measures"))]
     included_scenarios_count = len(scenarios)
     skipped_unmeasured_count = max(
         0, original_scenarios_count - included_scenarios_count
@@ -637,7 +673,7 @@ async def run_evaluation_async(
     unknown_counts: Dict[str, int] = {}
     unknown_scenarios = 0
     for sc in scenarios:
-        sc_ms = [str(m) for m in (sc.get("measures") or [])]
+        sc_ms = measure_names(sc.get("measures"))
         unknown = [m for m in sc_ms if m not in _REG_MEASURES]
         if unknown:
             unknown_scenarios += 1
@@ -731,7 +767,8 @@ def _needs_extended_pipeline(eval_cfg: Dict[str, Any]) -> bool:
     Extended pipeline is needed for:
     - Environment configuration
     - Synthetic scenarios (type: synthetic)
-    - Scripted multi-turn scenarios (prompts: [...])
+    - Scripted multi-turn scenarios (prompts: [...], max_continuations,
+      until_sentinel, continuation_prompt)
     """
     if eval_cfg.get("environment"):
         return True
@@ -740,8 +777,15 @@ def _needs_extended_pipeline(eval_cfg: Dict[str, Any]) -> bool:
         # Synthetic scenario
         if sc.get("type") == "synthetic":
             return True
-        # Scripted multi-turn
+        # Scripted multi-turn — fixed list or any of the loop knobs
         if "prompts" in sc and isinstance(sc["prompts"], list):
+            return True
+        if (
+            sc.get("max_continuations")
+            or sc.get("until_sentinel")
+            or sc.get("until_sql")
+            or sc.get("continuation_prompt")
+        ):
             return True
 
     return False

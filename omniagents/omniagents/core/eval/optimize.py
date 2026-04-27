@@ -30,6 +30,9 @@ def optimize_agent_from_project(
     resume: bool,
     apply: bool,
     log_hook: Optional[Callable[[str], None]] = None,
+    train_select: str | None = None,
+    dev_select: str | None = None,
+    test_select: str | None = None,
 ) -> Dict[str, Any]:
     try:
         import gepa  # type: ignore
@@ -38,7 +41,7 @@ def optimize_agent_from_project(
             "This command requires the 'gepa' package. Install with: pip install gepa[full]"
         )
     from omniagents.core.eval.gepa_agent_adapter import OmniAgentsAgentAdapter
-    from omniagents.core.eval.loader import load_eval_config
+    from omniagents.core.eval.loader import load_eval_config, filter_scenarios
     from omniagents.core.project.apply import apply_agent_instructions
 
     _eval_config = load_eval_config(
@@ -54,6 +57,28 @@ def optimize_agent_from_project(
         base = base.parent
     cat = (category or "").strip()
 
+    # Selector-based split resolution (evaluations/-native flow). When any of
+    # --train-select / --dev-select / --test-select is provided, the
+    # scenarios for that role come from the project's scenarios graph filtered
+    # by the selector — no external split files needed. Per-role selectors
+    # short-circuit per-role file resolution; mixed file/selector usage is
+    # supported.
+    using_any_selector = bool(
+        (train_select or "").strip()
+        or (dev_select or "").strip()
+        or (test_select or "").strip()
+    )
+
+    def _filter_by_selector(selector: str | None) -> Optional[List[Dict[str, Any]]]:
+        if not selector or not str(selector).strip():
+            return None
+        all_scenarios = list(_eval_config.config.get("scenarios") or [])
+        return list(filter_scenarios(all_scenarios, str(selector), None))
+
+    train_via_select = _filter_by_selector(train_select)
+    dev_via_select = _filter_by_selector(dev_select)
+    test_via_select = _filter_by_selector(test_select)
+
     def _resolve_split(which, explicit):
         if explicit:
             p = _P(explicit)
@@ -68,7 +93,8 @@ def optimize_agent_from_project(
         ).resolve()
         return candidate if candidate.exists() else None
 
-    tr_path = (
+    # Resolve file paths only for roles not covered by a selector.
+    tr_path = None if train_via_select is not None else (
         _resolve_split("train", train_file)
         if (cat or not train_file)
         else (
@@ -77,14 +103,14 @@ def optimize_agent_from_project(
             else (base / train_file).resolve()
         )
     )
-    dv_path = (
+    dv_path = None if dev_via_select is not None else (
         _resolve_split("dev", dev_file)
         if (cat or not dev_file)
         else (
             _P(dev_file) if _P(dev_file).is_absolute() else (base / dev_file).resolve()
         )
     )
-    ts_path = (
+    ts_path = None if test_via_select is not None else (
         _resolve_split("test", test_file)
         if (cat or not test_file)
         else (
@@ -94,10 +120,12 @@ def optimize_agent_from_project(
         )
     )
 
-    if not any([tr_path, dv_path, ts_path]):
+    # Only raise the "missing splits" error when NO selector was used at all
+    # AND no file path resolved successfully.
+    if not using_any_selector and not any([tr_path, dv_path, ts_path]):
         if not any([train_file, dev_file, test_file]) and not ((name or "").strip()):
             raise SystemExit(
-                "Could not locate scenario splits for category '{cat}'. Provide --name <scenario_set> or explicit split files.".format(
+                "Could not locate scenario splits for category '{cat}'. Provide --name <scenario_set>, explicit split files, or --train-select/--dev-select/--test-select.".format(
                     cat=cat or "<unknown>"
                 )
             )
@@ -118,7 +146,7 @@ def optimize_agent_from_project(
                 )
             )
         raise SystemExit(
-            "Could not locate scenario splits. Provide --name <scenario_set> or explicit split files."
+            "Could not locate scenario splits. Provide --name <scenario_set>, explicit split files, or --train-select/--dev-select/--test-select."
         )
 
     reference_split_path = dv_path or tr_path or ts_path
@@ -128,9 +156,23 @@ def optimize_agent_from_project(
         items = [x for x in (y.get("scenarios") or []) if isinstance(x, dict)]
         return items
 
-    train_raw = _read_scenarios(tr_path) if tr_path and tr_path.exists() else []
-    dev_raw = _read_scenarios(dv_path) if dv_path and dv_path.exists() else []
-    test_raw = _read_scenarios(ts_path) if ts_path and ts_path.exists() else []
+    def _resolve_role(via_select, path):
+        if via_select is not None:
+            # Scenarios sourced from the project graph default to label=True
+            # so the stratified sampler treats them as positives. Explicit
+            # `label: false` on the source scenario is preserved.
+            out: List[Dict[str, Any]] = []
+            for sc in via_select:
+                sc2 = dict(sc)
+                if "label" not in sc2:
+                    sc2["label"] = True
+                out.append(sc2)
+            return out
+        return _read_scenarios(path) if path and path.exists() else []
+
+    train_raw = _resolve_role(train_via_select, tr_path)
+    dev_raw = _resolve_role(dev_via_select, dv_path)
+    test_raw = _resolve_role(test_via_select, ts_path)
     if not cat:
         try:
             for it in dev_raw or train_raw or test_raw:
@@ -147,15 +189,18 @@ def optimize_agent_from_project(
     try:
         from omniagents.core.eval.pipeline import _failure_category_map as _fc_map_guard
 
-        cfg_all_for_guard = (
-            yaml.safe_load(_P(compiled_cfg_path).read_text(encoding="utf-8")) or {}
-        )
-        ev_guard = cfg_all_for_guard.get("evaluation") or {}
+        # Read failure_categories from the merged eval config (which already
+        # incorporated evaluations/evaluation.yml during load_eval_config),
+        # not from the agent YAML directly. The agent YAML never declares
+        # `evaluation` in this scaffold.
+        ev_guard = _eval_config.config or {}
         measures_for_cat = list((_fc_map_guard(ev_guard) or {}).get(cat) or [])
         if not measures_for_cat:
             raise SystemExit(
-                f"Failure category '{cat}' has no measures configured in evaluations/evaluation.yml. Add measures to enable scoring."
+                f"Failure category '{cat}' has no measures configured in evaluations/evaluation.yml. Add a 'failure_categories' block under 'evaluation:' that maps '{cat}' to one or more measure names."
             )
+    except SystemExit:
+        raise
     except Exception:
         pass
 
@@ -228,14 +273,16 @@ def optimize_agent_from_project(
     if out_dir:
         outp = _P(out_dir)
         base_run = outp if outp.is_absolute() else (base / outp).resolve()
-    else:
-        if reference_split_path is None:
-            raise SystemExit(
-                "No scenario splits available; provide --name <scenario_set> or explicit split files."
-            )
+    elif reference_split_path is not None:
         base_run = (
             reference_split_path.parents[2] / "agent_optimize" / (cat or "category")
         )
+    else:
+        # Selector-based flow: no split files exist on disk. Land artifacts
+        # under the project's evaluations dir by default.
+        base_run = (
+            _eval_config.eval_dir / "agent_optimize" / (cat or "category")
+        ).resolve()
     if resume:
         run_dir = base_run
     else:
@@ -266,6 +313,7 @@ def optimize_agent_from_project(
     try:
         from gepa.core.engine import GEPAEngine  # type: ignore
         from gepa.core.result import GEPAResult  # type: ignore
+        from gepa.core.data_loader import ensure_loader  # type: ignore
         from gepa.logging.experiment_tracker import create_experiment_tracker  # type: ignore
         from gepa.strategies.candidate_selector import ParetoCandidateSelector  # type: ignore
         from gepa.strategies.component_selector import RoundRobinReflectionComponentSelector  # type: ignore
@@ -364,9 +412,12 @@ def optimize_agent_from_project(
         stop_callback = _progress_stop
     else:
         stop_callback = base_stop_callback
+    # gepa >= 0.1.x expects the trainset wrapped as a DataLoader so the
+    # proposer can call .fetch(ids) and len() on it.
+    trainset_loader = ensure_loader(trainset)
     reflective_proposer = ReflectiveMutationProposer(
         logger=logger,
-        trainset=trainset,
+        trainset=trainset_loader,
         adapter=adapter,
         candidate_selector=candidate_selector,
         module_selector=module_selector,
@@ -377,24 +428,25 @@ def optimize_agent_from_project(
         reflection_lm=str(reflection_model or "gpt-4.1"),
     )
 
-    def _evaluator(inputs, prog):
-        ev = adapter.evaluate(inputs, prog, capture_traces=False)
-        return ev.outputs, ev.scores
-
     try:
         adapter.debug_dir = run_dir / "debug"
     except Exception:
         pass
 
+    # gepa >= 0.1.x takes the adapter directly (and builds its own internal
+    # evaluator that calls adapter.evaluate). frontier_type='instance' is the
+    # scenario-level Pareto frontier — the closest analogue to the older API
+    # that took only (outputs, scores).
     engine = GEPAEngine(
+        adapter=adapter,
         run_dir=str(run_dir),
-        evaluator=_evaluator,
         valset=devset,
         seed_candidate=seed_candidate,
         perfect_score=1,
         seed=_seed,
         reflective_proposer=reflective_proposer,
         merge_proposer=None,
+        frontier_type="instance",
         logger=logger,
         experiment_tracker=experiment_tracker,
         track_best_outputs=False,

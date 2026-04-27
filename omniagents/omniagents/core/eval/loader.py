@@ -370,7 +370,8 @@ def filter_scenarios(
                 tags = [str(t) for t in _ensure_list(it.get("tags"))]
                 return any(fnmatch.fnmatch(t, pat) for t in tags)
             if typ == "measure":
-                ms = [str(m) for m in _ensure_list(it.get("measures"))]
+                from omniagents.core.eval.measure_tiers import measure_names
+                ms = measure_names(it.get("measures"))
                 return any(fnmatch.fnmatch(m, pat) for m in ms)
         return fnmatch.fnmatch(str(it.get("name") or ""), expr)
 

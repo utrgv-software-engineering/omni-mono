@@ -186,7 +186,12 @@ class OmniAgentsAgentAdapter:
             pass
         return load_agent_spec_from_yaml(str(self.compiled_yaml))
 
-    async def _run_once(self, instructions: str, prompt: str) -> Dict[str, Any]:
+    async def _run_once(
+        self,
+        instructions: str,
+        prompt: str,
+        scenario: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         spec = self._load_spec()
         spec.use_safe_agent = False
         if self.agent_max_turns is not None:
@@ -227,7 +232,14 @@ class OmniAgentsAgentAdapter:
                     await maybe_coro  # type: ignore[arg-type]
 
         eval_cfg = self._eval_cfg_dict
-        scen = {"measures": list(self.category_measures)}
+        # Build a scoring scenario that includes the original scenario's
+        # `judges` and `expect` fields so judges configured per-scenario
+        # actually run (they're keyed by name, not by measure suffix).
+        scen: Dict[str, Any] = {"measures": list(self.category_measures)}
+        if isinstance(scenario, dict):
+            for key in ("judges", "expect", "name", "id", "tags"):
+                if key in scenario:
+                    scen[key] = scenario[key]
         try:
             metadata = await _run_judges(
                 self.compiled_yaml,
@@ -238,6 +250,10 @@ class OmniAgentsAgentAdapter:
             )
         except Exception:
             metadata = {}
+        # Surface the scenario in metadata so measures that look up
+        # `ctx.scenario.expect` (e.g. for ground-truth comparison) work.
+        if isinstance(scenario, dict):
+            metadata = {**metadata, "scenario": scenario}
         ctx = build_eval_context(
             history=history, tools=spec.available_tools, metadata=metadata
         )
@@ -321,11 +337,11 @@ class OmniAgentsAgentAdapter:
                             with studio_trace(
                                 self.workflow_name, group_id=gid, metadata=meta
                             ):
-                                res = await self._run_once(instructions, prompt)
+                                res = await self._run_once(instructions, prompt, scenario=item)
                         except Exception:
-                            res = await self._run_once(instructions, prompt)
+                            res = await self._run_once(instructions, prompt, scenario=item)
                     else:
-                        res = await self._run_once(instructions, prompt)
+                        res = await self._run_once(instructions, prompt, scenario=item)
                 except Exception as e:
                     fail_entry = {"name": "execution", "reason": str(e)}
                     outs.append(
@@ -366,6 +382,11 @@ class OmniAgentsAgentAdapter:
                             "measures": measures,
                             "failures": failures,
                             "violation": violation,
+                            # Full conversation history (user / assistant /
+                            # function_call / function_call_output /
+                            # reasoning) so the reflective dataset can
+                            # surface tool-call patterns to the reflection LLM.
+                            "history": res.get("history") or [],
                         }
                     )
                 else:
@@ -395,6 +416,7 @@ class OmniAgentsAgentAdapter:
                     "final_assistant_text": o.get("final_assistant_text"),
                     "failures": o.get("failures"),
                     "violation": o.get("violation"),
+                    "history": o.get("history") or [],
                 }
                 if "measures" in o:
                     tr["measures"] = o.get("measures")
@@ -471,10 +493,14 @@ class OmniAgentsAgentAdapter:
             pass
 
         class _EvalBatch:
-            def __init__(self, outputs, scores, trajectories):
+            def __init__(self, outputs, scores, trajectories, objective_scores=None):
                 self.outputs = outputs
                 self.scores = scores
                 self.trajectories = trajectories
+                # gepa >= 0.1.x asks adapters for objective_scores in addition
+                # to scalar scores. The instance-level frontier doesn't need
+                # them, so None is acceptable.
+                self.objective_scores = objective_scores
 
         return _EvalBatch(outputs=outputs, scores=scores, trajectories=trajectories)
 
@@ -486,6 +512,109 @@ class OmniAgentsAgentAdapter:
             return p.read_text(encoding="utf-8")
         except Exception:
             return ""
+
+    def _format_tool_trace(
+        self, history: List[Dict[str, Any]], max_result_chars: int = 800
+    ) -> str:
+        """Render a conversation history into a readable trace for the
+        reflection LLM. Tool calls and tool results are interleaved with the
+        agent's reasoning and final text. Tool result outputs are truncated
+        to ``max_result_chars`` to keep token usage bounded.
+
+        The output looks like:
+
+            ASSISTANT REASONING: <summary>
+
+            TOOL CALL #1: web_search
+              args: {"query": "..."}
+
+            TOOL RESULT #1 (first 800 chars):
+            <output>
+
+            ASSISTANT FINAL: <text>
+        """
+        if not history:
+            return ""
+        # Identify the index of the LAST assistant turn so we can skip it
+        # (the caller renders the final assistant text in its own field;
+        # rendering it here would just duplicate it).
+        last_assistant_idx = -1
+        for idx, item in enumerate(history):
+            if not isinstance(item, dict):
+                continue
+            if item.get("role") == "assistant":
+                content = item.get("content")
+                text = ""
+                if isinstance(content, list):
+                    for c in content:
+                        if isinstance(c, dict) and c.get("type") == "output_text":
+                            text += c.get("text") or ""
+                elif isinstance(content, str):
+                    text = content
+                if text.strip():
+                    last_assistant_idx = idx
+        lines: List[str] = []
+        tool_idx = 0
+        for idx, item in enumerate(history):
+            if not isinstance(item, dict):
+                continue
+            role = item.get("role")
+            it_type = item.get("type")
+            if it_type == "function_call":
+                tool_idx += 1
+                name = item.get("name") or "<unknown>"
+                args = item.get("arguments") or ""
+                if isinstance(args, str) and len(args) > 400:
+                    args = args[:400] + " …(truncated)"
+                lines.append(f"TOOL CALL #{tool_idx}: {name}")
+                lines.append(f"  args: {args}")
+            elif it_type == "function_call_output":
+                output = item.get("output") or ""
+                if not isinstance(output, str):
+                    try:
+                        output = json.dumps(output, default=str)
+                    except Exception:
+                        output = str(output)
+                if len(output) > max_result_chars:
+                    output = output[:max_result_chars] + " …(truncated)"
+                lines.append(f"TOOL RESULT #{tool_idx} (first {max_result_chars} chars):")
+                lines.append(output)
+            elif it_type == "reasoning":
+                summary = item.get("summary")
+                if isinstance(summary, list):
+                    rendered = "\n".join(
+                        s.get("text") if isinstance(s, dict) else str(s)
+                        for s in summary
+                    )
+                else:
+                    rendered = str(summary or "")
+                if rendered.strip():
+                    lines.append(f"ASSISTANT REASONING: {rendered.strip()[:600]}")
+            elif role == "assistant":
+                # Skip the final assistant turn — caller renders it via the
+                # final_assistant_text field. Render only intermediate
+                # assistant turns (interleaved with tool calls).
+                if idx == last_assistant_idx:
+                    continue
+                content = item.get("content")
+                text = ""
+                if isinstance(content, list):
+                    for c in content:
+                        if isinstance(c, dict) and c.get("type") == "output_text":
+                            text += c.get("text") or ""
+                elif isinstance(content, str):
+                    text = content
+                if text.strip():
+                    snippet = text.strip()
+                    if len(snippet) > 400:
+                        snippet = snippet[:400] + " …(truncated)"
+                    lines.append(f"ASSISTANT (intermediate): {snippet}")
+            elif role == "user":
+                # User turns are already shown via Inputs.text in the
+                # reflective item — skip to avoid duplication.
+                continue
+            lines.append("")
+        return "\n".join(lines).strip()
 
     def _format_dataset_md(self, items: List[Dict[str, Any]]) -> str:
         def render_value(value, level=3):
@@ -794,11 +923,20 @@ class OmniAgentsAgentAdapter:
                     fb = "All measures passed. Reinforce guidance that preserves compliant behavior."
                     if measure_summaries:
                         fb = fb + " Measure details: " + " | ".join(measure_summaries)
+                outputs_dict: Dict[str, Any] = {
+                    "final_assistant_text": t.get("final_assistant_text")
+                }
+                # Include the tool-call trace when the agent has tools so the
+                # reflection LLM can reason about tool usage patterns
+                # (search before fetch, redundant calls, missed lookups).
+                history = t.get("history") or []
+                if history:
+                    trace = self._format_tool_trace(history)
+                    if trace:
+                        outputs_dict["tool_trace"] = trace
                 d = {
                     "Inputs": {"text": t.get("prompt")},
-                    "Generated Outputs": {
-                        "final_assistant_text": t.get("final_assistant_text")
-                    },
+                    "Generated Outputs": outputs_dict,
                     "Feedback": fb,
                 }
                 items.append(d)

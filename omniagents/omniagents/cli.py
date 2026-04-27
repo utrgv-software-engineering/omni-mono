@@ -891,6 +891,24 @@ def main():
         help="Explicit path to a test split YAML",
     )
     agent_opt.add_argument(
+        "--train-select",
+        dest="train_select",
+        default=None,
+        help="Selector for train scenarios (e.g. 'tag:train'). Loads from the project's scenarios graph instead of a file. Can be mixed with --dev-file/--test-file etc.",
+    )
+    agent_opt.add_argument(
+        "--dev-select",
+        dest="dev_select",
+        default=None,
+        help="Selector for dev scenarios (e.g. 'tag:dev'). Loads from the project's scenarios graph instead of a file.",
+    )
+    agent_opt.add_argument(
+        "--test-select",
+        dest="test_select",
+        default=None,
+        help="Selector for test scenarios (e.g. 'tag:test'). Loads from the project's scenarios graph instead of a file.",
+    )
+    agent_opt.add_argument(
         "--positives-only",
         dest="positives_only",
         action="store_true",
@@ -947,15 +965,15 @@ def main():
         "--apply",
         dest="apply",
         action="store_true",
-        help="Apply optimized instructions back to the agent source with backup (default)",
+        help="Overwrite the agent's instructions file with the optimized text. Off by default — review the run dir's agent_override.yml first, then re-run with --apply (or copy by hand).",
     )
     _agent_apply_group.add_argument(
         "--no-apply",
         dest="apply",
         action="store_false",
-        help="Do not apply optimized changes back to the agent source",
+        help="Do not apply optimized changes back to the agent source (default).",
     )
-    agent_opt.set_defaults(apply=True)
+    agent_opt.set_defaults(apply=False)
 
     judge_parser = subparsers.add_parser("judge", help="Judge utilities")
     judge_sub = judge_parser.add_subparsers(dest="judge_cmd")
@@ -1143,15 +1161,15 @@ def main():
         "--apply",
         dest="apply",
         action="store_true",
-        help="Apply optimized instructions/template back to source files with backups (default)",
+        help="Overwrite the judge's instructions/template files with the optimized text. Off by default — review the run dir's <judge>_override.yml first, then re-run with --apply (or copy by hand).",
     )
     _judge_apply_group2.add_argument(
         "--no-apply",
         dest="apply",
         action="store_false",
-        help="Do not apply optimized changes back to source files",
+        help="Do not apply optimized changes back to source files (default).",
     )
-    judge_opt.set_defaults(apply=True)
+    judge_opt.set_defaults(apply=False)
 
     args = parser.parse_args()
 
@@ -1573,7 +1591,10 @@ def main():
                     seed=int(getattr(args, "seed") or 0),
                     output_dir=(str(getattr(args, "output") or "") or None),
                     resume=bool(getattr(args, "resume", False)),
-                    apply=bool(getattr(args, "apply", True)),
+                    apply=bool(getattr(args, "apply", False)),
+                    train_select=(str(getattr(args, "train_select", "") or "") or None),
+                    dev_select=(str(getattr(args, "dev_select", "") or "") or None),
+                    test_select=(str(getattr(args, "test_select", "") or "") or None),
                 )
                 return
             except SystemExit:
@@ -1772,11 +1793,14 @@ def main():
                         scenario_name=name_arg or "default",
                     )
                     print(f"Wrote results: {final_out}")
+                from omniagents.core.eval.measure_tiers import gates_ci, DEFAULT_TIER
                 checks = []
                 runs = data.get("runs", []) or []
                 metrics = data.get("metrics", []) or []
                 measure_total = 0
                 measure_failed = 0
+                measure_failed_gating = 0
+                measure_failed_diagnostic = 0
                 for r in runs or []:
                     scen = r.get("scenario")
                     sc_cfg = r.get("scenario_config") or {}
@@ -1786,9 +1810,17 @@ def main():
                         measure_total += 1
                         pv = m.get("passed")
                         passed = bool(pv) if pv is not None else None
+                        tier = m.get("tier") or DEFAULT_TIER
+                        is_gating = gates_ci(tier)
                         if passed is False:
                             measure_failed += 1
+                            if is_gating:
+                                measure_failed_gating += 1
+                            else:
+                                measure_failed_diagnostic += 1
                         desc = f"Scenario {scen}: measure {m.get('name')}"
+                        if not is_gating:
+                            desc = f"{desc} [{tier}]"
                         reason = m.get("reason")
                         checks.append(
                             {
@@ -1801,6 +1833,8 @@ def main():
                                 "assistant": r.get("final_assistant_text") or "",
                                 "scenario_id": sid,
                                 "scenario_name": sname,
+                                "tier": tier,
+                                "gates_ci": is_gating,
                             }
                         )
                 metrics_failed = 0
@@ -1950,12 +1984,39 @@ def main():
                         f"# Summary: {len(metrics)} metrics, {metrics_failed} failing targets"
                     )
                     print(
-                        f"# Measures: {measure_total} total, {measure_failed} failing"
+                        f"# Measures: {measure_total} total, {measure_failed} failing "
+                        f"({measure_failed_gating} gating, {measure_failed_diagnostic} diagnostic)"
                     )
                     if scen_total is not None:
                         print(
                             f"# Scenarios: included={scen_included} skipped_unmeasured={scen_skipped} total={scen_total}"
                         )
+                        # Loud warning when scenarios are silently dropped because they
+                        # don't declare a `measures: [...]` list. `eval suite run`
+                        # excludes unmeasured scenarios by design (so CI gates on real
+                        # scores), but the default scaffold and ad-hoc scenarios are
+                        # easy to write without measures — and the silent skip leaves
+                        # users staring at an empty result.
+                        if scen_skipped and scen_total and scen_skipped == scen_total:
+                            print(
+                                "# WARNING: every scenario was skipped because none declare a `measures:` list."
+                            )
+                            print(
+                                "#          `eval suite run` only includes scenarios with measures attached."
+                            )
+                            print(
+                                "#          Add `measures: [<measure_name>]` to each scenario in scenarios.yml,"
+                            )
+                            print(
+                                "#          or pass `--include-unmeasured` to run them anyway (no scoring)."
+                            )
+                        elif scen_skipped:
+                            print(
+                                f"# WARNING: {scen_skipped} scenario(s) skipped because they have no `measures:` list."
+                            )
+                            print(
+                                "#          Add `measures: [<measure_name>]` to each, or pass `--include-unmeasured`."
+                            )
                     if um:
                         for k in sorted(um.keys()):
                             try:
@@ -2031,7 +2092,10 @@ def main():
                         print(
                             f"Metrics: {len(metrics)}  Failing targets: {metrics_failed}"
                         )
-                        print(f"Measures: {measure_total}  Failing: {measure_failed}")
+                        print(
+                            f"Measures: {measure_total}  Failing: {measure_failed} "
+                            f"(gating: {measure_failed_gating}, diagnostic: {measure_failed_diagnostic})"
+                        )
                         if scen_total is not None:
                             print(
                                 f"Scenarios: included={scen_included}  Skipped (no measures)={scen_skipped}  Total={scen_total}"
@@ -2050,7 +2114,7 @@ def main():
                             names = ", ".join(disc_list[:10])
                             extra = "" if len(disc_list) <= 10 else ", ..."
                             print(f"Discovered measures: {disc_count} [{names}{extra}]")
-                overall_failed = (metrics_failed > 0) or (measure_failed > 0)
+                overall_failed = (metrics_failed > 0) or (measure_failed_gating > 0)
                 if overall_failed:
                     sys.exit(1)
             except SystemExit:
@@ -2799,7 +2863,7 @@ def main():
                     seed=int(getattr(args, "seed") or 0),
                     output_dir=(str(getattr(args, "output") or "") or None),
                     resume=bool(getattr(args, "resume", False)),
-                    apply=bool(getattr(args, "apply", True)),
+                    apply=bool(getattr(args, "apply", False)),
                 )
                 return
             except SystemExit:
@@ -2853,7 +2917,10 @@ def main():
                     seed=int(getattr(args, "seed") or 0),
                     output_dir=(str(getattr(args, "output") or "") or None),
                     resume=bool(getattr(args, "resume", False)),
-                    apply=bool(getattr(args, "apply", True)),
+                    apply=bool(getattr(args, "apply", False)),
+                    train_select=(str(getattr(args, "train_select", "") or "") or None),
+                    dev_select=(str(getattr(args, "dev_select", "") or "") or None),
+                    test_select=(str(getattr(args, "test_select", "") or "") or None),
                 )
                 return
             except SystemExit:
@@ -3322,7 +3389,7 @@ def main():
                     seed=int(getattr(args, "seed") or 0),
                     output_dir=(str(getattr(args, "output") or "") or None),
                     resume=bool(getattr(args, "resume", False)),
-                    apply=bool(getattr(args, "apply", True)),
+                    apply=bool(getattr(args, "apply", False)),
                 )
                 return
             except SystemExit:

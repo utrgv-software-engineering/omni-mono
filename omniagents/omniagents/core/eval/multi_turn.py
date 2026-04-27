@@ -23,7 +23,7 @@ import inspect
 import logging
 import os
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 
 import yaml
 from agents import RunConfig
@@ -131,6 +131,57 @@ def _build_registries_for_eval(
     return tool_registry, sf_registry
 
 
+def _load_user_mcp_for_eval(
+    compiled_yaml_path: Path,
+    project_root: Path | None = None,
+) -> List[Any]:
+    """Resolve user MCP servers for an eval run.
+
+    Mirrors what ``omniagents.core.project.runtime.load_project`` does for
+    production runs: when ``project.yml`` declares ``allow_user_mcp_servers:
+    true``, load mcp.json from the user-global config dir and the
+    project-local one. The eval pipeline calls ``load_agent_spec_from_yaml``
+    directly and would otherwise skip this entirely.
+
+    Returns an empty list when the project doesn't opt in or when no
+    mcp.json files are found.
+    """
+    cfg_path = Path(compiled_yaml_path).resolve()
+    if project_root is None:
+        project_root = cfg_path.parent
+        if project_root.name == "target":
+            project_root = project_root.parent
+
+    proj_cfg: Dict[str, Any] = {}
+    for candidate in ("project.yml", "project.yaml"):
+        project_yml = project_root / candidate
+        if project_yml.is_file():
+            try:
+                proj_cfg = (
+                    yaml.safe_load(project_yml.read_text(encoding="utf-8")) or {}
+                )
+            except Exception:
+                proj_cfg = {}
+            break
+
+    if not proj_cfg.get("allow_user_mcp_servers"):
+        return []
+
+    try:
+        from omniagents.core.config.user_mcp import load_user_mcp_config
+
+        project_name = proj_cfg.get("name") or project_root.name
+        return list(
+            load_user_mcp_config(
+                project_root=project_root,
+                project_name=str(project_name),
+            )
+        )
+    except Exception as exc:
+        _logger.warning("user MCP config load failed: %s", exc)
+        return []
+
+
 def _get_scenario_type(scenario: Dict[str, Any]) -> str:
     """Determine scenario type from configuration.
 
@@ -141,8 +192,28 @@ def _get_scenario_type(scenario: Dict[str, Any]) -> str:
 
 
 def _is_scripted_multi_turn(scenario: Dict[str, Any]) -> bool:
-    """Check if scenario is scripted multi-turn (has prompts list)."""
-    return "prompts" in scenario and isinstance(scenario["prompts"], list)
+    """Check if scenario is scripted multi-turn.
+
+    True when the scenario opts into any multi-turn behaviour:
+      - ``prompts: [...]``      — a fixed list of user turns
+      - ``max_continuations``   — loop a single prompt up to N turns
+      - ``continuation_prompt`` — a different prompt for repeats
+      - ``until_sentinel``      — early-stop on a substring in the agent's
+                                  last assistant message
+      - ``until_sql``           — early-stop when a SELECT against the
+                                  environment-staged DB returns a row
+    """
+    if "prompts" in scenario and isinstance(scenario["prompts"], list):
+        return True
+    if scenario.get("max_continuations"):
+        return True
+    if scenario.get("until_sentinel"):
+        return True
+    if scenario.get("until_sql"):
+        return True
+    if scenario.get("continuation_prompt"):
+        return True
+    return False
 
 
 async def run_scenario(
@@ -201,10 +272,17 @@ async def run_scenario(
         _tool_reg, _sf_reg = _build_registries_for_eval(
             Path(agent_yaml), project_root=project_root
         )
+        # Honor ``allow_user_mcp_servers`` in project.yml so evals see the
+        # same MCP surface as production. Without this, ``mcp.json`` under
+        # ``$XDG_CONFIG_HOME/<project>/`` is invisible to the agent during
+        # eval runs (which is what blocks WorkspaceEvalEnvironment's
+        # db_fixture mcp.json from reaching the agent).
+        _user_mcp = _load_user_mcp_for_eval(Path(agent_yaml), project_root)
         spec = load_agent_spec_from_yaml(
             agent_yaml,
             tool_registry=_tool_reg if _tool_reg else None,
             server_functions_registry=_sf_reg if _sf_reg else None,
+            user_mcp_servers=_user_mcp if _user_mcp else None,
         )
         spec.use_safe_agent = False
 
@@ -414,10 +492,12 @@ async def _run_scripted_single_turn(
     eval_ctx._environment = env
     eval_ctx._environment_context = context
 
-    measure_names = scenario.get("measures") or []
+    from omniagents.core.eval.measure_tiers import parse_measures, tag_results
+    _measure_names, _tier_by_name = parse_measures(scenario.get("measures"))
     measures_out = (
-        run_measures(eval_ctx, measures=measure_names) if measure_names else []
+        run_measures(eval_ctx, measures=_measure_names) if _measure_names else []
     )
+    tag_results(measures_out, _tier_by_name)
 
     result_metadata = {
         "environment_context": context.data if context else {},
@@ -432,6 +512,15 @@ async def _run_scripted_single_turn(
         stream_result=stream_telemetry,
     )
 
+    from .transcripts import export_transcript, resolve_project_root
+
+    transcript_path = export_transcript(
+        history,
+        scenario,
+        project_root=resolve_project_root(agent_yaml) if agent_yaml else Path.cwd(),
+        session_id=session_id,
+    )
+
     return {
         "scenario": scenario.get("name", "scenario"),
         "type": "scripted",
@@ -442,6 +531,7 @@ async def _run_scripted_single_turn(
         "history_len": len(history),
         "exchanges": 1,
         "metadata": result_metadata,
+        "transcript_path": transcript_path,
         **telemetry,
     }
 
@@ -457,8 +547,53 @@ async def _run_scripted_multi_turn(
     eval_cfg: Optional[Dict[str, Any]] = None,
     agent_yaml: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Run a scripted multi-turn scenario (prompts: [...])."""
-    prompts = scenario["prompts"]  # Required, validated by caller
+    """Run a scripted multi-turn scenario.
+
+    Recognised scenario shapes:
+      - ``prompts: [...]`` — replay each prompt in order, one turn per entry
+      - ``prompt: "..."`` + ``max_continuations: N`` — loop a single prompt
+      - ``continuation_prompt: "..."`` — substituted for any turn beyond the
+        scripted prompts (mirrors the supervisor "initial vs continuation"
+        split)
+      - ``until_sentinel: "..."`` — break early when the agent's last
+        assistant text contains the substring
+    """
+    # Normalise the prompt list. Either ``prompts`` (list) or ``prompt``
+    # (single string) is accepted; any extra turns beyond the scripted
+    # prompts are filled with ``continuation_prompt`` (or the last prompt).
+    if "prompts" in scenario and isinstance(scenario["prompts"], list):
+        prompts: List[str] = list(scenario["prompts"])
+    elif "prompt" in scenario:
+        prompts = [scenario["prompt"]]
+    else:
+        raise ValueError(
+            "scripted multi-turn scenario requires 'prompts' (list) or 'prompt' (string)"
+        )
+    if not prompts:
+        raise ValueError("scripted multi-turn scenario has empty prompt list")
+
+    max_continuations = int(scenario.get("max_continuations") or len(prompts))
+    if max_continuations < len(prompts):
+        max_continuations = len(prompts)
+    continuation_prompt = scenario.get("continuation_prompt")
+    until_sentinel = scenario.get("until_sentinel")
+    until_sql = scenario.get("until_sql")
+    # ``until_sql`` reads the SQLite path the environment staged in its
+    # context (e.g. WorkspaceEvalEnvironment writes ``db_path`` when
+    # ``db_fixture`` is set). The query runs read-only after each turn;
+    # any row returned counts as the predicate firing.
+    until_sql_db_path = (
+        (context.data.get("db_path") if context and context.data else None)
+        if until_sql
+        else None
+    )
+    if until_sql and not until_sql_db_path:
+        _logger.warning(
+            "scenario %r has until_sql but environment did not stage db_path; "
+            "predicate will never fire",
+            scenario.get("name"),
+        )
+
     session_id = None
     run_uid = None
     cumulative_usage = {
@@ -473,15 +608,19 @@ async def _run_scripted_multi_turn(
         for k in cumulative_usage:
             cumulative_usage[k] += u.get(k, 0)
 
-    with scenario_timer() as elapsed_fn:
-        if workflow_name and studio_trace:
-            import uuid as _uuid
+    use_trace = bool(workflow_name and studio_trace)
+    run_config = None
+    meta = None
+    if workflow_name:
+        import uuid as _uuid
 
-            try:
-                _sid = scenario.get("id") or scenario.get("name") or "scenario"
-                run_uid = f"{_sid}-{_uuid.uuid4().hex[:8]}"
-            except Exception:
-                run_uid = _uuid.uuid4().hex[:8]
+        try:
+            _sid = scenario.get("id") or scenario.get("name") or "scenario"
+            run_uid = f"{_sid}-{_uuid.uuid4().hex[:8]}"
+        except Exception:
+            run_uid = _uuid.uuid4().hex[:8]
+        run_config = RunConfig(workflow_name=workflow_name, group_id=run_uid)
+        if use_trace:
             meta = {
                 "omniagents": {
                     "run_type": "evaluation",
@@ -491,22 +630,79 @@ async def _run_scripted_multi_turn(
                         "name": scenario.get("name"),
                     },
                     "run": {"id": run_uid},
-                    "exchanges": len(prompts),
+                    "exchanges": max_continuations,
                 }
             }
-            run_config = RunConfig(workflow_name=workflow_name, group_id=run_uid)
-            with studio_trace(workflow_name, group_id=run_uid, metadata=meta):
-                for prompt in prompts:
-                    msgs = [{"role": "user", "content": prompt}]
-                    result = agent.run_streamed(msgs, run_config=run_config)
-                    _accumulate(await consume_stream_events(result.stream_events()))
-                    session_id = getattr(agent, "_session_id", None)
+
+    break_reason = "max_continuations"
+    turns_completed = 0
+
+    async def _run_one_turn(prompt_text: str) -> None:
+        nonlocal session_id
+        msgs = [{"role": "user", "content": prompt_text}]
+        if run_config:
+            stream_result = agent.run_streamed(msgs, run_config=run_config)
         else:
-            for prompt in prompts:
-                msgs = [{"role": "user", "content": prompt}]
-                result = agent.run_streamed(msgs)
-                _accumulate(await consume_stream_events(result.stream_events()))
-                session_id = getattr(agent, "_session_id", None)
+            stream_result = agent.run_streamed(msgs)
+        _accumulate(await consume_stream_events(stream_result.stream_events()))
+        session_id = getattr(agent, "_session_id", None)
+
+    def _sentinel_hit() -> bool:
+        if not until_sentinel or session_id is None:
+            return False
+        # Reload only what we need to check the last message. Cheap because
+        # session histories during eval runs are small.
+        recent = load_history(
+            session_id,
+            project_slug=spec.project_slug,
+            agent_slug=spec.agent_slug,
+        )
+        return until_sentinel in (final_assistant_text(recent) or "")
+
+    def _sql_predicate_hit() -> bool:
+        if not until_sql or not until_sql_db_path:
+            return False
+        import sqlite3
+
+        try:
+            conn = sqlite3.connect(
+                f"file:{until_sql_db_path}?mode=ro", uri=True, timeout=2.0
+            )
+            try:
+                row = conn.execute(until_sql).fetchone()
+                return row is not None
+            finally:
+                conn.close()
+        except sqlite3.Error as exc:
+            _logger.warning(
+                "until_sql query failed for scenario %r: %s",
+                scenario.get("name"),
+                exc,
+            )
+            return False
+
+    async def _drive_loop() -> None:
+        nonlocal break_reason, turns_completed
+        for turn_idx in range(max_continuations):
+            if turn_idx < len(prompts):
+                prompt_text = prompts[turn_idx]
+            else:
+                prompt_text = continuation_prompt or prompts[-1]
+            await _run_one_turn(prompt_text)
+            turns_completed = turn_idx + 1
+            if _sentinel_hit():
+                break_reason = "sentinel"
+                return
+            if _sql_predicate_hit():
+                break_reason = "sql_predicate"
+                return
+
+    with scenario_timer() as elapsed_fn:
+        if use_trace:
+            with studio_trace(workflow_name, group_id=run_uid, metadata=meta):
+                await _drive_loop()
+        else:
+            await _drive_loop()
 
     stream_telemetry = {"usage": cumulative_usage}
 
@@ -540,10 +736,12 @@ async def _run_scripted_multi_turn(
     eval_ctx._environment = env
     eval_ctx._environment_context = context
 
-    measure_names = scenario.get("measures") or []
+    from omniagents.core.eval.measure_tiers import parse_measures, tag_results
+    _measure_names, _tier_by_name = parse_measures(scenario.get("measures"))
     measures_out = (
-        run_measures(eval_ctx, measures=measure_names) if measure_names else []
+        run_measures(eval_ctx, measures=_measure_names) if _measure_names else []
     )
+    tag_results(measures_out, _tier_by_name)
 
     result_metadata = {
         "environment_context": context.data if context else {},
@@ -551,11 +749,23 @@ async def _run_scripted_multi_turn(
     }
     if run_uid:
         result_metadata["group_id"] = run_uid
+    result_metadata["break_reason"] = break_reason
+    result_metadata["turns_completed"] = turns_completed
+    result_metadata["max_continuations"] = max_continuations
 
     telemetry = build_telemetry(
         elapsed_fn=elapsed_fn,
         history=history,
         stream_result=stream_telemetry,
+    )
+
+    from .transcripts import export_transcript, resolve_project_root
+
+    transcript_path = export_transcript(
+        history,
+        scenario,
+        project_root=resolve_project_root(agent_yaml) if agent_yaml else Path.cwd(),
+        session_id=session_id,
     )
 
     return {
@@ -566,8 +776,10 @@ async def _run_scripted_multi_turn(
         "final_assistant_text": final_assistant_text(history),
         "measures": measures_out,
         "history_len": len(history),
-        "exchanges": len(prompts),
+        "exchanges": turns_completed,
+        "break_reason": break_reason,
         "metadata": result_metadata,
+        "transcript_path": transcript_path,
         **telemetry,
     }
 
@@ -683,10 +895,12 @@ async def _run_synthetic_scenario(
     eval_ctx._environment = env
     eval_ctx._environment_context = context
 
-    measure_names = scenario.get("measures") or []
+    from omniagents.core.eval.measure_tiers import parse_measures, tag_results
+    _measure_names, _tier_by_name = parse_measures(scenario.get("measures"))
     measures_out = (
-        run_measures(eval_ctx, measures=measure_names) if measure_names else []
+        run_measures(eval_ctx, measures=_measure_names) if _measure_names else []
     )
+    tag_results(measures_out, _tier_by_name)
 
     # Count exchanges from history
     exchanges = sum(1 for m in history if m.get("role") == "user")
@@ -703,6 +917,15 @@ async def _run_synthetic_scenario(
         stream_result=stream_telemetry,
     )
 
+    from .transcripts import export_transcript, resolve_project_root
+
+    transcript_path = export_transcript(
+        history,
+        scenario,
+        project_root=resolve_project_root(base_dir),
+        session_id=session_id,
+    )
+
     return {
         "scenario": scenario.get("name", "scenario"),
         "type": "synthetic",
@@ -715,6 +938,7 @@ async def _run_synthetic_scenario(
         "user_completed": simulated_user.completed,
         "user_completion_reason": simulated_user.completion_reason,
         "metadata": result_metadata,
+        "transcript_path": transcript_path,
         **telemetry,
     }
 
@@ -934,10 +1158,15 @@ async def run_evaluation_with_environment_async(
 
     # Filter scenarios
     if not include_unmeasured:
-        scenarios = [sc for sc in scenarios if sc.get("measures")]
+        from omniagents.core.eval.measure_tiers import measure_names
+        scenarios = [sc for sc in scenarios if measure_names(sc.get("measures"))]
 
     all_runs: List[Dict[str, Any]] = []
-    total_runs = len(scenarios)
+    _peek_default_runs_per = int((defaults or {}).get("runs_per_prompt", 1) or 1)
+    total_runs = sum(
+        max(1, int(sc.get("runs_per_prompt") or _peek_default_runs_per))
+        for sc in scenarios
+    )
 
     if progress_cb:
         try:
@@ -1002,7 +1231,16 @@ async def run_evaluation_with_environment_async(
 
             return r
 
-    tasks = [asyncio.create_task(_worker(sc)) for sc in scenarios]
+    # Honor runs_per_prompt the same way the basic pipeline does. Per-scenario
+    # ``runs_per_prompt:`` overrides the defaults block — lets a single
+    # non-deterministic scenario be loud (N=10) without slowing the rest of
+    # the suite.
+    default_runs_per = int(defaults.get("runs_per_prompt", 1) or 1)
+    tasks = []
+    for sc in scenarios:
+        sc_runs = int(sc.get("runs_per_prompt") or default_runs_per)
+        for _ in range(max(1, sc_runs)):
+            tasks.append(asyncio.create_task(_worker(sc)))
 
     if tasks:
         all_runs = await asyncio.gather(*tasks)
@@ -1221,8 +1459,17 @@ async def run_scenarios_against_agent(
 
             return result
 
+    # Honor runs_per_prompt (defaults block, with per-scenario override) so
+    # callers of run_scenarios_against_agent see the same multi-run behaviour
+    # as the suite-level CLI.
+    default_runs_per = int(defaults.get("runs_per_prompt", 1) or 1)
+    expanded: List[Tuple[int, Dict[str, Any]]] = []
+    for idx, sc in enumerate(scenarios):
+        sc_runs = int(sc.get("runs_per_prompt") or default_runs_per)
+        for _ in range(max(1, sc_runs)):
+            expanded.append((idx, sc))
     # Run all scenarios in parallel with concurrency limit
-    tasks = [_run_single(idx, sc) for idx, sc in enumerate(scenarios)]
+    tasks = [_run_single(idx, sc) for idx, sc in expanded]
     results = await asyncio.gather(*tasks)
 
     if progress_cb:
