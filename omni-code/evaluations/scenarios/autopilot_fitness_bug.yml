@@ -143,3 +143,4 @@ scenarios:
         - debug_skill_activated
         - software_planning_skill_activated
         - bugfix_skill_activated
+        - webapp_acceptance_runner_skill_activated

@@ -688,6 +688,14 @@ def bugfix_skill_activated(ctx: EvalContext) -> dict:
 
 
 @evaluation_measure
+def webapp_acceptance_runner_skill_activated(ctx: EvalContext) -> dict:
+    """Did the agent read .omni_code/skills/webapp-acceptance-runner/SKILL.md?"""
+    if _skill_was_activated(ctx, "webapp-acceptance-runner"):
+        return pass_reason("webapp-acceptance-runner skill activated")
+    return fail_reason("webapp-acceptance-runner skill not activated")
+
+
+@evaluation_measure
 def no_remote_operations(ctx: EvalContext) -> dict:
     """Reject remote git / GitHub operations from execute_bash.
 
