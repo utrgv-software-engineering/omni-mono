@@ -37,6 +37,7 @@ interface TraceStore {
   searchQuery: string
   selectedProject: string | null  // null means "All Projects"
   selectedWorkflow: string | null
+  selectedAgent: string | null  // null means "All Agents"
   filters: {
     spanTypes: SpanType[]
     hasErrors: boolean
@@ -67,6 +68,7 @@ interface TraceStore {
   setSearchQuery: (query: string) => void
   setSelectedProject: (project: string | null) => void
   setSelectedWorkflow: (workflow: string | null) => void
+  setSelectedAgent: (agent: string | null) => void
   updateFilters: (filters: Partial<TraceStore['filters']>) => void
   addTrace: (trace: Trace) => void
   addSpan: (span: Span) => void
@@ -103,6 +105,7 @@ export const useTraceStore = create<TraceStore>()(
   searchQuery: '',
   selectedProject: null,  // null = All Projects
   selectedWorkflow: null,
+  selectedAgent: null,
   filters: {
     spanTypes: [],
     hasErrors: false,
@@ -132,6 +135,7 @@ export const useTraceStore = create<TraceStore>()(
   setSearchQuery: (query) => set({ searchQuery: query }),
   setSelectedProject: (project) => set({ selectedProject: project }),
   setSelectedWorkflow: (workflow) => set({ selectedWorkflow: workflow }),
+  setSelectedAgent: (agent) => set({ selectedAgent: agent }),
   updateFilters: (filters) => set((state) => ({
     filters: { ...state.filters, ...filters }
   })),

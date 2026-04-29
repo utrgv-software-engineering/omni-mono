@@ -26,11 +26,11 @@ interface UseConversationsArgs {
 }
 
 export function useConversations({ project, workflow }: UseConversationsArgs) {
-  const { filters, searchQuery } = useTraceStore()
+  const { filters, searchQuery, selectedAgent } = useTraceStore()
   const debouncedSearch = useDebouncedValue(searchQuery, 250)
 
   return useQuery({
-    queryKey: ['conversations', filters, debouncedSearch, project, workflow],
+    queryKey: ['conversations', filters, debouncedSearch, project, workflow, selectedAgent],
     queryFn: () => {
       if (!project) {
         return { conversations: [], total: 0 }
@@ -43,11 +43,22 @@ export function useConversations({ project, workflow }: UseConversationsArgs) {
         search: debouncedSearch || undefined,
         has_errors: filters.hasErrors || undefined,
         workflow_name: workflow || undefined,
+        agent: selectedAgent || undefined,
         dims: dims.length ? dims : undefined,
       })
     },
     refetchInterval: 5000,
     enabled: !!project,
+  })
+}
+
+export function useProjectAgents(project: string | null) {
+  return useQuery({
+    queryKey: ['project-agents', project],
+    queryFn: () => (project ? api.getProjectAgents(project) : { agents: [] }),
+    enabled: !!project,
+    staleTime: 1000 * 30,
+    refetchInterval: 1000 * 30,
   })
 }
 

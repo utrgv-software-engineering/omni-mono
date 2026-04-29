@@ -3,7 +3,7 @@ import { MessageSquare, AlertCircle, Edit3, ThumbsUp, ThumbsDown, Circle, Filter
 import type { Conversation } from '../../../types'
 import { useTraceStore } from '../store/traceStore'
 import { formatDistanceToNow } from 'date-fns'
-import { useSyntheticDimensions } from '../hooks/useTraces'
+import { useSyntheticDimensions, useProjectAgents } from '../hooks/useTraces'
 
 interface ConversationListProps {
   conversations: Conversation[]
@@ -14,13 +14,15 @@ interface ConversationListProps {
 type FilterType = 'all' | 'unanalyzed' | 'good' | 'bad' | 'annotated' | 'bad-no-notes'
 
 export function ConversationList({ conversations, onConversationSelect, selectedConversationId }: ConversationListProps) {
-  const { selectedConversation, searchQuery, conversationAnalysis, filters, updateFilters, selectedProject, selectedWorkflow, evaluationResults, loadEvaluationResults } = useTraceStore()
+  const { selectedConversation, searchQuery, conversationAnalysis, filters, updateFilters, selectedProject, selectedWorkflow, selectedAgent, setSelectedAgent, evaluationResults, loadEvaluationResults } = useTraceStore()
   const [activeFilter, setActiveFilter] = useState<FilterType>('all')
   const [focusedIndex, setFocusedIndex] = useState<number>(0)
   const listRef = useRef<HTMLDivElement>(null)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
   const { data: syntheticDimsData } = useSyntheticDimensions(selectedProject, selectedWorkflow)
   const syntheticDimensions = syntheticDimsData?.dimensions || []
+  const { data: projectAgentsData } = useProjectAgents(selectedProject)
+  const projectAgents = projectAgentsData?.agents || []
   const [showFilters, setShowFilters] = useState(false)
   const [expandedDims, setExpandedDims] = useState<Record<string, boolean>>({})
   
@@ -175,6 +177,14 @@ export function ConversationList({ conversations, onConversationSelect, selected
               Errors only ×
             </button>
           )}
+          {selectedAgent && (
+            <button
+              onClick={() => setSelectedAgent(null)}
+              className="px-2 py-0.5 text-xs rounded-full bg-muted border border-border hover:bg-muted/70"
+            >
+              Agent: {selectedAgent} ×
+            </button>
+          )}
           {syntheticDimensions.flatMap(dim => {
             const selected = filters.syntheticDims[dim.name] || []
             return selected.map(val => {
@@ -229,6 +239,24 @@ export function ConversationList({ conversations, onConversationSelect, selected
               />
               Errors only
             </label>
+            {projectAgents.length > 0 && (
+              <label className="flex items-center gap-2 text-xs">
+                <span className="text-muted-foreground">Agent</span>
+                <select
+                  value={selectedAgent ?? ''}
+                  onChange={(e) => setSelectedAgent(e.target.value || null)}
+                  className="flex-1 px-2 py-1 text-xs bg-muted/40 rounded border border-border outline-none focus:bg-muted"
+                >
+                  <option value="">All agents</option>
+                  {projectAgents.map(a => (
+                    <option key={a.agent_slug} value={a.agent_slug}>
+                      {a.agent_slug}
+                      {typeof a.session_count === 'number' ? ` (${a.session_count})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             {syntheticDimensions.length > 0 && (
               <div className="space-y-2">
                 {syntheticDimensions.map(dim => {

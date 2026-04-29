@@ -107,6 +107,7 @@ class ApiClient {
     search?: string
     has_errors?: boolean
     workflow_name?: string
+    agent?: string
     dims?: string[]
   }): Promise<{ conversations: Conversation[]; total: number }> {
     const searchParams = new URLSearchParams()
@@ -120,6 +121,13 @@ class ApiClient {
       }
     })
     return this.fetch(`/conversations?${searchParams}`)
+  }
+
+  async getProjectAgents(project: string): Promise<{
+    agents: { agent_slug: string; session_count: number | null }[]
+  }> {
+    const params = new URLSearchParams({ project })
+    return this.fetch(`/project_agents?${params}`)
   }
 
   async getConversationTraces(

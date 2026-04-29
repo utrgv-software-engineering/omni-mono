@@ -267,6 +267,60 @@ def _load_session_metadata_for_project(
     return out
 
 
+def _list_project_agent_dirs(project: str) -> List[Tuple[Path, str]]:
+    """Return ``(sessions.db path, agent_slug)`` for every agent under a project.
+
+    Honors the ``OMNIAGENTS_HISTORY_DB`` single-file override (in which case
+    the lone DB has no meaningful agent slug, so we surface ``"default"``).
+    """
+    override = os.getenv("OMNIAGENTS_HISTORY_DB")
+    if override:
+        path = Path(os.path.expanduser(override)).resolve()
+        return [(path, "default")] if path.exists() else []
+    project_dir = get_sessions_db_path(project, "default").parent.parent
+    if not project_dir.exists():
+        return []
+    out: List[Tuple[Path, str]] = []
+    for agent_dir in sorted(project_dir.iterdir(), key=lambda p: p.name.lower()):
+        if not agent_dir.is_dir():
+            continue
+        db_path = agent_dir / "sessions.db"
+        if db_path.exists():
+            out.append((db_path, agent_dir.name))
+    return out
+
+
+def _resolve_agent_group_ids(
+    project: str, agent: str, *, max_sessions: int = 10000
+) -> List[str]:
+    """Resolve session ids for ``agent`` under ``project`` into trace group_ids.
+
+    The trace store doesn't know which agent owned a session, so we look up
+    the most recent ``max_sessions`` session ids in the agent's
+    ``sessions.db`` and convert them to the runtime's group_id format
+    (``session_{sid}``). Silently returns ``[]`` for missing/unreadable DBs.
+    """
+    if not agent:
+        return []
+    db_path = get_sessions_db_path(project, agent)
+    if not db_path.exists():
+        return []
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    except sqlite3.OperationalError:
+        return []
+    try:
+        rows = conn.execute(
+            "SELECT session_id FROM sessions ORDER BY created_at DESC LIMIT ?",
+            (max_sessions,),
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+    return [f"session_{row[0]}" for row in rows if row and row[0]]
+
+
 def _extract_trace_io_preview(spans):
     """Pull a short input/output text preview from response/generation spans.
 
@@ -6327,6 +6381,10 @@ def create_api_app(
         search: Optional[str] = None,
         has_errors: Optional[bool] = None,
         workflow_name: Optional[str] = None,
+        agent: Optional[str] = Query(
+            None,
+            description="Filter to conversations whose session lives under this agent slug",
+        ),
         dim: Optional[List[str]] = Query(
             None, description="Synthetic dimension filters as 'dimension:value'"
         ),
@@ -6405,6 +6463,17 @@ def create_api_app(
             if has_errors is not None:
                 filters.append("has_errors = ?")
                 params.append(1 if has_errors else 0)
+            if agent:
+                # Traces don't carry the agent slug, so resolve session ids
+                # from the agent's sessions.db and filter by group_id (which
+                # bridge.py sets to "session_{session.id}"). Capped to keep
+                # the IN clause within SQLite's host-parameter limit.
+                gids = _resolve_agent_group_ids(project, agent, max_sessions=10000)
+                if not gids:
+                    return {"conversations": [], "total": 0}
+                placeholders = ",".join("?" for _ in gids)
+                filters.append(f"group_id IN ({placeholders})")
+                params.extend(gids)
             where_sql = ("WHERE " + " AND ".join(filters)) if filters else ""
 
             # Without dim filter we can paginate in SQL and get total via window function.
@@ -6572,6 +6641,35 @@ def create_api_app(
             return {"workflows": names}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/api/project_agents")
+    async def get_project_agents(
+        project: str = Query(..., description="Project name"),
+    ):
+        """List agents that have a sessions.db under this project.
+
+        Source-of-truth for the agent-filter dropdown on Logs. We list what
+        actually produced sessions on disk rather than what's currently
+        configured in /api/agents, so historical conversations from removed
+        or renamed agents remain reachable.
+        """
+        agents: List[Dict[str, Any]] = []
+        for db_path, slug in _list_project_agent_dirs(project):
+            session_count: Optional[int] = None
+            try:
+                conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            except sqlite3.OperationalError:
+                conn = None
+            if conn is not None:
+                try:
+                    row = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()
+                    session_count = int(row[0]) if row and row[0] is not None else 0
+                except sqlite3.Error:
+                    session_count = None
+                finally:
+                    conn.close()
+            agents.append({"agent_slug": slug, "session_count": session_count})
+        return {"agents": agents}
 
     @app.get("/api/conversations/{project}/{group_id}/traces")
     async def get_conversation_traces(
