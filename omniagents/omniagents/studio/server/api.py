@@ -43,7 +43,11 @@ import yaml
 
 from pydantic import BaseModel, Field
 
-from omniagents.core.paths import get_sessions_db_path, get_traces_dir
+from omniagents.core.paths import (
+    get_sessions_db_path,
+    get_sessions_dir,
+    get_traces_dir,
+)
 from omniagents.core.agents.service import AgentService
 from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions
 from omniagents.rpc.server import JsonRpcChannel
@@ -184,20 +188,176 @@ def _filter_groups_by_dim(conn, group_ids, dim_map):
     return matching
 
 
+_SESSION_LOC_CACHE: Dict[str, Tuple[float, List[Tuple[Path, str]]]] = {}
+_SESSION_LOC_CACHE_LOCK = __import__("threading").Lock()
+_SESSION_LOC_CACHE_TTL_SECONDS = 30.0
+
+
+def _compute_session_db_locations(
+    trace_project: str, *, sample_size: int = 500
+) -> List[Tuple[Path, str]]:
+    """Return ``(sessions.db path, agent_slug)`` for every agent that has
+    sessions referenced by this trace project.
+
+    Fast path: if a directly-named ``~/.omniagents/sessions/{trace_project}/``
+    dir exists with agent sub-dirs, use that (covers the common case where
+    trace project name equals the runtime's session project slug).
+
+    Fallback: pull the most recent ``sample_size`` ``session_*`` group_ids
+    from the trace DB and probe every ``sessions.db`` (across all session
+    project dirs) for a hit. Matching at the **agent dir** level, not the
+    project dir level, so unrelated agents that happen to share a session
+    project root aren't pulled in.
+    """
+    sessions_root = get_sessions_dir()
+    if not sessions_root.exists():
+        return []
+
+    direct = get_sessions_db_path(trace_project, "default").parent.parent
+    if direct.exists():
+        out: List[Tuple[Path, str]] = []
+        for agent_dir in sorted(direct.iterdir(), key=lambda p: p.name.lower()):
+            if not agent_dir.is_dir():
+                continue
+            db_path = agent_dir / "sessions.db"
+            if db_path.exists():
+                out.append((db_path, agent_dir.name))
+        if out:
+            return out
+
+    trace_db_path = get_traces_dir() / f"{trace_project}.db"
+    if not trace_db_path.exists():
+        return []
+    try:
+        conn = sqlite3.connect(f"file:{trace_db_path}?mode=ro", uri=True)
+    except sqlite3.OperationalError:
+        return []
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT group_id FROM traces "
+            "WHERE group_id LIKE 'session_%' "
+            "ORDER BY created_at DESC LIMIT ?",
+            (sample_size,),
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+
+    sample_ids = [r[0][len("session_") :] for r in rows if r and r[0]]
+    if not sample_ids:
+        return []
+
+    probe_ids = sample_ids[:200]
+    placeholders = ",".join("?" for _ in probe_ids)
+    probe_sql = f"SELECT 1 FROM sessions WHERE session_id IN ({placeholders}) LIMIT 1"
+
+    matches: List[Tuple[Path, str]] = []
+    seen_keys: Set[Tuple[str, str]] = set()
+    for proj_dir in sorted(sessions_root.iterdir(), key=lambda p: p.name.lower()):
+        if not proj_dir.is_dir():
+            continue
+        for agent_dir in sorted(proj_dir.iterdir(), key=lambda p: p.name.lower()):
+            if not agent_dir.is_dir():
+                continue
+            db_path = agent_dir / "sessions.db"
+            if not db_path.exists():
+                continue
+            try:
+                c = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            except sqlite3.OperationalError:
+                continue
+            try:
+                hit = c.execute(probe_sql, probe_ids).fetchone()
+            except sqlite3.Error:
+                hit = None
+            finally:
+                c.close()
+            if hit:
+                key = (proj_dir.name, agent_dir.name)
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    matches.append((db_path, agent_dir.name))
+    return matches
+
+
+def _list_project_agent_dirs(trace_project: str) -> List[Tuple[Path, str]]:
+    """Return ``(sessions.db path, agent_slug)`` for every agent associated
+    with this trace project. Cached in-process for
+    ``_SESSION_LOC_CACHE_TTL_SECONDS`` since discovery probes many
+    sessions.db files when names diverge.
+
+    Honors the ``OMNIAGENTS_HISTORY_DB`` single-file override.
+    """
+    override = os.getenv("OMNIAGENTS_HISTORY_DB")
+    if override:
+        path = Path(os.path.expanduser(override)).resolve()
+        return [(path, "default")] if path.exists() else []
+
+    import time
+
+    now = time.monotonic()
+    with _SESSION_LOC_CACHE_LOCK:
+        cached = _SESSION_LOC_CACHE.get(trace_project)
+        if cached and now - cached[0] < _SESSION_LOC_CACHE_TTL_SECONDS:
+            return cached[1]
+
+    result = _compute_session_db_locations(trace_project)
+
+    with _SESSION_LOC_CACHE_LOCK:
+        _SESSION_LOC_CACHE[trace_project] = (now, result)
+    return result
+
+
+def _resolve_agent_group_ids(
+    trace_project: str, agent: str, *, max_sessions: int = 10000
+) -> List[str]:
+    """Resolve session ids for ``agent`` under ``trace_project`` into trace
+    group_ids (``session_{sid}``).
+
+    Aggregates across every sessions.db whose ``agent_slug`` matches ``agent``
+    (the same slug can appear in multiple session-project dirs).
+    """
+    if not agent:
+        return []
+
+    candidates = [
+        db for db, slug in _list_project_agent_dirs(trace_project) if slug == agent
+    ]
+
+    out: List[str] = []
+    for db_path in candidates:
+        if not db_path.exists():
+            continue
+        remaining = max_sessions - len(out)
+        if remaining <= 0:
+            break
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        except sqlite3.OperationalError:
+            continue
+        try:
+            rows = conn.execute(
+                "SELECT session_id FROM sessions ORDER BY created_at DESC LIMIT ?",
+                (remaining,),
+            ).fetchall()
+        except sqlite3.Error:
+            continue
+        finally:
+            conn.close()
+        out.extend(f"session_{r[0]}" for r in rows if r and r[0])
+    return out
+
+
 def _load_session_metadata_for_project(
-    project: str, session_ids: List[str]
+    trace_project: str, session_ids: List[str]
 ) -> Dict[str, Dict[str, Any]]:
     """Best-effort lookup of session rows for a list of session_ids.
 
-    Sessions live in per-(project, agent) SQLite DBs at
-    ``~/.omniagents/sessions/{project}/{agent}/sessions.db``, but Studio
-    traces don't carry the agent slug. We walk every agent dir under the
-    project and query each ``sessions.db``. Session ids are UUIDs so the
-    cross-agent join is unambiguous in practice.
-
-    Returns a dict keyed by session_id with ``user_id``, ``archived``,
-    ``hold``, ``agent_slug``, and the session's own ``created_at``. Missing
-    columns (older DBs) are tolerated; unreadable DBs are skipped silently.
+    Sessions live in per-(session-project, agent) SQLite DBs and the
+    session-project slug doesn't have to match the trace project name, so
+    we resolve candidates via :func:`_list_project_agent_dirs` (which falls
+    back to discovery by trace content) and query each.
     """
     ids = [s for s in session_ids if isinstance(s, str) and s]
     if not ids:
@@ -209,18 +369,7 @@ def _load_session_metadata_for_project(
             (Path(os.path.expanduser(override)).resolve(), None)
         ]
     else:
-        # get_sessions_db_path slugifies project for us; .parent.parent strips
-        # off the {agent}/sessions.db suffix to give the project sessions dir.
-        project_dir = get_sessions_db_path(project, "default").parent.parent
-        if not project_dir.exists():
-            return {}
-        db_paths = []
-        for agent_dir in project_dir.iterdir():
-            if not agent_dir.is_dir():
-                continue
-            db_path = agent_dir / "sessions.db"
-            if db_path.exists():
-                db_paths.append((db_path, agent_dir.name))
+        db_paths = [(p, slug) for p, slug in _list_project_agent_dirs(trace_project)]
 
     out: Dict[str, Dict[str, Any]] = {}
     seen: Set[str] = set()
@@ -265,60 +414,6 @@ def _load_session_metadata_for_project(
         finally:
             conn.close()
     return out
-
-
-def _list_project_agent_dirs(project: str) -> List[Tuple[Path, str]]:
-    """Return ``(sessions.db path, agent_slug)`` for every agent under a project.
-
-    Honors the ``OMNIAGENTS_HISTORY_DB`` single-file override (in which case
-    the lone DB has no meaningful agent slug, so we surface ``"default"``).
-    """
-    override = os.getenv("OMNIAGENTS_HISTORY_DB")
-    if override:
-        path = Path(os.path.expanduser(override)).resolve()
-        return [(path, "default")] if path.exists() else []
-    project_dir = get_sessions_db_path(project, "default").parent.parent
-    if not project_dir.exists():
-        return []
-    out: List[Tuple[Path, str]] = []
-    for agent_dir in sorted(project_dir.iterdir(), key=lambda p: p.name.lower()):
-        if not agent_dir.is_dir():
-            continue
-        db_path = agent_dir / "sessions.db"
-        if db_path.exists():
-            out.append((db_path, agent_dir.name))
-    return out
-
-
-def _resolve_agent_group_ids(
-    project: str, agent: str, *, max_sessions: int = 10000
-) -> List[str]:
-    """Resolve session ids for ``agent`` under ``project`` into trace group_ids.
-
-    The trace store doesn't know which agent owned a session, so we look up
-    the most recent ``max_sessions`` session ids in the agent's
-    ``sessions.db`` and convert them to the runtime's group_id format
-    (``session_{sid}``). Silently returns ``[]`` for missing/unreadable DBs.
-    """
-    if not agent:
-        return []
-    db_path = get_sessions_db_path(project, agent)
-    if not db_path.exists():
-        return []
-    try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    except sqlite3.OperationalError:
-        return []
-    try:
-        rows = conn.execute(
-            "SELECT session_id FROM sessions ORDER BY created_at DESC LIMIT ?",
-            (max_sessions,),
-        ).fetchall()
-    except sqlite3.Error:
-        return []
-    finally:
-        conn.close()
-    return [f"session_{row[0]}" for row in rows if row and row[0]]
 
 
 def _extract_trace_io_preview(spans):
@@ -6646,16 +6741,21 @@ def create_api_app(
     async def get_project_agents(
         project: str = Query(..., description="Project name"),
     ):
-        """List agents that have a sessions.db under this project.
+        """List agents that have produced sessions referenced by this trace
+        project.
 
         Source-of-truth for the agent-filter dropdown on Logs. We list what
-        actually produced sessions on disk rather than what's currently
-        configured in /api/agents, so historical conversations from removed
-        or renamed agents remain reachable.
+        actually produced sessions on disk (with discovery falling back to
+        scanning when trace and session project names diverge) rather than
+        what's currently configured in ``/api/agents``, so historical
+        conversations from removed or renamed agents remain reachable.
+
+        Same agent_slug appearing under multiple session-project dirs is
+        merged into one row with summed session_count.
         """
-        agents: List[Dict[str, Any]] = []
+        per_slug: Dict[str, Dict[str, Any]] = {}
         for db_path, slug in _list_project_agent_dirs(project):
-            session_count: Optional[int] = None
+            count: Optional[int] = None
             try:
                 conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
             except sqlite3.OperationalError:
@@ -6663,13 +6763,22 @@ def create_api_app(
             if conn is not None:
                 try:
                     row = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()
-                    session_count = int(row[0]) if row and row[0] is not None else 0
+                    count = int(row[0]) if row and row[0] is not None else 0
                 except sqlite3.Error:
-                    session_count = None
+                    count = None
                 finally:
                     conn.close()
-            agents.append({"agent_slug": slug, "session_count": session_count})
-        return {"agents": agents}
+            existing = per_slug.get(slug)
+            if existing is None:
+                per_slug[slug] = {"agent_slug": slug, "session_count": count}
+            else:
+                if count is not None:
+                    existing["session_count"] = (
+                        existing.get("session_count") or 0
+                    ) + count
+        return {
+            "agents": sorted(per_slug.values(), key=lambda a: a["agent_slug"].lower())
+        }
 
     @app.get("/api/conversations/{project}/{group_id}/traces")
     async def get_conversation_traces(
