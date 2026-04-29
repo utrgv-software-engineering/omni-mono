@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import shutil
+import sqlite3
 import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -42,7 +43,7 @@ import yaml
 
 from pydantic import BaseModel, Field
 
-from omniagents.core.paths import get_traces_dir
+from omniagents.core.paths import get_sessions_db_path, get_traces_dir
 from omniagents.core.agents.service import AgentService
 from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions
 from omniagents.rpc.server import JsonRpcChannel
@@ -181,6 +182,89 @@ def _filter_groups_by_dim(conn, group_ids, dim_map):
         if all(mapping.get(k) in allowed for k, allowed in dim_map.items()):
             matching.add(gkey)
     return matching
+
+
+def _load_session_metadata_for_project(
+    project: str, session_ids: List[str]
+) -> Dict[str, Dict[str, Any]]:
+    """Best-effort lookup of session rows for a list of session_ids.
+
+    Sessions live in per-(project, agent) SQLite DBs at
+    ``~/.omniagents/sessions/{project}/{agent}/sessions.db``, but Studio
+    traces don't carry the agent slug. We walk every agent dir under the
+    project and query each ``sessions.db``. Session ids are UUIDs so the
+    cross-agent join is unambiguous in practice.
+
+    Returns a dict keyed by session_id with ``user_id``, ``archived``,
+    ``hold``, ``agent_slug``, and the session's own ``created_at``. Missing
+    columns (older DBs) are tolerated; unreadable DBs are skipped silently.
+    """
+    ids = [s for s in session_ids if isinstance(s, str) and s]
+    if not ids:
+        return {}
+
+    override = os.getenv("OMNIAGENTS_HISTORY_DB")
+    if override:
+        db_paths: List[Tuple[Path, Optional[str]]] = [
+            (Path(os.path.expanduser(override)).resolve(), None)
+        ]
+    else:
+        # get_sessions_db_path slugifies project for us; .parent.parent strips
+        # off the {agent}/sessions.db suffix to give the project sessions dir.
+        project_dir = get_sessions_db_path(project, "default").parent.parent
+        if not project_dir.exists():
+            return {}
+        db_paths = []
+        for agent_dir in project_dir.iterdir():
+            if not agent_dir.is_dir():
+                continue
+            db_path = agent_dir / "sessions.db"
+            if db_path.exists():
+                db_paths.append((db_path, agent_dir.name))
+
+    out: Dict[str, Dict[str, Any]] = {}
+    seen: Set[str] = set()
+    for db_path, agent_slug in db_paths:
+        remaining = [sid for sid in ids if sid not in seen]
+        if not remaining:
+            break
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        except sqlite3.OperationalError:
+            continue
+        try:
+            cols = {
+                row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()
+            }
+            if "session_id" not in cols:
+                continue
+            select_parts = ["session_id", "archived", "created_at"]
+            for opt in ("user_id", "hold"):
+                if opt in cols:
+                    select_parts.append(opt)
+            placeholders = ",".join("?" for _ in remaining)
+            sql = (
+                f"SELECT {', '.join(select_parts)} FROM sessions "
+                f"WHERE session_id IN ({placeholders})"
+            )
+            rows = conn.execute(sql, remaining).fetchall()
+            for row in rows:
+                rec = dict(zip(select_parts, row))
+                sid = rec["session_id"]
+                out[sid] = {
+                    "session_id": sid,
+                    "agent_slug": agent_slug,
+                    "archived": bool(rec.get("archived")),
+                    "hold": bool(rec.get("hold")),
+                    "user_id": rec.get("user_id"),
+                    "created_at": rec.get("created_at"),
+                }
+                seen.add(sid)
+        except sqlite3.Error:
+            pass
+        finally:
+            conn.close()
+    return out
 
 
 def _extract_trace_io_preview(spans):
@@ -6386,6 +6470,27 @@ def create_api_app(
                         ),
                     }
                 )
+
+            # Attach session metadata for conversations whose group_id was
+            # produced by the runtime (group_id="session_{session.id}" — see
+            # core/runtime/bridge.py). This is the only join key between the
+            # trace store and per-(project,agent) sessions.db.
+            session_id_by_gid: Dict[str, str] = {}
+            for conv in conversations:
+                gid = conv.get("group_id")
+                if isinstance(gid, str) and gid.startswith("session_"):
+                    session_id_by_gid[gid] = gid[len("session_") :]
+            if session_id_by_gid:
+                session_meta = _load_session_metadata_for_project(
+                    project, list(session_id_by_gid.values())
+                )
+                for conv in conversations:
+                    sid = session_id_by_gid.get(conv.get("group_id"))
+                    if sid is None:
+                        continue
+                    meta = session_meta.get(sid)
+                    if meta is not None:
+                        conv["session"] = meta
 
             return {"conversations": conversations, "total": total}
         except Exception as e:

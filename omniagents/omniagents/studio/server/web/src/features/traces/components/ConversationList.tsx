@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { MessageSquare, AlertCircle, Edit3, ThumbsUp, ThumbsDown, Circle, Filter, ChevronDown, ChevronRight } from 'lucide-react'
+import { MessageSquare, AlertCircle, Edit3, ThumbsUp, ThumbsDown, Circle, Filter, ChevronDown, ChevronRight, Archive, Lock, User } from 'lucide-react'
 import type { Conversation } from '../../../types'
 import { useTraceStore } from '../store/traceStore'
 import { formatDistanceToNow } from 'date-fns'
@@ -335,8 +335,24 @@ export function ConversationList({ conversations, onConversationSelect, selected
                           <MessageSquare className="w-3 h-3 flex-shrink-0" />
                           <span>{conversation.trace_count} trace{conversation.trace_count !== 1 ? 's' : ''} • {timeAgo}</span>
                         </div>
+                        {conversation.session?.user_id && (
+                          <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground truncate">
+                            <User className="w-3 h-3 flex-shrink-0" />
+                            <span className="truncate">{conversation.session.user_id}</span>
+                          </div>
+                        )}
                       </div>
                       <div className="flex items-center gap-1 flex-shrink-0">
+                        {conversation.session?.hold && (
+                          <span title="Legal hold">
+                            <Lock className="w-3.5 h-3.5 text-amber-500" />
+                          </span>
+                        )}
+                        {conversation.session?.archived && (
+                          <span title="Archived">
+                            <Archive className="w-3.5 h-3.5 text-muted-foreground" />
+                          </span>
+                        )}
                         {evalResult && (
                           <span
                             className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${

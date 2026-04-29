@@ -59,6 +59,15 @@ export interface SearchFilters {
   project?: string
 }
 
+export interface ConversationSession {
+  session_id: string
+  agent_slug: string | null
+  archived: boolean
+  hold: boolean
+  user_id: string | null
+  created_at: string | null
+}
+
 export interface Conversation {
   group_id: string
   trace_count: number
@@ -67,6 +76,7 @@ export interface Conversation {
   workflow_name: string | null
   metadata: Record<string, any>
   first_input: string | null
+  session?: ConversationSession
 }
 
 export interface FailureCategory {
