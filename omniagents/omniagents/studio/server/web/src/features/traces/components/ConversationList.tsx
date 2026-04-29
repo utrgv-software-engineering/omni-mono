@@ -205,15 +205,15 @@ export function ConversationList({
                 {f === 'bad-no-notes' ? 'Needs notes' : f.charAt(0).toUpperCase() + f.slice(1)}
               </button>
             ))}
-            <label className="ml-auto flex items-center gap-1.5 text-xs cursor-pointer">
-              <input
-                type="checkbox"
-                checked={filters.hasErrors}
-                onChange={(e) => updateFilters({ hasErrors: e.target.checked })}
-                className="h-3 w-3 rounded border-input"
-              />
-              <span>Errors only</span>
-            </label>
+            <button
+              onClick={() => updateFilters({ hasErrors: !filters.hasErrors })}
+              className={`inline-flex items-center gap-1 px-2 py-1 text-xs rounded border ${filters.hasErrors ? 'bg-destructive/10 border-destructive/40 text-destructive font-medium' : 'bg-muted/40 border-border hover:bg-muted'}`}
+              aria-pressed={filters.hasErrors}
+              title={filters.hasErrors ? 'Showing errors only' : 'Show errors only'}
+            >
+              <AlertCircle className="w-3 h-3" />
+              Errors
+            </button>
           </div>
         </div>
 
