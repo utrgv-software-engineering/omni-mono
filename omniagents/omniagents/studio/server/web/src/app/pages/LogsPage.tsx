@@ -262,6 +262,8 @@ export function LogsPage() {
       conversations={conversationsData?.conversations || []}
       onConversationSelect={handleConversationSelect}
       selectedConversationId={conversationParam}
+      workflows={workflowsData?.workflows || []}
+      onWorkflowChange={handleWorkflowChange}
     />
   )
 
@@ -273,11 +275,8 @@ export function LogsPage() {
       showBackButton
       onBack={handleBackToHome}
       projects={projectsData?.projects || []}
-      workflows={workflowsData?.workflows || []}
       selectedProject={projectParam}
-      selectedWorkflow={workflowParam}
       onProjectChange={handleProjectChange}
-      onWorkflowChange={handleWorkflowChange}
     />
   )
 

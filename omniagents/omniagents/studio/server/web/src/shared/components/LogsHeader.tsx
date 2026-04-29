@@ -13,11 +13,8 @@ interface LogsHeaderProps {
   showBackButton?: boolean
   onBack?: () => void
   projects?: string[]
-  workflows?: string[]
   selectedProject?: string | null
-  selectedWorkflow?: string | null
   onProjectChange?: (project: string | null) => void
-  onWorkflowChange?: (workflow: string | null) => void
 }
 
 export function LogsHeader({
@@ -27,11 +24,8 @@ export function LogsHeader({
   showBackButton = false,
   onBack,
   projects = [],
-  workflows = [],
   selectedProject = null,
-  selectedWorkflow = null,
   onProjectChange,
-  onWorkflowChange,
 }: LogsHeaderProps) {
   const { setSelectedConversation, setSelectedTrace, conversationAnalysis, failureCategories } = useTraceStore()
   const queryClient = useQueryClient()
@@ -72,7 +66,6 @@ export function LogsHeader({
       setSelectedConversation(null)
       setSelectedTrace(null)
       onProjectChange?.(null)
-      onWorkflowChange?.(null)
       await queryClient.invalidateQueries()
     } catch (error) {
       console.error('Error deleting project:', error)
@@ -162,17 +155,6 @@ export function LogsHeader({
               <option value="">Project</option>
               {projects.map((project) => (
                 <option key={project} value={project}>{project}</option>
-              ))}
-            </select>
-            <select
-              value={selectedWorkflow || ''}
-              onChange={(event) => onWorkflowChange?.(event.target.value || null)}
-              className="hidden sm:block px-2 py-1 text-xs bg-muted/50 border border-border rounded-md outline-none focus:bg-muted"
-              disabled={!workflows.length}
-            >
-              <option value="">Workflow</option>
-              {workflows.map((workflow) => (
-                <option key={workflow} value={workflow}>{workflow}</option>
               ))}
             </select>
             {showViewToggle && onViewModeChange && viewMode && (

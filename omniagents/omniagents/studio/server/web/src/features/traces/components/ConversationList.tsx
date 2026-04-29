@@ -9,11 +9,19 @@ interface ConversationListProps {
   conversations: Conversation[]
   onConversationSelect: (conversation: Conversation) => void
   selectedConversationId?: string | null
+  workflows?: string[]
+  onWorkflowChange?: (workflow: string | null) => void
 }
 
 type FilterType = 'all' | 'unanalyzed' | 'good' | 'bad' | 'annotated' | 'bad-no-notes'
 
-export function ConversationList({ conversations, onConversationSelect, selectedConversationId }: ConversationListProps) {
+export function ConversationList({
+  conversations,
+  onConversationSelect,
+  selectedConversationId,
+  workflows = [],
+  onWorkflowChange,
+}: ConversationListProps) {
   const { selectedConversation, searchQuery, conversationAnalysis, filters, updateFilters, selectedProject, selectedWorkflow, selectedAgent, setSelectedAgent, evaluationResults, loadEvaluationResults } = useTraceStore()
   const [activeFilter, setActiveFilter] = useState<FilterType>('all')
   const [focusedIndex, setFocusedIndex] = useState<number>(0)
@@ -185,6 +193,14 @@ export function ConversationList({ conversations, onConversationSelect, selected
               Agent: {selectedAgent} ×
             </button>
           )}
+          {selectedWorkflow && (
+            <button
+              onClick={() => onWorkflowChange?.(null)}
+              className="px-2 py-0.5 text-xs rounded-full bg-muted border border-border hover:bg-muted/70"
+            >
+              Workflow: {selectedWorkflow} ×
+            </button>
+          )}
           {syntheticDimensions.flatMap(dim => {
             const selected = filters.syntheticDims[dim.name] || []
             return selected.map(val => {
@@ -239,6 +255,21 @@ export function ConversationList({ conversations, onConversationSelect, selected
               />
               Errors only
             </label>
+            {workflows.length > 0 && onWorkflowChange && (
+              <label className="flex items-center gap-2 text-xs">
+                <span className="text-muted-foreground">Workflow</span>
+                <select
+                  value={selectedWorkflow ?? ''}
+                  onChange={(e) => onWorkflowChange(e.target.value || null)}
+                  className="flex-1 px-2 py-1 text-xs bg-muted/40 rounded border border-border outline-none focus:bg-muted"
+                >
+                  <option value="">All workflows</option>
+                  {workflows.map(w => (
+                    <option key={w} value={w}>{w}</option>
+                  ))}
+                </select>
+              </label>
+            )}
             {projectAgents.length > 0 && (
               <label className="flex items-center gap-2 text-xs">
                 <span className="text-muted-foreground">Agent</span>
