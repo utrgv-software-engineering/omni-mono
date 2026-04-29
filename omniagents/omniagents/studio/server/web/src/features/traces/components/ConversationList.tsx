@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { MessageSquare, AlertCircle, Edit3, ThumbsUp, ThumbsDown, Circle, Filter, ChevronDown, ChevronRight, Archive, Lock, User } from 'lucide-react'
+import { MessageSquare, AlertCircle, Edit3, ThumbsUp, ThumbsDown, Circle, ChevronDown, ChevronRight, Archive, Lock, User } from 'lucide-react'
 import type { Conversation } from '../../../types'
 import { useTraceStore } from '../store/traceStore'
 import { formatDistanceToNow } from 'date-fns'
@@ -31,7 +31,6 @@ export function ConversationList({
   const syntheticDimensions = syntheticDimsData?.dimensions || []
   const { data: projectAgentsData } = useProjectAgents(selectedProject)
   const projectAgents = projectAgentsData?.agents || []
-  const [showFilters, setShowFilters] = useState(false)
   const [expandedDims, setExpandedDims] = useState<Record<string, boolean>>({})
   
   // Auto-select first project if none selected
@@ -154,13 +153,27 @@ export function ConversationList({
       focusedItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
     }
   }, [focusedIndex])
-  
+
+  const hasActiveFilters =
+    activeFilter !== 'all' ||
+    filters.hasErrors ||
+    !!selectedAgent ||
+    !!selectedWorkflow ||
+    Object.values(filters.syntheticDims || {}).some(arr => Array.isArray(arr) && arr.length > 0)
+
+  const resetFilters = () => {
+    setActiveFilter('all')
+    updateFilters({ hasErrors: false, syntheticDims: {} })
+    setSelectedAgent(null)
+    onWorkflowChange?.(null)
+  }
+
   return (
     <div className="h-full flex flex-col">
       
       
       {/* Search and Filters */}
-      <div className="p-3 border-b border-border space-y-2">
+      <div className="p-3 border-b border-border space-y-3">
         <input
           type="text"
           placeholder="Search conversations..."
@@ -168,117 +181,69 @@ export function ConversationList({
           value={searchQuery}
           onChange={(e) => useTraceStore.getState().setSearchQuery(e.target.value)}
         />
-        <div className="flex flex-wrap gap-1.5">
-          {activeFilter !== 'all' && (
-            <button
-              onClick={() => setActiveFilter('all')}
-              className="px-2 py-0.5 text-xs rounded-full bg-muted border border-border hover:bg-muted/70"
-            >
-              Status: {activeFilter.replace('-', ' ')} ×
-            </button>
-          )}
-          {filters.hasErrors && (
-            <button
-              onClick={() => updateFilters({ hasErrors: false })}
-              className="px-2 py-0.5 text-xs rounded-full bg-muted border border-border hover:bg-muted/70"
-            >
-              Errors only ×
-            </button>
-          )}
-          {selectedAgent && (
-            <button
-              onClick={() => setSelectedAgent(null)}
-              className="px-2 py-0.5 text-xs rounded-full bg-muted border border-border hover:bg-muted/70"
-            >
-              Agent: {selectedAgent} ×
-            </button>
-          )}
-          {selectedWorkflow && (
-            <button
-              onClick={() => onWorkflowChange?.(null)}
-              className="px-2 py-0.5 text-xs rounded-full bg-muted border border-border hover:bg-muted/70"
-            >
-              Workflow: {selectedWorkflow} ×
-            </button>
-          )}
-          {syntheticDimensions.flatMap(dim => {
-            const selected = filters.syntheticDims[dim.name] || []
-            return selected.map(val => {
-              const v = dim.values.find(x => x.name === val)
-              return (
-                <button
-                  key={`${dim.name}:${val}`}
-                  onClick={() => {
-                    const curr = filters.syntheticDims
-                    const next = (curr[dim.name] || []).filter(x => x !== val)
-                    const clone = { ...curr }
-                    if (next.length) clone[dim.name] = next; else delete clone[dim.name]
-                    updateFilters({ syntheticDims: clone })
-                  }}
-                  className="px-2 py-0.5 text-xs rounded-full bg-muted border border-border hover:bg-muted/70"
-                >
-                  {dim.label}: {v?.label || val} ×
-                </button>
-              )
-            })
-          })}
-        </div>
 
-        <button
-          onClick={() => setShowFilters(v => !v)}
-          className="mt-1 w-full flex items-center gap-2 px-2 py-1 text-xs bg-muted/50 rounded-md border border-border hover:bg-muted"
-        >
-          <Filter className="w-3.5 h-3.5 text-muted-foreground" />
-          <span className="flex-1 text-left">Filters</span>
-          {showFilters ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-        </button>
-
-        {showFilters && (
-          <div className="space-y-3 pt-1">
-            <div className="flex items-center gap-1">
-              {(['all','unanalyzed','good','bad','bad-no-notes'] as FilterType[]).map(f => (
-                <button
-                  key={f}
-                  onClick={() => setActiveFilter(f)}
-                  className={`px-2 py-1 text-xs rounded border ${activeFilter === f ? 'bg-background border-border' : 'bg-muted/40 border-border hover:bg-muted'}`}
-                >
-                  {f === 'bad-no-notes' ? 'Needs Notes' : f.charAt(0).toUpperCase() + f.slice(1)}
-                </button>
-              ))}
-            </div>
-            <label className="flex items-center gap-2 text-xs">
+        {/* Status — segmented row */}
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Status</span>
+            {hasActiveFilters && (
+              <button
+                onClick={resetFilters}
+                className="text-[11px] text-muted-foreground hover:text-foreground"
+              >
+                Reset all
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-1">
+            {(['all','unanalyzed','good','bad','bad-no-notes'] as FilterType[]).map(f => (
+              <button
+                key={f}
+                onClick={() => setActiveFilter(f)}
+                className={`px-2 py-1 text-xs rounded border ${activeFilter === f ? 'bg-background border-border font-medium' : 'bg-muted/40 border-border hover:bg-muted'}`}
+              >
+                {f === 'bad-no-notes' ? 'Needs notes' : f.charAt(0).toUpperCase() + f.slice(1)}
+              </button>
+            ))}
+            <label className="ml-auto flex items-center gap-1.5 text-xs cursor-pointer">
               <input
                 type="checkbox"
                 checked={filters.hasErrors}
                 onChange={(e) => updateFilters({ hasErrors: e.target.checked })}
                 className="h-3 w-3 rounded border-input"
               />
-              Errors only
+              <span>Errors only</span>
             </label>
-            {workflows.length > 0 && onWorkflowChange && (
-              <label className="flex items-center gap-2 text-xs">
-                <span className="text-muted-foreground">Workflow</span>
+          </div>
+        </div>
+
+        {/* Workflow + Agent — side-by-side selects */}
+        {(workflows.length > 0 || projectAgents.length > 0) && (
+          <div className="grid grid-cols-2 gap-2">
+            {workflows.length > 0 && onWorkflowChange ? (
+              <label className="flex flex-col gap-1 text-xs min-w-0">
+                <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Workflow</span>
                 <select
                   value={selectedWorkflow ?? ''}
                   onChange={(e) => onWorkflowChange(e.target.value || null)}
-                  className="flex-1 px-2 py-1 text-xs bg-muted/40 rounded border border-border outline-none focus:bg-muted"
+                  className="px-2 py-1 text-xs bg-muted/40 rounded border border-border outline-none focus:bg-muted"
                 >
-                  <option value="">All workflows</option>
+                  <option value="">All</option>
                   {workflows.map(w => (
                     <option key={w} value={w}>{w}</option>
                   ))}
                 </select>
               </label>
-            )}
-            {projectAgents.length > 0 && (
-              <label className="flex items-center gap-2 text-xs">
-                <span className="text-muted-foreground">Agent</span>
+            ) : <div />}
+            {projectAgents.length > 0 ? (
+              <label className="flex flex-col gap-1 text-xs min-w-0">
+                <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Agent</span>
                 <select
                   value={selectedAgent ?? ''}
                   onChange={(e) => setSelectedAgent(e.target.value || null)}
-                  className="flex-1 px-2 py-1 text-xs bg-muted/40 rounded border border-border outline-none focus:bg-muted"
+                  className="px-2 py-1 text-xs bg-muted/40 rounded border border-border outline-none focus:bg-muted"
                 >
-                  <option value="">All agents</option>
+                  <option value="">All</option>
                   {projectAgents.map(a => (
                     <option key={a.agent_slug} value={a.agent_slug}>
                       {a.agent_slug}
@@ -287,66 +252,69 @@ export function ConversationList({
                   ))}
                 </select>
               </label>
-            )}
-            {syntheticDimensions.length > 0 && (
-              <div className="space-y-2">
-                {syntheticDimensions.map(dim => {
-                  const selected = filters.syntheticDims[dim.name] || []
-                  const isOpen = !!expandedDims[dim.name]
-                  const selectedCount = selected.length
-                  return (
-                    <div key={dim.name} className="border border-border rounded-md">
-                      <button
-                        onClick={() => setExpandedDims(s => ({ ...s, [dim.name]: !isOpen }))}
-                        className="w-full flex items-center justify-between px-2 py-1 text-xs bg-muted/40"
-                      >
-                        <span>{dim.label}{selectedCount ? ` (${selectedCount} selected)` : ''}</span>
-                        {isOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                      </button>
-                      {isOpen && (
-                        <div className="p-2">
-                          {selectedCount > 0 && (
-                            <button
-                              onClick={() => {
-                                const curr = { ...filters.syntheticDims }
-                                delete curr[dim.name]
-                                updateFilters({ syntheticDims: curr })
-                              }}
-                              className="mb-2 text-[10px] text-muted-foreground hover:text-foreground"
-                            >
-                              Clear
-                            </button>
-                          )}
-                          <div className="grid grid-cols-2 gap-1.5">
-                            {dim.values.map(v => {
-                              const checked = selected.includes(v.name)
-                              return (
-                                <label key={v.name} className="inline-flex items-center gap-1 px-1.5 py-1 text-[11px] rounded border cursor-pointer select-none bg-muted/30 border-border hover:bg-muted">
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    onChange={() => {
-                                      const curr = filters.syntheticDims
-                                      const currForDim = curr[dim.name] || []
-                                      const nextForDim = currForDim.includes(v.name)
-                                        ? currForDim.filter(x => x !== v.name)
-                                        : [...currForDim, v.name]
-                                      updateFilters({ syntheticDims: { ...curr, [dim.name]: nextForDim } })
-                                    }}
-                                    className="h-3 w-3 rounded border-input"
-                                  />
-                                  <span className="truncate">{v.label}</span>
-                                </label>
-                              )
-                            })}
-                          </div>
-                        </div>
+            ) : <div />}
+          </div>
+        )}
+
+        {/* Synthetic dimensions — kept collapsible because they can be many/long */}
+        {syntheticDimensions.length > 0 && (
+          <div className="space-y-1.5">
+            <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Dimensions</span>
+            {syntheticDimensions.map(dim => {
+              const selected = filters.syntheticDims[dim.name] || []
+              const isOpen = !!expandedDims[dim.name]
+              const selectedCount = selected.length
+              return (
+                <div key={dim.name} className="border border-border rounded-md">
+                  <button
+                    onClick={() => setExpandedDims(s => ({ ...s, [dim.name]: !isOpen }))}
+                    className="w-full flex items-center justify-between px-2 py-1 text-xs bg-muted/30 rounded-t-md"
+                  >
+                    <span>{dim.label}{selectedCount ? ` · ${selectedCount}` : ''}</span>
+                    {isOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                  </button>
+                  {isOpen && (
+                    <div className="p-2">
+                      {selectedCount > 0 && (
+                        <button
+                          onClick={() => {
+                            const curr = { ...filters.syntheticDims }
+                            delete curr[dim.name]
+                            updateFilters({ syntheticDims: curr })
+                          }}
+                          className="mb-2 text-[10px] text-muted-foreground hover:text-foreground"
+                        >
+                          Clear
+                        </button>
                       )}
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {dim.values.map(v => {
+                          const checked = selected.includes(v.name)
+                          return (
+                            <label key={v.name} className="inline-flex items-center gap-1 px-1.5 py-1 text-[11px] rounded border cursor-pointer select-none bg-muted/30 border-border hover:bg-muted">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => {
+                                  const curr = filters.syntheticDims
+                                  const currForDim = curr[dim.name] || []
+                                  const nextForDim = currForDim.includes(v.name)
+                                    ? currForDim.filter(x => x !== v.name)
+                                    : [...currForDim, v.name]
+                                  updateFilters({ syntheticDims: { ...curr, [dim.name]: nextForDim } })
+                                }}
+                                className="h-3 w-3 rounded border-input"
+                              />
+                              <span className="truncate">{v.label}</span>
+                            </label>
+                          )
+                        })}
+                      </div>
                     </div>
-                  )
-                })}
-              </div>
-            )}
+                  )}
+                </div>
+              )
+            })}
           </div>
         )}
       </div>
