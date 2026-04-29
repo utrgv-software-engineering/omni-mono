@@ -29,7 +29,6 @@ interface TraceStore {
   traces: Trace[]
   selectedTrace: Trace | null
   spans: Span[]
-  selectedSpan: Span | null
 
   // Evaluation Results (lookup by group_id)
   evaluationResults: Record<string, EvaluationResultLookup>
@@ -65,7 +64,6 @@ interface TraceStore {
   setTraces: (traces: Trace[]) => void
   setSelectedTrace: (trace: Trace | null) => void
   setSpans: (spans: Span[]) => void
-  setSelectedSpan: (span: Span | null) => void
   setSearchQuery: (query: string) => void
   setSelectedProject: (project: string | null) => void
   setSelectedWorkflow: (workflow: string | null) => void
@@ -89,6 +87,8 @@ interface TraceStore {
   loadEvaluationResults: () => Promise<void>
 }
 
+let analysisRequestToken = 0
+
 export const useTraceStore = create<TraceStore>()(
   persist(
     (set, get) => ({
@@ -99,7 +99,6 @@ export const useTraceStore = create<TraceStore>()(
   traces: [],
   selectedTrace: null,
   spans: [],
-  selectedSpan: null,
   evaluationResults: {},
   searchQuery: '',
   selectedProject: null,  // null = All Projects
@@ -130,33 +129,9 @@ export const useTraceStore = create<TraceStore>()(
   setTraces: (traces) => set({ traces }),
   setSelectedTrace: (trace) => set({ selectedTrace: trace }),
   setSpans: (spans) => set({ spans }),
-  setSelectedSpan: (span) => set({ selectedSpan: span }),
   setSearchQuery: (query) => set({ searchQuery: query }),
-  setSelectedProject: (project) => set((state) => {
-    if (state.selectedProject === project) {
-      return {}
-    }
-    return {
-      selectedProject: project,
-      selectedWorkflow: null,
-      selectedConversation: null,
-      selectedTrace: null,
-      conversationTraces: [],
-      spans: [],
-    }
-  }),
-  setSelectedWorkflow: (workflow) => set((state) => {
-    if (state.selectedWorkflow === workflow) {
-      return {}
-    }
-    return {
-      selectedWorkflow: workflow,
-      selectedConversation: null,
-      selectedTrace: null,
-      conversationTraces: [],
-      spans: [],
-    }
-  }),
+  setSelectedProject: (project) => set({ selectedProject: project }),
+  setSelectedWorkflow: (workflow) => set({ selectedWorkflow: workflow }),
   updateFilters: (filters) => set((state) => ({
     filters: { ...state.filters, ...filters }
   })),
@@ -168,28 +143,37 @@ export const useTraceStore = create<TraceStore>()(
   })),
   
   loadProjectAnalysis: async (project: string, workflowName?: string) => {
+    const token = ++analysisRequestToken
     set({ isAnalysisLoading: true, analysisError: null })
     try {
       const analysis = await api.getAllAnalysis(project, workflowName)
-      
-      // Load categories for each analysis
+      if (token !== analysisRequestToken) return
+
+      const entries = Object.entries(analysis)
+      const settled = await Promise.all(
+        entries.map(async ([groupId, data]): Promise<[string, AnalysisData]> => {
+          try {
+            const { categoryIds } = await api.getAnalysisCategories(project, groupId)
+            return [groupId, { ...data, categories: categoryIds }]
+          } catch {
+            return [groupId, { ...data, categories: [] }]
+          }
+        })
+      )
+      if (token !== analysisRequestToken) return
+
       const analysisWithCategories: Record<string, AnalysisData> = {}
-      for (const [groupId, data] of Object.entries(analysis)) {
-        try {
-          const { categoryIds } = await api.getAnalysisCategories(project, groupId)
-          analysisWithCategories[groupId] = { ...data, categories: categoryIds }
-        } catch {
-          // If categories fail to load, just use the analysis without them
-          analysisWithCategories[groupId] = { ...data, categories: [] }
-        }
+      for (const [groupId, data] of settled) {
+        analysisWithCategories[groupId] = data
       }
-      
+
       set({ conversationAnalysis: analysisWithCategories, isAnalysisLoading: false })
     } catch (error) {
+      if (token !== analysisRequestToken) return
       console.error('Failed to load analysis:', error)
-      set({ 
+      set({
         analysisError: error instanceof Error ? error.message : 'Failed to load analysis',
-        isAnalysisLoading: false 
+        isAnalysisLoading: false
       })
     }
   },
@@ -377,11 +361,9 @@ export const useTraceStore = create<TraceStore>()(
   },
 }),
     {
-      name: 'studio-ui-state', // localStorage key
-      partialize: (state) => ({ 
-        // Persist selected workflow and analysis goals
-        selectedWorkflow: state.selectedWorkflow,
-        analysisGoals: state.analysisGoals
+      name: 'studio-ui-state',
+      partialize: (state) => ({
+        analysisGoals: state.analysisGoals,
       }),
     }
   )

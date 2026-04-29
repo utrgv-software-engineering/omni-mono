@@ -51,6 +51,16 @@ export default {
         mono: ['SF Mono', 'Monaco', 'Inconsolata', 'monospace'],
         sans: ['Inter', 'system-ui', 'sans-serif'],
       },
+      keyframes: {
+        'loading-bar': {
+          '0%':   { transform: 'translateX(-100%)', width: '40%' },
+          '50%':  { width: '60%' },
+          '100%': { transform: 'translateX(250%)', width: '40%' },
+        },
+      },
+      animation: {
+        'loading-bar': 'loading-bar 1.2s ease-in-out infinite',
+      },
     },
   },
   plugins: [

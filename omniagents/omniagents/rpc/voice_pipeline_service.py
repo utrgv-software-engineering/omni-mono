@@ -338,6 +338,14 @@ class VoicePipelineService(RpcMethodsBase):
         self._sessions: Dict[str, VoicePipelineSession] = {}
         self._event_tasks: Dict[str, asyncio.Task] = {}
 
+    async def capabilities(self) -> Dict[str, Any]:
+        """Probe voice availability without opening a session (and thus without creating a trace)."""
+        return {
+            "enabled": True,
+            "kind": "pipeline",
+            "agent_name": getattr(self.spec, "name", None),
+        }
+
     async def start_session(self, session_id: Optional[str] = None) -> Dict[str, Any]:
         if session_id is None:
             session_id = str(uuid.uuid4())

@@ -141,6 +141,7 @@ export function App() {
           }
         } catch {}
         try {
+          // Probe via capabilities() not startSession(): the latter creates an empty trace per boot.
           const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
           const host = window.location.host
           const base = `${proto}://${host}/ws/realtime`
@@ -150,12 +151,8 @@ export function App() {
           const rtc = new RealtimeRPCClient(base, token)
           await rtc.connect()
           try {
-            const res: any = await rtc.startSession()
-            const sid = String(res?.session_id || '')
-            if (sid) {
-              setVoiceEnabled(true)
-              try { await rtc.stopSession(sid) } catch {}
-            }
+            const caps = await rtc.capabilities()
+            setVoiceEnabled(!!caps?.enabled)
           } finally { rtc.disconnect() }
         } catch { setVoiceEnabled(false) }
         const url = new URL(window.location.href)

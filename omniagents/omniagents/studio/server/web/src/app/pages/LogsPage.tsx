@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { StudioPage } from '../../shared/components/StudioPage'
 import { LogsHeader } from '../../shared/components/LogsHeader'
@@ -12,6 +12,25 @@ import { useWebSocket } from '../../shared/hooks/useWebSocket'
 import { useStudioProject } from '../../shared/hooks/useStudioProject'
 import type { Conversation, Trace } from '../../types'
 import { ROUTES, QUERY_PARAMS } from '../routes'
+
+const stubConversation = (groupId: string): Conversation => ({
+  group_id: groupId,
+  trace_count: 0,
+  has_errors: false,
+  created_at: '',
+  workflow_name: null,
+  metadata: {},
+  first_input: null,
+})
+
+const stubTrace = (traceId: string): Trace => ({
+  trace_id: traceId,
+  workflow_name: null,
+  group_id: null,
+  project: '',
+  metadata: {},
+  created_at: '',
+})
 
 const normalizeParam = (value: string | null) => {
   if (!value) {
@@ -39,9 +58,7 @@ export function LogsPage() {
     setConversationTraces,
     conversationTraces,
     setSpans,
-    selectedConversation,
     setSelectedConversation,
-    selectedTrace,
     setSelectedTrace,
     setSelectedProject,
     setSelectedWorkflow,
@@ -57,8 +74,11 @@ export function LogsPage() {
     project: projectParam,
     workflow: workflowParam,
   })
-  const { data: conversationTracesData } = useConversationTraces(projectParam, conversationParam)
-  const { data: traceData } = useTrace(projectParam, traceParam)
+  const { data: conversationTracesData, isFetching: isFetchingConversationTraces } =
+    useConversationTraces(projectParam, conversationParam, {
+      includePreview: viewMode === 'debug',
+    })
+  const { data: traceData, isFetching: isFetchingTrace } = useTrace(projectParam, traceParam)
 
   useWebSocket()
 
@@ -108,12 +128,11 @@ export function LogsPage() {
   useEffect(() => {
     if (!conversationParam) {
       setSelectedConversation(null)
-      setSelectedTrace(null)
       return
     }
-    const found = conversationsData?.conversations?.find((item) => item.group_id === conversationParam) || null
-    setSelectedConversation(found)
-  }, [conversationParam, conversationsData, setSelectedConversation, setSelectedTrace])
+    const found = conversationsData?.conversations?.find((item) => item.group_id === conversationParam)
+    setSelectedConversation(found ?? stubConversation(conversationParam))
+  }, [conversationParam, conversationsData, setSelectedConversation])
 
   useEffect(() => {
     if (conversationTracesData?.traces) {
@@ -128,8 +147,8 @@ export function LogsPage() {
       setSelectedTrace(null)
       return
     }
-    const found = conversationTraces.find((item) => item.trace_id === traceParam) || null
-    setSelectedTrace(found)
+    const found = conversationTraces.find((item) => item.trace_id === traceParam)
+    setSelectedTrace(found ?? stubTrace(traceParam))
   }, [traceParam, conversationTraces, setSelectedTrace])
 
   useEffect(() => {
@@ -141,8 +160,8 @@ export function LogsPage() {
   }, [traceData, setSpans])
 
   useEffect(() => {
-    if (projectParam && workflowParam) {
-      loadProjectAnalysis(projectParam, workflowParam)
+    if (projectParam) {
+      loadProjectAnalysis(projectParam, workflowParam ?? undefined)
     }
   }, [projectParam, workflowParam, loadProjectAnalysis])
 
@@ -159,19 +178,9 @@ export function LogsPage() {
     if (!conversationTracesData?.traces?.length) {
       return
     }
-    const lastTrace = conversationTracesData.traces[conversationTracesData.traces.length - 1]
-    updateSearch({ [QUERY_PARAMS.trace]: lastTrace.trace_id }, { replace: true })
+    const latestTrace = conversationTracesData.traces[conversationTracesData.traces.length - 1]
+    updateSearch({ [QUERY_PARAMS.trace]: latestTrace.trace_id }, { replace: true })
   }, [viewMode, conversationParam, traceParam, conversationTracesData, updateSearch])
-
-  const previousViewModeRef = useRef(viewMode)
-
-  useEffect(() => {
-    const previousMode = previousViewModeRef.current
-    if (viewMode === 'debug' && previousMode !== 'debug') {
-      updateSearch({ [QUERY_PARAMS.trace]: null })
-    }
-    previousViewModeRef.current = viewMode
-  }, [viewMode, updateSearch])
 
   const handleBackToHome = () => {
     navigate(ROUTES.home)
@@ -218,7 +227,7 @@ export function LogsPage() {
   }
 
   const viewContent = useMemo(() => {
-    if (!selectedConversation) {
+    if (!conversationParam) {
       return (
         <div className="h-full flex items-center justify-center text-muted-foreground">
           <div className="text-center">
@@ -233,7 +242,7 @@ export function LogsPage() {
       return <ReviewView spans={traceData?.spans || []} />
     }
 
-    if (selectedTrace) {
+    if (traceParam) {
       return <DebugView spans={traceData?.spans || []} onBack={() => updateSearch({ [QUERY_PARAMS.trace]: null })} />
     }
 
@@ -244,9 +253,9 @@ export function LogsPage() {
         selectedTraceId={null}
       />
     )
-  }, [conversationTraces, selectedConversation, selectedTrace, traceData?.spans, viewMode, updateSearch])
+  }, [conversationParam, traceParam, conversationTraces, traceData?.spans, viewMode, updateSearch])
 
-  const showShortcutsBar = Boolean(selectedConversation && viewMode === 'review')
+  const showShortcutsBar = Boolean(conversationParam && viewMode === 'review')
 
   const sidebarContent = (
     <ConversationList
@@ -260,7 +269,7 @@ export function LogsPage() {
     <LogsHeader
       viewMode={viewMode}
       onViewModeChange={handleViewModeChange}
-      showViewToggle={!!selectedConversation}
+      showViewToggle={!!conversationParam}
       showBackButton
       onBack={handleBackToHome}
       projects={projectsData?.projects || []}
@@ -281,6 +290,11 @@ export function LogsPage() {
       hasBottomBar={showShortcutsBar}
     >
       <div className="relative h-full">
+        {(isFetchingConversationTraces || isFetchingTrace) && (
+          <div className="absolute top-0 left-0 right-0 h-0.5 overflow-hidden z-50">
+            <div className="h-full bg-primary/70 animate-loading-bar" />
+          </div>
+        )}
         {viewContent}
         {showShortcutsBar && (
           <div className="fixed bottom-0 left-0 right-0 bg-background/95 backdrop-blur border-t border-border px-4 py-2.5 flex items-center justify-center gap-3 text-xs z-50">

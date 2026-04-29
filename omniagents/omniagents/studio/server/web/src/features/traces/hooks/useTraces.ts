@@ -1,6 +1,16 @@
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { useTraceStore } from '../store/traceStore'
+
+function useDebouncedValue<T>(value: T, delay = 250): T {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebounced(value), delay)
+    return () => window.clearTimeout(id)
+  }, [value, delay])
+  return debounced
+}
 
 export function useProjects() {
   return useQuery({
@@ -17,11 +27,12 @@ interface UseConversationsArgs {
 
 export function useConversations({ project, workflow }: UseConversationsArgs) {
   const { filters, searchQuery } = useTraceStore()
+  const debouncedSearch = useDebouncedValue(searchQuery, 250)
 
   return useQuery({
-    queryKey: ['conversations', filters, searchQuery, project, workflow],
+    queryKey: ['conversations', filters, debouncedSearch, project, workflow],
     queryFn: () => {
-      if (!project || !workflow) {
+      if (!project) {
         return { conversations: [], total: 0 }
       }
       const dims = Object.entries(filters.syntheticDims || {})
@@ -29,25 +40,30 @@ export function useConversations({ project, workflow }: UseConversationsArgs) {
       return api.getConversations({
         project,
         limit: 100,
-        search: searchQuery || undefined,
+        search: debouncedSearch || undefined,
         has_errors: filters.hasErrors || undefined,
         workflow_name: workflow || undefined,
         dims: dims.length ? dims : undefined,
       })
     },
     refetchInterval: 5000,
-    enabled: !!(project && workflow),
+    enabled: !!project,
   })
 }
 
-export function useConversationTraces(project: string | null, groupId: string | null) {
+export function useConversationTraces(
+  project: string | null,
+  groupId: string | null,
+  options?: { includePreview?: boolean },
+) {
+  const includePreview = !!options?.includePreview
   return useQuery({
-    queryKey: ['conversation-traces', project, groupId],
+    queryKey: ['conversation-traces', project, groupId, includePreview],
     queryFn: () => {
       if (!project || !groupId) {
         return { traces: [], group_id: '', total: 0 }
       }
-      return api.getConversationTraces(project, groupId)
+      return api.getConversationTraces(project, groupId, { includePreview })
     },
     enabled: !!(project && groupId),
   })
@@ -55,9 +71,10 @@ export function useConversationTraces(project: string | null, groupId: string | 
 
 export function useTraces(project: string | null) {
   const { filters, searchQuery } = useTraceStore()
+  const debouncedSearch = useDebouncedValue(searchQuery, 250)
 
   return useQuery({
-    queryKey: ['traces', filters, searchQuery, project],
+    queryKey: ['traces', filters, debouncedSearch, project],
     queryFn: () => {
       if (!project) {
         return { traces: [], total: 0 }
@@ -65,7 +82,7 @@ export function useTraces(project: string | null) {
       return api.getTraces({
         project,
         limit: 100,
-        search: searchQuery || undefined,
+        search: debouncedSearch || undefined,
         has_errors: filters.hasErrors || undefined,
         span_type: filters.spanTypes[0] || undefined,
       })

@@ -119,6 +119,10 @@ export class RealtimeRPCClient {
     this.ws.send(JSON.stringify(msg))
   }
 
+  async capabilities(): Promise<{ enabled: boolean; kind?: string; agent_name?: string | null }> {
+    return this.call('capabilities')
+  }
+
   async startSession(sessionId?: string): Promise<{ session_id: string; run_id: string }> {
     const params: Record<string, unknown> = {}
     if (sessionId) params.session_id = sessionId

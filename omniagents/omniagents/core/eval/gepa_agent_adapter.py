@@ -337,9 +337,13 @@ class OmniAgentsAgentAdapter:
                             with studio_trace(
                                 self.workflow_name, group_id=gid, metadata=meta
                             ):
-                                res = await self._run_once(instructions, prompt, scenario=item)
+                                res = await self._run_once(
+                                    instructions, prompt, scenario=item
+                                )
                         except Exception:
-                            res = await self._run_once(instructions, prompt, scenario=item)
+                            res = await self._run_once(
+                                instructions, prompt, scenario=item
+                            )
                     else:
                         res = await self._run_once(instructions, prompt, scenario=item)
                 except Exception as e:
@@ -577,7 +581,9 @@ class OmniAgentsAgentAdapter:
                         output = str(output)
                 if len(output) > max_result_chars:
                     output = output[:max_result_chars] + " …(truncated)"
-                lines.append(f"TOOL RESULT #{tool_idx} (first {max_result_chars} chars):")
+                lines.append(
+                    f"TOOL RESULT #{tool_idx} (first {max_result_chars} chars):"
+                )
                 lines.append(output)
             elif it_type == "reasoning":
                 summary = item.get("summary")
@@ -744,11 +750,64 @@ class OmniAgentsAgentAdapter:
         except Exception:
             return s
 
+    def _build_agent_context_md(self) -> str:
+        """Render the agent's context factory once and format the resulting
+        ``{key: value}`` dict as markdown for inclusion in the optimizer prompt.
+
+        Returns "" when no factory is configured or rendering fails. Each
+        rendered key is presented as the Jinja2 placeholder it corresponds to
+        (``{{ key }}``) followed by its current resolved value, so the
+        reflection LLM can write skill/tool/context-aware instructions while
+        being told to preserve the placeholder tokens for runtime injection.
+        """
+        try:
+            spec = self._load_spec()
+        except Exception:
+            return ""
+        factory = getattr(spec, "build_context", None)
+        if not callable(factory):
+            return ""
+        variables = getattr(spec, "variables", None) or {}
+        try:
+            ctx = factory(variables)
+        except Exception:
+            return ""
+        if ctx is None:
+            return ""
+        if not isinstance(ctx, dict):
+            for attr in ("model_dump", "__dict__"):
+                try:
+                    candidate = getattr(ctx, attr)
+                    if callable(candidate):
+                        candidate = candidate()
+                    if isinstance(candidate, dict):
+                        ctx = candidate
+                        break
+                except Exception:
+                    continue
+        if not isinstance(ctx, dict) or not ctx:
+            return ""
+        parts: List[str] = []
+        for k, v in ctx.items():
+            v_str = v if isinstance(v, str) else str(v)
+            if not v_str.strip():
+                continue
+            parts.append(f"### `{{{{ {k} }}}}` — current resolved value\n\n{v_str}\n")
+        if not parts:
+            return ""
+        return (
+            "These Jinja2 placeholders appear in the agent's instructions and "
+            "are substituted at runtime with dynamic context (skills index, "
+            "tool catalog, session metadata, etc.). The current resolved "
+            "values are shown below for reference.\n\n" + "\n---\n".join(parts)
+        )
+
     def _default_instruction_prompt(
         self, current_doc: str, items: List[Dict[str, Any]]
     ) -> str:
         md = self._format_dataset_md(items)
         tools_md = self._get_tools_schema_md()
+        agent_ctx_md = self._build_agent_context_md()
         name = (
             self._agent_meta.get("label") or self._agent_meta.get("name") or "assistant"
         )
@@ -765,6 +824,10 @@ class OmniAgentsAgentAdapter:
         info_parts.append("\n## Current Instructions\n```\n" + current_doc + "\n```")
         if tools_md:
             info_parts.append("\n## Available Tools (if any)\n" + tools_md)
+        if agent_ctx_md:
+            info_parts.append(
+                "\n## Runtime Context (Jinja2 substituted at run time)\n" + agent_ctx_md
+            )
         sections.append("# LLM Agent Information\n" + "\n\n".join(info_parts))
         sections.append(
             "# Goal\nWrite improved, generalizable instructions that maximize correct behavior across the dataset without overfitting."
@@ -779,6 +842,7 @@ class OmniAgentsAgentAdapter:
             "- Do: include domain constraints and decision rules; be explicit about edge cases.",
             "- Don’t: overfit to specific IDs; avoid brittle patterns; don’t require unavailable context.",
             "- Tools: use tools when they improve correctness; follow parameter schemas.",
+            "- Placeholders: preserve every Jinja2 `{{ ... }}` token from the current instructions verbatim. They are runtime injection points; removing or rewriting them breaks plumbing. You may add hardcoded prose around them (including references to specific skills/tools by name) — just do not replace the placeholders themselves.",
             "- Output format: return ONLY the new instructions in a single fenced code block. No commentary.",
         ]
         sections.append("# Guidance\n" + "\n".join(guidance))
@@ -796,11 +860,13 @@ class OmniAgentsAgentAdapter:
                 tmpl = self._read_text_file(base_dir, str(tf))
                 dataset_md = self._format_dataset_md(items)
                 tools_md = self._get_tools_schema_md()
+                agent_ctx_md = self._build_agent_context_md()
                 return render_template(
                     tmpl,
                     current_instruction_doc=current_text,
                     dataset_md=dataset_md,
                     tools_schema_md=tools_md,
+                    agent_context_md=agent_ctx_md,
                     target_role="assistant",
                     agent_name=self._agent_meta.get("name"),
                     agent_label=self._agent_meta.get("label"),

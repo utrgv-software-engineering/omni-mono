@@ -121,6 +121,138 @@ def _expand_env_template(value: str) -> str:
     return re.sub(pattern, replacer, value)
 
 
+def _fetch_first_user_input(conn, trace_id):
+    """Pull the first user message from a trace's earliest response/generation span."""
+    if not trace_id:
+        return None
+    cursor = conn.execute(
+        """
+        SELECT data FROM spans
+        WHERE trace_id = ? AND span_type IN ('response', 'generation')
+        ORDER BY sequence_number
+        LIMIT 1
+        """,
+        (trace_id,),
+    )
+    row = cursor.fetchone()
+    if not row:
+        return None
+    try:
+        raw = row["data"]
+        full_span = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        input_msgs = full_span.get("span_data", {}).get("input") or []
+        for msg in input_msgs:
+            if isinstance(msg, dict) and msg.get("role") == "user":
+                return msg.get("content", "") or None
+    except Exception:
+        return None
+    return None
+
+
+def _filter_groups_by_dim(conn, group_ids, dim_map):
+    """Return the subset of group_ids whose any trace's metadata satisfies the dim filter."""
+    if not group_ids or not dim_map:
+        return set(group_ids)
+    placeholders = ",".join("?" * len(group_ids))
+    cursor = conn.execute(
+        f"""
+        SELECT COALESCE(group_id, trace_id) AS gkey, metadata
+        FROM traces
+        WHERE COALESCE(group_id, trace_id) IN ({placeholders})
+        """,
+        group_ids,
+    )
+    matching: set = set()
+    for row in cursor:
+        gkey = row["gkey"]
+        if gkey in matching:
+            continue
+        md = row["metadata"]
+        try:
+            meta = json.loads(md) if isinstance(md, str) else (md or {})
+        except Exception:
+            meta = {}
+        mapping = (
+            meta.get("omniagents", {})
+            .get("synthetic", {})
+            .get("selection", {})
+            .get("mapping", {})
+        )
+        if all(mapping.get(k) in allowed for k, allowed in dim_map.items()):
+            matching.add(gkey)
+    return matching
+
+
+def _extract_trace_io_preview(spans):
+    """Pull a short input/output text preview from response/generation spans.
+
+    Returns ``(input_text, output_text)``; either may be None.
+    """
+    trace_input = None
+    trace_outputs: list = []
+    for span in spans:
+        try:
+            raw = span["data"]
+            full_span = json.loads(raw) if isinstance(raw, str) else (raw or {})
+            span_data = full_span.get("span_data", {})
+            span_type = span["span_type"]
+
+            if (
+                span_type in ("response", "generation")
+                and span_data.get("input")
+                and not trace_input
+            ):
+                user_msgs = [
+                    m.get("content", "")
+                    for m in span_data["input"]
+                    if isinstance(m, dict) and m.get("role") == "user"
+                ]
+                if user_msgs:
+                    trace_input = user_msgs[-1] if len(user_msgs) > 1 else user_msgs[0]
+
+            if span_type == "response":
+                response = span_data.get("response") or {}
+                for output_item in response.get("output") or []:
+                    if output_item.get("type") == "message":
+                        for content_item in output_item.get("content") or []:
+                            if content_item.get("type") == "output_text":
+                                text = content_item.get("text", "")
+                                if text:
+                                    trace_outputs.append(text)
+                    elif output_item.get("type") == "function_call":
+                        trace_outputs.append(
+                            f"→ {output_item.get('name', 'function')}()"
+                        )
+
+            elif span_type == "generation":
+                output_list = span_data.get("output")
+                if isinstance(output_list, list) and output_list:
+                    first_output = output_list[0]
+                    if isinstance(first_output, dict):
+                        inner_outputs = first_output.get("output")
+                        if isinstance(inner_outputs, list):
+                            for item in inner_outputs:
+                                if not isinstance(item, dict):
+                                    continue
+                                if (
+                                    item.get("type") == "message"
+                                    and item.get("role") == "assistant"
+                                ):
+                                    for content in item.get("content") or []:
+                                        if isinstance(content, dict) and content.get(
+                                            "text"
+                                        ):
+                                            trace_outputs.append(content["text"])
+                                elif item.get("type") == "function_call":
+                                    trace_outputs.append(
+                                        f"→ {item.get('name', 'function')}()"
+                                    )
+        except Exception:
+            continue
+
+    return trace_input, (trace_outputs[-1] if trace_outputs else None)
+
+
 class SpaStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope: Scope) -> Response:
         try:
@@ -6115,144 +6247,147 @@ def create_api_app(
             None, description="Synthetic dimension filters as 'dimension:value'"
         ),
     ):
-        """Get conversations (grouped traces) with filtering and pagination"""
+        """Get conversations (grouped traces) with filtering and pagination.
+
+        Aggregates per group_id in a single SQL query rather than scanning
+        every trace's spans in Python (which used to load the entire DB
+        on every sidebar refresh).
+        """
         try:
-            # Get the storage for this project
             try:
                 storage = storage_manager.get_storage(project)
             except ValueError:
                 return {"conversations": [], "total": 0}
 
-            # Get many traces for coverage
-            traces = storage.get_traces(limit=1000000)
-
-            # Group by group_id
-            conversations = {}
-            for trace in traces:
-                group_id = (
-                    trace.get("group_id") or trace["trace_id"]
-                )  # Use trace_id if no group
-
-                if group_id not in conversations:
-                    conversations[group_id] = {
-                        "group_id": group_id,
-                        "traces": [],
-                        "trace_count": 0,
-                        "has_errors": False,
-                        "created_at": trace["created_at"],
-                        "workflow_name": trace.get("workflow_name"),
-                        "metadata": trace.get("metadata", {}),
-                        "first_input": None,  # Will extract from first trace
-                    }
-
-                conversations[group_id]["traces"].append(trace)
-                conversations[group_id]["trace_count"] += 1
-
-                # Check for errors in spans and extract first input from first trace
-                spans = storage.get_spans_for_trace(trace["trace_id"])
-                if any(s.get("error") for s in spans):
-                    conversations[group_id]["has_errors"] = True
-
-                # Extract first input from the first trace in the conversation
-                if conversations[group_id]["first_input"] is None:
-                    for span in spans:
-                        try:
-                            # Parse the data field
-                            if isinstance(span.get("data"), str):
-                                full_span = json.loads(span["data"])
-                            else:
-                                full_span = span.get("data", {})
-
-                            span_data = full_span.get("span_data", {})
-
-                            # Look for first user input in response or generation spans
-                            if span.get("span_type") in [
-                                "response",
-                                "generation",
-                            ] and span_data.get("input"):
-                                input_msgs = span_data["input"]
-                                user_msgs = [
-                                    m
-                                    for m in input_msgs
-                                    if isinstance(m, dict) and m.get("role") == "user"
-                                ]
-                                if user_msgs:
-                                    conversations[group_id]["first_input"] = user_msgs[
-                                        0
-                                    ].get("content", "")
-                                    break
-                        except:
-                            pass
-
-            # Convert to list and sort by created_at
-            conv_list = list(conversations.values())
-            conv_list.sort(key=lambda x: x["created_at"], reverse=True)
-
-            # Apply filters
-            if search:
-                conv_list = [
-                    c
-                    for c in conv_list
-                    if search.lower() in (c.get("workflow_name") or "").lower()
-                    or search.lower() in c["group_id"].lower()
-                ]
-
-            if has_errors is not None:
-                conv_list = [c for c in conv_list if c["has_errors"] == has_errors]
-
-            if workflow_name:
-                wn = workflow_name.lower()
-                conv_list = [
-                    c for c in conv_list if (c.get("workflow_name") or "").lower() == wn
-                ]
-
-            # Apply synthetic dimension filters
+            dim_map: Dict[str, set] = {}
             if dim:
-                dim_map: Dict[str, set] = {}
                 for entry in dim:
                     try:
                         k, v = entry.split(":", 1)
                         dim_map.setdefault(k, set()).add(v)
                     except ValueError:
                         continue
-                if dim_map:
-                    filtered_conv = []
-                    for conv in conv_list:
-                        matched = False
-                        for t in conv.get("traces", []):
-                            md = t.get("metadata")
-                            try:
-                                if isinstance(md, str):
-                                    meta = json.loads(md)
-                                else:
-                                    meta = md or {}
-                            except:
-                                meta = {}
-                            mapping = (
-                                meta.get("omniagents", {})
-                                .get("synthetic", {})
-                                .get("selection", {})
-                                .get("mapping", {})
-                            )
-                            if all(
-                                mapping.get(k) in allowed
-                                for k, allowed in dim_map.items()
-                            ):
-                                matched = True
-                                break
-                        if matched:
-                            filtered_conv.append(conv)
-                    conv_list = filtered_conv
 
-            # Apply pagination
-            total = len(conv_list)
-            paginated = conv_list[offset : offset + limit]
+            base_sql = """
+                WITH ranked AS (
+                  SELECT t.trace_id, t.workflow_name, t.metadata, t.created_at,
+                         COALESCE(t.group_id, t.trace_id) AS gkey,
+                         ROW_NUMBER() OVER (
+                           PARTITION BY COALESCE(t.group_id, t.trace_id)
+                           ORDER BY t.created_at DESC
+                         ) AS rn_desc,
+                         ROW_NUMBER() OVER (
+                           PARTITION BY COALESCE(t.group_id, t.trace_id)
+                           ORDER BY t.created_at ASC
+                         ) AS rn_asc
+                  FROM traces t
+                ),
+                groups AS (
+                  SELECT gkey AS group_id,
+                         COUNT(*) AS trace_count,
+                         MAX(created_at) AS created_at_raw,
+                         MAX(CASE WHEN rn_desc = 1 THEN workflow_name END) AS workflow_name,
+                         MAX(CASE WHEN rn_desc = 1 THEN metadata END)      AS metadata,
+                         MAX(CASE WHEN rn_asc  = 1 THEN trace_id END)      AS first_trace_id
+                  FROM ranked
+                  GROUP BY gkey
+                ),
+                err_groups AS (
+                  SELECT DISTINCT COALESCE(t.group_id, t.trace_id) AS gkey
+                  FROM traces t
+                  JOIN spans s ON s.trace_id = t.trace_id
+                  WHERE s.error IS NOT NULL
+                ),
+                joined AS (
+                  SELECT g.group_id, g.trace_count, g.created_at_raw,
+                         g.workflow_name, g.metadata, g.first_trace_id,
+                         CASE WHEN err.gkey IS NOT NULL THEN 1 ELSE 0 END AS has_errors
+                  FROM groups g
+                  LEFT JOIN err_groups err ON err.gkey = g.group_id
+                )
+            """
 
-            # Remove full traces from response (just keep count)
-            for conv in paginated:
-                del conv["traces"]
+            filters: List[str] = []
+            params: List[Any] = []
+            if workflow_name:
+                filters.append("LOWER(workflow_name) = LOWER(?)")
+                params.append(workflow_name)
+            if search:
+                filters.append(
+                    "(LOWER(workflow_name) LIKE LOWER(?) OR LOWER(group_id) LIKE LOWER(?))"
+                )
+                like = f"%{search}%"
+                params.extend([like, like])
+            if has_errors is not None:
+                filters.append("has_errors = ?")
+                params.append(1 if has_errors else 0)
+            where_sql = ("WHERE " + " AND ".join(filters)) if filters else ""
 
-            return {"conversations": paginated, "total": total}
+            # Without dim filter we can paginate in SQL and get total via window function.
+            # With dim filter we need to inspect per-trace metadata, so we materialize
+            # the filtered groups in Python and paginate there.
+            if not dim_map:
+                page_sql = (
+                    base_sql
+                    + f"""
+                    SELECT group_id, trace_count,
+                           datetime(created_at_raw) || 'Z' AS created_at,
+                           workflow_name, metadata, first_trace_id, has_errors,
+                           COUNT(*) OVER () AS total_rows
+                    FROM joined
+                    {where_sql}
+                    ORDER BY created_at_raw DESC
+                    LIMIT ? OFFSET ?
+                    """
+                )
+                rows = list(storage.conn.execute(page_sql, [*params, limit, offset]))
+                total = rows[0]["total_rows"] if rows else 0
+            else:
+                all_sql = (
+                    base_sql
+                    + f"""
+                    SELECT group_id, trace_count,
+                           datetime(created_at_raw) || 'Z' AS created_at,
+                           workflow_name, metadata, first_trace_id, has_errors
+                    FROM joined
+                    {where_sql}
+                    ORDER BY created_at_raw DESC
+                    """
+                )
+                all_rows = list(storage.conn.execute(all_sql, params))
+                matching_ids = _filter_groups_by_dim(
+                    storage.conn, [r["group_id"] for r in all_rows], dim_map
+                )
+                rows = [r for r in all_rows if r["group_id"] in matching_ids]
+                total = len(rows)
+                rows = rows[offset : offset + limit]
+
+            conversations = []
+            for row in rows:
+                md = row["metadata"]
+                if isinstance(md, str):
+                    try:
+                        md = json.loads(md) or {}
+                    except Exception:
+                        md = {}
+                elif md is None:
+                    md = {}
+
+                conversations.append(
+                    {
+                        "group_id": row["group_id"],
+                        "trace_count": row["trace_count"],
+                        "has_errors": bool(row["has_errors"]),
+                        "created_at": row["created_at"],
+                        "workflow_name": row["workflow_name"],
+                        "metadata": md,
+                        "first_input": _fetch_first_user_input(
+                            storage.conn, row["first_trace_id"]
+                        ),
+                    }
+                )
+
+            return {"conversations": conversations, "total": total}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -6267,25 +6402,25 @@ def create_api_app(
                 storage = storage_manager.get_storage(project)
             except ValueError:
                 return {"dimensions": []}
-            traces = storage.get_traces(limit=1000000)
+            sql = """
+                SELECT metadata FROM traces
+                WHERE json_extract(metadata, '$.omniagents.synthetic.catalog.dimensions') IS NOT NULL
+            """
+            params: List[Any] = []
+            if workflow_name:
+                sql += " AND LOWER(workflow_name) = LOWER(?)"
+                params.append(workflow_name)
+            traces = list(storage.conn.execute(sql, params))
             dims_map: Dict[str, Dict[str, Any]] = {}
 
             def display_name(s: str) -> str:
                 return s.replace("_", " ").title()
 
             for t in traces:
-                if (
-                    workflow_name
-                    and (t.get("workflow_name") or "").lower() != workflow_name.lower()
-                ):
-                    continue
-                md = t.get("metadata")
+                md = t["metadata"]
                 try:
-                    if isinstance(md, str):
-                        meta = json.loads(md)
-                    else:
-                        meta = md or {}
-                except:
+                    meta = json.loads(md) if isinstance(md, str) else (md or {})
+                except Exception:
                     meta = {}
                 dims = (
                     meta.get("omniagents", {})
@@ -6334,191 +6469,95 @@ def create_api_app(
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get("/api/conversations/{project}/{group_id}/traces")
-    async def get_conversation_traces(project: str, group_id: str):
-        """Get all traces in a conversation"""
+    async def get_conversation_traces(
+        project: str,
+        group_id: str,
+        include_preview: bool = False,
+    ):
+        """Get all traces in a conversation.
+
+        ``include_preview`` is opt-in because extracting the input/output text
+        requires reading full ``response``/``generation`` span ``data`` blobs,
+        which can be hundreds of KB each. The trace list (debug mode) needs it;
+        the auto-select-latest path in review mode does not.
+        """
         try:
             storage = storage_manager.get_storage(project)
 
-            # Get all traces for this group_id
-            all_traces = storage.get_traces(limit=10000)
+            rows = list(
+                storage.conn.execute(
+                    """
+                    SELECT t.trace_id, t.workflow_name, t.group_id, t.metadata,
+                           datetime(t.created_at) || 'Z' AS created_at,
+                           COUNT(s.span_id)                                          AS span_count,
+                           MAX(CASE WHEN s.error IS NOT NULL THEN 1 ELSE 0 END)      AS has_errors,
+                           MIN(s.started_at)                                         AS min_started,
+                           MAX(s.ended_at)                                           AS max_ended
+                    FROM traces t
+                    LEFT JOIN spans s ON s.trace_id = t.trace_id
+                    WHERE t.group_id = ?
+                       OR (t.group_id IS NULL AND t.trace_id = ?)
+                    GROUP BY t.trace_id
+                    ORDER BY t.created_at
+                    """,
+                    (group_id, group_id),
+                )
+            )
 
-            # Filter by group_id (or traces where trace_id == group_id for single traces)
-            # Make sure we have mutable dicts
-            conversation_traces = []
-            for t in all_traces:
-                if t.get("group_id") == group_id or (
-                    not t.get("group_id") and t["trace_id"] == group_id
-                ):
-                    # Create a new dict to ensure mutability
-                    trace_dict = dict(t)
-                    conversation_traces.append(trace_dict)
+            traces: list = []
+            for row in rows:
+                trace = dict(row)
 
-            # Sort by created_at
-            conversation_traces.sort(key=lambda x: x["created_at"])
-
-            # Add span counts and error flags, extract input/output
-            for trace in conversation_traces:
-                spans = storage.get_spans_for_trace(trace["trace_id"])
-                trace["span_count"] = len(spans)
-                trace["has_errors"] = any(s.get("error") for s in spans)
-
-                # Ensure metadata exists and is a dict
-                if "metadata" not in trace:
-                    trace["metadata"] = {}
-                elif trace["metadata"] is None:
-                    trace["metadata"] = {}
-                elif isinstance(trace["metadata"], str):
+                md = trace.get("metadata")
+                if isinstance(md, str):
                     try:
-                        trace["metadata"] = json.loads(trace["metadata"])
-                        if trace["metadata"] is None:
-                            trace["metadata"] = {}
-                    except:
-                        trace["metadata"] = {}
+                        md = json.loads(md) or {}
+                    except Exception:
+                        md = {}
+                elif md is None:
+                    md = {}
+                trace["metadata"] = md
 
-                # Try to extract input/output from spans
-                # Sort spans by sequence number to get chronological order
-                sorted_spans = sorted(spans, key=lambda x: x.get("sequence_number", 0))
+                trace["has_errors"] = bool(trace.get("has_errors"))
 
-                trace_input = None
-                trace_outputs = []
-                previous_messages = []  # Track messages from previous traces
-
-                for span in sorted_spans:
+                min_s = trace.pop("min_started", None)
+                max_e = trace.pop("max_ended", None)
+                if min_s and max_e:
                     try:
-                        # Parse the data field which contains the full span JSON
-                        if isinstance(span.get("data"), str):
-                            full_span = json.loads(span["data"])
-                        else:
-                            full_span = span.get("data", {})
-
-                        span_data = full_span.get("span_data", {})
-
-                        # Extract input from response or generation spans - find the NEW user input for THIS trace
-                        if (
-                            span.get("span_type") in ["response", "generation"]
-                            and span_data.get("input")
-                            and not trace_input
-                        ):
-                            input_msgs = span_data["input"]
-
-                            # Look through the input messages to find the most recent user message
-                            # that isn't from a previous trace
-                            user_msgs = []
-                            for msg in input_msgs:
-                                if isinstance(msg, dict) and msg.get("role") == "user":
-                                    user_msgs.append(msg.get("content", ""))
-
-                            # For the first trace, use the first user message
-                            # For subsequent traces, use the last user message (most recent)
-                            if user_msgs:
-                                # Check if this is likely a continuation (has multiple user messages)
-                                if len(user_msgs) > 1:
-                                    # This is a continuation - use the last (most recent) user message
-                                    trace_input = user_msgs[-1]
-                                else:
-                                    # This is the first interaction - use the first message
-                                    trace_input = user_msgs[0]
-
-                        # Collect ALL response outputs (we'll use the last one)
-                        if span.get("span_type") == "response" and span_data.get(
-                            "response"
-                        ):
-                            response = span_data["response"]
-                            if response.get("output") and isinstance(
-                                response["output"], list
-                            ):
-                                for output_item in response["output"]:
-                                    # Handle message type outputs (actual text responses)
-                                    if output_item.get(
-                                        "type"
-                                    ) == "message" and output_item.get("content"):
-                                        for content_item in output_item["content"]:
-                                            if (
-                                                content_item.get("type")
-                                                == "output_text"
-                                            ):
-                                                text = content_item.get("text", "")
-                                                if text:
-                                                    trace_outputs.append(text)
-                                    # Handle function calls (show what function was called)
-                                    elif output_item.get("type") == "function_call":
-                                        func_name = output_item.get("name", "function")
-                                        trace_outputs.append(f"→ {func_name}()")
-
-                        # Handle Chat Completions format (generation spans)
-                        if span.get("span_type") == "generation" and span_data.get(
-                            "output"
-                        ):
-                            output_list = span_data["output"]
-                            if isinstance(output_list, list) and output_list:
-                                # Chat Completions has nested structure: output[0].output[0].content[0].text
-                                first_output = output_list[0]
-                                if (
-                                    isinstance(first_output, dict)
-                                    and "output" in first_output
-                                ):
-                                    inner_outputs = first_output["output"]
-                                    if isinstance(inner_outputs, list):
-                                        for item in inner_outputs:
-                                            if isinstance(item, dict):
-                                                # Check for message with content
-                                                if (
-                                                    item.get("type") == "message"
-                                                    and item.get("role") == "assistant"
-                                                ):
-                                                    content_items = item.get(
-                                                        "content", []
-                                                    )
-                                                    if isinstance(content_items, list):
-                                                        for content in content_items:
-                                                            if isinstance(
-                                                                content, dict
-                                                            ) and content.get("text"):
-                                                                trace_outputs.append(
-                                                                    content["text"]
-                                                                )
-                                                # Check for function call
-                                                elif (
-                                                    item.get("type") == "function_call"
-                                                ):
-                                                    func_name = item.get(
-                                                        "name", "function"
-                                                    )
-                                                    trace_outputs.append(
-                                                        f"→ {func_name}()"
-                                                    )
-                    except Exception as e:
-                        pass
-
-                # Use the LAST output as the trace output (final response)
-                trace_output = trace_outputs[-1] if trace_outputs else None
-
-                # Set the extracted input/output in metadata
-                if trace_input:
-                    trace["metadata"]["input"] = trace_input
-                if trace_output:
-                    trace["metadata"]["output"] = trace_output
-
-                # Calculate duration from spans
-                if spans:
-                    started_times = [
-                        s["started_at"] for s in spans if s.get("started_at")
-                    ]
-                    ended_times = [s["ended_at"] for s in spans if s.get("ended_at")]
-
-                    if started_times and ended_times:
-                        start = min(datetime.fromisoformat(t) for t in started_times)
-                        end = max(datetime.fromisoformat(t) for t in ended_times)
+                        start = datetime.fromisoformat(min_s)
+                        end = datetime.fromisoformat(max_e)
                         trace["duration"] = (end - start).total_seconds() * 1000
-                    else:
+                    except Exception:
                         trace["duration"] = 0
                 else:
                     trace["duration"] = 0
 
+                traces.append(trace)
+
+            if include_preview:
+                for trace in traces:
+                    spans = list(
+                        storage.conn.execute(
+                            """
+                            SELECT span_type, data, sequence_number
+                            FROM spans
+                            WHERE trace_id = ?
+                              AND span_type IN ('response', 'generation')
+                            ORDER BY sequence_number
+                            """,
+                            (trace["trace_id"],),
+                        )
+                    )
+                    trace_input, trace_output = _extract_trace_io_preview(spans)
+                    if trace_input:
+                        trace["metadata"]["input"] = trace_input
+                    if trace_output:
+                        trace["metadata"]["output"] = trace_output
+
             return {
-                "traces": conversation_traces,
+                "traces": traces,
                 "group_id": group_id,
-                "total": len(conversation_traces),
+                "total": len(traces),
             }
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
@@ -6744,18 +6783,16 @@ def create_api_app(
             storage = storage_manager.get_storage(project)
             analysis_data = storage.get_all_analysis(project)
 
-            # If a workflow filter is provided, determine which group_ids belong to it
             if workflow_name:
-                traces = storage.get_traces(limit=10000)
-                wn = workflow_name.lower()
-                allowed_group_ids = set()
-                for t in traces:
-                    twn = (t.get("workflow_name") or "").lower()
-                    if twn == wn:
-                        gid = t.get("group_id") or t.get("trace_id")
-                        if gid:
-                            allowed_group_ids.add(gid)
-                # Filter analysis to only allowed group_ids
+                rows = storage.conn.execute(
+                    """
+                    SELECT DISTINCT COALESCE(group_id, trace_id) AS gkey
+                    FROM traces
+                    WHERE LOWER(workflow_name) = LOWER(?)
+                    """,
+                    (workflow_name,),
+                )
+                allowed_group_ids = {r["gkey"] for r in rows}
                 analysis_data = [
                     a for a in analysis_data if a.get("group_id") in allowed_group_ids
                 ]

@@ -46,6 +46,27 @@ ws://server:8000/ws/realtime?token=your-auth-token
 
 ## RPC Methods
 
+### capabilities()
+
+Probe whether realtime voice is available **without** opening a session. Use
+this for boot-time capability detection. Calling `start_session` purely to
+probe is a footgun: it creates a trace row and opens an upstream Realtime
+WebSocket even when the user never speaks.
+
+**Returns:**
+```json
+{
+  "enabled": true,
+  "kind": "realtime",
+  "agent_name": "omni"
+}
+```
+
+`kind` is `"realtime"` for the OpenAI Realtime backend or `"pipeline"` for the
+classic STT→LLM→TTS pipeline. If voice is not configured, the `capabilities`
+method is simply not registered — clients should treat the resulting
+`MethodNotFound` (or transport-level failure) as `enabled: false`.
+
 ### start_session(session_id?: string)
 
 Start a new realtime voice session.

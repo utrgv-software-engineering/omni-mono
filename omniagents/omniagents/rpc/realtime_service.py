@@ -52,6 +52,14 @@ class RealtimeService(RpcMethodsBase):
         # Event streaming tasks: session_id -> asyncio.Task
         self._event_tasks: Dict[str, asyncio.Task] = {}
 
+    async def capabilities(self) -> Dict[str, Any]:
+        """Probe voice availability without opening a session (and thus without creating a trace)."""
+        return {
+            "enabled": True,
+            "kind": "realtime",
+            "agent_name": getattr(self.spec, "name", None),
+        }
+
     async def start_session(self, session_id: Optional[str] = None) -> Dict[str, Any]:
         """Start a new realtime session.
 

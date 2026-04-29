@@ -122,12 +122,17 @@ class ApiClient {
     return this.fetch(`/conversations?${searchParams}`)
   }
 
-  async getConversationTraces(project: string, groupId: string): Promise<{ 
-    traces: Trace[]; 
-    group_id: string; 
-    total: number 
+  async getConversationTraces(
+    project: string,
+    groupId: string,
+    options?: { includePreview?: boolean },
+  ): Promise<{
+    traces: Trace[]
+    group_id: string
+    total: number
   }> {
-    return this.fetch(`/conversations/${project}/${groupId}/traces`)
+    const qs = options?.includePreview ? '?include_preview=true' : ''
+    return this.fetch(`/conversations/${project}/${groupId}/traces${qs}`)
   }
 
   async getTraces(params: {
