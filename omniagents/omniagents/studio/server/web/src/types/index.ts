@@ -254,6 +254,7 @@ export interface EvaluationScenarioEntry {
   dimensions?: Record<string, any> | null
   measures?: any[] | null
   failure_categories?: string[] | null
+  tags?: string[] | null
   label?: boolean | null
   metadata?: Record<string, any> | null
   analysis?: EvaluationScenarioAnalysis | null
@@ -738,6 +739,12 @@ export interface EvaluationScenarioResult {
   group_id: string | null
 }
 
+export interface EvaluationMeasureAggregate {
+  passed: number
+  failed: number
+  total: number
+}
+
 export interface EvaluationRunSummary {
   path: string
   run_at: string
@@ -745,6 +752,7 @@ export interface EvaluationRunSummary {
   passed: number
   failed: number
   workflow_name: string | null
+  per_measure?: Record<string, EvaluationMeasureAggregate>
 }
 
 export interface EvaluationResultsListResponse {

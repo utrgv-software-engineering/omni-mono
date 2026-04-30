@@ -859,6 +859,7 @@ function ScenarioSetDetail({
   const [isStartingRun, setIsStartingRun] = useState(false)
   const [runMaxTurns, setRunMaxTurns] = useState('')
   const [runIncludeHistory, setRunIncludeHistory] = useState(true)
+  const [runSelect, setRunSelect] = useState('')
   const [runError, setRunError] = useState<string | null>(null)
   const [activeRun, setActiveRun] = useState<{ jobId: string; status: EvaluationScenarioRunStatus | null } | null>(null)
   const runSocketRef = useRef<WebSocket | null>(null)
@@ -1076,6 +1077,7 @@ function ScenarioSetDetail({
     }
     setRunMaxTurns('')
     setRunIncludeHistory(true)
+    setRunSelect('')
     setRunError(null)
     setIsRunDialogOpen(true)
   }
@@ -1198,6 +1200,10 @@ function ScenarioSetDetail({
     }
     if (parsedMax !== undefined) {
       payload.max_turns = parsedMax
+    }
+    const trimmedSelect = runSelect.trim()
+    if (trimmedSelect.length > 0) {
+      payload.select = trimmedSelect
     }
     setIsStartingRun(true)
     setRunError(null)
@@ -1678,7 +1684,7 @@ function ScenarioSetDetail({
                 <div key={key} className="rounded-md border border-border bg-background px-4 py-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="text-sm font-semibold">{scenario.name}</span>
                         {scenario.type === 'synthetic' ? (
                           <span className="rounded-md bg-violet-500/10 border border-violet-500/40 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-400">
@@ -1694,6 +1700,23 @@ function ScenarioSetDetail({
                             {scenario.fixture}
                           </span>
                         ) : null}
+                        {(scenario.tags ?? []).map((tag) => {
+                          const lower = tag.toLowerCase()
+                          const isSplit = lower === 'train' || lower === 'dev' || lower === 'test'
+                          return (
+                            <span
+                              key={tag}
+                              className={cn(
+                                "rounded-md border px-1.5 py-0.5 text-[10px] font-medium",
+                                isSplit
+                                  ? "border-blue-500/40 bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                                  : "border-border bg-muted text-muted-foreground"
+                              )}
+                            >
+                              {tag}
+                            </span>
+                          )
+                        })}
                       </div>
                       {scenario.description ? <div className="mt-0.5 text-xs text-muted-foreground">{scenario.description}</div> : null}
                       {scenario.id ? <div className="text-xs text-muted-foreground">ID: {scenario.id}</div> : null}
@@ -1862,6 +1885,98 @@ function ScenarioSetDetail({
             </div>
 
             <div className="space-y-4">
+              {(() => {
+                // Tag chip picker — derived from this set's scenarios.
+                const tagCounts = new Map<string, number>()
+                for (const sc of set.scenarios ?? []) {
+                  for (const t of sc.tags ?? []) {
+                    tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1)
+                  }
+                }
+                if (tagCounts.size === 0) return null
+                const SPLIT_ORDER: Record<string, number> = { train: 0, dev: 1, test: 2 }
+                const tags = Array.from(tagCounts.entries()).sort(([a], [b]) => {
+                  const ai = SPLIT_ORDER[a.toLowerCase()] ?? 99
+                  const bi = SPLIT_ORDER[b.toLowerCase()] ?? 99
+                  if (ai !== bi) return ai - bi
+                  return a.localeCompare(b)
+                })
+                const totalForSelect = (() => {
+                  const trimmed = runSelect.trim()
+                  if (!trimmed) return set.scenarios.length
+                  if (!trimmed.startsWith('tag:')) return null
+                  const want = trimmed.slice(4).trim()
+                  return tagCounts.get(want) ?? 0
+                })()
+                return (
+                  <div>
+                    <label className="mb-1 block text-xs font-medium uppercase text-muted-foreground">
+                      Filter by tag
+                    </label>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setRunSelect('')}
+                        className={cn(
+                          "rounded-full border px-2.5 py-0.5 text-xs transition-colors",
+                          runSelect.trim().length === 0
+                            ? "border-primary bg-primary/10 text-primary"
+                            : "border-border bg-muted text-muted-foreground hover:bg-muted/70"
+                        )}
+                      >
+                        all <span className="opacity-70 tabular-nums">{set.scenarios.length}</span>
+                      </button>
+                      {tags.map(([tag, n]) => {
+                        const expr = `tag:${tag}`
+                        const isActive = runSelect.trim() === expr
+                        const isSplit = tag.toLowerCase() in SPLIT_ORDER
+                        return (
+                          <button
+                            type="button"
+                            key={tag}
+                            onClick={() => setRunSelect(isActive ? '' : expr)}
+                            className={cn(
+                              "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs transition-colors",
+                              isActive
+                                ? "border-primary bg-primary/10 text-primary"
+                                : isSplit
+                                ? "border-blue-500/30 bg-blue-500/5 text-blue-700 dark:text-blue-300 hover:bg-blue-500/10"
+                                : "border-border bg-muted text-muted-foreground hover:bg-muted/70"
+                            )}
+                          >
+                            <span>{tag}</span>
+                            <span className="tabular-nums opacity-70">{n}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                    {totalForSelect !== null ? (
+                      <div className="mt-1.5 text-xs text-muted-foreground">
+                        Will run {totalForSelect} of {set.scenarios.length} scenario{set.scenarios.length === 1 ? '' : 's'}.
+                      </div>
+                    ) : (
+                      <div className="mt-1.5 text-xs text-muted-foreground">
+                        Custom selector — count not previewable.
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
+              <div>
+                <label className="mb-1 block text-xs font-medium uppercase text-muted-foreground">
+                  Selector (advanced)
+                </label>
+                <input
+                  type="text"
+                  value={runSelect}
+                  onChange={(event) => setRunSelect(event.target.value)}
+                  placeholder="e.g. tag:dev  ·  name:icl_*  ·  id:foo,tag:smoke"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-primary/40"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Same grammar as <code className="font-mono">--select</code> on the CLI: comma-separated, supports <code>id:</code>, <code>name:</code>, <code>tag:</code>, <code>measure:</code>.
+                </p>
+              </div>
               <div>
                 <label className="mb-1 block text-xs font-medium uppercase text-muted-foreground">Max Turns</label>
                 <input
@@ -5501,6 +5616,45 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
                             {typeof analysisFromMetadata === 'number' ? ` • ${analysisFromMetadata} annotated` : ''}
                           </div>
                         </div>
+                        {(() => {
+                          const counts = new Map<string, number>()
+                          for (const s of set.scenarios ?? []) {
+                            for (const t of s.tags ?? []) {
+                              counts.set(t, (counts.get(t) ?? 0) + 1)
+                            }
+                          }
+                          if (counts.size === 0) return null
+                          // Split-shaped tags first (train/dev/test), then everything else alpha
+                          const SPLIT_ORDER: Record<string, number> = { train: 0, dev: 1, test: 2 }
+                          const sorted = Array.from(counts.entries()).sort(([a], [b]) => {
+                            const ai = SPLIT_ORDER[a.toLowerCase()] ?? 99
+                            const bi = SPLIT_ORDER[b.toLowerCase()] ?? 99
+                            if (ai !== bi) return ai - bi
+                            return a.localeCompare(b)
+                          })
+                          return (
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {sorted.map(([tag, n]) => {
+                                const isSplit = tag.toLowerCase() in SPLIT_ORDER
+                                return (
+                                  <span
+                                    key={tag}
+                                    className={cn(
+                                      "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs",
+                                      isSplit
+                                        ? "border-blue-500/30 bg-blue-500/5 text-blue-700 dark:text-blue-300"
+                                        : "border-border bg-muted text-muted-foreground"
+                                    )}
+                                    title={`${n} scenario${n === 1 ? '' : 's'} tagged ${tag}`}
+                                  >
+                                    <span className={isSplit ? "font-medium" : ""}>{tag}</span>
+                                    <span className="tabular-nums opacity-70">{n}</span>
+                                  </span>
+                                )
+                              })}
+                            </div>
+                          )
+                        })()}
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
@@ -6017,6 +6171,66 @@ function ResultsPanel({
                             View all traces for this run
                           </button>
                         )}
+
+                        {/* Per-measure summary cards (system-internal "_*" measures hidden) */}
+                        {(() => {
+                          const measures = Object.entries(run.per_measure ?? {}).filter(
+                            ([name]) => !name.startsWith("_")
+                          )
+                          if (measures.length === 0) return null
+                          return (
+                            <div className="mb-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                              {measures.map(([name, stats]) => {
+                                const pct = stats.total > 0 ? Math.round((stats.passed / stats.total) * 100) : 0
+                                const tone =
+                                  stats.failed === 0
+                                    ? "border-green-500/30 bg-green-500/5"
+                                    : pct >= 80
+                                    ? "border-yellow-500/30 bg-yellow-500/5"
+                                    : "border-red-500/30 bg-red-500/5"
+                                const accent =
+                                  stats.failed === 0
+                                    ? "text-green-600 dark:text-green-400"
+                                    : pct >= 80
+                                    ? "text-yellow-600 dark:text-yellow-400"
+                                    : "text-red-600 dark:text-red-400"
+                                const barColor =
+                                  stats.failed === 0
+                                    ? "bg-green-500"
+                                    : pct >= 80
+                                    ? "bg-yellow-500"
+                                    : "bg-red-500"
+                                return (
+                                  <div
+                                    key={name}
+                                    className={cn(
+                                      "rounded-md border px-3 py-2.5",
+                                      tone
+                                    )}
+                                  >
+                                    <div className="font-mono text-[11px] uppercase tracking-wide text-muted-foreground truncate">
+                                      {name}
+                                    </div>
+                                    <div className="mt-1 flex items-baseline gap-2">
+                                      <span className={cn("text-2xl font-semibold tabular-nums", accent)}>
+                                        {pct}%
+                                      </span>
+                                      <span className="text-xs text-muted-foreground tabular-nums">
+                                        {stats.passed} / {stats.total}
+                                      </span>
+                                    </div>
+                                    <div className="mt-2 h-1 overflow-hidden rounded-full bg-muted">
+                                      <div
+                                        className={cn("h-full rounded-full transition-all", barColor)}
+                                        style={{ width: `${pct}%` }}
+                                      />
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )
+                        })()}
 
                         {/* Scenario Results */}
                         {detailData.scenarios.map((scenario, idx) => (

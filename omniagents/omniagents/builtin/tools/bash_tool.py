@@ -125,18 +125,25 @@ def execute_bash(
     if max_output_chars is None:
         max_output_chars = _BASH_DEFAULT_MAX_OUTPUT_CHARS
 
-    # Determine working directory from explicit arg or context
-    if cwd is None:
-        try:
-            c = getattr(ctx, "context", None)
-            if isinstance(c, dict):
-                wr = c.get("workspace_root")
-            else:
-                wr = getattr(c, "workspace_root", None)
-            if isinstance(wr, str) and wr.strip():
-                cwd = wr
-        except Exception:
-            cwd = None
+    # Determine working directory. Mirrors file_tools._resolve_path:
+    # relative cwd is anchored to workspace_root when one is available,
+    # so bash and file tools agree on what "." means.
+    wr: Optional[str] = None
+    try:
+        c = getattr(ctx, "context", None)
+        if isinstance(c, dict):
+            raw_wr = c.get("workspace_root")
+        else:
+            raw_wr = getattr(c, "workspace_root", None)
+        if isinstance(raw_wr, str) and raw_wr.strip():
+            wr = os.path.abspath(raw_wr)
+    except Exception:
+        wr = None
+
+    if cwd is None or (isinstance(cwd, str) and not cwd.strip()):
+        cwd = wr
+    elif not os.path.isabs(cwd) and wr:
+        cwd = os.path.abspath(os.path.join(wr, cwd))
 
     start_time = time.monotonic()
 

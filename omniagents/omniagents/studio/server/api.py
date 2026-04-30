@@ -1152,6 +1152,7 @@ class ScenarioEntryModel(BaseModel):
     dimensions: Optional[Dict[str, Any]] = None
     measures: Optional[List[Any]] = None
     failure_categories: Optional[List[str]] = None
+    tags: Optional[List[str]] = None
     label: Optional[bool] = None
     metadata: Optional[Dict[str, Any]] = None
     analysis: Optional[Dict[str, Any]] = None
@@ -2408,6 +2409,12 @@ class EvaluationScenarioResultModel(BaseModel):
     group_id: Optional[str] = None
 
 
+class EvaluationMeasureAggregateModel(BaseModel):
+    passed: int = 0
+    failed: int = 0
+    total: int = 0
+
+
 class EvaluationRunSummaryModel(BaseModel):
     path: str
     run_at: str
@@ -2415,6 +2422,7 @@ class EvaluationRunSummaryModel(BaseModel):
     passed: int
     failed: int
     workflow_name: Optional[str] = None
+    per_measure: Dict[str, EvaluationMeasureAggregateModel] = {}
 
 
 class EvaluationResultsListResponse(BaseModel):
@@ -3684,11 +3692,19 @@ def create_api_app(
         return _unique_paths(dirs)
 
     def _scenarios_files(ctx) -> List[Path]:
+        """Discover scenario YAML files. Mirrors the eval CLI's loader, which
+        accepts ``<eval_dir>/scenarios.yml`` *and* any ``*.yml`` under
+        ``<eval_dir>/scenarios/`` (recursive). Without this Studio's
+        Scenarios tab silently misses anything not named ``scenarios.yml``,
+        even though the eval CLI happily loads it."""
         files: List[Path] = []
         for directory in _evaluation_dirs(ctx):
             candidate = directory / "scenarios.yml"
             if candidate.is_file():
                 files.append(candidate)
+            scenarios_subdir = directory / "scenarios"
+            if scenarios_subdir.is_dir():
+                files.extend(sorted(scenarios_subdir.rglob("*.yml")))
         eval_paths = ctx.paths.get("evaluations") or []
         for entry in eval_paths:
             if (
@@ -3796,6 +3812,18 @@ def create_api_app(
                 ]
                 if filtered:
                     failure_categories = filtered
+            raw_tags = (
+                item.get("tags") if isinstance(item.get("tags"), list) else None
+            )
+            tags: Optional[List[str]] = None
+            if raw_tags:
+                filtered_tags = [
+                    str(value).strip()
+                    for value in raw_tags
+                    if isinstance(value, str) and str(value).strip()
+                ]
+                if filtered_tags:
+                    tags = filtered_tags
             analysis_data = (
                 item.get("analysis") if isinstance(item.get("analysis"), dict) else None
             )
@@ -3828,6 +3856,7 @@ def create_api_app(
                     dimensions=dimensions,
                     measures=measures,
                     failure_categories=failure_categories,
+                    tags=tags,
                     label=label_value,
                     metadata=metadata,
                     analysis=analysis_data,
@@ -7751,6 +7780,23 @@ def create_api_app(
             else:
                 summary["failed"] += 1
 
+            # Resolve the trace group_id under which this scenario's spans
+            # were persisted. Three sources, in priority order:
+            #   1. ``run.trace_group_id`` — the eval pipeline's run_uid
+            #      ({scenario_id}-{uuid8}). Authoritative when present.
+            #   2. ``run.metadata.group_id`` — older eval result schemas.
+            #   3. ``session_{run.session_id}`` — runtime conversation
+            #      pattern; only correct for traces produced outside the
+            #      eval pipeline (e.g., interactive playground sessions).
+            group_id = run.get("trace_group_id")
+            if not group_id:
+                metadata = run.get("metadata") if isinstance(run.get("metadata"), dict) else {}
+                group_id = metadata.get("group_id")
+            if not group_id:
+                session_id = run.get("session_id")
+                if session_id:
+                    group_id = f"session_{session_id}"
+
             scenarios.append(
                 {
                     "scenario_id": run.get("scenario_id") or run.get("id"),
@@ -7767,11 +7813,7 @@ def create_api_app(
                         for m in measures
                     ],
                     "error": run.get("error"),
-                    "group_id": (
-                        run.get("metadata", {}).get("group_id")
-                        if isinstance(run.get("metadata"), dict)
-                        else None
-                    ),
+                    "group_id": group_id,
                 }
             )
 
@@ -7789,6 +7831,16 @@ def create_api_app(
             for run in _find_result_runs(manifest_path):
                 try:
                     summary = run.get("summary", {})
+                    pm_raw = summary.get("per_measure") or {}
+                    per_measure = {
+                        name: EvaluationMeasureAggregateModel(
+                            passed=int(stats.get("passed", 0)),
+                            failed=int(stats.get("failed", 0)),
+                            total=int(stats.get("total", 0)),
+                        )
+                        for name, stats in pm_raw.items()
+                        if isinstance(stats, dict)
+                    }
                     results.append(
                         EvaluationRunSummaryModel(
                             path=run.get("path", ""),
@@ -7797,6 +7849,7 @@ def create_api_app(
                             passed=summary.get("passed", 0),
                             failed=summary.get("failed", 0),
                             workflow_name=run.get("workflow_name"),
+                            per_measure=per_measure,
                         )
                     )
                 except Exception as e:

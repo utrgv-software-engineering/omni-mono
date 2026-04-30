@@ -75,10 +75,32 @@ def save_evaluation_run(
     results_dir = get_results_directory(scenario_path)
     runs = data.get("runs", [])
 
-    # Calculate summary stats
+    # Calculate summary stats. A run "passes" iff every measure on it passed
+    # (mirrors the rule used by the Studio detail endpoint). Runs with no
+    # measures are treated as passes so empty scenarios don't poison the count.
+    def _run_passed(r: Dict[str, Any]) -> bool:
+        measures = r.get("measures", [])
+        if not measures:
+            return True
+        return all(m.get("passed", False) for m in measures)
+
     total = len(runs)
-    passed = sum(1 for r in runs if r.get("passed", False))
+    passed = sum(1 for r in runs if _run_passed(r))
     failed = total - passed
+
+    # Per-measure aggregates: { measure_name: {passed, failed, total} }. Lets
+    # the UI surface each measure's pass rate independently so users can see
+    # softer measures climb separately from stricter ones.
+    per_measure: Dict[str, Dict[str, int]] = {}
+    for r in runs:
+        for m in r.get("measures", []):
+            name = m.get("name", "unknown")
+            entry = per_measure.setdefault(name, {"passed": 0, "failed": 0, "total": 0})
+            entry["total"] += 1
+            if m.get("passed", False):
+                entry["passed"] += 1
+            else:
+                entry["failed"] += 1
 
     metadata = {
         "source": source,
@@ -89,6 +111,7 @@ def save_evaluation_run(
         "total_scenarios": total,
         "passed": passed,
         "failed": failed,
+        "per_measure": per_measure,
     }
 
     results_path = save_run_results(results_dir, run_id, runs, metadata)
@@ -103,6 +126,7 @@ def save_evaluation_run(
             "total_scenarios": total,
             "passed": passed,
             "failed": failed,
+            "per_measure": per_measure,
         },
     }
     update_runs_index(results_dir, run_entry)

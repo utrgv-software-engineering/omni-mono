@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react'
+import React, { useMemo, useState } from 'react'
 import type { Span } from '../../../types'
 import { cn } from '../../../lib/utils'
 import {
@@ -134,7 +134,32 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
     }
     return results
   }, [traceData?.trace?.metadata])
-  
+
+  // Eval scenarios carry an expected outcome (the doctor's reference answer)
+  // attached to the trace metadata under metadata.omniagents.expected. Surface
+  // it as a collapsible block at the top of the conversation so a reviewer can
+  // compare the agent's response to the ground truth without leaving the page.
+  const referenceAnswer = useMemo(() => {
+    const md = traceData?.trace?.metadata
+    let meta: any = null
+    if (md) {
+      if (typeof md === 'string') {
+        try { meta = JSON.parse(md) } catch { meta = null }
+      } else {
+        meta = md
+      }
+    }
+    const expected = meta?.omniagents?.expected
+    if (!expected || typeof expected !== 'object') return null
+    const answer = expected.doctor_answer || expected.expected_answer || expected.answer
+    if (!answer || typeof answer !== 'string') return null
+    return {
+      answer: answer.trim(),
+      curatorNote: typeof expected.curator_note === 'string' ? expected.curator_note : null,
+    }
+  }, [traceData?.trace?.metadata])
+  const [referenceExpanded, setReferenceExpanded] = useState(true)
+
   // Reset expanded functions when trace changes and auto-focus conversation area
   React.useEffect(() => {
     setExpandedFunctions(new Set())
@@ -251,8 +276,13 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
           }
           
           if (content) {
-            // Use message ID for deduplication if available, otherwise use content
-            const messageKey = msg.id || `assistant-${span.span_id}-${content}`
+            // Historic assistant messages: the OpenAI Responses API echoes the
+            // full conversation history in each response span's ``input``, so
+            // the same prior-turn message appears in every span's input. Dedupe
+            // by content (NOT by span_id) so we render it once. Including
+            // span_id here would produce N copies in a trace with N response
+            // spans, since each call to the API has a different span_id.
+            const messageKey = msg.id || `assistant-history-${content}`
             if (!seenMessages.has(messageKey)) {
               seenMessages.add(messageKey)
               items.push({
@@ -1217,6 +1247,34 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
         <div key={traceId} className="max-w-4xl mx-auto">
           {showMetadata && (
             <TraceMetadataBlock metadata={traceData?.trace?.metadata} />
+          )}
+          {referenceAnswer && (
+            <div className="mb-4 rounded-md border border-blue-500/30 bg-blue-500/5 overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setReferenceExpanded((v) => !v)}
+                className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-blue-500/10 transition-colors"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="font-mono text-[10px] uppercase tracking-wide text-blue-600 dark:text-blue-400 shrink-0">
+                    Reference answer
+                  </span>
+                  {referenceAnswer.curatorNote && (
+                    <span className="text-xs text-muted-foreground truncate">
+                      · {referenceAnswer.curatorNote}
+                    </span>
+                  )}
+                </div>
+                <span className="text-xs text-muted-foreground shrink-0">
+                  {referenceExpanded ? 'Hide' : 'Show'}
+                </span>
+              </button>
+              {referenceExpanded && (
+                <div className="px-3 pb-3 text-sm whitespace-pre-wrap leading-relaxed text-foreground/90 border-t border-blue-500/20 pt-3">
+                  {referenceAnswer.answer}
+                </div>
+              )}
+            </div>
           )}
           {conversationItems.map((item, index) => {
             const key = `item-${index}`

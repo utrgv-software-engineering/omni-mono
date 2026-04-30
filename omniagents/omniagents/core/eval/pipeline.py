@@ -398,6 +398,10 @@ async def _run_scenario(
     agent = await create_unified_agent(spec)
     prompt = scenario.get("prompt", "")
     msgs = [{"role": "user", "content": prompt}]
+    # Trace group_id under which this scenario's spans land, when studio
+    # tracing is configured. Persisted into the result so consumers (Studio
+    # "View Trace" link) can navigate from a result row to its trace.
+    trace_group_id: Optional[str] = None
     try:
         stream_telemetry = {
             "usage": {
@@ -457,6 +461,13 @@ async def _run_scenario(
                         run_uid = f"{_sid}-{_uuid.uuid4().hex[:8]}"
                     except Exception:
                         run_uid = _uuid.uuid4().hex[:8]
+                    # Include the scenario's expected outcome (e.g.,
+                    # ``expect.doctor_answer``) so the trace is self-contained
+                    # for review. The Studio review UI surfaces this so a
+                    # reviewer reading a failing trace can see the reference
+                    # answer side-by-side with the agent's response without
+                    # leaving the page.
+                    expected_block = scenario.get("expect")
                     meta = {
                         "omniagents": {
                             "run_type": "evaluation",
@@ -465,6 +476,7 @@ async def _run_scenario(
                                 "name": scenario.get("name"),
                             },
                             "run": {"id": run_uid},
+                            **({"expected": expected_block} if expected_block else {}),
                             "synthetic": {
                                 "catalog_id": catalog_id,
                                 "catalog": {"dimensions": dims_catalog},
@@ -481,6 +493,7 @@ async def _run_scenario(
                         }
                     }
                     gid = run_uid
+                    trace_group_id = gid
                     with studio_trace(workflow_name, group_id=gid, metadata=meta):
                         result = agent.run_streamed(msgs)
                         stream_telemetry = await consume_stream_events(
@@ -579,6 +592,7 @@ async def _run_scenario(
             "scenario": scenario.get("name", "scenario"),
             "prompt": prompt,
             "session_id": session_id,
+            "trace_group_id": trace_group_id,
             "final_assistant_text": final_assistant_text(history),
             "measures": measures_out,
             "history_len": len(history),

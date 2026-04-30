@@ -1,12 +1,33 @@
 import subprocess
 import os
+from typing import Any, Optional
 
+from agents.run_context import RunContextWrapper
 from omniagents.core.tools.artifacts import OfficeConversionError, emit_artifact, resolve_file_content
 from omniagents.core.tools.discovery import function_tool
 
 
+def _workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> Optional[str]:
+    try:
+        if ctx is None:
+            return None
+        c = getattr(ctx, "context", None)
+        if c is None:
+            return None
+        if isinstance(c, dict):
+            wr = c.get("workspace_root")
+        else:
+            wr = getattr(c, "workspace_root", None)
+        if isinstance(wr, str) and wr.strip():
+            return os.path.abspath(wr)
+    except Exception:
+        pass
+    return None
+
+
 @function_tool
 def display_artifact(
+    ctx: RunContextWrapper[Any],
     title: str,
     *,
     content: str | None = None,
@@ -46,6 +67,10 @@ def display_artifact(
         return {"success": True, "emitted_mode": mode}
 
     expanded_path = os.path.expanduser((path or "").strip())
+    if expanded_path and not os.path.isabs(expanded_path):
+        wr = _workspace_root_from_ctx(ctx)
+        if wr:
+            expanded_path = os.path.abspath(os.path.join(wr, expanded_path))
     if not expanded_path or not os.path.isfile(expanded_path):
         return {"success": False, "error": f"File not found: {expanded_path}"}
 

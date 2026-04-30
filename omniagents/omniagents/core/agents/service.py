@@ -240,10 +240,17 @@ class AgentService(RpcMethodsBase):
             self.spec.agent_slug = agent_slug
         self._session_manager = SessionManager(project_slug, agent_slug)
         try:
-            # Always setup tracing to ensure defaults (disabled) are applied
-            from omniagents.core.tracing import setup_tracing
+            # Only initialize tracing when the agent spec carries an explicit
+            # tracing_config. Falling back to setup_tracing(None) here would
+            # apply a "studio/omniagents" default that tears down any tracing
+            # processor configured by an outer context (e.g., the eval pipeline
+            # in core/eval/pipeline.py, which initializes studio tracing for
+            # the project before constructing per-scenario AgentServices).
+            tracing_cfg = getattr(self.spec, "tracing_config", None)
+            if tracing_cfg:
+                from omniagents.core.tracing import setup_tracing
 
-            setup_tracing(getattr(self.spec, "tracing_config", None))
+                setup_tracing(tracing_cfg)
         except Exception:
             pass
 

@@ -2,11 +2,34 @@ import os
 import tempfile
 import requests
 from typing import Dict, Any, Optional
+from agents.run_context import RunContextWrapper
 from omniagents.core.tools import rich_function_tool, RichToolOutput, approval_metadata
 
 
+def _workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> Optional[str]:
+    try:
+        if ctx is None:
+            return None
+        c = getattr(ctx, "context", None)
+        if c is None:
+            return None
+        if isinstance(c, dict):
+            wr = c.get("workspace_root")
+        else:
+            wr = getattr(c, "workspace_root", None)
+        if isinstance(wr, str) and wr.strip():
+            return os.path.abspath(wr)
+    except Exception:
+        pass
+    return None
+
+
 @rich_function_tool(client_status="Downloading file...")
-def download_file(url: str, output_path: Optional[str] = None) -> RichToolOutput:
+def download_file(
+    ctx: RunContextWrapper[Any],
+    url: str,
+    output_path: Optional[str] = None,
+) -> RichToolOutput:
     """
     Downloads a file from a given URL and saves it locally to a temporary location.
 
@@ -60,7 +83,12 @@ def download_file(url: str, output_path: Optional[str] = None) -> RichToolOutput
 
         # Determine filename or extension for the temporary file
         if output_path:
-            # User provided a specific path to use
+            # User provided a specific path to use. Anchor relative paths to
+            # the workspace root so the agent's "downloads/foo" lands inside
+            # its workspace, not the host process cwd.
+            wr = _workspace_root_from_ctx(ctx)
+            if not os.path.isabs(output_path) and wr:
+                output_path = os.path.join(wr, output_path)
             file_dir = os.path.dirname(os.path.abspath(output_path))
             filename = os.path.basename(output_path)
 
