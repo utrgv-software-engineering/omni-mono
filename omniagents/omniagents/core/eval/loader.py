@@ -46,6 +46,13 @@ class EvalConfig:
     project_config: Dict[str, Any] = field(default_factory=dict)
     """Raw ``project.yml`` dict."""
 
+    judge_sources: Dict[str, Path] = field(default_factory=dict)
+    """Per-judge YAML source path. Used to resolve a judge's relative paths
+    (``instructions_file``, ``template_file``) and to locate the file an
+    editor would write back to. Keys match ``config['judges']``; the path is
+    the YAML the merge picked the judge up from (last-write-wins, mirroring
+    merge order)."""
+
 
 # ---------------------------------------------------------------------------
 # YAML / dict helpers (extracted from compiler.py)
@@ -169,7 +176,16 @@ def _resolve_judge_agent_ref(base: Path, jcfg: Dict[str, Any]) -> Dict[str, Any]
     return jc
 
 
-def _collect_judges(paths: List[Path]) -> Dict[str, Any]:
+def _collect_judges(
+    paths: List[Path], sources: Optional[Dict[str, Path]] = None
+) -> Dict[str, Any]:
+    """Collect judge configs from per-folder yml files.
+
+    If ``sources`` is provided, each judge's source path is recorded into it
+    (last-write-wins, mirroring the merge order). Inline judges defined under
+    ``evaluation.judges`` in ``evaluation.yml`` are picked up by
+    :func:`_collect_base_eval`, not here.
+    """
     out: Dict[str, Any] = {}
     for p in paths:
         if p.is_file():
@@ -179,11 +195,15 @@ def _collect_judges(paths: List[Path]) -> Dict[str, Any]:
                 if isinstance(js, dict):
                     for k, v in js.items():
                         out[k] = _resolve_judge_agent_ref(p.parent, v)
+                        if sources is not None:
+                            sources[str(k)] = p
                 if isinstance(js, list):
                     for j in js:
                         key = (j or {}).get("name") or (j or {}).get("key")
                         if key:
                             out[key] = _resolve_judge_agent_ref(p.parent, j)
+                            if sources is not None:
+                                sources[str(key)] = p
             continue
         if not p.is_dir():
             continue
@@ -195,11 +215,15 @@ def _collect_judges(paths: List[Path]) -> Dict[str, Any]:
             if isinstance(js, dict):
                 for k, v in js.items():
                     out[k] = _resolve_judge_agent_ref(y.parent, v)
+                    if sources is not None:
+                        sources[str(k)] = y
             if isinstance(js, list):
                 for j in js:
                     key = (j or {}).get("name") or (j or {}).get("key")
                     if key:
                         out[key] = _resolve_judge_agent_ref(y.parent, j)
+                        if sources is not None:
+                            sources[str(key)] = y
     return out
 
 
@@ -259,7 +283,30 @@ def _collect_metrics(paths: List[Path]) -> List[Dict[str, Any]]:
     return out
 
 
-def _collect_base_eval(paths: List[Path]) -> Dict[str, Any]:
+def _collect_base_eval(
+    paths: List[Path], judge_sources: Optional[Dict[str, Path]] = None
+) -> Dict[str, Any]:
+    """Collect the merged ``evaluation.*`` dict from base eval YAML files.
+
+    If ``judge_sources`` is provided, each judge defined inline under
+    ``evaluation.judges`` is recorded (last-write-wins). This lets callers
+    locate the YAML file an inline judge came from for path resolution.
+    """
+
+    def _record_judges(eval_block: Dict[str, Any], src: Path) -> None:
+        if judge_sources is None:
+            return
+        js = eval_block.get("judges")
+        if isinstance(js, dict):
+            for k in js.keys():
+                judge_sources[str(k)] = src
+        elif isinstance(js, list):
+            for j in js:
+                if isinstance(j, dict):
+                    key = j.get("name") or j.get("key")
+                    if key:
+                        judge_sources[str(key)] = src
+
     result: Dict[str, Any] = {}
     for p in paths:
         if not p.exists():
@@ -269,6 +316,7 @@ def _collect_base_eval(paths: List[Path]) -> Dict[str, Any]:
             if isinstance(data, dict):
                 if isinstance(data.get("evaluation"), dict):
                     result = _merge_dict(result, data["evaluation"])
+                    _record_judges(data["evaluation"], p)
                 else:
                     result = _merge_dict(result, data)
             continue
@@ -276,6 +324,7 @@ def _collect_base_eval(paths: List[Path]) -> Dict[str, Any]:
             data = _read_yaml(y)
             if isinstance(data, dict) and isinstance(data.get("evaluation"), dict):
                 result = _merge_dict(result, data["evaluation"])
+                _record_judges(data["evaluation"], y)
     return result
 
 
@@ -371,6 +420,7 @@ def filter_scenarios(
                 return any(fnmatch.fnmatch(t, pat) for t in tags)
             if typ == "measure":
                 from omniagents.core.eval.measure_tiers import measure_names
+
                 ms = measure_names(it.get("measures"))
                 return any(fnmatch.fnmatch(m, pat) for m in ms)
         return fnmatch.fnmatch(str(it.get("name") or ""), expr)
@@ -487,10 +537,15 @@ def load_eval_config(
         ]
     )
 
-    # Collect everything
-    base_eval = _collect_base_eval([s for s in base_eval_sources if s.exists()])
+    # Collect everything. Judge source paths are tracked across both base
+    # eval (inline `evaluation.judges`) and per-folder judges/, mirroring
+    # the merge order so per-folder definitions win when both exist.
+    judge_sources: Dict[str, Path] = {}
+    base_eval = _collect_base_eval(
+        [s for s in base_eval_sources if s.exists()], judge_sources
+    )
     scenarios = _collect_scenarios([s for s in scenarios_sources if s.exists()])
-    judges = _collect_judges([s for s in judges_sources if s.exists()])
+    judges = _collect_judges([s for s in judges_sources if s.exists()], judge_sources)
     optimizers = _collect_optimizers([s for s in optimizers_sources if s.exists()])
     metrics = _collect_metrics([s for s in metrics_sources if s.exists()])
 
@@ -532,6 +587,7 @@ def load_eval_config(
         project_root=base_dir.resolve(),
         tracing_config=tracing_config,
         project_config=proj,
+        judge_sources=judge_sources,
     )
 
 

@@ -3453,93 +3453,143 @@ def create_api_app(
                 dirs.append(candidate)
         return _unique_paths(dirs)
 
+    def _resolve_first_existing(
+        bases: List[Path], value: Optional[str]
+    ) -> Optional[Path]:
+        """Try resolving ``value`` against each base; return the first that exists.
+
+        Absolute paths short-circuit. Used for judge ``instructions_file`` /
+        ``template_file`` which can be relative to either the YAML they're
+        defined in (inline-in-evaluation.yml judges) or the per-folder judge
+        scaffold (which historically used a buggy ``../evaluations/...``
+        prefix).
+        """
+        if not value:
+            return None
+        candidate = Path(value)
+        if candidate.is_absolute():
+            return candidate if candidate.exists() else None
+        for base in bases:
+            resolved = (base / candidate).resolve()
+            if resolved.exists():
+                return resolved
+        return None
+
     def _load_judge_models(ctx) -> List[EvaluationJudgeModel]:
+        """Project the evaluation loader's merged judges dict into UI models.
+
+        Source of truth is :func:`load_eval_config`, which already merges
+        inline ``evaluation.judges`` and per-folder ``judges/*.yml`` configs
+        (see ``omniagents/core/eval/loader.py``). We then resolve each
+        judge's ``instructions_file`` and ``template_file`` against the
+        YAML the merge picked the judge up from, with sane fallbacks for
+        the per-folder scaffold convention.
+        """
+        try:
+            eval_config = load_eval_config(str(ctx.root))
+        except Exception:
+            return []
+
+        judges_cfg = eval_config.config.get("judges") or {}
+        if not isinstance(judges_cfg, dict):
+            return []
+
+        eval_dir = eval_config.eval_dir
+        project_root = eval_config.project_root
+
         result: List[EvaluationJudgeModel] = []
-        for root in _judge_directories(ctx):
-            for entry in sorted(root.iterdir()):
-                if not entry.is_dir():
-                    continue
-                cfg_path = entry / "judge.yml"
-                if not cfg_path.is_file():
-                    continue
-                try:
-                    data = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
-                except Exception:
-                    data = {}
-                judges_cfg = data.get("judges") if isinstance(data, dict) else None
-                if not isinstance(judges_cfg, dict):
-                    continue
-                for key, cfg in judges_cfg.items():
-                    if not isinstance(cfg, dict):
-                        continue
-                    agent_cfg = (
-                        cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
-                    )
-                    input_cfg = (
-                        cfg.get("input") if isinstance(cfg.get("input"), dict) else {}
-                    )
-                    instructions_file = (
-                        agent_cfg.get("instructions_file")
-                        if isinstance(agent_cfg.get("instructions_file"), str)
-                        else None
-                    )
-                    template_file = (
-                        input_cfg.get("template_file")
-                        if isinstance(input_cfg.get("template_file"), str)
-                        else None
-                    )
-                    resolved_instr = _resolve_relative_file(
-                        cfg_path.parent, instructions_file
-                    ) or (entry / "instructions.md")
-                    resolved_template = _resolve_relative_file(
-                        cfg_path.parent, template_file
-                    ) or (entry / "template.md")
-                    instructions_text = _read_text_optional(resolved_instr)
-                    template_text = _read_text_optional(resolved_template)
-                    updated_at = _latest_timestamp(
-                        [cfg_path, resolved_instr, resolved_template]
-                    )
-                    source_value = str(
-                        input_cfg.get("source", "final_assistant_text")
-                        or "final_assistant_text"
-                    )
-                    failure_value = cfg.get("failure_category") or cfg.get("category")
-                    model_value = (
-                        agent_cfg.get("model")
-                        if isinstance(agent_cfg.get("model"), str)
-                        else None
-                    )
-                    agent_name = (
-                        agent_cfg.get("name")
-                        if isinstance(agent_cfg.get("name"), str)
-                        else None
-                    )
-                    agent_label = (
-                        agent_cfg.get("label")
-                        if isinstance(agent_cfg.get("label"), str)
-                        else None
-                    )
-                    judge_model = EvaluationJudgeModel(
-                        key=str(key),
-                        agent_name=agent_name,
-                        agent_label=agent_label,
-                        model=model_value,
-                        source=source_value,
-                        failure_category=str(failure_value) if failure_value else None,
-                        instructions=instructions_text,
-                        template=template_text,
-                        instructions_file=instructions_file,
-                        template_file=template_file,
-                        instructions_path=(
-                            str(resolved_instr) if resolved_instr else None
-                        ),
-                        template_path=(
-                            str(resolved_template) if resolved_template else None
-                        ),
-                        judge_path=str(cfg_path),
-                        updated_at=updated_at,
-                    )
-                    result.append(judge_model)
+        for key, cfg in sorted(judges_cfg.items()):
+            if not isinstance(cfg, dict):
+                continue
+            agent_cfg = cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
+            input_cfg = cfg.get("input") if isinstance(cfg.get("input"), dict) else {}
+
+            instructions_file = (
+                agent_cfg.get("instructions_file")
+                if isinstance(agent_cfg.get("instructions_file"), str)
+                else None
+            )
+            template_file = (
+                input_cfg.get("template_file")
+                if isinstance(input_cfg.get("template_file"), str)
+                else None
+            )
+
+            source_path = eval_config.judge_sources.get(str(key))
+            if source_path is None:
+                # Provenance unavailable; the loader merge always tracks
+                # judges seen via the supported source paths, so this falls
+                # back to evaluation.yml as a safe default rather than
+                # silently dropping a real judge.
+                source_path = eval_dir / "evaluation.yml"
+
+            bases = [source_path.parent, eval_dir, project_root]
+            resolved_instr = _resolve_first_existing(bases, instructions_file)
+            resolved_template = _resolve_first_existing(bases, template_file)
+
+            # Per-folder scaffold convention: instructions.md / template.md
+            # sit next to judge.yml. Only fall back when the source clearly
+            # follows that layout.
+            if (
+                resolved_instr is None
+                and source_path.name == "judge.yml"
+                and (source_path.parent / "instructions.md").exists()
+            ):
+                resolved_instr = source_path.parent / "instructions.md"
+            if (
+                resolved_template is None
+                and source_path.name == "judge.yml"
+                and (source_path.parent / "template.md").exists()
+            ):
+                resolved_template = source_path.parent / "template.md"
+
+            instructions_text = _read_text_optional(resolved_instr)
+            template_text = _read_text_optional(resolved_template)
+            updated_at = _latest_timestamp(
+                [source_path, resolved_instr, resolved_template]
+            )
+
+            source_value = str(
+                input_cfg.get("source", "final_assistant_text")
+                or "final_assistant_text"
+            )
+            failure_value = cfg.get("failure_category") or cfg.get("category")
+            model_value = (
+                agent_cfg.get("model")
+                if isinstance(agent_cfg.get("model"), str)
+                else None
+            )
+            agent_name = (
+                agent_cfg.get("name")
+                if isinstance(agent_cfg.get("name"), str)
+                else None
+            )
+            agent_label = (
+                agent_cfg.get("label")
+                if isinstance(agent_cfg.get("label"), str)
+                else None
+            )
+
+            result.append(
+                EvaluationJudgeModel(
+                    key=str(key),
+                    agent_name=agent_name,
+                    agent_label=agent_label,
+                    model=model_value,
+                    source=source_value,
+                    failure_category=str(failure_value) if failure_value else None,
+                    instructions=instructions_text,
+                    template=template_text,
+                    instructions_file=instructions_file,
+                    template_file=template_file,
+                    instructions_path=(str(resolved_instr) if resolved_instr else None),
+                    template_path=(
+                        str(resolved_template) if resolved_template else None
+                    ),
+                    judge_path=str(source_path),
+                    updated_at=updated_at,
+                )
+            )
         return result
 
     def _find_judge_entry(
