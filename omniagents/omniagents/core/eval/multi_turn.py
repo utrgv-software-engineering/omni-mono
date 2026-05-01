@@ -225,6 +225,7 @@ async def run_scenario(
     workflow_name: Optional[str] = None,
     studio_trace: Optional[Any] = None,
     project_root: Optional[Path] = None,
+    eval_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Run a single scenario with environment support.
 
@@ -332,6 +333,7 @@ async def run_scenario(
                 studio_trace,
                 eval_cfg=eval_cfg,
                 agent_yaml=agent_yaml,
+                eval_dir=eval_dir,
             )
         else:
             return await _run_scripted_single_turn(
@@ -344,6 +346,7 @@ async def run_scenario(
                 studio_trace,
                 eval_cfg=eval_cfg,
                 agent_yaml=agent_yaml,
+                eval_dir=eval_dir,
             )
 
     except Exception as e:
@@ -387,17 +390,23 @@ async def _run_judges_for_scenario(
     eval_cfg: Dict[str, Any],
     scenario: Dict[str, Any],
     history: List[Dict[str, Any]],
+    eval_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Run LLM judges for a scenario and return metadata with results.
 
     Delegates to the basic pipeline's ``_run_judges`` so that the
     extended pipeline (environment-backed) gets the same judge support
-    as the basic one.
+    as the basic one. ``eval_dir`` must be threaded through so that the
+    judge's ``instructions_file`` and ``template_file`` resolve relative
+    to the evaluation config directory rather than the agent yaml's
+    parent (which would silently fall back to default empty templates).
     """
     try:
         from .pipeline import _run_judges
 
-        return await _run_judges(Path(agent_yaml), eval_cfg, scenario, history)
+        return await _run_judges(
+            Path(agent_yaml), eval_cfg, scenario, history, eval_dir=eval_dir
+        )
     except Exception as exc:
         _logger.debug("Judge execution failed: %s", exc)
         return {}
@@ -413,6 +422,7 @@ async def _run_scripted_single_turn(
     studio_trace: Optional[Any] = None,
     eval_cfg: Optional[Dict[str, Any]] = None,
     agent_yaml: Optional[str] = None,
+    eval_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Run a scripted single-turn scenario (prompt: "...")."""
     prompt = scenario["prompt"]  # Required for single-turn
@@ -476,7 +486,7 @@ async def _run_scripted_single_turn(
     judge_metadata = {}
     if agent_yaml and eval_cfg:
         judge_metadata = await _run_judges_for_scenario(
-            agent_yaml, eval_cfg, scenario, history
+            agent_yaml, eval_cfg, scenario, history, eval_dir=eval_dir
         )
 
     ctx_metadata = {
@@ -546,6 +556,7 @@ async def _run_scripted_multi_turn(
     studio_trace: Optional[Any] = None,
     eval_cfg: Optional[Dict[str, Any]] = None,
     agent_yaml: Optional[str] = None,
+    eval_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Run a scripted multi-turn scenario.
 
@@ -720,7 +731,7 @@ async def _run_scripted_multi_turn(
     judge_metadata = {}
     if agent_yaml and eval_cfg:
         judge_metadata = await _run_judges_for_scenario(
-            agent_yaml, eval_cfg, scenario, history
+            agent_yaml, eval_cfg, scenario, history, eval_dir=eval_dir
         )
 
     ctx_metadata = {
@@ -1194,6 +1205,7 @@ async def run_evaluation_with_environment_async(
                     workflow_name,
                     studio_trace,
                     project_root=_project_root,
+                    eval_dir=_eval_dir,
                 )
             else:
                 # Use existing single-turn pipeline (no environment, scripted)
@@ -1206,6 +1218,7 @@ async def run_evaluation_with_environment_async(
                     eval_cfg,
                     workflow_name,
                     project_root=_project_root,
+                    eval_dir=_eval_dir,
                 )
 
             r["scenario_config"] = sc
@@ -1383,6 +1396,7 @@ async def run_scenarios_against_agent(
                 workflow_name,
                 studio_trace,
                 project_root=_project_root,
+                eval_dir=_eval_dir,
             )
 
             # Transform result to match legacy format
