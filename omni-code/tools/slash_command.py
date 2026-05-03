@@ -139,10 +139,23 @@ async def run_init_agent(max_turns: int = 1000) -> str:
         RunConfig(model_provider=model_provider) if model_provider is not None else None
     )
 
+    # Resolve the workspace BEFORE the run so we can both (a) pass it as
+    # the agent's run context — the init agent's apply_patch / write_file
+    # tools resolve relative paths against ctx.context["workspace_root"]
+    # and would raise WorkspaceRootRequiredError without it under strict
+    # mode — and (b) read the resulting AGENTS.md back from the same
+    # location for the success message.
+    workspace_root = os.environ.get("PWD")
+    base_dir = Path(workspace_root).expanduser() if workspace_root else Path.cwd()
+
     # Run the agent
     with _temporary_environ(env_overrides):
         result = await Runner.run(
-            agent, "begin", max_turns=max_turns, run_config=run_config
+            agent,
+            "begin",
+            context={"workspace_root": str(base_dir)},
+            max_turns=max_turns,
+            run_config=run_config,
         )
 
     try:
@@ -150,8 +163,6 @@ async def run_init_agent(max_turns: int = 1000) -> str:
     except Exception:
         return "Failed to update AGENTS.md"
 
-    workspace_root = os.environ.get("PWD")
-    base_dir = Path(workspace_root).expanduser() if workspace_root else Path.cwd()
     agents_md_path = base_dir / "AGENTS.md"
     if status in {"Created AGENTS.md", "Updated AGENTS.md"} and agents_md_path.exists():
         try:

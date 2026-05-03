@@ -412,8 +412,18 @@ async def _run_session_summarizer_agent(
     run_config = (
         RunConfig(model_provider=model_provider) if model_provider is not None else None
     )
+    # CLI invocation — anchor to the user's current working directory.
+    # The session_summarizer agent has tools=[] today so this is unused,
+    # but passing it keeps the call forward-compatible and consistent
+    # with the framework's strict workspace_root convention.
     with _temporary_environ(env_overrides):
-        result = await Runner.run(agent, prompt, max_turns=1, run_config=run_config)
+        result = await Runner.run(
+            agent,
+            prompt,
+            context={"workspace_root": os.getcwd()},
+            max_turns=1,
+            run_config=run_config,
+        )
         return result.final_output_as(str)
 
 

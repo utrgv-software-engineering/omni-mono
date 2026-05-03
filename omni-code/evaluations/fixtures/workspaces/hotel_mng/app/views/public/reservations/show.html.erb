@@ -1,0 +1,263 @@
+<%# Reservation Details Page %>
+<div class="min-h-screen bg-gray-50">
+  <div class="container mx-auto px-4 py-12">
+    <div class="max-w-4xl mx-auto">
+      <%# Header %>
+      <div class="bg-white rounded-lg shadow-lg overflow-hidden mb-6">
+        <div class="bg-gradient-to-r from-blue-600 to-blue-700 p-6">
+          <h1 class="text-2xl font-bold text-white mb-2">Reservation Details</h1>
+          <div class="flex flex-wrap items-center gap-4 text-white/90">
+            <span class="flex items-center">
+              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"></path>
+              </svg>
+              <%= @reservation.confirmation_number %>
+            </span>
+            <span class="flex items-center">
+              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+              <%= @reservation.status.humanize %>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <%# Main Content %>
+        <div class="lg:col-span-2 space-y-6">
+          <%# Guest Information %>
+          <div class="bg-white rounded-lg shadow p-6">
+            <h2 class="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+              <svg class="w-5 h-5 mr-2 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+              </svg>
+              Guest Information
+            </h2>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <p class="text-sm text-gray-500">Name</p>
+                <p class="font-medium text-gray-900"><%= @reservation.guest.full_name %></p>
+              </div>
+              <div>
+                <p class="text-sm text-gray-500">Email</p>
+                <p class="font-medium text-gray-900"><%= @reservation.guest.email %></p>
+              </div>
+              <div>
+                <p class="text-sm text-gray-500">Phone</p>
+                <p class="font-medium text-gray-900"><%= @reservation.guest.phone || "Not provided" %></p>
+              </div>
+              <div>
+                <p class="text-sm text-gray-500">Guests</p>
+                <p class="font-medium text-gray-900">
+                  <%= pluralize(@reservation.adults, 'Adult') %>
+                  <% if @reservation.children > 0 %>
+                    , <%= pluralize(@reservation.children, 'Child', 'Children') %>
+                  <% end %>
+                  <% if @reservation.infants > 0 %>
+                    , <%= pluralize(@reservation.infants, 'Infant') %>
+                  <% end %>
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <%# Stay Details %>
+          <div class="bg-white rounded-lg shadow p-6">
+            <h2 class="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+              <svg class="w-5 h-5 mr-2 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+              </svg>
+              Stay Details
+            </h2>
+            
+            <div class="space-y-4">
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <p class="text-sm text-gray-500">Check-in Date</p>
+                  <p class="font-medium text-gray-900"><%= @reservation.check_in_date.strftime("%B %d, %Y") %></p>
+                  <p class="text-xs text-gray-600">After <%= @hotel.check_in_time.strftime("%l:%M %p") %></p>
+                </div>
+                <div>
+                  <p class="text-sm text-gray-500">Check-out Date</p>
+                  <p class="font-medium text-gray-900"><%= @reservation.check_out_date.strftime("%B %d, %Y") %></p>
+                  <p class="text-xs text-gray-600">Before <%= @hotel.check_out_time.strftime("%l:%M %p") %></p>
+                </div>
+              </div>
+              
+              <div>
+                <p class="text-sm text-gray-500">Room Type</p>
+                <p class="font-medium text-gray-900"><%= @reservation.room_type.name %></p>
+                <p class="text-sm text-gray-600"><%= @reservation.room_type.description %></p>
+              </div>
+              
+              <% if @reservation.room.present? %>
+                <div>
+                  <p class="text-sm text-gray-500">Room Number</p>
+                  <p class="font-medium text-gray-900"><%= @reservation.room.room_number %></p>
+                </div>
+              <% end %>
+              
+              <% if @reservation.special_requests.present? %>
+                <div>
+                  <p class="text-sm text-gray-500">Special Requests</p>
+                  <p class="text-gray-700"><%= @reservation.special_requests %></p>
+                </div>
+              <% end %>
+            </div>
+          </div>
+
+          <%# Payment Information %>
+          <div class="bg-white rounded-lg shadow p-6">
+            <h2 class="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+              <svg class="w-5 h-5 mr-2 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"></path>
+              </svg>
+              Payment Information
+            </h2>
+            
+            <div class="space-y-3">
+              <div class="flex justify-between items-center">
+                <span class="text-gray-600">Total Amount</span>
+                <span class="text-xl font-bold text-gray-900">$<%= @reservation.total_amount.to_i %></span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-gray-600">Paid Amount</span>
+                <span class="font-medium text-gray-900">$<%= @reservation.paid_amount.to_i %></span>
+              </div>
+              <div class="flex justify-between items-center pt-3 border-t">
+                <span class="text-gray-600 font-medium">Balance Due</span>
+                <span class="text-xl font-bold <%= @reservation.balance_due > 0 ? 'text-red-600' : 'text-green-600' %>">
+                  $<%= @reservation.balance_due.to_i %>
+                </span>
+              </div>
+              
+              <div class="mt-4">
+                <span class="inline-block px-3 py-1 rounded-full text-sm font-medium
+                  <%= case @reservation.payment_status
+                      when 'paid' then 'bg-green-100 text-green-800'
+                      when 'partial' then 'bg-yellow-100 text-yellow-800'
+                      when 'refunded' then 'bg-gray-100 text-gray-800'
+                      else 'bg-red-100 text-red-800'
+                      end %>">
+                  Payment <%= @reservation.payment_status.humanize %>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <%# Sidebar %>
+        <div class="lg:col-span-1">
+          <%# Hotel Information %>
+          <div class="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 class="text-lg font-semibold text-gray-900 mb-4">Hotel Information</h2>
+            <div class="space-y-3">
+              <div>
+                <p class="font-medium text-gray-900"><%= @hotel.name %></p>
+                <% if @hotel.star_rating.present? %>
+                  <div class="flex mt-1">
+                    <% @hotel.star_rating.to_i.times do %>
+                      <svg class="w-4 h-4 text-yellow-400 fill-current" viewBox="0 0 20 20">
+                        <path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z"/>
+                      </svg>
+                    <% end %>
+                  </div>
+                <% end %>
+              </div>
+              
+              <div class="text-sm text-gray-600">
+                <p><%= @hotel.address %></p>
+                <p><%= @hotel.city %>, <%= @hotel.state %> <%= @hotel.postal_code %></p>
+              </div>
+              
+              <div class="text-sm">
+                <p class="text-gray-600">Phone</p>
+                <a href="tel:<%= @hotel.phone %>" class="text-blue-600 hover:underline">
+                  <%= @hotel.phone %>
+                </a>
+              </div>
+              
+              <div class="text-sm">
+                <p class="text-gray-600">Email</p>
+                <a href="mailto:<%= @hotel.email %>" class="text-blue-600 hover:underline">
+                  <%= @hotel.email %>
+                </a>
+              </div>
+            </div>
+          </div>
+
+          <%# Actions %>
+          <div class="bg-white rounded-lg shadow p-6">
+            <h2 class="text-lg font-semibold text-gray-900 mb-4">Actions</h2>
+            
+            <div class="space-y-3">
+              <% if @reservation.can_modify? %>
+                <%= link_to "Modify Reservation", 
+                    edit_public_reservation_path(@reservation.confirmation_number, 
+                                               email: params[:email], 
+                                               phone: params[:phone]),
+                    class: "block w-full text-center bg-blue-600 text-white font-medium py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-200" %>
+              <% end %>
+              
+              <% if @reservation.can_cancel? %>
+                <%= link_to "Cancel Reservation", 
+                    cancel_public_reservation_path(@reservation.confirmation_number,
+                                                 email: params[:email],
+                                                 phone: params[:phone]),
+                    class: "block w-full text-center bg-red-600 text-white font-medium py-2 px-4 rounded-lg hover:bg-red-700 transition-colors duration-200" %>
+              <% end %>
+              
+              <button onclick="window.print()" class="w-full bg-gray-200 text-gray-900 font-medium py-2 px-4 rounded-lg hover:bg-gray-300 transition-colors duration-200">
+                Print Details
+              </button>
+              
+              <a href="mailto:<%= @hotel.email %>?subject=Reservation <%= @reservation.confirmation_number %>" 
+                 class="block w-full text-center bg-gray-600 text-white font-medium py-2 px-4 rounded-lg hover:bg-gray-700 transition-colors duration-200">
+                Contact Hotel
+              </a>
+            </div>
+            
+            <% if ['confirmed', 'pending'].include?(@reservation.status) %>
+              <div class="mt-6 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                <h3 class="text-sm font-semibold text-amber-800 mb-2">Policies</h3>
+                <ul class="text-xs text-amber-800 space-y-1">
+                  <li>• <strong>Modifications:</strong> Can be made up to 24 hours before check-in</li>
+                  <li>• <strong>Cancellation:</strong> 
+                    <% if @cancellation_policy %>
+                      <%= @cancellation_policy.description || @cancellation_policy.cancellation_type.humanize %>
+                      <% if @cancellation_policy.free_cancellation_hours.present? %>
+                        (Free up to <%= @cancellation_policy.free_cancellation_hours %> hours before check-in)
+                      <% end %>
+                    <% else %>
+                      <% days_until = (@reservation.check_in_date - Date.current).to_i %>
+                      <% cancellation_fee = @reservation.calculate_cancellation_fee %>
+                      <% if cancellation_fee == 0 %>
+                        Free cancellation
+                      <% elsif cancellation_fee == @reservation.total_amount %>
+                        Full charge applies
+                      <% else %>
+                        $<%= cancellation_fee.to_i %> cancellation fee applies
+                      <% end %>
+                    <% end %>
+                  </li>
+                </ul>
+              </div>
+            <% elsif @reservation.status == 'cancelled' %>
+              <div class="mt-6 p-4 bg-gray-100 border border-gray-300 rounded-lg">
+                <p class="text-sm text-gray-700 font-semibold">
+                  This reservation has been cancelled.
+                </p>
+                <% if @reservation.refundable_amount > 0 %>
+                  <p class="text-sm text-gray-600 mt-1">
+                    Refund amount: $<%= @reservation.refundable_amount.to_i %>
+                  </p>
+                <% end %>
+              </div>
+            <% end %>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

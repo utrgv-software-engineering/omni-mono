@@ -1,0 +1,68 @@
+services:
+  # PostgreSQL database
+  postgres:
+    image: postgres:16-alpine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Rails application service
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      # Mount the application code
+      - .:/rails
+      # Mount omniagents for local development
+      - ../omniagents:/omniagents
+      # Cache gems in a named volume for faster rebuilds
+      - bundle_cache:/usr/local/bundle
+      # Persist agents virtualenv inside the container filesystem only
+      - agents_venv:/var/lib/hotel-agents-venv
+      # Don't mount node_modules if it exists (prevents conflicts)
+      - /rails/node_modules
+      # Prevent temp files from being shared
+      - /rails/tmp
+    ports:
+      - "3000:3000"
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      AGENTS_VENV: .venv-docker
+      # Rails settings
+      RAILS_ENV: development
+      RAILS_MAX_THREADS: 5
+      # Allow connections from any IP (needed for Docker)
+      BINDING: 0.0.0.0
+      # PostgreSQL connection
+      PGHOST: postgres
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      # Enable eval API for agent testing
+      ALLOW_EVAL_API: "true"
+      EVAL_API_TOKEN: "eval-development-token"
+    # Enable interactive mode for debugging
+    stdin_open: true
+    tty: true
+    # Optional: Uncomment to load additional environment variables from file
+    # env_file:
+    #   - .env.docker
+
+volumes:
+  # Named volume for bundler gem cache
+  bundle_cache:
+  agents_venv:
+  postgres_data:

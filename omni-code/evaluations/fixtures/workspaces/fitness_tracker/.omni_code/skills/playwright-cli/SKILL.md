@@ -6,6 +6,14 @@ allowed-tools: Bash(playwright-cli:*)
 
 # Browser Automation with playwright-cli
 
+## Prerequisites
+
+Before using playwright-cli, ensure it is installed globally:
+
+```bash
+npm install -g @playwright/cli@latest
+```
+
 ## Quick start
 
 ```bash
@@ -238,4 +246,69 @@ playwright-cli -s=mysession delete-data  # delete user data for persistent sessi
 playwright-cli list
 # Close all browsers
 playwright-cli close-all
+# Forcefully kill all browser processes
+playwright-cli kill-all
 ```
+
+## Local installation
+
+In some cases user might want to install playwright-cli locally. If running globally available `playwright-cli` binary fails, use `npx playwright-cli` to run the commands. For example:
+
+```bash
+npx playwright-cli open https://example.com
+npx playwright-cli click e1
+```
+
+## Example: Form submission
+
+```bash
+playwright-cli open https://example.com/form
+playwright-cli snapshot
+
+playwright-cli fill e1 "user@example.com"
+playwright-cli fill e2 "password123"
+playwright-cli click e3
+playwright-cli snapshot
+playwright-cli close
+```
+
+## Example: Multi-tab workflow
+
+```bash
+playwright-cli open https://example.com
+playwright-cli tab-new https://example.com/other
+playwright-cli tab-list
+playwright-cli tab-select 0
+playwright-cli snapshot
+playwright-cli close
+```
+
+## Example: Debugging with DevTools
+
+```bash
+playwright-cli open https://example.com
+playwright-cli click e4
+playwright-cli fill e7 "test"
+playwright-cli console
+playwright-cli network
+playwright-cli close
+```
+
+```bash
+playwright-cli open https://example.com
+playwright-cli tracing-start
+playwright-cli click e4
+playwright-cli fill e7 "test"
+playwright-cli tracing-stop
+playwright-cli close
+```
+
+## Specific tasks
+
+* **Request mocking** [references/request-mocking.md](references/request-mocking.md)
+* **Running Playwright code** [references/running-code.md](references/running-code.md)
+* **Browser session management** [references/session-management.md](references/session-management.md)
+* **Storage state (cookies, localStorage)** [references/storage-state.md](references/storage-state.md)
+* **Test generation** [references/test-generation.md](references/test-generation.md)
+* **Tracing** [references/tracing.md](references/tracing.md)
+* **Video recording** [references/video-recording.md](references/video-recording.md)

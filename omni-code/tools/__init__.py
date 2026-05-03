@@ -1,50 +1,15 @@
-from omniagents.builtin.tools import (
-    display_artifact,
-    web_fetch,
-    youtube_search,
-    web_search,
-    scholar_search,
-    download_file,
-    execute_bash,
-    glob_files,
-    grep_files,
-    list_directory,
-    read_file,
-    edit_file,
-    write_file,
-    apply_patch,
-)
-from .conversion_tools import convert_to_markdown
-from .notebook_tools import read_notebook, edit_notebook
-from .slash_command import dispatch
-from .explore_tool import explore
-from .worker_tools import spawn_worker, get_worker_status, wait_for_workers, send_worker_message, close_worker, resume_worker, cleanup_worker_worktree
-
-__all__ = [
-    'web_fetch',
-    'web_search',
-    'youtube_search',
-    'scholar_search',
-    'convert_to_markdown',
-    'download_file',
-    'execute_bash',
-    'glob_files',
-    'grep_files',
-    'list_directory',
-    'read_file',
-    'edit_file',
-    'write_file',
-    'apply_patch',
-    'read_notebook',
-    'edit_notebook',
-    'dispatch',
-    'display_artifact',
-    'explore',
-    'spawn_worker',
-    'get_worker_status',
-    'wait_for_workers',
-    'send_worker_message',
-    'close_worker',
-    'resume_worker',
-    'cleanup_worker_worktree',
-]
+# Intentionally empty.
+#
+# Re-exports were removed because they triggered a sys.modules collision
+# during omniagents eval discovery: when this __init__.py loaded, its
+# cascade of `from .bash_tool import ...` imports bound `sys.modules['tools']`
+# to this directory, which then prevented `omniagents.core.tools.discovery`
+# from importing the builtin tools at `omniagents/builtin/tools/` (it tries
+# `importlib.import_module('tools.file_tools')` and Python locks onto the
+# already-cached `tools` package). The result was that the agent ran without
+# `read_file`, `list_directory`, `apply_patch`, `write_file`, and the other
+# builtin tools — and reached for `read_page` (omni-projects MCP) as the
+# closest-named substitute.
+#
+# Nothing in this repo imports symbols directly from `tools` — all callers
+# use `from tools.<module> import X`. Removing the re-exports is safe.

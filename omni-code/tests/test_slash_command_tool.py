@@ -76,3 +76,142 @@ async def test_run_init_agent_uses_model_provider_and_restores_env(monkeypatch, 
             os.environ.pop("OPENAI_API_KEY", None)
         else:
             os.environ["OPENAI_API_KEY"] = prior
+
+
+@pytest.mark.asyncio
+async def test_run_init_agent_passes_workspace_root_via_run_context(
+    monkeypatch, tmp_path
+):
+    """The init agent's tools (apply_patch / write_file / read_file)
+    resolve relative paths against ctx.context["workspace_root"]. Under
+    strict mode (omniagents v0.6.48+) a missing value raises
+    WorkspaceRootRequiredError. This test pins the contract: the
+    slash-command flow must pass workspace_root via Runner.run's
+    context= kwarg, sourced from $PWD (or cwd as fallback)."""
+    import tools.slash_command as slash
+    import omni_code.models as models
+    import omniagents.core.config.loader as loader
+    import omniagents.core.agents.builder as builder
+    from agents import Runner
+
+    monkeypatch.setattr(models, "load_models_config", lambda: {})
+    monkeypatch.setattr(
+        models,
+        "resolve_model_for_runtime",
+        lambda model_name=None: {"model": "gpt-test", "model_settings": {}},
+    )
+
+    class FakeSpec:
+        def __init__(self):
+            self.model_name = None
+            self.model_settings = None
+
+    monkeypatch.setattr(
+        loader, "load_agent_spec_from_yaml", lambda *_a, **_k: FakeSpec()
+    )
+
+    async def fake_build_agent(
+        *, settings, mcp_servers, spec, session=None, approval_callback=None, _loading_stack=None
+    ):
+        return object()
+
+    monkeypatch.setattr(builder, "_default_build_agent", fake_build_agent)
+    monkeypatch.setattr(
+        slash, "_build_model_provider", lambda _runtime: (None, {})
+    )
+
+    captured: dict = {}
+
+    async def fake_run(_agent, _input, *, context=None, max_turns=10, run_config=None, **_kwargs):
+        captured["context"] = context
+
+        class FakeResult:
+            def final_output_as(self, _type):
+                return "Created AGENTS.md"
+
+        return FakeResult()
+
+    monkeypatch.setattr(Runner, "run", fake_run)
+
+    # Asymmetric: PWD points at tmp_path, NOT the test runner cwd. If the
+    # slash command silently picked up some other path (e.g. the server
+    # process's cwd), captured["context"] would not match tmp_path.
+    monkeypatch.setenv("PWD", str(tmp_path))
+    (tmp_path / "AGENTS.md").write_text("# Repository Guidelines\n", encoding="utf-8")
+
+    await slash.run_init_agent(max_turns=5)
+
+    assert captured["context"] is not None, (
+        "Runner.run was called without context= — workspace_root not propagated"
+    )
+    assert isinstance(captured["context"], dict)
+    assert captured["context"].get("workspace_root") == str(tmp_path), (
+        f"workspace_root mismatch: got {captured['context'].get('workspace_root')!r}, "
+        f"expected {str(tmp_path)!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_init_agent_falls_back_to_cwd_when_pwd_missing(
+    monkeypatch, tmp_path
+):
+    """If $PWD is unset, the slash command should anchor workspace_root
+    to Path.cwd() rather than passing None (which would raise
+    WorkspaceRootRequiredError downstream when init_agent's apply_patch
+    tries to write AGENTS.md)."""
+    import tools.slash_command as slash
+    import omni_code.models as models
+    import omniagents.core.config.loader as loader
+    import omniagents.core.agents.builder as builder
+    from agents import Runner
+    from pathlib import Path
+
+    monkeypatch.setattr(models, "load_models_config", lambda: {})
+    monkeypatch.setattr(
+        models,
+        "resolve_model_for_runtime",
+        lambda model_name=None: {"model": "gpt-test", "model_settings": {}},
+    )
+
+    class FakeSpec:
+        def __init__(self):
+            self.model_name = None
+            self.model_settings = None
+
+    monkeypatch.setattr(
+        loader, "load_agent_spec_from_yaml", lambda *_a, **_k: FakeSpec()
+    )
+
+    async def fake_build_agent(
+        *, settings, mcp_servers, spec, session=None, approval_callback=None, _loading_stack=None
+    ):
+        return object()
+
+    monkeypatch.setattr(builder, "_default_build_agent", fake_build_agent)
+    monkeypatch.setattr(
+        slash, "_build_model_provider", lambda _runtime: (None, {})
+    )
+
+    captured: dict = {}
+
+    async def fake_run(_agent, _input, *, context=None, max_turns=10, run_config=None, **_kwargs):
+        captured["context"] = context
+
+        class FakeResult:
+            def final_output_as(self, _type):
+                return "Created AGENTS.md"
+
+        return FakeResult()
+
+    monkeypatch.setattr(Runner, "run", fake_run)
+
+    monkeypatch.delenv("PWD", raising=False)
+
+    # cd into tmp_path so Path.cwd() returns it deterministically.
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "AGENTS.md").write_text("# Repository Guidelines\n", encoding="utf-8")
+
+    await slash.run_init_agent(max_turns=5)
+
+    assert captured["context"] is not None
+    assert captured["context"].get("workspace_root") == str(tmp_path)

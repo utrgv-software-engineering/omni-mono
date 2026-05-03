@@ -63,8 +63,10 @@ class Story:
 _TEMPLATE_RE = re.compile(r"\$\{([A-Za-z0-9_-]+)\}")
 
 _SUPPORTED_STEPS = {
+  'back',
   'check',
   'click',
+  'evaluate',
   'expectAttrEquals',
   'expectCount',
   'expectDisabled',
@@ -75,12 +77,16 @@ _SUPPORTED_STEPS = {
   'expectVisible',
   'expectTextContains',
   'fill',
+  'forward',
+  'goto',
+  'reload',
   'screenshot',
   'select',
   'sleepMs',
   'type',
   'uncheck',
-  'waitFor'
+  'waitFor',
+  'waitForUrl'
 }
 
 
@@ -225,6 +231,17 @@ def _load_stories(stories_dir: Path) -> list[Story]:
       raise RuntimeError(f'story.criteria must be a string list: {path}')
     if not isinstance(selectors_raw, dict) or not all(isinstance(k, str) for k in selectors_raw.keys()):
       raise RuntimeError(f'story.selectors must be a string map: {path}')
+    # Normalize bare-string steps for no-payload kinds. Authors naturally
+    # write `- reload` instead of `- reload: ~` or `- reload: {}`; YAML
+    # parses that as a plain string. Promote it to a single-key dict so
+    # the validator can dispatch normally. Restricted to the known
+    # no-payload kinds so typos (e.g. `- reolad`) still fail loudly.
+    if isinstance(steps_raw, list):
+      _NO_PAYLOAD_KINDS = {'reload', 'back', 'forward'}
+      steps_raw = [
+        {item: None} if isinstance(item, str) and item in _NO_PAYLOAD_KINDS else item
+        for item in steps_raw
+      ]
     if not isinstance(steps_raw, list) or not all(isinstance(item, dict) for item in steps_raw):
       raise RuntimeError(f'story.steps must be a list of maps: {path}')
 
@@ -325,6 +342,31 @@ def _validate_steps(story_id: str, path: Path, steps_raw: list[dict[str, Any]]) 
       steps.append(step)
       continue
 
+    if kind == 'goto':
+      if not isinstance(payload, str) or not payload.strip():
+        raise RuntimeError(f'{story_id} ({path}): step[{index}] goto requires a string url (relative urls resolve against baseUrl)')
+      steps.append(step)
+      continue
+
+    if kind in {'reload', 'back', 'forward'}:
+      # These take no payload; accept null, empty string, or an empty dict.
+      if payload not in (None, '', {}) and not (isinstance(payload, dict) and not payload):
+        raise RuntimeError(f'{story_id} ({path}): step[{index}] {kind} takes no arguments')
+      steps.append(step)
+      continue
+
+    if kind == 'evaluate':
+      if not isinstance(payload, str) or not payload.strip():
+        raise RuntimeError(f'{story_id} ({path}): step[{index}] evaluate requires a JS expression string')
+      steps.append(step)
+      continue
+
+    if kind == 'waitForUrl':
+      if not isinstance(payload, str) or not payload.strip():
+        raise RuntimeError(f'{story_id} ({path}): step[{index}] waitForUrl requires a substring to wait for in page.url()')
+      steps.append(step)
+      continue
+
     if kind == 'expectUrlContains':
       if not isinstance(payload, str):
         raise RuntimeError(f'{story_id} ({path}): step[{index}] expectUrlContains requires a string')
@@ -378,10 +420,15 @@ def _validate_steps(story_id: str, path: Path, steps_raw: list[dict[str, Any]]) 
   return steps
 
 
+_STEP_BOUNDARY = '⁣step_boundary⁣'
+
+
 def _compile_steps(story: Story) -> str:
   lines: list[str] = []
 
   for index, step in enumerate(story.steps):
+    lines.append(_STEP_BOUNDARY)
+
     kind = next(iter(step.keys()))
     payload = step[kind]
 
@@ -454,6 +501,55 @@ def _compile_steps(story: Story) -> str:
       lines.append("const __url = page.url();")
       lines.append(
         f"if (!__url.includes({json.dumps(payload)})) throw new Error('expectUrlContains failed: ' + {json.dumps(str(payload))} + ' not in ' + __url);"
+      )
+      continue
+
+    if kind == 'goto':
+      # Resolve relative URLs against baseUrl in JS so the agent can pass
+      # either "/dashboard" or "http://other-host/path" naturally.
+      # Note: don't use `new URL(u, baseUrl)` — Playwright MCP's runCode
+      # evaluates this callback in a Node VM context that doesn't expose
+      # the URL global, so we splice manually.
+      lines.append(
+        f"{{ const __u = {json.dumps(payload)};"
+        " const __target = /^[a-z]+:\\/\\//i.test(__u)"
+        "   ? __u"
+        "   : (baseUrl.replace(/\\/+$/, '') + (__u.startsWith('/') ? __u : '/' + __u));"
+        " await page.goto(__target, { waitUntil: 'domcontentloaded', timeout: timeouts.navigation }); }"
+      )
+      continue
+
+    if kind == 'reload':
+      lines.append(
+        "await page.reload({ waitUntil: 'domcontentloaded', timeout: timeouts.navigation });"
+      )
+      continue
+
+    if kind == 'back':
+      lines.append(
+        "await page.goBack({ waitUntil: 'domcontentloaded', timeout: timeouts.navigation });"
+      )
+      continue
+
+    if kind == 'forward':
+      lines.append(
+        "await page.goForward({ waitUntil: 'domcontentloaded', timeout: timeouts.navigation });"
+      )
+      continue
+
+    if kind == 'evaluate':
+      # Side-effect JS — no assertion. Use this for setup/seed work that
+      # doesn't have a meaningful return value (e.g. POSTing to your API
+      # before navigating to the page that displays the data).
+      lines.append(f"await page.evaluate({json.dumps(payload)});")
+      continue
+
+    if kind == 'waitForUrl':
+      # Polls page.url() until it includes the substring or the navigation
+      # timeout elapses. Useful after a click that triggers a redirect.
+      lines.append(
+        f"await page.waitForURL((u) => String(u).includes({json.dumps(payload)}), "
+        f"{{ timeout: timeouts.navigation }});"
       )
       continue
 
@@ -532,7 +628,27 @@ def _compile_steps(story: Story) -> str:
 
     raise RuntimeError(f'{story.story_id} ({story.path}): step[{index}] unknown step kind {kind}')
 
-  return '\n'.join(lines)
+  # Wrap each step's emitted JS in a `{ ... }` block so any `const`
+  # declarations stay scoped to the step. Without this, two steps of the
+  # same kind (e.g. two `expectTextContains`) both emit `const __text = …`
+  # into the same enclosing function scope, hitting a JS SyntaxError
+  # ("Identifier '__text' has already been declared") at parse time. That
+  # error surfaces upstream as "missing ### Result json" — hard to debug.
+  # Each loop iteration above pushes a `_STEP_BOUNDARY` sentinel before
+  # emitting; we wrap each between-sentinels chunk here so the per-branch
+  # dispatch code stays untouched.
+  result: list[str] = []
+  buffer: list[str] = []
+  for line in lines + [_STEP_BOUNDARY]:
+    if line == _STEP_BOUNDARY:
+      if buffer:
+        result.append('{')
+        result.extend(buffer)
+        result.append('}')
+        buffer = []
+    else:
+      buffer.append(line)
+  return '\n'.join(result)
 
 
 def _compose_run_code(
@@ -785,17 +901,6 @@ def _render_run_report(run_dir: Path, run_manifest: dict, video: VideoPolicy) ->
   return out_path
 
 
-def _start_server(start_cmd: str, cwd: Path) -> subprocess.Popen[str]:
-  return subprocess.Popen(
-    start_cmd,
-    cwd=cwd,
-    shell=True,
-    text=True,
-    stdout=subprocess.DEVNULL,
-    stderr=subprocess.DEVNULL
-  )
-
-
 def _build_env(browser: BrowserConfig) -> dict[str, str]:
   env = dict(os.environ)
   if browser.display:
@@ -866,9 +971,13 @@ def main() -> int:
   parser.add_argument('--state-save', default=None)
   parser.add_argument('--config', default=str(Path(__file__).with_name('config.json')))
   parser.add_argument('--stories-dir', default=str(Path(__file__).with_name('stories')))
-  parser.add_argument('--start-cmd', default=None)
-  parser.add_argument('--start-cwd', default=str(Path(__file__).resolve().parents[1]))
-  parser.add_argument('--start-timeout-s', type=int, default=30)
+  parser.add_argument(
+    '--wait-timeout-s',
+    type=int,
+    default=30,
+    help='How long to poll --base-url before giving up. The runner does NOT '
+         'start the app — bring it up yourself first (Procfile, docker, etc.).',
+  )
 
   args = parser.parse_args()
 
@@ -987,12 +1096,11 @@ def main() -> int:
   env = _build_env(browser)
   prefix = _cli_prefix(browser)
 
-  proc: subprocess.Popen[str] | None = None
-  if args.start_cmd:
-    proc = _start_server(args.start_cmd, Path(args.start_cwd))
-    _wait_for_url(base_url, args.start_timeout_s)
-  else:
-    _ensure_url_ok(base_url)
+  # The runner does NOT start the app under test. Bring it up yourself
+  # before invoking the runner (e.g. via Procfile, docker-compose, or
+  # whatever idiom the project uses; see AGENTS.md). We poll --base-url
+  # until it responds 2xx or --wait-timeout-s expires.
+  _wait_for_url(base_url, args.wait_timeout_s)
 
   run_manifest_path = run_dir / 'run.manifest.json'
   run_manifest = {
@@ -1100,12 +1208,6 @@ def main() -> int:
 
   finally:
     _run(prefix + ['close'], env=env)
-    if proc is not None:
-      proc.terminate()
-      try:
-        proc.wait(timeout=5)
-      except subprocess.TimeoutExpired:
-        proc.kill()
 
   print(str(run_dir / 'run.report.embedded.html'))
   return 1 if any_failed else 0

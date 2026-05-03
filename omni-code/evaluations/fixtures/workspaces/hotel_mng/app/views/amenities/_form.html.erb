@@ -1,0 +1,174 @@
+<%= form_with(model: amenity, local: true) do |form| %>
+  <% if amenity.errors.any? %>
+    <div class="rounded-lg bg-red-50 p-4 mb-6">
+      <div class="flex">
+        <div class="flex-shrink-0">
+          <svg class="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+          </svg>
+        </div>
+        <div class="ml-3">
+          <h3 class="text-sm font-medium text-red-800">
+            There were <%= pluralize(amenity.errors.count, "error") %> with your submission
+          </h3>
+          <div class="mt-2 text-sm text-red-700">
+            <ul class="list-disc pl-5 space-y-1">
+              <% amenity.errors.full_messages.each do |message| %>
+                <li><%= message %></li>
+              <% end %>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  <% end %>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <!-- Main Form -->
+    <div class="lg:col-span-2">
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h2 class="text-lg font-semibold text-gray-900">Amenity Details</h2>
+        </div>
+        
+        <div class="px-6 py-4 space-y-6">
+          <!-- Name -->
+          <div>
+            <%= form.label :name, class: "block text-sm font-medium text-gray-700 mb-1" %>
+            <%= form.text_field :name, 
+                class: "w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500",
+                placeholder: "e.g., WiFi, Pool, Gym" %>
+            <p class="mt-1 text-sm text-gray-500">The name of the amenity as displayed to users</p>
+          </div>
+
+          <!-- Category -->
+          <div>
+            <%= form.label :category, class: "block text-sm font-medium text-gray-700 mb-1" %>
+            <%= form.select :category,
+                options_for_select(Amenity::CATEGORIES.map { |c| [c.humanize, c] }, amenity.category),
+                { prompt: "Select a category" },
+                class: "w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500" %>
+            <p class="mt-1 text-sm text-gray-500">Choose the most appropriate category for this amenity</p>
+          </div>
+
+          <!-- Description -->
+          <div>
+            <%= form.label :description, class: "block text-sm font-medium text-gray-700 mb-1" %>
+            <%= form.text_area :description, 
+                rows: 3,
+                class: "w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500",
+                placeholder: "Optional description or additional details" %>
+            <p class="mt-1 text-sm text-gray-500">Provide additional details about this amenity (optional)</p>
+          </div>
+
+          <!-- Icon -->
+          <div>
+            <%= form.label :icon, class: "block text-sm font-medium text-gray-700 mb-1" %>
+            <div class="flex items-center space-x-4">
+              <%= form.text_field :icon, 
+                  class: "flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500",
+                  placeholder: "e.g., wifi, pool, dumbbell" %>
+              <div class="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
+                <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                </svg>
+              </div>
+            </div>
+            <p class="mt-1 text-sm text-gray-500">Icon identifier for display (Font Awesome class or custom icon name)</p>
+          </div>
+
+          <!-- Is Countable -->
+          <div>
+            <div class="flex items-start">
+              <div class="flex items-center h-5">
+                <%= form.check_box :is_countable, 
+                    class: "h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded" %>
+              </div>
+              <div class="ml-3">
+                <%= form.label :is_countable, class: "block text-sm font-medium text-gray-700" %>
+                <p class="text-sm text-gray-500">Check if this amenity can have a quantity (e.g., "2 beds", "3 towels")</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="lg:col-span-1">
+      <!-- Category Guide -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h3 class="text-sm font-semibold text-gray-900">Category Guide</h3>
+        </div>
+        <div class="px-6 py-4">
+          <dl class="space-y-2 text-xs">
+            <div>
+              <dt class="font-medium text-gray-700">Room</dt>
+              <dd class="text-gray-500">In-room amenities (bed, desk, safe)</dd>
+            </div>
+            <div>
+              <dt class="font-medium text-gray-700">Hotel</dt>
+              <dd class="text-gray-500">Property-wide amenities (pool, gym)</dd>
+            </div>
+            <div>
+              <dt class="font-medium text-gray-700">Bathroom</dt>
+              <dd class="text-gray-500">Bathroom features (shower, bathtub)</dd>
+            </div>
+            <div>
+              <dt class="font-medium text-gray-700">Kitchen</dt>
+              <dd class="text-gray-500">Kitchen/dining amenities</dd>
+            </div>
+            <div>
+              <dt class="font-medium text-gray-700">Entertainment</dt>
+              <dd class="text-gray-500">TV, gaming, media options</dd>
+            </div>
+            <div>
+              <dt class="font-medium text-gray-700">Accessibility</dt>
+              <dd class="text-gray-500">Accessibility features</dd>
+            </div>
+            <div>
+              <dt class="font-medium text-gray-700">Business</dt>
+              <dd class="text-gray-500">Business center, meeting rooms</dd>
+            </div>
+            <div>
+              <dt class="font-medium text-gray-700">Family</dt>
+              <dd class="text-gray-500">Family-friendly features</dd>
+            </div>
+            <div>
+              <dt class="font-medium text-gray-700">Outdoor</dt>
+              <dd class="text-gray-500">Outdoor spaces and activities</dd>
+            </div>
+            <div>
+              <dt class="font-medium text-gray-700">Wellness</dt>
+              <dd class="text-gray-500">Spa, fitness, health amenities</dd>
+            </div>
+          </dl>
+        </div>
+      </div>
+
+      <!-- Common Amenities -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200 mt-6">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h3 class="text-sm font-semibold text-gray-900">Common Examples</h3>
+        </div>
+        <div class="px-6 py-4">
+          <div class="space-y-2 text-xs text-gray-600">
+            <p><strong>Hotel:</strong> WiFi, Parking, Pool, Gym, Restaurant</p>
+            <p><strong>Room:</strong> TV, Safe, Mini Bar, Air Conditioning</p>
+            <p><strong>Bathroom:</strong> Hair Dryer, Toiletries, Bathtub</p>
+            <p><strong>Kitchen:</strong> Coffee Maker, Microwave, Refrigerator</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Form Actions -->
+  <div class="mt-6 flex justify-end space-x-3">
+    <%= link_to "Cancel", amenities_path, 
+        class: "px-4 py-2 border border-gray-300 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500" %>
+    <%= form.submit amenity.persisted? ? "Update Amenity" : "Create Amenity",
+        class: "px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 cursor-pointer" %>
+  </div>
+<% end %>

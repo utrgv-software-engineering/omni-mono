@@ -17,6 +17,14 @@ tools:
   - write_file
   - edit_notebook
   - execute_bash
+  - bash_status
+  - bash_logs
+  - bash_kill
+  - task_create
+  - task_list
+  - task_get
+  - task_update
+  - load_skill
 
 model_settings:
   reasoning:

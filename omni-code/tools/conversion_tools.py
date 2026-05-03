@@ -1,50 +1,88 @@
 # Initialize MarkItDown
+from typing import Any, Optional
+
+from agents.run_context import RunContextWrapper
 from omniagents.core.tools import rich_function_tool, RichToolOutput
 from markitdown import MarkItDown
 import os
 
 md_converter = MarkItDown(enable_plugins=True)  # Enable plugins with all features
 
+
+def _workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> Optional[str]:
+    try:
+        if ctx is None:
+            return None
+        c = getattr(ctx, "context", None)
+        if c is None:
+            return None
+        if isinstance(c, dict):
+            wr = c.get("workspace_root")
+        else:
+            wr = getattr(c, "workspace_root", None)
+        if isinstance(wr, str) and wr.strip():
+            return os.path.abspath(wr)
+    except Exception:
+        pass
+    return None
+
+
 # Define tools
 @rich_function_tool
-def convert_to_markdown(file_path: str) -> RichToolOutput:
+def convert_to_markdown(
+    ctx: RunContextWrapper[Any],
+    file_path: str,
+) -> RichToolOutput:
     """
-    Convert virtually any file format to markdown for analysis and review.
-    
+    Extract text/markdown from BINARY or RICH-FORMAT files (PDF, Word,
+    PowerPoint, Excel, images, audio, HTML, YouTube). Use this only when
+    the file is in a format `read_file` cannot handle as plain text.
+
+    DO NOT use this for plain-text files. For source code, markdown,
+    YAML, JSON, TOML, INI, plain `.txt`, `.log`, `.csv` (when treated as
+    text), config files, or anything you can read with `cat`, use
+    `read_file` instead. This tool is heavier (loads MarkItDown,
+    sometimes does OCR or transcription) and provides no benefit for
+    files that are already text.
+
     Args:
-        file_path: Path to the file to convert or a URL (YouTube, web pages, etc.)
-        
+        file_path: Path to a binary/rich-format file, or a URL
+            (YouTube, web pages). Plain-text local files should be read
+            with `read_file`, not this tool.
+
     Returns:
-        JSON object with the following structure:
+        JSON object with:
         {
-            "success": boolean indicating if conversion was successful,
+            "success": boolean,
             "content": markdown content of the converted file/URL,
             "error": error message (if unsuccessful)
         }
-        
-    Supported formats include:
+
+    Supported source formats this tool is FOR:
     - Documents: PDF, Word (DOCX, DOC), PowerPoint (PPTX, PPT), Excel (XLSX, XLS)
-    - Media: Images (with EXIF data and optional OCR), Audio (with transcription)
-    - Web content: HTML, YouTube videos (with transcripts)
-    - Text formats: CSV, JSON, XML, TXT
+    - Media: Images (with EXIF + optional OCR), Audio (with transcription)
+    - Web content: HTML pages, YouTube videos (with transcripts)
     - Archives: ZIP (processes contained files)
     - E-books: EPUB
-    - Emails: Outlook messages
-    
-    For YouTube videos, the content includes:
-    - Video title and metadata (views, keywords, runtime)
-    - Video description
-    - Full transcript (when available)
-    
-    For images, the content includes:
-    - EXIF metadata
-    - OCR-extracted text (when applicable)
-    
-    For audio files, the content includes:
-    - File metadata
-    - Transcribed speech (when applicable)
+    - Emails: Outlook .msg messages
+
+    Formats this tool is NOT for (use `read_file`):
+    - Source code: .py, .ts, .tsx, .js, .jsx, .go, .rs, .rb, .java, .c, .h, .cpp, .swift, .kt, etc.
+    - Markup: .md, .mdx, .rst, .adoc
+    - Config: .yaml, .yml, .json, .toml, .ini, .env, .conf
+    - Plain text: .txt, .log
+    - Anything ending in SKILL.md (use `load_skill` instead)
+
+    For YouTube videos, returns title/metadata/description/transcript.
+    For images, returns EXIF + OCR text.
+    For audio, returns metadata + transcription.
     """
     try:
+        # Anchor relative local paths to workspace_root (URLs pass through).
+        if not file_path.startswith('http'):
+            wr = _workspace_root_from_ctx(ctx)
+            if wr and not os.path.isabs(file_path):
+                file_path = os.path.abspath(os.path.join(wr, file_path))
         # Check if file exists (skip for URLs)
         if not file_path.startswith('http') and not os.path.exists(file_path):
             error_msg = f"File not found at {file_path}"

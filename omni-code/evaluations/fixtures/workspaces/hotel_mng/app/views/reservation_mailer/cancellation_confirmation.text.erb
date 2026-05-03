@@ -1,0 +1,36 @@
+<% hotel_location = [@hotel.address, @hotel.city, @hotel.state, @hotel.country].reject(&:blank?).join(', ') %>
+<% stay_window = "#{@reservation.check_in_date.strftime('%B %d, %Y')} to #{@reservation.check_out_date.strftime('%B %d, %Y')}" %>
+<% cancellation_fee = number_to_currency(@cancellation_fee || 0) %>
+<% paid_amount = number_to_currency(@reservation.paid_amount) %>
+<% refund_amount = number_to_currency(@refund_amount || 0) %>
+<% special_requests = @reservation.special_requests.presence || 'None recorded' %>
+
+<%= @hotel.name %> Reservation Cancelled
+
+Hello <%= @guest.full_name %>,
+
+This email confirms that reservation <%= @reservation.confirmation_number %> at <%= @hotel.name %> has been cancelled.
+
+Hotel: <%= @hotel.name %>
+Location: <%= hotel_location.presence || 'Details on file' %>
+
+Original Stay: <%= stay_window %> (<%= pluralize(@reservation.nights, 'night') %>)
+Room Type: <%= @room_type.name %>
+Guests: <%= pluralize(@reservation.total_guests, 'guest') %>
+
+Payment Summary:
+Amount Paid: <%= paid_amount %>
+Cancellation Fee: <%= cancellation_fee %>
+Refund Amount: <%= refund_amount %>
+
+Special Requests on File:
+<%= special_requests %>
+
+If you have questions about this cancellation or the refund timeline, reply to this email or call <%= @hotel.phone.presence || 'the hotel' %>.
+
+We hope to welcome you in the future.
+
+<%= @hotel.name %>
+<%= hotel_location.presence || '' %>
+<%= @hotel.phone.presence || '' %>
+<%= @hotel.email.presence || '' %>

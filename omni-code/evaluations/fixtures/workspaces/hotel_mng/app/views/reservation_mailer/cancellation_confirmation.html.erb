@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+  <body style="margin:0;padding:0;background-color:#f4f5f7;font-family:'Helvetica Neue',Arial,sans-serif;color:#111827;">
+    <% hotel_location = [@hotel.address, @hotel.city, @hotel.state, @hotel.country].reject(&:blank?).join(', ') %>
+    <% stay_window = "#{@reservation.check_in_date.strftime('%B %d, %Y')} to #{@reservation.check_out_date.strftime('%B %d, %Y')}" %>
+    <% paid_amount = number_to_currency(@reservation.paid_amount) %>
+    <% cancellation_fee = number_to_currency(@cancellation_fee || 0) %>
+    <% refund_amount = number_to_currency(@refund_amount || 0) %>
+    <% special_requests = @reservation.special_requests.presence || 'None recorded' %>
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+      <tr>
+        <td align="center" style="padding:24px;">
+          <table width="600" cellpadding="0" cellspacing="0" role="presentation" style="background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 20px 50px rgba(15,23,42,0.08);">
+            <tr>
+              <td style="background-color:#991b1b;color:#ffffff;padding:32px;text-align:center;">
+                <div style="font-size:24px;font-weight:600;">Reservation Cancelled</div>
+                <div style="margin-top:8px;font-size:14px;letter-spacing:1px;text-transform:uppercase;opacity:0.85;">Confirmation <%= @reservation.confirmation_number %></div>
+                <div style="margin-top:12px;font-size:18px;font-weight:500;"><%= @hotel.name %></div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:32px;">
+                <p style="margin:0 0 16px;">Hello <%= @guest.first_name %>,</p>
+                <p style="margin:0 0 24px;">This note confirms that we cancelled your reservation. The summary below is your official record.</p>
+                <table style="width:100%;border-collapse:collapse;margin:0 0 24px;">
+                  <tr>
+                    <td style="padding:8px 0;color:#6b7280;">Original Stay</td>
+                    <td style="padding:8px 0;text-align:right;color:#111827;"><%= stay_window %> (<%= pluralize(@reservation.nights, 'night') %>)</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:8px 0;color:#6b7280;">Room Type</td>
+                    <td style="padding:8px 0;text-align:right;color:#111827;"><%= @room_type.name %></td>
+                  </tr>
+                  <tr>
+                    <td style="padding:8px 0;color:#6b7280;">Guests</td>
+                    <td style="padding:8px 0;text-align:right;color:#111827;"><%= pluralize(@reservation.total_guests, 'guest') %></td>
+                  </tr>
+                  <tr>
+                    <td style="padding:8px 0;color:#6b7280;">Status</td>
+                    <td style="padding:8px 0;text-align:right;color:#111827;">Cancelled</td>
+                  </tr>
+                </table>
+                <div style="padding:20px;border:1px solid #fde8e8;border-radius:10px;background-color:#fef2f2;margin-bottom:24px;">
+                  <div style="font-weight:600;margin-bottom:12px;color:#991b1b;">Payment Summary</div>
+                  <table style="width:100%;border-collapse:collapse;">
+                    <tr>
+                      <td style="padding:6px 0;color:#6b7280;">Amount Paid</td>
+                      <td style="padding:6px 0;text-align:right;color:#111827;"><%= paid_amount %></td>
+                    </tr>
+                    <tr>
+                      <td style="padding:6px 0;color:#6b7280;">Cancellation Fee</td>
+                      <td style="padding:6px 0;text-align:right;color:#111827;"><%= cancellation_fee %></td>
+                    </tr>
+                    <tr>
+                      <td style="padding:6px 0;color:#6b7280;border-top:1px solid #fcdada;">Refund Amount</td>
+                      <td style="padding:6px 0;text-align:right;color:#166534;border-top:1px solid #fcdada;font-weight:600;"><%= refund_amount %></td>
+                    </tr>
+                  </table>
+                  <% if @refund_amount.to_f > 0 %>
+                    <p style="margin:12px 0 0;color:#374151;font-size:14px;">Refunds are returned to the original payment method within 5-7 business days.</p>
+                  <% else %>
+                    <p style="margin:12px 0 0;color:#374151;font-size:14px;">No refund is due based on the cancellation policy for this stay.</p>
+                  <% end %>
+                </div>
+                <div style="padding:20px;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:24px;">
+                  <div style="font-weight:600;margin-bottom:8px;color:#111827;">Special Requests on File</div>
+                  <div style="color:#374151;line-height:1.5;"><%= special_requests %></div>
+                </div>
+                <div style="padding:20px;background-color:#f9fafb;border-radius:10px;margin-bottom:24px;">
+                  <div style="font-weight:600;margin-bottom:8px;color:#111827;">Need help?</div>
+                  <div style="color:#374151;line-height:1.5;">
+                    Reach out if you have questions about this cancellation or would like to rebook. You can reply to this email or contact us using the details below.
+                  </div>
+                </div>
+                <div style="padding:0;margin:0 0 24px;color:#374151;line-height:1.6;">
+                  <div><strong><%= @hotel.name %></strong></div>
+                  <% if hotel_location.present? %>
+                    <div><%= hotel_location %></div>
+                  <% end %>
+                  <% if @hotel.phone.present? %>
+                    <div>Phone: <%= @hotel.phone %></div>
+                  <% end %>
+                  <% if @hotel.email.present? %>
+                    <div>Email: <%= @hotel.email %></div>
+                  <% end %>
+                  <% if @hotel.website.present? %>
+                    <div>Website: <%= @hotel.website %></div>
+                  <% end %>
+                </div>
+                <p style="margin:0;">Thank you for letting us know. We hope to welcome you another time.</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="background-color:#f3f4f6;padding:20px;text-align:center;color:#6b7280;font-size:13px;">
+                <div>This message serves as your cancellation receipt.</div>
+                <div style="margin-top:4px;">Confirmation <%= @reservation.confirmation_number %></div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

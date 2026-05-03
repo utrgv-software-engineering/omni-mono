@@ -1,10 +1,40 @@
 import difflib
 import json
 import os
-from typing import Optional
+from typing import Any, Optional
 
+from agents.run_context import RunContextWrapper
 from omniagents.core.tools import rich_function_tool, RichToolOutput
 from omniagents.core.tools import approval_metadata
+
+
+def _workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> Optional[str]:
+    try:
+        if ctx is None:
+            return None
+        c = getattr(ctx, "context", None)
+        if c is None:
+            return None
+        if isinstance(c, dict):
+            wr = c.get("workspace_root")
+        else:
+            wr = getattr(c, "workspace_root", None)
+        if isinstance(wr, str) and wr.strip():
+            return os.path.abspath(wr)
+    except Exception:
+        pass
+    return None
+
+
+def _resolve_path(ctx: RunContextWrapper[Any] | None, path: str) -> str:
+    wr = _workspace_root_from_ctx(ctx)
+    if not path:
+        return path
+    if os.path.isabs(path):
+        return path
+    if wr:
+        return os.path.abspath(os.path.join(wr, path))
+    return path
 
 
 def _load_notebook(file_path: str) -> dict:
@@ -71,7 +101,10 @@ def _get_cells(nb: dict) -> list:
 
 
 @rich_function_tool
-def read_notebook(file_path: str) -> RichToolOutput:
+def read_notebook(
+    ctx: RunContextWrapper[Any],
+    file_path: str,
+) -> RichToolOutput:
     """
     Read a Jupyter notebook (.ipynb) file and return all cells with their outputs.
 
@@ -85,6 +118,7 @@ def read_notebook(file_path: str) -> RichToolOutput:
     Returns:
         Formatted text showing all cells with indices, types, content, and outputs.
     """
+    file_path = _resolve_path(ctx, file_path)
     if not os.path.exists(file_path):
         error_msg = f"File not found: {file_path}"
         return RichToolOutput(error_msg, {
@@ -155,6 +189,7 @@ def read_notebook(file_path: str) -> RichToolOutput:
 
 @rich_function_tool
 def edit_notebook(
+    ctx: RunContextWrapper[Any],
     file_path: str,
     cell_number: int,
     new_source: str,
@@ -180,6 +215,7 @@ def edit_notebook(
     Returns:
         Confirmation message with the updated cell content.
     """
+    file_path = _resolve_path(ctx, file_path)
     if not os.path.exists(file_path):
         error_msg = f"File not found: {file_path}"
         return RichToolOutput(error_msg, {

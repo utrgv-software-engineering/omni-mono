@@ -1,0 +1,298 @@
+<% content_for :page_title, "Schedule - #{@service.name}" %>
+
+<div class="max-w-7xl mx-auto">
+  <!-- Breadcrumb Navigation -->
+  <nav class="flex mb-4" aria-label="Breadcrumb">
+    <%= link_to "Hotels", hotels_path, class: "text-sm text-gray-500 hover:text-gray-700" %>
+    <span class="mx-2 text-gray-400">/</span>
+    <%= link_to @hotel.name, hotel_path(@hotel), class: "text-sm text-gray-500 hover:text-gray-700" %>
+    <span class="mx-2 text-gray-400">/</span>
+    <%= link_to "Services", hotel_services_path(@hotel), class: "text-sm text-gray-500 hover:text-gray-700" %>
+    <span class="mx-2 text-gray-400">/</span>
+    <%= link_to @service.name, hotel_service_path(@hotel, @service), class: "text-sm text-gray-500 hover:text-gray-700" %>
+    <span class="mx-2 text-gray-400">/</span>
+    <span class="text-sm text-gray-900">Schedule</span>
+  </nav>
+
+  <!-- Page Header with Actions -->
+  <div class="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900"><%= @service.name %> Schedule</h1>
+      <p class="text-sm text-gray-600 mt-1">Manage availability and booking slots for this service</p>
+    </div>
+    <div class="mt-4 sm:mt-0">
+      <% if policy(ServiceSchedule).new? %>
+        <%= link_to new_hotel_service_service_schedule_path(@hotel, @service), class: "inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors" do %>
+          <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+          </svg>
+          Add Schedule
+        <% end %>
+      <% end %>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <!-- Weekly Schedule Grid -->
+    <div class="lg:col-span-2">
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h2 class="text-lg font-semibold text-gray-900">Weekly Schedule</h2>
+        </div>
+        <div class="p-6">
+          <% if @service_schedules.any? %>
+            <div class="space-y-4">
+              <% (0..6).each do |day_num| %>
+                <% schedule = @service_schedules.find { |s| s.day_of_week == day_num } %>
+                <div class="flex items-center p-4 rounded-lg <%= schedule ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50 border border-gray-200' %>">
+                  <div class="flex-1">
+                    <h3 class="text-sm font-medium <%= schedule ? 'text-blue-900' : 'text-gray-900' %>">
+                      <%= ServiceSchedule::DAYS_OF_WEEK[day_num] %>
+                    </h3>
+                    <% if schedule %>
+                      <div class="mt-1 flex items-center space-x-4 text-sm text-blue-700">
+                        <div class="flex items-center">
+                          <svg class="h-4 w-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                          </svg>
+                          <%= schedule.formatted_hours %>
+                        </div>
+                        <% if schedule.max_bookings_per_slot %>
+                          <div class="flex items-center">
+                            <svg class="h-4 w-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                            </svg>
+                            Max <%= schedule.max_bookings_per_slot %> bookings/slot
+                          </div>
+                        <% end %>
+                      </div>
+                    <% else %>
+                      <p class="mt-1 text-sm text-gray-500">Not available</p>
+                    <% end %>
+                  </div>
+                  <div class="flex items-center space-x-2">
+                    <% if schedule %>
+                      <% if policy(schedule).edit? %>
+                        <%= link_to edit_hotel_service_service_schedule_path(@hotel, @service, schedule),
+                            class: "text-blue-600 hover:text-blue-900",
+                            title: "Edit" do %>
+                          <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                          </svg>
+                        <% end %>
+                      <% end %>
+                      <% if policy(schedule).destroy? %>
+                        <%= link_to hotel_service_service_schedule_path(@hotel, @service, schedule),
+                            method: :delete,
+                            data: { confirm: "Are you sure you want to remove this schedule?" },
+                            class: "text-red-600 hover:text-red-900",
+                            title: "Delete" do %>
+                          <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                          </svg>
+                        <% end %>
+                      <% end %>
+                    <% else %>
+                      <% if policy(ServiceSchedule).new? %>
+                        <%= link_to new_hotel_service_service_schedule_path(@hotel, @service, day_of_week: day_num),
+                            class: "text-gray-400 hover:text-blue-600",
+                            title: "Add Schedule" do %>
+                          <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                          </svg>
+                        <% end %>
+                      <% end %>
+                    <% end %>
+                  </div>
+                </div>
+              <% end %>
+            </div>
+          <% else %>
+            <!-- Empty State -->
+            <div class="text-center py-8">
+              <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+              <h3 class="mt-2 text-sm font-medium text-gray-900">No schedule configured</h3>
+              <p class="mt-1 text-sm text-gray-500">
+                Set up a schedule to manage service availability
+              </p>
+              <div class="mt-6">
+                <% if policy(ServiceSchedule).new? %>
+                  <%= link_to new_hotel_service_service_schedule_path(@hotel, @service), class: "inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500" do %>
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                    </svg>
+                    Add Schedule
+                  <% end %>
+                <% end %>
+              </div>
+            </div>
+          <% end %>
+        </div>
+      </div>
+      
+      <!-- Daily View -->
+      <div class="mt-6 bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h2 class="text-lg font-semibold text-gray-900">Today's Schedule</h2>
+          <p class="text-sm text-gray-500 mt-1"><%= Date.current.strftime("%A, %B %d, %Y") %></p>
+        </div>
+        <div class="p-6">
+          <% today_schedule = @service_schedules.find { |s| s.day_of_week == Date.current.wday } %>
+          <% if today_schedule %>
+            <div class="space-y-4">
+              <!-- Time slots visualization -->
+              <div class="bg-gray-50 rounded-lg p-4">
+                <div class="flex items-center justify-between mb-2">
+                  <span class="text-sm font-medium text-gray-700">Operating Hours</span>
+                  <span class="text-sm text-gray-900">
+                    <%= today_schedule.formatted_hours %>
+                  </span>
+                </div>
+                <% if today_schedule.max_bookings_per_slot %>
+                  <div class="flex items-center justify-between">
+                    <span class="text-sm font-medium text-gray-700">Max Bookings per Slot</span>
+                    <span class="text-sm text-gray-900"><%= today_schedule.max_bookings_per_slot %></span>
+                  </div>
+                <% end %>
+              </div>
+              
+              <!-- Today's bookings -->
+              <div>
+                <h3 class="text-sm font-medium text-gray-700 mb-2">Today's Bookings</h3>
+                <% todays_bookings = @service.bookings_on_date(Date.current) %>
+                <% if todays_bookings.any? %>
+                  <div class="space-y-2">
+                    <% todays_bookings.each do |booking| %>
+                      <div class="flex items-center justify-between p-2 bg-white border border-gray-200 rounded">
+                        <div class="flex items-center">
+                          <% if booking.booking_time %>
+                            <span class="text-sm font-medium text-gray-900 mr-3">
+                              <%= booking.formatted_booking_time %>
+                            </span>
+                          <% end %>
+                          <span class="text-sm text-gray-600">
+                            <%= booking.guest.full_name %>
+                          </span>
+                        </div>
+                        <%= render partial: "shared/status_badge", locals: { status: booking.status, type: "service_booking" } %>
+                      </div>
+                    <% end %>
+                  </div>
+                <% else %>
+                  <p class="text-sm text-gray-500">No bookings for today</p>
+                <% end %>
+              </div>
+            </div>
+          <% else %>
+            <div class="text-center py-4">
+              <p class="text-sm text-gray-500">Service not available today</p>
+            </div>
+          <% end %>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="space-y-6">
+      <!-- Service Info -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h2 class="text-lg font-semibold text-gray-900">Service Details</h2>
+        </div>
+        <div class="px-6 py-4 space-y-2 text-sm">
+          <div class="flex justify-between">
+            <span class="text-gray-500">Service</span>
+            <span class="text-gray-900 font-medium"><%= @service.name %></span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-500">Category</span>
+            <span class="text-gray-900"><%= @service.category.humanize %></span>
+          </div>
+          <% if @service.duration_minutes %>
+            <div class="flex justify-between">
+              <span class="text-gray-500">Default Duration</span>
+              <span class="text-gray-900"><%= @service.duration_minutes %> min</span>
+            </div>
+          <% end %>
+          <% if @service.capacity %>
+            <div class="flex justify-between">
+              <span class="text-gray-500">Capacity</span>
+              <span class="text-gray-900"><%= @service.capacity %> guests</span>
+            </div>
+          <% end %>
+          <div class="flex justify-between">
+            <span class="text-gray-500">Advance Booking</span>
+            <span class="text-gray-900">
+              <%= @service.advance_booking_required ? "Required" : "Not required" %>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Schedule Summary -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h2 class="text-lg font-semibold text-gray-900">Schedule Summary</h2>
+        </div>
+        <div class="px-6 py-4 space-y-3">
+          <div class="flex justify-between items-center">
+            <span class="text-sm text-gray-500">Days Available</span>
+            <span class="text-sm font-medium text-gray-900">
+              <%= @service_schedules.count %> of 7
+            </span>
+          </div>
+          <div class="flex justify-between items-center">
+            <span class="text-sm text-gray-500">Total Weekly Hours</span>
+            <span class="text-sm font-medium text-gray-900">
+              <%= @service_schedules.sum(&:duration_in_hours).round(1) %> hours
+            </span>
+          </div>
+          <% if @service_schedules.any? %>
+            <div class="pt-2 border-t border-gray-200">
+              <p class="text-xs text-gray-500 mb-2">Operating Days:</p>
+              <div class="flex flex-wrap gap-1">
+                <% @service_schedules.each do |schedule| %>
+                  <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                    <%= schedule.day_name[0..2] %>
+                  </span>
+                <% end %>
+              </div>
+            </div>
+          <% end %>
+        </div>
+      </div>
+
+      <!-- Quick Actions -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h2 class="text-lg font-semibold text-gray-900">Quick Actions</h2>
+        </div>
+        <div class="px-6 py-4 space-y-2">
+          <%= link_to hotel_service_path(@hotel, @service), class: "w-full inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50" do %>
+            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+            </svg>
+            View Service
+          <% end %>
+          
+          <%= link_to service_bookings_path(service_id: @service.id), class: "w-full inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50" do %>
+            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+            </svg>
+            View Bookings
+          <% end %>
+          
+          <%= link_to new_service_booking_path(service_id: @service.id), class: "w-full inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50" do %>
+            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+            </svg>
+            New Booking
+          <% end %>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

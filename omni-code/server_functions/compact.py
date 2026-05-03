@@ -392,8 +392,29 @@ async def _run_compaction_agent(
     run_config = (
         RunConfig(model_provider=model_provider) if model_provider is not None else None
     )
+    # Inherit workspace_root from the caller's session (the user's active
+    # workspace) so that, if the compactor agent ever gains workspace
+    # tools, they resolve paths against the right directory rather than
+    # silently failing under strict mode. Today the compactor has tools=[]
+    # so the value is unused; passing it is forward-compatible.
+    workspace_root = None
+    if session is not None:
+        sess_ctx = getattr(session, "context", None)
+        if isinstance(sess_ctx, dict):
+            wr = sess_ctx.get("workspace_root")
+            if isinstance(wr, str) and wr.strip():
+                workspace_root = wr
+    if not workspace_root:
+        workspace_root = os.getcwd()
+
     with _temporary_environ(env_overrides):
-        result = await Runner.run(agent, prompt, max_turns=1, run_config=run_config)
+        result = await Runner.run(
+            agent,
+            prompt,
+            context={"workspace_root": workspace_root},
+            max_turns=1,
+            run_config=run_config,
+        )
         return result.final_output_as(str)
 
 

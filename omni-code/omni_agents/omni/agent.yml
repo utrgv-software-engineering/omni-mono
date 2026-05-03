@@ -8,13 +8,16 @@ welcome_text: |
 tools:
   - read_image
   - dispatch
-  # - explore
+  - explore
   - list_directory
   - read_file
   - display_artifact
   - apply_patch
   - write_file
   - execute_bash
+  - bash_status
+  - bash_logs
+  - bash_kill
   - web_fetch
   - web_search
   - youtube_search
@@ -23,13 +26,18 @@ tools:
   - convert_to_markdown
   - read_notebook
   - edit_notebook
-  # - spawn_worker
-  # - get_worker_status
-  # - wait_for_workers
-  # - send_worker_message
-  # - close_worker
-  # - resume_worker
-  # - cleanup_worker_worktree
+  - spawn_worker
+  - get_worker_status
+  - wait_for_workers
+  - send_worker_message
+  - close_worker
+  - resume_worker
+  - cleanup_worker_worktree
+  - task_create
+  - task_list
+  - task_get
+  - task_update
+  - load_skill
 
 model_settings:
   reasoning:
@@ -50,19 +58,25 @@ safe_agent_options:
     - read_file
     - display_artifact
     - dispatch
+    - bash_status
+    - bash_logs
     - web_fetch
     - web_search
     - youtube_search
     - scholar_search
     - convert_to_markdown
     - read_notebook
-    # - explore
-    # - get_worker_status
-    # - wait_for_workers
-    # - send_worker_message
-    # - close_worker
-    # - resume_worker
-    # - cleanup_worker_worktree
+    - explore
+    - get_worker_status
+    - wait_for_workers
+    - send_worker_message
+    - close_worker
+    - resume_worker
+    - task_create
+    - task_list
+    - task_get
+    - task_update
+    - load_skill
 
 server_functions:
   - help
@@ -79,6 +93,12 @@ server_functions:
   - reasoning
   - terminal.create
   - terminal.close
+  - bash_jobs.list
+  - bash_jobs.kill
+  - bash_jobs.tail
+  - bj-list
+  - bj-kill
+  - bj-logs
   - fs_get_cwd
   - fs_get_workspace_root
   - fs_get_home

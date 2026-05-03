@@ -1,0 +1,48 @@
+# Minimal coding agent used ONLY by the workspace_root propagation
+# evals (`evaluations/scenarios/subagent_workspace.yml`). It exists so
+# we can verify subagent + tool workspace_root propagation without
+# having to flip the production `omni` agent's tool list.
+#
+# Differences from `omni`:
+#   * spawn_worker / wait_for_workers / write_file / execute_bash are
+#     all explicitly enabled.
+#   * No safe-agent wrapping, no MCP, no sessions decorations — keeps
+#     the eval narrowly focused on tool-context propagation.
+#
+# Invoke via:
+#   python -m omniagents.cli eval suite run -P project.yml \
+#       --agent eval_subagent_test \
+#       --select 'name:workspace_root_visible_to_spawned_worker' \
+#       --reporter pretty
+
+name: eval_subagent_test
+label: Eval Subagent Test
+description: "Test-only agent used to verify subagent workspace_root propagation"
+instructions_file: instructions.md
+
+additional_tools_dirs:
+  - ../../tools
+
+tools:
+  - list_directory
+  - read_file
+  - write_file
+  - execute_bash
+  - spawn_worker
+  - wait_for_workers
+  - get_worker_status
+  - explore
+
+model_settings:
+  reasoning:
+    effort: low
+  parallel_tool_calls: true
+
+max_turns: 200
+
+# Reuse the production model resolver so this agent picks up the same
+# credentials the user configured for `omni`. Without this it falls
+# through to bare env vars and explodes on stale tokens.
+model_config_resolver: resolve_default_model
+
+variables: {}

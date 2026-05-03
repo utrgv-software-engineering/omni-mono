@@ -1,0 +1,368 @@
+<% content_for :page_title, "Reservation #{@reservation.confirmation_number}" %>
+
+<div class="max-w-7xl mx-auto">
+  <!-- Header with Actions -->
+  <div class="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between">
+    <div>
+      <nav class="flex mb-2" aria-label="Breadcrumb">
+        <%= link_to "Reservations", reservations_path, class: "text-sm text-gray-500 hover:text-gray-700" %>
+        <span class="mx-2 text-gray-400">/</span>
+        <span class="text-sm text-gray-900"><%= @reservation.confirmation_number %></span>
+      </nav>
+      <h1 class="text-2xl font-bold text-gray-900">Reservation Details</h1>
+    </div>
+    <div class="mt-4 sm:mt-0 flex space-x-3">
+      <% if @reservation.can_check_in? %>
+        <%= link_to new_reservation_check_in_path(@reservation), class: "inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500" do %>
+          <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+          Check In
+        <% end %>
+      <% elsif @reservation.can_check_out? %>
+        <%= link_to new_reservation_check_out_path(@reservation), class: "inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-orange-600 hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500" do %>
+          <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
+          </svg>
+          Check Out
+        <% end %>
+      <% end %>
+      
+      <%= link_to edit_reservation_path(@reservation), class: "inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500" do %>
+        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+        </svg>
+        Edit
+      <% end %>
+      
+      <% if @reservation.can_cancel? %>
+        <%= link_to reservation_path(@reservation), method: :delete, 
+            data: { confirm: "Are you sure you want to cancel this reservation?" },
+            class: "inline-flex items-center px-4 py-2 border border-red-300 text-sm font-medium rounded-lg text-red-700 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" do %>
+          <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+          Cancel
+        <% end %>
+      <% end %>
+    </div>
+  </div>
+
+  <!-- Status Alert -->
+  <% if @reservation.status == "pending" %>
+    <div class="mb-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+      <div class="flex">
+        <svg class="h-5 w-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+          <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+        </svg>
+        <div class="ml-3">
+          <p class="text-sm text-yellow-700">
+            This reservation is pending confirmation. Please confirm or assign a room to complete the booking.
+          </p>
+        </div>
+      </div>
+    </div>
+  <% end %>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <!-- Main Content (2/3 width) -->
+    <div class="lg:col-span-2 space-y-6">
+      <!-- Guest Information -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h2 class="text-lg font-semibold text-gray-900">Guest Information</h2>
+        </div>
+        <div class="px-6 py-4">
+          <dl class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Primary Guest</dt>
+              <dd class="mt-1 text-sm text-gray-900">
+                <%= link_to @reservation.guest.full_name, guest_path(@reservation.guest), class: "text-blue-600 hover:text-blue-800" %>
+                <% if @reservation.guest.vip_status? %>
+                  <span class="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800">VIP</span>
+                <% end %>
+              </dd>
+            </div>
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Email</dt>
+              <dd class="mt-1 text-sm text-gray-900"><%= @reservation.guest.email %></dd>
+            </div>
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Phone</dt>
+              <dd class="mt-1 text-sm text-gray-900"><%= @reservation.guest.phone || "Not provided" %></dd>
+            </div>
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Total Guests</dt>
+              <dd class="mt-1 text-sm text-gray-900">
+                <%= @reservation.adults %> Adults
+                <% if @reservation.children > 0 %>
+                  , <%= @reservation.children %> Children
+                <% end %>
+                <% if @reservation.infants > 0 %>
+                  , <%= @reservation.infants %> Infants
+                <% end %>
+              </dd>
+            </div>
+            <% if @reservation.guest.nationality.present? %>
+              <div>
+                <dt class="text-sm font-medium text-gray-500">Nationality</dt>
+                <dd class="mt-1 text-sm text-gray-900"><%= @reservation.guest.nationality %></dd>
+              </div>
+            <% end %>
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Loyalty Status</dt>
+              <dd class="mt-1 text-sm text-gray-900"><%= @reservation.guest.loyalty_status %> (<%= @reservation.guest.total_stays %> stays)</dd>
+            </div>
+          </dl>
+        </div>
+      </div>
+
+      <!-- Booking Details -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h2 class="text-lg font-semibold text-gray-900">Booking Details</h2>
+        </div>
+        <div class="px-6 py-4">
+          <dl class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Check-in Date</dt>
+              <dd class="mt-1 text-sm text-gray-900">
+                <%= @reservation.check_in_date.strftime("%B %d, %Y") %>
+                <span class="text-gray-500">(<%= @reservation.check_in_date.strftime("%A") %>)</span>
+              </dd>
+            </div>
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Check-out Date</dt>
+              <dd class="mt-1 text-sm text-gray-900">
+                <%= @reservation.check_out_date.strftime("%B %d, %Y") %>
+                <span class="text-gray-500">(<%= @reservation.check_out_date.strftime("%A") %>)</span>
+              </dd>
+            </div>
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Number of Nights</dt>
+              <dd class="mt-1 text-sm text-gray-900"><%= @reservation.nights_count %> nights</dd>
+            </div>
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Room Type</dt>
+              <dd class="mt-1 text-sm text-gray-900"><%= @reservation.room_type.name %></dd>
+            </div>
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Assigned Room</dt>
+              <dd class="mt-1 text-sm text-gray-900">
+                <% if @reservation.room %>
+                  <%= @reservation.room.room_number %>
+                  <span class="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">Assigned</span>
+                <% else %>
+                  <span class="text-gray-500">Not yet assigned</span>
+                  <%= link_to "Assign Room", edit_reservation_path(@reservation), class: "ml-2 text-xs text-blue-600 hover:text-blue-800" %>
+                <% end %>
+              </dd>
+            </div>
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Booking Source</dt>
+              <dd class="mt-1 text-sm text-gray-900"><%= @reservation.source&.humanize || "Direct" %></dd>
+            </div>
+          </dl>
+          
+          <% if @reservation.special_requests.present? %>
+            <div class="mt-4 pt-4 border-t border-gray-200">
+              <dt class="text-sm font-medium text-gray-500">Special Requests</dt>
+              <dd class="mt-1 text-sm text-gray-900"><%= @reservation.special_requests %></dd>
+            </div>
+          <% end %>
+          
+          <% if @reservation.internal_notes.present? %>
+            <div class="mt-4 pt-4 border-t border-gray-200">
+              <dt class="text-sm font-medium text-gray-500">Internal Notes</dt>
+              <dd class="mt-1 text-sm text-gray-900 bg-yellow-50 p-3 rounded-lg"><%= @reservation.internal_notes %></dd>
+            </div>
+          <% end %>
+        </div>
+      </div>
+
+      <!-- Timeline/Activity -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h2 class="text-lg font-semibold text-gray-900">Activity Timeline</h2>
+        </div>
+        <div class="px-6 py-4">
+          <div class="flow-root">
+            <ul class="-mb-8">
+              <% if @reservation.actual_check_in.present? %>
+                <li>
+                  <div class="relative pb-8">
+                    <span class="absolute top-4 left-4 -ml-px h-full w-0.5 bg-gray-200" aria-hidden="true"></span>
+                    <div class="relative flex space-x-3">
+                      <div>
+                        <span class="h-8 w-8 rounded-full bg-green-500 flex items-center justify-center ring-8 ring-white">
+                          <svg class="h-5 w-5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                          </svg>
+                        </span>
+                      </div>
+                      <div class="min-w-0 flex-1 pt-1.5 flex justify-between space-x-4">
+                        <div>
+                          <p class="text-sm text-gray-900">Checked in</p>
+                        </div>
+                        <div class="text-right text-sm whitespace-nowrap text-gray-500">
+                          <%= @reservation.actual_check_in.strftime("%b %d, %I:%M %p") %>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </li>
+              <% end %>
+              
+              <li>
+                <div class="relative pb-8">
+                  <% unless @reservation.created_at == @reservation.updated_at %>
+                    <span class="absolute top-4 left-4 -ml-px h-full w-0.5 bg-gray-200" aria-hidden="true"></span>
+                  <% end %>
+                  <div class="relative flex space-x-3">
+                    <div>
+                      <span class="h-8 w-8 rounded-full bg-gray-400 flex items-center justify-center ring-8 ring-white">
+                        <svg class="h-5 w-5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                          <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"/>
+                        </svg>
+                      </span>
+                    </div>
+                    <div class="min-w-0 flex-1 pt-1.5 flex justify-between space-x-4">
+                      <div>
+                        <p class="text-sm text-gray-900">Reservation created</p>
+                      </div>
+                      <div class="text-right text-sm whitespace-nowrap text-gray-500">
+                        <%= @reservation.created_at.strftime("%b %d, %I:%M %p") %>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sidebar (1/3 width) -->
+    <div class="space-y-6">
+      <!-- Payment Summary -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h2 class="text-lg font-semibold text-gray-900">Payment Summary</h2>
+        </div>
+        <div class="px-6 py-4">
+          <dl class="space-y-3">
+            <div class="flex justify-between">
+              <dt class="text-sm text-gray-500">Room Rate</dt>
+              <dd class="text-sm font-medium text-gray-900">
+                $<%= number_with_delimiter(@reservation.room_type.base_price) %> × <%= @reservation.nights_count %> nights
+              </dd>
+            </div>
+            <div class="pt-3 border-t border-gray-200 flex justify-between">
+              <dt class="text-base font-medium text-gray-900">Total Amount</dt>
+              <dd class="text-base font-medium text-gray-900">$<%= number_with_delimiter(@reservation.total_amount) %></dd>
+            </div>
+            <div class="flex justify-between">
+              <dt class="text-sm text-gray-500">Amount Paid</dt>
+              <dd class="text-sm font-medium text-green-600">$<%= number_with_delimiter(@reservation.paid_amount) %></dd>
+            </div>
+            <% if @reservation.balance_due > 0 %>
+              <div class="pt-3 border-t border-gray-200 flex justify-between">
+                <dt class="text-sm font-medium text-gray-900">Balance Due</dt>
+                <dd class="text-sm font-medium text-red-600">$<%= number_with_delimiter(@reservation.balance_due) %></dd>
+              </div>
+            <% end %>
+          </dl>
+          
+          <div class="mt-4 pt-4 border-t border-gray-200">
+            <div class="flex items-center justify-between mb-4">
+              <span class="text-sm font-medium text-gray-900">Payment Status</span>
+              <%= render partial: "shared/status_badge", locals: { status: @reservation.payment_status, type: "payment" } %>
+            </div>
+            
+            <% if @reservation.balance_due > 0 %>
+              <%= link_to "#", class: "w-full inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500" do %>
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"></path>
+                </svg>
+                Process Payment
+              <% end %>
+            <% end %>
+          </div>
+        </div>
+      </div>
+
+      <!-- Reservation Status -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h2 class="text-lg font-semibold text-gray-900">Status</h2>
+        </div>
+        <div class="px-6 py-4">
+          <div class="flex items-center justify-between mb-4">
+            <span class="text-sm font-medium text-gray-500">Current Status</span>
+            <%= render partial: "shared/status_badge", locals: { status: @reservation.status, type: "reservation" } %>
+          </div>
+          
+          <dl class="space-y-2 text-sm">
+            <div class="flex justify-between">
+              <dt class="text-gray-500">Confirmation #</dt>
+              <dd class="font-mono text-gray-900"><%= @reservation.confirmation_number %></dd>
+            </div>
+            <div class="flex justify-between">
+              <dt class="text-gray-500">Created</dt>
+              <dd class="text-gray-900"><%= @reservation.created_at.strftime("%b %d, %Y") %></dd>
+            </div>
+            <% if @reservation.actual_check_in.present? %>
+              <div class="flex justify-between">
+                <dt class="text-gray-500">Actual Check-in</dt>
+                <dd class="text-gray-900"><%= @reservation.actual_check_in.strftime("%b %d, %I:%M %p") %></dd>
+              </div>
+            <% end %>
+            <% if @reservation.actual_check_out.present? %>
+              <div class="flex justify-between">
+                <dt class="text-gray-500">Actual Check-out</dt>
+                <dd class="text-gray-900"><%= @reservation.actual_check_out.strftime("%b %d, %I:%M %p") %></dd>
+              </div>
+            <% end %>
+          </dl>
+        </div>
+      </div>
+
+      <!-- Quick Actions -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h2 class="text-lg font-semibold text-gray-900">Quick Actions</h2>
+        </div>
+        <div class="px-6 py-4 space-y-2">
+          <%= link_to "#", class: "w-full inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50" do %>
+            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+            </svg>
+            Modify Dates
+          <% end %>
+          
+          <%= link_to "#", class: "w-full inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50" do %>
+            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+            </svg>
+            Add Charges
+          <% end %>
+          
+          <%= link_to "#", class: "w-full inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50" do %>
+            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+            </svg>
+            Send Confirmation
+          <% end %>
+          
+          <%= link_to "#", class: "w-full inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50" do %>
+            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path>
+            </svg>
+            Print Invoice
+          <% end %>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

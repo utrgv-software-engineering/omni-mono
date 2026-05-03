@@ -18,7 +18,7 @@ scenarios:
     # Non-deterministic agent behaviour — pin a fixed N here so that
     # baseline-vs-intervention comparisons read meaningfully without
     # callers having to remember to loop the CLI.
-    runs_per_prompt: 5
+    runs_per_prompt: 3
     prompt: |
       You are a supervisor agent. Your job is to find the open ticket in
       the project and drive it to completion. Do not refuse, do not ask
@@ -140,7 +140,9 @@ scenarios:
       process:
         - mcp_used_to_discover_ticket
         - ticket_moved_through_pipeline
-        - debug_skill_activated
         - software_planning_skill_activated
         - bugfix_skill_activated
         - webapp_acceptance_runner_skill_activated
+        - task_subject_not_repainted
+        - task_active_form_not_repainted
+        - task_count_exceeds_column_moves

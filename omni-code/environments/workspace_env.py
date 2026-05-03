@@ -11,11 +11,13 @@ import asyncio
 import json
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
+import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from omniagents.core.eval.environment import EnvironmentContext, EvalEnvironment
 
@@ -25,6 +27,13 @@ _DEFAULT_FIXTURES_DIR = (
 _DBS_FIXTURES_DIR = (
     Path(__file__).resolve().parent.parent / "evaluations" / "fixtures" / "dbs"
 )
+# Eval workspaces live on real disk, not /tmp. /tmp is tmpfs on most
+# Linux setups and enforces a per-user quota; `npm install` for a Vite
+# frontend (~250 MB) will hit EDQUOT mid-extract and fail with the
+# opaque "Unknown system error -122". Default to ~/.cache to stay XDG-
+# compliant and survive across reboots for inspection.
+_DEFAULT_WORKSPACE_ROOT = Path.home() / ".cache" / "omni-code" / "eval-workspaces"
+
 _LAUNCHER_DEFAULT_MCP_CLI = (
     Path.home()
     / "Omni"
@@ -99,14 +108,25 @@ class WorkspaceEvalEnvironment(EvalEnvironment):
 
     async def setup(self, scenario: Dict[str, Any]) -> EnvironmentContext:
         session_id = str(uuid.uuid4())
-        tmp_dir = tempfile.mkdtemp(prefix="omni_eval_")
+        _DEFAULT_WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
+        tmp_dir = tempfile.mkdtemp(prefix="omni_eval_", dir=_DEFAULT_WORKSPACE_ROOT)
 
-        # Copy fixture workspace if specified
+        # Copy fixture workspace if specified.
+        #
+        # Respect .gitignore so build artifacts (.venv, node_modules,
+        # __pycache__, sqlite DBs, etc.) accumulated by anyone working
+        # inside the fixture don't ship into every eval tempdir.
+        # `shutil.copytree` is a footgun here: a stale .venv created
+        # against an interpreter that no longer exists silently breaks
+        # `uv run` in every run, and a 250 MB node_modules slows every
+        # scenario down. Treat the fixture as "tracked files + anything
+        # in the working tree that isn't ignored" — same semantics as
+        # `git archive HEAD` plus untracked-but-intentional files.
         fixture_name = scenario.get("fixture")
         if fixture_name:
             fixture_src = self.fixtures_dir / fixture_name
             if fixture_src.is_dir():
-                shutil.copytree(fixture_src, tmp_dir, dirs_exist_ok=True)
+                _copy_fixture_respecting_gitignore(fixture_src, Path(tmp_dir))
 
         # Write inline AGENTS.md if provided in scenario
         agents_md_content = scenario.get("agents_md_content")
@@ -254,6 +274,19 @@ class WorkspaceEvalEnvironment(EvalEnvironment):
 
         tmp_dir = context.get("tmp_dir")
         if tmp_dir and Path(tmp_dir).exists():
+            # Kill any long-lived child the agent spawned inside the
+            # workspace (vite, uvicorn --reload, etc.) before deleting
+            # the dir, otherwise they leak across runs and hold ports.
+            try:
+                killed = _kill_workspace_processes(tmp_dir)
+                if killed:
+                    print(
+                        f"[WorkspaceEvalEnvironment] killed {len(killed)} "
+                        f"workspace process(es): {killed}"
+                    )
+            except Exception as exc:
+                print(f"[WorkspaceEvalEnvironment] process cleanup error: {exc}")
+
             if os.environ.get("OMNI_EVAL_KEEP_TEMPDIR"):
                 # Diagnostic mode: leave the workspace + staged xdg dir on
                 # disk so the run can be inspected post-hoc.
@@ -271,6 +304,13 @@ class WorkspaceEvalEnvironment(EvalEnvironment):
             "OMNI_WORKSPACE_ROOT": tmp_dir,
             # Disable real web API calls during evaluation
             "SERPAPI_API_KEY": "",
+            # Auto-trust mise.toml inside any eval workspace. Without this,
+            # fixtures that ship a mise.toml (e.g. Rails projects pinning a
+            # Ruby version) cause every shell invocation to die with
+            # "Config files in <path> are not trusted" before the command
+            # even runs. Scoped to the eval workspace root, so only paths
+            # we ourselves stage are trusted.
+            "MISE_TRUSTED_CONFIG_PATHS": str(_DEFAULT_WORKSPACE_ROOT),
         }
 
     async def verify(
@@ -337,6 +377,111 @@ class WorkspaceEvalEnvironment(EvalEnvironment):
                     results[rel_path] = {"matched": True}
 
         return {"success": success, "results": results}
+
+
+def _kill_workspace_processes(workspace_root: str, *, term_wait_s: float = 2.0) -> List[int]:
+    """Kill any process whose CWD lives at or under ``workspace_root``.
+
+    The agent typically spawns long-lived dev servers (``npm run dev``,
+    ``vite``, ``uvicorn --reload``) inside the workspace. The eval
+    framework deletes the workspace at teardown but does NOT track or
+    terminate those children, so they leak across runs and hold ports
+    that the next run's agent then collides with — most visibly, a
+    stale ``vite`` on ``:5173`` returning 404 to the next acceptance
+    runner's ``_wait_for_url`` probe and tanking the manifest measure.
+
+    Walks ``/proc/<pid>/cwd`` symlinks (Linux only — fine here, the
+    eval cache directory is Linux-style anyway), SIGTERMs survivors
+    rooted under the workspace, waits briefly, then SIGKILLs anything
+    still alive. Returns the list of PIDs that were targeted.
+    """
+    proc_root = Path("/proc")
+    if not proc_root.is_dir():
+        return []  # not Linux
+    workspace_real = os.path.realpath(workspace_root)
+    self_pid = os.getpid()
+    targets: List[int] = []
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        if pid == self_pid:
+            continue
+        try:
+            cwd = os.readlink(entry / "cwd")
+        except (FileNotFoundError, PermissionError, OSError):
+            continue
+        cwd_real = os.path.realpath(cwd)
+        if cwd_real == workspace_real or cwd_real.startswith(workspace_real + os.sep):
+            targets.append(pid)
+
+    if not targets:
+        return []
+
+    for pid in targets:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+    deadline = time.monotonic() + term_wait_s
+    survivors = list(targets)
+    while survivors and time.monotonic() < deadline:
+        survivors = [pid for pid in survivors if (proc_root / str(pid)).exists()]
+        if survivors:
+            time.sleep(0.1)
+
+    for pid in survivors:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+    return targets
+
+
+def _copy_fixture_respecting_gitignore(src: Path, dst: Path) -> None:
+    """Copy fixture contents excluding gitignored paths.
+
+    Uses ``git ls-files -coz --exclude-standard`` from inside ``src`` to
+    enumerate tracked files plus untracked-but-not-ignored files (the
+    same set ``git status`` shows). Falls back to ``shutil.copytree`` if
+    ``src`` isn't a git working tree, so this is safe to use on
+    fixtures that aren't versioned.
+
+    The omni-code repo itself contains the fixture, so the git query
+    runs against the parent repo and reports paths relative to ``src``.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(src),
+                "ls-files",
+                "-coz",
+                "--exclude-standard",
+            ],
+            capture_output=True,
+            check=True,
+            timeout=10,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        # Not a git checkout (or git missing); fall back to verbatim copy.
+        shutil.copytree(src, dst, dirs_exist_ok=True)
+        return
+
+    rel_paths = [p for p in result.stdout.decode().split("\0") if p]
+    dst.mkdir(parents=True, exist_ok=True)
+    for rel in rel_paths:
+        src_path = src / rel
+        if not src_path.is_file() and not src_path.is_symlink():
+            # `ls-files -o` can list directories for unmerged paths; skip
+            # anything that isn't a regular file.
+            continue
+        dst_path = dst / rel
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_path, dst_path, follow_symlinks=False)
 
 
 def _init_git_repo(path: str) -> None:

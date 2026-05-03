@@ -35,15 +35,14 @@ def _read_file_paths(ctx: EvalContext) -> Set[str]:
 
 @evaluation_measure
 def correct_skill_activated(ctx: EvalContext) -> dict:
-    """Agent read the SKILL.md for every expected skill."""
+    """Agent activated every expected skill (via load_skill or read_file)."""
     expected: List[str] = ctx.expect.get("expected_skills", [])
     if not expected:
         return pass_reason("no expected skills specified")
 
-    read_paths = _read_file_paths(ctx)
     found, missing = [], []
     for name in expected:
-        if any(f"skills/{name}/SKILL.md" in p or f"skills/{name}/skill.md" in p for p in read_paths):
+        if _skill_was_activated(ctx, name):
             found.append(name)
         else:
             missing.append(name)
@@ -55,17 +54,12 @@ def correct_skill_activated(ctx: EvalContext) -> dict:
 
 @evaluation_measure
 def no_wrong_skill_activated(ctx: EvalContext) -> dict:
-    """Agent did NOT read SKILL.md for any forbidden skill."""
+    """Agent did NOT activate any forbidden skill."""
     forbidden: List[str] = ctx.expect.get("forbidden_skills", [])
     if not forbidden:
         return pass_reason("no forbidden skills specified")
 
-    read_paths = _read_file_paths(ctx)
-    violations = [
-        name
-        for name in forbidden
-        if any(f"skills/{name}/SKILL.md" in p or f"skills/{name}/skill.md" in p for p in read_paths)
-    ]
+    violations = [name for name in forbidden if _skill_was_activated(ctx, name)]
 
     if not violations:
         return pass_reason("no forbidden skills activated")
@@ -79,16 +73,11 @@ def chained_skill_activated(ctx: EvalContext) -> dict:
     if not chain_requirements:
         return pass_reason("no skill chain requirements specified")
 
-    read_paths = _read_file_paths(ctx)
-
-    def _skill_was_read(name: str) -> bool:
-        return any(f"skills/{name}/SKILL.md" in p or f"skills/{name}/skill.md" in p for p in read_paths)
-
     missing_chains = []
     for parent_skill, required_skills in chain_requirements.items():
-        if _skill_was_read(parent_skill):
+        if _skill_was_activated(ctx, parent_skill):
             for req in required_skills:
-                if not _skill_was_read(req):
+                if not _skill_was_activated(ctx, req):
                     missing_chains.append(f"{parent_skill} → {req}")
 
     if not missing_chains:
@@ -602,6 +591,42 @@ def db_row_exists(ctx: EvalContext) -> dict:
 
 
 @evaluation_measure
+def db_row_absent(ctx: EvalContext) -> dict:
+    """Assert a SELECT against the env-staged sqlite db returns ZERO rows.
+
+    Inverse of ``db_row_exists``. Reads ``db_path`` from
+    ``ctx.metadata['environment_context']`` and the query from
+    ``ctx.expect['assert_sql_no_rows']``. Useful for "ticket did not
+    advance past <gated column>" / "no forbidden state was reached"
+    assertions.
+    """
+    sql = ctx.expect.get("assert_sql_no_rows")
+    if not sql:
+        return pass_reason("no assert_sql_no_rows specified")
+
+    env_ctx = ctx.metadata.get("environment_context", {})
+    db_path = env_ctx.get("db_path")
+    if not db_path:
+        return fail_reason(
+            "environment did not stage a db_path — set db_fixture on the scenario"
+        )
+
+    import sqlite3
+
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+        try:
+            row = conn.execute(sql).fetchone()
+            if row is None:
+                return pass_reason(f"no row matched (as required): {sql}")
+            return fail_reason(f"forbidden row present: {row}")
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        return fail_reason(f"sqlite error: {exc}")
+
+
+@evaluation_measure
 def command_in_workspace_succeeds(ctx: EvalContext) -> dict:
     """Run a shell command in the eval workspace; pass when exit code is 0.
 
@@ -648,7 +673,20 @@ def command_in_workspace_succeeds(ctx: EvalContext) -> dict:
 
 
 def _skill_was_activated(ctx: EvalContext, skill_name: str) -> bool:
-    """True iff the agent read this skill's SKILL.md (case-insensitive name)."""
+    """True iff the agent activated this skill (case-insensitive name).
+
+    Checks the dedicated ``load_skill`` tool first (the canonical path),
+    then falls back to ``read_file`` paths matching the skill's
+    SKILL.md location for runs that pre-date ``load_skill`` or use it
+    inconsistently. ``convert_to_markdown`` is intentionally NOT
+    accepted — the agent has the right tool for this job and using
+    something else when ``load_skill`` exists is the failure mode.
+    """
+    target = skill_name.lower()
+    for call in ctx.tool_calls("load_skill"):
+        args = call.args if isinstance(call.args, dict) else {}
+        if (args.get("name") or "").lower() == target:
+            return True
     needle_a = f"/skills/{skill_name}/SKILL.md".lower()
     needle_b = f"/skills/{skill_name}/skill.md".lower()
     for call in ctx.tool_calls("read_file"):
@@ -1305,6 +1343,171 @@ def acceptance_run_report_rendered(ctx: EvalContext) -> dict:
         f"report rendered ({size:,} bytes, runId present)",
         run_id=run_id,
         report_size=size,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Task list health
+# ─────────────────────────────────────────────────────────────────────
+
+
+@evaluation_measure
+def task_subject_not_repainted(ctx: EvalContext) -> dict:
+    """Agent did not repaint a task by renaming its subject repeatedly.
+
+    Failure mode: agent uses ``task_update(subject=...)`` to repurpose an
+    existing task as new work instead of creating a new task. Surface
+    symptom is one task id whose subject mutates phase to phase.
+
+    Rule: count ``task_update`` calls per task id whose ``subject`` value
+    actually changes the subject. One change is allowed (typo / sharper
+    wording for the same deliverable, per the prompt). Two or more
+    changes on the same id flags as repainting.
+    """
+    updates = ctx.tool_calls("task_update")
+    if not updates:
+        return pass_reason("no task_update calls")
+
+    creates = ctx.tool_calls("task_create")
+    events: list[tuple[int, str, dict]] = []
+    for c in creates:
+        events.append((c.index, "create", c.args if isinstance(c.args, dict) else {}))
+    for u in updates:
+        events.append((u.index, "update", u.args if isinstance(u.args, dict) else {}))
+    events.sort(key=lambda e: e[0])
+
+    next_id = 1
+    last_subject: dict[str, str] = {}
+    rename_count: dict[str, int] = {}
+    rename_log: dict[str, list[dict]] = {}
+
+    for _idx, kind, args in events:
+        if kind == "create":
+            tid = str(next_id)
+            next_id += 1
+            last_subject[tid] = args.get("subject", "")
+            continue
+        tid = args.get("task_id")
+        new_sub = args.get("subject")
+        if not tid or new_sub is None:
+            continue
+        prev = last_subject.get(tid)
+        if prev is None or new_sub == prev:
+            last_subject[tid] = new_sub
+            continue
+        rename_count[tid] = rename_count.get(tid, 0) + 1
+        rename_log.setdefault(tid, []).append({"from": prev, "to": new_sub})
+        last_subject[tid] = new_sub
+
+    repainted = {tid: n for tid, n in rename_count.items() if n >= 2}
+    if repainted:
+        return fail_reason(
+            f"{len(repainted)} task(s) had subject changed >=2 times: {repainted}",
+            renames=rename_log,
+        )
+    return pass_reason(
+        f"no task had subject changed more than once "
+        f"(across {len(updates)} task_update call(s))"
+    )
+
+
+@evaluation_measure
+def task_active_form_not_repainted(ctx: EvalContext) -> dict:
+    """Agent did not repaint a task by mutating its activeForm.
+
+    Companion to ``task_subject_not_repainted`` for the spinner-text
+    field. Common failure mode: the agent learns not to mutate
+    ``subject`` (because the rule is explicit) but smuggles the same
+    behavior into ``activeForm`` — repainting a single task with
+    different sub-phase verbs as the work shifts ("Implementing fix"
+    → "Writing failing test then applying backend fix"). The dock
+    user sees a single task whose live status keeps morphing instead
+    of new tasks completing in sequence.
+
+    Rule: stricter than the subject rule. ``activeForm`` is a spinner
+    label — a single phase verb — so any in-flight mutation flags. If
+    the work has changed enough that you want a new verb, that is a
+    new deliverable and deserves a new task.
+    """
+    updates = ctx.tool_calls("task_update")
+    if not updates:
+        return pass_reason("no task_update calls")
+
+    creates = ctx.tool_calls("task_create")
+    events: list[tuple[int, str, dict]] = []
+    for c in creates:
+        events.append((c.index, "create", c.args if isinstance(c.args, dict) else {}))
+    for u in updates:
+        events.append((u.index, "update", u.args if isinstance(u.args, dict) else {}))
+    events.sort(key=lambda e: e[0])
+
+    next_id = 1
+    last_active: dict[str, str] = {}
+    rename_log: dict[str, list[dict]] = {}
+
+    for _idx, kind, args in events:
+        if kind == "create":
+            tid = str(next_id)
+            next_id += 1
+            last_active[tid] = (args.get("activeForm") or args.get("subject") or "")
+            continue
+        tid = args.get("task_id")
+        new_af = args.get("activeForm")
+        if not tid or new_af is None:
+            continue
+        prev = last_active.get(tid)
+        if prev is None or new_af == prev:
+            last_active[tid] = new_af
+            continue
+        rename_log.setdefault(tid, []).append({"from": prev, "to": new_af})
+        last_active[tid] = new_af
+
+    if rename_log:
+        return fail_reason(
+            f"{len(rename_log)} task(s) had activeForm repainted: "
+            f"{list(rename_log.keys())}",
+            renames=rename_log,
+        )
+    return pass_reason(
+        f"no activeForm mutations across {len(updates)} task_update call(s)"
+    )
+
+
+@evaluation_measure
+def task_count_exceeds_column_moves(ctx: EvalContext) -> dict:
+    """Decomposition exists below the kanban level, not at it.
+
+    Failure mode this catches: the agent's task list mirrors the
+    kanban columns 1:1 — one task per stage walked through — instead
+    of decomposing the work *inside* each stage. Symptom: ``task_create``
+    count equals or is less than ``move_ticket`` count.
+
+    Rule: when the agent advances the ticket through N columns
+    (``move_ticket`` calls), expect at least N+1 tasks. Anything less
+    means the task list is a redundant copy of the kanban; the
+    resolution that makes the task list useful (the discrete
+    deliverables within a column) is missing.
+
+    No-op when no kanban activity happened (no ``move_ticket`` calls).
+    """
+    moves = len(ctx.tool_calls("move_ticket"))
+    creates = len(ctx.tool_calls("task_create"))
+    if moves == 0:
+        return pass_reason("no kanban activity — rule does not apply")
+    if creates == 0:
+        return fail_reason(
+            f"agent advanced {moves} column(s) without creating any tasks"
+        )
+    if creates <= moves:
+        return fail_reason(
+            f"task list mirrors the kanban: {creates} task(s) for "
+            f"{moves} column transition(s) — expected at least {moves + 1}",
+            task_count=creates,
+            move_count=moves,
+        )
+    return pass_reason(
+        f"{creates} task(s) for {moves} column transition(s) "
+        f"(decomposes below the column level)"
     )
 
 

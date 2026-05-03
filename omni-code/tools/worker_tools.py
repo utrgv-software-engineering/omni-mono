@@ -200,17 +200,18 @@ async def _history_loader(entry, tail: int) -> list[dict]:
 
 
 def _workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> str:
-    """Extract workspace_root from the caller's context, falling back to cwd."""
-    caller_ctx = getattr(ctx, "context", None) if ctx else None
-    if isinstance(caller_ctx, dict):
-        wr = caller_ctx.get("workspace_root")
-        if isinstance(wr, str) and wr.strip():
-            return wr
-    elif caller_ctx is not None:
-        wr = getattr(caller_ctx, "workspace_root", None)
-        if isinstance(wr, str) and wr.strip():
-            return wr
-    return os.getcwd()
+    """Extract workspace_root from the caller's context.
+
+    Defers to ``omniagents.builtin.tools._workspace.require_workspace_root``
+    so the error type and message line up with the framework's other
+    builtin tools. The framework's ``AgentService.start_run`` is strict
+    about workspace_root since v0.6.48, so by the time this code runs
+    the value is guaranteed to be present unless something upstream is
+    broken — this call is defense-in-depth.
+    """
+    from omniagents.builtin.tools._workspace import require_workspace_root
+
+    return require_workspace_root(ctx, where="worker_tools")
 
 
 # ---------------------------------------------------------------------------
@@ -451,7 +452,7 @@ async def spawn_worker(
     await _MANAGER.spawn(
         worker_id=worker_id,
         task_description=task,
-        context={"workspace_root": worker_workspace},
+        context={"workspace_root": worker_workspace, "task_scope": worker_id},
     )
 
     response: dict[str, Any] = {
@@ -842,7 +843,9 @@ async def resume_worker(ctx: RunContextWrapper[Any], worker_id: str, message: st
         workspace_root = _workspace_root_from_ctx(ctx)
 
     new_entry = await _MANAGER.resume(
-        worker_id, message, context={"workspace_root": workspace_root}
+        worker_id,
+        message,
+        context={"workspace_root": workspace_root, "task_scope": worker_id},
     )
     if new_entry is None:
         llm_output = json.dumps(

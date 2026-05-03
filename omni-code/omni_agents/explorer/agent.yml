@@ -12,7 +12,6 @@ tools:
   - grep_files
   - read_file
   - read_notebook
-  - convert_to_markdown
 
 model_settings:
   reasoning:

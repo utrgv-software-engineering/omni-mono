@@ -1,0 +1,51 @@
+<div class="mb-6">
+  <%= link_to admin_students_path, class: "inline-flex items-center text-sm text-gray-500 hover:text-gray-700" do %>
+    <svg class="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+    </svg>
+    Back to Students
+  <% end %>
+</div>
+
+<div class="max-w-2xl">
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold text-gray-900">Bulk Import Results</h1>
+  </div>
+
+  <% if @results["created_count"].to_i > 0 %>
+    <div class="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
+      <h2 class="text-lg font-semibold text-green-800">
+        Created <%= @results["created_count"] %> account(s)
+      </h2>
+    </div>
+  <% end %>
+
+  <% if @results["error_count"].to_i > 0 %>
+    <div class="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+      <h2 class="text-lg font-semibold text-red-800 mb-2">
+        <%= @results["error_count"] %> error(s)
+      </h2>
+      <% if @results["errors_sample"]&.any? %>
+        <ul class="list-disc list-inside text-sm text-red-700 space-y-1">
+          <% @results["errors_sample"].each do |error| %>
+            <li><%= error %></li>
+          <% end %>
+        </ul>
+        <% if @results["error_count"] > 5 %>
+          <p class="text-sm text-red-600 mt-2">... and <%= @results["error_count"] - 5 %> more</p>
+        <% end %>
+      <% end %>
+    </div>
+  <% end %>
+
+  <% if @results["created_count"].to_i == 0 && @results["error_count"].to_i == 0 %>
+    <div class="bg-gray-50 border border-gray-200 rounded-lg p-4">
+      <p class="text-gray-600">No results to display.</p>
+    </div>
+  <% end %>
+
+  <div class="mt-6 flex space-x-3">
+    <%= link_to "Import More", bulk_new_admin_students_path, class: "px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50" %>
+    <%= link_to "View All Students", admin_students_path, class: "px-4 py-2 border border-transparent rounded-lg text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700" %>
+  </div>
+</div>
