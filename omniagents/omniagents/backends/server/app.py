@@ -157,6 +157,8 @@ def build_app(
     config_path: str | None = None,
     spec: "AgentSpec" | None = None,
     auth_token: str | None = None,
+    *,
+    default_workspace_root: str | None = None,
 ) -> FastAPI:  # noqa: D401
     """Return a fully configured FastAPI app exposing the agent via RPC.
 
@@ -168,6 +170,13 @@ def build_app(
             YAML file.
         auth_token: Optional bearer token that clients must pass via the ``?token=XYZ``
             query parameter.
+        default_workspace_root: Optional fallback path passed through to
+            ``AgentService(default_workspace_root=…)``. CLI-style backends
+            (``ink``/``web``) pass ``os.getcwd()`` here so a missing
+            ``workspace_root`` on a run resolves to the user's terminal dir
+            instead of raising. Production server deployments should leave
+            this ``None`` so a missing value fails loudly rather than
+            silently anchoring to the server process's cwd.
     """
 
     # ------------------------------------------------------------------
@@ -230,7 +239,7 @@ def build_app(
     # ------------------------------------------------------------------
     # Create AgentService instance and register RPC endpoint
     # ------------------------------------------------------------------
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root=default_workspace_root)
     app.state.agent_service = service
     # Allow examples to register custom server functions without changing core
     try:

@@ -44,6 +44,27 @@ export interface UsageInfo {
   maxOutputTokens?: number;
 }
 
+export interface TaskSummary {
+  id: string;
+  subject: string;
+  activeForm?: string;
+  status: "pending" | "in_progress" | "completed";
+  owner?: string;
+  blockedBy?: string[];
+}
+
+export interface BashJobSummary {
+  job_id: string;
+  pid: number;
+  command: string;
+  running: boolean;
+  exit_code: number | null;
+  wall_time_ms: number;
+  started_at?: number;
+  log_path?: string;
+  cwd?: string;
+}
+
 interface AppState {
   // Data
   messages: Message[];
@@ -60,6 +81,8 @@ interface AppState {
   approval: ApprovalInfo | null;
   currentRunId: string | null;
   preamble: string | null;
+  tasks: TaskSummary[];
+  bashJobs: BashJobSummary[];
 
   // Actions (ONLY way to update state)
   actions: {
@@ -90,6 +113,8 @@ interface AppState {
     cancelRun: (runId: string) => void;
     removeApprovalMessage: () => void;
     clearMessages: () => void;
+    setTasks: (tasks: TaskSummary[]) => void;
+    setBashJobs: (jobs: BashJobSummary[]) => void;
   };
 }
 
@@ -108,6 +133,8 @@ export const useAppStore = create<AppState>()(
     approval: null,
     currentRunId: null,
     preamble: null,
+    tasks: [],
+    bashJobs: [],
 
     actions: {
       addMessage: (msg) =>
@@ -281,6 +308,18 @@ export const useAppStore = create<AppState>()(
           state.statusSpinner = false;
           state.approval = null;
           state.preamble = null;
+          state.tasks = [];
+          state.bashJobs = [];
+        }),
+
+      setTasks: (tasks) =>
+        set((state) => {
+          state.tasks = tasks;
+        }),
+
+      setBashJobs: (jobs) =>
+        set((state) => {
+          state.bashJobs = jobs;
         }),
     },
   })),
@@ -301,4 +340,6 @@ export const useSessionReasoningEffort = () =>
 export const useSessionId = () => useAppStore((s) => s.sessionId);
 export const useCurrentRunId = () => useAppStore((s) => s.currentRunId);
 export const usePreamble = () => useAppStore((s) => s.preamble);
+export const useTasks = () => useAppStore((s) => s.tasks);
+export const useBashJobs = () => useAppStore((s) => s.bashJobs);
 export const useActions = () => useAppStore((s) => s.actions);

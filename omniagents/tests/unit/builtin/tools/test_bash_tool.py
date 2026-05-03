@@ -3,6 +3,8 @@ import subprocess
 import sys
 import types
 
+import pytest
+
 if "pygit2" not in sys.modules:
     fake_pygit2 = types.ModuleType("pygit2")
 
@@ -259,3 +261,58 @@ def test_truncate_output_head_tail_no_truncation_needed():
     assert was_truncated is False
     assert chars_removed == 0
     assert truncated == text
+
+
+# ---------------------------------------------------------------------------
+# Strict workspace_root behavior — execute_bash refuses to inherit the
+# host process's cwd silently.
+# ---------------------------------------------------------------------------
+
+
+def test_execute_bash_raises_when_workspace_root_missing():
+    """No workspace_root + no absolute cwd argument → raise rather than
+    let subprocess.run inherit the parent process cwd."""
+    from omniagents.core.errors import WorkspaceRootRequiredError
+
+    ctx = types.SimpleNamespace(context={})  # no workspace_root
+    with pytest.raises(WorkspaceRootRequiredError):
+        unwrap(bash_tool.execute_bash)(ctx, "echo ok")
+
+
+def test_execute_bash_absolute_cwd_does_not_require_workspace_root(monkeypatch, tmp_path):
+    """An absolute cwd is unambiguous; no workspace_root needed."""
+    captured = {}
+
+    def fake_run(command, shell, capture_output, text, timeout, cwd, executable=None, **_kwargs):
+        captured["cwd"] = cwd
+        return types.SimpleNamespace(stdout="ok\n", stderr="", returncode=0)
+
+    monkeypatch.setattr(bash_tool.subprocess, "run", fake_run)
+
+    ctx = types.SimpleNamespace(context={})  # no workspace_root
+    unwrap(bash_tool.execute_bash)(ctx, "echo ok", cwd=str(tmp_path))
+
+    assert captured["cwd"] == str(tmp_path)
+
+
+def test_execute_bash_relative_cwd_anchored_to_workspace_root(
+    monkeypatch, tmp_path,
+):
+    """A relative cwd is joined onto workspace_root, never to parent cwd."""
+    import os as _os
+
+    sub = tmp_path / "subdir"
+    sub.mkdir()
+
+    captured = {}
+
+    def fake_run(command, shell, capture_output, text, timeout, cwd, executable=None, **_kwargs):
+        captured["cwd"] = cwd
+        return types.SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    monkeypatch.setattr(bash_tool.subprocess, "run", fake_run)
+
+    ctx = types.SimpleNamespace(context={"workspace_root": str(tmp_path)})
+    unwrap(bash_tool.execute_bash)(ctx, "ls", cwd="subdir")
+
+    assert captured["cwd"] == _os.path.abspath(str(sub))

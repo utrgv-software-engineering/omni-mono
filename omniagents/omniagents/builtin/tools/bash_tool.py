@@ -125,25 +125,26 @@ def execute_bash(
     if max_output_chars is None:
         max_output_chars = _BASH_DEFAULT_MAX_OUTPUT_CHARS
 
-    # Determine working directory. Mirrors file_tools._resolve_path:
-    # relative cwd is anchored to workspace_root when one is available,
-    # so bash and file tools agree on what "." means.
-    wr: Optional[str] = None
-    try:
-        c = getattr(ctx, "context", None)
-        if isinstance(c, dict):
-            raw_wr = c.get("workspace_root")
-        else:
-            raw_wr = getattr(c, "workspace_root", None)
-        if isinstance(raw_wr, str) and raw_wr.strip():
-            wr = os.path.abspath(raw_wr)
-    except Exception:
-        wr = None
+    # Determine working directory. Mirrors file_tools._resolve_path: an
+    # absolute cwd is honored as-is; a missing or relative cwd is anchored
+    # to workspace_root. The framework guarantees workspace_root is on the
+    # run context by the time a tool executes — if it isn't,
+    # require_workspace_root raises rather than letting the subprocess
+    # silently inherit the server process's cwd.
+    from omniagents.builtin.tools._workspace import (
+        require_workspace_root,
+        workspace_root_from_ctx,
+    )
 
-    if cwd is None or (isinstance(cwd, str) and not cwd.strip()):
-        cwd = wr
-    elif not os.path.isabs(cwd) and wr:
-        cwd = os.path.abspath(os.path.join(wr, cwd))
+    cwd_is_absolute = isinstance(cwd, str) and cwd.strip() and os.path.isabs(cwd)
+    if cwd_is_absolute:
+        wr = workspace_root_from_ctx(ctx)  # informational only
+    else:
+        wr = require_workspace_root(ctx, where="execute_bash")
+        if cwd is None or (isinstance(cwd, str) and not cwd.strip()):
+            cwd = wr
+        else:
+            cwd = os.path.abspath(os.path.join(wr, cwd))
 
     start_time = time.monotonic()
 

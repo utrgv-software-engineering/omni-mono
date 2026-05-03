@@ -117,7 +117,7 @@ def test_run_judges_parses_coded_output(monkeypatch, tmp_path):
 
     class Runner:
         @staticmethod
-        async def run(agent, prompt, max_turns):
+        async def run(agent, prompt, max_turns, context=None, **_kwargs):
             prompts.append(prompt)
             return types.SimpleNamespace(
                 final_output='```json\n{"answer": "Pass", "reasoning": "ok"}\n```'

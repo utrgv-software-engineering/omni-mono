@@ -7,6 +7,7 @@ just like other evaluation agents (judges, optimizers, etc.).
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -205,7 +206,11 @@ Write only the message, nothing else. Be natural and conversational."""
         # Use isolated trace context so simulated user gets its own trace
         with isolated_trace_context():
             result = await Runner.run(
-                self._get_agent(), prompt, max_turns=1, run_config=self.run_config
+                self._get_agent(),
+                prompt,
+                context={"workspace_root": os.getcwd()},
+                max_turns=1,
+                run_config=self.run_config,
             )
         response = str(result.final_output or "")
         # Store the generated message in history
@@ -233,6 +238,7 @@ Write only the message, nothing else. Be natural and conversational."""
             result = await Runner.run(
                 self._get_agent(),
                 self._history.copy(),
+                context={"workspace_root": os.getcwd()},
                 max_turns=1,
                 run_config=self.run_config,
             )

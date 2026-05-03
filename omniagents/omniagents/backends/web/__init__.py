@@ -109,7 +109,18 @@ class WebBackend:
         except Exception:
             pass
 
-        app = build_app(config_path=config_path, spec=spec, auth_token=auth_token)
+        # Web auto-launches the server in the user's terminal too — same
+        # contract as ink. The user's cwd is the implicit workspace_root;
+        # the in-browser workspace picker can override it per-session via
+        # session.ensure variables (App.tsx). Production server deploys
+        # (omni --mode server) leave this unset so missing values raise
+        # rather than silently anchor to the server's cwd.
+        app = build_app(
+            config_path=config_path,
+            spec=spec,
+            auth_token=auth_token,
+            default_workspace_root=os.getcwd(),
+        )
 
         dev_flag_env = os.environ.get("OMNI_WEB_DEV", "0").lower() not in {
             "0",

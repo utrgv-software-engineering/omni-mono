@@ -66,7 +66,7 @@ def attach_capture(service):
 @pytest.mark.asyncio
 async def test_start_run_retries_emit_status_and_error(monkeypatch):
     spec = make_spec()
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     service.channel = object()
     events = attach_capture(service)
     monkeypatch.setenv("OMNIAGENTS_RETRY_MAX", "2")
@@ -128,7 +128,7 @@ async def test_start_run_success_keeps_mcp_stack(monkeypatch):
     monkeypatch.setattr(service_module, "stream_agent", success_stream)
     spec = make_spec()
     spec.mcp_servers = [object()]
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     service.channel = object()
     events = attach_capture(service)
     run_info = await service.start_run("prompt")
@@ -168,7 +168,7 @@ async def test_start_run_failure_keeps_mcp_stack(monkeypatch):
     monkeypatch.setattr(service_module, "stream_agent", failing_stream)
     spec = make_spec()
     spec.mcp_servers = [object()]
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     service.channel = object()
     events = attach_capture(service)
     run_info = await service.start_run("prompt")
@@ -210,7 +210,7 @@ async def test_stop_run_keeps_mcp_stack(monkeypatch):
     monkeypatch.setattr(service_module, "stream_agent", blocking_stream)
     spec = make_spec()
     spec.mcp_servers = [object()]
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     service.channel = object()
     events = attach_capture(service)
     run_info = await service.start_run("prompt")
@@ -249,7 +249,7 @@ async def test_build_agent_failure_closes_mcp_stack(monkeypatch):
 
     spec = make_spec(build_agent=failing_builder)
     spec.mcp_servers = [object()]
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     service.channel = object()
     session = service._session_manager.get_or_create("session")
     with pytest.raises(RuntimeError):
@@ -274,7 +274,7 @@ async def test_start_run_merges_variables_with_existing(monkeypatch):
     monkeypatch.setattr(service_module, "stream_agent", success_stream)
 
     spec = make_spec()
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     service.channel = object()
     attach_capture(service)
 
@@ -311,7 +311,7 @@ async def test_start_run_new_variables_override_existing_keys(monkeypatch):
     monkeypatch.setattr(service_module, "stream_agent", success_stream)
 
     spec = make_spec()
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     service.channel = object()
     attach_capture(service)
 
@@ -343,7 +343,7 @@ async def test_start_run_replaces_variables_when_existing_not_dict(monkeypatch):
     monkeypatch.setattr(service_module, "stream_agent", success_stream)
 
     spec = make_spec()
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     service.channel = object()
     attach_capture(service)
 
@@ -372,7 +372,7 @@ async def test_start_run_no_variables_preserves_existing(monkeypatch):
     monkeypatch.setattr(service_module, "stream_agent", success_stream)
 
     spec = make_spec()
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     service.channel = object()
     attach_capture(service)
 
@@ -386,7 +386,10 @@ async def test_start_run_no_variables_preserves_existing(monkeypatch):
     sess = service._session_manager.get_or_create(run_info["session_id"])
     await asyncio.wait_for(sess.current_task, timeout=1)
 
-    assert sess.variables == {"additional_instructions": "Do X"}
+    # Existing variables stay put. workspace_root may also be injected
+    # from the AgentService default — that's expected under strict mode
+    # and is a separate concern from preservation.
+    assert sess.variables["additional_instructions"] == "Do X"
 
 
 @pytest.mark.asyncio
@@ -400,7 +403,7 @@ async def test_start_run_merges_context_with_existing(monkeypatch):
     monkeypatch.setattr(service_module, "stream_agent", success_stream)
 
     spec = make_spec()
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     service.channel = object()
     attach_capture(service)
 
@@ -421,3 +424,101 @@ async def test_start_run_merges_context_with_existing(monkeypatch):
     assert sess.context["workspace_root"] == "/ws"
     assert sess.context["custom_key"] == "abc"
     assert sess.context["new_key"] == "new_val"
+
+
+# ---------------------------------------------------------------------------
+# Strict workspace_root behavior — server-mode regression coverage.
+# Production server backends construct AgentService without a default; a
+# missing workspace_root must raise rather than silently anchor the agent
+# to the server process's cwd.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_start_run_raises_when_workspace_root_missing_and_no_default(
+    monkeypatch,
+):
+    """Strict server-mode: no default, no client-provided workspace_root → raise."""
+    from omniagents.core.errors import WorkspaceRootRequiredError
+
+    async def success_stream(*args, **kwargs):
+        return {"usage": {"input_tokens": 1}, "model": "m"}
+
+    monkeypatch.setattr(service_module, "stream_agent", success_stream)
+
+    spec = make_spec()
+    service = AgentService(spec)  # NO default_workspace_root
+    service.channel = object()
+    attach_capture(service)
+
+    with pytest.raises(WorkspaceRootRequiredError):
+        await service.start_run("prompt")
+
+
+@pytest.mark.asyncio
+async def test_start_run_injects_default_when_workspace_root_missing(monkeypatch):
+    """ink/web backend: AgentService default fills in for missing workspace_root."""
+
+    async def success_stream(*args, **kwargs):
+        return {"usage": {"input_tokens": 1}, "model": "m"}
+
+    monkeypatch.setattr(service_module, "stream_agent", success_stream)
+
+    spec = make_spec()
+    service = AgentService(spec, default_workspace_root="/srv/cli")
+    service.channel = object()
+    attach_capture(service)
+
+    run_info = await service.start_run("prompt")
+    sess = service._session_manager.get_or_create(run_info["session_id"])
+    await asyncio.wait_for(sess.current_task, timeout=1)
+
+    assert sess.context["workspace_root"] == "/srv/cli"
+    assert sess.variables["workspace_root"] == "/srv/cli"
+
+
+@pytest.mark.asyncio
+async def test_start_run_default_does_not_clobber_client_context(monkeypatch):
+    """When the client supplies workspace_root via context, the default must not override."""
+
+    async def success_stream(*args, **kwargs):
+        return {"usage": {"input_tokens": 1}, "model": "m"}
+
+    monkeypatch.setattr(service_module, "stream_agent", success_stream)
+
+    spec = make_spec()
+    service = AgentService(spec, default_workspace_root="/srv/cli")
+    service.channel = object()
+    attach_capture(service)
+
+    run_info = await service.start_run(
+        "prompt", context={"workspace_root": "/from/client"}
+    )
+    sess = service._session_manager.get_or_create(run_info["session_id"])
+    await asyncio.wait_for(sess.current_task, timeout=1)
+
+    assert sess.context["workspace_root"] == "/from/client"
+
+
+@pytest.mark.asyncio
+async def test_start_run_default_does_not_clobber_client_variables(monkeypatch):
+    """The web UI passes workspace_root via variables, not context. The default
+    must defer to that path the same way it defers to context."""
+
+    async def success_stream(*args, **kwargs):
+        return {"usage": {"input_tokens": 1}, "model": "m"}
+
+    monkeypatch.setattr(service_module, "stream_agent", success_stream)
+
+    spec = make_spec()
+    service = AgentService(spec, default_workspace_root="/srv/cli")
+    service.channel = object()
+    attach_capture(service)
+
+    run_info = await service.start_run(
+        "prompt", variables={"workspace_root": "/from/web/picker"}
+    )
+    sess = service._session_manager.get_or_create(run_info["session_id"])
+    await asyncio.wait_for(sess.current_task, timeout=1)
+
+    assert sess.variables["workspace_root"] == "/from/web/picker"

@@ -6,22 +6,7 @@ from agents.run_context import RunContextWrapper
 from omniagents.core.tools import rich_function_tool, RichToolOutput, approval_metadata
 
 
-def _workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> Optional[str]:
-    try:
-        if ctx is None:
-            return None
-        c = getattr(ctx, "context", None)
-        if c is None:
-            return None
-        if isinstance(c, dict):
-            wr = c.get("workspace_root")
-        else:
-            wr = getattr(c, "workspace_root", None)
-        if isinstance(wr, str) and wr.strip():
-            return os.path.abspath(wr)
-    except Exception:
-        pass
-    return None
+from omniagents.builtin.tools._workspace import require_workspace_root
 
 
 @rich_function_tool(client_status="Downloading file...")
@@ -85,9 +70,10 @@ def download_file(
         if output_path:
             # User provided a specific path to use. Anchor relative paths to
             # the workspace root so the agent's "downloads/foo" lands inside
-            # its workspace, not the host process cwd.
-            wr = _workspace_root_from_ctx(ctx)
-            if not os.path.isabs(output_path) and wr:
+            # its workspace, not the host process cwd. Absolute paths are
+            # honored as-is.
+            if not os.path.isabs(output_path):
+                wr = require_workspace_root(ctx, where="download_file")
                 output_path = os.path.join(wr, output_path)
             file_dir = os.path.dirname(os.path.abspath(output_path))
             filename = os.path.basename(output_path)

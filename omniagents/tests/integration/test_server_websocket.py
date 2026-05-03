@@ -101,7 +101,7 @@ class TestServerIntegration:
         )
 
         # Build and return the app
-        app = server_app.build_app(spec=spec)
+        app = server_app.build_app(spec=spec, default_workspace_root="/tmp")
         return app
 
     @pytest.fixture
@@ -425,3 +425,154 @@ class TestServerIntegration:
             resp = ws.receive_json()
             # Should return empty history
             assert resp["result"] == []
+
+
+# ---------------------------------------------------------------------------
+# Strict workspace_root regression tests — verify that:
+#   1. A server-mode app (no default_workspace_root) refuses start_run when
+#      the client does not supply workspace_root.
+#   2. A workspace_root supplied via session.ensure context flows all the
+#      way to the agent's runtime context (asymmetric tempdir vs test cwd
+#      proves no silent fallback).
+#   3. workspace_root supplied via variables (the path the web UI uses)
+#      also propagates.
+# These cover the original bug: in server mode, sub-agents and tool
+# subprocesses were anchoring to the server process's cwd because the
+# framework silently fell back to os.getcwd() when the client omitted
+# workspace_root.
+# ---------------------------------------------------------------------------
+
+
+class TestStrictWorkspaceRootServerMode:
+    """The server backend (omni --mode server) must refuse to fill in
+    workspace_root from its own cwd. Either the client supplies it, or
+    start_run rejects."""
+
+    @pytest.fixture
+    def captured_contexts(self):
+        return []
+
+    @pytest.fixture
+    def strict_client(self, monkeypatch, captured_contexts):
+        """Server-mode app: NO default_workspace_root. Captures the
+        runtime_context kwarg that the framework passes into stream_agent
+        so tests can assert exactly what the tools would see."""
+
+        spec = AgentSpec(
+            name="StrictAgent",
+            welcome_text="hi",
+            get_agent_instructions=lambda: "x",
+            build_agent=mock_build_agent,
+        )
+
+        async def capturing_stream(agent, prompt, sess, channel, **kwargs):
+            captured_contexts.append(kwargs.get("context"))
+            user_msg = {"role": "user", "content": prompt}
+            sess.history.append(user_msg)
+            from omniagents.core.session import append_message
+
+            append_message(sess.id, user_msg)
+
+        from omniagents.core.runtime import bridge as runner_bridge
+
+        monkeypatch.setattr(runner_bridge, "stream_agent", capturing_stream)
+        monkeypatch.setattr(
+            "omniagents.core.agents.service.stream_agent", capturing_stream
+        )
+
+        # Deliberately NO default_workspace_root.
+        app = server_app.build_app(spec=spec)
+        return TestClient(app)
+
+    def test_start_run_without_workspace_root_returns_jsonrpc_error(
+        self, strict_client
+    ):
+        """No default + no client-supplied value → JSON-RPC error, not a
+        silent run anchored to the server process cwd."""
+        with strict_client.websocket_connect("/ws") as ws:
+            ws.send_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "start_run",
+                    "params": {"prompt": "hi"},
+                }
+            )
+            resp = _wait_for_result(ws, 1)
+            assert "error" in resp
+            err_msg = resp["error"]["message"].lower()
+            assert "workspace_root" in err_msg
+
+    def test_workspace_root_via_session_ensure_propagates_to_runtime(
+        self, strict_client, captured_contexts, tmp_path
+    ):
+        """The tempdir the client supplied — not the test runner's cwd —
+        is what the framework hands to stream_agent (and therefore to
+        every tool's RunContextWrapper)."""
+        target = str(tmp_path / "workspace")
+        with strict_client.websocket_connect("/ws") as ws:
+            ws.send_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "server_call",
+                    "params": {
+                        "function": "session.ensure",
+                        "args": {"context": {"workspace_root": target}},
+                    },
+                }
+            )
+            ensure_resp = _wait_for_result(ws, 1)
+            session_id = ensure_resp["result"]["session_id"]
+
+            ws.send_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "start_run",
+                    "params": {"prompt": "hi", "session_id": session_id},
+                }
+            )
+            _wait_for_run_completion(ws, 2)
+
+        assert captured_contexts, "stream_agent never invoked"
+        ctx = captured_contexts[-1]
+        # Tools call ctx.context.get("workspace_root") — exactly this path.
+        assert isinstance(ctx, dict)
+        assert ctx.get("workspace_root") == target
+        # And critically: NOT the test process cwd. This is the asymmetric
+        # check that detects silent-cwd-fallback regressions.
+        import os as _os
+
+        assert ctx.get("workspace_root") != _os.getcwd()
+
+    def test_workspace_root_via_variables_propagates_to_runtime(
+        self, strict_client, captured_contexts, tmp_path
+    ):
+        """The web UI passes workspace_root via variables (App.tsx). That
+        path must propagate to the runtime context too — otherwise web
+        clients would hit WorkspaceRootRequiredError despite supplying
+        the value."""
+        target = str(tmp_path / "via_variables")
+        with strict_client.websocket_connect("/ws") as ws:
+            ws.send_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "start_run",
+                    "params": {
+                        "prompt": "hi",
+                        "variables": {"workspace_root": target},
+                    },
+                }
+            )
+            _wait_for_run_completion(ws, 1)
+
+        assert captured_contexts, "stream_agent never invoked"
+        ctx = captured_contexts[-1]
+        # build_coding_context-style factories merge variables into context;
+        # in this minimal spec there is no factory so service.py falls back
+        # to sess.variables for runtime_context. Either way, the value must
+        # be reachable from where tools look.
+        assert isinstance(ctx, dict)
+        assert ctx.get("workspace_root") == target

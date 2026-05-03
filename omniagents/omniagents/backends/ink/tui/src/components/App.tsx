@@ -22,6 +22,8 @@ import {
   useSessionId,
   useCurrentRunId,
   usePreamble,
+  useTasks,
+  useBashJobs,
   useActions,
 } from "../store/appStore.js";
 import type { ApprovalInfo } from "../store/appStore.js";
@@ -35,6 +37,8 @@ import { Preamble } from "./Preamble.js";
 import { Help } from "./Help.js";
 import { SessionList } from "./SessionList.js";
 import { Scrollable } from "./Scrollable.js";
+import { Tasks } from "./Tasks.js";
+import { BashJobs } from "./BashJobs.js";
 import { MouseProvider } from "../contexts/MouseContext.js";
 import { ScrollProvider } from "../contexts/ScrollProvider.js";
 import { TokyoNightTheme } from "../theme.js";
@@ -227,11 +231,39 @@ export const App: React.FC<AppProps> = ({
   const sessionModel = useSessionModel();
   const sessionId = useSessionId();
   const currentRunId = useCurrentRunId();
+  const tasks = useTasks();
+  const bashJobs = useBashJobs();
   const actions = useActions();
 
   // Measure controls/footer height dynamically (like gemini-cli)
   const controlsRef = useRef<any>(null);
   const [controlsHeight, setControlsHeight] = useState(0);
+
+  // Bash-jobs panel focus: Ctrl+B toggles a "panel mode" that hijacks
+  // arrow keys / x / l for navigation + kill + log preview. Esc inside the
+  // panel returns to normal typing.
+  const [bashPanelFocused, setBashPanelFocused] = useState(false);
+
+  // Warm up the server-side bash-jobs sweeper as soon as a running job
+  // appears in the panel. Without this, a job spawned by the agent that
+  // then naturally exits while the user is idle would leave the panel
+  // stuck on "running" — the sweeper needs a service handle, captured on
+  // the first server-function call. One read-only RPC is enough.
+  const bashJobsWarmupRef = useRef(false);
+  const anyBashJobRunning = bashJobs.some((j) => j.running);
+  useEffect(() => {
+    if (!anyBashJobRunning) {
+      bashJobsWarmupRef.current = false;
+      return;
+    }
+    if (bashJobsWarmupRef.current || !client || !connected) return;
+    bashJobsWarmupRef.current = true;
+    client
+      .serverCall("bash_jobs.list", {}, sessionId || undefined)
+      .catch(() => {
+        bashJobsWarmupRef.current = false;
+      });
+  }, [anyBashJobRunning, client, connected, sessionId]);
 
   useLayoutEffect(() => {
     if (controlsRef.current) {
@@ -240,7 +272,7 @@ export const App: React.FC<AppProps> = ({
         setControlsHeight(measurement.height);
       }
     }
-  }, [terminalHeight, approval, thinking]);
+  }, [terminalHeight, approval, thinking, tasks]);
 
   // Calculate available height for messages (gemini-cli approach)
   const availableTerminalHeight = Math.max(
@@ -582,6 +614,22 @@ export const App: React.FC<AppProps> = ({
   useInput(
     useCallback(
       (input, key) => {
+        // Ctrl+B: enter the bash-jobs panel for keyboard management. Only
+        // toggles on when there's at least one job; otherwise it's a no-op
+        // so the chord doesn't feel broken when the panel is hidden.
+        if (key.ctrl && input === "b") {
+          if (!bashPanelFocused && bashJobs.length > 0) {
+            setBashPanelFocused(true);
+          } else if (bashPanelFocused) {
+            setBashPanelFocused(false);
+          }
+          return;
+        }
+        // While the panel owns input, swallow other keys here so they
+        // don't double-handle (the panel registers its own useInput).
+        if (bashPanelFocused) {
+          return;
+        }
         if (key.escape) {
           if (approval) {
             handleApproval("no");
@@ -621,10 +669,27 @@ export const App: React.FC<AppProps> = ({
           }
         }
       },
-      [thinking, currentRunId, approval, cancelRun, handleApproval, exit],
+      [
+        thinking,
+        currentRunId,
+        approval,
+        cancelRun,
+        handleApproval,
+        exit,
+        bashPanelFocused,
+        bashJobs.length,
+      ],
     ),
     { isActive: uiState === "chat" || !!approval },
   );
+
+  // If every job vanishes (cleared, archived) while the panel is focused,
+  // fall back to normal typing — there's nothing to manage.
+  useEffect(() => {
+    if (bashPanelFocused && bashJobs.length === 0) {
+      setBashPanelFocused(false);
+    }
+  }, [bashPanelFocused, bashJobs.length]);
 
   // Cleanup timer on unmount
   useEffect(() => {
@@ -718,12 +783,38 @@ export const App: React.FC<AppProps> = ({
             {/* Status indicator - ALWAYS in DOM, just hidden - isolated subscription */}
             <StatusIndicatorWrapper approval={approval} thinking={thinking} />
 
+            {/* Docked task list - renders nothing when empty */}
+            <Tasks />
+
+            {/* Docked background-bash-jobs panel - renders nothing when empty */}
+            <BashJobs
+              focused={bashPanelFocused}
+              onUnfocus={() => setBashPanelFocused(false)}
+              onKill={async (job_id) => {
+                if (!client) return {};
+                return await client.serverCall(
+                  "bash_jobs.kill",
+                  { job_id },
+                  sessionId || undefined,
+                );
+              }}
+              onTail={async (job_id, lines) => {
+                if (!client) return { ok: false, error: "no client" };
+                const args: Record<string, unknown> = { job_id };
+                if (typeof lines === "number") args.lines = lines;
+                return (await client.serverCall(
+                  "bash_jobs.tail",
+                  args,
+                  sessionId || undefined,
+                )) as any;
+              }}
+            />
 
             {/* Input prompt - always rendered, disabled during approval/thinking */}
           <Box marginTop={1}>
             <MultiLineInputOptimized
               onSubmit={handleSubmit}
-              disabled={!connected || !!approval}
+              disabled={!connected || !!approval || bashPanelFocused}
               disableSubmit={thinking}
               history={messageHistory}
             />

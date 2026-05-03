@@ -10,6 +10,7 @@ import logging
 import os
 import shutil
 import sqlite3
+import tempfile
 import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -1021,6 +1022,25 @@ manager = ConnectionManager()
 
 
 class PlaygroundSessionStore:
+    """In-memory store of playground session configs.
+
+    Each session also owns a sandbox tempdir, allocated on first
+    ``upsert`` and surfaced as ``config["__playground_workspace_root"]``.
+    The websocket handler passes that path as ``default_workspace_root``
+    on the per-session ``AgentService``, so playground agents that have
+    builtin filesystem tools (file_tools, bash, etc.) resolve relative
+    paths against the sandbox instead of:
+
+      * raising ``WorkspaceRootRequiredError`` under strict mode (the
+        framework refuses to silently use the studio server's cwd), or
+      * silently writing to wherever the studio server happened to be
+        launched from (the bug strict mode was added to catch).
+
+    Studio operators are the only ones interacting with the playground;
+    qualifying for a default like ink/web/launcher do, but isolated
+    per-session so two playground tabs don't trample each other.
+    """
+
     def __init__(self):
         self._sessions: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
@@ -1028,8 +1048,21 @@ class PlaygroundSessionStore:
     async def upsert(self, session_id: Optional[str], config: Dict[str, Any]) -> str:
         async with self._lock:
             key = session_id or uuid.uuid4().hex
+            existing = self._sessions.get(key)
             payload = dict(config)
             payload["updated_at"] = _utc_now()
+            # Preserve the per-session sandbox tempdir across config
+            # updates (the client may upsert the same session_id multiple
+            # times to change instructions, tools, etc. — the workspace
+            # stays put).
+            if existing and existing.get("__playground_workspace_root"):
+                payload["__playground_workspace_root"] = existing[
+                    "__playground_workspace_root"
+                ]
+            else:
+                payload["__playground_workspace_root"] = tempfile.mkdtemp(
+                    prefix=f"omniagents_studio_playground_{key[:8]}_"
+                )
             self._sessions[key] = payload
             return key
 
@@ -1040,7 +1073,13 @@ class PlaygroundSessionStore:
 
     async def delete(self, session_id: str) -> None:
         async with self._lock:
-            self._sessions.pop(session_id, None)
+            entry = self._sessions.pop(session_id, None)
+        # Best-effort cleanup outside the lock — slow filesystem ops
+        # shouldn't block other session operations.
+        if entry:
+            ws_root = entry.get("__playground_workspace_root")
+            if isinstance(ws_root, str) and ws_root:
+                shutil.rmtree(ws_root, ignore_errors=True)
 
 
 class PlaygroundSessionRequest(BaseModel):
@@ -8182,7 +8221,13 @@ def create_api_app(
             await websocket.close(code=1011, reason=str(exc))
             return
 
-        service = AgentService(spec)
+        # Per-session sandbox allocated by PlaygroundSessionStore. Acts as
+        # the strict-mode default: the playground client doesn't send
+        # workspace_root via session.ensure / start_run, so without this
+        # the framework would raise WorkspaceRootRequiredError on the
+        # first run.
+        ws_root = config.get("__playground_workspace_root")
+        service = AgentService(spec, default_workspace_root=ws_root)
         transport = ServerWebSocketTransport(websocket)
 
         try:

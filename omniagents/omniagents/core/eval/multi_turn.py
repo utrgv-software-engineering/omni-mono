@@ -191,6 +191,32 @@ def _get_scenario_type(scenario: Dict[str, Any]) -> str:
     return scenario.get("type", "scripted")
 
 
+def _apply_scenario_variables(spec, scenario: Dict[str, Any]) -> None:
+    """Merge ``scenario.variables`` into ``spec.variables``; scenario wins.
+
+    Mirrors the launcher's ``start_run(variables=...)`` pattern: scenario
+    YAML can set per-scenario session variables (e.g.
+    ``additional_instructions``) that flow through ``AgentSpec.variables``
+    → ``RemoteAgent._variables`` → ``start_run`` → ``session.variables``,
+    where the agent's ``build_context`` factory picks them up and renders
+    them into the instructions template.
+
+    Without this, scenarios cannot inject system-level guidance the way
+    real callers (launcher autopilot, custom dispatchers) do — only the
+    agent YAML's baseline ``variables:`` block flows through, and there
+    is no per-scenario override.
+
+    No-op if the scenario has no ``variables`` field or it is not a dict.
+    """
+    scenario_vars = scenario.get("variables")
+    if not isinstance(scenario_vars, dict) or not scenario_vars:
+        return
+    if spec.variables is None:
+        spec.variables = dict(scenario_vars)
+    else:
+        spec.variables = {**spec.variables, **scenario_vars}
+
+
 def _is_scripted_multi_turn(scenario: Dict[str, Any]) -> bool:
     """Check if scenario is scripted multi-turn.
 
@@ -286,6 +312,10 @@ async def run_scenario(
             user_mcp_servers=_user_mcp if _user_mcp else None,
         )
         spec.use_safe_agent = False
+
+        # Per-scenario session variables (e.g. additional_instructions).
+        # Mirrors the launcher's start_run(variables=...) dispatch.
+        _apply_scenario_variables(spec, scenario)
 
         if "max_turns" in defaults:
             spec.max_turns = int(defaults.get("max_turns", spec.max_turns))

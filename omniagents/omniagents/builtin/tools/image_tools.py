@@ -7,36 +7,22 @@ from agents.run_context import RunContextWrapper
 from agents.tool import ToolOutputText, ToolOutputImage
 
 
-def _workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> Optional[str]:
-    """Extract workspace root from context if available."""
-    try:
-        if ctx is None:
-            return None
-        c = getattr(ctx, "context", None)
-        if c is None:
-            return None
-        if isinstance(c, dict):
-            wr = c.get("workspace_root")
-        else:
-            wr = getattr(c, "workspace_root", None)
-        if isinstance(wr, str) and wr.strip():
-            return os.path.abspath(wr)
-    except Exception:
-        pass
-    return None
+from omniagents.builtin.tools._workspace import require_workspace_root
 
 
 def _resolve_path(ctx: RunContextWrapper[Any] | None, path: Optional[str]) -> str:
-    """Resolve a path relative to workspace root or make absolute."""
-    wr = _workspace_root_from_ctx(ctx)
-    if path is None or (isinstance(path, str) and path.strip() == ""):
-        return wr or "."
-    p = path if isinstance(path, str) else str(path)
-    if os.path.isabs(p):
+    """Resolve a path relative to workspace_root, or accept an absolute path.
+
+    Mirrors ``file_tools._resolve_path``: absolute paths are returned as-is;
+    everything else requires ``workspace_root`` on the run context.
+    """
+    p = path if isinstance(path, str) else (str(path) if path is not None else "")
+    if p and os.path.isabs(p):
         return p
-    if wr:
-        return os.path.abspath(os.path.join(wr, p))
-    return p
+    wr = require_workspace_root(ctx, where="read_image")
+    if not p:
+        return wr
+    return os.path.abspath(os.path.join(wr, p))
 
 
 @function_tool(client_status="Loading image...")

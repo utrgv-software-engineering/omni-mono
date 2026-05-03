@@ -51,6 +51,12 @@ const MessageItem = React.memo<{ message: Message }>(
       case "assistant":
         return <AssistantMessage message={message} />;
       case "tool_call":
+        // Tools can opt out of the conversation log by setting
+        // ui_metadata.hidden = true (e.g. task_* tools rendered by
+        // the docked Tasks panel instead).
+        if (message.toolCall?.metadata?.hidden === true) {
+          return null;
+        }
         return <ToolCallMessage message={message} />;
       case "approval_request":
         // Approval requests shown in ApprovalDialog, not in message history

@@ -15,7 +15,7 @@ async def test_archive_session_triggers_terminal_cleanup(temp_history_db):
         build_agent=None,
     )
 
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     session = service._session_manager.get_or_create()
     calls = []
 

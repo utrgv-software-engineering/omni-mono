@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import re
 from typing import Any, Dict, List, Optional, Callable
@@ -224,7 +225,17 @@ async def evaluate_split(
     async def _run_judge(agent, prompt: str, max_turns: int = 1):
         from agents import Runner as AgentsRunner
 
-        res = await AgentsRunner.run(agent, prompt, max_turns=max_turns)
+        # Judges in this split-evaluation flow are post-hoc — there's
+        # no live scenario workspace at this point. Anchor to cwd so
+        # any builtin tool the judge gains in the future resolves
+        # against the eval host's working directory rather than
+        # raising WorkspaceRootRequiredError under strict mode.
+        res = await AgentsRunner.run(
+            agent,
+            prompt,
+            context={"workspace_root": os.getcwd()},
+            max_turns=max_turns,
+        )
         return getattr(res, "final_output", None)
 
     def _predict_label_from_judge_output(val: Any, category: str) -> bool | None:

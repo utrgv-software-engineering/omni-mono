@@ -30,7 +30,7 @@ def test_rpc_methods(monkeypatch):
     )
 
     monkeypatch.setattr(runner_bridge, "stream_agent", fake_stream_agent)
-    app = server_app.build_app(spec=spec)
+    app = server_app.build_app(spec=spec, default_workspace_root="/tmp")
     client = TestClient(app)
 
     with client.websocket_connect("/ws") as ws:
@@ -95,7 +95,7 @@ def test_rpc_methods(monkeypatch):
 
     importlib.reload(sessions_mod)
     importlib.reload(server_app)
-    app2 = server_app.build_app(spec=spec)
+    app2 = server_app.build_app(spec=spec, default_workspace_root="/tmp")
     client2 = TestClient(app2)
     with client2.websocket_connect("/ws") as ws2:
         ws2.send_json(
@@ -122,7 +122,7 @@ def test_concurrent_websocket_connections(monkeypatch):
     )
 
     monkeypatch.setattr(runner_bridge, "stream_agent", fake_stream_agent)
-    app = server_app.build_app(spec=spec)
+    app = server_app.build_app(spec=spec, default_workspace_root="/tmp")
     client = TestClient(app)
 
     with ExitStack() as stack:
@@ -184,7 +184,7 @@ def test_connection_cleanup_resets_channel(monkeypatch):
     )
 
     monkeypatch.setattr(runner_bridge, "stream_agent", fake_stream_agent)
-    app = server_app.build_app(spec=spec)
+    app = server_app.build_app(spec=spec, default_workspace_root="/tmp")
     client = TestClient(app)
 
     with client.websocket_connect("/ws") as ws:

@@ -194,7 +194,7 @@ class TestServiceModelProviderDetermination:
         from omniagents.core.agents.specs import AgentSpec
 
         spec = make_spec()
-        service = AgentService(spec)
+        service = AgentService(spec, default_workspace_root="/tmp")
         session = service._session_manager.get_or_create(None)
         session.model_config = {
             "provider": "litellm",
@@ -231,7 +231,7 @@ class TestServiceModelProviderDetermination:
         from omniagents.core.agents.service import AgentService
 
         spec = make_spec()
-        service = AgentService(spec)
+        service = AgentService(spec, default_workspace_root="/tmp")
         session = service._session_manager.get_or_create(None)
         session.model_config = {
             "provider": "openai-compatible",

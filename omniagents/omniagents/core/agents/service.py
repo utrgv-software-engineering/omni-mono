@@ -220,15 +220,33 @@ class AgentService(RpcMethodsBase):
     - Event broadcasting to multiple channels
     """
 
-    def __init__(self, spec: AgentSpec) -> None:
+    def __init__(
+        self,
+        spec: AgentSpec,
+        *,
+        default_workspace_root: str | None = None,
+    ) -> None:
         """Initialize AgentService with an agent specification.
 
         Args:
             spec: The agent specification containing configuration,
                   instructions, tools, and other settings.
+            default_workspace_root: Optional fallback used when ``start_run``
+                is invoked without ``workspace_root`` on either context or
+                variables. CLI-style backends (ink/web) typically pass
+                ``os.getcwd()`` here so an agent author who imports the
+                builtin tools "just works" from a terminal. Production
+                server deployments should leave this ``None`` so a missing
+                ``workspace_root`` raises ``WorkspaceRootRequiredError``
+                rather than anchoring the agent to the server process's
+                cwd.
         """
         super().__init__()
         self.spec = spec
+        self._default_workspace_root: str | None = (
+            default_workspace_root if isinstance(default_workspace_root, str) and default_workspace_root.strip()
+            else None
+        )
         project_slug = _safe_slug(getattr(self.spec, "project_slug", None), "default")
         agent_slug = _safe_slug(
             getattr(self.spec, "agent_slug", None),
@@ -1037,6 +1055,14 @@ class AgentService(RpcMethodsBase):
             variables_value["workspace_root"] = workspace_root
             updated = True
 
+        # Stamp session_id into the run context so tools can scope per-session
+        # state (e.g. background bash jobs filter their snapshot by session
+        # so multiple browser tabs / parallel sessions don't leak state at
+        # each other). Mirrors how workspace_root rides on the context.
+        if getattr(session, "id", None):
+            context_value = _ensure_mapping(context_value)
+            context_value.setdefault("session_id", session.id)
+
         session.context = context_value
         session.variables = variables_value
 
@@ -1548,10 +1574,33 @@ class AgentService(RpcMethodsBase):
             else:
                 merged_context = context
 
-        # Fall back to cwd when no workspace_root has been set yet.
-        workspace_root = None
-        if not isinstance(merged_context, dict) or "workspace_root" not in merged_context:
-            workspace_root = os.getcwd()
+        # Workspace root resolution. The framework no longer falls back to
+        # the server process's cwd silently — that anchored sub-agents and
+        # tool subprocesses to whatever directory the server happened to
+        # be running in. Order of preference:
+        #   1. workspace_root already on context (or variables — the web
+        #      UI passes it that way)
+        #   2. default_workspace_root configured on this AgentService
+        #      (set by ink/web bootstrappers from os.getcwd())
+        #   3. raise WorkspaceRootRequiredError
+        def _ws_root_from(d) -> str | None:
+            if isinstance(d, dict):
+                v = d.get("workspace_root")
+                if isinstance(v, str) and v.strip():
+                    return v
+            return None
+
+        workspace_root: str | None = None
+        if (
+            _ws_root_from(merged_context) is None
+            and _ws_root_from(merged_variables) is None
+        ):
+            if self._default_workspace_root is not None:
+                workspace_root = self._default_workspace_root
+            else:
+                from omniagents.core.errors import WorkspaceRootRequiredError
+
+                raise WorkspaceRootRequiredError(where="start_run")
 
         self._apply_session_metadata(
             sess,

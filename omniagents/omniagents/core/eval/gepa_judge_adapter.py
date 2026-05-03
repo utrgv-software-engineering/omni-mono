@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 import asyncio
 import sys
@@ -553,25 +554,31 @@ class OmniAgentsJudgeAdapter:
                         with studio_trace(
                             self.workflow_name, group_id=run_uid, metadata=meta
                         ):
-                            res = asyncio.run(AgentsRunner.run(judge_agent, prompt, max_turns=self.judge_max_turns))  # type: ignore
+                            res = asyncio.run(AgentsRunner.run(judge_agent, prompt, context={"workspace_root": os.getcwd()}, max_turns=self.judge_max_turns))  # type: ignore
                     except RuntimeError:
                         import asyncio as _asyncio
 
                         res = _asyncio.get_event_loop().run_until_complete(
                             AgentsRunner.run(
-                                judge_agent, prompt, max_turns=self.judge_max_turns
+                                judge_agent,
+                                prompt,
+                                context={"workspace_root": os.getcwd()},
+                                max_turns=self.judge_max_turns,
                             )
                         )
                     except Exception:
-                        res = asyncio.run(AgentsRunner.run(judge_agent, prompt, max_turns=self.judge_max_turns))  # type: ignore
+                        res = asyncio.run(AgentsRunner.run(judge_agent, prompt, context={"workspace_root": os.getcwd()}, max_turns=self.judge_max_turns))  # type: ignore
                 else:
-                    res = asyncio.run(AgentsRunner.run(judge_agent, prompt, max_turns=self.judge_max_turns))  # type: ignore
+                    res = asyncio.run(AgentsRunner.run(judge_agent, prompt, context={"workspace_root": os.getcwd()}, max_turns=self.judge_max_turns))  # type: ignore
             except RuntimeError:
                 import asyncio as _asyncio
 
                 res = _asyncio.get_event_loop().run_until_complete(
                     AgentsRunner.run(
-                        judge_agent, prompt, max_turns=self.judge_max_turns
+                        judge_agent,
+                        prompt,
+                        context={"workspace_root": os.getcwd()},
+                        max_turns=self.judge_max_turns,
                     )
                 )
             val = getattr(res, "final_output", None)
@@ -1098,11 +1105,26 @@ class OmniAgentsJudgeAdapter:
                         with studio_trace(
                             self.workflow_name, group_id=run_uid, metadata=meta
                         ):
-                            res = await AgentsRunner.run(agent, prompt, max_turns=1)
+                            res = await AgentsRunner.run(
+                                agent,
+                                prompt,
+                                context={"workspace_root": os.getcwd()},
+                                max_turns=1,
+                            )
                     except Exception:
-                        res = await AgentsRunner.run(agent, prompt, max_turns=1)
+                        res = await AgentsRunner.run(
+                            agent,
+                            prompt,
+                            context={"workspace_root": os.getcwd()},
+                            max_turns=1,
+                        )
                 else:
-                    res = await AgentsRunner.run(agent, prompt, max_turns=1)
+                    res = await AgentsRunner.run(
+                        agent,
+                        prompt,
+                        context={"workspace_root": os.getcwd()},
+                        max_turns=1,
+                    )
                 out = getattr(res, "final_output", None)
                 out_s = out if isinstance(out, str) else str(out)
                 new_texts[name] = self._extract_fenced(out_s)

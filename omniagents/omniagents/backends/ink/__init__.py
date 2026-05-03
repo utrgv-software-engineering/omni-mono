@@ -80,8 +80,19 @@ class InkBackend:
         spec.realtime_mode = False
         spec.voice_spec = None
 
-        # Build the FastAPI app with the agent spec
-        app = build_app(config_path=config_path, spec=spec, auth_token=auth_token)
+        # Build the FastAPI app with the agent spec.
+        # ink auto-launches the server in the user's terminal, so the
+        # user's cwd is the workspace_root they implicitly intend. Pass
+        # it as the default so builtin tools "just work" without the
+        # client having to populate workspace_root explicitly. Production
+        # server deployments (omni --mode server) leave this unset and
+        # require clients to populate it.
+        app = build_app(
+            config_path=config_path,
+            spec=spec,
+            auth_token=auth_token,
+            default_workspace_root=os.getcwd(),
+        )
 
         # Start server in background thread
         def run_server():

@@ -213,6 +213,20 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
           params.metadata,
         );
 
+        // Side-channel: any tool can attach a tasks_snapshot to its
+        // ui_metadata to refresh the docked task list above the input.
+        // Today only task_create/task_list/task_get/task_update do.
+        const snapshot = params.metadata?.tasks_snapshot;
+        if (Array.isArray(snapshot)) {
+          actions.setTasks(snapshot as any);
+        }
+        // Same pattern: bash tools attach bash_jobs_snapshot to refresh
+        // the docked background-jobs panel.
+        const jobsSnapshot = params.metadata?.bash_jobs_snapshot;
+        if (Array.isArray(jobsSnapshot)) {
+          actions.setBashJobs(jobsSnapshot as any);
+        }
+
         // Preamble stays visible!
       });
     };
@@ -407,6 +421,17 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       return { ack: true };
     };
 
+    // Server-pushed bash-jobs panel refresh (fired after a UI-driven kill
+    // so other tabs and the Ink TUI itself stay in sync — broadcast to
+    // every channel on the session).
+    const handleBashJobsUpdate = async (args: Record<string, unknown>) => {
+      const snap = (args as { snapshot?: unknown }).snapshot;
+      if (Array.isArray(snap)) {
+        actions.setBashJobs(snap as any);
+      }
+      return { ack: true };
+    };
+
     // Register event handlers
     client.on("message_output", handleMessageOutput);
     client.on("tool_called", handleToolCalled);
@@ -420,6 +445,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     client.registerClientFunction("ui.request_tool_approval", handleApproval);
     client.registerClientFunction("ui.set_status", handleSetStatus);
     client.registerClientFunction("ui.set_session_state", handleSetSessionState);
+    client.registerClientFunction("ui.bash_jobs.update", handleBashJobsUpdate);
 
     // Cleanup
     return () => {
@@ -435,6 +461,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       client.unregisterClientFunction("ui.request_tool_approval");
       client.unregisterClientFunction("ui.set_status");
       client.unregisterClientFunction("ui.set_session_state");
+      client.unregisterClientFunction("ui.bash_jobs.update");
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, sessionId, rpcReady, batcher]);

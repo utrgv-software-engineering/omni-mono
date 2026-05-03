@@ -404,3 +404,89 @@ def test_playground_ws_rejects_missing_session(studio_client):
         with studio_client.websocket_connect("/api/playground/ws?session_id=missing"):
             pass
     assert exc.value.code == 4404
+
+
+def test_playground_ws_passes_per_session_workspace_root_to_stream(
+    monkeypatch, studio_client
+):
+    """Strict-mode regression: studio playground client doesn't send
+    workspace_root, but the AgentService for each playground session is
+    constructed with default_workspace_root=<per-session tempdir> from
+    PlaygroundSessionStore. Verify the runtime_context the agent sees
+    matches that tempdir.
+
+    Two sessions get distinct tempdirs (no cross-contamination).
+    """
+    import os as _os
+
+    captured: list = []
+
+    async def capturing_stream(agent, prompt, session, rpc_channel, **kwargs):
+        captured.append(kwargs.get("context"))
+        run_id = asyncio.current_task().get_name()
+        await rpc_channel.async_call(
+            "message_output",
+            {"run_id": run_id, "content": "ok", "is_final": True},
+        )
+        return {
+            "usage": {
+                "requests": 1,
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "total_tokens": 2,
+                "input_tokens_details": {"cached_tokens": 0},
+                "output_tokens_details": {"reasoning_tokens": 0},
+            },
+            "model": "gpt-4o-mini",
+            "max_input_tokens": 8192,
+            "max_output_tokens": 1024,
+            "truncation": "auto",
+        }
+
+    monkeypatch.setattr(bridge, "stream_agent", capturing_stream)
+    monkeypatch.setattr(
+        "omniagents.core.agents.service.stream_agent", capturing_stream
+    )
+
+    def _drive(session_id: str) -> None:
+        with studio_client.websocket_connect(
+            f"/api/playground/ws?session_id={session_id}"
+        ) as ws:
+            ws.send_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "start_run",
+                    "params": {"prompt": "hi"},
+                }
+            )
+            result = None
+            run_end = None
+            while not (result and run_end):
+                msg = ws.receive_json()
+                if msg.get("id") == 1 and "result" in msg:
+                    result = msg
+                if msg.get("method") == "run_end":
+                    run_end = msg
+
+    s1 = create_session(studio_client)
+    s2 = create_session(studio_client)
+
+    _drive(s1)
+    _drive(s2)
+
+    # Each playground session got its own sandbox tempdir.
+    assert len(captured) == 2
+    ctx1, ctx2 = captured
+    assert isinstance(ctx1, dict) and isinstance(ctx2, dict)
+    ws1 = ctx1.get("workspace_root")
+    ws2 = ctx2.get("workspace_root")
+    assert isinstance(ws1, str) and ws1
+    assert isinstance(ws2, str) and ws2
+    assert ws1 != ws2, "two sessions must not share a sandbox tempdir"
+    # The tempdirs follow the studio playground naming convention and
+    # are NOT the studio process cwd (the strict-mode regression).
+    assert "omniagents_studio_playground_" in ws1
+    assert "omniagents_studio_playground_" in ws2
+    assert ws1 != _os.getcwd()
+    assert ws2 != _os.getcwd()

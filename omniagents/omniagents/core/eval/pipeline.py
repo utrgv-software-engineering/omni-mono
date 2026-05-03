@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import importlib.util
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Callable
 
@@ -343,8 +344,15 @@ async def _run_judges(
                 agent_slug=f"judge_{key}",
             )
             judge_agent = await _default_build_agent({}, None, spec, None)
+            # Judges may be configured with tools (judges.py allows it via
+            # available_tools); pass workspace_root so any builtin tool
+            # they gain works under strict mode. Anchored to cwd because
+            # this judge runs post-scenario without a live workspace.
             judge_res = await AgentsRunner.run(
-                judge_agent, judge_prompt, max_turns=int(agent_cfg.get("max_turns", 1))
+                judge_agent,
+                judge_prompt,
+                context={"workspace_root": os.getcwd()},
+                max_turns=int(agent_cfg.get("max_turns", 1)),
             )
             val = getattr(judge_res, "final_output", None)
             if expect_dict and not isinstance(val, dict):
@@ -379,7 +387,7 @@ async def _run_scenario(
     eval_dir: Path | None = None,
     project_root: Path | None = None,
 ) -> Dict[str, Any]:
-    from .multi_turn import _build_registries_for_eval
+    from .multi_turn import _apply_scenario_variables, _build_registries_for_eval
 
     _tool_reg, _sf_reg = _build_registries_for_eval(
         Path(agent_yaml), project_root=project_root
@@ -390,6 +398,9 @@ async def _run_scenario(
         server_functions_registry=_sf_reg if _sf_reg else None,
     )
     spec.use_safe_agent = False
+    # Per-scenario session variables (e.g. additional_instructions).
+    # Mirrors the launcher's start_run(variables=...) dispatch.
+    _apply_scenario_variables(spec, scenario)
     try:
         if "max_turns" in defaults:
             spec.max_turns = int(defaults.get("max_turns", spec.max_turns))

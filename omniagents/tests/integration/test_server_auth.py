@@ -72,8 +72,8 @@ def auth_context(monkeypatch):
     manager = StubTerminalManager()
 
     class StubAgentService(server_app.AgentService):
-        def __init__(self, spec):
-            super().__init__(spec)
+        def __init__(self, spec, **kwargs):
+            super().__init__(spec, **kwargs)
             self.terminal_manager = manager
 
     monkeypatch.setattr(server_app, "AgentService", StubAgentService)
@@ -86,7 +86,7 @@ def auth_context(monkeypatch):
         build_agent=mock_build_agent,
     )
 
-    app = server_app.build_app(spec=spec, auth_token="secret")
+    app = server_app.build_app(spec=spec, auth_token="secret", default_workspace_root="/tmp")
     client = TestClient(app)
     return SimpleNamespace(client=client, terminal_manager=manager)
 

@@ -9,7 +9,7 @@ from .test_agent_builder import make_spec
 
 
 def build_service() -> AgentService:
-    return AgentService(make_spec())
+    return AgentService(make_spec(), default_workspace_root="/tmp")
 
 
 @pytest.mark.asyncio

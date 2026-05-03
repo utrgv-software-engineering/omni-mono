@@ -243,7 +243,7 @@ async def test_agent_service_wraps_agent_and_sets_callback(monkeypatch):
     )
     monkeypatch.setattr(AgentService, "_clone_agent", lambda self, agent: agent)
 
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     session = service._session_manager.get_or_create(None)
 
     async def approval(name, args, metadata=None):
@@ -287,7 +287,7 @@ async def test_agent_service_reuses_safe_agent_and_injects_callback(monkeypatch)
     spec.build_agent = builder
     monkeypatch.setattr(AgentService, "_clone_agent", lambda self, agent: agent)
 
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     session = service._session_manager.get_or_create(None)
 
     async def approval(name, args, metadata=None):

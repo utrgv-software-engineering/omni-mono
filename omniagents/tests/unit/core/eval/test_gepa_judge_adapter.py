@@ -86,7 +86,7 @@ def test_evaluate_applies_scoring_matrix(monkeypatch, tmp_path):
 
     class Runner:
         @staticmethod
-        async def run(agent, prompt, max_turns):
+        async def run(agent, prompt, max_turns, context=None, **_kwargs):
             prompts.append(prompt)
             value = next(payloads)
             return types.SimpleNamespace(final_output=value)

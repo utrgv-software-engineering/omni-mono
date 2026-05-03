@@ -2,6 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Header } from './components/Header'
 import { MessageList, type MessageItem } from './components/MessageList'
 import { Input } from './components/Input'
+import { Tasks, type TaskSummary } from './components/Tasks'
+import {
+  BashJobs,
+  type BashJobSummary,
+  type BashJobsKillResult,
+  type BashJobsTailResult,
+} from './components/BashJobs'
 import { SessionList, type SessionItem } from './components/SessionList'
 import { Sidebar } from './components/Sidebar'
 import { ArtifactsPanel, type ArtifactItem } from './components/ArtifactsPanel'
@@ -27,6 +34,8 @@ export function App() {
   const [voiceEnabled, setVoiceEnabled] = useState(false)
   const [items, setItems] = useState<MessageItem[]>([])
   const [artifacts, setArtifacts] = useState<ArtifactItem[]>([])
+  const [tasks, setTasks] = useState<TaskSummary[]>([])
+  const [bashJobs, setBashJobs] = useState<BashJobSummary[]>([])
   const [thinking, setThinking] = useState(false)
   const [status, setStatus] = useState<string | undefined>(undefined)
   const [statusSpinner, setStatusSpinner] = useState<boolean>(false)
@@ -272,6 +281,19 @@ export function App() {
       const call_id = String(p?.call_id ?? '')
       const metadata = p?.metadata
       preambleBufferRef.current.forEach(m => { m.superseded = true })
+      // Side-channel: any tool can attach a tasks_snapshot to its
+      // ui_metadata to refresh the docked task panel above the input.
+      // Today only the task_* tools do.
+      const snapshot = metadata?.tasks_snapshot
+      if (Array.isArray(snapshot)) {
+        setTasks(snapshot as TaskSummary[])
+      }
+      // Same pattern for background bash jobs: bash tools attach a
+      // bash_jobs_snapshot so the docked Bash jobs panel stays in sync.
+      const jobsSnapshot = metadata?.bash_jobs_snapshot
+      if (Array.isArray(jobsSnapshot)) {
+        setBashJobs(jobsSnapshot as BashJobSummary[])
+      }
       setItems(prev => {
         const idx = prev.findIndex(it => it.type === 'tool' && (it as any).call_id === call_id)
         if (idx >= 0) {
@@ -326,6 +348,25 @@ export function App() {
             const filtered = prev.filter(it => !(it.type === 'approval' && (it as any).request_id === request_id))
             return [...filtered, approvalItem]
           })
+        }
+        return
+      }
+      if (fn === 'ui.bash_jobs.update') {
+        const request_id = String(p?.request_id ?? '')
+        const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
+        if (eventSessionId && sessionIdRef.current && sessionIdRef.current !== eventSessionId) {
+          if (request_id) {
+            client.clientResponse(request_id, true, { ack: true }).catch(() => {})
+          }
+          return
+        }
+        const args = p?.args || {}
+        const snap = args?.snapshot
+        if (Array.isArray(snap)) {
+          setBashJobs(snap as BashJobSummary[])
+        }
+        if (request_id) {
+          client.clientResponse(request_id, true, { ack: true }).catch(() => {})
         }
         return
       }
@@ -633,6 +674,20 @@ export function App() {
         }
         const merged = appendPendingApprovals(msgs, id)
         setItems(merged)
+        // Replay the most recent tasks_snapshot from history so the
+        // docked panel reflects the session state immediately.
+        let lastSnapshot: TaskSummary[] | null = null
+        let lastJobsSnapshot: BashJobSummary[] | null = null
+        for (const m of msgs) {
+          if (m.type === 'tool') {
+            const snap = (m as any).metadata?.tasks_snapshot
+            if (Array.isArray(snap)) lastSnapshot = snap as TaskSummary[]
+            const jobsSnap = (m as any).metadata?.bash_jobs_snapshot
+            if (Array.isArray(jobsSnap)) lastJobsSnapshot = jobsSnap as BashJobSummary[]
+          }
+        }
+        setTasks(lastSnapshot ?? [])
+        setBashJobs(lastJobsSnapshot ?? [])
         // Restore workspace from session and lock it
         if (workspaceSupported) {
           try {
@@ -644,6 +699,8 @@ export function App() {
       } catch {}
     } else {
       setItems([])
+      setTasks([])
+      setBashJobs([])
     }
     setUI('chat')
   }, [client, appendPendingApprovals, workspaceSupported])
@@ -753,6 +810,27 @@ export function App() {
         <div className="flex-1 flex flex-row min-h-0 min-w-0">
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
             <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} statusItalic={statusItalic} onReaction={handleReaction} currentRunId={runId} toolStatusText={toolStatus} />
+            <Tasks tasks={tasks} />
+            <BashJobs
+              jobs={bashJobs}
+              onKill={async (job_id) => {
+                const res = (await client.serverCall('bash_jobs.kill', { job_id }, sessionId)) as unknown as BashJobsKillResult
+                if (Array.isArray(res?.snapshot)) setBashJobs(res.snapshot as BashJobSummary[])
+                return res
+              }}
+              onTail={async (job_id, lines) => {
+                const args: Record<string, unknown> = { job_id }
+                if (typeof lines === 'number') args.lines = lines
+                const res = (await client.serverCall('bash_jobs.tail', args, sessionId)) as unknown as BashJobsTailResult & { snapshot?: BashJobSummary[] }
+                if (Array.isArray(res?.snapshot)) setBashJobs(res.snapshot as BashJobSummary[])
+                return res
+              }}
+              onWarmup={async () => {
+                const res = (await client.serverCall('bash_jobs.list', {}, sessionId)) as unknown as { snapshot?: BashJobSummary[] }
+                if (Array.isArray(res?.snapshot)) setBashJobs(res.snapshot as BashJobSummary[])
+                return res
+              }}
+            />
             <Input
               disabled={!connected}
               thinking={thinking}

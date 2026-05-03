@@ -142,7 +142,7 @@ async def test_stdio_mcp_server_preserves_state_across_runs(monkeypatch):
         ],
     )
 
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     service.channel = object()
 
     # Turn 1: Navigate to google.com
@@ -259,7 +259,7 @@ async def test_stdio_mcp_different_sessions_get_isolated_instances(monkeypatch):
         ],
     )
 
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     service.channel = object()
 
     # Session A
@@ -533,7 +533,7 @@ async def test_minimal_reproduction_sequential_runs_with_mcp(monkeypatch):
 
     spec = make_spec()
     spec.mcp_servers = [object()]  # Signal that MCP servers are configured
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     service.channel = object()
     attach_capture(service)
 
@@ -581,7 +581,7 @@ async def test_hypothesis_1_mcp_without_safeagent(monkeypatch):
 
     spec = make_spec(build_agent=build_agent_without_safe)
     spec.mcp_servers = [object()]
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     service.channel = object()
 
     # Mock stream_agent to simulate MCP tool call
@@ -643,7 +643,7 @@ async def test_hypothesis_3_approval_callback_auto_approve(monkeypatch):
 
     spec = make_spec(build_agent=build_agent_with_auto_approval, use_safe_agent=True)
     spec.mcp_servers = [object()]
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     service.channel = object()
 
     # Mock stream_agent to simulate requesting approval
@@ -822,7 +822,7 @@ async def test_anyio_mcp_with_connection_reuse_reproduces_hang(monkeypatch):
 
     spec = make_spec()
     spec.mcp_servers = [object()]
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     service.channel = object()
 
     # First run - creates server with task group in this task

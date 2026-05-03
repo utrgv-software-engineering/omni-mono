@@ -43,7 +43,11 @@ class ServerBackend:
             f"Starting OmniAgents RPC server on {host}:{port} (config: {config_path})"
         )
 
-        # Build and run the FastAPI app
+        # Build and run the FastAPI app. NOTE: deliberately do not pass
+        # default_workspace_root — production server deployments must
+        # have clients populate workspace_root explicitly so the agent
+        # never anchors to the server process's cwd. A missing value
+        # raises WorkspaceRootRequiredError on the offending start_run.
         app = build_app(config_path, spec=spec, auth_token=auth_token)
         uvicorn.run(app, host=host, port=port, reload=reload)
 

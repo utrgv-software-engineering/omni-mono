@@ -72,7 +72,15 @@ export function MessageList({ items, statusText, thinking, statusSpinner, preamb
     }
     setFeedbackIndex(undefined)
   }, [feedbackIndex, reactions, onReaction])
-  const displayItems = useMemo(() => groupItems(items, currentRunId, !!thinking), [items, currentRunId, thinking])
+  // Tools may opt out of the conversation log by attaching
+  // ui_metadata.hidden=true (e.g. task_* tools rendered by the docked
+  // Tasks panel). Filter before grouping so they don't inflate the
+  // activity-group counts either.
+  const visibleItems = useMemo(
+    () => items.filter(it => !(it.type === 'tool' && (it as ToolItem).metadata?.hidden === true)),
+    [items],
+  )
+  const displayItems = useMemo(() => groupItems(visibleItems, currentRunId, !!thinking), [visibleItems, currentRunId, thinking])
   const lastDisplay = displayItems[displayItems.length - 1]
   const hasRunningGroup = lastDisplay?.type === 'activity_group' && (lastDisplay as ActivityGroupData).isRunning
   // When a running group is active, show toolStatusText in the ticker (persists across fast tool_result clears)

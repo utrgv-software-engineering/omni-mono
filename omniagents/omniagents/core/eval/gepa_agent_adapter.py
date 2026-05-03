@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import inspect
+import os
 from dataclasses import dataclass
 from pathlib import Path
 import sys
@@ -913,11 +914,26 @@ class OmniAgentsAgentAdapter:
                         with studio_trace(
                             self.workflow_name, group_id=run_uid, metadata=meta
                         ):
-                            res = await AgentsRunner.run(agent, prompt, max_turns=1)
+                            res = await AgentsRunner.run(
+                                agent,
+                                prompt,
+                                context={"workspace_root": os.getcwd()},
+                                max_turns=1,
+                            )
                     except Exception:
-                        res = await AgentsRunner.run(agent, prompt, max_turns=1)
+                        res = await AgentsRunner.run(
+                            agent,
+                            prompt,
+                            context={"workspace_root": os.getcwd()},
+                            max_turns=1,
+                        )
                 else:
-                    res = await AgentsRunner.run(agent, prompt, max_turns=1)
+                    res = await AgentsRunner.run(
+                        agent,
+                        prompt,
+                        context={"workspace_root": os.getcwd()},
+                        max_turns=1,
+                    )
                 out = getattr(res, "final_output", None)
                 out_s = out if isinstance(out, str) else str(out)
                 new_texts[name] = self._extract_fenced(out_s)

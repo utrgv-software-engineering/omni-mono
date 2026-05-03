@@ -13,9 +13,14 @@ class FakeOther:
         self.stopped_runs = []
         self.approvals = []
 
-    async def start_run(self, prompt, session_id=None):
+    async def start_run(self, prompt, session_id=None, context=None, **kwargs):
         self.agent.started_prompt = prompt
         self.agent.started_session_id = session_id
+        # Capture the run context so tests can assert workspace_root / other
+        # context keys propagated from the parent's spawn_worker call into
+        # the worker's own start_run payload.
+        self.agent.started_context = context
+        self.agent.started_kwargs = kwargs
         return SimpleNamespace(
             result={"run_id": self.agent.run_id, "session_id": self.agent.session_id}
         )
@@ -138,3 +143,62 @@ async def test_worker_manager_get_status_uses_history_loader():
     status = await manager.get_status("worker-d", tail=3, history_loader=history_loader)
 
     assert status["history"] == [{"role": "user", "content": "tail-3"}]
+
+
+# ---------------------------------------------------------------------------
+# Context propagation — the parent's spawn_worker tool reads
+# workspace_root from its own ctx and passes it via context= so the
+# worker's session.context inherits it. This is the regression test
+# for the silent-cwd-fallback bug in server mode.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_worker_manager_spawn_forwards_context_to_start_run():
+    """spawn(context={...}) must reach the worker's start_run payload."""
+    manager = make_manager()
+    handle = await manager.spawn(
+        worker_id="worker-ctx",
+        task_description="do it",
+        model=None,
+        context={"workspace_root": "/tenant/x", "extra_key": "v"},
+    )
+
+    assert handle.agent.started_context == {
+        "workspace_root": "/tenant/x",
+        "extra_key": "v",
+    }
+
+
+@pytest.mark.asyncio
+async def test_worker_manager_spawn_omits_context_when_none():
+    """When the parent passes no context, workers should not receive a
+    context= kwarg either — preserves backwards-compatible session creation."""
+    manager = make_manager()
+    handle = await manager.spawn(
+        worker_id="worker-noctx",
+        task_description="do it",
+        model=None,
+    )
+
+    assert handle.agent.started_context is None
+
+
+@pytest.mark.asyncio
+async def test_worker_manager_resume_forwards_context_to_start_run():
+    """Resume after close must also propagate context — otherwise a
+    resumed worker would lose its workspace_root mid-flight."""
+    manager = make_manager()
+    handle = await manager.spawn(
+        worker_id="worker-resume",
+        task_description="first",
+        model=None,
+        context={"workspace_root": "/initial"},
+    )
+    await manager.close("worker-resume")
+
+    resumed = await manager.resume(
+        "worker-resume", "follow up", context={"workspace_root": "/resumed"}
+    )
+    assert resumed is not None
+    assert resumed.agent.started_context == {"workspace_root": "/resumed"}

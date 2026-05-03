@@ -100,7 +100,7 @@ def build_spec(
 async def test_safe_agent_requests_approval_via_rpc(monkeypatch):
     recorder = []
     spec = build_spec([("dangerous_tool", "executed")], recorder)
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     decisions = [{"result": {"approved": True, "always_approve": False}}]
     channel = FakeChannel(service, decisions)
     service.channel = channel
@@ -222,7 +222,7 @@ async def test_safe_handoff_agent_receives_callback():
 async def test_skip_approvals_runs_without_requests(monkeypatch):
     recorder = []
     spec = build_spec([("safe_tool", "done")], recorder, skip_approvals=True)
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     channel = FakeChannel(service, [])
     service.channel = channel
 
@@ -304,7 +304,7 @@ async def test_multi_tool_rejection_halts_execution(monkeypatch):
         recorder,
         halt_on_rejection=True,
     )
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     decisions = [
         {"result": {"approved": True, "always_approve": False}},
         {"result": {"approved": False, "always_approve": False, "error_message": "no"}},

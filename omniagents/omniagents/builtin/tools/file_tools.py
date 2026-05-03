@@ -78,23 +78,6 @@ def _is_ignored(path: str, repo_root: str = ".") -> bool:
         return False
 
 
-@lru_cache(maxsize=65536)
-def _has_hidden_segment(path: str) -> bool:
-    """Return True if any path segment is a hidden name (starts with a dot).
-
-    This treats files or any ancestor directory starting with '.' as hidden.
-    """
-    try:
-        norm = os.path.normpath(path)
-        # Split into components and check any that start with '.'
-        for part in norm.split(os.sep):
-            if part.startswith(".") and part not in (".", ".."):
-                return True
-        return False
-    except Exception:
-        return False
-
-
 def _is_binary_file(path: str) -> bool:
     try:
         if not os.path.isfile(path):
@@ -117,48 +100,34 @@ def _should_skip(
     candidate_path: str,
     repo_root: str,
     respect_gitignore: bool,
-    ignore_hidden: bool,
 ) -> bool:
     """Return True if candidate should be excluded based on flags."""
     if respect_gitignore and _is_ignored(candidate_path, repo_root):
         return True
-    if ignore_hidden and _has_hidden_segment(candidate_path):
-        return True
     return False
 
 
-def _workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> Optional[str]:
-    try:
-        if ctx is None:
-            return None
-        c = getattr(ctx, "context", None)
-        if c is None:
-            from omniagents.core.debug import Debug
-            Debug.log(f"[file_tools] _workspace_root_from_ctx: ctx.context is None")
-            return None
-        if isinstance(c, dict):
-            wr = c.get("workspace_root")
-        else:
-            wr = getattr(c, "workspace_root", None)
-        if isinstance(wr, str) and wr.strip():
-            return os.path.abspath(wr)
-        from omniagents.core.debug import Debug
-        Debug.log(f"[file_tools] _workspace_root_from_ctx: no workspace_root, ctx keys={list(c.keys()) if isinstance(c, dict) else type(c).__name__}")
-    except Exception:
-        pass
-    return None
+from omniagents.builtin.tools._workspace import (
+    require_workspace_root,
+    workspace_root_from_ctx as _workspace_root_from_ctx,
+)
 
 
 def _resolve_path(ctx: RunContextWrapper[Any] | None, path: Optional[str]) -> str:
-    wr = _workspace_root_from_ctx(ctx)
-    if path is None or (isinstance(path, str) and path.strip() == ""):
-        return wr or "."
-    p = path if isinstance(path, str) else str(path)
-    if os.path.isabs(p):
+    """Resolve ``path`` against the run context's ``workspace_root``.
+
+    Absolute paths are returned as-is (no workspace_root needed).
+    Relative paths and the empty / missing path require ``workspace_root``;
+    if it isn't set, ``WorkspaceRootRequiredError`` propagates from
+    ``require_workspace_root`` rather than falling back to cwd.
+    """
+    p = path if isinstance(path, str) else (str(path) if path is not None else "")
+    if p and os.path.isabs(p):
         return p
-    if wr:
-        return os.path.abspath(os.path.join(wr, p))
-    return p
+    wr = require_workspace_root(ctx, where="file_tools")
+    if not p:
+        return wr
+    return os.path.abspath(os.path.join(wr, p))
 
 
 @rich_function_tool(client_status="Finding matching files...")
@@ -166,7 +135,6 @@ def glob_files(
     ctx: RunContextWrapper[Any],
     pattern: str,
     path: Optional[str] = None,
-    ignore_hidden: Optional[bool] = None,
     respect_gitignore: Optional[bool] = None,
 ) -> RichToolOutput:
     """
@@ -175,14 +143,15 @@ def glob_files(
     Args:
         pattern: The glob pattern to match files (e.g., "*.py", "**/*.json")
         path: Directory or file to search in. Defaults to the workspace root when omitted.
-        ignore_hidden: If True, exclude files/dirs with any hidden segment (names starting with '.')
         respect_gitignore: If True, exclude paths ignored by Git (.gitignore, .git/info/exclude, etc.)
 
     Returns:
         Tuple of (llm_output, ui_metadata) where:
         - llm_output: Text description of files found
         - ui_metadata: Rich metadata for UI rendering
-        Binary files are skipped.
+        Binary files are skipped. Hidden files (dotfiles) are always
+        included; in coding workspaces they're typically relevant
+        (config, hooks, dotfile bundles).
 
     Usage:
         Use this tool to find files matching specific patterns.
@@ -197,11 +166,11 @@ def glob_files(
         # Find all Python files in the current directory
         glob_files("*.py", path="./")
 
-        # Find all JSON files recursively
+        # Find all JSON files recursively (including dotfiles)
         glob_files("**/*.json", path="./")
 
-        # Include hidden files and gitignored files
-        glob_files("**/*", path="./", ignore_hidden=False, respect_gitignore=False)
+        # Include gitignored files too
+        glob_files("**/*", path="./", respect_gitignore=False)
 
         # Find all log files in a specific directory
         glob_files("*.log", path="/var/log")
@@ -218,13 +187,11 @@ def glob_files(
             relative_base = "."
         relative_base = os.path.abspath(relative_base)
         repo_root = relative_base
-        if ignore_hidden is None:
-            ignore_hidden = False  # preserve current behavior
         if respect_gitignore is None:
             respect_gitignore = True  # preserve current behavior
 
-        # General implementation that honors '**' semantics and includes hidden items
-        # when ignore_hidden is False, regardless of Python's glob quirks.
+        # General implementation that honors '**' semantics, including
+        # dotfiles, regardless of Python's glob quirks.
 
         def split_segments(p: str) -> List[str]:
             parts = []
@@ -264,9 +231,7 @@ def glob_files(
 
         skipped_binary = 0
         if base_is_file:
-            if not _should_skip(
-                resolved_path, repo_root, respect_gitignore, ignore_hidden
-            ):
+            if not _should_skip(resolved_path, repo_root, respect_gitignore):
                 if _is_binary_file(resolved_path):
                     skipped_binary += 1
                 else:
@@ -278,9 +243,7 @@ def glob_files(
                 pruned = []
                 for d in list(dirs):
                     d_full = os.path.join(root, d)
-                    if _should_skip(
-                        d_full, repo_root, respect_gitignore, ignore_hidden
-                    ):
+                    if _should_skip(d_full, repo_root, respect_gitignore):
                         pruned.append(d)
                 for d in pruned:
                     if d in dirs:
@@ -294,9 +257,7 @@ def glob_files(
 
                 for fname in filenames:
                     f_full = os.path.join(root, fname)
-                    if _should_skip(
-                        f_full, repo_root, respect_gitignore, ignore_hidden
-                    ):
+                    if _should_skip(f_full, repo_root, respect_gitignore):
                         continue
                     if _is_binary_file(f_full):
                         skipped_binary += 1
@@ -350,7 +311,6 @@ def glob_files(
                 "search_type": "glob",
                 "scope": path if path not in (None, "") else resolved_path,
                 "preview_count": len(preview_matches),
-                "ignore_hidden": bool(ignore_hidden),
                 "respect_gitignore": bool(respect_gitignore),
                 "skipped_binary": skipped_binary,
             },
@@ -370,9 +330,6 @@ def glob_files(
                 "error_type": "glob_error",
                 "pattern": pattern,
                 "path": path,
-                "ignore_hidden": (
-                    bool(ignore_hidden) if ignore_hidden is not None else None
-                ),
                 "respect_gitignore": (
                     bool(respect_gitignore) if respect_gitignore is not None else None
                 ),
@@ -396,7 +353,6 @@ def grep_files(
     include: Optional[str] = None,
     limit: Optional[int] = None,
     timeout: Optional[int] = None,
-    ignore_hidden: Optional[bool] = None,
     respect_gitignore: Optional[bool] = None,
 ) -> RichToolOutput:
     """
@@ -408,12 +364,13 @@ def grep_files(
         include: Optional file pattern (glob) to filter files (e.g., "*.py")
         limit: Maximum number of files to return (default: 100, max: 2000)
         timeout: Maximum search time in seconds (default: 30)
-        ignore_hidden: If True, exclude hidden files/dirs (default: False)
         respect_gitignore: If True, exclude gitignored paths (default: True)
 
     Returns:
         List of file paths with match counts, sorted by modification time (newest first).
         Use read_file to see the actual matching content.
+        Hidden files (dotfiles) are always included; in coding workspaces
+        they're typically relevant (config, hooks, dotfile bundles).
 
     Usage:
         # Find files containing TODO comments
@@ -442,8 +399,6 @@ def grep_files(
     if timeout is None:
         timeout = _GREP_DEFAULT_TIMEOUT
 
-    if ignore_hidden is None:
-        ignore_hidden = False
     if respect_gitignore is None:
         respect_gitignore = True
 
@@ -461,7 +416,6 @@ def grep_files(
         files_with_matches = 0
         files_searched = 0
         skipped_gitignored = 0
-        skipped_hidden = 0
         skipped_binary = 0
         timed_out = False
 
@@ -486,12 +440,9 @@ def grep_files(
         real_to_index: Dict[str, int] = {}
 
         def record_file(candidate: str) -> None:
-            nonlocal skipped_gitignored, skipped_hidden, skipped_binary
+            nonlocal skipped_gitignored, skipped_binary
             if respect_gitignore and _is_ignored(candidate, repo_root):
                 skipped_gitignored += 1
-                return
-            if ignore_hidden and _has_hidden_segment(candidate):
-                skipped_hidden += 1
                 return
             if os.path.isfile(candidate) and _is_binary_file(candidate):
                 skipped_binary += 1
@@ -520,16 +471,9 @@ def grep_files(
                 pruned_dirs = []
                 for d in list(dirs):
                     d_full = os.path.join(root, d)
-                    is_ignored = bool(
-                        respect_gitignore and _is_ignored(d_full, repo_root)
-                    )
-                    is_hidden = bool(ignore_hidden and _has_hidden_segment(d_full))
-                    if is_ignored or is_hidden:
+                    if respect_gitignore and _is_ignored(d_full, repo_root):
                         pruned_dirs.append(d)
-                        if is_ignored:
-                            skipped_gitignored += 1
-                        elif is_hidden:
-                            skipped_hidden += 1
+                        skipped_gitignored += 1
                 for d in pruned_dirs:
                     if d in dirs:
                         dirs.remove(d)
@@ -601,8 +545,6 @@ def grep_files(
             hints = []
             if skipped_gitignored:
                 hints.append(f"skipped {skipped_gitignored} gitignored")
-            if skipped_hidden and ignore_hidden:
-                hints.append(f"skipped {skipped_hidden} hidden")
             if skipped_binary:
                 hints.append(f"skipped {skipped_binary} binary")
             if hints:
@@ -650,10 +592,8 @@ def grep_files(
                 "elapsed_ms": elapsed_ms,
                 "timed_out": timed_out,
                 "scope": f"{include or '*'} in {path if path not in (None, '') else resolved_path}",
-                "ignore_hidden": ignore_hidden,
                 "respect_gitignore": respect_gitignore,
                 "skipped_gitignored": skipped_gitignored,
-                "skipped_hidden": skipped_hidden,
                 "skipped_binary": skipped_binary,
             },
         }
@@ -672,9 +612,6 @@ def grep_files(
             "metadata": {
                 "error_type": "grep_error",
                 "pattern": pattern,
-                "ignore_hidden": (
-                    bool(ignore_hidden) if ignore_hidden is not None else None
-                ),
                 "respect_gitignore": (
                     bool(respect_gitignore) if respect_gitignore is not None else None
                 ),
@@ -736,7 +673,6 @@ def _collect_entries_with_depth(
     current_depth: int,
     max_depth: int,
     respect_gitignore: bool,
-    ignore_hidden: bool,
 ) -> List[_DirEntry]:
     """
     Collect directory entries up to max_depth levels deep.
@@ -755,7 +691,7 @@ def _collect_entries_with_depth(
 
     for item in items:
         # Check if should skip
-        if _should_skip(item.path, base_path, respect_gitignore, ignore_hidden):
+        if _should_skip(item.path, base_path, respect_gitignore):
             continue
 
         # Determine entry type
@@ -791,7 +727,6 @@ def _collect_entries_with_depth(
                 current_depth + 1,
                 max_depth,
                 respect_gitignore,
-                ignore_hidden,
             )
             entries.extend(child_entries)
 
@@ -805,7 +740,6 @@ def list_directory(
     offset: Optional[int] = None,
     limit: Optional[int] = None,
     depth: Optional[int] = None,
-    ignore_hidden: Optional[bool] = None,
     respect_gitignore: Optional[bool] = None,
 ) -> RichToolOutput:
     """
@@ -816,13 +750,14 @@ def list_directory(
         offset: 1-based entry number to start from (default: 1)
         limit: Maximum number of entries to return (default: 50)
         depth: Maximum directory depth to traverse (default: 2, min: 1)
-        ignore_hidden: If True, exclude files/dirs starting with '.' (default: False)
         respect_gitignore: If True, exclude paths ignored by Git (default: True)
 
     Returns:
         Tuple of (llm_output, ui_metadata) where:
         - llm_output: Indented tree with type markers (/ for dirs, @ for symlinks)
         - ui_metadata: Rich metadata for UI rendering
+        Hidden files (dotfiles) are always included; in coding workspaces
+        they're typically relevant (config, hooks, dotfile bundles).
 
     Usage:
         # List current directory (default: 50 entries, 2 levels deep)
@@ -833,9 +768,6 @@ def list_directory(
 
         # List 3 levels deep
         list_directory(".", depth=3)
-
-        # List without hidden files
-        list_directory(".", ignore_hidden=True)
 
     Output format:
         Absolute path: /path/to/dir
@@ -867,8 +799,6 @@ def list_directory(
             depth = _LIST_DIR_DEFAULT_DEPTH
         if depth < 1:
             depth = 1
-        if ignore_hidden is None:
-            ignore_hidden = False
         if respect_gitignore is None:
             respect_gitignore = True
 
@@ -889,7 +819,7 @@ def list_directory(
 
         # Collect all entries with depth-limited traversal
         all_entries = _collect_entries_with_depth(
-            path, path, 0, depth, respect_gitignore, ignore_hidden
+            path, path, 0, depth, respect_gitignore
         )
 
         total_entries = len(all_entries)
@@ -908,7 +838,6 @@ def list_directory(
                         "total_entries": 0,
                         "entries_returned": 0,
                         "depth": depth,
-                        "ignore_hidden": ignore_hidden,
                         "respect_gitignore": respect_gitignore,
                     },
                 },
@@ -987,7 +916,6 @@ def list_directory(
                 "file_count": file_count,
                 "symlink_count": symlink_count,
                 "was_truncated": was_truncated,
-                "ignore_hidden": ignore_hidden,
                 "respect_gitignore": respect_gitignore,
             },
         }
@@ -1006,9 +934,6 @@ def list_directory(
             "metadata": {
                 "error_type": "directory_error",
                 "path": path,
-                "ignore_hidden": (
-                    bool(ignore_hidden) if ignore_hidden is not None else None
-                ),
                 "respect_gitignore": (
                     bool(respect_gitignore) if respect_gitignore is not None else None
                 ),

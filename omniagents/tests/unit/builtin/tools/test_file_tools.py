@@ -3,6 +3,8 @@ import re
 import sys
 import types
 
+import pytest
+
 if "pygit2" not in sys.modules:
     fake_pygit2 = types.ModuleType("pygit2")
 
@@ -89,18 +91,19 @@ def test_glob_files_matches(tmp_path):
     assert result.ui_metadata["metadata"]["result_count"] == len(paths)
 
 
-def test_glob_files_respects_hidden(tmp_path):
+def test_glob_files_includes_hidden(tmp_path):
+    """Hidden files are always included — coding workspaces rely on dotfiles."""
     ctx = make_ctx(tmp_path)
     visible = tmp_path / "visible.txt"
     visible.write_text("x", encoding="utf-8")
     hidden = tmp_path / ".hidden.txt"
     hidden.write_text("y", encoding="utf-8")
 
-    result = unwrap(file_tools.glob_files)(ctx, "*.txt", ignore_hidden=True)
+    result = unwrap(file_tools.glob_files)(ctx, "*.txt")
 
     paths = result.ui_metadata["value"]
     assert str(visible) in paths
-    assert str(hidden) not in paths
+    assert str(hidden) in paths
 
 
 def test_glob_files_single_file_path(tmp_path):
@@ -208,12 +211,11 @@ def test_grep_files_no_matches_shows_skip_info(tmp_path):
     (tmp_path / "test.txt").write_text("no match here", encoding="utf-8")
     (tmp_path / ".hidden.txt").write_text("also no match", encoding="utf-8")
 
-    result = unwrap(file_tools.grep_files)(
-        ctx, "nonexistent", ignore_hidden=True
-    )
+    result = unwrap(file_tools.grep_files)(ctx, "nonexistent")
 
     assert "No matches found" in result.llm_output
-    assert result.ui_metadata["metadata"]["skipped_hidden"] >= 0
+    # Hidden files are always included now — both files were searched.
+    assert result.ui_metadata["metadata"]["skipped_gitignored"] >= 0
 
 
 def test_grep_files_counts_all_matches_in_file(tmp_path):
@@ -535,20 +537,15 @@ def test_list_directory_empty(tmp_path):
     assert result.ui_metadata["metadata"]["total_entries"] == 0
 
 
-def test_list_directory_respects_hidden(tmp_path):
-    """Test ignore_hidden parameter."""
+def test_list_directory_includes_hidden(tmp_path):
+    """Hidden files are always listed — coding workspaces rely on dotfiles."""
     ctx = make_ctx(tmp_path)
     (tmp_path / "visible.txt").write_text("visible", encoding="utf-8")
     (tmp_path / ".hidden.txt").write_text("hidden", encoding="utf-8")
 
-    # With ignore_hidden=True
-    result = unwrap(file_tools.list_directory)(ctx, str(tmp_path), ignore_hidden=True)
+    result = unwrap(file_tools.list_directory)(ctx, str(tmp_path))
     assert "visible.txt" in result.llm_output
-    assert ".hidden.txt" not in result.llm_output
-
-    # With ignore_hidden=False (default)
-    result2 = unwrap(file_tools.list_directory)(ctx, str(tmp_path), ignore_hidden=False)
-    assert ".hidden.txt" in result2.llm_output
+    assert ".hidden.txt" in result.llm_output
 
 
 def test_list_directory_not_a_directory(tmp_path):
@@ -561,3 +558,34 @@ def test_list_directory_not_a_directory(tmp_path):
 
     assert "not a directory" in result.llm_output.lower()
     assert result.ui_metadata["display_type"] == "error"
+
+
+# ---------------------------------------------------------------------------
+# Strict workspace_root behavior — file tools refuse to silently anchor
+# relative paths to the host process cwd.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_path_raises_when_workspace_root_missing(tmp_path):
+    """A relative path without workspace_root on the run context must raise."""
+    from omniagents.core.errors import WorkspaceRootRequiredError
+
+    ctx = types.SimpleNamespace(context={})  # no workspace_root
+    with pytest.raises(WorkspaceRootRequiredError):
+        file_tools._resolve_path(ctx, "subdir/file.txt")
+
+
+def test_resolve_path_absolute_does_not_require_workspace_root():
+    """An absolute path bypasses the workspace_root check — there's no
+    ambiguity about where it lands."""
+    ctx = types.SimpleNamespace(context={})  # no workspace_root
+    resolved = file_tools._resolve_path(ctx, "/etc/hosts")
+    assert resolved == "/etc/hosts"
+
+
+def test_resolve_path_uses_workspace_root_when_set(tmp_path):
+    ctx = types.SimpleNamespace(context={"workspace_root": str(tmp_path)})
+    resolved = file_tools._resolve_path(ctx, "subdir/file.txt")
+    import os as _os
+
+    assert resolved == _os.path.abspath(_os.path.join(str(tmp_path), "subdir/file.txt"))

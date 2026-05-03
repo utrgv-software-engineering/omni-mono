@@ -38,7 +38,7 @@ async def test_tool_approval_stays_with_run_channel():
         build_agent=None,
     )
 
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
 
     ch1 = FakeChannel("ch1")
     ch2 = FakeChannel("ch2")
@@ -91,7 +91,7 @@ async def test_tool_approval_does_not_fall_back_to_unrelated_channel():
         build_agent=None,
     )
 
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
 
     primary_channel = FakeChannel("primary")
     unrelated_channel = FakeChannel("unrelated")
@@ -141,7 +141,7 @@ async def test_tool_approval_requires_session_context():
         build_agent=None,
     )
 
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
 
     with pytest.raises(RuntimeError):
         await service._request_tool_approval("tool", "{}", None)
@@ -156,7 +156,7 @@ async def test_tool_approval_queues_when_no_channels():
         build_agent=None,
     )
 
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     sess = service._session_manager.get_or_create(None)
 
     approval_task = asyncio.create_task(
@@ -189,7 +189,7 @@ async def test_queued_tool_approval_replays_on_start_run(monkeypatch):
         build_agent=None,
     )
 
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
     session = service._session_manager.get_or_create("sess")
 
     approval_task = asyncio.create_task(
@@ -273,7 +273,7 @@ async def test_agent_service_rebuilds_agent_every_run(monkeypatch):
         build_agent=builder,
     )
 
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
 
     first = await service.start_run("prompt-1", session_id="sess")
     first_session = service._session_manager.get_or_create(first["session_id"])
@@ -318,7 +318,7 @@ async def test_tool_approval_requests_stay_with_origin_session(monkeypatch):
         build_agent=builder,
     )
 
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
 
     sess1 = service._session_manager.get_or_create("s1")
     sess2 = service._session_manager.get_or_create("s2")
@@ -415,7 +415,7 @@ async def test_always_approve_remains_session_local(monkeypatch):
         build_agent=builder,
     )
 
-    service = AgentService(spec)
+    service = AgentService(spec, default_workspace_root="/tmp")
 
     sess1 = service._session_manager.get_or_create("s1")
     sess2 = service._session_manager.get_or_create("s2")
