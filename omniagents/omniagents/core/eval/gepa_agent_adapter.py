@@ -327,6 +327,7 @@ class OmniAgentsAgentAdapter:
                             import uuid as _uuid
 
                             run_uid = _uuid.uuid4().hex[:8]
+                            expected_block = item.get("expect") if isinstance(item, dict) else None
                             meta = {
                                 "omniagents": {
                                     "run_type": "optimizer",
@@ -340,6 +341,7 @@ class OmniAgentsAgentAdapter:
                                         "name": item.get("name"),
                                     },
                                     "run": {"id": run_uid},
+                                    **({"expected": expected_block} if expected_block else {}),
                                 }
                             }
                             gid = run_uid

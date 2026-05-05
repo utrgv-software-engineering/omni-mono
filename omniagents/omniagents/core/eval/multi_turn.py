@@ -480,6 +480,7 @@ async def _run_scripted_single_turn(
                 run_uid = f"{_sid}-{_uuid.uuid4().hex[:8]}"
             except Exception:
                 run_uid = _uuid.uuid4().hex[:8]
+            expected_block = scenario.get("expect")
             meta = {
                 "omniagents": {
                     "run_type": "evaluation",
@@ -489,6 +490,7 @@ async def _run_scripted_single_turn(
                         "name": scenario.get("name"),
                     },
                     "run": {"id": run_uid},
+                    **({"expected": expected_block} if expected_block else {}),
                 }
             }
             run_config = RunConfig(workflow_name=workflow_name, group_id=run_uid)
@@ -666,6 +668,7 @@ async def _run_scripted_multi_turn(
             run_uid = _uuid.uuid4().hex[:8]
         run_config = RunConfig(workflow_name=workflow_name, group_id=run_uid)
         if use_trace:
+            expected_block = scenario.get("expect")
             meta = {
                 "omniagents": {
                     "run_type": "evaluation",
@@ -676,6 +679,7 @@ async def _run_scripted_multi_turn(
                     },
                     "run": {"id": run_uid},
                     "exchanges": max_continuations,
+                    **({"expected": expected_block} if expected_block else {}),
                 }
             }
 
@@ -888,6 +892,7 @@ async def _run_synthetic_scenario(
         if workflow_name and studio_trace:
             import uuid as _uuid
 
+            expected_block = scenario.get("expect")
             meta = {
                 "omniagents": {
                     "run_type": "evaluation",
@@ -901,6 +906,7 @@ async def _run_synthetic_scenario(
                         "id": agent_run_config.group_id if agent_run_config else None
                     },
                     "max_exchanges": max_exchanges,
+                    **({"expected": expected_block} if expected_block else {}),
                 }
             }
             with studio_trace(

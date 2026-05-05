@@ -135,11 +135,11 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
     return results
   }, [traceData?.trace?.metadata])
 
-  // Eval scenarios carry an expected outcome (the doctor's reference answer)
-  // attached to the trace metadata under metadata.omniagents.expected. Surface
-  // it as a collapsible block at the top of the conversation so a reviewer can
-  // compare the agent's response to the ground truth without leaving the page.
-  const referenceAnswer = useMemo(() => {
+  // Eval scenarios carry an expected outcome (whatever the scenario YAML
+  // declared in its `expect:` block) attached to the trace metadata under
+  // metadata.omniagents.expected. Surface every field generically so the
+  // panel works for any dataset's reference shape, not just `doctor_answer`.
+  const referenceEntries = useMemo<Array<[string, any]>>(() => {
     const md = traceData?.trace?.metadata
     let meta: any = null
     if (md) {
@@ -150,13 +150,8 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
       }
     }
     const expected = meta?.omniagents?.expected
-    if (!expected || typeof expected !== 'object') return null
-    const answer = expected.doctor_answer || expected.expected_answer || expected.answer
-    if (!answer || typeof answer !== 'string') return null
-    return {
-      answer: answer.trim(),
-      curatorNote: typeof expected.curator_note === 'string' ? expected.curator_note : null,
-    }
+    if (!expected || typeof expected !== 'object') return []
+    return Object.entries(expected).filter(([, v]) => v !== null && v !== undefined && v !== '')
   }, [traceData?.trace?.metadata])
   const [referenceExpanded, setReferenceExpanded] = useState(true)
 
@@ -1248,31 +1243,31 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
           {showMetadata && (
             <TraceMetadataBlock metadata={traceData?.trace?.metadata} />
           )}
-          {referenceAnswer && (
+          {referenceEntries.length > 0 && (
             <div className="mb-4 rounded-md border border-blue-500/30 bg-blue-500/5 overflow-hidden">
               <button
                 type="button"
                 onClick={() => setReferenceExpanded((v) => !v)}
                 className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-blue-500/10 transition-colors"
               >
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="font-mono text-[10px] uppercase tracking-wide text-blue-600 dark:text-blue-400 shrink-0">
-                    Reference answer
-                  </span>
-                  {referenceAnswer.curatorNote && (
-                    <span className="text-xs text-muted-foreground truncate">
-                      · {referenceAnswer.curatorNote}
-                    </span>
-                  )}
-                </div>
+                <span className="font-mono text-[10px] uppercase tracking-wide text-blue-600 dark:text-blue-400">
+                  Reference
+                </span>
                 <span className="text-xs text-muted-foreground shrink-0">
                   {referenceExpanded ? 'Hide' : 'Show'}
                 </span>
               </button>
               {referenceExpanded && (
-                <div className="px-3 pb-3 text-sm whitespace-pre-wrap leading-relaxed text-foreground/90 border-t border-blue-500/20 pt-3">
-                  {referenceAnswer.answer}
-                </div>
+                <dl className="px-3 pb-3 pt-3 space-y-2 border-t border-blue-500/20">
+                  {referenceEntries.map(([k, v]) => (
+                    <div key={k}>
+                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{k.replace(/_/g, ' ')}</dt>
+                      <dd className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
+                        {typeof v === 'string' ? v : JSON.stringify(v, null, 2)}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
               )}
             </div>
           )}

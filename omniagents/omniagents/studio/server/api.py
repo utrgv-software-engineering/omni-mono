@@ -1195,6 +1195,7 @@ class ScenarioEntryModel(BaseModel):
     label: Optional[bool] = None
     metadata: Optional[Dict[str, Any]] = None
     analysis: Optional[Dict[str, Any]] = None
+    expect: Optional[Dict[str, Any]] = None  # Reference data (e.g. doctor_answer, source) — surfaced in dataset-split view
 
 
 class ScenarioSetModel(BaseModel):
@@ -3866,6 +3867,9 @@ def create_api_app(
             analysis_data = (
                 item.get("analysis") if isinstance(item.get("analysis"), dict) else None
             )
+            expect_data = (
+                item.get("expect") if isinstance(item.get("expect"), dict) else None
+            )
             label_value = (
                 item.get("label") if isinstance(item.get("label"), bool) else None
             )
@@ -3899,6 +3903,7 @@ def create_api_app(
                     label=label_value,
                     metadata=metadata,
                     analysis=analysis_data,
+                    expect=expect_data,
                 )
             )
         return scenarios

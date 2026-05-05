@@ -258,6 +258,7 @@ export interface EvaluationScenarioEntry {
   label?: boolean | null
   metadata?: Record<string, any> | null
   analysis?: EvaluationScenarioAnalysis | null
+  expect?: Record<string, any> | null // Reference data (e.g. doctor_answer, source)
 }
 
 export interface EvaluationScenarioAnalysis {

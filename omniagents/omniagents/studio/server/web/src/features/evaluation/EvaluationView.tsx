@@ -41,6 +41,7 @@ import type {
   EvaluationMeasureDeleteResponse,
   EvaluationResultsListResponse,
   EvaluationResultsDetailResponse,
+  AgentSummary,
 } from '../../types'
 import { useTraceStore } from '../traces/store/traceStore'
 import { useToastStore } from '../../stores/toastStore'
@@ -563,6 +564,7 @@ function DatasetsPanel({
                             <th className="border-b border-border/50 px-3 py-2 text-left text-xs font-semibold uppercase text-muted-foreground">Label</th>
                             <th className="border-b border-border/50 px-3 py-2 text-left text-xs font-semibold uppercase text-muted-foreground">Dimensions</th>
                             <th className="border-b border-border/50 px-3 py-2 text-left text-xs font-semibold uppercase text-muted-foreground">Prompt</th>
+                            <th className="border-b border-border/50 px-3 py-2 text-left text-xs font-semibold uppercase text-muted-foreground">Reference</th>
                             <th className="border-b border-border/50 px-3 py-2 text-left text-xs font-semibold uppercase text-muted-foreground">Assistant Output</th>
                           </tr>
                         </thead>
@@ -577,6 +579,9 @@ function DatasetsPanel({
                                 : 'border-border text-muted-foreground'
                             const assistantMessageRaw = scenario.metadata && typeof scenario.metadata.assistant_last_message === 'string' ? scenario.metadata.assistant_last_message : null
                             const assistantMessage = assistantMessageRaw && assistantMessageRaw.trim().length > 0 ? assistantMessageRaw : '—'
+                            const expectEntries = scenario.expect && typeof scenario.expect === 'object'
+                              ? Object.entries(scenario.expect).filter(([, v]) => v !== null && v !== undefined && v !== '')
+                              : []
                             return (
                               <tr key={`${scenario.id || scenario.name || 'scenario'}-${index}`} className="border-b border-border/50">
                                 <td className="px-3 py-2 align-top text-sm font-medium text-foreground">
@@ -598,6 +603,22 @@ function DatasetsPanel({
                                 <td className="px-3 py-2 align-top text-xs text-muted-foreground">{formatDimensionsList(scenario.dimensions)}</td>
                                 <td className="px-3 py-2 align-top text-sm text-foreground">
                                   <div className="max-h-36 overflow-y-auto whitespace-pre-wrap">{scenario.goal || scenario.prompt || (scenario.prompts ? scenario.prompts.join(' → ') : '')}</div>
+                                </td>
+                                <td className="px-3 py-2 align-top text-sm text-foreground">
+                                  {expectEntries.length === 0 ? (
+                                    <span className="text-muted-foreground">—</span>
+                                  ) : (
+                                    <dl className="max-h-36 overflow-y-auto space-y-1">
+                                      {expectEntries.map(([key, value]) => (
+                                        <div key={key}>
+                                          <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{key.replace(/_/g, ' ')}</dt>
+                                          <dd className="whitespace-pre-wrap text-sm">
+                                            {typeof value === 'string' ? value : JSON.stringify(value, null, 2)}
+                                          </dd>
+                                        </div>
+                                      ))}
+                                    </dl>
+                                  )}
                                 </td>
                                 <td className="px-3 py-2 align-top text-sm text-muted-foreground">
                                   <div className="max-h-36 overflow-y-auto whitespace-pre-wrap text-foreground">
@@ -689,6 +710,14 @@ function useEvaluationDatasets(enabled: boolean) {
   return useQuery({
     queryKey: ['evaluation', 'datasets'],
     queryFn: () => api.getEvaluationDatasets(),
+    enabled,
+  })
+}
+
+function useAgents(enabled: boolean) {
+  return useQuery<{ agents: AgentSummary[] }>({
+    queryKey: ['agents'],
+    queryFn: () => api.getAgents(),
     enabled,
   })
 }
@@ -860,6 +889,9 @@ function ScenarioSetDetail({
   const [runMaxTurns, setRunMaxTurns] = useState('')
   const [runIncludeHistory, setRunIncludeHistory] = useState(true)
   const [runSelect, setRunSelect] = useState('')
+  const [runAgent, setRunAgent] = useState('')
+  const { data: agentsData } = useAgents(true)
+  const agentsList = agentsData?.agents ?? []
   const [runError, setRunError] = useState<string | null>(null)
   const [activeRun, setActiveRun] = useState<{ jobId: string; status: EvaluationScenarioRunStatus | null } | null>(null)
   const runSocketRef = useRef<WebSocket | null>(null)
@@ -1078,6 +1110,7 @@ function ScenarioSetDetail({
     setRunMaxTurns('')
     setRunIncludeHistory(true)
     setRunSelect('')
+    setRunAgent('')
     setRunError(null)
     setIsRunDialogOpen(true)
   }
@@ -1204,6 +1237,10 @@ function ScenarioSetDetail({
     const trimmedSelect = runSelect.trim()
     if (trimmedSelect.length > 0) {
       payload.select = trimmedSelect
+    }
+    const trimmedAgent = runAgent.trim()
+    if (trimmedAgent.length > 0) {
+      payload.agent = trimmedAgent
     }
     setIsStartingRun(true)
     setRunError(null)
@@ -1774,6 +1811,27 @@ function ScenarioSetDetail({
                     </div>
                   ) : null}
                   {scenario.prompt ? <p className="mt-2 text-sm text-muted-foreground">{scenario.prompt}</p> : null}
+                  {(() => {
+                    const expectEntries = scenario.expect && typeof scenario.expect === 'object'
+                      ? Object.entries(scenario.expect).filter(([, v]) => v !== null && v !== undefined && v !== '')
+                      : []
+                    if (expectEntries.length === 0) return null
+                    return (
+                      <div className="mt-2 space-y-1">
+                        <span className="text-xs font-medium text-muted-foreground">Reference:</span>
+                        <dl className="space-y-1.5 rounded-md bg-muted/30 p-2">
+                          {expectEntries.map(([k, v]) => (
+                            <div key={k}>
+                              <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{k.replace(/_/g, ' ')}</dt>
+                              <dd className="whitespace-pre-wrap text-sm text-foreground">
+                                {typeof v === 'string' ? v : JSON.stringify(v, null, 2)}
+                              </dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </div>
+                    )
+                  })()}
                   {scenario.prompts && scenario.prompts.length > 0 ? (
                     <div className="mt-2 space-y-1">
                       <span className="text-xs font-medium text-muted-foreground">Prompts ({scenario.prompts.length}):</span>
@@ -1976,6 +2034,21 @@ function ScenarioSetDetail({
                 <p className="mt-1 text-xs text-muted-foreground">
                   Same grammar as <code className="font-mono">--select</code> on the CLI: comma-separated, supports <code>id:</code>, <code>name:</code>, <code>tag:</code>, <code>measure:</code>.
                 </p>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium uppercase text-muted-foreground">Agent</label>
+                <select
+                  value={runAgent}
+                  onChange={(event) => setRunAgent(event.target.value)}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                >
+                  <option value="">Use project entrypoint</option>
+                  {agentsList.map((agent) => (
+                    <option key={agent.key} value={agent.key}>
+                      {agent.label}{agent.is_entry ? ' (entrypoint)' : ''}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium uppercase text-muted-foreground">Max Turns</label>
@@ -4706,6 +4779,8 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
   const pushToast = useToastStore((state) => state.pushToast)
   const { data, isLoading, isError, refetch, isFetching } = useEvaluationScenarios(isAvailable)
   const { data: dimensionsData } = useDimensions(isAvailable)
+  const { data: agentsData } = useAgents(isAvailable)
+  const suiteAgentsList = agentsData?.agents ?? []
   const [pendingKey, setPendingKey] = useState<string | null>(null)
   const [selectedSetPath, setSelectedSetPath] = useState<string | null>(null)
   const [runTrigger, setRunTrigger] = useState<ScenarioRunTrigger | null>(null)
@@ -5741,13 +5816,19 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
               </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="mb-1 block text-xs font-medium uppercase text-muted-foreground">Agent Override</label>
-                  <input
+                  <label className="mb-1 block text-xs font-medium uppercase text-muted-foreground">Agent</label>
+                  <select
                     value={suiteAgent}
                     onChange={(event) => setSuiteAgent(event.target.value)}
-                    placeholder="Leave blank for entrypoint"
                     className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
-                  />
+                  >
+                    <option value="">Use project entrypoint</option>
+                    {suiteAgentsList.map((agent) => (
+                      <option key={agent.key} value={agent.key}>
+                        {agent.label}{agent.is_entry ? ' (entrypoint)' : ''}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium uppercase text-muted-foreground">Output Path</label>
