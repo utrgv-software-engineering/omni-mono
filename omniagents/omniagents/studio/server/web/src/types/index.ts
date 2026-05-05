@@ -753,6 +753,7 @@ export interface EvaluationRunSummary {
   passed: number
   failed: number
   workflow_name: string | null
+  agent?: string | null
   per_measure?: Record<string, EvaluationMeasureAggregate>
 }
 

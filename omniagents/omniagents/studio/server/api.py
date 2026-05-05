@@ -2462,6 +2462,7 @@ class EvaluationRunSummaryModel(BaseModel):
     passed: int
     failed: int
     workflow_name: Optional[str] = None
+    agent: Optional[str] = None
     per_measure: Dict[str, EvaluationMeasureAggregateModel] = {}
 
 
@@ -5776,6 +5777,14 @@ def create_api_app(
                 eval_config=eval_cfg,
             )
 
+            # Resolve "use entrypoint" (no agent override) to the actual
+            # entrypoint key so the historical record is unambiguous.
+            resolved_agent = (payload.agent or "").strip() or None
+            if resolved_agent is None:
+                resolved_agent = (
+                    getattr(app.state, "playground_resources", {}) or {}
+                ).get("entry_agent_key")
+
             # Save results using structured storage
             run_metadata = {
                 "id": run_id,
@@ -5783,7 +5792,7 @@ def create_api_app(
                 "finished_at": _utc_now(),
                 "workflow_name": workflow_name,
                 "source_path": str(Path(scenario_set.path).resolve()),
-                "agent": payload.agent,
+                "agent": resolved_agent,
                 "filters": {
                     "select": payload.select,
                     "exclude": payload.exclude,
@@ -5814,6 +5823,7 @@ def create_api_app(
                     "timestamp": run_metadata["created_at"],
                     "path": str(results_path),
                     "workflow_name": workflow_name,
+                    "agent": resolved_agent,
                     "summary": run_metadata["summary"],
                     "source": str(Path(scenario_set.path).resolve().parent.name),
                 },
@@ -7893,6 +7903,7 @@ def create_api_app(
                             passed=summary.get("passed", 0),
                             failed=summary.get("failed", 0),
                             workflow_name=run.get("workflow_name"),
+                            agent=run.get("agent"),
                             per_measure=per_measure,
                         )
                     )

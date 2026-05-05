@@ -58,6 +58,7 @@ def save_evaluation_run(
     data: Dict[str, Any],
     source: str = "cli",
     scenario_name: Optional[str] = None,
+    agent: Optional[str] = None,
 ) -> Path:
     """
     Save evaluation run results with full metadata.
@@ -67,6 +68,10 @@ def save_evaluation_run(
         data: The evaluation results dict with "runs" key
         source: "cli" or "studio"
         scenario_name: Optional name for the scenario set
+        agent: Optional agent key/name this run targeted (e.g. "ai_doc" or
+            "baseline"). When ``None`` or empty, the run hit the project's
+            entrypoint agent. Surfaced by the Studio Results UI so users can
+            tell which agent each historical run was scored against.
 
     Returns:
         Path to the saved results.json file
@@ -102,10 +107,13 @@ def save_evaluation_run(
             else:
                 entry["failed"] += 1
 
+    agent_value = agent.strip() if isinstance(agent, str) and agent.strip() else None
+
     metadata = {
         "source": source,
         "scenario_path": str(scenario_path),
         "scenario_name": scenario_name or scenario_path.stem,
+        "agent": agent_value,
         "started_at": datetime.now().isoformat(),
         "completed_at": datetime.now().isoformat(),
         "total_scenarios": total,
@@ -122,6 +130,7 @@ def save_evaluation_run(
         "timestamp": metadata["completed_at"],
         "path": str(results_path),
         "workflow_name": "",
+        "agent": agent_value,
         "summary": {
             "total_scenarios": total,
             "passed": passed,

@@ -6101,6 +6101,14 @@ function ResultsPanel({
 
   const results = useMemo(() => listData?.results ?? [], [listData])
   const resolvedProjectName = projectName ?? listData?.project ?? null
+  const { data: agentsData } = useAgents(true)
+  const agentLabelByKey = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const a of agentsData?.agents ?? []) {
+      if (a.key) map.set(a.key, a.label || a.key)
+    }
+    return map
+  }, [agentsData])
 
   const formatTimestamp = (ts: string | null | undefined) => {
     if (!ts) return ''
@@ -6208,6 +6216,9 @@ function ResultsPanel({
                     </div>
                   </div>
                   <div className="flex items-center gap-4 text-xs">
+                    <span className="rounded-md border border-border bg-muted/40 px-2 py-0.5 text-foreground">
+                      Agent: {run.agent ? (agentLabelByKey.get(run.agent) ?? run.agent) : <span className="text-muted-foreground italic">unknown</span>}
+                    </span>
                     <span className="text-muted-foreground">
                       {run.total_scenarios} scenarios
                     </span>

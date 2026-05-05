@@ -1786,11 +1786,25 @@ def main():
                         scenario_dir = base_proj / "artifacts" / "eval"
                     # Create a placeholder scenario path for results directory
                     scenario_path = scenario_dir / "scenarios.yml"
+                    # Resolve "no --agent flag" to the actual entrypoint name
+                    # by reading the compiled agent YAML, so historical runs
+                    # are unambiguous about which agent was scored.
+                    _agent_arg = str(getattr(args, "agent", "") or "").strip()
+                    if not _agent_arg:
+                        try:
+                            import yaml as _yaml_mod
+                            _cfg = _yaml_mod.safe_load(
+                                _P(compiled_cfg_path).read_text(encoding="utf-8")
+                            ) or {}
+                            _agent_arg = str(_cfg.get("name") or "").strip()
+                        except Exception:
+                            _agent_arg = ""
                     final_out = save_evaluation_run(
                         scenario_path=scenario_path,
                         data=data,
                         source="cli",
                         scenario_name=name_arg or "default",
+                        agent=_agent_arg or None,
                     )
                     print(f"Wrote results: {final_out}")
                 from omniagents.core.eval.measure_tiers import gates_ci, DEFAULT_TIER
