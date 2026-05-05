@@ -401,6 +401,13 @@ async def _run_scenario(
     # Per-scenario session variables (e.g. additional_instructions).
     # Mirrors the launcher's start_run(variables=...) dispatch.
     _apply_scenario_variables(spec, scenario)
+    # Anchor builtin filesystem tools to the eval invocation's cwd. Without
+    # this, start_run raises WorkspaceRootRequiredError under strict mode
+    # (no default_workspace_root is set on the eval-side AgentService).
+    # Mirrors the judges path in _run_judges.
+    if not isinstance(spec.context, dict):
+        spec.context = {} if spec.context is None else {"_original": spec.context}
+    spec.context.setdefault("workspace_root", os.getcwd())
     try:
         if "max_turns" in defaults:
             spec.max_turns = int(defaults.get("max_turns", spec.max_turns))

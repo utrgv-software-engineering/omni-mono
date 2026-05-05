@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import random
 import re
 from datetime import datetime
@@ -216,7 +217,15 @@ async def _run_generation(
 ) -> List[Dict[str, Any]]:
     from agents import Runner as AgentsRunner
 
-    res = await AgentsRunner.run(agent, prompt, max_turns=max_turns)
+    # Synthetic prompt generator has no tools today, but anchor to cwd
+    # for parity with judges/optimizers — keeps the strict-mode contract
+    # satisfied if a future config adds tools to the generator agent.
+    res = await AgentsRunner.run(
+        agent,
+        prompt,
+        context={"workspace_root": os.getcwd()},
+        max_turns=max_turns,
+    )
     val = getattr(res, "final_output", None)
     try:
         if val is not None and hasattr(val, "model_dump"):

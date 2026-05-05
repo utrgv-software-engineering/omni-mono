@@ -206,6 +206,14 @@ class OmniAgentsAgentAdapter:
 
         spec.get_agent_instructions = _get_instr
 
+        # Anchor builtin filesystem tools to the eval invocation's cwd.
+        # Without this, start_run raises WorkspaceRootRequiredError under
+        # strict mode (no default_workspace_root is set on the eval-side
+        # AgentService). Mirrors the judges path in _run_judges.
+        if not isinstance(spec.context, dict):
+            spec.context = {} if spec.context is None else {"_original": spec.context}
+        spec.context.setdefault("workspace_root", os.getcwd())
+
         agent = await create_unified_agent(spec)
         msgs = [{"role": "user", "content": prompt}]
 

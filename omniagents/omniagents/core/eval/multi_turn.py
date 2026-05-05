@@ -320,12 +320,16 @@ async def run_scenario(
         if "max_turns" in defaults:
             spec.max_turns = int(defaults.get("max_turns", spec.max_turns))
 
+        # Anchor builtin filesystem tools to the eval invocation's cwd.
+        # Without this, start_run raises WorkspaceRootRequiredError under
+        # strict mode (no default_workspace_root is set on the eval-side
+        # AgentService). Mirrors the judges path in _run_judges.
+        if not isinstance(spec.context, dict):
+            spec.context = {} if spec.context is None else {"_original": spec.context}
+        spec.context.setdefault("workspace_root", os.getcwd())
+
         # Inject environment context into spec.context for tools
         if context and context.data:
-            if spec.context is None:
-                spec.context = {}
-            elif not isinstance(spec.context, dict):
-                spec.context = {"_original": spec.context}
             spec.context.update(context.data)
 
             # Set env vars as specified by the environment
