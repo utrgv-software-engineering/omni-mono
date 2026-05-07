@@ -14,8 +14,16 @@ Upgrade the pinned `openai-agents` dependency from `0.4.2` to `0.16.0` (12 minor
 | 4 — Session storage delegation | ⚠️ Partial — scope reduced | `399f491` | +61 −5 |
 | 5a — Server-side SafeAgent removal + needs_approval wiring | ✅ Done | `2f5fc92` | +641 −1116 |
 | 5b/c — RPC wire format + frontend lockstep | ✅ Done | `779c107` | +371 −285 |
-| 5d — Tests for new approval flow | ✅ Done | (this PR) | +tests |
-| 5e — Examples + YAML deprecation warning | ✅ Done | (this PR) | +small |
+| 5d — Tests for new approval flow | ✅ Done | `24bdcaa` | +tests |
+| 5e — Examples + YAML deprecation warning | ✅ Done | `691e65b` | +small |
+| 6 — Tier 1 YAML knobs (max_turns=null, retry_policy, error_handlers, tool_execution, nest_handoff_history) | ✅ Done | `09a98fc` | +275 −10 |
+| 7 — model_provider config + MultiProvider routing | ✅ Done | `0244c94` | +143 −84 |
+| 8 — Lifecycle hooks discovery + apply_patch primitives re-exported | ✅ Done | `6c3f345` | +164 −2 |
+| 9 — OpenAIResponsesCompactionSession adoption + drop context-length retry | ✅ Done | `06a19f7` | +191 −220 |
+| Hosted tools merged | ✅ Done | `3af685e` | +new module + YAML |
+| Session backends merged | ✅ Done | `59c258d` | +new module + extras |
+| MCP resources/approval merged | ✅ Done | `d8c750e` | +617 −0 |
+| 10 — session_backend → Runner.run_streamed(session=...) | ✅ Done | `f195e35` | +9 −1 |
 
 **Total committed so far:** ~670 lines changed across 14 files. Realtime and voice paths verified working on 0.16.0 with no code changes. Default agents now use `gpt-5.2` with `Reasoning(effort="medium")`. Tool-level guardrails (SDK 0.7+) discoverable via the existing `guardrails/` directory and configurable via two new YAML keys. OmniAgents `Session` now satisfies the SDK `Session` protocol so it can be passed to `Runner.run(session=...)` once step 5 wires that up.
 
@@ -276,16 +284,23 @@ Per-step validation is in each step. Cumulative end-state acceptance criteria fo
 
 These are net-new features the audit identified as worth adopting, but are explicitly excluded from this migration to keep scope tight:
 
-- Hosted tools: `WebSearchTool`, `FileSearchTool`, `CodeInterpreterTool`, `ComputerTool`, `ApplyPatchTool`, `LocalShellTool`, `ImageGenerationTool`, `HostedMCPTool`
-- Sandbox agents (0.14.0)
-- `OpenAIResponsesCompactionSession` / context compaction
-- `MultiProvider` and `litellm`/`any-llm` model routing extensions
-- Run error handlers (`RunErrorHandler`, `model_refusal` handler)
-- `responses_websocket_session()` for WebSocket Responses transport
-- New session backends: `SQLAlchemySession`, `RedisSession`, `MongoDBSession`, `EncryptSession`, `DaprSession`
-- MCP resources: `list_resources()`, `read_resource()`
-- `RetryPolicy` exposure in YAML (the SDK's retry runs internally even if not configured)
-- `ApplyPatchEditor` / `apply_diff` primitives
-- `max_turns=None` toggle in YAML schema
+- ~~Hosted tools: `WebSearchTool`, `FileSearchTool`, `CodeInterpreterTool`, `ComputerTool`, `ApplyPatchTool`, `LocalShellTool`, `ImageGenerationTool`, `HostedMCPTool`~~ ✅ Wired in this PR via `omniagents/core/tools/hosted.py`
+- Sandbox agents (0.14.0) — **still deferred** (large surface; deserves its own PR)
+- ~~`OpenAIResponsesCompactionSession` / context compaction~~ ✅ Wired in step 9
+- ~~`MultiProvider` and `litellm`/`any-llm` model routing extensions~~ ✅ Wired in step 7
+- ~~Run error handlers (`RunErrorHandler`, `model_refusal` handler)~~ ✅ Wired in step 6 via `error_handlers:` YAML
+- `responses_websocket_session()` for WebSocket Responses transport — **still deferred** (premature without a use case)
+- ~~New session backends: `SQLAlchemySession`, `RedisSession`, `MongoDBSession`, `EncryptSession`~~ ✅ Wired via `omniagents/core/session/backends.py`. `DaprSession` not wired but trivial to add following the same factory pattern.
+- ~~MCP resources: `list_resources()`, `read_resource()`~~ ✅ Wired via new `mcp.list_resources` / `mcp.read_resource` server functions and MCP-approval flow.
+- ~~`RetryPolicy` exposure in YAML~~ ✅ Wired in step 6 via `retry_policy:` YAML
+- ~~`ApplyPatchEditor` / `apply_diff` primitives~~ ✅ Re-exported from `omniagents.core` in step 8
+- ~~`max_turns=None` toggle in YAML schema~~ ✅ Wired in step 6
 
-A follow-up planning doc should sequence these by user value once the migration lands.
+### Remaining work after this PR
+
+- **Full `Runner.run(session=...)` refactor** — partially done (only when the user opts into `session.compaction` or `session.backend`). The default path still feeds history manually because the SDK-managed path persists at end-of-run via `save_result_to_session`, which loses partial transcripts on cancellation. Collapsing the two paths needs an SDK Session adapter that emits per-event live updates.
+- **Frontend wiring for MCP approval events** — server emits `mcp_approval_requested` / `mcp_approval_resolved` but no first-party frontend handles them yet (workers auto-approve so multi-agent flows don't hang).
+- **`Agent.as_tool()` YAML surface** — could become its own `agent_tools:` block alongside `handoffs:`. Out of scope here to keep this PR reviewable.
+- **`is_enabled` callables on tools/handoffs** — the SDK supports per-tool/per-handoff predicates that overlap with our session-level `safe_tool_overrides` allow-list. Worth a follow-up that consolidates the two patterns.
+- **Sandbox agents** — entire SDK subsystem (manifests, capabilities, multiple providers) still untouched.
+- **Reasoning content replay** — SDK 0.13+ supports replaying reasoning items for adapters like DeepSeek; might fix the two `test_reasoning_pairing.py` failures noted in step 1.
