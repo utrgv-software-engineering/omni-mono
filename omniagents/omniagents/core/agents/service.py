@@ -2188,8 +2188,16 @@ class AgentService(RpcMethodsBase):
                 # ``responses.compact`` when its threshold hook fires.  When
                 # compaction is disabled this is ``None``.
                 _compaction_cfg = getattr(self.spec, "session_compaction_config", None)
+                _explicit_backend = getattr(self.spec, "session_backend", None)
                 sdk_session = None
-                if _compaction_cfg:
+                # Order of precedence:
+                #   1. Spec-supplied SDK ``Session`` backend (e.g. Redis, Mongo,
+                #      EncryptedSession) — already an SDK Session instance.
+                #   2. Compaction wrapper around the OmniAgents Session.
+                #   3. None — legacy manual-history path.
+                if _explicit_backend is not None:
+                    sdk_session = _explicit_backend
+                elif _compaction_cfg:
                     cached = getattr(sess, "_sdk_compaction_session", None)
                     if cached is None:
                         from omniagents.core.session.compaction import (
