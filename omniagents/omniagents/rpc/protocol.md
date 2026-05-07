@@ -440,6 +440,75 @@ The server returns `true` if the approval was matched to a pending request and `
 
 Broadcast to every connected channel for the session as soon as a `tool_approval_response` is accepted. Clients should dismiss any visible approval dialog for the matching `call_id` without taking further action — multiple tabs/voice clients can show the same prompt and the first responder wins.
 
+## MCP Approval Flow
+
+Hosted MCP tools (`HostedMCPTool` from openai-agents 0.16) can request per-call approval through a dedicated event/RPC pair, parallel to the function-tool approval flow above. This keeps the wire format clean: function-tool approvals carry a `call_id` minted by the model, while MCP approvals carry the `request_id` from the `McpApprovalRequest` plus the `server_label` so the UI can attribute the request to the correct hosted MCP server.
+
+When the SDK pauses a run with a `ToolApprovalItem` whose `raw_item` is an `McpApprovalRequest`, the bridge calls `request_mcp_approval` on the server. The server emits `mcp_approval_requested`, awaits an `mcp_approval_response` RPC from the client, applies the decision via `RunState.approve` / `RunState.reject`, and resumes the run.
+
+### mcp_approval_requested (server → client)
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "mcp_approval_requested",
+  "params": {
+    "kind": "mcp",
+    "request_id": "mcp_appr_abc123",
+    "server_label": "my_mcp",
+    "tool_name": "read_file",
+    "arguments": "{\"path\": \"/etc/passwd\"}",
+    "session_id": "sess_123",
+    "run_id": "run_456"
+  }
+}
+```
+
+Notes:
+- `request_id` is the `McpApprovalRequest.id` minted by the model — it must be echoed back in `mcp_approval_response` and is unique per approval prompt.
+- `server_label` is the hosted MCP server label (matches the `server_label` field of the `HostedMCPTool` config).
+- `tool_name` is the MCP tool the model wants to invoke; combined with `server_label` it identifies the operation.
+- `arguments` is the raw argument string the model produced.
+- `kind: "mcp"` is included as a forward-compatible discriminator for clients that want to share rendering code with `tool_approval_requested`. The presence of `request_id` (vs. `call_id`) is also a reliable discriminator.
+- The server queues the event and replays it on reconnect, so a refreshed client sees any still-pending prompt.
+
+### mcp_approval_response (client → server)
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "1",
+  "method": "mcp_approval_response",
+  "params": {
+    "request_id": "mcp_appr_abc123",
+    "decision": "approve",
+    "rejection_message": null
+  }
+}
+```
+
+Fields:
+- `request_id` (string, required): identifier from the matching `mcp_approval_requested` event.
+- `decision` (string, required): `"approve"` or `"reject"`.
+- `rejection_message` (string, optional): when rejecting, the message returned to the model in place of the tool result.
+
+The server returns `true` if the approval was matched to a pending request and `false` otherwise. There is no `always_approve` flag on this path: hosted-MCP approval state is keyed by `(server_label, tool_name)` inside the SDK, and OmniAgents does not currently maintain a session-level always-allow set for hosted MCP tools. Clients that want sticky approvals should re-prompt or implement a client-side cache.
+
+### mcp_approval_resolved (server → client)
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "mcp_approval_resolved",
+  "params": {
+    "request_id": "mcp_appr_abc123",
+    "session_id": "sess_123"
+  }
+}
+```
+
+Broadcast to every connected channel for the session as soon as an `mcp_approval_response` is accepted, mirroring `tool_approval_resolved` for function tools. Clients should dismiss any visible MCP approval dialog for the matching `request_id`.
+
 ## Client Functions (optional)
 
 Client Functions enable server-initiated calls to client-provided capabilities. This allows richer UIs and local integrations (e.g., rendering artifacts, file pickers, status updates) while keeping the server stateless.
@@ -566,6 +635,91 @@ Invoke a named server function with arguments. Returns the function result or a 
 Notes:
 - Functions are registered server-side and may accept optional session context.
 - Most use cases should leverage these generic methods rather than inventing many ad-hoc RPC names.
+
+## MCP Resources
+
+MCP servers configured under the agent's YAML `mcp_servers:` (and exposed as `Agent.mcp_servers` to the SDK) can also surface *resources* in addition to tools. Resources are read-only blobs (files, prompts, structured data) addressed by URI. OmniAgents exposes the SDK's `MCPServer.list_resources()` / `MCPServer.read_resource()` over RPC as the following server functions, dispatched through `server_call`.
+
+Both functions look the server up by the YAML `name` field (the same identifier used in `mcp_servers:`). They require an active session because MCP servers are session-scoped.
+
+### mcp.list_resources
+
+Request:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "1",
+  "method": "server_call",
+  "params": {
+    "function": "mcp.list_resources",
+    "session_id": "sess_123",
+    "args": {
+      "server_name": "my_mcp",
+      "cursor": null
+    }
+  }
+}
+```
+
+Response:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "1",
+  "result": {
+    "server_name": "my_mcp",
+    "resources": [
+      { "uri": "file:///workspace/notes.md", "name": "notes.md", "mimeType": "text/markdown" }
+    ],
+    "next_cursor": null
+  }
+}
+```
+
+Notes:
+- `server_name` (string, required): matches the `name` of an entry in the agent's `mcp_servers:` config.
+- `cursor` (string, optional): opaque pagination cursor returned by a previous call.
+- Resource entries are forwarded from the underlying MCP `ListResourcesResult` via `model_dump`. Shape follows the MCP spec (`uri`, `name`, `mimeType`, optional `description`, etc.); clients should treat unknown fields as opaque.
+- Throws (returns a JSON-RPC error from `server_call`) if the server is unknown, inactive, or the underlying MCP server does not implement `resources/list`.
+
+### mcp.read_resource
+
+Request:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "2",
+  "method": "server_call",
+  "params": {
+    "function": "mcp.read_resource",
+    "session_id": "sess_123",
+    "args": {
+      "server_name": "my_mcp",
+      "uri": "file:///workspace/notes.md"
+    }
+  }
+}
+```
+
+Response:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "2",
+  "result": {
+    "server_name": "my_mcp",
+    "uri": "file:///workspace/notes.md",
+    "contents": [
+      { "uri": "file:///workspace/notes.md", "mimeType": "text/markdown", "text": "# Notes\n..." }
+    ]
+  }
+}
+```
+
+Notes:
+- `server_name` (string, required) and `uri` (string, required): identify the resource on the named server.
+- `contents` mirrors the MCP `ReadResourceResult.contents` array (`text` for textual content, `blob` for base64 binary, plus `uri` and `mimeType`).
+- Throws if the server is unknown / inactive, the URI is not addressable on that server, or the underlying MCP server does not implement `resources/read`.
 
 ## Authentication
 

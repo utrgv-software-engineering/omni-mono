@@ -127,4 +127,15 @@ def map_notification_to_event(method: str, payload: Dict[str, Any]):
         # UI should dismiss any visible prompt for the matching call_id.
         return new_item_event("tool_approval_resolved", payload)
 
+    elif method == "mcp_approval_requested":
+        # Hosted-MCP approval prompt (SDK 0.16+). UI renders the prompt
+        # using ``server_label`` / ``tool_name`` and answers via the
+        # ``mcp_approval_response`` RPC method, echoing ``request_id``.
+        return new_item_event("mcp_approval_requested", payload)
+
+    elif method == "mcp_approval_resolved":
+        # A pending MCP approval was resolved (likely by another channel).
+        # UI should dismiss any visible prompt for the matching request_id.
+        return new_item_event("mcp_approval_resolved", payload)
+
     return None
