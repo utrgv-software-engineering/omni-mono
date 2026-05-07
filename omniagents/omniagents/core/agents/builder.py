@@ -231,7 +231,7 @@ async def _default_build_agent(
 
     # Get core config from spec/settings
     agent_name = spec.name
-    model_name = spec.model_name or settings.get("model_name", "gpt-4o")
+    model_name = spec.model_name or settings.get("model_name", "gpt-5.2")
 
     # Session-level model override
     session_model_config = None
@@ -382,6 +382,17 @@ async def _default_build_agent(
     # If tools are available and tool_choice not explicitly set, default to "auto"
     if tools and "tool_choice" not in model_settings_kwargs:
         model_settings_kwargs["tool_choice"] = "auto"
+
+    # For gpt-5.x reasoning models, the SDK 0.16.0 defaults reasoning.effort to "none".
+    # We default to "medium" instead unless explicitly configured, to preserve quality.
+    if (
+        isinstance(model_name, str)
+        and model_name.startswith("gpt-5")
+        and "reasoning" not in model_settings_kwargs
+    ):
+        from agents.model_settings import Reasoning
+
+        model_settings_kwargs["reasoning"] = Reasoning(effort="medium")
 
     # Create ModelSettings from merged kwargs
     if model_settings_kwargs:

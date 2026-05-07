@@ -227,7 +227,7 @@ def _parse_inline_agent_spec(
     """
     # Get basic agent info
     agent_name = config.get("name", "Inline Agent")
-    model_name = config.get("model", "gpt-4o")
+    model_name = config.get("model", "gpt-5.2")
 
     # Handle instructions
     instructions_func = _load_instructions(config, base_dir)
