@@ -111,7 +111,7 @@ export function App() {
     for (const item of pendingApprovalsRef.current.values()) {
       const itemSession = (item as any).session_id
       if (itemSession && itemSession !== targetSession) continue
-      const exists = base.some(existing => existing.type === 'approval' && (existing as any).request_id === (item as any).request_id)
+      const exists = base.some(existing => existing.type === 'approval' && (existing as any).call_id === (item as any).call_id)
       if (!exists) additions.push(item)
     }
     return additions.length ? [...base, ...additions] : base
@@ -128,7 +128,7 @@ export function App() {
       client.connect()
         .then(async () => {
           setConnected(true)
-        try { await client.clientFunctions(1, [{ name: 'ui.request_tool_approval' }, { name: 'ui.set_status' }, { name: 'ui.add_artifact' }]) } catch {}
+        try { await client.clientFunctions(1, [{ name: 'ui.set_status' }, { name: 'ui.add_artifact' }]) } catch {}
         try {
           const info = await client.getAgentInfo()
           const agentName = normalizeAgentName(String(info?.name || 'OmniAgent'))
@@ -329,28 +329,6 @@ export function App() {
         }
         return
       }
-      if (fn === 'ui.request_tool_approval') {
-        const args = p?.args || {}
-        const request_id = String(p?.request_id ?? '')
-        const tool = String(args?.tool ?? '')
-        const argumentsText = String(args?.arguments ?? '')
-        const metadata = args?.metadata
-        setThinking(false)
-        if (!request_id) {
-          return
-        }
-        const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
-        const approvalItem: MessageItem & { session_id?: string } = { type: 'approval', request_id, tool, argumentsText, metadata, session_id: eventSessionId }
-        pendingApprovalsRef.current.set(request_id, approvalItem)
-        const shouldDisplay = !eventSessionId || !sessionIdRef.current || sessionIdRef.current === eventSessionId
-        if (shouldDisplay) {
-          setItems(prev => {
-            const filtered = prev.filter(it => !(it.type === 'approval' && (it as any).request_id === request_id))
-            return [...filtered, approvalItem]
-          })
-        }
-        return
-      }
       if (fn === 'ui.bash_jobs.update') {
         const request_id = String(p?.request_id ?? '')
         const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
@@ -393,16 +371,41 @@ export function App() {
       }
     })
 
-    const offClientRequestResolved = client.on('client_request_resolved', (p: any) => {
-      const request_id = String(p?.request_id ?? '')
-      if (request_id) {
-        pendingApprovalsRef.current.delete(request_id)
-        setItems(prev => prev.filter(it => !(it.type === 'approval' && (it as any).request_id === request_id)))
+    const offClientRequestResolved = client.on('client_request_resolved', () => {
+      // No-op: tool approvals no longer flow through client_request, so a
+      // client_request resolution carries no approval state for us to
+      // discard. Kept subscribed for future use / generic UI requests.
+    })
+
+    const offToolApprovalRequested = client.on('tool_approval_requested', (p: any) => {
+      const call_id = String(p?.call_id ?? '')
+      const tool = String(p?.tool_name ?? '')
+      const argumentsText = String(p?.arguments ?? '')
+      const metadata = p?.metadata
+      setThinking(false)
+      if (!call_id) return
+      const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
+      const approvalItem: MessageItem & { session_id?: string } = { type: 'approval', call_id, tool, argumentsText, metadata, session_id: eventSessionId }
+      pendingApprovalsRef.current.set(call_id, approvalItem)
+      const shouldDisplay = !eventSessionId || !sessionIdRef.current || sessionIdRef.current === eventSessionId
+      if (shouldDisplay) {
+        setItems(prev => {
+          const filtered = prev.filter(it => !(it.type === 'approval' && (it as any).call_id === call_id))
+          return [...filtered, approvalItem]
+        })
+      }
+    })
+
+    const offToolApprovalResolved = client.on('tool_approval_resolved', (p: any) => {
+      const call_id = String(p?.call_id ?? '')
+      if (call_id) {
+        pendingApprovalsRef.current.delete(call_id)
+        setItems(prev => prev.filter(it => !(it.type === 'approval' && (it as any).call_id === call_id)))
       }
     })
 
     return () => {
-      offMessageOutput(); offRunStarted(); offRunEnd(); offRunStatus(); offClientRequest(); offClientRequestResolved(); offToken(); offToolCalled(); offToolResult()
+      offMessageOutput(); offRunStarted(); offRunEnd(); offRunStatus(); offClientRequest(); offClientRequestResolved(); offToolApprovalRequested(); offToolApprovalResolved(); offToken(); offToolCalled(); offToolResult()
       client.disconnect()
     }
   }, [client, normalizeAgentName, refreshSessions])
@@ -555,19 +558,19 @@ export function App() {
     }
   }, [connected, ui, initialSent, items.length, handleSubmit])
 
-  const handleApprovalDecision = useCallback(async (request_id: string, value: 'yes' | 'always' | 'no') => {
+  const handleApprovalDecision = useCallback(async (call_id: string, value: 'yes' | 'always' | 'no') => {
     const removeApproval = () => {
-      pendingApprovalsRef.current.delete(request_id)
-      setItems(prev => prev.filter(it => !(it.type === 'approval' && (it as any).request_id === request_id)))
+      pendingApprovalsRef.current.delete(call_id)
+      setItems(prev => prev.filter(it => !(it.type === 'approval' && (it as any).call_id === call_id)))
     }
     try {
-      const approved = value !== 'no'
-      const always_approve = value === 'always'
-      await client.clientResponse(request_id, true, { approved, always_approve })
+      const decision = value === 'no' ? 'reject' : 'approve'
+      const alwaysApprove = value === 'always'
+      await client.toolApprovalResponse(call_id, decision, alwaysApprove)
       removeApproval()
       setThinking(true)
     } catch (e) {
-      await client.clientResponse(request_id, false, undefined, { message: String((e as Error)?.message || 'failed') })
+      await client.toolApprovalResponse(call_id, 'reject', false, String((e as Error)?.message || 'failed'))
       removeApproval()
       setThinking(true)
     }

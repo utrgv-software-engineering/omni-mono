@@ -134,6 +134,13 @@ export class RPCClient {
     await this.call('client_response', params)
   }
 
+  async toolApprovalResponse(callId: string, decision: 'approve' | 'reject', alwaysApprove: boolean = false, rejectionMessage?: string): Promise<boolean> {
+    const params: Record<string, unknown> = { call_id: callId, decision }
+    if (alwaysApprove) params.always_approve = true
+    if (rejectionMessage) params.rejection_message = rejectionMessage
+    return this.call('tool_approval_response', params)
+  }
+
   async listServerFunctions(): Promise<Array<{ name: string; description?: string; params_schema?: Record<string, unknown>; result_schema?: Record<string, unknown> }>> {
     return this.call('list_server_functions', {})
   }

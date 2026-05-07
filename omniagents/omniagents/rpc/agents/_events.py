@@ -117,4 +117,14 @@ def map_notification_to_event(method: str, payload: Dict[str, Any]):
         # Payload is passed-through; UI layer should inspect and act.
         return new_item_event("client_request", payload)
 
+    elif method == "tool_approval_requested":
+        # Tool approval prompt — UI layer renders the prompt and answers
+        # via the tool_approval_response RPC method.
+        return new_item_event("tool_approval_requested", payload)
+
+    elif method == "tool_approval_resolved":
+        # A pending approval was resolved (likely by another channel).
+        # UI should dismiss any visible prompt for the matching call_id.
+        return new_item_event("tool_approval_resolved", payload)
+
     return None

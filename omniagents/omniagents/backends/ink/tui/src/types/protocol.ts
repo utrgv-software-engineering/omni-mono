@@ -170,28 +170,45 @@ export interface ClientRequest {
   };
 }
 
-export interface ToolApprovalRequest {
-  function: "ui.request_tool_approval";
-  arguments: {
+// SDK 0.16 tool-approval flow: dedicated event + RPC, not client_request.
+
+export interface ToolApprovalRequestedEvent {
+  jsonrpc: "2.0";
+  method: "tool_approval_requested";
+  params: {
+    call_id: string;
     tool_name: string;
-    tool_arguments: Record<string, unknown>;
+    arguments: string; // raw JSON-encoded argument string from the model
     metadata?: {
-      title?: string;
-      description?: string;
-      fields?: Array<{
-        name: string;
-        value: string;
-        label?: string;
-        type?: string;
-      }>;
-      warning?: string;
+      display_type?: string;
+      summary?: string;
+      preview?: string;
+      [key: string]: unknown;
     };
+    session_id?: string;
+    run_id?: string;
   };
 }
 
-export interface ToolApprovalResponse {
-  approved: boolean;
-  reason?: string;
+export interface ToolApprovalResolvedEvent {
+  jsonrpc: "2.0";
+  method: "tool_approval_resolved";
+  params: {
+    call_id: string;
+    session_id?: string;
+  };
+}
+
+export interface ToolApprovalResponseRequest {
+  jsonrpc: "2.0";
+  id: string | number;
+  method: "tool_approval_response";
+  params: {
+    call_id: string;
+    decision: "approve" | "reject";
+    always_approve?: boolean;
+    rejection_message?: string;
+  };
 }
 
 export interface AddArtifactRequest {

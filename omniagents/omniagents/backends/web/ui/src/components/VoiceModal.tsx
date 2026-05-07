@@ -463,26 +463,22 @@ export function VoiceModal({ isOpen, onClose, sessionId, onSessionCreated }: { i
           })
         }
 
-        if (eventType === 'client_request') {
-          const fn = String(data?.function || '')
-          if (fn === 'ui.request_tool_approval') {
-            const args = data?.args || {}
-            setNotifications(prev => [{
-              id: `ap_${data.request_id || Date.now()}`,
-              type: 'tool_approval' as const,
-              tool: args.tool || 'tool',
-              input: typeof args.arguments === 'string' ? args.arguments : JSON.stringify(args.arguments),
-              request_id: data.request_id,
-              metadata: args.metadata,
-              timestamp: Date.now(),
-            }, ...prev].slice(0, 10))
-          }
+        if (eventType === 'tool_approval_requested') {
+          setNotifications(prev => [{
+            id: `ap_${data.call_id || Date.now()}`,
+            type: 'tool_approval' as const,
+            tool: data.tool_name || 'tool',
+            input: typeof data.arguments === 'string' ? data.arguments : JSON.stringify(data.arguments),
+            call_id: data.call_id,
+            metadata: data.metadata,
+            timestamp: Date.now(),
+          }, ...prev].slice(0, 10))
         }
 
-        if (eventType === 'client_request_resolved') {
-          const reqId = String(data?.request_id || '')
-          if (reqId) {
-            setNotifications(prev => prev.filter(n => n.request_id !== reqId))
+        if (eventType === 'tool_approval_resolved') {
+          const callId = String(data?.call_id || '')
+          if (callId) {
+            setNotifications(prev => prev.filter(n => n.call_id !== callId))
           }
         }
       }
@@ -591,14 +587,14 @@ export function VoiceModal({ isOpen, onClose, sessionId, onSessionCreated }: { i
     }
   }, [isOpen])
 
-  const handleApprove = useCallback((requestId: string) => {
-    clientRef.current?.clientResponse(requestId, true, { approved: true })
-    setNotifications(prev => prev.filter(n => n.request_id !== requestId))
+  const handleApprove = useCallback((callId: string) => {
+    clientRef.current?.toolApprovalResponse(callId, 'approve')
+    setNotifications(prev => prev.filter(n => n.call_id !== callId))
   }, [])
 
-  const handleReject = useCallback((requestId: string) => {
-    clientRef.current?.clientResponse(requestId, true, { approved: false })
-    setNotifications(prev => prev.filter(n => n.request_id !== requestId))
+  const handleReject = useCallback((callId: string) => {
+    clientRef.current?.toolApprovalResponse(callId, 'reject')
+    setNotifications(prev => prev.filter(n => n.call_id !== callId))
   }, [])
 
   const handleDismissNotification = useCallback((id: string) => {

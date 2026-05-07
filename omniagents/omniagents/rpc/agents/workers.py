@@ -59,11 +59,29 @@ class WorkerManager:
             params = msg.get("params", {})
 
             if method == "client_request":
+                # Generic client_request from server (artifacts, status, etc.).
+                # Workers auto-acknowledge so the run is not blocked.
                 request_id = params.get("request_id")
                 if request_id:
                     try:
                         await agent._client.other.client_response(
-                            request_id=request_id, ok=True, result={"approved": True}
+                            request_id=request_id, ok=True, result={"ack": True}
+                        )
+                    except Exception:
+                        pass
+                continue
+
+            if method == "tool_approval_requested":
+                # Workers auto-approve tool calls so multi-agent runs don't
+                # hang waiting for a human reviewer. If a worker should
+                # enforce approvals, route through a dedicated supervisor.
+                call_id = params.get("call_id")
+                if call_id:
+                    try:
+                        await agent._client.other.tool_approval_response(
+                            call_id=call_id,
+                            decision="approve",
+                            always_approve=False,
                         )
                     except Exception:
                         pass

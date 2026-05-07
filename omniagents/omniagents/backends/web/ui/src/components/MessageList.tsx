@@ -35,7 +35,7 @@ export type ToolItem = {
 
 export type ApprovalItem = {
   type: 'approval'
-  request_id: string
+  call_id: string
   tool: string
   argumentsText?: string
   metadata?: any
@@ -45,7 +45,7 @@ export type ApprovalItem = {
 export type MessageItem = ChatMessage | ToolItem | ApprovalItem
 
 export function MessageList({ items, statusText, thinking, statusSpinner, preambleText, welcomeText, onApprovalDecision, statusItalic, onReaction, currentRunId, toolStatusText }:
-  { items: MessageItem[]; statusText?: string; thinking?: boolean; statusSpinner?: boolean; preambleText?: string; welcomeText?: string; onApprovalDecision?: (request_id: string, value: 'yes' | 'always' | 'no') => void; statusItalic?: boolean; onReaction?: (type: 'like' | 'dislike', text?: string) => void; currentRunId?: string; toolStatusText?: string }) {
+  { items: MessageItem[]; statusText?: string; thinking?: boolean; statusSpinner?: boolean; preambleText?: string; welcomeText?: string; onApprovalDecision?: (call_id: string, value: 'yes' | 'always' | 'no') => void; statusItalic?: boolean; onReaction?: (type: 'like' | 'dislike', text?: string) => void; currentRunId?: string; toolStatusText?: string }) {
   const [reactions, setReactions] = useState<Record<number, 'like' | 'dislike' | undefined>>({})
   const [feedbackIndex, setFeedbackIndex] = useState<number | undefined>(undefined)
   const handleReaction = React.useCallback((index: number, type: 'like' | 'dislike') => {
@@ -102,7 +102,7 @@ export function MessageList({ items, statusText, thinking, statusSpinner, preamb
             if (m.type === 'activity_group') return <ActivityGroupComponent key={(m as any).runId + '-' + i} group={m as any} statusText={tickerStatus} />
             if (m.type === 'chat') return <MessageBubble key={i} index={i} role={(m as ChatMessage).role} content={(m as ChatMessage).content} attachments={(m as ChatMessage).attachments} reactions={reactions} onReact={handleReaction} feedbackIndex={feedbackIndex} onFeedbackSubmit={handleFeedbackSubmit} onFeedbackDismiss={handleFeedbackDismiss} />
             if (m.type === 'tool') return <ToolCard key={(m as ToolItem).call_id || i} item={m as ToolItem} />
-            if (m.type === 'approval') return <ApprovalCard key={(m as ApprovalItem).request_id} item={m as ApprovalItem} onDecision={onApprovalDecision} />
+            if (m.type === 'approval') return <ApprovalCard key={(m as ApprovalItem).call_id} item={m as ApprovalItem} onDecision={onApprovalDecision} />
             return null
           })
         )}
@@ -343,7 +343,7 @@ export function ToolCard({ item }: { item: ToolItem }) {
   )
 }
 
-function ApprovalCard({ item, onDecision }: { item: ApprovalItem; onDecision?: (request_id: string, value: 'yes' | 'always' | 'no') => void }) {
+function ApprovalCard({ item, onDecision }: { item: ApprovalItem; onDecision?: (call_id: string, value: 'yes' | 'always' | 'no') => void }) {
   const meta = item.metadata
   const summary = meta && typeof meta === 'object' && typeof meta.summary === 'string' ? meta.summary : ''
   const richBody = renderMetadata(meta, item.argumentsText || '')
@@ -361,9 +361,9 @@ function ApprovalCard({ item, onDecision }: { item: ApprovalItem; onDecision?: (
         ))}
       </div>
       <div className="mt-3 flex gap-2 justify-end">
-        <button className="px-3 py-1.5 text-xs rounded-md border border-errorRed text-errorRed bg-transparent hover:bg-errorRed/20" onClick={() => onDecision && onDecision(item.request_id, 'no')}>Reject</button>
-        <button className="px-3 py-1.5 text-xs rounded-md border border-tweetBlue text-tweetBlue bg-transparent hover:bg-bgColumn" onClick={() => onDecision && onDecision(item.request_id, 'always')}>Always</button>
-        <button className="px-3 py-1.5 text-xs rounded-md bg-tweetBlue hover:brightness-110 text-white" onClick={() => onDecision && onDecision(item.request_id, 'yes')}>Approve Once</button>
+        <button className="px-3 py-1.5 text-xs rounded-md border border-errorRed text-errorRed bg-transparent hover:bg-errorRed/20" onClick={() => onDecision && onDecision(item.call_id, 'no')}>Reject</button>
+        <button className="px-3 py-1.5 text-xs rounded-md border border-tweetBlue text-tweetBlue bg-transparent hover:bg-bgColumn" onClick={() => onDecision && onDecision(item.call_id, 'always')}>Always</button>
+        <button className="px-3 py-1.5 text-xs rounded-md bg-tweetBlue hover:brightness-110 text-white" onClick={() => onDecision && onDecision(item.call_id, 'yes')}>Approve Once</button>
       </div>
     </div>
   )

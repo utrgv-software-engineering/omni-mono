@@ -7,15 +7,14 @@ export interface VoiceNotification {
   input?: string
   output?: string
   call_id?: string
-  request_id?: string
   metadata?: any
   timestamp: number
 }
 
 interface Props {
   notifications: VoiceNotification[]
-  onApprove?: (requestId: string) => void
-  onReject?: (requestId: string) => void
+  onApprove?: (callId: string) => void
+  onReject?: (callId: string) => void
   onDismiss?: (id: string) => void
 }
 
@@ -101,13 +100,13 @@ function NotificationCard({ n, onApprove, onReject, onDismiss }: {
           )}
           <div className="flex gap-2 mt-3">
             <button
-              onClick={(e) => { e.stopPropagation(); onApprove?.(n.request_id!) }}
+              onClick={(e) => { e.stopPropagation(); onApprove?.(n.call_id!) }}
               className="flex-1 text-xs font-medium py-1.5 rounded-lg bg-green-500/20 text-green-400 hover:bg-green-500/30 border border-green-500/20 transition-colors"
             >
               Approve
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); onReject?.(n.request_id!) }}
+              onClick={(e) => { e.stopPropagation(); onReject?.(n.call_id!) }}
               className="flex-1 text-xs font-medium py-1.5 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/20 transition-colors"
             >
               Reject

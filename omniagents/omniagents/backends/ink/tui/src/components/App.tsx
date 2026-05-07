@@ -69,7 +69,7 @@ const ApprovalDialogWrapper = React.memo<{
     // Only re-render if approval actually changed
     if (prev.approval === next.approval) return true;
     if (!prev.approval || !next.approval) return false;
-    return prev.approval.request_id === next.approval.request_id;
+    return prev.approval.call_id === next.approval.call_id;
   },
 );
 

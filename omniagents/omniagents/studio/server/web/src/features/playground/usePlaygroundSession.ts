@@ -303,10 +303,6 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
               name: 'ui.set_status',
               description: 'Override inline status text',
             },
-            {
-              name: 'ui.request_tool_approval',
-              description: 'Prompt the user to approve a tool invocation',
-            },
           ],
         },
       }
@@ -445,68 +441,60 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
               }
               break
             }
+            case 'tool_approval_requested': {
+              const toolName = typeof params.tool_name === 'string' && params.tool_name.trim().length > 0 ? params.tool_name : 'tool'
+              const callId = typeof params.call_id === 'string' && params.call_id.trim().length > 0 ? params.call_id : createId()
+              let argsText = ''
+              const rawArgs = params.arguments
+              if (typeof rawArgs === 'string') {
+                argsText = rawArgs
+              } else if (rawArgs !== undefined) {
+                try {
+                  argsText = JSON.stringify(rawArgs)
+                } catch {
+                  argsText = String(rawArgs)
+                }
+              }
+
+              let metadata: Record<string, unknown> | undefined
+              const rawMetadata = params.metadata as unknown
+              if (rawMetadata && typeof rawMetadata === 'object') {
+                metadata = rawMetadata as Record<string, unknown>
+              }
+
+              dispatch({
+                type: 'append-approval',
+                event: {
+                  id: createId(),
+                  type: 'approval',
+                  approvalId: callId,
+                  requestId: callId,
+                  name: toolName,
+                  arguments: argsText,
+                  metadata,
+                },
+              })
+              dispatch({
+                type: 'status',
+                event: {
+                  id: createId(),
+                  type: 'status',
+                  content: `Approval requested for ${toolName}`,
+                  severity: 'info',
+                },
+              })
+              break
+            }
+            case 'tool_approval_resolved': {
+              // Another channel responded; the playground UI relies on
+              // run_end / new tool_called events to advance state and
+              // does not need to mutate the approval list explicitly here.
+              break
+            }
             case 'client_request': {
               const functionNameRaw = params.function || params.name
               const functionName = typeof functionNameRaw === 'string' ? functionNameRaw.toLowerCase() : ''
               const requestId = typeof params.request_id === 'string' ? params.request_id : undefined
-
-              if (functionName === 'ui.request_tool_approval') {
-                const args = (params.args as Record<string, unknown> | undefined) ?? {}
-                const toolName = typeof args.tool === 'string' && args.tool.trim().length > 0 ? args.tool : 'tool'
-                const approvalSource = (params.approval_id ?? params.approvalId ?? args.approval_id ?? args.approvalId) as
-                  | string
-                  | undefined
-                const approvalId = approvalSource && approvalSource.trim().length > 0 ? approvalSource : createId()
-                let argsText = ''
-                const rawArgs = args.arguments ?? params.arguments
-                if (typeof rawArgs === 'string') {
-                  argsText = rawArgs
-                } else if (rawArgs !== undefined) {
-                  try {
-                    argsText = JSON.stringify(rawArgs)
-                  } catch {
-                    argsText = String(rawArgs)
-                  }
-                }
-
-                let metadata: Record<string, unknown> | undefined
-                const rawMetadata = (params.metadata ?? args.metadata) as unknown
-                if (typeof rawMetadata === 'string') {
-                  try {
-                    const parsed = JSON.parse(rawMetadata)
-                    if (parsed && typeof parsed === 'object') {
-                      metadata = parsed as Record<string, unknown>
-                    }
-                  } catch {
-                    metadata = undefined
-                  }
-                } else if (rawMetadata && typeof rawMetadata === 'object') {
-                  metadata = rawMetadata as Record<string, unknown>
-                }
-
-                dispatch({
-                  type: 'append-approval',
-                  event: {
-                    id: createId(),
-                    type: 'approval',
-                    approvalId,
-                    requestId,
-                    name: toolName,
-                    arguments: argsText,
-                    metadata,
-                  },
-                })
-                dispatch({
-                  type: 'status',
-                  event: {
-                    id: createId(),
-                    type: 'status',
-                    content: `Approval requested for ${toolName}`,
-                    severity: 'info',
-                  },
-                })
-                break
-              }
 
               if (functionName === 'ui.set_status' && params.args && typeof params.args.text === 'string') {
                 dispatch({
@@ -647,32 +635,39 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
         throw new Error('Playground connection is not ready')
       }
       const pendingApproval = state.events.find((event) => event.type === 'approval' && event.approvalId === approvalId)
-      if (!pendingApproval || !pendingApproval.requestId) {
+      if (!pendingApproval) {
         throw new Error('Unknown or expired approval request')
       }
 
-      const resultPayload: Record<string, unknown> = {
-        approved: decision.approved,
+      // Use call_id (stored as approvalId / requestId on the playground
+      // event) as the SDK 0.16 approval identifier.
+      const callId = pendingApproval.requestId || pendingApproval.approvalId
+      if (!callId) {
+        throw new Error('Approval has no call_id')
       }
-      if (decision.alwaysApprove) {
-        resultPayload.always_approve = true
+      const requestPayload: Record<string, unknown> = {
+        call_id: callId,
+        decision: decision.approved ? 'approve' : 'reject',
+      }
+      if (decision.approved && decision.alwaysApprove) {
+        requestPayload.always_approve = true
       }
       if (!decision.approved && decision.errorMessage) {
         const trimmed = decision.errorMessage.trim()
         if (trimmed) {
-          resultPayload.error_message = trimmed
+          requestPayload.rejection_message = trimmed
         }
       }
 
+      requestCounter.current += 1
+      const rpcId = requestCounter.current
+      pendingMethodRef.current.set(rpcId, 'tool_approval_response')
       wsRef.current.send(
         JSON.stringify({
           jsonrpc: '2.0',
-          method: 'client_response',
-          params: {
-            request_id: pendingApproval.requestId,
-            ok: true,
-            result: resultPayload,
-          },
+          id: rpcId,
+          method: 'tool_approval_response',
+          params: requestPayload,
         })
       )
 

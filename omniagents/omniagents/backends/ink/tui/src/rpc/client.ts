@@ -11,8 +11,6 @@ import type {
   ServerEvent,
   ClientRequest,
   WebSocketMessage,
-  ToolApprovalRequest,
-  ToolApprovalResponse,
   SendMessageResponse,
   GetHistoryResponse,
   ListSessionsResponse,
@@ -257,6 +255,28 @@ export class RPCClient extends EventEmitter {
   }
 
   /**
+   * Respond to a tool_approval_requested event (SDK 0.16 interruption flow).
+   */
+  async toolApprovalResponse(
+    callId: string,
+    decision: "approve" | "reject",
+    alwaysApprove: boolean = false,
+    rejectionMessage?: string,
+  ): Promise<boolean> {
+    const params: Record<string, unknown> = {
+      call_id: callId,
+      decision,
+    };
+    if (alwaysApprove) {
+      params.always_approve = true;
+    }
+    if (rejectionMessage) {
+      params.rejection_message = rejectionMessage;
+    }
+    return this.call<boolean>("tool_approval_response", params);
+  }
+
+  /**
    * List available server functions
    */
   async listServerFunctions(): Promise<
@@ -397,6 +417,12 @@ export class RPCClient extends EventEmitter {
       case "run_status":
         this.emit("run_status", event.params);
         break;
+      case "tool_approval_requested":
+        this.emit("tool_approval_requested", event.params);
+        break;
+      case "tool_approval_resolved":
+        this.emit("tool_approval_resolved", event.params);
+        break;
       default:
         this.log("Unknown notification method:", event.method);
     }
@@ -416,7 +442,6 @@ export class RPCClient extends EventEmitter {
       args: Record<string, unknown>;
       session_id?: string;
       run_id?: string;
-      approval_id?: string;
     };
 
     const { request_id, function: funcName, args } = params;
@@ -438,7 +463,6 @@ export class RPCClient extends EventEmitter {
         request_id,
         session_id: params.session_id,
         run_id: params.run_id,
-        approval_id: params.approval_id,
       });
       // Send success response via client_response RPC method
       await this.clientResponse(

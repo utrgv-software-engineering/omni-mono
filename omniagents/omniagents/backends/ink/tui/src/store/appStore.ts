@@ -18,8 +18,7 @@ export interface ToolCallInfo {
 }
 
 export interface ApprovalInfo {
-  approval_id: string;
-  request_id: string;
+  call_id: string;
   tool: string;
   arguments: string;
   metadata?: Record<string, unknown>;

@@ -20,18 +20,8 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
   const { client, sessionId, rpcReady } = options;
   const actions = useActions();
   const batcher = useRef(new EventBatcher()).current;
-  const approvalResolversRef = useRef<
-    Map<
-      string,
-      (value: {
-        approved: boolean;
-        always_approve?: boolean;
-        error_message?: string;
-      }) => void
-    >
-  >(new Map());
   const approvalQueueRef = useRef<ApprovalInfo[]>([]);
-  const currentApprovalRequestIdRef = useRef<string | null>(null);
+  const currentApprovalCallIdRef = useRef<string | null>(null);
 
   // Buffer for messages with superseded tracking
   const messageBufferRef = useRef<Array<{
@@ -359,39 +349,47 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       });
     };
 
-    // TOOL APPROVAL - immediate UI update (no batching, no extra message)
-    const handleApproval = async (args: Record<string, unknown>) => {
+    // TOOL APPROVAL - SDK 0.16 interruption flow.
+    //
+    // The server emits a tool_approval_requested event per pending tool
+    // call. We surface the prompt immediately; the user response is sent
+    // back via the tool_approval_response RPC method (see approveToolCall
+    // below). When another channel (e.g. voice client) approves first, the
+    // server broadcasts tool_approval_resolved so we dismiss the prompt.
+    const handleToolApprovalRequested = (params: Record<string, unknown>) => {
       const approvalInfo: ApprovalInfo = {
-        approval_id: (args.approval_id as string) || "",
-        request_id: (args.request_id as string) || "",
-        tool: (args.tool as string) || "",
-        arguments: (args.arguments as string) || "{}",
-        metadata: args.metadata as Record<string, unknown>,
-        session_id: args.session_id as string,
-        run_id: args.run_id as string,
+        call_id: (params.call_id as string) || "",
+        tool: (params.tool_name as string) || "",
+        arguments: (params.arguments as string) || "{}",
+        metadata: params.metadata as Record<string, unknown>,
+        session_id: params.session_id as string,
+        run_id: params.run_id as string,
       };
+      if (!approvalInfo.call_id) return;
 
-      const requestId =
-        approvalInfo.request_id || `${Date.now()}_${Math.random()}`;
-      approvalInfo.request_id = requestId;
+      approvalQueueRef.current.push(approvalInfo);
 
-      // Return promise that waits for user to approve/deny
-      return new Promise<{
-        approved: boolean;
-        always_approve?: boolean;
-        error_message?: string;
-      }>((resolve) => {
-        approvalResolversRef.current.set(requestId, resolve);
-        approvalQueueRef.current.push(approvalInfo);
-
-        if (!currentApprovalRequestIdRef.current) {
-          const next = approvalQueueRef.current.shift();
-          if (next) {
-            currentApprovalRequestIdRef.current = next.request_id;
-            actions.setApproval(next);
-          }
+      if (!currentApprovalCallIdRef.current) {
+        const next = approvalQueueRef.current.shift();
+        if (next) {
+          currentApprovalCallIdRef.current = next.call_id;
+          actions.setApproval(next);
         }
-      });
+      }
+    };
+
+    const handleToolApprovalResolved = (params: Record<string, unknown>) => {
+      const callId = (params.call_id as string) || "";
+      if (!callId) return;
+      // Drop any queued prompt for this call_id (resolved by another tab)
+      approvalQueueRef.current = approvalQueueRef.current.filter(
+        (a) => a.call_id !== callId,
+      );
+      if (currentApprovalCallIdRef.current === callId) {
+        const next = approvalQueueRef.current.shift() || null;
+        currentApprovalCallIdRef.current = next ? next.call_id : null;
+        actions.setApproval(next);
+      }
     };
 
     // CUSTOM STATUS - NOT batched (needs immediate UI update)
@@ -440,9 +438,10 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     client.on("run_end", handleRunEnd);
     client.on("run_status", handleRunStatus);
     client.on("token", handleTokenUsage);
+    client.on("tool_approval_requested", handleToolApprovalRequested);
+    client.on("tool_approval_resolved", handleToolApprovalResolved);
 
     // Register client functions
-    client.registerClientFunction("ui.request_tool_approval", handleApproval);
     client.registerClientFunction("ui.set_status", handleSetStatus);
     client.registerClientFunction("ui.set_session_state", handleSetSessionState);
     client.registerClientFunction("ui.bash_jobs.update", handleBashJobsUpdate);
@@ -456,9 +455,10 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       client.off("run_end", handleRunEnd);
       client.off("run_status", handleRunStatus);
       client.off("token", handleTokenUsage);
+      client.off("tool_approval_requested", handleToolApprovalRequested);
+      client.off("tool_approval_resolved", handleToolApprovalResolved);
 
       // Cleanup registered client functions
-      client.unregisterClientFunction("ui.request_tool_approval");
       client.unregisterClientFunction("ui.set_status");
       client.unregisterClientFunction("ui.set_session_state");
       client.unregisterClientFunction("ui.bash_jobs.update");
@@ -466,16 +466,14 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, sessionId, rpcReady, batcher]);
 
-  // Return approval handler function
+  // Return approval handler function — sends the user's decision over the
+  // wire and advances to the next queued prompt, if any.
   const approveToolCall = async (approved: boolean, alwaysApprove: boolean) => {
-    const currentRequestId = currentApprovalRequestIdRef.current;
-    if (!currentRequestId) return;
-
-    const resolver = approvalResolversRef.current.get(currentRequestId);
-    if (!resolver) return;
+    const currentCallId = currentApprovalCallIdRef.current;
+    if (!currentCallId || !client) return;
 
     const next = approvalQueueRef.current.shift() || null;
-    currentApprovalRequestIdRef.current = next ? next.request_id : null;
+    currentApprovalCallIdRef.current = next ? next.call_id : null;
 
     // Clear approval and restore thinking state
     // The server will decide via events whether the run continues or stops
@@ -484,17 +482,17 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       actions.setThinking(!next);
     });
 
-    // Resolve the promise that the server is waiting for
-    const result = approved
-      ? { approved: true, always_approve: alwaysApprove }
-      : {
-          approved: false,
-          always_approve: false,
-          error_message: "User rejected tool call",
-        };
-
-    approvalResolversRef.current.delete(currentRequestId);
-    resolver(result);
+    try {
+      await client.toolApprovalResponse(
+        currentCallId,
+        approved ? "approve" : "reject",
+        approved && alwaysApprove,
+        approved ? undefined : "User rejected tool call",
+      );
+    } catch (err) {
+      // Best-effort; if the response fails the server will eventually time
+      // out the future or the run will be cancelled.
+    }
   };
 
   const cancelRun = async (runId: string) => {

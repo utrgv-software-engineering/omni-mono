@@ -33,7 +33,7 @@ This separation allows:
 The protocol supports optional metadata fields for enhanced UI experiences:
 
 ### Tool Approval Metadata
-Tool approval requests are delivered via `client_request` notifications with `function` set to `ui.request_tool_approval`. The `args.metadata` field can contain structured information for rich approval dialogs (diffs, previews, previews, etc.) instead of displaying raw JSON arguments.
+Tool approval requests are delivered via the `tool_approval_requested` event. The `metadata` field can contain structured information for rich approval dialogs (diffs, previews, file info, etc.) instead of displaying raw JSON arguments.
 
 ### Tool Result Metadata  
 The `tool_result` event may include a `metadata` field containing UI-specific data (charts, tables, visualizations) separate from the text output sent to the agent.
@@ -119,8 +119,8 @@ Start a new agent run with the given prompt and optional initial variables.
 - `message_output`: Agent generated text response
 - `run_started`: Run has been scheduled and is now active (contains run_id and session_id)
 - `run_end`: Agent run completed
-
-When tool approval is required, the server emits a `client_request` with `function` `ui.request_tool_approval` instead of a dedicated event.
+- `tool_approval_requested`: A tool call needs human approval before it runs (see Tool Approval Flow below)
+- `tool_approval_resolved`: A pending approval request has been resolved (broadcast to all channels for multi-tab UI dismissal)
 
 ### stop_run(run_id: string)
 Cancel an active agent run.
@@ -370,13 +370,81 @@ Notes:
 - If present, "max_input_tokens" indicates the maximum input context tokens the model can accept. "max_output_tokens" indicates the maximum tokens the model can generate in a single response. Clients can use these to calculate context utilization and warn when approaching limits.
 - The final aggregate usage and last-known model metadata are also included in the run_end event.
 
+## Tool Approval Flow
+
+Tool approvals are first-class events backed by the openai-agents SDK 0.16 interruption model. When a tool's `needs_approval` predicate returns true, the SDK pauses the run and the server emits a `tool_approval_requested` event for each pending tool call. The client responds via the `tool_approval_response` RPC method; the server applies the decision to the SDK `RunState` and resumes the run.
+
+### tool_approval_requested (server → client)
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tool_approval_requested",
+  "params": {
+    "call_id": "call_abc123",
+    "tool_name": "delete_file",
+    "arguments": "{\"path\": \"/important/file.txt\"}",
+    "metadata": {
+      "display_type": "file_delete",
+      "summary": "Delete /important/file.txt",
+      "preview": "This will permanently delete the file"
+    },
+    "session_id": "sess_123",
+    "run_id": "run_456"
+  }
+}
+```
+
+Notes:
+- `call_id` is the tool call identifier minted by the model. It uniquely identifies the pending approval and must be echoed back in `tool_approval_response`.
+- `arguments` is the raw JSON-encoded argument string the model produced.
+- `metadata` is optional and supplied by tools that registered an `@approval_metadata` generator. Clients should fall back to displaying `arguments` when absent.
+- The server queues the event and replays it on reconnect, so a refreshed client sees any still-pending prompt.
+
+### tool_approval_response (client → server)
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "1",
+  "method": "tool_approval_response",
+  "params": {
+    "call_id": "call_abc123",
+    "decision": "approve",
+    "always_approve": false,
+    "rejection_message": null
+  }
+}
+```
+
+Fields:
+- `call_id` (string, required): identifier from the matching `tool_approval_requested` event.
+- `decision` (string, required): `"approve"` or `"reject"`.
+- `always_approve` (bool, optional): when approving, also adds the tool name to the session-level always-allow list so subsequent invocations skip the prompt.
+- `rejection_message` (string, optional): when rejecting, the message returned to the model in place of the tool result. Defaults to a generic rejection if omitted.
+
+The server returns `true` if the approval was matched to a pending request and `false` otherwise (e.g. expired, duplicate, wrong session).
+
+### tool_approval_resolved (server → client)
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tool_approval_resolved",
+  "params": {
+    "call_id": "call_abc123",
+    "session_id": "sess_123"
+  }
+}
+```
+
+Broadcast to every connected channel for the session as soon as a `tool_approval_response` is accepted. Clients should dismiss any visible approval dialog for the matching `call_id` without taking further action — multiple tabs/voice clients can show the same prompt and the first responder wins.
+
 ## Client Functions (optional)
 
-Client Functions enable server-initiated calls to client-provided capabilities. This allows richer UIs and local integrations (e.g., rendering artifacts, file pickers, approval dialogs) while keeping the server stateless.
+Client Functions enable server-initiated calls to client-provided capabilities. This allows richer UIs and local integrations (e.g., rendering artifacts, file pickers, status updates) while keeping the server stateless.
 
-> Tool approvals now flow exclusively through `client_request`/`client_response`. The legacy `tool_approval_response` RPC has been removed.
-
-Tool approvals are implemented using this mechanism, so clients that do not support `ui.request_tool_approval` should auto-approve or fail closed according to their security posture.
+Tool approvals are NOT delivered through `client_request` — they have a dedicated event/RPC pair (see "Tool Approval Flow" above) so they survive reconnection and don't interleave with generic UI requests.
 
 ### client_functions (client → server)
 Optional capability handshake sent by the client after connecting. Declares supported functions.
@@ -418,54 +486,6 @@ Server asks the client to run a function. Clients should execute and respond wit
 Notes:
 - Servers may broadcast to all active channels for the session. Clients should ignore unknown functions or return an error via client_response.
 - Use idempotency_key if the server may replay requests on reconnect.
-- Tool approvals are issued with `function` set to `ui.request_tool_approval`. Clients should render the prompt to the user and respond via `client_response` once a decision is made.
-
-#### Tool approval (`ui.request_tool_approval`)
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "client_request",
-  "params": {
-    "request_id": "approval_req_001",
-    "function": "ui.request_tool_approval",
-    "args": {
-      "tool": "delete_file",
-      "arguments": "{\"path\": \"/important/file.txt\"}",
-      "metadata": {
-        "display_type": "file_delete",
-        "summary": "Delete /important/file.txt",
-        "preview": "This will permanently delete the file",
-        "file_info": {
-          "size": 1024,
-          "modified": "2024-01-01T00:00:00Z"
-        }
-      }
-    },
-    "session_id": "sess_123",
-    "run_id": "run_456"
-  }
-}
-```
-
-Clients answer with `client_response`, including the approval decision:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "client_response",
-  "params": {
-    "request_id": "approval_req_001",
-    "ok": true,
-    "result": {
-      "approved": true,
-      "always_approve": false
-    }
-  }
-}
-```
-
-If the user rejects the request, return `approved: false` and optionally supply `error_message` explaining the rejection. Setting `always_approve: true` instructs the server to mark the tool as trusted for the remainder of the session.
 
 ### client_response (client → server)
 Client responds to a client_request. If multiple clients are connected, any may reply.
