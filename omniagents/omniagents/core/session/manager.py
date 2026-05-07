@@ -117,6 +117,54 @@ class Session:  # noqa: D101
             agent_slug=self._agent_slug,
         )
 
+    # --- openai-agents SDK Session protocol ---
+    # These async methods make Session compatible with agents.memory.Session,
+    # so it can be passed directly to Runner.run(session=...).
+    # They delegate to the existing sync persistence layer.
+
+    @property
+    def session_id(self) -> str:  # SDK Protocol field
+        return self.id
+
+    async def get_items(self, limit: int | None = None) -> list[dict]:
+        """SDK Session protocol: retrieve conversation items.
+
+        Returns the latest *limit* items in chronological order, or all items
+        when *limit* is None.
+        """
+        items = list(self.history)
+        if limit is not None and limit >= 0:
+            items = items[-limit:]
+        return items
+
+    async def add_items(self, items: list[dict]) -> None:
+        """SDK Session protocol: append items to the conversation."""
+        for item in items:
+            # Reuse the sync append_message so existing persistence + repair
+            # logic stays the single source of truth.
+            self.append_message(item)
+
+    async def pop_item(self) -> dict | None:
+        """SDK Session protocol: remove and return the most recent item.
+
+        Note: persistence-layer pop is not currently exposed by history_db,
+        so this only mutates in-memory history. Resumed sessions will see
+        the popped item again. Suitable for SDK-internal rewinds within a
+        single run.
+        """
+        if not self.history:
+            return None
+        return self.history.pop()
+
+    async def clear_session(self) -> None:
+        """SDK Session protocol: clear the in-memory conversation.
+
+        Persistent rows are NOT deleted; use the CLI / archive flow if you
+        need a hard wipe. This matches the existing OmniAgents semantics
+        where archival is a metadata flag rather than a destructive op.
+        """
+        self.history.clear()
+
     def _repair_history_after_unclean_shutdown(self) -> None:
         response_call_ids_in_order: list[str] = []
         response_call_ids_seen: set[str] = set()
@@ -137,8 +185,10 @@ class Session:  # noqa: D101
                     response_outputs_seen.add(call_id)
                 continue
 
-            if isinstance(item_type, str) and item_type.endswith("_call") and not item_type.endswith(
-                "_call_output"
+            if (
+                isinstance(item_type, str)
+                and item_type.endswith("_call")
+                and not item_type.endswith("_call_output")
             ):
                 call_id = item.get("call_id")
                 if (
@@ -174,7 +224,9 @@ class Session:  # noqa: D101
                 continue
 
         missing_responses = [
-            cid for cid in response_call_ids_in_order if cid not in response_outputs_seen
+            cid
+            for cid in response_call_ids_in_order
+            if cid not in response_outputs_seen
         ]
         for call_id in missing_responses:
             self.append_message(
@@ -186,7 +238,9 @@ class Session:  # noqa: D101
             )
 
         missing_chat = [
-            cid for cid in chat_tool_call_ids_in_order if cid not in chat_tool_outputs_seen
+            cid
+            for cid in chat_tool_call_ids_in_order
+            if cid not in chat_tool_outputs_seen
         ]
         for tool_call_id in missing_chat:
             self.append_message(
@@ -245,7 +299,9 @@ class SessionManager:  # noqa: D101
             except Exception:
                 continue
         new_session.context = context if context is not None else source_session.context
-        new_session.variables = variables if variables is not None else source_session.variables
+        new_session.variables = (
+            variables if variables is not None else source_session.variables
+        )
         try:
             self.persist_metadata(
                 new_session,
