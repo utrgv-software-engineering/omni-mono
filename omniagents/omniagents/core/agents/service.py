@@ -2186,7 +2186,12 @@ class AgentService(RpcMethodsBase):
                 # memoise) a wrapper that delegates reads/writes to the
                 # underlying OmniAgents Session and triggers
                 # ``responses.compact`` when its threshold hook fires.  When
-                # compaction is disabled this is ``None``.
+                # neither a compaction wrapper nor an explicit backend is
+                # configured, ``sdk_session`` stays ``None`` and the bridge
+                # falls back to passing the OmniAgents Session itself to
+                # ``Runner.run_streamed`` — the Session already implements
+                # the SDK ``Session`` protocol (``get_items`` / ``add_items``
+                # / ``pop_item`` / ``clear_session``).
                 _compaction_cfg = getattr(self.spec, "session_compaction_config", None)
                 _explicit_backend = getattr(self.spec, "session_backend", None)
                 sdk_session = None
@@ -2194,7 +2199,7 @@ class AgentService(RpcMethodsBase):
                 #   1. Spec-supplied SDK ``Session`` backend (e.g. Redis, Mongo,
                 #      EncryptedSession) — already an SDK Session instance.
                 #   2. Compaction wrapper around the OmniAgents Session.
-                #   3. None — legacy manual-history path.
+                #   3. None — bridge passes the OmniAgents Session directly.
                 if _explicit_backend is not None:
                     sdk_session = _explicit_backend
                 elif _compaction_cfg:
@@ -2511,9 +2516,9 @@ class AgentService(RpcMethodsBase):
 
         await self._replay_live_state(sess, self.channel)
 
-        from omniagents.core.runtime.bridge import _filter_history_for_api
+        from omniagents.core.session.manager import filter_history_for_api
 
-        result = _filter_history_for_api(sess.history)
+        result = filter_history_for_api(sess.history)
         _debug_rpc("get_session_history result", {"history": result})
         return result
 
