@@ -2,9 +2,17 @@ name: Safe Tool Demo (YAML)
 model: gpt-4o
 instructions_file: instructions.md
 welcome_text: "Ask me the time or to flip a coin!"
+# Tool approval is enforced via the SDK 0.16+ interruption model.
+# When use_safe_agent is true, AgentService attaches per-tool
+# `needs_approval` predicates that consult the safe_tool_names /
+# safe_tool_patterns allow lists. A tool requiring approval pauses
+# the run; the client responds via the tool_approval_response RPC.
 use_safe_agent: true
 safe_agent_options:
   skip_approvals: false
+  # NOTE: halt_on_rejection is deprecated and ignored under SDK 0.16+.
+  # Rejected tool calls now return rejection_message to the model rather
+  # than terminating the run. Kept here for forward-compat with old configs.
   halt_on_rejection: true
   safe_tool_names: []
   safe_tool_patterns: []

@@ -41,7 +41,10 @@ def main() -> None:
     runner = Runner.from_agent(
         build_agent(),
         welcome_text="Ask me the time or to flip a coin!",
-        safe=True,  # Enable SafeAgent wrapper
+        # Tool approval is enforced via the SDK 0.16+ interruption model;
+        # `safe=True` wires per-tool needs_approval predicates so each
+        # tool call pauses the run for user confirmation.
+        safe=True,
     )
     runner.main(default_mode="cli")
 

@@ -4,9 +4,49 @@ import re
 import importlib
 import fnmatch
 import sys
+import warnings
 
 from pathlib import Path
 from typing import Dict, Any, List, Callable, Optional, Set
+
+
+_SAFE_AGENT_DEPRECATION_WARNED: Set[str] = set()
+
+
+def _emit_safe_agent_deprecations(safe_options_config: Any, *, source: str) -> None:
+    """Emit one-shot deprecation warnings for SafeAgent-era YAML keys whose
+    semantics changed under the SDK 0.16+ interruption model.
+
+    * ``halt_on_rejection`` is no longer honored: when a tool is rejected
+      the SDK feeds the rejection_message back to the model and lets it
+      decide what to do next (continue with another approach, ask the
+      user, etc). The legacy "halt the entire run" behavior is gone.
+
+    The other keys (``use_safe_agent``, ``safe_tool_names``,
+    ``safe_tool_patterns``, ``skip_approvals``) still work exactly as
+    before — they configure the per-tool ``needs_approval`` predicates
+    that AgentService wires per session.
+    """
+
+    if not isinstance(safe_options_config, dict):
+        return
+    if "halt_on_rejection" not in safe_options_config:
+        return
+    val = safe_options_config.get("halt_on_rejection")
+    # Only warn when the user explicitly opted out of the (former) default.
+    # The default was True, so a literal True isn't worth warning about.
+    if val is False and source not in _SAFE_AGENT_DEPRECATION_WARNED:
+        _SAFE_AGENT_DEPRECATION_WARNED.add(source)
+        warnings.warn(
+            f"safe_agent_options.halt_on_rejection is deprecated and ignored "
+            f"in {source}. Under the SDK 0.16+ interruption model, rejected "
+            f"tool calls return their rejection_message to the model rather "
+            f"than terminating the run. Remove the key to silence this "
+            f"warning.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+
 
 # Core imports
 from omniagents.core.agents.specs import (
@@ -270,6 +310,7 @@ def _parse_inline_agent_spec(
         safe_tool_names=safe_options_config.get("safe_tool_names", []),
         safe_tool_patterns=safe_options_config.get("safe_tool_patterns", []),
     )
+    _emit_safe_agent_deprecations(safe_options_config, source=f"agent '{agent_name}'")
 
     # Derive agent_slug from agent name for inline agents
     inline_agent_slug = agent_name.lower().replace(" ", "_").replace("-", "_")
@@ -1264,6 +1305,7 @@ def load_agent_spec_from_yaml(
         safe_tool_names=safe_options_config.get("safe_tool_names", []),
         safe_tool_patterns=safe_options_config.get("safe_tool_patterns", []),
     )
+    _emit_safe_agent_deprecations(safe_options_config, source=str(config_path))
 
     # Apply project-level safety mode override
     _safety_mode = None

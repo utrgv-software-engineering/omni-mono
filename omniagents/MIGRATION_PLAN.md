@@ -12,7 +12,10 @@ Upgrade the pinned `openai-agents` dependency from `0.4.2` to `0.16.0` (12 minor
 | 2 — Realtime/voice fix (gating) | ✅ Done (no-op) | — | 0 |
 | 3 — Tool decorator cleanup + tool guardrails discovery | ✅ Done | `9c49c53` | +307 −96 |
 | 4 — Session storage delegation | ⚠️ Partial — scope reduced | `399f491` | +61 −5 |
-| 5 — SafeAgent removal + RPC wire format break + frontend lockstep | ⏳ **Pending** | — | (est. 1500–2500) |
+| 5a — Server-side SafeAgent removal + needs_approval wiring | ✅ Done | `2f5fc92` | +641 −1116 |
+| 5b/c — RPC wire format + frontend lockstep | ✅ Done | `779c107` | +371 −285 |
+| 5d — Tests for new approval flow | ✅ Done | (this PR) | +tests |
+| 5e — Examples + YAML deprecation warning | ✅ Done | (this PR) | +small |
 
 **Total committed so far:** ~670 lines changed across 14 files. Realtime and voice paths verified working on 0.16.0 with no code changes. Default agents now use `gpt-5.2` with `Reasoning(effort="medium")`. Tool-level guardrails (SDK 0.7+) discoverable via the existing `guardrails/` directory and configurable via two new YAML keys. OmniAgents `Session` now satisfies the SDK `Session` protocol so it can be passed to `Runner.run(session=...)` once step 5 wires that up.
 
