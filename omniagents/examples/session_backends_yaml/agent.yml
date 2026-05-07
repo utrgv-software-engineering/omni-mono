@@ -1,0 +1,76 @@
+# Example: opt-in SDK-native session backends.
+#
+# OmniAgents ships with its own multi-tenant SQLite session storage out of the
+# box. The `session.backend` block below lets you delegate model-context
+# history to one of the SDK's pluggable backends instead.
+#
+# Pick ONE of the example blocks under `session.backend` (the rest are
+# commented out). Required pip extras are noted next to each.
+#
+# Note: This is currently parsed and stored on the spec but the wiring of
+# the resolved backend into Runner.run_streamed(session=...) is deferred
+# until OmniAgents stops manually feeding session history. See
+# omniagents.core.session.backends for details.
+
+name: Session Backends Demo (YAML)
+model: gpt-4o
+instructions_file: instructions.md
+welcome_text: "Ask me the time or to flip a coin!"
+
+tools:
+  - get_current_time
+  - flip_coin
+
+session:
+  backend:
+    # Default — pass-through to OmniAgents' built-in SQLite storage.
+    # Equivalent to omitting the `session` block entirely.
+    type: sqlite
+
+  # --- Redis (pip install omniagents[session-redis]) ---
+  # backend:
+  #   type: redis
+  #   session_id: user-123
+  #   url: redis://localhost:6379/0
+  #   key_prefix: agents:session
+  #   ttl: 86400
+
+  # --- SQLAlchemy (pip install omniagents[session-sqlalchemy]) ---
+  # Use any SQLAlchemy async URL (postgres+asyncpg, mysql+aiomysql,
+  # sqlite+aiosqlite, ...).
+  # backend:
+  #   type: sqlalchemy
+  #   session_id: user-123
+  #   url: postgresql+asyncpg://app:secret@db.example.com/agents
+  #   create_tables: true
+  #   sessions_table: agent_sessions
+  #   messages_table: agent_messages
+
+  # --- MongoDB (pip install omniagents[session-mongodb]) ---
+  # backend:
+  #   type: mongodb
+  #   session_id: user-123
+  #   uri: mongodb://localhost:27017
+  #   database: agents
+  #   sessions_collection: agent_sessions
+  #   messages_collection: agent_messages
+
+  # --- OpenAI Conversations (no extra required) ---
+  # Persists history server-side via the OpenAI Conversations API. Omit
+  # `conversation_id` to lazily create a new conversation on first call.
+  # backend:
+  #   type: openai_conversations
+  #   conversation_id: conv_abc123
+
+  # --- Encrypted wrapper (pip install omniagents[session-encrypted]) ---
+  # Wraps another backend with Fernet encryption + per-session HKDF key
+  # derivation + TTL-based expiration.
+  # backend:
+  #   type: encrypted
+  #   session_id: user-123
+  #   key: ${SESSION_ENCRYPTION_KEY}
+  #   ttl: 600
+  #   inner:
+  #     type: redis
+  #     session_id: user-123
+  #     url: redis://localhost:6379/0

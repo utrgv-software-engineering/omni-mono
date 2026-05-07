@@ -249,6 +249,17 @@ class AgentSpec:
     run_hooks: Optional[Any] = None
     """SDK ``RunHooks`` instance forwarded to ``Runner.run(...)``."""
 
+    # --- Session Backend (SDK-native, opt-in) ---
+    session_backend: Optional[Any] = None
+    """Pre-built SDK ``Session`` instance for SDK-managed model-context history.
+
+    Resolved from the YAML ``session.backend`` block via
+    :func:`omniagents.core.session.backends.build_session_backend`. ``None``
+    means the default OmniAgents SQLite session storage handles history.
+    Wired to ``Runner.run_streamed(session=...)`` in the Phase 3 refactor.
+    """
+
+
     # --- Tracing Configuration ---
     tracing_config: Optional[Dict[str, Any]] = None
 
