@@ -24,6 +24,10 @@ Upgrade the pinned `openai-agents` dependency from `0.4.2` to `0.16.0` (12 minor
 | Session backends merged | ✅ Done | `59c258d` | +new module + extras |
 | MCP resources/approval merged | ✅ Done | `d8c750e` | +617 −0 |
 | 10 — session_backend → Runner.run_streamed(session=...) | ✅ Done | `f195e35` | +9 −1 |
+| 12 — Sandbox agents (SandboxAgent + manifests + capabilities + 9 client types) | ✅ Done | `fd12f31` | +771 −0 |
+| 13 — Smaller bundle: agent_tools, is_enabled, websocket session, reasoning replay | ✅ Done | `488fbc1` | +795 −44 |
+| 14 — Frontend MCP approval wiring (web + Ink + Studio) | ✅ Done | `7adec3d` | +787 −90 |
+| 15 — Collapse manual/SDK history fork; single Runner.run(session=...) path | ✅ Done | `(this commit)` | +1109 −993 |
 
 **Total committed so far:** ~670 lines changed across 14 files. Realtime and voice paths verified working on 0.16.0 with no code changes. Default agents now use `gpt-5.2` with `Reasoning(effort="medium")`. Tool-level guardrails (SDK 0.7+) discoverable via the existing `guardrails/` directory and configurable via two new YAML keys. OmniAgents `Session` now satisfies the SDK `Session` protocol so it can be passed to `Runner.run(session=...)` once step 5 wires that up.
 
@@ -298,9 +302,12 @@ These are net-new features the audit identified as worth adopting, but are expli
 
 ### Remaining work after this PR
 
-- **Full `Runner.run(session=...)` refactor** — partially done (only when the user opts into `session.compaction` or `session.backend`). The default path still feeds history manually because the SDK-managed path persists at end-of-run via `save_result_to_session`, which loses partial transcripts on cancellation. Collapsing the two paths needs an SDK Session adapter that emits per-event live updates.
-- **Frontend wiring for MCP approval events** — server emits `mcp_approval_requested` / `mcp_approval_resolved` but no first-party frontend handles them yet (workers auto-approve so multi-agent flows don't hang).
-- **`Agent.as_tool()` YAML surface** — could become its own `agent_tools:` block alongside `handoffs:`. Out of scope here to keep this PR reviewable.
-- **`is_enabled` callables on tools/handoffs** — the SDK supports per-tool/per-handoff predicates that overlap with our session-level `safe_tool_overrides` allow-list. Worth a follow-up that consolidates the two patterns.
-- **Sandbox agents** — entire SDK subsystem (manifests, capabilities, multiple providers) still untouched.
-- **Reasoning content replay** — SDK 0.13+ supports replaying reasoning items for adapters like DeepSeek; might fix the two `test_reasoning_pairing.py` failures noted in step 1.
+All deferred items have now been wired up in steps 12–15 of this PR:
+
+- ~~**Full `Runner.run(session=...)` refactor**~~ ✅ Step 15 — bridge collapsed to a single SDK-managed path; filter/strip helpers moved into `Session.get_items()`; cancellation buffer in bridge flushes any streamed-but-unpersisted items so live updates survive.
+- ~~**Frontend wiring for MCP approval events**~~ ✅ Step 14 — web React, Ink TUI, and Studio all render MCP approval prompts and POST `mcp_approval_response`.
+- ~~**`Agent.as_tool()` YAML surface**~~ ✅ Step 13 — `agent_tools:` block analogous to `handoffs:`, supports inline + external YAML refs, name/description/is_enabled/needs_approval/max_turns overrides.
+- ~~**`is_enabled` callables on tools/handoffs**~~ ✅ Step 13 — new `omniagents/core/predicates/` discovery layer + `@is_enabled_predicate` decorator; resolvable via name from project `predicates/` dir or dotted-path import. Applied to function tools, handoffs, and agent_tools.
+- ~~**Sandbox agents**~~ ✅ Step 12 — `sandbox:` YAML block with all SDK clients (`unix_local`, `docker`, `e2b`, `modal`, `runloop`, `daytona`, `blaxel`, `vercel`, `cloudflare`), all capabilities, and the full manifest entry surface. New `core/sandbox/` factory module + spec fields + builder/RunConfig wiring.
+- ~~**Reasoning content replay**~~ ✅ Step 13 — `model_provider.reasoning_content_replay` opt-in with a `_ReasoningReplayProvider` wrapper that attaches `should_replay_reasoning_content` to chat-completions / litellm models. (Confirmed: it does NOT fix the two `TestOrphanedReasoningHandling` flakes — those are about persistence behavior, unrelated to the converter-time replay hook.)
+- ~~**`responses_websocket_session()` for WebSocket Responses transport**~~ ✅ Step 13 — `model_provider.use_responses_websocket: true` + `websocket_options` flow through `OpenAIProvider` / `MultiProvider` constructors. The explicit `responses_websocket_session()` async-context-manager helper is intentionally not used (the long-lived `OpenAIProvider`'s internal cache keeps the WS connection warm anyway).
