@@ -70,3 +70,32 @@ except Exception:
     tool_input_guardrail = None  # type: ignore
     tool_output_guardrail = None  # type: ignore
     ToolGuardrailFunctionOutput = None  # type: ignore
+
+# Re-export SDK apply_patch primitives so user code building file-edit
+# tools can hand-roll an editor without importing from agents.* directly.
+try:
+    from agents.editor import (  # type: ignore
+        ApplyPatchEditor,
+        ApplyPatchOperation,
+        ApplyPatchResult,
+    )
+    from agents.apply_diff import apply_diff  # type: ignore
+except Exception:
+    ApplyPatchEditor = None  # type: ignore
+    ApplyPatchOperation = None  # type: ignore
+    ApplyPatchResult = None  # type: ignore
+    apply_diff = None  # type: ignore
+
+# Re-export SDK lifecycle hook base classes for user subclassing.
+try:
+    from agents.lifecycle import (  # type: ignore
+        AgentHooks,
+        AgentHooksBase,
+        RunHooks,
+        RunHooksBase,
+    )
+except Exception:
+    AgentHooks = None  # type: ignore
+    AgentHooksBase = None  # type: ignore
+    RunHooks = None  # type: ignore
+    RunHooksBase = None  # type: ignore

@@ -494,6 +494,7 @@ async def stream_agent(
     nest_handoff_history: bool = False,
     tool_execution_config: Optional[Any] = None,
     error_handlers: Optional[dict] = None,
+    run_hooks: Optional[Any] = None,
 ) -> dict | None:  # noqa: D401
     """Drive agent.run_streamed and forward events to *rpc_channel*.
 
@@ -693,6 +694,8 @@ async def stream_agent(
             }
             if error_handlers:
                 run_kwargs["error_handlers"] = error_handlers
+            if run_hooks is not None:
+                run_kwargs["hooks"] = run_hooks
             result = _Runner.run_streamed(agent, run_input, **run_kwargs)
             session.current_stream_result = result
 
@@ -1042,6 +1045,7 @@ async def stream_agent(
                             nest_handoff_history=nest_handoff_history,
                             tool_execution_config=tool_execution_config,
                             error_handlers=error_handlers,
+                            run_hooks=run_hooks,
                         )
             except Exception:
                 pass

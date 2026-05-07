@@ -470,7 +470,7 @@ async def _default_build_agent(
             logger.debug(f"Using session reasoning effort: {session_reasoning}")
 
     # Build the agent
-    base_agent = Agent(
+    agent_kwargs: Dict[str, Any] = dict(
         name=agent_name,
         instructions=instructions,
         tools=tools,
@@ -478,7 +478,7 @@ async def _default_build_agent(
         model_settings=model_settings,
         mcp_servers=mcp_servers_list,
         mcp_config=mcp_config,
-        handoffs=handoffs,  # Add handoffs here
+        handoffs=handoffs,
         handoff_description=handoff_description,
         reset_tool_choice=reset_tool_choice,
         tool_use_behavior=tool_use_behavior,
@@ -487,5 +487,9 @@ async def _default_build_agent(
         input_guardrails=input_guardrails,
         output_guardrails=output_guardrails,
     )
+    if getattr(spec, "agent_hooks", None) is not None:
+        agent_kwargs["hooks"] = spec.agent_hooks
+
+    base_agent = Agent(**agent_kwargs)
 
     return base_agent

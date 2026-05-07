@@ -1575,6 +1575,40 @@ def load_agent_spec_from_yaml(
         print("Warning: 'model_provider' must be a dict. Ignoring.")
         model_provider_raw = None
 
+    # SDK lifecycle hooks (RunHooks / AgentHooks). Discover from
+    # ``lifecycle_hooks/`` subdirectory and pick by name from YAML.
+    agent_hooks_obj: Optional[Any] = None
+    run_hooks_obj: Optional[Any] = None
+    if not remote_ws_url:
+        try:
+            from omniagents.core.lifecycle_hooks.discovery import (
+                discover_lifecycle_hooks_in_dir,
+            )
+
+            lifecycle_hooks_dir = (base_dir / "lifecycle_hooks").resolve()
+            run_hooks_map: Dict[str, Any] = {}
+            agent_hooks_map: Dict[str, Any] = {}
+            if lifecycle_hooks_dir.is_dir():
+                run_hooks_map, agent_hooks_map = discover_lifecycle_hooks_in_dir(
+                    str(lifecycle_hooks_dir)
+                )
+            requested_agent_hook = config.get("agent_hooks")
+            requested_run_hook = config.get("run_hooks")
+            if isinstance(requested_agent_hook, str):
+                agent_hooks_obj = agent_hooks_map.get(requested_agent_hook)
+                if agent_hooks_obj is None:
+                    print(
+                        f"Warning: agent_hooks '{requested_agent_hook}' not found in lifecycle_hooks/. Ignoring."
+                    )
+            if isinstance(requested_run_hook, str):
+                run_hooks_obj = run_hooks_map.get(requested_run_hook)
+                if run_hooks_obj is None:
+                    print(
+                        f"Warning: run_hooks '{requested_run_hook}' not found in lifecycle_hooks/. Ignoring."
+                    )
+        except Exception as e:
+            print(f"Warning: lifecycle hook discovery failed: {e}. Ignoring.")
+
     # retry_policy: coerce to ModelRetrySettings stored on spec.retry_settings.
     retry_policy_raw = config.get("retry_policy") or None
     if retry_policy_raw is not None and not isinstance(retry_policy_raw, dict):
@@ -1633,6 +1667,8 @@ def load_agent_spec_from_yaml(
         error_handlers=error_handlers_cfg,
         retry_settings=(retry_settings_cfg if retry_settings_cfg is not None else None),
         model_provider_config=model_provider_raw,
+        agent_hooks=agent_hooks_obj,
+        run_hooks=run_hooks_obj,
         # Tracing Config
         tracing_config=tracing_config,
         # MCP Config

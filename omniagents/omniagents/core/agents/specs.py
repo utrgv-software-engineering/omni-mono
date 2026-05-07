@@ -243,6 +243,12 @@ class AgentSpec:
     ``any-llm/...``, ``openai/...``) automatically.
     """
 
+    agent_hooks: Optional[Any] = None
+    """SDK ``AgentHooks`` instance assigned to ``Agent.hooks``."""
+
+    run_hooks: Optional[Any] = None
+    """SDK ``RunHooks`` instance forwarded to ``Runner.run(...)``."""
+
     # --- Tracing Configuration ---
     tracing_config: Optional[Dict[str, Any]] = None
 

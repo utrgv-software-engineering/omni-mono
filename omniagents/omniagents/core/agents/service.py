@@ -1861,6 +1861,7 @@ class AgentService(RpcMethodsBase):
                                 self.spec, "tool_execution_config", None
                             ),
                             error_handlers=getattr(self.spec, "error_handlers", None),
+                            run_hooks=getattr(self.spec, "run_hooks", None),
                         )
                         end_reason = sess.cancel_end_reason or "completed"
                         error_info = None
