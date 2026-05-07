@@ -237,15 +237,24 @@ def load_project(project_path: str) -> ProjectContext:
 
     in_guard: Dict[str, Any] = {}
     out_guard: Dict[str, Any] = {}
+    tool_in_guard: Dict[str, Any] = {}
+    tool_out_guard: Dict[str, Any] = {}
     for d in guardrails_dirs:
         if d.is_dir():
             try:
-                di, do = discover_guardrails_in_dir(str(d))
+                di, do, ti, to = discover_guardrails_in_dir(str(d))
                 in_guard.update(di)
                 out_guard.update(do)
+                tool_in_guard.update(ti)
+                tool_out_guard.update(to)
             except Exception:
                 pass
-    guardrails_registry = {"input": in_guard, "output": out_guard}
+    guardrails_registry = {
+        "input": in_guard,
+        "output": out_guard,
+        "tool_input": tool_in_guard,
+        "tool_output": tool_out_guard,
+    }
 
     server_functions_registry: Dict[str, Any] = {}
     for d in server_functions_dirs:
@@ -267,9 +276,7 @@ def load_project(project_path: str) -> ProjectContext:
 
     # MCP allowlist overrides user MCP permission
     if security.mcp_require_allowlist and allow_user_mcp:
-        print(
-            "Security: mcp_require_allowlist is enabled — disabling user MCP servers"
-        )
+        print("Security: mcp_require_allowlist is enabled — disabling user MCP servers")
         allow_user_mcp = False
 
     user_mcp_configs: List[Any] = []

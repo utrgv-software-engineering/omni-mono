@@ -26,32 +26,14 @@ def reset_approval_registry():
         registry.update(snapshot)
 
 
-def test_wrap_sync_function_creates_async_wrapper():
-    def add(a, b=1):
-        return a + b
-
-    wrapped, was_wrapped = discovery._wrap_sync_function(add)
-    assert was_wrapped is True
-    assert inspect.iscoroutinefunction(wrapped)
-    assert inspect.signature(wrapped) == inspect.signature(add)
-    assert asyncio.run(wrapped(2, b=3)) == 5
-
-
-def test_wrap_sync_function_leaves_coroutine_unchanged():
-    async def add(a):
-        return a * 2
-
-    wrapped, was_wrapped = discovery._wrap_sync_function(add)
-    assert wrapped is add
-    assert was_wrapped is False
-
-
-def test_function_tool_marks_and_invokes_sync_function():
+def test_function_tool_marks_sync_function():
     tool = discovery.function_tool(client_status="Running")(lambda name: f"hi {name}")
     assert getattr(tool, "_is_omniagents_core_tool", False) is True
     assert getattr(tool, "_client_status_text", None) == "Running"
-    result = asyncio.run(tool.on_invoke_tool(None, json.dumps({"name": "Ada"})))
-    assert result == "hi Ada"
+    # SDK 0.16+ handles sync->async natively via asyncio.to_thread; the
+    # original function is captured for direct invocation (used by training).
+    assert getattr(tool, "_original_func", None) is not None
+    assert tool._original_func("Ada") == "hi Ada"
 
 
 def test_function_tool_client_status_str_error():

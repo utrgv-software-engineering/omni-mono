@@ -249,7 +249,9 @@ def _filter_history_for_api(history: list[dict]) -> list[dict]:
                     ):
                         function_calls.append(next_item)
                         j += 1
-                    elif isinstance(next_type, str) and next_type.endswith("_call_output"):
+                    elif isinstance(next_type, str) and next_type.endswith(
+                        "_call_output"
+                    ):
                         interleaved_outputs.append((j, next_item))
                         j += 1
                     else:
@@ -536,7 +538,7 @@ async def stream_agent(
             try:
                 # Use run_coroutine_threadsafe because the callback may be
                 # invoked from a worker thread (sync tools run via
-                # asyncio.to_thread in _wrap_sync_function).
+                # asyncio.to_thread in the SDK's function_tool wrapper).
                 asyncio.run_coroutine_threadsafe(
                     _send_artifact(
                         {
@@ -973,6 +975,7 @@ async def stream_agent(
             Debug.log(f"[srv] ✗ API Error body={e.body} type={e.type} code={e.code}")
 
         import traceback
+
         Debug.log(f"[srv] ✗ Traceback:\n{traceback.format_exc()}")
 
         logger.error(

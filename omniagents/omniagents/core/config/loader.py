@@ -727,9 +727,7 @@ def load_agent_spec_from_yaml(
         voice_backend = "realtime"
     voice_backend = voice_backend.strip().lower() or "realtime"
     if voice_backend not in {"realtime", "pipeline"}:
-        print(
-            f"Warning: Invalid voice_backend '{voice_backend}'. Using 'realtime'."
-        )
+        print(f"Warning: Invalid voice_backend '{voice_backend}'. Using 'realtime'.")
         voice_backend = "realtime"
 
     realtime_settings = None
@@ -809,7 +807,9 @@ def load_agent_spec_from_yaml(
     if tool_registry is not None:
         try:
             all_discovered_functions.update(tool_registry)
-            Debug.log(f"Using project tool registry with {len(all_discovered_functions)} tools")
+            Debug.log(
+                f"Using project tool registry with {len(all_discovered_functions)} tools"
+            )
         except Exception:
             pass
     else:
@@ -915,7 +915,9 @@ def load_agent_spec_from_yaml(
         if server_functions_registry is not None:
             try:
                 discovered_server_functions.update(server_functions_registry)
-                Debug.log(f"Using project server functions registry with {len(discovered_server_functions)} functions")
+                Debug.log(
+                    f"Using project server functions registry with {len(discovered_server_functions)} functions"
+                )
             except Exception:
                 pass
         else:
@@ -924,7 +926,9 @@ def load_agent_spec_from_yaml(
                 discovered_server_functions = discover_server_functions_in_dir(
                     str(server_functions_dir)
                 )
-                Debug.log(f"Discovered server functions from 'server_functions' subdirectory: {server_functions_dir}")
+                Debug.log(
+                    f"Discovered server functions from 'server_functions' subdirectory: {server_functions_dir}"
+                )
             additional_sf_dirs = config.get("additional_server_functions_dirs", [])
             if not isinstance(additional_sf_dirs, list):
                 print(
@@ -936,7 +940,9 @@ def load_agent_spec_from_yaml(
                 if add_dir_path.is_dir():
                     extra = discover_server_functions_in_dir(str(add_dir_path))
                     discovered_server_functions.update(extra)
-                    Debug.log(f"Discovered additional server functions from: {add_dir_path}")
+                    Debug.log(
+                        f"Discovered additional server functions from: {add_dir_path}"
+                    )
                 else:
                     try:
                         display_path = add_dir_path.relative_to(Path.cwd())
@@ -990,7 +996,9 @@ def load_agent_spec_from_yaml(
             discovered_runtime_hooks = discover_runtime_hooks_in_dir(
                 str(runtime_hooks_dir)
             )
-            Debug.log(f"Discovered runtime hooks from 'runtime_hooks' subdirectory: {runtime_hooks_dir}")
+            Debug.log(
+                f"Discovered runtime hooks from 'runtime_hooks' subdirectory: {runtime_hooks_dir}"
+            )
 
         rh_cfg = config.get("runtime_hooks", None)
         if rh_cfg is None:
@@ -1026,26 +1034,51 @@ def load_agent_spec_from_yaml(
     # Check the 'guardrails' subdirectory for guardrail definitions
     input_guardrails_list = []
     output_guardrails_list = []
+    tool_input_guardrails_list = []
+    tool_output_guardrails_list = []
 
     if not remote_ws_url:  # Only discover guardrails for local agents
         if guardrails_registry is not None:
             discovered_input = dict((guardrails_registry.get("input") or {}))
             discovered_output = dict((guardrails_registry.get("output") or {}))
-            Debug.log(f"Using project guardrails registry: input={len(discovered_input)} output={len(discovered_output)}")
+            discovered_tool_input = dict((guardrails_registry.get("tool_input") or {}))
+            discovered_tool_output = dict(
+                (guardrails_registry.get("tool_output") or {})
+            )
+            Debug.log(
+                f"Using project guardrails registry: input={len(discovered_input)} "
+                f"output={len(discovered_output)} tool_input={len(discovered_tool_input)} "
+                f"tool_output={len(discovered_tool_output)}"
+            )
         else:
             guardrails_dir_path = (base_dir / "guardrails").resolve()
             if guardrails_dir_path.is_dir():
-                # Discover guardrails
-                discovered_input, discovered_output = discover_guardrails_in_dir(
-                    str(guardrails_dir_path)
+                # Discover guardrails (agent-level + tool-level)
+                (
+                    discovered_input,
+                    discovered_output,
+                    discovered_tool_input,
+                    discovered_tool_output,
+                ) = discover_guardrails_in_dir(str(guardrails_dir_path))
+                Debug.log(
+                    f"Discovered guardrails from 'guardrails' subdirectory: {guardrails_dir_path}"
                 )
-                Debug.log(f"Discovered guardrails from 'guardrails' subdirectory: {guardrails_dir_path}")
                 Debug.log(f"  Input guardrails: {list(discovered_input.keys())}")
                 Debug.log(f"  Output guardrails: {list(discovered_output.keys())}")
+                Debug.log(
+                    f"  Tool input guardrails: {list(discovered_tool_input.keys())}"
+                )
+                Debug.log(
+                    f"  Tool output guardrails: {list(discovered_tool_output.keys())}"
+                )
             else:
                 discovered_input = {}
                 discovered_output = {}
-                Debug.log(f"No 'guardrails' subdirectory found at {guardrails_dir_path}")
+                discovered_tool_input = {}
+                discovered_tool_output = {}
+                Debug.log(
+                    f"No 'guardrails' subdirectory found at {guardrails_dir_path}"
+                )
 
         # Process input guardrails from config
         input_guardrail_names = config.get("input_guardrails", [])
@@ -1087,10 +1120,50 @@ def load_agent_spec_from_yaml(
                 f"Warning: The following output guardrails listed in '{config_path}' were not found: {', '.join(missing_output_guardrails)}"
             )
 
+        # Process tool-level input guardrails from config (SDK 0.7+)
+        tool_input_guardrail_names = config.get("tool_input_guardrails", [])
+        if not isinstance(tool_input_guardrail_names, list):
+            print(
+                f"Warning: 'tool_input_guardrails' key in {config_path} should be a list of guardrail names. Ignoring."
+            )
+            tool_input_guardrail_names = []
+
+        missing_tool_input = []
+        for guardrail_name in tool_input_guardrail_names:
+            if guardrail_name in discovered_tool_input:
+                tool_input_guardrails_list.append(discovered_tool_input[guardrail_name])
+            else:
+                missing_tool_input.append(guardrail_name)
+        if missing_tool_input:
+            print(
+                f"Warning: The following tool input guardrails listed in '{config_path}' were not found: {', '.join(missing_tool_input)}"
+            )
+
+        # Process tool-level output guardrails from config (SDK 0.7+)
+        tool_output_guardrail_names = config.get("tool_output_guardrails", [])
+        if not isinstance(tool_output_guardrail_names, list):
+            print(
+                f"Warning: 'tool_output_guardrails' key in {config_path} should be a list of guardrail names. Ignoring."
+            )
+            tool_output_guardrail_names = []
+
+        missing_tool_output = []
+        for guardrail_name in tool_output_guardrail_names:
+            if guardrail_name in discovered_tool_output:
+                tool_output_guardrails_list.append(
+                    discovered_tool_output[guardrail_name]
+                )
+            else:
+                missing_tool_output.append(guardrail_name)
+        if missing_tool_output:
+            print(
+                f"Warning: The following tool output guardrails listed in '{config_path}' were not found: {', '.join(missing_tool_output)}"
+            )
+
     # --- Content Scanner Guardrails (auto-injected from security providers) ---
     if project_defaults and isinstance(project_defaults.get("security"), dict):
-        scanner_cfg = (
-            (project_defaults["security"].get("providers") or {}).get("content_scanner")
+        scanner_cfg = (project_defaults["security"].get("providers") or {}).get(
+            "content_scanner"
         )
         if scanner_cfg and scanner_cfg.get("type", "none") != "none":
             try:
@@ -1339,10 +1412,14 @@ def load_agent_spec_from_yaml(
     if model_config_resolver_name:
         model_config_resolvers = discover_model_config_resolvers(base_dir)
         if model_config_resolver_name in model_config_resolvers:
-            model_config_resolver_func = model_config_resolvers[model_config_resolver_name]
+            model_config_resolver_func = model_config_resolvers[
+                model_config_resolver_name
+            ]
             Debug.log(f"Using model config resolver: {model_config_resolver_name}")
         else:
-            available = list(model_config_resolvers.keys()) if model_config_resolvers else []
+            available = (
+                list(model_config_resolvers.keys()) if model_config_resolvers else []
+            )
             print(
                 f"Warning: Model config resolver '{model_config_resolver_name}' not found in {base_dir}. "
                 f"Available: {available}"
@@ -1356,7 +1433,9 @@ def load_agent_spec_from_yaml(
             realtime_settings_resolver_func = realtime_settings_resolvers[
                 realtime_settings_resolver_name
             ]
-            Debug.log(f"Using realtime settings resolver: {realtime_settings_resolver_name}")
+            Debug.log(
+                f"Using realtime settings resolver: {realtime_settings_resolver_name}"
+            )
         else:
             available = (
                 list(realtime_settings_resolvers.keys())
@@ -1426,6 +1505,8 @@ def load_agent_spec_from_yaml(
         # Guardrails
         input_guardrails=input_guardrails_list,
         output_guardrails=output_guardrails_list,
+        tool_input_guardrails=tool_input_guardrails_list,
+        tool_output_guardrails=tool_output_guardrails_list,
         # Agent Safety Config
         use_safe_agent=use_safe,
         safe_agent_options=safe_options,

@@ -44,14 +44,19 @@ def _apply_tool_timeouts(tools: List[Any], timeouts: Dict[str, Any]) -> List[Any
         def _make_timed_invoke(orig, tname, tout):
             async def timed_invoke(context, params_json: str):
                 try:
-                    return await asyncio.wait_for(orig(context, params_json), timeout=tout)
+                    return await asyncio.wait_for(
+                        orig(context, params_json), timeout=tout
+                    )
                 except asyncio.TimeoutError:
                     logger.warning(f"Tool '{tname}' timed out after {tout}s")
-                    return _json.dumps({
-                        "error": "TOOL_TIMEOUT",
-                        "tool": tname,
-                        "timeout_seconds": tout,
-                    })
+                    return _json.dumps(
+                        {
+                            "error": "TOOL_TIMEOUT",
+                            "tool": tname,
+                            "timeout_seconds": tout,
+                        }
+                    )
+
             return timed_invoke
 
         timed_tool = FunctionTool(
@@ -62,7 +67,11 @@ def _apply_tool_timeouts(tools: List[Any], timeouts: Dict[str, Any]) -> List[Any
             strict_json_schema=tool.strict_json_schema,
         )
         # Preserve custom attributes
-        for attr in ("_is_omniagents_core_tool", "_original_func", "_client_status_text"):
+        for attr in (
+            "_is_omniagents_core_tool",
+            "_original_func",
+            "_client_status_text",
+        ):
             if hasattr(tool, attr):
                 setattr(timed_tool, attr, getattr(tool, attr))
         timed_tool._timeout_seconds = timeout
@@ -243,6 +252,22 @@ async def _default_build_agent(
 
     instructions = process_instructions(spec.get_agent_instructions())
     tools = spec.available_tools
+
+    # Apply spec-level tool guardrails to every FunctionTool the agent uses.
+    # SDK 0.7+ supports per-tool input/output guardrails; we propagate the
+    # agent-level lists onto each tool that doesn't already carry them.
+    if spec.tool_input_guardrails or spec.tool_output_guardrails:
+        for _tool in tools:
+            if hasattr(_tool, "tool_input_guardrails") and spec.tool_input_guardrails:
+                existing = list(_tool.tool_input_guardrails or [])
+                _tool.tool_input_guardrails = existing + list(
+                    spec.tool_input_guardrails
+                )
+            if hasattr(_tool, "tool_output_guardrails") and spec.tool_output_guardrails:
+                existing = list(_tool.tool_output_guardrails or [])
+                _tool.tool_output_guardrails = existing + list(
+                    spec.tool_output_guardrails
+                )
     provided_mcp_servers: List[Any] = []
     # Check if mcp_servers was explicitly provided (including empty list)
     # None means "use spec.mcp_servers", empty list means "no servers"
@@ -367,13 +392,19 @@ async def _default_build_agent(
         model_level_settings = session_model_config["model_settings"]
         if isinstance(model_level_settings, dict):
             model_settings_kwargs.update(model_level_settings)
-            logger.debug(f"Applied model-level settings: {list(model_level_settings.keys())}")
+            logger.debug(
+                f"Applied model-level settings: {list(model_level_settings.keys())}"
+            )
 
     # Override with agent-level settings from spec (if present)
     if spec.model_settings:
         # Deep merge for nested dicts like extra_body
         for key, value in spec.model_settings.items():
-            if key in model_settings_kwargs and isinstance(value, dict) and isinstance(model_settings_kwargs[key], dict):
+            if (
+                key in model_settings_kwargs
+                and isinstance(value, dict)
+                and isinstance(model_settings_kwargs[key], dict)
+            ):
                 # Merge nested dicts (e.g., extra_body)
                 model_settings_kwargs[key] = {**model_settings_kwargs[key], **value}
             else:

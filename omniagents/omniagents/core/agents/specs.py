@@ -203,6 +203,9 @@ class AgentSpec:
     output_guardrails: List[Any] = field(
         default_factory=list
     )  # List of OutputGuardrail instances
+    # Tool-level guardrails (SDK 0.7+). Applied to every tool the agent uses.
+    tool_input_guardrails: List[Any] = field(default_factory=list)
+    tool_output_guardrails: List[Any] = field(default_factory=list)
 
     # --- Agent Safety Configuration ---
     use_safe_agent: bool = False

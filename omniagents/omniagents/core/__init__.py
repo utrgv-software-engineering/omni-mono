@@ -55,3 +55,18 @@ except Exception:
     input_guardrail = None  # type: ignore
     output_guardrail = None  # type: ignore
     GuardrailFunctionOutput = None  # type: ignore
+
+try:
+    from agents.tool_guardrails import (  # type: ignore
+        ToolInputGuardrail,
+        ToolOutputGuardrail,
+        tool_input_guardrail,
+        tool_output_guardrail,
+        ToolGuardrailFunctionOutput,
+    )
+except Exception:
+    ToolInputGuardrail = None  # type: ignore
+    ToolOutputGuardrail = None  # type: ignore
+    tool_input_guardrail = None  # type: ignore
+    tool_output_guardrail = None  # type: ignore
+    ToolGuardrailFunctionOutput = None  # type: ignore

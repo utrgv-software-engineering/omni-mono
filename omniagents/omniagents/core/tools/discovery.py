@@ -2,9 +2,6 @@ import os
 import importlib
 import inspect
 import sys
-import asyncio
-import contextvars
-import functools
 from pathlib import Path
 from typing import Dict, Callable, Optional, Any, Tuple
 import traceback
@@ -46,20 +43,6 @@ class RichToolOutput:
 # --- Wrapper Decorators --- #
 
 
-def _wrap_sync_function(func: Callable) -> tuple[Callable, bool]:
-    if inspect.iscoroutinefunction(func):
-        return func, False
-    sig = inspect.signature(func)
-
-    @functools.wraps(func)
-    async def async_wrapper(*args, **kw):
-        ctx = contextvars.copy_context()
-        return await asyncio.to_thread(ctx.run, func, *args, **kw)
-
-    async_wrapper.__signature__ = sig
-    return async_wrapper, True
-
-
 def function_tool(func: Callable = None, **kwargs) -> FunctionTool:
     """
     A wrapper around agents.tool.function_tool that adds a marker
@@ -73,9 +56,8 @@ def function_tool(func: Callable = None, **kwargs) -> FunctionTool:
     """
 
     def decorator(f):
-        wrapped_func, _ = _wrap_sync_function(f)
         client_status = kwargs.pop("client_status", None)
-        tool = original_function_tool(wrapped_func, **kwargs)
+        tool = original_function_tool(f, **kwargs)
 
         # Add our marker attribute
         setattr(tool, "_is_omniagents_core_tool", True)
@@ -114,9 +96,8 @@ def rich_function_tool(func: Callable = None, **kwargs) -> FunctionTool:
     """
 
     def decorator(f):
-        wrapped_func, _ = _wrap_sync_function(f)
         client_status = kwargs.pop("client_status", None)
-        tool = original_function_tool(wrapped_func, **kwargs)
+        tool = original_function_tool(f, **kwargs)
 
         setattr(tool, "_is_omniagents_core_tool", True)
         setattr(tool, "_is_rich_tool", True)
@@ -196,7 +177,9 @@ def approval_metadata(tool: str = None):
         setattr(func, "_is_approval_metadata", True)
         setattr(func, "_tool_name", tool_name)
 
-        Debug.log(f"Registered approval metadata for tool '{tool_name}' from function '{func.__name__}'")
+        Debug.log(
+            f"Registered approval metadata for tool '{tool_name}' from function '{func.__name__}'"
+        )
 
         return func  # Return the function unchanged
 
@@ -244,6 +227,7 @@ def get_approval_metadata(tool_name: str, args: dict) -> Optional[Dict[str, Any]
     except Exception as e:
         Debug.log(f"Error generating approval metadata for tool '{tool_name}': {e}")
         import traceback
+
         Debug.log(traceback.format_exc())
         return None
 
@@ -358,5 +342,7 @@ def discover_functions_in_dir(
             except Exception:
                 pass
 
-    Debug.log(f"Completed tool discovery: Found {len(discovered_functions)} marked tools in '{base_dir}'.")
+    Debug.log(
+        f"Completed tool discovery: Found {len(discovered_functions)} marked tools in '{base_dir}'."
+    )
     return discovered_functions
