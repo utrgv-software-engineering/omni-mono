@@ -51,6 +51,18 @@ oidc = [
 sqlcipher = [
     "pysqlcipher3>=1.2.0",
 ]
+session-sqlalchemy = [
+    "openai-agents[sqlalchemy]>=0.16.0,<0.17",
+]
+session-redis = [
+    "openai-agents[redis]>=0.16.0,<0.17",
+]
+session-mongodb = [
+    "openai-agents[mongodb]>=0.16.0,<0.17",
+]
+session-encrypted = [
+    "openai-agents[encrypt]>=0.16.0,<0.17",
+]
 presidio = [
     "presidio-analyzer>=2.2.0",
     "presidio-anonymizer>=2.2.0",

@@ -1584,6 +1584,41 @@ def load_agent_spec_from_yaml(
             print(f"Warning: Failed to resolve retry_policy: {e}. Ignoring.")
             retry_settings_cfg = None
 
+    # --- Session Backend (SDK-native, opt-in) ---
+    # YAML schema:
+    #   session:
+    #     backend:
+    #       type: redis | sqlalchemy | mongodb | encrypted | openai_conversations | sqlite
+    #       # backend-specific kwargs (url, session_id, ttl, inner, ...)
+    #
+    # When absent or 'sqlite', leaves session_backend = None so the default
+    # OmniAgents SQLite session storage handles history. Otherwise resolves
+    # to an SDK Session instance via build_session_backend().
+    session_backend_obj: Any = None
+    session_block = config.get("session")
+    if session_block is not None and not isinstance(session_block, dict):
+        print("Warning: 'session' must be a dict. Ignoring.")
+        session_block = None
+    if isinstance(session_block, dict):
+        backend_block = session_block.get("backend")
+        if backend_block is not None and not isinstance(backend_block, dict):
+            print("Warning: 'session.backend' must be a dict. Ignoring.")
+            backend_block = None
+        if isinstance(backend_block, dict):
+            try:
+                from omniagents.core.session.backends import build_session_backend
+
+                session_backend_obj = build_session_backend(backend_block)
+            except ImportError as e:
+                print(f"Warning: {e}. Falling back to default SQLite storage.")
+                session_backend_obj = None
+            except Exception as e:
+                print(
+                    f"Warning: Failed to resolve session.backend: {e}. "
+                    f"Falling back to default SQLite storage."
+                )
+                session_backend_obj = None
+
     # --- Construct AgentSpec ---
     spec = AgentSpec(
         # Basic Info
@@ -1626,6 +1661,8 @@ def load_agent_spec_from_yaml(
         tool_execution_config=tool_execution_cfg,
         error_handlers=error_handlers_cfg,
         retry_settings=(retry_settings_cfg if retry_settings_cfg is not None else None),
+        # SDK-native session backend (opt-in; None means use default SQLite)
+        session_backend=session_backend_obj,
         # Tracing Config
         tracing_config=tracing_config,
         # MCP Config

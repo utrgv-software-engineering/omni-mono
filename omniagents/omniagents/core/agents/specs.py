@@ -234,6 +234,22 @@ class AgentSpec:
     retry_settings: Optional[Any] = None
     """Pre-built ``ModelRetrySettings`` applied to ``ModelSettings.retry``."""
 
+    # --- Session Backend (SDK-native, opt-in) ---
+    session_backend: Optional[Any] = None
+    """Pre-built SDK ``Session`` instance for SDK-managed model-context history.
+
+    Resolved from the YAML ``session.backend`` block via
+    :func:`omniagents.core.session.backends.build_session_backend`. ``None``
+    means the default OmniAgents SQLite session storage handles history.
+
+    Note: As of the SDK 0.16 upgrade, OmniAgents still feeds full session
+    history into ``Runner.run_streamed`` as ``input``, so this field is
+    currently only stored on the spec and not yet plumbed through to the
+    runner's ``session=`` kwarg. That wiring is deferred to the upcoming
+    Phase 3 ``Runner.run(session=...)`` refactor where manual history feed
+    is replaced.
+    """
+
     # --- Tracing Configuration ---
     tracing_config: Optional[Dict[str, Any]] = None
 
