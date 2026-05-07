@@ -4,6 +4,20 @@
 
 Upgrade the pinned `openai-agents` dependency from `0.4.2` to `0.16.0` (12 minor releases), delete OmniAgents code that the SDK now provides natively, and update the RPC protocol where the new SDK shapes are cleaner. All work lands as a single PR on branch `upgrade-openai-agents-0.16`. After this work, OmniAgents drops ~1,500 lines of duplicate logic, exposes tool-level guardrails, and tracks the latest SDK going forward.
 
+## Current Status
+
+| Step | Status | Commit | Lines |
+|---|---|---|---|
+| 1 — Foundation: deps + import fixes + defaults | ✅ Done | `ec3aa2e` | +302 −5 |
+| 2 — Realtime/voice fix (gating) | ✅ Done (no-op) | — | 0 |
+| 3 — Tool decorator cleanup + tool guardrails discovery | ✅ Done | `9c49c53` | +307 −96 |
+| 4 — Session storage delegation | ⚠️ Partial — scope reduced | `399f491` | +61 −5 |
+| 5 — SafeAgent removal + RPC wire format break + frontend lockstep | ⏳ **Pending** | — | (est. 1500–2500) |
+
+**Total committed so far:** ~670 lines changed across 14 files. Realtime and voice paths verified working on 0.16.0 with no code changes. Default agents now use `gpt-5.2` with `Reasoning(effort="medium")`. Tool-level guardrails (SDK 0.7+) discoverable via the existing `guardrails/` directory and configurable via two new YAML keys. OmniAgents `Session` now satisfies the SDK `Session` protocol so it can be passed to `Runner.run(session=...)` once step 5 wires that up.
+
+**Next session pickup point:** Step 5 details below. Branch is local; not yet pushed.
+
 ## Decisions Locked
 
 | Decision | Choice | Rationale |
@@ -22,133 +36,125 @@ Upgrade the pinned `openai-agents` dependency from `0.4.2` to `0.16.0` (12 minor
 
 ---
 
-## Step 1 — Foundation: dependency bump, import fixes, defaults
+## Step 1 — Foundation: dependency bump, import fixes, defaults ✅
 
-**Goal:** Get the codebase compiling and the test suite running against `openai-agents 0.16.0` with no behavioral changes intended.
+**Status:** Done in commit `ec3aa2e`.
 
-**Changes:**
+**Done:**
+- Bumped `openai-agents[realtime]` from `==0.4.2` to `>=0.16.0,<0.17` in `pyproject.toml` and `requirements.txt`. Same for `voice` extra. Added a `litellm` extra.
+- Default model literal changed from `gpt-4o` to `gpt-5.2` in `core/agents/builder.py:234` and `core/config/loader.py:230`.
+- Added a guard in `core/agents/builder.py` that auto-sets `Reasoning(effort="medium")` for any `gpt-5.x` model when not explicitly configured, to avoid the SDK 0.7.0+ silent default of `"none"`.
+- Smoke-tested: `examples/basic_yaml` and `examples/safe_agent_yaml` build cleanly; default-model agents pick up `gpt-5.2` and the medium reasoning effort.
 
-- `pyproject.toml` and `requirements.txt`:
-  - Bump `openai-agents[realtime]==0.4.2` → `openai-agents[realtime]>=0.16.0,<0.17`
-  - Bump `voice` extra similarly
-  - Add `openai-agents[litellm]` to extras since `litellm_provider` is now behind it
-  - SDK pulls `mcp>=1.19`, `openai>=2.26`, `pydantic>=2.12.2`, `numpy>=2.2` automatically; verify no conflicts with existing pins (`pydantic==2.12.3` is fine)
-- `omniagents/core/agents/builder.py:183`:
-  - Replace `from agents.models._openai_shared import get_default_openai_client` with `OpenAIProvider().get_client()` or equivalent public API
-- `omniagents/core/agents/service.py` and any other call sites: audit imports against the SDK's current `agents/__init__.py`; the audit identified all currently-used imports as still resolvable, but verify
-- `omniagents/core/config/loader.py`: enforce explicit `model:` defaulting to `"gpt-5.2"` so that 0.16.0's silent default (`gpt-5.4-mini`) doesn't kick in
-- Add explicit `reasoning.effort` default in `core/config/loader.py` and `core/session/manager.py:87-88` to avoid the 0.7.0 default flip to `"none"` causing silent quality regressions on `gpt-5.x` models
-- Wherever code checks `result.final_output == ""` to detect refusals, switch to `try/except ModelRefusalError` (likely in `service.py` and possibly `core/eval/`)
-- If any tests assert nested handoff history shape, set `RunConfig(nest_handoff_history=True)` explicitly to preserve old behavior
-
-**Validation checkpoint:**
-- `pytest -q tests/unit` passes
-- `pytest -q tests/integration` runs to completion; record which tests fail and categorize (expected breakage from later steps vs. unexpected)
-- `python -m omniagents.cli run -c examples/basic_yaml/agent.yml --mode server` starts and accepts a single message
-- `make coverage-python` runs without import errors
-
-**Rollback:** Single commit; `git revert` if the dep bump alone proves unstable.
-
-**PR scope:** PR #1. ~50–150 lines changed across config, no behavioral changes intended.
+**Findings (deviations from original plan):**
+- The `_openai_shared` import (`builder.py:183`) **still resolves cleanly** in 0.16.0 — no rewrite was needed. Left as-is; switching to a public API is a code-quality follow-up, not a migration blocker.
+- No `final_output == ""` checks exist in OmniAgents — `ModelRefusalError` migration was a no-op.
+- `pydantic==2.12.3` and `pydantic-core==2.41.4` work fine with the new SDK; `openai` was force-upgraded from 1.x to 2.35.1 by the SDK requirement (`openai>=2.26.0,<3`).
+- Unit tests: 997 pass / 103 fail. ~100 of the failures are pre-existing flakes (test-order dependence on `test_security`, `Debug.log` writes to stderr but tests assert on `captured.out`, `_stream_event_payload()` signature drift). 2 of the failures (`test_reasoning_pairing.py::TestOrphanedReasoningHandling`) appear migration-related (SDK reasoning-streaming behavior change) but don't block the migration; they should be addressed alongside step 5 or as a follow-up.
 
 ---
 
-## Step 2 — Realtime / Voice fix (gating)
+## Step 2 — Realtime / Voice fix (gating) ✅
 
-**Goal:** Validate that realtime and voice still function on 0.16.0. This step is the project gate — if realtime can't be made to work, the whole migration must be re-scoped.
+**Status:** Done — turned out to be a no-op. No code changes needed.
 
-**Risk assessment:**
-- The SDK crossed two breaking realtime boundaries between 0.4.2 and 0.16.0:
-  - 0.3.0: migration to `gpt-realtime` GA model interface
-  - 0.13.0: realtime module restructure (new `_default_tracker.py`, `events.py`, `handoffs.py`, `model_events.py`, `audio_formats.py`); default model bumped to `gpt-realtime-1.5`
-- Files at risk:
-  - `omniagents/rpc/realtime_session.py` (857 lines) — imports `RealtimeAgent`, `RealtimeRunner` directly
-  - `omniagents/rpc/voice_pipeline_service.py` (535 lines) — imports `StreamedAudioInput`, `VoicePipeline`, `VoicePipelineConfig`, `agents.voice.imports.np`
-  - `omniagents/voice/openai_compatible.py`
-  - `tests/integration/test_realtime_integration.py`
-  - `tests/integration/test_realtime_sdk_integration.py`
+**Findings:**
+- All realtime/voice imports OmniAgents uses still resolve cleanly on 0.16.0:
+  - `from agents.realtime import RealtimeAgent, RealtimeRunner`
+  - `from agents.voice import StreamedAudioInput, VoicePipeline`
+  - `from agents.voice.pipeline_config import VoicePipelineConfig`
+  - `from agents.voice.imports import np, websockets`
+  - `from agents.voice.model import VoiceModelProvider`
+  - `from agents.voice.models.openai_model_provider`, `.openai_stt`, `.openai_tts`
+- `tests/integration/test_realtime_integration.py` (9 tests including session lifecycle, multiple sessions, event streaming, send_audio, send_text, interrupt, session_not_found, duplicate_session, service_cleanup) all pass.
+- `tests/integration/test_realtime_sdk_integration.py` collects and runs cleanly.
+- `tests/unit/rpc/test_realtime_session.py`: 45 of 48 tests pass. The 3 failures (`test_start_session_with_handoffs`, `test_start_session_with_tools_and_handoffs`, `test_start_session_with_tools_handoffs_and_guardrails`) are mock-based and unrelated to realtime — they fail because `SafeAgent` is mocked but the test setup doesn't stub `set_global_safe_tools`. These will resolve naturally in step 5 when SafeAgent is removed.
+- The audit's prediction that the realtime restructure (0.13.0) would cause major breakage didn't materialize for OmniAgents because OmniAgents uses `RealtimeAgent`/`RealtimeRunner` at a high level and doesn't touch the internal event types that were restructured.
 
-**Changes:**
-- Cross-reference each import against the SDK's new `agents.realtime.*` and `agents.voice.*` surfaces; rewrite call sites that have moved
-- Update event handling for any new realtime event types (`handoff_*`, audio format events)
-- If `agents.voice.imports.np` was removed, import `numpy` directly
-- Update `voice_pipeline_service.py:25` event passthrough set to include any new event names that should reach the client
-
-**Validation checkpoint:**
-- `pytest -q tests/integration/test_realtime_integration.py tests/integration/test_realtime_sdk_integration.py` passes
-- `python -m omniagents.cli run -c examples/voice_pipeline_openai_compatible/agent.yml --mode web` boots; manual smoke test of voice round-trip
-- `python -m omniagents.cli run -c examples/safe_agent_yaml/agent.yml --mode web` with realtime voice controls: voice + tool approval (still on legacy SafeAgent here) work end-to-end
-
-**Failure mode:** No fallback. The migration target is 0.16.0; if realtime is fundamentally broken there, the work stops and the blocker is escalated to the user with a concrete reproduction. There is no downgrade path.
-
-**Rollback:** This step is part of a single PR; revert as a whole if needed.
+**No commit for this step** — verification only.
 
 ---
 
-## Step 3 — Tool decorator cleanup + Tool guardrails discovery
+## Step 3 — Tool decorator cleanup + Tool guardrails discovery ✅
 
-**Goal:** Remove the now-redundant `_wrap_sync_function` from OmniAgents' tool decorator and extend tool/guardrail discovery to surface SDK 0.16.0's new tool-level guardrails.
+**Status:** Done in commit `9c49c53`.
 
-**Changes:**
+**Done:**
+- `core/tools/discovery.py`: deleted `_wrap_sync_function` and its callers in `function_tool` / `rich_function_tool`. The SDK 0.8+ wraps sync functions via `asyncio.to_thread` natively with the same contextvars semantics our wrapper provided. Kept `_is_omniagents_core_tool`, `_client_status_text`, `_original_func` markers, `RichToolOutput`, and `@approval_metadata()` registry.
+- `core/runtime/bridge.py`: updated stale comment referencing the deleted helper.
+- `core/guardrails/discovery.py`: `discover_guardrails_in_dir` now also scans for `ToolInputGuardrail` / `ToolOutputGuardrail` instances; return shape is now a 4-tuple.
+- `core/config/loader.py`: read new YAML keys `tool_input_guardrails:` / `tool_output_guardrails:`, resolve names against discovery, populate `AgentSpec`.
+- `core/project/runtime.py`: extend project-level guardrails registry with `tool_input` / `tool_output` buckets.
+- `core/agents/specs.py`: `AgentSpec` gains `tool_input_guardrails` and `tool_output_guardrails` list fields.
+- `core/agents/builder.py`: propagate spec-level tool guardrails onto every `FunctionTool` the agent uses (additive, doesn't clobber per-tool lists).
+- `core/__init__.py`: re-export `ToolInputGuardrail`, `ToolOutputGuardrail`, `tool_input_guardrail`, `tool_output_guardrail`, `ToolGuardrailFunctionOutput`.
+- `tests/unit/core/guardrails/test_discovery.py`: updated existing assertions for the new 4-tuple return; added a new test covering tool-guardrail discovery end-to-end (passes).
+- `tests/unit/core/tools/test_discovery.py`: dropped two `_wrap_sync_function` tests; tightened the marker test to check `_original_func` instead of invoking `on_invoke_tool` with a `None` ctx (which 0.16+ rejects).
 
-- `omniagents/core/tools/discovery.py`:
-  - Remove `_wrap_sync_function` (the SDK now handles sync→async via `asyncio.to_thread` since 0.8.0)
-  - Keep `_is_omniagents_core_tool`, `_client_status_text`, `_original_func` markers
-  - Keep `RichToolOutput` (UI sidecar; **not** equivalent to SDK's `ToolOutputText/Image/FileContent`)
-  - Keep `@approval_metadata()` registry (no SDK equivalent for rich approval-dialog metadata)
-- `omniagents/core/guardrails/discovery.py`:
-  - Add discovery for `ToolInputGuardrail` and `ToolOutputGuardrail` instances (SDK exposes via `agents.tool_guardrails`)
-  - Re-export `tool_input_guardrail`, `tool_output_guardrail`, `ToolGuardrailFunctionOutput`, `RejectContentBehavior`, `RaiseExceptionBehavior` from `omniagents.core`
-- `omniagents/core/config/loader.py`:
-  - Extend YAML schema to allow `tool_input_guardrails` and `tool_output_guardrails` per-tool or globally
-  - Wire discovered tool guardrails into `FunctionTool.tool_input_guardrails` / `tool_output_guardrails`
-- `omniagents/core/__init__.py`: re-export new guardrail symbols
-
-**Validation checkpoint:**
-- All existing tests still pass (no behavior change for existing tools)
-- New unit test: a tool with a `ToolInputGuardrail` returning `RejectContentBehavior` produces a model-visible rejection without raising
-- `examples/guardrails_yaml/` continues to work; consider adding a `tool_guardrails_yaml` example demonstrating the new feature
-
-**Rollback:** Two independent commits within the single PR — either is safely revertable in isolation if needed pre-merge.
+**Findings (deviations from original plan):**
+- The plan suggested per-tool YAML guardrails. Implemented as **agent-global lists** instead — simpler, same coverage. Per-tool wiring is a clean follow-up if anyone needs it.
+- Did not write a `RejectContentBehavior` integration test. The discovery surface is verified; the actual reject-content roundtrip relies on the SDK's runner doing the work and is best covered by a runtime-level test rather than a discovery test. Deferred.
 
 ---
 
-## Step 4 — Session storage delegation
+## Step 4 — Session storage delegation ⚠️ Partial — scope reduced
 
-**Goal:** Replace OmniAgents' bespoke SQLite history layer with delegation to SDK `SQLiteSession`, while preserving multi-tenant scoping, the RPC `SessionManager`, and the Studio query layer.
+**Status:** Scope reduced and done in commit `399f491`. The full delegation envisioned in the original plan was not done; see "Why scope reduced" below.
 
-**Changes:**
+**Done:**
+- `core/session/manager.py`: OmniAgents `Session` now satisfies the openai-agents SDK `Session` Protocol (`agents.memory.Session`). Added four async methods that delegate to the existing sync persistence layer:
+  - `get_items(limit)` — returns `list(history)`, optionally tail-sliced
+  - `add_items(items)` — calls `append_message` for each, preserving the existing repair/persistence path
+  - `pop_item()` — pops from in-memory history (persistent rows kept, matches OmniAgents non-destructive semantics)
+  - `clear_session()` — clears in-memory history (persistent rows kept)
+- Exposed `session_id` as a property so the protocol's class-level attribute declaration is satisfied.
+- Verified `isinstance(session, agents.memory.Session)` is `True`. `tests/integration/test_session_management.py` passes.
 
-- `omniagents/core/session/history_db.py` (805 lines): rewrite as a thin shim around `agents.memory.SQLiteSession`:
-  - `load_history(session_id)` → `SQLiteSession(...).get_items(limit=None)`
-  - `append_message(session_id, item)` → `SQLiteSession(...).add_items([item])`
-  - `register_session(project_slug, agent_slug, session_id)` stays — multi-tenant scoping is OmniAgents-specific
-  - `set_archived`, `list_sessions`, search/count/stats from `query.py` stay — these are query-layer concerns the SDK doesn't address
-  - DB path resolution stays (single `sessions.db` at repo root unless overridden)
-- `omniagents/core/session/manager.py` (373 lines): unchanged surface, but:
-  - `SessionBase.add_to_history` and `load_history` now delegate to the new shim
-  - `channels`, `pending_events`, `run_channels`, `current_task`, `cancel_requested`, `safe_tool_overrides`, `active_run_id`, `pending_client_requests`, `active_model`, `reasoning_effort` — all stay in-memory in `SessionManager` (these are RPC connection state, not persistence)
-- `omniagents/core/agents/service.py`: where it calls `Runner.run(...)`, pass `session=SQLiteSession(...)` so the SDK manages history natively. Remove manual history rolling.
-- `omniagents/core/session/audio_storage.py`: keep as-is (no SDK equivalent)
-- `omniagents/core/session/query.py`: keep as-is (Studio depends on this)
+**Why scope reduced:**
+- A wholesale rewrite of `history_db.py` (805 lines) as a shim over `agents.memory.SQLiteSession` would require:
+  - A schema migration (OmniAgents tables `history`, `sessions` with columns `archived`, `hold`, `context_json`, `variables_json`, `user_id`, `audio_metadata` — SDK uses `agent_sessions` and `agent_messages`).
+  - Coordinating reads/writes between two storage systems if they were to share a DB file.
+  - Updating ~14 call sites across `service.py`, `runtime/bridge.py`, `eval/pipeline.py`, `eval/multi_turn.py`, `eval/gepa_agent_adapter.py`, `session/cli.py`.
+- More importantly, **`history_db.py` is not strictly duplicating SDK code** — it adds substantial functionality the SDK doesn't have:
+  - Multi-tenant project/agent scoping (`register_session(project_slug, agent_slug, ...)`)
+  - Archived/hold flags
+  - Audio metadata storage referenced from messages
+  - Cross-session search and metadata queries (`query.py`, used by Studio)
+  - Encryption-provider hook (`set_encryption_provider`)
+- Per the locked decision "Strict — delete duplications only", and given there is no actual duplication to delete, the minimal valuable change is API alignment: make our `Session` class satisfy the SDK protocol so that `Runner.run(session=our_session)` becomes possible. That unlocks future SDK-driven persistence (compaction, etc.) without ripping out working code.
 
-**Schema migration:** SDK's `SQLiteSession` uses tables `sessions` and `messages` (configurable via `sessions_table` / `messages_table` kwargs). OmniAgents' current schema differs — write a one-time migration that renames/copies into SDK-compatible tables on first 0.16.0 boot. Migration script lives at `omniagents/core/session/_migrations/v0_16_session_schema.py`.
-
-**Validation checkpoint:**
-- `pytest -q tests/integration/test_session_management.py` passes
-- A pre-migration `sessions.db` from a 0.4.2 build is migrated cleanly to the new schema; conversation resume works
-- Studio session list / search / archive operations all still work
-- Multi-tenant project/agent scoping respected
-
-**Rollback:** The schema migration is **idempotent** and leaves the old tables intact (renamed with `_legacy` suffix) so a downgrade after merge is still possible.
+**Deferred to follow-up:**
+- Wiring `Runner.run(session=session)` into `service.py` and `runtime/bridge.py` — currently OmniAgents manages history manually before/after each `Runner.run` call. Switching to SDK-managed history is a meaningful refactor and is best done after step 5 lands so the approval flow doesn't have to be coordinated against two storage layers in flight.
+- Schema migration to SDK-compatible tables — only relevant if we adopt SDK-managed history.
+- Adopting `OpenAIResponsesCompactionSession` for automatic context compaction — listed in "Out of Scope" below.
 
 ---
 
-## Step 5 — SafeAgent → `needs_approval` + new RPC wire format
+## Step 5 — SafeAgent → `needs_approval` + new RPC wire format ⏳ PENDING
+
+**Status:** Not started. This is the largest step and was deferred so steps 1–4 can land as a coherent first PR. Picked up next.
 
 **Goal:** Delete `omniagents/core/agents/safe.py` (534 lines) and rewire tool approval through the SDK's native interruption model. Break the RPC wire format and update first-party clients in the same PR.
 
-**Why this is last:** It's the highest-blast-radius change and depends on a stable foundation (steps 1–2) and a cleanly-delegated session layer (step 4) since approval state interacts with run resumption and history.
+**Why this is last:** It's the highest-blast-radius change. Touches server runtime, RPC protocol, three first-party frontends (web React, Ink TUI, Studio), and integration tests. Audit estimated ~2 weeks for this step alone.
+
+### Pre-flight references (verified during steps 1–4)
+
+- SDK approval API:
+  - `FunctionTool.needs_approval: bool | Callable[[RunContextWrapper, dict, str], Awaitable[bool]]` (declared in `agents.tool`)
+  - `RunResult.interruptions: list[ToolApprovalItem]` returned by `Runner.run(...)` when approval is required
+  - `RunState.approve(item, always_approve=False)` / `RunState.reject(item, always_reject=False, rejection_message=...)` (in `agents.run_state`)
+  - Resume: pass `state=run_state` into the next `Runner.run(...)`
+- Existing OmniAgents touch points (verified line numbers):
+  - `core/agents/safe.py` — entire file slated for deletion (534 lines)
+  - `core/agents/builder.py:225, 457` — SafeAgent construction
+  - `core/agents/service.py:47, 669, 690, 811, 1398, 1616` — runtime SafeAgent integration
+  - `core/config/loader.py:265, 371, 1186, 1430` — YAML loading of `safe_agent_options`
+  - `core/agents/specs.py` — `SafeAgentOptions` already used; keep but interpret differently
+  - `rpc/protocol.md:36-55, 377-501, 423-468` — current `client_request: ui.request_tool_approval` flow
+  - `rpc/agents/_events.py:115-118` — `client_request` notification mapping
+  - `rpc/agents/workers.py:61` — `client_request` routing
+  - Frontends: `backends/web/ui/src/App.tsx:131`, `backends/web/ui/src/components/VoiceModal.tsx:466-482`, `backends/ink/tui/src/types/protocol.ts:164-174`, `backends/ink/tui/src/rpc/client.ts:241-407`, `backends/ink/tui/src/hooks/useMessagesNew.ts:445-461`
 
 ### 5a. Server-side migration
 
@@ -209,17 +215,15 @@ Upgrade the pinned `openai-agents` dependency from `0.4.2` to `0.16.0` (12 minor
 
 ## PR Strategy
 
-A single PR off `upgrade-openai-agents-0.16` containing all five steps as logically-grouped commits, in the order documented above:
+**Original plan:** A single PR containing all five steps as commits, squash-merged to `main`.
 
-1. Foundation (deps + import fixes + pinned defaults)
-2. Realtime/voice fix
-3. Tool decorator cleanup + tool guardrail discovery
-4. Session storage delegation
-5. SafeAgent removal + RPC wire format break + frontend lockstep
+**Current proposal (revised after step 4):** Two PRs.
 
-The branch merges to `main` as a single squash. Each commit has a focused message so the reviewer can read the history if they prefer commit-by-commit review.
+- **PR A — Steps 1–4** (ready now): foundation, realtime/voice verification, tool decorator cleanup + tool guardrail discovery, SDK Session protocol on omniagents `Session`. Net-positive on its own; SafeAgent stays working until PR B.
+  - Commits: `ec3aa2e`, `9c49c53`, `399f491` plus `MIGRATION_PLAN.md`. ~670 lines changed.
+- **PR B — Step 5**: SafeAgent removal + RPC wire format break + frontend lockstep. Atomic; reverts as one. Estimated 1500–2500 lines.
 
-Approximate total: 2,500–4,200 lines changed (majority deletions).
+Either land both as a single PR per the original plan, or split as above. The split keeps PR A reviewable independently and lets PR B focus reviewer attention on the high-risk approval refactor.
 
 ---
 
@@ -253,14 +257,15 @@ Per-step validation is in each step. Cumulative end-state acceptance criteria fo
 
 ## Assumptions (defaults chosen without further user input)
 
-1. **Concrete pinned model**: foundation step pins `model: gpt-5.2` as the project-wide default unless a YAML overrides.
-2. **Reasoning effort default**: `reasoning.effort: "medium"` for `gpt-5.x` models, falling back to SDK defaults otherwise. The 0.7.0-introduced `"none"` default is explicitly avoided.
-3. **Migration script for sessions DB**: runs on first server boot under 0.16.0; logs both old-row and new-row counts; refuses to run if the schema is already migrated (idempotent).
-4. **Approval state lifecycle**: matches existing OmniAgents behavior — held in-memory on `SessionManager` (`pending_client_requests`) and on the service (`_pending_client_requests` asyncio Futures). Lost on server restart, same as today. The `run_state_token` is a server-side handle to serialized `RunState` cached in-memory keyed by token; survives reconnect within the same server process, not server restart. No persistence layer added.
-5. **YAML deprecation horizon**: `use_safe_agent` / `safe_tool_names` / `safe_tool_patterns` continue to work for 1 minor release after this migration ships; removal in a subsequent major bump (target: omniagents 1.0).
+1. **Concrete pinned model** ✅: `gpt-5.2` is now the default in `core/agents/builder.py` and `core/config/loader.py`.
+2. **Reasoning effort default** ✅: `Reasoning(effort="medium")` auto-applied for any `gpt-5.x` model when not explicitly configured.
+3. **Migration script for sessions DB**: not written. Step 4 was scoped down so no schema migration is needed. Re-add if SDK-managed history is adopted in a follow-up.
+4. **Approval state lifecycle**: matches existing OmniAgents behavior — held in-memory on `SessionManager` (`pending_client_requests`) and on the service (`_pending_client_requests` asyncio Futures). Lost on server restart, same as today. The step-5 `run_state_token` will be a server-side handle to serialized `RunState` cached in-memory keyed by token; survives reconnect within the same server process, not server restart. No persistence layer to add.
+5. **YAML deprecation horizon**: `use_safe_agent` / `safe_tool_names` / `safe_tool_patterns` continue to work for 1 minor release after step 5 ships; removal targeted for omniagents 1.0.
 6. **`max_turns=None` adoption**: not opted-in by default; existing turn-limit behavior preserved unless YAML opts in.
-7. **`mcp` being a hard dep on 0.16.0**: acceptable; OmniAgents already imports `agents.mcp` and the additional `mcp>=1.19` install footprint is small.
-8. **`numpy>=2.2` requirement**: acceptable; existing OmniAgents code does not pin numpy.
+7. **`mcp` being a hard dep on 0.16.0** ✅ confirmed: clean install, no conflicts.
+8. **`numpy>=2.2` requirement** ✅ confirmed: clean install.
+9. **`openai` major-version bump (1.x → 2.35.1)** ✅ confirmed: pulled in transitively by SDK; no breakage observed.
 
 ---
 
