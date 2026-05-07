@@ -60,8 +60,8 @@ export function groupItems(
       }
       accRunId = rid
       acc.push(tool)
-    } else if (item.type === 'approval') {
-      // Approvals break the group
+    } else if (item.type === 'approval' || item.type === 'mcp_approval') {
+      // Approvals (function-tool or hosted-MCP) break the group
       flush()
       result.push(item)
     } else {

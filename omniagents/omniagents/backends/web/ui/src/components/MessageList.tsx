@@ -42,10 +42,24 @@ export type ApprovalItem = {
   session_id?: string
 }
 
-export type MessageItem = ChatMessage | ToolItem | ApprovalItem
+// Hosted-MCP approval prompts ride a parallel event/RPC pair. They carry a
+// request_id (minted by the model on the McpApprovalRequest) and the MCP
+// server_label so the UI can attribute the call to a specific hosted MCP.
+// Visually identical to ApprovalItem but without the "Always" option (the
+// SDK has no equivalent of session-level always-allow on this path).
+export type McpApprovalItem = {
+  type: 'mcp_approval'
+  request_id: string
+  server_label: string
+  tool: string
+  argumentsText?: string
+  session_id?: string
+}
 
-export function MessageList({ items, statusText, thinking, statusSpinner, preambleText, welcomeText, onApprovalDecision, statusItalic, onReaction, currentRunId, toolStatusText }:
-  { items: MessageItem[]; statusText?: string; thinking?: boolean; statusSpinner?: boolean; preambleText?: string; welcomeText?: string; onApprovalDecision?: (call_id: string, value: 'yes' | 'always' | 'no') => void; statusItalic?: boolean; onReaction?: (type: 'like' | 'dislike', text?: string) => void; currentRunId?: string; toolStatusText?: string }) {
+export type MessageItem = ChatMessage | ToolItem | ApprovalItem | McpApprovalItem
+
+export function MessageList({ items, statusText, thinking, statusSpinner, preambleText, welcomeText, onApprovalDecision, onMcpApprovalDecision, statusItalic, onReaction, currentRunId, toolStatusText }:
+  { items: MessageItem[]; statusText?: string; thinking?: boolean; statusSpinner?: boolean; preambleText?: string; welcomeText?: string; onApprovalDecision?: (call_id: string, value: 'yes' | 'always' | 'no') => void; onMcpApprovalDecision?: (request_id: string, value: 'yes' | 'no') => void; statusItalic?: boolean; onReaction?: (type: 'like' | 'dislike', text?: string) => void; currentRunId?: string; toolStatusText?: string }) {
   const [reactions, setReactions] = useState<Record<number, 'like' | 'dislike' | undefined>>({})
   const [feedbackIndex, setFeedbackIndex] = useState<number | undefined>(undefined)
   const handleReaction = React.useCallback((index: number, type: 'like' | 'dislike') => {
@@ -103,6 +117,7 @@ export function MessageList({ items, statusText, thinking, statusSpinner, preamb
             if (m.type === 'chat') return <MessageBubble key={i} index={i} role={(m as ChatMessage).role} content={(m as ChatMessage).content} attachments={(m as ChatMessage).attachments} reactions={reactions} onReact={handleReaction} feedbackIndex={feedbackIndex} onFeedbackSubmit={handleFeedbackSubmit} onFeedbackDismiss={handleFeedbackDismiss} />
             if (m.type === 'tool') return <ToolCard key={(m as ToolItem).call_id || i} item={m as ToolItem} />
             if (m.type === 'approval') return <ApprovalCard key={(m as ApprovalItem).call_id} item={m as ApprovalItem} onDecision={onApprovalDecision} />
+            if (m.type === 'mcp_approval') return <McpApprovalCard key={(m as McpApprovalItem).request_id} item={m as McpApprovalItem} onDecision={onMcpApprovalDecision} />
             return null
           })
         )}
@@ -364,6 +379,31 @@ function ApprovalCard({ item, onDecision }: { item: ApprovalItem; onDecision?: (
         <button className="px-3 py-1.5 text-xs rounded-md border border-errorRed text-errorRed bg-transparent hover:bg-errorRed/20" onClick={() => onDecision && onDecision(item.call_id, 'no')}>Reject</button>
         <button className="px-3 py-1.5 text-xs rounded-md border border-tweetBlue text-tweetBlue bg-transparent hover:bg-bgColumn" onClick={() => onDecision && onDecision(item.call_id, 'always')}>Always</button>
         <button className="px-3 py-1.5 text-xs rounded-md bg-tweetBlue hover:brightness-110 text-white" onClick={() => onDecision && onDecision(item.call_id, 'yes')}>Approve Once</button>
+      </div>
+    </div>
+  )
+}
+
+// Hosted-MCP approval prompt. Looks like ApprovalCard but identifies the
+// hosted MCP server (server_label) and intentionally omits the "Always"
+// button — the SDK has no parallel always-allow set on the MCP path.
+function McpApprovalCard({ item, onDecision }: { item: McpApprovalItem; onDecision?: (request_id: string, value: 'yes' | 'no') => void }) {
+  return (
+    <div className="rounded-md border border-warningOrange bg-bgCardAlt p-3">
+      <div className="flex flex-col gap-1">
+        <div className="text-sm font-semibold text-warningOrange">MCP Tool Approval: {item.tool}</div>
+        <div className="text-xs text-textSubtle">Server: <span className="font-mono">{item.server_label}</span></div>
+      </div>
+      <div className="mt-2">
+        {item.argumentsText ? (
+          <pre className="text-xs overflow-x-auto whitespace-pre-wrap bg-bgColumn rounded p-2 border border-bgCardAlt text-textPrimary">{item.argumentsText}</pre>
+        ) : (
+          <div className="text-xs text-textSubtle">No parameters</div>
+        )}
+      </div>
+      <div className="mt-3 flex gap-2 justify-end">
+        <button className="px-3 py-1.5 text-xs rounded-md border border-errorRed text-errorRed bg-transparent hover:bg-errorRed/20" onClick={() => onDecision && onDecision(item.request_id, 'no')}>Reject</button>
+        <button className="px-3 py-1.5 text-xs rounded-md bg-tweetBlue hover:brightness-110 text-white" onClick={() => onDecision && onDecision(item.request_id, 'yes')}>Approve</button>
       </div>
     </div>
   )

@@ -62,6 +62,7 @@ export function App() {
   const [initialSent, setInitialSent] = useState(false)
   const preambleBufferRef = useRef<Array<{ content: string; timestamp: Date; superseded: boolean }>>([])
   const pendingApprovalsRef = useRef(new Map<string, (MessageItem & { session_id?: string })>())
+  const pendingMcpApprovalsRef = useRef(new Map<string, (MessageItem & { session_id?: string })>())
   const urlSessionHandledRef = useRef(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [artifactsPanelOpen, setArtifactsPanelOpen] = useState(false)
@@ -112,6 +113,12 @@ export function App() {
       const itemSession = (item as any).session_id
       if (itemSession && itemSession !== targetSession) continue
       const exists = base.some(existing => existing.type === 'approval' && (existing as any).call_id === (item as any).call_id)
+      if (!exists) additions.push(item)
+    }
+    for (const item of pendingMcpApprovalsRef.current.values()) {
+      const itemSession = (item as any).session_id
+      if (itemSession && itemSession !== targetSession) continue
+      const exists = base.some(existing => existing.type === 'mcp_approval' && (existing as any).request_id === (item as any).request_id)
       if (!exists) additions.push(item)
     }
     return additions.length ? [...base, ...additions] : base
@@ -404,8 +411,38 @@ export function App() {
       }
     })
 
+    // Hosted-MCP approval flow — parallel to tool_approval but keyed by
+    // request_id (minted by the model on the McpApprovalRequest) rather
+    // than call_id, and identifies the MCP server via server_label.
+    const offMcpApprovalRequested = client.on('mcp_approval_requested', (p: any) => {
+      const request_id = String(p?.request_id ?? '')
+      const server_label = String(p?.server_label ?? '')
+      const tool = String(p?.tool_name ?? '')
+      const argumentsText = String(p?.arguments ?? '')
+      setThinking(false)
+      if (!request_id) return
+      const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
+      const approvalItem: MessageItem & { session_id?: string } = { type: 'mcp_approval', request_id, server_label, tool, argumentsText, session_id: eventSessionId }
+      pendingMcpApprovalsRef.current.set(request_id, approvalItem)
+      const shouldDisplay = !eventSessionId || !sessionIdRef.current || sessionIdRef.current === eventSessionId
+      if (shouldDisplay) {
+        setItems(prev => {
+          const filtered = prev.filter(it => !(it.type === 'mcp_approval' && (it as any).request_id === request_id))
+          return [...filtered, approvalItem]
+        })
+      }
+    })
+
+    const offMcpApprovalResolved = client.on('mcp_approval_resolved', (p: any) => {
+      const request_id = String(p?.request_id ?? '')
+      if (request_id) {
+        pendingMcpApprovalsRef.current.delete(request_id)
+        setItems(prev => prev.filter(it => !(it.type === 'mcp_approval' && (it as any).request_id === request_id)))
+      }
+    })
+
     return () => {
-      offMessageOutput(); offRunStarted(); offRunEnd(); offRunStatus(); offClientRequest(); offClientRequestResolved(); offToolApprovalRequested(); offToolApprovalResolved(); offToken(); offToolCalled(); offToolResult()
+      offMessageOutput(); offRunStarted(); offRunEnd(); offRunStatus(); offClientRequest(); offClientRequestResolved(); offToolApprovalRequested(); offToolApprovalResolved(); offMcpApprovalRequested(); offMcpApprovalResolved(); offToken(); offToolCalled(); offToolResult()
       client.disconnect()
     }
   }, [client, normalizeAgentName, refreshSessions])
@@ -571,6 +608,23 @@ export function App() {
       setThinking(true)
     } catch (e) {
       await client.toolApprovalResponse(call_id, 'reject', false, String((e as Error)?.message || 'failed'))
+      removeApproval()
+      setThinking(true)
+    }
+  }, [client])
+
+  const handleMcpApprovalDecision = useCallback(async (request_id: string, value: 'yes' | 'no') => {
+    const removeApproval = () => {
+      pendingMcpApprovalsRef.current.delete(request_id)
+      setItems(prev => prev.filter(it => !(it.type === 'mcp_approval' && (it as any).request_id === request_id)))
+    }
+    try {
+      const decision = value === 'no' ? 'reject' : 'approve'
+      await client.mcpApprovalResponse(request_id, decision)
+      removeApproval()
+      setThinking(true)
+    } catch (e) {
+      await client.mcpApprovalResponse(request_id, 'reject', String((e as Error)?.message || 'failed'))
       removeApproval()
       setThinking(true)
     }
@@ -812,7 +866,7 @@ export function App() {
         )}
         <div className="flex-1 flex flex-row min-h-0 min-w-0">
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
-            <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} statusItalic={statusItalic} onReaction={handleReaction} currentRunId={runId} toolStatusText={toolStatus} />
+            <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} onMcpApprovalDecision={handleMcpApprovalDecision} statusItalic={statusItalic} onReaction={handleReaction} currentRunId={runId} toolStatusText={toolStatus} />
             <Tasks tasks={tasks} />
             <BashJobs
               jobs={bashJobs}

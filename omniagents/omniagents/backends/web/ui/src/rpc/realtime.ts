@@ -151,4 +151,19 @@ export class RealtimeRPCClient {
   async clientResponse(requestId: string, ok: boolean, result?: Record<string, unknown>): Promise<boolean> {
     return this.call('client_response', { request_id: requestId, ok, result })
   }
+
+  async toolApprovalResponse(callId: string, decision: 'approve' | 'reject', alwaysApprove: boolean = false, rejectionMessage?: string): Promise<boolean> {
+    const params: Record<string, unknown> = { call_id: callId, decision }
+    if (alwaysApprove) params.always_approve = true
+    if (rejectionMessage) params.rejection_message = rejectionMessage
+    return this.call('tool_approval_response', params)
+  }
+
+  // Hosted-MCP approvals are keyed by request_id (from the model's
+  // McpApprovalRequest) and have no ``always_approve`` affordance.
+  async mcpApprovalResponse(requestId: string, decision: 'approve' | 'reject', rejectionMessage?: string): Promise<boolean> {
+    const params: Record<string, unknown> = { request_id: requestId, decision }
+    if (rejectionMessage) params.rejection_message = rejectionMessage
+    return this.call('mcp_approval_response', params)
+  }
 }

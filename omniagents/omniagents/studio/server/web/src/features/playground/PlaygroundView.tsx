@@ -1799,6 +1799,11 @@ function PlaygroundApprovalRequestCard({ event, pendingAction, disabled, error, 
   const rejectLabel = pendingAction === 'reject' ? 'Rejecting…' : 'Reject'
   const alwaysLabel = pendingAction === 'always' ? 'Saving…' : 'Always'
   const approveLabel = pendingAction === 'approve' ? 'Approving…' : 'Approve once'
+  // Hosted-MCP approvals ride the same approval card but are labeled
+  // "MCP Tool Approval", show the MCP server_label, and intentionally
+  // omit the "Always" button (no SDK-level always-allow on this path).
+  const isMcp = event.kind === 'mcp'
+  const heading = isMcp ? `MCP Tool Approval: ${toolName}` : `Approve ${toolName}`
   return (
     <div className="mr-auto inline-block max-w-[80%]">
       <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 shadow-sm">
@@ -1808,7 +1813,12 @@ function PlaygroundApprovalRequestCard({ event, pendingAction, disabled, error, 
           </div>
           <div className="flex-1 space-y-3">
             <div className="space-y-1">
-              <div className="text-sm font-medium text-foreground">Approve {toolName}</div>
+              <div className="text-sm font-medium text-foreground">{heading}</div>
+              {isMcp && event.serverLabel && (
+                <div className="text-xs text-muted-foreground">
+                  Server: <span className="font-mono">{event.serverLabel}</span>
+                </div>
+              )}
               {content}
             </div>
             {error && <div className="text-xs text-destructive whitespace-pre-wrap">{error}</div>}
@@ -1821,21 +1831,23 @@ function PlaygroundApprovalRequestCard({ event, pendingAction, disabled, error, 
               >
                 {rejectLabel}
               </button>
-              <button
-                type="button"
-                className="rounded-md border border-amber-500/60 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-600 transition-colors hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-60"
-                onClick={() => onDecision('always')}
-                disabled={disabled}
-              >
-                {alwaysLabel}
-              </button>
+              {!isMcp && (
+                <button
+                  type="button"
+                  className="rounded-md border border-amber-500/60 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-600 transition-colors hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => onDecision('always')}
+                  disabled={disabled}
+                >
+                  {alwaysLabel}
+                </button>
+              )}
               <button
                 type="button"
                 className="rounded-md bg-amber-500 px-4 py-1.5 text-xs font-medium text-white transition-colors hover:bg-amber-500/90 disabled:cursor-not-allowed disabled:opacity-70"
                 onClick={() => onDecision('approve')}
                 disabled={disabled}
               >
-                {approveLabel}
+                {isMcp ? (pendingAction === 'approve' ? 'Approving…' : 'Approve') : approveLabel}
               </button>
             </div>
           </div>

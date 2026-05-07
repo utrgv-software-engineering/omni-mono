@@ -18,6 +18,12 @@ export interface PlaygroundChatEvent {
   requestId?: string
   arguments?: string
   metadata?: Record<string, unknown>
+  // Discriminator for approval events: 'tool' is a function-tool
+  // approval (call_id-keyed, supports always_approve); 'mcp' is a hosted
+  // MCP-tool approval (request_id-keyed, no always_approve, identifies
+  // the MCP server via serverLabel). Defaults to 'tool' when absent.
+  kind?: 'tool' | 'mcp'
+  serverLabel?: string
 }
 
 export interface PlaygroundUsageTotals {
@@ -491,6 +497,57 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
               // does not need to mutate the approval list explicitly here.
               break
             }
+            case 'mcp_approval_requested': {
+              // Hosted-MCP approval — parallel to tool_approval but keyed
+              // by request_id and identifies the MCP server via
+              // server_label. No "always" affordance on this path.
+              const toolName = typeof params.tool_name === 'string' && params.tool_name.trim().length > 0 ? params.tool_name : 'tool'
+              const serverLabelVal = typeof params.server_label === 'string' ? params.server_label : ''
+              const requestId = typeof params.request_id === 'string' && params.request_id.trim().length > 0 ? params.request_id : createId()
+              let argsText = ''
+              const rawArgs = params.arguments
+              if (typeof rawArgs === 'string') {
+                argsText = rawArgs
+              } else if (rawArgs !== undefined) {
+                try {
+                  argsText = JSON.stringify(rawArgs)
+                } catch {
+                  argsText = String(rawArgs)
+                }
+              }
+
+              dispatch({
+                type: 'append-approval',
+                event: {
+                  id: createId(),
+                  type: 'approval',
+                  kind: 'mcp',
+                  approvalId: requestId,
+                  requestId,
+                  name: toolName,
+                  serverLabel: serverLabelVal,
+                  arguments: argsText,
+                },
+              })
+              dispatch({
+                type: 'status',
+                event: {
+                  id: createId(),
+                  type: 'status',
+                  content: `MCP approval requested for ${toolName} (${serverLabelVal || 'mcp'})`,
+                  severity: 'info',
+                },
+              })
+              break
+            }
+            case 'mcp_approval_resolved': {
+              // Multi-tab dismissal — mirror tool_approval_resolved.
+              const requestId = typeof params.request_id === 'string' ? params.request_id : ''
+              if (requestId) {
+                dispatch({ type: 'resolve-approval', approvalId: requestId })
+              }
+              break
+            }
             case 'client_request': {
               const functionNameRaw = params.function || params.name
               const functionName = typeof functionNameRaw === 'string' ? functionNameRaw.toLowerCase() : ''
@@ -639,18 +696,26 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
         throw new Error('Unknown or expired approval request')
       }
 
-      // Use call_id (stored as approvalId / requestId on the playground
-      // event) as the SDK 0.16 approval identifier.
-      const callId = pendingApproval.requestId || pendingApproval.approvalId
-      if (!callId) {
-        throw new Error('Approval has no call_id')
+      // Hosted-MCP approvals ride a parallel RPC method
+      // (``mcp_approval_response``) and key on ``request_id`` rather than
+      // ``call_id``. There is no ``always_approve`` affordance — see
+      // protocol.md §"MCP Approval Flow".
+      const isMcp = pendingApproval.kind === 'mcp'
+
+      const identifier = pendingApproval.requestId || pendingApproval.approvalId
+      if (!identifier) {
+        throw new Error('Approval has no identifier')
       }
       const requestPayload: Record<string, unknown> = {
-        call_id: callId,
         decision: decision.approved ? 'approve' : 'reject',
       }
-      if (decision.approved && decision.alwaysApprove) {
-        requestPayload.always_approve = true
+      if (isMcp) {
+        requestPayload.request_id = identifier
+      } else {
+        requestPayload.call_id = identifier
+        if (decision.approved && decision.alwaysApprove) {
+          requestPayload.always_approve = true
+        }
       }
       if (!decision.approved && decision.errorMessage) {
         const trimmed = decision.errorMessage.trim()
@@ -659,14 +724,16 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
         }
       }
 
+      const rpcMethod = isMcp ? 'mcp_approval_response' : 'tool_approval_response'
+
       requestCounter.current += 1
       const rpcId = requestCounter.current
-      pendingMethodRef.current.set(rpcId, 'tool_approval_response')
+      pendingMethodRef.current.set(rpcId, rpcMethod)
       wsRef.current.send(
         JSON.stringify({
           jsonrpc: '2.0',
           id: rpcId,
-          method: 'tool_approval_response',
+          method: rpcMethod,
           params: requestPayload,
         })
       )
@@ -675,7 +742,7 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
       const labelSource = decision.toolName && decision.toolName.trim().length > 0 ? decision.toolName : pendingApproval.name
       const label = labelSource && labelSource.trim().length > 0 ? labelSource.trim() : 'tool'
       const message = decision.approved
-        ? decision.alwaysApprove
+        ? decision.alwaysApprove && !isMcp
           ? `Always approve enabled for ${label}`
           : `Approved ${label}`
         : `Rejected ${label}`

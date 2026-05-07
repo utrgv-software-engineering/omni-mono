@@ -45,7 +45,11 @@ export type ServerEvent =
   | RunStartedEvent
   | RunEndEvent
   | TokenEvent
-  | RunStatusEvent;
+  | RunStatusEvent
+  | ToolApprovalRequestedEvent
+  | ToolApprovalResolvedEvent
+  | McpApprovalRequestedEvent
+  | McpApprovalResolvedEvent;
 
 export interface ToolCalledEvent {
   jsonrpc: "2.0";
@@ -207,6 +211,47 @@ export interface ToolApprovalResponseRequest {
     call_id: string;
     decision: "approve" | "reject";
     always_approve?: boolean;
+    rejection_message?: string;
+  };
+}
+
+// Hosted-MCP approval flow (SDK 0.16 HostedMCPTool). Parallel to the
+// function-tool approval flow above, but identified by request_id (from
+// the model's McpApprovalRequest) and the MCP server_label. There is no
+// ``always_approve`` flag on this path — the SDK keys approval by
+// (server_label, tool_name) and we don't maintain a parallel always-allow
+// set yet (see protocol.md §"MCP Approval Flow").
+
+export interface McpApprovalRequestedEvent {
+  jsonrpc: "2.0";
+  method: "mcp_approval_requested";
+  params: {
+    kind: "mcp";
+    request_id: string;
+    server_label: string;
+    tool_name: string;
+    arguments: string; // raw JSON-encoded argument string from the model
+    session_id?: string;
+    run_id?: string;
+  };
+}
+
+export interface McpApprovalResolvedEvent {
+  jsonrpc: "2.0";
+  method: "mcp_approval_resolved";
+  params: {
+    request_id: string;
+    session_id?: string;
+  };
+}
+
+export interface McpApprovalResponseRequest {
+  jsonrpc: "2.0";
+  id: string | number;
+  method: "mcp_approval_response";
+  params: {
+    request_id: string;
+    decision: "approve" | "reject";
     rejection_message?: string;
   };
 }
