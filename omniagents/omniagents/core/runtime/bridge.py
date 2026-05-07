@@ -147,331 +147,6 @@ def _stream_event_payload(item, run_id: str, *, session_id: str):
     return None, None
 
 
-def _apply_compaction_window(history: list[dict], *, sdk_session=None) -> list[dict]:
-    """Trim history to items after the most recent legacy summary marker.
-
-    When SDK-native compaction is wired up (``sdk_session`` is provided) this
-    is a no-op — the wrapper handles compaction itself via the OpenAI
-    Responses ``compact`` endpoint.  Otherwise the legacy
-    ``"kind": "context_summary"`` marker is honoured so existing data already
-    in the DB is not stranded.
-    """
-    if sdk_session is not None:
-        return list(history)
-    if not history:
-        return []
-    last_summary_idx: int | None = None
-    for idx in range(len(history) - 1, -1, -1):
-        item = history[idx]
-        if (
-            isinstance(item, dict)
-            and item.get("role") == "assistant"
-            and isinstance(item.get("omniagents"), dict)
-            and item["omniagents"].get("kind") == "context_summary"
-        ):
-            last_summary_idx = idx
-            break
-    if last_summary_idx is None:
-        return list(history)
-    # Include the summary itself so the model still sees it.
-    return list(history[last_summary_idx:])
-
-
-def _filter_history_for_api(history: list[dict]) -> list[dict]:
-    """Reorder history items to match OpenAI API requirements.
-
-    During streaming, items arrive in this order:
-      reasoning → function_call(s) → message → function_call_output(s)
-
-    But OpenAI expects:
-      reasoning → message → function_call(s) → function_call_output(s)
-
-    This reordering ensures:
-    - reasoning items are immediately followed by messages (not function_calls)
-    - parallel function_calls are grouped together after the message
-    - function_call items are properly paired with their outputs
-
-    This prevents errors like:
-    "Item 'rs_xxx' of type 'reasoning' was provided without its required following item."
-    "No tool call found for function call output with call_id xxx"
-    """
-    reordered = []
-    i = 0
-    consumed_indices: set[int] = set()
-    while i < len(history):
-        if i in consumed_indices:
-            i += 1
-            continue
-        item = history[i]
-        item_type = item.get("type", "message")
-
-        # Handle reasoning items - they need special treatment for parallel calls
-        if item_type == "reasoning":
-            reasoning = item
-            j = i + 1
-
-            # Collect all parallel function calls that follow the reasoning.
-            # Calls and outputs may be interleaved (fc → fc_output → fc → fc_output)
-            # or grouped (fc → fc → fc_output → fc_output).  Handle both by
-            # skipping over outputs while scanning for calls.
-            function_calls = []
-            interleaved_outputs = []
-            while j < len(history):
-                next_item = history[j]
-                next_type = next_item.get("type", "")
-                if (
-                    isinstance(next_type, str)
-                    and next_type.endswith("_call")
-                    and not next_type.endswith("_call_output")
-                ):
-                    function_calls.append(next_item)
-                    j += 1
-                elif isinstance(next_type, str) and next_type.endswith("_call_output"):
-                    # Output interleaved between calls – collect and skip
-                    interleaved_outputs.append((j, next_item))
-                    j += 1
-                else:
-                    break
-
-            # A second reasoning may sit between the last output and the
-            # message (the model emitted reasoning before the preamble text).
-            # Skip over it so we can still find the paired message.
-            trailing_reasoning = None
-            if (
-                j < len(history)
-                and history[j].get("type") == "reasoning"
-                and j + 1 < len(history)
-                and history[j + 1].get("type") == "message"
-            ):
-                trailing_reasoning = history[j]
-                j += 1
-
-            # Find the message that pairs with this reasoning
-            message = None
-            if j < len(history) and history[j].get("type") == "message":
-                message = history[j]
-                j += 1
-
-            # Items may be persisted in message-before-calls order
-            # (reasoning → message → function_call) instead of streaming order
-            # (reasoning → function_call → message).  Scan for calls after the
-            # message so both orderings are handled.
-            if message and not function_calls:
-                while j < len(history):
-                    next_item = history[j]
-                    next_type = next_item.get("type", "")
-                    if (
-                        isinstance(next_type, str)
-                        and next_type.endswith("_call")
-                        and not next_type.endswith("_call_output")
-                    ):
-                        function_calls.append(next_item)
-                        j += 1
-                    elif isinstance(next_type, str) and next_type.endswith(
-                        "_call_output"
-                    ):
-                        interleaved_outputs.append((j, next_item))
-                        j += 1
-                    else:
-                        break
-
-            # Collect outputs for the function calls.
-            # Start from interleaved outputs already gathered, then scan
-            # forward for any remaining (the grouped layout).
-            outputs = []
-            call_ids = {fc.get("call_id") for fc in function_calls if fc.get("call_id")}
-
-            unmatched_interleaved = []
-            for idx, out_item in interleaved_outputs:
-                out_cid = out_item.get("call_id")
-                if out_cid in call_ids:
-                    outputs.append(out_item)
-                    consumed_indices.add(idx)
-                    call_ids.discard(out_cid)
-                else:
-                    # Output doesn't belong to any call in this group —
-                    # preserve it so it isn't silently dropped.
-                    unmatched_interleaved.append(out_item)
-
-            if call_ids:
-                for k in range(j, len(history)):
-                    next_item = history[k]
-                    next_type = next_item.get("type", "")
-                    if not (
-                        isinstance(next_type, str)
-                        and next_type.endswith("_call_output")
-                    ):
-                        continue
-                    output_call_id = next_item.get("call_id")
-                    if output_call_id in call_ids:
-                        outputs.append(next_item)
-                        consumed_indices.add(k)
-                        call_ids.remove(output_call_id)
-                        if not call_ids:
-                            break
-
-            # Emit any interleaved outputs that didn't match a call in this
-            # group before the group itself, so they aren't silently lost.
-            reordered.extend(unmatched_interleaved)
-
-            if message:
-                # Valid reasoning group: reorder to reasoning → message → function_calls → outputs
-                reordered.append(reasoning)
-                reordered.append(message)
-                reordered.extend(function_calls)
-                reordered.extend(outputs)
-            elif function_calls:
-                # Orphaned reasoning (no message): drop reasoning but preserve tool calls
-                # Azure rejects reasoning without messages AND rejects synthetic messages,
-                # but accepts function_calls without reasoning if they have new IDs.
-                # Create synthetic function_calls with new IDs to preserve the tool call history.
-                for fc in function_calls:
-                    # Find corresponding output
-                    fc_output = None
-                    for output in outputs:
-                        if output.get("call_id") == fc.get("call_id"):
-                            fc_output = output
-                            break
-
-                    # Create synthetic IDs (not referencing dropped reasoning)
-                    original_id = fc.get("id", "unknown")
-                    synth_call_id = f"call_synth_{original_id[3:] if original_id.startswith('fc_') else original_id}"
-                    synth_fc_id = f"fc_synth_{original_id[3:] if original_id.startswith('fc_') else original_id}"
-
-                    # Synthetic function call
-                    synth_fc = {
-                        "type": "function_call",
-                        "id": synth_fc_id,
-                        "call_id": synth_call_id,
-                        "name": fc.get("name"),
-                        "arguments": fc.get("arguments"),
-                        "status": fc.get("status", "completed"),
-                    }
-                    reordered.append(synth_fc)
-
-                    # Synthetic output
-                    if fc_output:
-                        synth_output = {
-                            "type": "function_call_output",
-                            "call_id": synth_call_id,
-                            "output": fc_output.get("output"),
-                        }
-                        reordered.append(synth_output)
-            # else: Orphaned reasoning with no function calls - just drop it
-
-            i = j  # Skip past all processed items
-        # Check if this is a function_call NOT preceded by reasoning
-        elif (
-            isinstance(item_type, str)
-            and item_type.endswith("_call")
-            and not item_type.endswith("_call_output")
-        ):
-            # Only process if we didn't already handle it as part of a reasoning group
-            # Check if previous item was reasoning (would have been handled above)
-            if i > 0 and reordered and reordered[-1].get("type") != "reasoning":
-                call_id = item.get("call_id")
-                function_call = item
-
-                # Look ahead for the message and output
-                message = None
-                output = None
-                j = i + 1
-
-                # Find the message that comes after this call
-                if j < len(history) and history[j].get("type") == "message":
-                    message = history[j]
-                    j += 1
-
-                # Find the output that matches this call_id
-                if call_id:
-                    for k in range(j, len(history)):
-                        next_item = history[k]
-                        if (
-                            isinstance(next_item.get("type", ""), str)
-                            and next_item.get("type", "").endswith("_call_output")
-                            and next_item.get("call_id") == call_id
-                        ):
-                            output = next_item
-                            consumed_indices.add(k)
-                            break
-
-                # Reorder: message → function_call → output
-                if message:
-                    reordered.append(message)
-                reordered.append(function_call)
-                if output:
-                    reordered.append(output)
-
-                i = j  # Skip past the items we just processed
-            else:
-                # Already handled as part of reasoning group, skip
-                i += 1
-        else:
-            # Not a reasoning or function_call, keep as-is
-            reordered.append(item)
-            i += 1
-
-    return reordered
-
-
-_STATUS_STRIP_TYPES = frozenset(
-    {
-        "reasoning",
-        "message",
-        "function_call",
-        "function_call_output",
-    }
-)
-
-
-def _strip_internal_keys_for_api(items: list[dict]) -> list[dict]:
-    # Build set of reasoning IDs present so we can detect orphaned messages
-    reasoning_ids: set[str] = set()
-    for item in items or []:
-        if isinstance(item, dict) and item.get("type") == "reasoning":
-            rid = item.get("id")
-            if rid:
-                reasoning_ids.add(rid)
-
-    cleaned: list[dict] = []
-    for item in items or []:
-        if not isinstance(item, dict):
-            continue
-        copied = dict(item)
-        copied.pop("omniagents", None)
-        # The API returns `phase` on assistant messages (gpt-5.3-codex+),
-        # but non-OpenAI providers (Azure, litellm) reject it as unknown.
-        # Safe to strip unconditionally — the SDK re-adds it when needed.
-        copied.pop("phase", None)
-        # The API returns `status` on output items (reasoning, message, etc.)
-        # but may reject it when those items are sent back as input.
-        # Strip it from types where it's output-only metadata.
-        if copied.get("type") in _STATUS_STRIP_TYPES:
-            copied.pop("status", None)
-        # Keep reasoning items (the API requires them before their paired
-        # message).  Preserve encrypted_content when present — the API
-        # requires it to associate reasoning with subsequent function_calls.
-        # Only strip status which is output-only metadata.
-        if copied.get("type") == "reasoning":
-            copied.pop("status", None)
-            # Ensure summary exists (API needs at least an empty list)
-            if "summary" not in copied:
-                copied["summary"] = []
-        # Strip id from orphaned message items whose reasoning was lost.
-        # This happens when history was saved before the reasoning-strip
-        # fix: the reasoning item was dropped but the message kept its id,
-        # so the API rejects it with "message without required reasoning".
-        # Removing the id makes the API treat it as a plain assistant turn.
-        if copied.get("type") == "message":
-            msg_id = copied.get("id", "")
-            if isinstance(msg_id, str) and msg_id.startswith("msg_"):
-                expected_reasoning_id = "rs_" + msg_id[4:]
-                if expected_reasoning_id not in reasoning_ids:
-                    copied.pop("id", None)
-        cleaned.append(copied)
-    return cleaned
-
-
 def _strip_phase_from_model_input(data):
     """RunConfig.call_model_input_filter that strips ``phase`` from all input items.
 
@@ -580,37 +255,21 @@ async def stream_agent(
         token = set_artifact_callback(_artifact_callback)
 
     # ------------------------------------------------------------------
-    # Build input preserving session history; persist **user** message so
-    # future runs see it as part of the context as well.
+    # Build the new-turn input.  History is read from the session by the
+    # SDK via ``Session.get_items()`` (which applies our reorder/strip
+    # helpers), so we pass only the fresh user turn here.  When resuming
+    # after an approval (``include_user_message=False``) the SDK pulls
+    # everything it needs from session history.
     # ------------------------------------------------------------------
+    user_msg: dict | None = None
     if include_user_message:
         if user_content is not None:
             user_msg = {"role": "user", "content": user_content}
         else:
             user_msg = {"role": "user", "content": prompt}
-        if sdk_session is not None:
-            # SDK-managed session: feed only the new turn input; the SDK
-            # pulls history from the wrapped session and persists the new
-            # turn (input + outputs) via ``save_result_to_session`` itself.
-            agent_input = [user_msg]
-        else:
-            session.append_message(user_msg)
-            windowed_history = _apply_compaction_window(
-                session.history, sdk_session=sdk_session
-            )
-            clean_history = _strip_internal_keys_for_api(
-                _filter_history_for_api(windowed_history)
-            )
-            agent_input = clean_history + [user_msg]
+        agent_input: Any = [user_msg]
     else:
-        if sdk_session is not None:
-            # Resume after approval/etc with no fresh user message; let the
-            # SDK pull history from the wrapped session.
-            agent_input = []
-        else:
-            agent_input = _strip_internal_keys_for_api(
-                _filter_history_for_api(list(session.history))
-            )
+        agent_input = []
 
     Debug.log(
         f"[srv] ▶ start_run  session={session.id[:8]} prompt={prompt[:80]!r} (hist={len(session.history)})"
@@ -651,6 +310,20 @@ async def stream_agent(
     pending_tool_calls = {}
     # Track tool call statuses we set so we can clear them on completion
     _status_calls: dict[str, str] = {}
+    # Buffer of items streamed in the *current* SDK run iteration.  The SDK
+    # persists items to the session via ``save_result_to_session`` at turn
+    # boundaries; if the run is cancelled mid-turn (or otherwise raises
+    # before that boundary fires), those items aren't on disk yet.  We hold
+    # them here so the ``finally`` block can flush them onto the session
+    # before injecting cancellation outputs for any pending tool calls.
+    # Seed with the user message — the SDK persists it at the top of
+    # ``run_single_turn_streamed`` (well before any tool call streams), so
+    # by the time we reach a cancellation path it's already on disk.  The
+    # finally-block dedupe still catches early-cancellation cases where
+    # the SDK never got that far.
+    streamed_items_buffer: list[dict] = []
+    if user_msg is not None:
+        streamed_items_buffer.append(user_msg)
 
     # Track usage across turns
     last_usage_totals = {
@@ -678,6 +351,12 @@ async def stream_agent(
             getattr(agent, "model_settings", None), "truncation", None
         ),
     }
+
+    # Counter for outer-loop iterations so we know when to drop the seed
+    # user message from the buffer (on iteration 0 we keep it; on resume
+    # iterations after an approval the SDK has already persisted prior
+    # items so we wipe the buffer).
+    outer_iteration = 0
 
     try:
         # Use Runner to run the agent
@@ -730,8 +409,20 @@ async def stream_agent(
                 run_kwargs["error_handlers"] = error_handlers
             if run_hooks is not None:
                 run_kwargs["hooks"] = run_hooks
-            if sdk_session is not None:
-                run_kwargs["session"] = sdk_session
+            # Always hand the SDK a session it can read/write through.
+            # ``sdk_session`` is the spec-supplied backend or compaction
+            # wrapper when configured, otherwise the OmniAgents Session
+            # itself (which implements the SDK protocol).
+            run_kwargs["session"] = sdk_session if sdk_session is not None else session
+            # On the *second* and subsequent iterations of this outer loop
+            # (after an approval interruption and resume), the SDK has
+            # already persisted everything streamed so far, so we drop the
+            # buffer to avoid re-flushing prior-turn items in the finally.
+            # The first iteration keeps the seed user message in the
+            # buffer so an early cancellation still records the input.
+            if outer_iteration > 0:
+                streamed_items_buffer.clear()
+            outer_iteration += 1
             result = _Runner.run_streamed(agent, run_input, **run_kwargs)
             session.current_stream_result = result
 
@@ -961,15 +652,20 @@ async def stream_agent(
                         except Exception:
                             pass
 
-                # Persist item into session history.  When SDK-managed
-                # compaction is wired up the SDK calls ``add_items`` itself
-                # via ``save_result_to_session``, so skip the manual append
-                # here to avoid double-persisting.
-                if sdk_session is None and hasattr(item, "to_input_item"):
+                # Persistence is handled by the SDK via ``add_items`` /
+                # ``save_result_to_session`` at turn boundaries (or on
+                # interruption), not per stream event.  Wire-event delivery
+                # to the UI is what makes updates feel live; on-disk
+                # persistence is allowed to lag behind by a turn.
+                #
+                # Buffer the input form of each streamed item so the
+                # ``finally`` block can flush them on cancellation paths
+                # where the SDK never reaches its turn-boundary save.
+                if hasattr(item, "to_input_item"):
                     try:
                         inp = item.to_input_item()
                         if inp:
-                            session.append_message(inp)
+                            streamed_items_buffer.append(inp)
                     except Exception:
                         pass
 
@@ -1182,8 +878,69 @@ async def stream_agent(
         raise
     finally:
         session.current_stream_result = None
-        # Handle any pending tool calls that didn't get results
-        # This covers both cancellation and unexpected termination
+        # Flush the streamed-items buffer.  In the normal SDK-driven
+        # flow, the SDK has already called ``Session.add_items`` for
+        # each turn boundary — those items are already in
+        # ``session.history`` and the dedupe loop below skips them.
+        # The buffer's real job is to cover the cancellation/exception
+        # window where the SDK never reached its turn-boundary save.
+        if streamed_items_buffer:
+            # Best-effort dedupe: skip any item whose stable identity
+            # (call_id for tool calls/outputs, id for messages /
+            # reasoning) is already represented in session.history.
+            # User messages have neither, so we match on (role,
+            # content) instead.
+            existing_ids: set[str] = set()
+            existing_call_ids: set[str] = set()
+            existing_user_signatures: set[tuple] = set()
+            for h in session.history:
+                if not isinstance(h, dict):
+                    continue
+                iid = h.get("id")
+                if isinstance(iid, str) and iid:
+                    existing_ids.add(iid)
+                cid = h.get("call_id")
+                if isinstance(cid, str) and cid:
+                    existing_call_ids.add(cid)
+                if h.get("role") == "user":
+                    try:
+                        existing_user_signatures.add(("user", repr(h.get("content"))))
+                    except Exception:
+                        pass
+            for buffered in streamed_items_buffer:
+                if not isinstance(buffered, dict):
+                    continue
+                iid = buffered.get("id")
+                if isinstance(iid, str) and iid and iid in existing_ids:
+                    continue
+                cid = buffered.get("call_id")
+                btype = buffered.get("type", "")
+                # function_call_output is keyed only by call_id; for the
+                # call itself we already check id above.
+                if (
+                    isinstance(btype, str)
+                    and btype.endswith("_call_output")
+                    and isinstance(cid, str)
+                    and cid in existing_call_ids
+                ):
+                    continue
+                if buffered.get("role") == "user":
+                    try:
+                        sig = ("user", repr(buffered.get("content")))
+                    except Exception:
+                        sig = None
+                    if sig is not None and sig in existing_user_signatures:
+                        continue
+                try:
+                    session.append_message(buffered)
+                except Exception:
+                    pass
+            streamed_items_buffer.clear()
+
+        # Handle any pending tool calls that didn't get results.
+        # This covers both cancellation and unexpected termination —
+        # without it the next run would see an unresolved
+        # ``function_call`` in history and the API would reject it.
         if pending_tool_calls:
             Debug.log(
                 f"[srv] ✗ Run ended with {len(pending_tool_calls)} pending tool calls"

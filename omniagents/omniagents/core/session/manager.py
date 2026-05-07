@@ -19,7 +19,359 @@ from .history_db import (
     update_session_metadata,
 )
 
-__all__ = ["Session", "SessionManager", "sm"]
+__all__ = [
+    "Session",
+    "SessionManager",
+    "sm",
+    "filter_history_for_api",
+    "strip_internal_keys_for_api",
+]
+
+
+# ---------------------------------------------------------------------
+# Helpers shared between the SDK Session protocol (Session.get_items)
+# and the JSON-RPC ``get_session_history`` method.  These run when
+# raw history is about to be handed to the OpenAI Responses API: items
+# are reordered so reasoning items keep their required pairings, and
+# output-only metadata that the API rejects on input is stripped.
+# ---------------------------------------------------------------------
+
+
+def filter_history_for_api(history: list[dict]) -> list[dict]:
+    """Reorder history items to match OpenAI API requirements.
+
+    During streaming, items arrive in this order:
+      reasoning → function_call(s) → message → function_call_output(s)
+
+    But OpenAI expects:
+      reasoning → message → function_call(s) → function_call_output(s)
+
+    This reordering ensures:
+    - reasoning items are immediately followed by messages (not function_calls)
+    - parallel function_calls are grouped together after the message
+    - function_call items are properly paired with their outputs
+
+    This prevents errors like:
+    "Item 'rs_xxx' of type 'reasoning' was provided without its required following item."
+    "No tool call found for function call output with call_id xxx"
+    """
+    reordered: list[dict] = []
+    i = 0
+    consumed_indices: set[int] = set()
+    while i < len(history):
+        if i in consumed_indices:
+            i += 1
+            continue
+        item = history[i]
+        item_type = item.get("type", "message")
+
+        # Handle reasoning items - they need special treatment for parallel calls
+        if item_type == "reasoning":
+            reasoning = item
+            j = i + 1
+
+            # Collect all parallel function calls that follow the reasoning.
+            # Calls and outputs may be interleaved (fc → fc_output → fc → fc_output)
+            # or grouped (fc → fc → fc_output → fc_output).  Handle both by
+            # skipping over outputs while scanning for calls.
+            function_calls: list[dict] = []
+            interleaved_outputs: list[tuple[int, dict]] = []
+            while j < len(history):
+                next_item = history[j]
+                next_type = next_item.get("type", "")
+                if (
+                    isinstance(next_type, str)
+                    and next_type.endswith("_call")
+                    and not next_type.endswith("_call_output")
+                ):
+                    function_calls.append(next_item)
+                    j += 1
+                elif isinstance(next_type, str) and next_type.endswith("_call_output"):
+                    # Output interleaved between calls – collect and skip
+                    interleaved_outputs.append((j, next_item))
+                    j += 1
+                else:
+                    break
+
+            # A second reasoning may sit between the last output and the
+            # message (the model emitted reasoning before the preamble text).
+            # Skip over it so we can still find the paired message.
+            trailing_reasoning = None
+            if (
+                j < len(history)
+                and history[j].get("type") == "reasoning"
+                and j + 1 < len(history)
+                and history[j + 1].get("type") == "message"
+            ):
+                trailing_reasoning = history[j]
+                j += 1
+
+            # Find the message that pairs with this reasoning
+            message = None
+            if j < len(history) and history[j].get("type") == "message":
+                message = history[j]
+                j += 1
+
+            # Items may be persisted in message-before-calls order
+            # (reasoning → message → function_call) instead of streaming order
+            # (reasoning → function_call → message).  Scan for calls after the
+            # message so both orderings are handled.
+            if message and not function_calls:
+                while j < len(history):
+                    next_item = history[j]
+                    next_type = next_item.get("type", "")
+                    if (
+                        isinstance(next_type, str)
+                        and next_type.endswith("_call")
+                        and not next_type.endswith("_call_output")
+                    ):
+                        function_calls.append(next_item)
+                        j += 1
+                    elif isinstance(next_type, str) and next_type.endswith(
+                        "_call_output"
+                    ):
+                        interleaved_outputs.append((j, next_item))
+                        j += 1
+                    else:
+                        break
+
+            # Collect outputs for the function calls.
+            # Start from interleaved outputs already gathered, then scan
+            # forward for any remaining (the grouped layout).
+            outputs: list[dict] = []
+            call_ids = {fc.get("call_id") for fc in function_calls if fc.get("call_id")}
+
+            unmatched_interleaved: list[dict] = []
+            for idx, out_item in interleaved_outputs:
+                out_cid = out_item.get("call_id")
+                if out_cid in call_ids:
+                    outputs.append(out_item)
+                    consumed_indices.add(idx)
+                    call_ids.discard(out_cid)
+                else:
+                    # Output doesn't belong to any call in this group —
+                    # preserve it so it isn't silently dropped.
+                    unmatched_interleaved.append(out_item)
+
+            if call_ids:
+                for k in range(j, len(history)):
+                    next_item = history[k]
+                    next_type = next_item.get("type", "")
+                    if not (
+                        isinstance(next_type, str)
+                        and next_type.endswith("_call_output")
+                    ):
+                        continue
+                    output_call_id = next_item.get("call_id")
+                    if output_call_id in call_ids:
+                        outputs.append(next_item)
+                        consumed_indices.add(k)
+                        call_ids.remove(output_call_id)
+                        if not call_ids:
+                            break
+
+            # Emit any interleaved outputs that didn't match a call in this
+            # group before the group itself, so they aren't silently lost.
+            reordered.extend(unmatched_interleaved)
+
+            if message:
+                # Valid reasoning group: reorder to reasoning → message → function_calls → outputs
+                reordered.append(reasoning)
+                reordered.append(message)
+                reordered.extend(function_calls)
+                reordered.extend(outputs)
+            elif function_calls:
+                # Orphaned reasoning (no message): drop reasoning but preserve tool calls
+                # Azure rejects reasoning without messages AND rejects synthetic messages,
+                # but accepts function_calls without reasoning if they have new IDs.
+                # Create synthetic function_calls with new IDs to preserve the tool call history.
+                for fc in function_calls:
+                    # Find corresponding output
+                    fc_output = None
+                    for output in outputs:
+                        if output.get("call_id") == fc.get("call_id"):
+                            fc_output = output
+                            break
+
+                    # Create synthetic IDs (not referencing dropped reasoning)
+                    original_id = fc.get("id", "unknown")
+                    synth_call_id = f"call_synth_{original_id[3:] if original_id.startswith('fc_') else original_id}"
+                    synth_fc_id = f"fc_synth_{original_id[3:] if original_id.startswith('fc_') else original_id}"
+
+                    # Synthetic function call
+                    synth_fc = {
+                        "type": "function_call",
+                        "id": synth_fc_id,
+                        "call_id": synth_call_id,
+                        "name": fc.get("name"),
+                        "arguments": fc.get("arguments"),
+                        "status": fc.get("status", "completed"),
+                    }
+                    reordered.append(synth_fc)
+
+                    # Synthetic output
+                    if fc_output:
+                        synth_output = {
+                            "type": "function_call_output",
+                            "call_id": synth_call_id,
+                            "output": fc_output.get("output"),
+                        }
+                        reordered.append(synth_output)
+            # else: Orphaned reasoning with no function calls - just drop it
+
+            i = j  # Skip past all processed items
+        # Check if this is a function_call NOT preceded by reasoning
+        elif (
+            isinstance(item_type, str)
+            and item_type.endswith("_call")
+            and not item_type.endswith("_call_output")
+        ):
+            # Only process if we didn't already handle it as part of a reasoning group
+            # Check if previous item was reasoning (would have been handled above)
+            if i > 0 and reordered and reordered[-1].get("type") != "reasoning":
+                call_id = item.get("call_id")
+                function_call = item
+
+                # Look ahead for the message and output
+                message = None
+                output = None
+                j = i + 1
+
+                # Find the message that comes after this call
+                if j < len(history) and history[j].get("type") == "message":
+                    message = history[j]
+                    j += 1
+
+                # Find the output that matches this call_id
+                if call_id:
+                    for k in range(j, len(history)):
+                        next_item = history[k]
+                        if (
+                            isinstance(next_item.get("type", ""), str)
+                            and next_item.get("type", "").endswith("_call_output")
+                            and next_item.get("call_id") == call_id
+                        ):
+                            output = next_item
+                            consumed_indices.add(k)
+                            break
+
+                # Reorder: message → function_call → output
+                if message:
+                    reordered.append(message)
+                reordered.append(function_call)
+                if output:
+                    reordered.append(output)
+
+                i = j  # Skip past the items we just processed
+            else:
+                # Already handled as part of reasoning group, skip
+                i += 1
+        else:
+            # Not a reasoning or function_call, keep as-is
+            reordered.append(item)
+            i += 1
+
+    return reordered
+
+
+_STATUS_STRIP_TYPES = frozenset(
+    {
+        "reasoning",
+        "message",
+        "function_call",
+        "function_call_output",
+    }
+)
+
+
+def strip_internal_keys_for_api(items: list[dict]) -> list[dict]:
+    """Drop OmniAgents-internal keys and output-only metadata before sending to the API.
+
+    Strips:
+    - The ``omniagents`` namespace dict (private bookkeeping)
+    - ``phase`` (gpt-5.3-codex+ output marker rejected by Azure/litellm)
+    - ``status`` on output-only types (``reasoning``, ``message``, ``function_call``,
+      ``function_call_output``) which the API rejects on input
+    - The ``id`` field on assistant ``message`` items whose paired ``reasoning`` was
+      lost (older history saved before the reasoning-strip fix); without an id
+      the API treats it as a plain assistant turn.
+
+    Also ensures reasoning items have a ``summary`` list (the API requires at
+    least an empty list).
+    """
+    # Build set of reasoning IDs present so we can detect orphaned messages
+    reasoning_ids: set[str] = set()
+    for item in items or []:
+        if isinstance(item, dict) and item.get("type") == "reasoning":
+            rid = item.get("id")
+            if rid:
+                reasoning_ids.add(rid)
+
+    cleaned: list[dict] = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        copied = dict(item)
+        copied.pop("omniagents", None)
+        # The API returns `phase` on assistant messages (gpt-5.3-codex+),
+        # but non-OpenAI providers (Azure, litellm) reject it as unknown.
+        # Safe to strip unconditionally — the SDK re-adds it when needed.
+        copied.pop("phase", None)
+        # The API returns `status` on output items (reasoning, message, etc.)
+        # but may reject it when those items are sent back as input.
+        # Strip it from types where it's output-only metadata.
+        if copied.get("type") in _STATUS_STRIP_TYPES:
+            copied.pop("status", None)
+        # Keep reasoning items (the API requires them before their paired
+        # message).  Preserve encrypted_content when present — the API
+        # requires it to associate reasoning with subsequent function_calls.
+        # Only strip status which is output-only metadata.
+        if copied.get("type") == "reasoning":
+            copied.pop("status", None)
+            # Ensure summary exists (API needs at least an empty list)
+            if "summary" not in copied:
+                copied["summary"] = []
+        # Strip id from orphaned message items whose reasoning was lost.
+        # This happens when history was saved before the reasoning-strip
+        # fix: the reasoning item was dropped but the message kept its id,
+        # so the API rejects it with "message without required reasoning".
+        # Removing the id makes the API treat it as a plain assistant turn.
+        if copied.get("type") == "message":
+            msg_id = copied.get("id", "")
+            if isinstance(msg_id, str) and msg_id.startswith("msg_"):
+                expected_reasoning_id = "rs_" + msg_id[4:]
+                if expected_reasoning_id not in reasoning_ids:
+                    copied.pop("id", None)
+        cleaned.append(copied)
+    return cleaned
+
+
+def _apply_legacy_compaction_window(history: list[dict]) -> list[dict]:
+    """Trim history to items after the most recent legacy summary marker.
+
+    Honors the ``"kind": "context_summary"`` marker on assistant messages
+    that older sessions persisted before SDK-native compaction took over.
+    Newly created sessions never write this marker, but the helper keeps
+    pre-existing data usable.  When no marker is present this is an
+    identity transform.
+    """
+    if not history:
+        return []
+    last_summary_idx: int | None = None
+    for idx in range(len(history) - 1, -1, -1):
+        item = history[idx]
+        if (
+            isinstance(item, dict)
+            and item.get("role") == "assistant"
+            and isinstance(item.get("omniagents"), dict)
+            and item["omniagents"].get("kind") == "context_summary"
+        ):
+            last_summary_idx = idx
+            break
+    if last_summary_idx is None:
+        return list(history)
+    # Include the summary itself so the model still sees it.
+    return list(history[last_summary_idx:])
 
 
 class Session:  # noqa: D101
@@ -138,8 +490,19 @@ class Session:  # noqa: D101
 
         Returns the latest *limit* items in chronological order, or all items
         when *limit* is None.
+
+        The OpenAI Responses API requires a specific item ordering and rejects
+        certain output-only fields when items are sent back as input.  Apply
+        the same reorder/strip helpers the bridge used to apply manually so
+        the SDK's ``prepare_input_with_session`` receives clean history.
         """
         items = list(self.history)
+        # Honor the legacy ``context_summary`` marker (a no-op for newly
+        # created sessions which never write one).
+        items = _apply_legacy_compaction_window(items)
+        # Reorder so reasoning/message/function_call/output groups are valid
+        # for the API and strip output-only metadata.
+        items = strip_internal_keys_for_api(filter_history_for_api(items))
         if limit is not None and limit >= 0:
             items = items[-limit:]
         return items
