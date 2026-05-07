@@ -259,6 +259,16 @@ class AgentSpec:
     Wired to ``Runner.run_streamed(session=...)`` in the Phase 3 refactor.
     """
 
+    session_compaction_config: Optional[Dict[str, Any]] = None
+    """SDK-native compaction config (``session.compaction`` in YAML).
+
+    When present and ``enabled`` is truthy, the OmniAgents Session is wrapped
+    with ``agents.memory.OpenAIResponsesCompactionSession`` before being passed
+    to the runtime so the OpenAI Responses ``compact`` endpoint manages
+    context-window pressure. All keys other than ``enabled`` are forwarded as
+    kwargs to ``OpenAIResponsesCompactionSession`` (e.g. ``model``,
+    ``compaction_mode``).
+    """
 
     # --- Tracing Configuration ---
     tracing_config: Optional[Dict[str, Any]] = None

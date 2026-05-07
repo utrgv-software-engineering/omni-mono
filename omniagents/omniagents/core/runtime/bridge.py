@@ -8,10 +8,6 @@ from typing import AsyncGenerator, Optional, Any
 from agents import RunConfig, ItemHelpers
 from openai.types.responses import ResponseCompletedEvent
 from omniagents.core.debug import Debug
-from omniagents.core.runtime.compaction import (
-    history_since_last_summary,
-    is_context_length_exceeded,
-)
 from omniagents.core.tools.artifacts import (
     reset_artifact_callback,
     set_artifact_callback,
@@ -151,12 +147,34 @@ def _stream_event_payload(item, run_id: str, *, session_id: str):
     return None, None
 
 
-def _apply_compaction_window(history: list[dict]) -> list[dict]:
-    return history_since_last_summary(history, include_summary=True)
+def _apply_compaction_window(history: list[dict], *, sdk_session=None) -> list[dict]:
+    """Trim history to items after the most recent legacy summary marker.
 
-
-def _is_context_length_exceeded(err: Exception) -> bool:
-    return is_context_length_exceeded(err)
+    When SDK-native compaction is wired up (``sdk_session`` is provided) this
+    is a no-op — the wrapper handles compaction itself via the OpenAI
+    Responses ``compact`` endpoint.  Otherwise the legacy
+    ``"kind": "context_summary"`` marker is honoured so existing data already
+    in the DB is not stranded.
+    """
+    if sdk_session is not None:
+        return list(history)
+    if not history:
+        return []
+    last_summary_idx: int | None = None
+    for idx in range(len(history) - 1, -1, -1):
+        item = history[idx]
+        if (
+            isinstance(item, dict)
+            and item.get("role") == "assistant"
+            and isinstance(item.get("omniagents"), dict)
+            and item["omniagents"].get("kind") == "context_summary"
+        ):
+            last_summary_idx = idx
+            break
+    if last_summary_idx is None:
+        return list(history)
+    # Include the summary itself so the model still sees it.
+    return list(history[last_summary_idx:])
 
 
 def _filter_history_for_api(history: list[dict]) -> list[dict]:
@@ -485,7 +503,6 @@ async def stream_agent(
     max_input_tokens: Optional[int] = None,
     max_output_tokens: Optional[int] = None,
     include_user_message: bool = True,
-    context_error_retry: bool = False,
     workflow_name: Optional[str] = None,
     group_id: Optional[str] = None,
     user_content: Optional[Any] = None,
@@ -495,6 +512,7 @@ async def stream_agent(
     tool_execution_config: Optional[Any] = None,
     error_handlers: Optional[dict] = None,
     run_hooks: Optional[Any] = None,
+    sdk_session: Optional[Any] = None,
 ) -> dict | None:  # noqa: D401
     """Drive agent.run_streamed and forward events to *rpc_channel*.
 
@@ -565,21 +583,33 @@ async def stream_agent(
     # future runs see it as part of the context as well.
     # ------------------------------------------------------------------
     if include_user_message:
-        windowed_history = _apply_compaction_window(session.history)
-        clean_history = _strip_internal_keys_for_api(
-            _filter_history_for_api(windowed_history)
-        )
         if user_content is not None:
-            agent_input = clean_history + [{"role": "user", "content": user_content}]
             user_msg = {"role": "user", "content": user_content}
         else:
-            agent_input = clean_history + [{"role": "user", "content": prompt}]
             user_msg = {"role": "user", "content": prompt}
-        session.append_message(user_msg)
+        if sdk_session is not None:
+            # SDK-managed session: feed only the new turn input; the SDK
+            # pulls history from the wrapped session and persists the new
+            # turn (input + outputs) via ``save_result_to_session`` itself.
+            agent_input = [user_msg]
+        else:
+            session.append_message(user_msg)
+            windowed_history = _apply_compaction_window(
+                session.history, sdk_session=sdk_session
+            )
+            clean_history = _strip_internal_keys_for_api(
+                _filter_history_for_api(windowed_history)
+            )
+            agent_input = clean_history + [user_msg]
     else:
-        agent_input = _strip_internal_keys_for_api(
-            _filter_history_for_api(list(session.history))
-        )
+        if sdk_session is not None:
+            # Resume after approval/etc with no fresh user message; let the
+            # SDK pull history from the wrapped session.
+            agent_input = []
+        else:
+            agent_input = _strip_internal_keys_for_api(
+                _filter_history_for_api(list(session.history))
+            )
 
     Debug.log(
         f"[srv] ▶ start_run  session={session.id[:8]} prompt={prompt[:80]!r} (hist={len(session.history)})"
@@ -696,6 +726,8 @@ async def stream_agent(
                 run_kwargs["error_handlers"] = error_handlers
             if run_hooks is not None:
                 run_kwargs["hooks"] = run_hooks
+            if sdk_session is not None:
+                run_kwargs["session"] = sdk_session
             result = _Runner.run_streamed(agent, run_input, **run_kwargs)
             session.current_stream_result = result
 
@@ -925,8 +957,11 @@ async def stream_agent(
                         except Exception:
                             pass
 
-                # Persist item into session history
-                if hasattr(item, "to_input_item"):
+                # Persist item into session history.  When SDK-managed
+                # compaction is wired up the SDK calls ``add_items`` itself
+                # via ``save_result_to_session``, so skip the manual append
+                # here to avoid double-persisting.
+                if sdk_session is None and hasattr(item, "to_input_item"):
                     try:
                         inp = item.to_input_item()
                         if inp:
@@ -996,16 +1031,15 @@ async def stream_agent(
         # Re-raise to let the caller handle it
         raise
     except Exception as e:
-        if (
-            not context_error_retry
-            and service is not None
-            and session is not None
-            and include_user_message
-        ):
+        # Notify user-defined runtime "error" hooks so they can react.
+        # Context-length retry logic was removed when SDK-native compaction
+        # took over context-window management; provider-managed retries now
+        # live behind the YAML ``retry_policy`` knob.
+        if service is not None and session is not None and include_user_message:
             try:
                 invoke = getattr(service, "invoke_runtime_hooks", None)
                 if invoke is not None:
-                    hook_result = await invoke(
+                    await invoke(
                         "error",
                         session=session,
                         run_id=(
@@ -1016,37 +1050,8 @@ async def stream_agent(
                         params={
                             "prompt": prompt,
                             "error": e,
-                            "is_context_length_exceeded": _is_context_length_exceeded(
-                                e
-                            ),
                         },
                     )
-                    if (
-                        isinstance(hook_result, dict)
-                        and hook_result.get("retry") is True
-                    ):
-                        return await stream_agent(
-                            agent,
-                            prompt,
-                            session,
-                            rpc_channel,
-                            service=service,
-                            max_turns=max_turns,
-                            context=context,
-                            max_input_tokens=max_input_tokens,
-                            max_output_tokens=max_output_tokens,
-                            include_user_message=False,
-                            context_error_retry=True,
-                            workflow_name=workflow_name,
-                            group_id=group_id,
-                            user_content=user_content,
-                            model_provider=model_provider,
-                            model_label=model_label,
-                            nest_handoff_history=nest_handoff_history,
-                            tool_execution_config=tool_execution_config,
-                            error_handlers=error_handlers,
-                            run_hooks=run_hooks,
-                        )
             except Exception:
                 pass
 

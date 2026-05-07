@@ -1624,17 +1624,17 @@ def load_agent_spec_from_yaml(
             print(f"Warning: Failed to resolve retry_policy: {e}. Ignoring.")
             retry_settings_cfg = None
 
-    # --- Session Backend (SDK-native, opt-in) ---
+    # --- Session-related YAML block (backend + compaction) ---
     # YAML schema:
     #   session:
-    #     backend:
+    #     backend:                  # opt-in SDK-managed backend
     #       type: redis | sqlalchemy | mongodb | encrypted | openai_conversations | sqlite
     #       # backend-specific kwargs (url, session_id, ttl, inner, ...)
-    #
-    # When absent or 'sqlite', leaves session_backend = None so the default
-    # OmniAgents SQLite session storage handles history. Otherwise resolves
-    # to an SDK Session instance via build_session_backend().
+    #     compaction:               # opt-in SDK-native context compaction
+    #       enabled: true
+    #       # any kwargs forwarded to OpenAIResponsesCompactionSession
     session_backend_obj: Any = None
+    session_compaction_cfg: Optional[Dict[str, Any]] = None
     session_block = config.get("session")
     if session_block is not None and not isinstance(session_block, dict):
         print("Warning: 'session' must be a dict. Ignoring.")
@@ -1658,6 +1658,13 @@ def load_agent_spec_from_yaml(
                     f"Falling back to default SQLite storage."
                 )
                 session_backend_obj = None
+
+        compaction_raw = session_block.get("compaction")
+        if compaction_raw is not None and not isinstance(compaction_raw, dict):
+            print("Warning: 'session.compaction' must be a dict. Ignoring.")
+            compaction_raw = None
+        if compaction_raw:
+            session_compaction_cfg = dict(compaction_raw)
 
     # --- Construct AgentSpec ---
     spec = AgentSpec(
@@ -1706,6 +1713,7 @@ def load_agent_spec_from_yaml(
         run_hooks=run_hooks_obj,
         # SDK-native session backend (opt-in; None means use default SQLite)
         session_backend=session_backend_obj,
+        session_compaction_config=session_compaction_cfg,
         # Tracing Config
         tracing_config=tracing_config,
         # MCP Config
