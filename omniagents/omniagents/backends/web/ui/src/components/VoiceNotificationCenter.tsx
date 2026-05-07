@@ -2,11 +2,16 @@ import React, { useEffect, useRef } from 'react'
 
 export interface VoiceNotification {
   id: string
-  type: 'tool_called' | 'tool_result' | 'tool_approval'
+  type: 'tool_called' | 'tool_result' | 'tool_approval' | 'mcp_approval'
   tool: string
   input?: string
   output?: string
   call_id?: string
+  // Hosted-MCP approvals are keyed by request_id (minted by the model) and
+  // identify the MCP server via server_label. They run in parallel to the
+  // function-tool approval flow and have no "always approve" affordance.
+  request_id?: string
+  server_label?: string
   metadata?: any
   timestamp: number
 }
@@ -15,6 +20,8 @@ interface Props {
   notifications: VoiceNotification[]
   onApprove?: (callId: string) => void
   onReject?: (callId: string) => void
+  onMcpApprove?: (requestId: string) => void
+  onMcpReject?: (requestId: string) => void
   onDismiss?: (id: string) => void
 }
 
@@ -51,12 +58,15 @@ function ShieldIcon() {
   )
 }
 
-function NotificationCard({ n, onApprove, onReject, onDismiss }: {
+function NotificationCard({ n, onApprove, onReject, onMcpApprove, onMcpReject, onDismiss }: {
   n: VoiceNotification
   onApprove?: (id: string) => void
   onReject?: (id: string) => void
+  onMcpApprove?: (requestId: string) => void
+  onMcpReject?: (requestId: string) => void
   onDismiss?: (id: string) => void
 }) {
+  const isApproval = n.type === 'tool_approval' || n.type === 'mcp_approval'
   return (
     <div
       className="pointer-events-auto max-w-[320px] rounded-xl border border-white/10 px-4 py-3 transition-all duration-300 ease-out"
@@ -65,15 +75,16 @@ function NotificationCard({ n, onApprove, onReject, onDismiss }: {
         backdropFilter: 'blur(40px) saturate(1.6)',
         boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 0.5px 0 rgba(255, 255, 255, 0.06)',
       }}
-      onClick={() => n.type !== 'tool_approval' && onDismiss?.(n.id)}
+      onClick={() => !isApproval && onDismiss?.(n.id)}
     >
       {/* Header */}
       <div className="flex items-center gap-2 mb-1">
         {n.type === 'tool_called' && <ToolIcon />}
         {n.type === 'tool_result' && <CheckIcon />}
         {n.type === 'tool_approval' && <ShieldIcon />}
+        {n.type === 'mcp_approval' && <ShieldIcon />}
         <span className="text-xs font-medium text-white/90 truncate">
-          {n.type === 'tool_approval' ? 'Approve tool call?' : n.tool}
+          {n.type === 'tool_approval' ? 'Approve tool call?' : n.type === 'mcp_approval' ? 'Approve MCP tool call?' : n.tool}
         </span>
       </div>
 
@@ -114,11 +125,41 @@ function NotificationCard({ n, onApprove, onReject, onDismiss }: {
           </div>
         </>
       )}
+
+      {n.type === 'mcp_approval' && (
+        <>
+          <div className="text-xs text-white/70 font-medium mt-0.5">{n.tool}</div>
+          {n.server_label && (
+            <div className="text-[11px] text-white/40 mt-0.5">
+              Server: <span className="font-mono">{n.server_label}</span>
+            </div>
+          )}
+          {n.input && (
+            <div className="text-[11px] text-white/50 font-mono leading-snug mt-1 whitespace-pre-wrap break-all">
+              {truncate(n.input, 120)}
+            </div>
+          )}
+          <div className="flex gap-2 mt-3">
+            <button
+              onClick={(e) => { e.stopPropagation(); onMcpApprove?.(n.request_id!) }}
+              className="flex-1 text-xs font-medium py-1.5 rounded-lg bg-green-500/20 text-green-400 hover:bg-green-500/30 border border-green-500/20 transition-colors"
+            >
+              Approve
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onMcpReject?.(n.request_id!) }}
+              className="flex-1 text-xs font-medium py-1.5 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/20 transition-colors"
+            >
+              Reject
+            </button>
+          </div>
+        </>
+      )}
     </div>
   )
 }
 
-export function VoiceNotificationCenter({ notifications, onApprove, onReject, onDismiss }: Props) {
+export function VoiceNotificationCenter({ notifications, onApprove, onReject, onMcpApprove, onMcpReject, onDismiss }: Props) {
   const timerRefs = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   // Auto-dismiss tool_result cards after 4 seconds
@@ -171,6 +212,8 @@ export function VoiceNotificationCenter({ notifications, onApprove, onReject, on
             n={n}
             onApprove={onApprove}
             onReject={onReject}
+            onMcpApprove={onMcpApprove}
+            onMcpReject={onMcpReject}
             onDismiss={onDismiss}
           />
         </div>

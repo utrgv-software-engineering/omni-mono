@@ -277,6 +277,28 @@ export class RPCClient extends EventEmitter {
   }
 
   /**
+   * Respond to an mcp_approval_requested event (SDK 0.16 hosted-MCP
+   * interruption flow). The wire format is similar to
+   * ``tool_approval_response`` but the identifier is ``request_id`` (from
+   * the model's ``McpApprovalRequest``) and there is intentionally no
+   * ``always_approve`` flag — see protocol.md §"MCP Approval Flow".
+   */
+  async mcpApprovalResponse(
+    requestId: string,
+    decision: "approve" | "reject",
+    rejectionMessage?: string,
+  ): Promise<boolean> {
+    const params: Record<string, unknown> = {
+      request_id: requestId,
+      decision,
+    };
+    if (rejectionMessage) {
+      params.rejection_message = rejectionMessage;
+    }
+    return this.call<boolean>("mcp_approval_response", params);
+  }
+
+  /**
    * List available server functions
    */
   async listServerFunctions(): Promise<
@@ -422,6 +444,12 @@ export class RPCClient extends EventEmitter {
         break;
       case "tool_approval_resolved":
         this.emit("tool_approval_resolved", event.params);
+        break;
+      case "mcp_approval_requested":
+        this.emit("mcp_approval_requested", event.params);
+        break;
+      case "mcp_approval_resolved":
+        this.emit("mcp_approval_resolved", event.params);
         break;
       default:
         this.log("Unknown notification method:", event.method);

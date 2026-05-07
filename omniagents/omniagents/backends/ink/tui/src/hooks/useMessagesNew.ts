@@ -8,7 +8,11 @@ import { RPCClient } from "../rpc/client.js";
 import { useActions, useAppStore } from "../store/appStore.js";
 import { EventBatcher } from "../utils/eventBatcher.js";
 import { debugLog } from "../utils/debugLog.js";
-import type { ApprovalInfo, Message } from "../store/appStore.js";
+import type {
+  ApprovalInfo,
+  McpApprovalInfo,
+  Message,
+} from "../store/appStore.js";
 
 export interface UseMessagesOptions {
   client: RPCClient | null;
@@ -22,13 +26,20 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
   const batcher = useRef(new EventBatcher()).current;
   const approvalQueueRef = useRef<ApprovalInfo[]>([]);
   const currentApprovalCallIdRef = useRef<string | null>(null);
+  // Hosted-MCP approvals queue/state — independent from function-tool
+  // approvals; multiple prompts can interleave but each surface is its
+  // own queue so we don't conflate request_id and call_id.
+  const mcpApprovalQueueRef = useRef<McpApprovalInfo[]>([]);
+  const currentMcpApprovalRequestIdRef = useRef<string | null>(null);
 
   // Buffer for messages with superseded tracking
-  const messageBufferRef = useRef<Array<{
-    content: string;
-    timestamp: Date;
-    superseded: boolean;
-  }>>([]);
+  const messageBufferRef = useRef<
+    Array<{
+      content: string;
+      timestamp: Date;
+      superseded: boolean;
+    }>
+  >([]);
 
   useEffect(() => {
     if (!client || !rpcReady) return;
@@ -78,7 +89,9 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
                 const toolMsg: Message = {
                   role: "tool_call",
                   content: "",
-                  timestamp: msg.timestamp ? new Date(msg.timestamp) : undefined,
+                  timestamp: msg.timestamp
+                    ? new Date(msg.timestamp)
+                    : undefined,
                   toolCall: {
                     tool: "unknown",
                     input: "{}",
@@ -97,7 +110,10 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
               let content = "";
               if (typeof msg.content === "string") {
                 content = msg.content;
-              } else if (msgAny.type === "message" && Array.isArray(msgAny.content)) {
+              } else if (
+                msgAny.type === "message" &&
+                Array.isArray(msgAny.content)
+              ) {
                 // OpenAI message format: extract text from content array
                 for (const part of msgAny.content) {
                   if (part.type === "output_text" && part.text) {
@@ -130,7 +146,9 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
         msg.superseded = true;
       }
       if (messageBufferRef.current.length > 0) {
-        debugLog(`Marked ${messageBufferRef.current.length} buffered messages as superseded`);
+        debugLog(
+          `Marked ${messageBufferRef.current.length} buffered messages as superseded`,
+        );
       }
     };
 
@@ -139,7 +157,9 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       const timestamp = Date.now();
       debugLog(`message_output received at ${timestamp}, updating preamble`);
       batcher.add(() => {
-        debugLog(`message_output batch executing at ${Date.now()}, delay: ${Date.now() - timestamp}ms`);
+        debugLog(
+          `message_output batch executing at ${Date.now()}, delay: ${Date.now() - timestamp}ms`,
+        );
 
         // Buffer this message as "not superseded yet"
         messageBufferRef.current.push({
@@ -154,7 +174,9 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
         // Clear any retry/error status once we see forward progress
         actions.setThinking(true, null);
 
-        debugLog(`Preamble updated, ${messageBufferRef.current.length} messages buffered`);
+        debugLog(
+          `Preamble updated, ${messageBufferRef.current.length} messages buffered`,
+        );
       });
     };
 
@@ -227,9 +249,13 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       session_id: string;
     }) => {
       const timestamp = Date.now();
-      debugLog(`run_started received at ${timestamp}, clearing preamble and buffer`);
+      debugLog(
+        `run_started received at ${timestamp}, clearing preamble and buffer`,
+      );
       batcher.add(() => {
-        debugLog(`run_started batch executing at ${Date.now()}, delay: ${Date.now() - timestamp}ms`);
+        debugLog(
+          `run_started batch executing at ${Date.now()}, delay: ${Date.now() - timestamp}ms`,
+        );
 
         // Clear buffer and preamble for new run
         messageBufferRef.current = [];
@@ -250,19 +276,29 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       };
     }) => {
       const timestamp = Date.now();
-      debugLog(`run_end received at ${timestamp}, end_reason=${params.end_reason}, processing ${messageBufferRef.current.length} buffered messages`);
+      debugLog(
+        `run_end received at ${timestamp}, end_reason=${params.end_reason}, processing ${messageBufferRef.current.length} buffered messages`,
+      );
       batcher.add(() => {
-        debugLog(`run_end batch executing at ${Date.now()}, delay: ${Date.now() - timestamp}ms`);
+        debugLog(
+          `run_end batch executing at ${Date.now()}, delay: ${Date.now() - timestamp}ms`,
+        );
 
         const current = useAppStore.getState().currentRunId;
         if (current && params.run_id && params.run_id !== current) {
-          debugLog(`Ignoring run_end for unrelated run_id=${params.run_id} (current=${current})`);
+          debugLog(
+            `Ignoring run_end for unrelated run_id=${params.run_id} (current=${current})`,
+          );
           return;
         }
 
         // Only add non-superseded messages to conversation
-        const nonSuperseded = messageBufferRef.current.filter(msg => !msg.superseded);
-        debugLog(`Adding ${nonSuperseded.length} non-superseded messages to conversation (${messageBufferRef.current.length - nonSuperseded.length} were superseded)`);
+        const nonSuperseded = messageBufferRef.current.filter(
+          (msg) => !msg.superseded,
+        );
+        debugLog(
+          `Adding ${nonSuperseded.length} non-superseded messages to conversation (${messageBufferRef.current.length - nonSuperseded.length} were superseded)`,
+        );
 
         for (const bufferedMsg of nonSuperseded) {
           actions.addMessage({
@@ -280,8 +316,10 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
         if (params.end_reason.toLowerCase() === "error" && params.error) {
           // Show error as status with fallback text
           const raw = (params.error.message || "").trim();
-          const fallbackType = (params as any).error?.type as string | undefined;
-          const msg = raw || (fallbackType || "Unknown error");
+          const fallbackType = (params as any).error?.type as
+            | string
+            | undefined;
+          const msg = raw || fallbackType || "Unknown error";
           actions.setThinking(false, `Error: ${msg}`);
         } else {
           // Normal completion - clear everything
@@ -304,7 +342,9 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     }) => {
       const current = useAppStore.getState().currentRunId;
       if (current && params.run_id && params.run_id !== current) {
-        debugLog(`Ignoring run_status for unrelated run_id=${params.run_id} (current=${current})`);
+        debugLog(
+          `Ignoring run_status for unrelated run_id=${params.run_id} (current=${current})`,
+        );
         return;
       }
       // Build retry status message like bubbletea does
@@ -392,6 +432,44 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       }
     };
 
+    // MCP APPROVAL — parallel to tool approval but keyed by request_id
+    // (from the model's McpApprovalRequest) and identifies the hosted MCP
+    // server via server_label. No "always" affordance.
+    const handleMcpApprovalRequested = (params: Record<string, unknown>) => {
+      const approvalInfo: McpApprovalInfo = {
+        request_id: (params.request_id as string) || "",
+        server_label: (params.server_label as string) || "",
+        tool: (params.tool_name as string) || "",
+        arguments: (params.arguments as string) || "{}",
+        session_id: params.session_id as string,
+        run_id: params.run_id as string,
+      };
+      if (!approvalInfo.request_id) return;
+
+      mcpApprovalQueueRef.current.push(approvalInfo);
+
+      if (!currentMcpApprovalRequestIdRef.current) {
+        const next = mcpApprovalQueueRef.current.shift();
+        if (next) {
+          currentMcpApprovalRequestIdRef.current = next.request_id;
+          actions.setMcpApproval(next);
+        }
+      }
+    };
+
+    const handleMcpApprovalResolved = (params: Record<string, unknown>) => {
+      const requestId = (params.request_id as string) || "";
+      if (!requestId) return;
+      mcpApprovalQueueRef.current = mcpApprovalQueueRef.current.filter(
+        (a) => a.request_id !== requestId,
+      );
+      if (currentMcpApprovalRequestIdRef.current === requestId) {
+        const next = mcpApprovalQueueRef.current.shift() || null;
+        currentMcpApprovalRequestIdRef.current = next ? next.request_id : null;
+        actions.setMcpApproval(next);
+      }
+    };
+
     // CUSTOM STATUS - NOT batched (needs immediate UI update)
     const handleSetStatus = async (args: Record<string, unknown>) => {
       const text = args.text as string;
@@ -404,7 +482,8 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
         | "progress"
         | undefined;
       const showSpinnerArg = (args as { show_spinner?: boolean }).show_spinner;
-      const showSpinner = typeof showSpinnerArg === "boolean" ? showSpinnerArg : true;
+      const showSpinner =
+        typeof showSpinnerArg === "boolean" ? showSpinnerArg : true;
       actions.setStatus(newStatus, type ?? null, showSpinner);
       return { ack: true };
     };
@@ -440,10 +519,15 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     client.on("token", handleTokenUsage);
     client.on("tool_approval_requested", handleToolApprovalRequested);
     client.on("tool_approval_resolved", handleToolApprovalResolved);
+    client.on("mcp_approval_requested", handleMcpApprovalRequested);
+    client.on("mcp_approval_resolved", handleMcpApprovalResolved);
 
     // Register client functions
     client.registerClientFunction("ui.set_status", handleSetStatus);
-    client.registerClientFunction("ui.set_session_state", handleSetSessionState);
+    client.registerClientFunction(
+      "ui.set_session_state",
+      handleSetSessionState,
+    );
     client.registerClientFunction("ui.bash_jobs.update", handleBashJobsUpdate);
 
     // Cleanup
@@ -457,6 +541,8 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       client.off("token", handleTokenUsage);
       client.off("tool_approval_requested", handleToolApprovalRequested);
       client.off("tool_approval_resolved", handleToolApprovalResolved);
+      client.off("mcp_approval_requested", handleMcpApprovalRequested);
+      client.off("mcp_approval_resolved", handleMcpApprovalResolved);
 
       // Cleanup registered client functions
       client.unregisterClientFunction("ui.set_status");
@@ -495,6 +581,32 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     }
   };
 
+  // Hosted-MCP approval handler — parallel to ``approveToolCall`` but
+  // sends ``mcp_approval_response`` and intentionally does not accept
+  // ``alwaysApprove`` (no SDK-level always-allow on this path).
+  const approveMcpToolCall = async (approved: boolean) => {
+    const currentRequestId = currentMcpApprovalRequestIdRef.current;
+    if (!currentRequestId || !client) return;
+
+    const next = mcpApprovalQueueRef.current.shift() || null;
+    currentMcpApprovalRequestIdRef.current = next ? next.request_id : null;
+
+    batcher.add(() => {
+      actions.setMcpApproval(next);
+      actions.setThinking(!next);
+    });
+
+    try {
+      await client.mcpApprovalResponse(
+        currentRequestId,
+        approved ? "approve" : "reject",
+        approved ? undefined : "User rejected MCP tool call",
+      );
+    } catch (err) {
+      // Best-effort — server will eventually time out / cancel the run.
+    }
+  };
+
   const cancelRun = async (runId: string) => {
     if (!client || !runId) return;
 
@@ -504,13 +616,15 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     try {
       await client.stopRun(runId);
     } catch (error) {
-      const msg = error instanceof Error ? error.message : "Failed to cancel run";
+      const msg =
+        error instanceof Error ? error.message : "Failed to cancel run";
       actions.setThinking(false, `Error: ${msg}`);
     }
   };
 
   return {
     approveToolCall,
+    approveMcpToolCall,
     cancelRun,
   };
 }

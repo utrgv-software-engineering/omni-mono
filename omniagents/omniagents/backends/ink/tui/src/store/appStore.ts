@@ -26,6 +26,20 @@ export interface ApprovalInfo {
   run_id?: string;
 }
 
+// Hosted-MCP approval prompts mirror ApprovalInfo but are keyed by
+// request_id (from the model's McpApprovalRequest) and identify the
+// hosted MCP server via server_label. No "always" affordance — the SDK
+// has no equivalent of the per-session function-tool always-allow set on
+// the MCP path.
+export interface McpApprovalInfo {
+  request_id: string;
+  server_label: string;
+  tool: string;
+  arguments: string;
+  session_id?: string;
+  run_id?: string;
+}
+
 export interface Message {
   role: "user" | "assistant" | "system" | "tool_call" | "approval_request";
   content: string;
@@ -78,6 +92,7 @@ interface AppState {
   statusType: "info" | "warning" | "error" | "success" | "progress" | null;
   statusSpinner: boolean;
   approval: ApprovalInfo | null;
+  mcpApproval: McpApprovalInfo | null;
   currentRunId: string | null;
   preamble: string | null;
   tasks: TaskSummary[];
@@ -99,6 +114,7 @@ interface AppState {
       showSpinner?: boolean,
     ) => void;
     setApproval: (approval: ApprovalInfo | null) => void;
+    setMcpApproval: (approval: McpApprovalInfo | null) => void;
     setUsage: (usage: UsageInfo) => void;
     setSessionState: (state: {
       model?: string | null;
@@ -130,6 +146,7 @@ export const useAppStore = create<AppState>()(
     statusType: null,
     statusSpinner: false,
     approval: null,
+    mcpApproval: null,
     currentRunId: null,
     preamble: null,
     tasks: [],
@@ -172,7 +189,9 @@ export const useAppStore = create<AppState>()(
           const currentStatus = state.status;
 
           if (currentThinking !== thinking) {
-            debugLog(`setThinking: ${currentThinking} -> ${thinking}, status: ${status ?? "null"}`);
+            debugLog(
+              `setThinking: ${currentThinking} -> ${thinking}, status: ${status ?? "null"}`,
+            );
             state.thinking = thinking;
           }
 
@@ -216,6 +235,18 @@ export const useAppStore = create<AppState>()(
           }
         }),
 
+      setMcpApproval: (approval) =>
+        set((state) => {
+          state.mcpApproval = approval;
+          if (approval) {
+            debugLog(`setMcpApproval: turning thinking OFF (approval shown)`);
+            state.thinking = false;
+            state.status = null;
+            state.statusType = null;
+            state.statusSpinner = false;
+          }
+        }),
+
       setUsage: (usage) =>
         set((state) => {
           // Only update if values actually changed
@@ -236,8 +267,8 @@ export const useAppStore = create<AppState>()(
           const label = (sessionState.label ?? null) as string | null;
           const model = (sessionState.model ?? null) as string | null;
           state.sessionModel = label || model;
-          state.sessionReasoningEffort =
-            (sessionState.reasoning_effort ?? null) as string | null;
+          state.sessionReasoningEffort = (sessionState.reasoning_effort ??
+            null) as string | null;
         }),
 
       setSessionId: (sessionId) =>
@@ -290,7 +321,9 @@ export const useAppStore = create<AppState>()(
           if (state.preamble !== preamble) {
             state.preamble = preamble;
             if (preamble) {
-              debugLog(`setPreamble: updated with content (${preamble.length} chars)`);
+              debugLog(
+                `setPreamble: updated with content (${preamble.length} chars)`,
+              );
             } else {
               debugLog(`setPreamble: cleared`);
             }
@@ -306,6 +339,7 @@ export const useAppStore = create<AppState>()(
           state.statusType = null;
           state.statusSpinner = false;
           state.approval = null;
+          state.mcpApproval = null;
           state.preamble = null;
           state.tasks = [];
           state.bashJobs = [];
@@ -329,9 +363,14 @@ export const useMessages = () => useAppStore((s) => s.messages);
 export const useThinking = () => useAppStore((s) => s.thinking);
 export const useStatus = () =>
   useAppStore(
-    useShallow((s) => ({ status: s.status, statusType: s.statusType, statusSpinner: s.statusSpinner }))
+    useShallow((s) => ({
+      status: s.status,
+      statusType: s.statusType,
+      statusSpinner: s.statusSpinner,
+    })),
   );
 export const useApproval = () => useAppStore((s) => s.approval);
+export const useMcpApproval = () => useAppStore((s) => s.mcpApproval);
 export const useUsage = () => useAppStore((s) => s.usage);
 export const useSessionModel = () => useAppStore((s) => s.sessionModel);
 export const useSessionReasoningEffort = () =>

@@ -141,6 +141,17 @@ export class RPCClient {
     return this.call('tool_approval_response', params)
   }
 
+  // Hosted MCP-tool approvals use a parallel RPC method that takes a
+  // ``request_id`` (minted by the model on the ``McpApprovalRequest``)
+  // instead of the ``call_id`` used by function-tool approvals. There is
+  // intentionally no ``always_approve`` flag — see protocol.md §"MCP
+  // Approval Flow".
+  async mcpApprovalResponse(requestId: string, decision: 'approve' | 'reject', rejectionMessage?: string): Promise<boolean> {
+    const params: Record<string, unknown> = { request_id: requestId, decision }
+    if (rejectionMessage) params.rejection_message = rejectionMessage
+    return this.call('mcp_approval_response', params)
+  }
+
   async listServerFunctions(): Promise<Array<{ name: string; description?: string; params_schema?: Record<string, unknown>; result_schema?: Record<string, unknown> }>> {
     return this.call('list_server_functions', {})
   }

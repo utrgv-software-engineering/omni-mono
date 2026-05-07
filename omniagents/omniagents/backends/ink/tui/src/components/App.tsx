@@ -17,6 +17,7 @@ import {
   useMessages,
   useThinking,
   useApproval,
+  useMcpApproval,
   useUsage,
   useSessionModel,
   useSessionId,
@@ -26,13 +27,14 @@ import {
   useBashJobs,
   useActions,
 } from "../store/appStore.js";
-import type { ApprovalInfo } from "../store/appStore.js";
+import type { ApprovalInfo, McpApprovalInfo } from "../store/appStore.js";
 import { Header } from "./Header.js";
 import { Logo } from "./Logo.js";
 import { MessageListOptimized } from "./MessageListOptimized.js";
 import { StatusIndicator } from "./StatusIndicator.js";
 import { MultiLineInputOptimized } from "./MultiLineInputOptimized.js";
 import { ApprovalDialog } from "./ApprovalDialog.js";
+import { McpApprovalDialog } from "./McpApprovalDialog.js";
 import { Preamble } from "./Preamble.js";
 import { Help } from "./Help.js";
 import { SessionList } from "./SessionList.js";
@@ -74,15 +76,46 @@ const ApprovalDialogWrapper = React.memo<{
 );
 
 /**
+ * Wrapper for the hosted-MCP approval dialog. Mirrors
+ * ApprovalDialogWrapper but renders ``McpApprovalDialog`` and matches on
+ * ``request_id`` (not call_id).
+ */
+const McpApprovalDialogWrapper = React.memo<{
+  approval: McpApprovalInfo | null;
+  onApprove: (value: "yes" | "no") => void;
+}>(
+  ({ approval, onApprove }) => {
+    if (!approval) {
+      return null;
+    }
+    return (
+      <McpApprovalDialog
+        tool={approval.tool}
+        serverLabel={approval.server_label}
+        arguments={approval.arguments}
+        onApprove={onApprove}
+      />
+    );
+  },
+  (prev, next) => {
+    if (prev.approval === next.approval) return true;
+    if (!prev.approval || !next.approval) return false;
+    return prev.approval.request_id === next.approval.request_id;
+  },
+);
+
+/**
  * Scrollable message list with keyboard and mouse support
  */
 const ScrollableMessageList = React.memo<{
   availableHeight: number;
   onApprove: (value: "yes" | "always" | "no") => void;
+  onMcpApprove: (value: "yes" | "no") => void;
 }>(
-  ({ availableHeight, onApprove }) => {
+  ({ availableHeight, onApprove, onMcpApprove }) => {
     const messages = useMessages();
     const approval = useApproval();
+    const mcpApproval = useMcpApproval();
     const preamble = usePreamble();
     const contentVersion = messages.length;
     return (
@@ -98,13 +131,23 @@ const ScrollableMessageList = React.memo<{
 
           {approval && (
             <Box marginTop={1}>
-              <ApprovalDialogWrapper approval={approval} onApprove={onApprove} />
+              <ApprovalDialogWrapper
+                approval={approval}
+                onApprove={onApprove}
+              />
             </Box>
           )}
 
-          {preamble && (
-            <Preamble content={preamble} />
+          {mcpApproval && (
+            <Box marginTop={1}>
+              <McpApprovalDialogWrapper
+                approval={mcpApproval}
+                onApprove={onMcpApprove}
+              />
+            </Box>
           )}
+
+          {preamble && <Preamble content={preamble} />}
         </Box>
       </Scrollable>
     );
@@ -121,11 +164,7 @@ const StatusIndicatorWrapper = React.memo<{
 }>(
   ({ approval, thinking }) => {
     return (
-      <Box
-        paddingX={1}
-        marginTop={1}
-        display={!approval ? "flex" : "none"}
-      >
+      <Box paddingX={1} marginTop={1} display={!approval ? "flex" : "none"}>
         <StatusIndicator />
       </Box>
     );
@@ -146,7 +185,14 @@ const HelpWrapper = React.memo<{
   sessionModel: string | null;
   waitingForSecondCtrlC: boolean;
 }>(
-  ({ connected, thinking, approval, usage, sessionModel, waitingForSecondCtrlC }) => {
+  ({
+    connected,
+    thinking,
+    approval,
+    usage,
+    sessionModel,
+    waitingForSecondCtrlC,
+  }) => {
     return (
       <Box paddingX={1} paddingBottom={1}>
         <Help
@@ -227,6 +273,7 @@ export const App: React.FC<AppProps> = ({
   const messages = useMessages();
   const thinking = useThinking();
   const approval = useApproval();
+  const mcpApproval = useMcpApproval();
   const usage = useUsage();
   const sessionModel = useSessionModel();
   const sessionId = useSessionId();
@@ -272,7 +319,7 @@ export const App: React.FC<AppProps> = ({
         setControlsHeight(measurement.height);
       }
     }
-  }, [terminalHeight, approval, thinking, tasks]);
+  }, [terminalHeight, approval, mcpApproval, thinking, tasks]);
 
   // Calculate available height for messages (gemini-cli approach)
   const availableTerminalHeight = Math.max(
@@ -287,11 +334,12 @@ export const App: React.FC<AppProps> = ({
   const [waitingForSecondCtrlC, setWaitingForSecondCtrlC] = useState(false);
 
   // Setup message handlers with batching
-  const { approveToolCall, cancelRun } = useMessagesOptimized({
-    client,
-    sessionId: sessionId ?? initialSessionId,
-    rpcReady,
-  });
+  const { approveToolCall, approveMcpToolCall, cancelRun } =
+    useMessagesOptimized({
+      client,
+      sessionId: sessionId ?? initialSessionId,
+      rpcReady,
+    });
 
   // Set initial session ID
   useEffect(() => {
@@ -453,7 +501,13 @@ export const App: React.FC<AppProps> = ({
     [approveToolCall],
   );
 
-  
+  // Hosted-MCP approval — parallel handler. No "always" affordance.
+  const handleMcpApproval = useCallback(
+    (value: "yes" | "no") => {
+      approveMcpToolCall(value === "yes");
+    },
+    [approveMcpToolCall],
+  );
 
   // Handle slash commands
   const handleSlashCommand = useCallback(
@@ -633,6 +687,8 @@ export const App: React.FC<AppProps> = ({
         if (key.escape) {
           if (approval) {
             handleApproval("no");
+          } else if (mcpApproval) {
+            handleMcpApproval("no");
           } else if (thinking && currentRunId) {
             cancelRun(currentRunId);
           }
@@ -652,6 +708,8 @@ export const App: React.FC<AppProps> = ({
               cancelRun(currentRunId);
             } else if (approval) {
               handleApproval("no");
+            } else if (mcpApproval) {
+              handleMcpApproval("no");
             }
 
             // Show warning message
@@ -673,14 +731,16 @@ export const App: React.FC<AppProps> = ({
         thinking,
         currentRunId,
         approval,
+        mcpApproval,
         cancelRun,
         handleApproval,
+        handleMcpApproval,
         exit,
         bashPanelFocused,
         bashJobs.length,
       ],
     ),
-    { isActive: uiState === "chat" || !!approval },
+    { isActive: uiState === "chat" || !!approval || !!mcpApproval },
   );
 
   // If every job vanishes (cleared, archived) while the panel is focused,
@@ -775,6 +835,7 @@ export const App: React.FC<AppProps> = ({
             <ScrollableMessageList
               availableHeight={availableTerminalHeight}
               onApprove={handleApproval}
+              onMcpApprove={handleMcpApproval}
             />
           </Box>
 
@@ -811,14 +872,16 @@ export const App: React.FC<AppProps> = ({
             />
 
             {/* Input prompt - always rendered, disabled during approval/thinking */}
-          <Box marginTop={1}>
-            <MultiLineInputOptimized
-              onSubmit={handleSubmit}
-              disabled={!connected || !!approval || bashPanelFocused}
-              disableSubmit={thinking}
-              history={messageHistory}
-            />
-          </Box>
+            <Box marginTop={1}>
+              <MultiLineInputOptimized
+                onSubmit={handleSubmit}
+                disabled={
+                  !connected || !!approval || !!mcpApproval || bashPanelFocused
+                }
+                disableSubmit={thinking}
+                history={messageHistory}
+              />
+            </Box>
 
             {/* Help text below input - isolated subscription */}
             <HelpWrapper

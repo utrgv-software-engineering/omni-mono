@@ -481,6 +481,28 @@ export function VoiceModal({ isOpen, onClose, sessionId, onSessionCreated }: { i
             setNotifications(prev => prev.filter(n => n.call_id !== callId))
           }
         }
+
+        // Hosted-MCP approval prompts ride a parallel event/RPC pair —
+        // request_id (not call_id) is the cache key and there is no
+        // ``always_approve`` affordance.
+        if (eventType === 'mcp_approval_requested') {
+          setNotifications(prev => [{
+            id: `mcp_${data.request_id || Date.now()}`,
+            type: 'mcp_approval' as const,
+            tool: data.tool_name || 'tool',
+            input: typeof data.arguments === 'string' ? data.arguments : JSON.stringify(data.arguments),
+            request_id: data.request_id,
+            server_label: data.server_label,
+            timestamp: Date.now(),
+          }, ...prev].slice(0, 10))
+        }
+
+        if (eventType === 'mcp_approval_resolved') {
+          const requestId = String(data?.request_id || '')
+          if (requestId) {
+            setNotifications(prev => prev.filter(n => n.request_id !== requestId))
+          }
+        }
       }
 
       if (t === 'realtime_response_start' || t === 'realtime_audio') {
@@ -595,6 +617,16 @@ export function VoiceModal({ isOpen, onClose, sessionId, onSessionCreated }: { i
   const handleReject = useCallback((callId: string) => {
     clientRef.current?.toolApprovalResponse(callId, 'reject')
     setNotifications(prev => prev.filter(n => n.call_id !== callId))
+  }, [])
+
+  const handleMcpApprove = useCallback((requestId: string) => {
+    clientRef.current?.mcpApprovalResponse(requestId, 'approve')
+    setNotifications(prev => prev.filter(n => n.request_id !== requestId))
+  }, [])
+
+  const handleMcpReject = useCallback((requestId: string) => {
+    clientRef.current?.mcpApprovalResponse(requestId, 'reject')
+    setNotifications(prev => prev.filter(n => n.request_id !== requestId))
   }, [])
 
   const handleDismissNotification = useCallback((id: string) => {
@@ -750,6 +782,8 @@ export function VoiceModal({ isOpen, onClose, sessionId, onSessionCreated }: { i
         notifications={notifications}
         onApprove={handleApprove}
         onReject={handleReject}
+        onMcpApprove={handleMcpApprove}
+        onMcpReject={handleMcpReject}
         onDismiss={handleDismissNotification}
       />
 
