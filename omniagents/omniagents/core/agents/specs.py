@@ -234,6 +234,15 @@ class AgentSpec:
     retry_settings: Optional[Any] = None
     """Pre-built ``ModelRetrySettings`` applied to ``ModelSettings.retry``."""
 
+    model_provider_config: Optional[Dict[str, Any]] = None
+    """Optional spec-level ``model_provider`` block (type + creds).
+
+    Resolved at runtime via ``build_model_provider`` and passed to
+    ``RunConfig.model_provider``. When unset, the SDK default
+    ``MultiProvider`` handles prefix routing (``litellm/...``,
+    ``any-llm/...``, ``openai/...``) automatically.
+    """
+
     # --- Tracing Configuration ---
     tracing_config: Optional[Dict[str, Any]] = None
 

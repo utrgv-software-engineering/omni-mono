@@ -1569,6 +1569,12 @@ def load_agent_spec_from_yaml(
             print(f"Warning: Failed to resolve error_handlers: {e}. Ignoring.")
             error_handlers_cfg = None
 
+    # model_provider: spec-level provider config (LiteLLM, OpenAI-compatible, etc.)
+    model_provider_raw = config.get("model_provider") or None
+    if model_provider_raw is not None and not isinstance(model_provider_raw, dict):
+        print("Warning: 'model_provider' must be a dict. Ignoring.")
+        model_provider_raw = None
+
     # retry_policy: coerce to ModelRetrySettings stored on spec.retry_settings.
     retry_policy_raw = config.get("retry_policy") or None
     if retry_policy_raw is not None and not isinstance(retry_policy_raw, dict):
@@ -1626,6 +1632,7 @@ def load_agent_spec_from_yaml(
         tool_execution_config=tool_execution_cfg,
         error_handlers=error_handlers_cfg,
         retry_settings=(retry_settings_cfg if retry_settings_cfg is not None else None),
+        model_provider_config=model_provider_raw,
         # Tracing Config
         tracing_config=tracing_config,
         # MCP Config

@@ -1790,94 +1790,35 @@ class AgentService(RpcMethodsBase):
                 # Also get group_id from session if provided
                 group_id_override = getattr(sess, "group_id", None)
 
-                # Determine model provider based on session model config.
-                # We must create an explicit provider with the correct
-                # api_key/base_url so that switching models actually
-                # routes requests to the right endpoint.
+                # Determine model provider. Precedence:
+                #   1. Session-level override (UI / RPC sets sess.model_config)
+                #   2. Spec-level YAML model_provider block
+                #   3. None — let the SDK default MultiProvider handle prefix
+                #      routing for ``litellm/...``, ``any-llm/...``, ``openai/...``
+                from omniagents.core.agents.run_options import build_model_provider
+
                 model_provider = None
                 session_model_config = getattr(sess, "model_config", None)
-                if session_model_config:
-                    provider_type = session_model_config.get("provider")
-                    if provider_type == "litellm":
-                        try:
-                            from agents.extensions.models.litellm_provider import (
-                                LitellmProvider,
-                            )
 
-                            model_provider = LitellmProvider()
-                        except ImportError:
-                            logger.warning(
-                                "LiteLLM not installed. Install with: pip install litellm"
-                            )
-                    elif provider_type in ("openai", "openai-compatible", "azure"):
-                        # Build an explicit OpenAIProvider with the
-                        # model's own base_url / api_key so we don't
-                        # rely on (possibly stale) env vars.
-                        #
-                        # IMPORTANT: We must always create an AsyncOpenAI
-                        # client with an explicit base_url. If we pass
-                        # base_url=None, the OpenAI SDK falls back to
-                        # os.environ["OPENAI_BASE_URL"] which may point
-                        # to a previously-configured provider (e.g. after
-                        # startup set it for an openai-compatible default).
-                        try:
-                            from openai import AsyncOpenAI
-                            from agents.models.openai_provider import OpenAIProvider
+                # Map session_model_config (legacy "provider" key) onto the
+                # build_model_provider shape (keys: type, base_url, api_key).
+                provider_cfg: Optional[Dict[str, Any]] = None
+                if session_model_config and session_model_config.get("provider"):
+                    provider_cfg = {
+                        "type": session_model_config.get("provider"),
+                        "base_url": session_model_config.get("base_url"),
+                        "api_key": session_model_config.get("api_key"),
+                    }
+                elif getattr(self.spec, "model_provider_config", None):
+                    provider_cfg = self.spec.model_provider_config
 
-                            _base_url = session_model_config.get("base_url")
-                            _api_key = session_model_config.get("api_key")
-
-                            # Expand env var references like ${VAR}
-                            def _expand(val):
-                                if (
-                                    val
-                                    and isinstance(val, str)
-                                    and val.startswith("${")
-                                    and val.endswith("}")
-                                ):
-                                    return os.getenv(val[2:-1])
-                                return val
-
-                            _base_url = _expand(_base_url)
-                            _api_key = _expand(_api_key)
-
-                            # Fall back to env for api_key only
-                            if not _api_key:
-                                if provider_type == "azure":
-                                    _api_key = os.getenv("AZURE_OPENAI_API_KEY")
-                                else:
-                                    _api_key = os.getenv("OPENAI_API_KEY")
-
-                            # For standard OpenAI (no base_url in config),
-                            # explicitly use the default OpenAI endpoint so
-                            # the SDK doesn't read OPENAI_BASE_URL from env.
-                            if not _base_url:
-                                _base_url = "https://api.openai.com/v1"
-
-                            is_azure = (
-                                "openai.azure.com" in _base_url
-                                or "services.ai.azure.com" in _base_url
-                            )
-
-                            if _api_key and is_azure:
-                                # Azure needs api-key header instead of Bearer
-                                client = AsyncOpenAI(
-                                    api_key="dummy",
-                                    base_url=_base_url,
-                                    default_headers={"api-key": _api_key},
-                                )
-                                model_provider = OpenAIProvider(openai_client=client)
-                            elif _api_key:
-                                client = AsyncOpenAI(
-                                    api_key=_api_key,
-                                    base_url=_base_url,
-                                )
-                                model_provider = OpenAIProvider(openai_client=client)
-                            # else: leave model_provider=None, fall through to defaults
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to create model provider for session model: {e}"
-                            )
+                if provider_cfg:
+                    try:
+                        model_provider = build_model_provider(provider_cfg)
+                    except ImportError as e:
+                        logger.warning(str(e))
+                    except Exception as e:
+                        logger.warning(f"Failed to create model provider: {e}")
 
                 while True:
                     try:

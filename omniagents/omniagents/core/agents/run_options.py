@@ -137,3 +137,105 @@ def resolve_tool_execution_config(config: Optional[Dict[str, Any]]) -> Optional[
         return None
     allowed: Iterable[str] = ("max_function_tool_concurrency",)
     return ToolExecutionConfig(**{k: config[k] for k in allowed if k in config})
+
+
+def _expand_env(value: Any) -> Any:
+    """Expand ``${VAR}`` strings against the process environment."""
+    import os
+
+    if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
+        return os.getenv(value[2:-1])
+    return value
+
+
+def build_model_provider(config: Optional[Dict[str, Any]]) -> Optional[Any]:
+    """Construct an SDK ``ModelProvider`` from a config dict.
+
+    Accepted shapes::
+
+        # Default OpenAI / OpenAI-compatible / Azure with explicit creds:
+        {"type": "openai", "base_url": "...", "api_key": "..."}
+        {"type": "openai-compatible", "base_url": "...", "api_key": "..."}
+        {"type": "azure", "base_url": "...", "api_key": "..."}
+
+        # LiteLLM (routes to any provider via litellm):
+        {"type": "litellm"}
+
+        # any-llm:
+        {"type": "any_llm", "api_key": "...", "base_url": "...",
+         "api": "responses" | "chat_completions"}
+
+        # MultiProvider with prefix routing (the SDK default — usually
+        # nothing to configure unless you want non-default OpenAI creds):
+        {"type": "multi", "openai_base_url": "...", "openai_api_key": "..."}
+
+    Returns ``None`` when ``config`` is empty so callers fall back to the
+    SDK's default ``MultiProvider``.
+    """
+    import os
+
+    if not config:
+        return None
+    provider_type = (config.get("type") or "openai").lower()
+
+    if provider_type == "litellm":
+        try:
+            from agents.extensions.models.litellm_provider import LitellmProvider
+        except ImportError as e:  # pragma: no cover
+            raise ImportError(
+                "LiteLLM provider not installed. Install with: pip install 'openai-agents[litellm]'"
+            ) from e
+        return LitellmProvider()
+
+    if provider_type in ("any-llm", "any_llm"):
+        try:
+            from agents.extensions.models.any_llm_provider import AnyLLMProvider
+        except ImportError as e:  # pragma: no cover
+            raise ImportError(
+                "any-llm provider not installed. Install the relevant openai-agents extra."
+            ) from e
+        return AnyLLMProvider(
+            api_key=_expand_env(config.get("api_key")),
+            base_url=_expand_env(config.get("base_url")),
+            api=config.get("api"),
+        )
+
+    if provider_type == "multi":
+        from agents.models.multi_provider import MultiProvider
+
+        return MultiProvider(
+            openai_api_key=_expand_env(config.get("openai_api_key")),
+            openai_base_url=_expand_env(config.get("openai_base_url")),
+            openai_organization=_expand_env(config.get("openai_organization")),
+            openai_project=_expand_env(config.get("openai_project")),
+            openai_use_responses=config.get("openai_use_responses"),
+            openai_prefix_mode=config.get("openai_prefix_mode", "alias"),
+            unknown_prefix_mode=config.get("unknown_prefix_mode", "error"),
+        )
+
+    # Default branch: OpenAI / OpenAI-compatible / Azure
+    from openai import AsyncOpenAI
+    from agents.models.openai_provider import OpenAIProvider
+
+    base_url = _expand_env(config.get("base_url"))
+    api_key = _expand_env(config.get("api_key"))
+    if not api_key:
+        if provider_type == "azure":
+            api_key = os.getenv("AZURE_OPENAI_API_KEY")
+        else:
+            api_key = os.getenv("OPENAI_API_KEY")
+    if not base_url:
+        base_url = "https://api.openai.com/v1"
+
+    is_azure = "openai.azure.com" in base_url or "services.ai.azure.com" in base_url
+    if api_key and is_azure:
+        client = AsyncOpenAI(
+            api_key="dummy",
+            base_url=base_url,
+            default_headers={"api-key": api_key},
+        )
+        return OpenAIProvider(openai_client=client)
+    if api_key:
+        client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        return OpenAIProvider(openai_client=client)
+    return None
