@@ -1879,6 +1879,30 @@ class AgentService(RpcMethodsBase):
                                 f"Failed to create model provider for session model: {e}"
                             )
 
+                # If the spec opts in to SDK-native compaction, build (and
+                # memoise) a wrapper that delegates reads/writes to the
+                # underlying OmniAgents Session and triggers
+                # ``responses.compact`` when its threshold hook fires.  When
+                # compaction is disabled this is ``None``.
+                _compaction_cfg = getattr(self.spec, "session_compaction_config", None)
+                sdk_session = None
+                if _compaction_cfg:
+                    cached = getattr(sess, "_sdk_compaction_session", None)
+                    if cached is None:
+                        from omniagents.core.session.compaction import (
+                            wrap_with_compaction,
+                        )
+
+                        wrapped = wrap_with_compaction(sess, _compaction_cfg)
+                        # ``wrap_with_compaction`` returns ``sess`` itself
+                        # when wrapping is disabled or fails; only memoise
+                        # when an actual wrapper was produced.
+                        if wrapped is not sess:
+                            sess._sdk_compaction_session = wrapped
+                            sdk_session = wrapped
+                    else:
+                        sdk_session = cached
+
                 while True:
                     try:
                         # Get token limits from session model config
@@ -1920,6 +1944,7 @@ class AgentService(RpcMethodsBase):
                                 self.spec, "tool_execution_config", None
                             ),
                             error_handlers=getattr(self.spec, "error_handlers", None),
+                            sdk_session=sdk_session,
                         )
                         end_reason = sess.cancel_end_reason or "completed"
                         error_info = None

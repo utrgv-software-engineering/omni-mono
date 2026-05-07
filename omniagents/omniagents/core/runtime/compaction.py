@@ -4,52 +4,11 @@ import copy
 import json
 from typing import Any
 
-
-def history_since_last_summary(
-    history: list[dict], *, include_summary: bool = False
-) -> list[dict]:
-    if not history:
-        return []
-    last_summary_idx: int | None = None
-    for idx in range(len(history) - 1, -1, -1):
-        item = history[idx]
-        if (
-            isinstance(item, dict)
-            and item.get("role") == "assistant"
-            and isinstance(item.get("omniagents"), dict)
-            and item["omniagents"].get("kind") == "context_summary"
-        ):
-            last_summary_idx = idx
-            break
-    if last_summary_idx is None:
-        return list(history)
-    start = last_summary_idx if include_summary else last_summary_idx + 1
-    return list(history[start:])
-
-
-def is_context_length_exceeded(err: Exception) -> bool:
-    if err.__class__.__name__ == "ContextWindowExceededError":
-        return True
-    body = getattr(err, "body", None)
-    if isinstance(body, dict):
-        error_obj = body.get("error")
-        if isinstance(error_obj, dict):
-            if error_obj.get("code") == "context_length_exceeded":
-                return True
-            error_message = str(error_obj.get("message", "")).lower()
-            if "context_length_exceeded" in error_message:
-                return True
-            if "context window" in error_message and "exceed" in error_message:
-                return True
-    code = getattr(err, "code", None)
-    if code == "context_length_exceeded":
-        return True
-    msg = str(err).lower()
-    if "context window" in msg and "exceed" in msg:
-        return True
-    if "maximum context length" in msg:
-        return True
-    return False
+# Note: ``history_since_last_summary`` and ``is_context_length_exceeded`` were
+# removed when SDK-native compaction (``OpenAIResponsesCompactionSession``)
+# took over context-window management.  The remaining helpers below are kept
+# because they are still consumed by runtime hooks and tests for transcript
+# extraction / tool-event sanitisation / resume-protocol blocks.
 
 
 def extract_transcript(history: list[dict]) -> str:

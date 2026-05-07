@@ -1584,6 +1584,23 @@ def load_agent_spec_from_yaml(
             print(f"Warning: Failed to resolve retry_policy: {e}. Ignoring.")
             retry_settings_cfg = None
 
+    # session.compaction: opt-in SDK-native context compaction. Stored as a
+    # plain dict on the spec; the wiring layer hands it to
+    # ``omniagents.core.session.compaction.wrap_with_compaction`` which
+    # forwards it to ``agents.memory.OpenAIResponsesCompactionSession``.
+    session_cfg_raw = config.get("session") or None
+    session_compaction_cfg: Optional[Dict[str, Any]] = None
+    if session_cfg_raw is not None and not isinstance(session_cfg_raw, dict):
+        print("Warning: 'session' must be a dict. Ignoring.")
+        session_cfg_raw = None
+    if session_cfg_raw:
+        compaction_raw = session_cfg_raw.get("compaction")
+        if compaction_raw is not None and not isinstance(compaction_raw, dict):
+            print("Warning: 'session.compaction' must be a dict. Ignoring.")
+            compaction_raw = None
+        if compaction_raw:
+            session_compaction_cfg = dict(compaction_raw)
+
     # --- Construct AgentSpec ---
     spec = AgentSpec(
         # Basic Info
@@ -1626,6 +1643,7 @@ def load_agent_spec_from_yaml(
         tool_execution_config=tool_execution_cfg,
         error_handlers=error_handlers_cfg,
         retry_settings=(retry_settings_cfg if retry_settings_cfg is not None else None),
+        session_compaction_config=session_compaction_cfg,
         # Tracing Config
         tracing_config=tracing_config,
         # MCP Config

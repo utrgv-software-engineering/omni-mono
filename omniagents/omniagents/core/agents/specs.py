@@ -234,6 +234,17 @@ class AgentSpec:
     retry_settings: Optional[Any] = None
     """Pre-built ``ModelRetrySettings`` applied to ``ModelSettings.retry``."""
 
+    session_compaction_config: Optional[Dict[str, Any]] = None
+    """SDK-native compaction config (``session.compaction`` in YAML).
+
+    When present and ``enabled`` is truthy, the OmniAgents Session is wrapped
+    with ``agents.memory.OpenAIResponsesCompactionSession`` before being passed
+    to the runtime so the OpenAI Responses ``compact`` endpoint manages
+    context-window pressure. All keys other than ``enabled`` are forwarded as
+    kwargs to ``OpenAIResponsesCompactionSession`` (e.g. ``model``,
+    ``compaction_mode``).
+    """
+
     # --- Tracing Configuration ---
     tracing_config: Optional[Dict[str, Any]] = None
 

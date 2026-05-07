@@ -2,38 +2,7 @@ from omniagents.core.runtime.compaction import (
     build_resume_protocol_block,
     extract_tool_events,
     format_tool_events_block,
-    history_since_last_summary,
 )
-
-
-def test_history_since_last_summary_excludes_summary_by_default():
-    history = [
-        {"role": "user", "content": "first"},
-        {
-            "role": "assistant",
-            "content": "summary",
-            "omniagents": {"kind": "context_summary", "version": 1},
-        },
-        {"role": "user", "content": "second"},
-    ]
-
-    assert history_since_last_summary(history) == [
-        {"role": "user", "content": "second"}
-    ]
-
-
-def test_history_since_last_summary_can_include_summary():
-    history = [
-        {"role": "user", "content": "first"},
-        {
-            "role": "assistant",
-            "content": "summary",
-            "omniagents": {"kind": "context_summary", "version": 1},
-        },
-        {"role": "user", "content": "second"},
-    ]
-
-    assert history_since_last_summary(history, include_summary=True) == history[1:]
 
 
 def test_extract_tool_events_and_format_block():
