@@ -54,6 +54,7 @@ from omniagents.core.agents.specs import (
     AgentLike,
     SafeAgentOptions,
     HandoffConfig,
+    AgentToolConfig,
     MCPServerConfig,
     SettingField,
     RealtimeSettings,
@@ -74,6 +75,10 @@ from omniagents.core.server_functions.discovery import (
 from omniagents.core.runtime_hooks.discovery import (
     discover_runtime_hooks_in_dir,
     build_runtime_hooks_registrar,
+)
+from omniagents.core.predicates.discovery import (
+    discover_predicates_in_dir,
+    resolve_predicate,
 )
 
 DEFAULT_SETTINGS_FIELDS = [
@@ -738,6 +743,9 @@ def load_agent_spec_from_yaml(
         "extra_body": dict,  # Additional body fields
         "extra_headers": dict,  # Additional headers
         "extra_args": dict,  # Arbitrary keyword arguments
+        # OmniAgents-specific (consumed by run_options.build_model_provider).
+        # Not passed to ModelSettings; extracted before construction.
+        "reasoning_content_replay": dict,
     }
 
     # Validate and warn about invalid settings
@@ -777,6 +785,11 @@ def load_agent_spec_from_yaml(
             f"Warning: 'model_settings.verbosity' should be 'low', 'medium', or 'high', got '{model_settings_config['verbosity']}'. Ignoring."
         )
         del model_settings_config["verbosity"]
+
+    # --- Extract reasoning_content_replay (not a ModelSettings field) ---
+    # Lift it out of model_settings_config so ModelSettings(**kwargs) doesn't
+    # complain about an unknown keyword. Stash it for the model_provider step.
+    _reasoning_replay_cfg = model_settings_config.pop("reasoning_content_replay", None)
 
     # --- Realtime Agent Configuration ---
     realtime_mode = config.get("realtime_mode", False)
@@ -1257,6 +1270,63 @@ def load_agent_spec_from_yaml(
             except Exception as e:
                 print(f"Warning: Failed to set up content scanner guardrails: {e}")
 
+    # --- Predicate Discovery (for is_enabled callables) ---
+    # Discovered once per YAML; used to resolve `is_enabled:` references on
+    # tools, handoffs, and agent_tools below.
+    predicate_registry: Dict[str, Callable] = {}
+    if not remote_ws_url:
+        try:
+            predicate_registry = discover_predicates_in_dir(base_dir)
+            if predicate_registry:
+                Debug.log(
+                    f"Discovered {len(predicate_registry)} is_enabled predicates from {base_dir}"
+                )
+        except Exception as e:
+            print(f"Warning: predicate discovery failed: {e}")
+
+    # --- Apply is_enabled to function tools ---
+    # The `tools:` block supports either a bare tool name (str) OR a dict like
+    # {"name": "my_tool", "is_enabled": "my_predicate"}. Function tools are
+    # already constructed FunctionTool dataclass instances, so we mutate the
+    # `is_enabled` attribute in place.
+    if not remote_ws_url and isinstance(activated_tool_names, list):
+        # Re-walk the original `tools:` list to look for dict-form entries.
+        raw_tools_list = config.get("tools", [])
+        if isinstance(raw_tools_list, list):
+            from agents.tool import FunctionTool as _SDKFunctionTool
+
+            tool_by_name = {
+                getattr(t, "name", None): t for t in selected_tool_functions
+            }
+            for entry in raw_tools_list:
+                if not isinstance(entry, dict):
+                    continue
+                tool_name = entry.get("name") or entry.get("tool")
+                if not tool_name:
+                    continue
+                tool_obj = tool_by_name.get(tool_name)
+                if tool_obj is None:
+                    continue
+                is_enabled_raw = entry.get("is_enabled")
+                if is_enabled_raw is None:
+                    continue
+                resolved = resolve_predicate(is_enabled_raw, predicate_registry)
+                if resolved is None:
+                    print(
+                        f"Warning: tool '{tool_name}' is_enabled='{is_enabled_raw}' "
+                        f"could not be resolved. Leaving default."
+                    )
+                    continue
+                # FunctionTool is a @dataclass — mutating `is_enabled` is supported.
+                if isinstance(tool_obj, _SDKFunctionTool):
+                    try:
+                        tool_obj.is_enabled = resolved
+                        Debug.log(f"Applied is_enabled predicate to tool '{tool_name}'")
+                    except Exception as e:
+                        print(
+                            f"Warning: failed to set is_enabled on tool '{tool_name}': {e}"
+                        )
+
     # --- Handoffs Configuration ---
     handoff_configs_list = []
     if not remote_ws_url:  # Only process handoffs for local agents
@@ -1293,6 +1363,9 @@ def load_agent_spec_from_yaml(
                         tool_description_override=handoff_item.get(
                             "tool_description_override"
                         ),
+                        is_enabled=resolve_predicate(
+                            handoff_item.get("is_enabled"), predicate_registry
+                        ),
                     )
                     handoff_configs_list.append(handoff_config)
 
@@ -1318,6 +1391,9 @@ def load_agent_spec_from_yaml(
                             tool_description_override=handoff_item.get(
                                 "tool_description_override"
                             ),
+                            is_enabled=resolve_predicate(
+                                handoff_item.get("is_enabled"), predicate_registry
+                            ),
                         )
                         handoff_configs_list.append(handoff_config)
                     except Exception as e:
@@ -1332,6 +1408,117 @@ def load_agent_spec_from_yaml(
                 print(
                     f"Warning: Invalid handoff item in {config_path}. Expected dict. Skipping."
                 )
+
+    # --- Agent-as-Tool Configuration ---
+    # `agent_tools:` exposes other agents as callable tools (Agent.as_tool()).
+    # Differs from handoffs: caller stays in control after the sub-agent runs.
+    agent_tool_configs_list: List[AgentToolConfig] = []
+    if not remote_ws_url:
+        agent_tools_config = config.get("agent_tools", [])
+        if agent_tools_config and not isinstance(agent_tools_config, list):
+            print(
+                f"Warning: 'agent_tools' key in {config_path} should be a list. Ignoring."
+            )
+            agent_tools_config = []
+
+        for at_item in agent_tools_config:
+            if not isinstance(at_item, dict):
+                print(
+                    f"Warning: Invalid agent_tool item in {config_path}. Expected dict. Skipping."
+                )
+                continue
+
+            tool_name = at_item.get("tool_name")
+            tool_description = at_item.get("tool_description")
+            is_enabled_resolved = resolve_predicate(
+                at_item.get("is_enabled"), predicate_registry
+            )
+            needs_approval_raw = at_item.get("needs_approval")
+            needs_approval_resolved = (
+                needs_approval_raw
+                if isinstance(needs_approval_raw, bool)
+                else resolve_predicate(needs_approval_raw, predicate_registry)
+            )
+            max_turns_val = at_item.get("max_turns")
+
+            if "yaml" in at_item:
+                yp = at_item.get("yaml")
+                if not isinstance(yp, str) or not yp.strip():
+                    print(
+                        f"Warning: agent_tool entry missing valid 'yaml' path in {config_path}. Skipping."
+                    )
+                    continue
+                resolved_yp = (base_dir / yp).resolve()
+                if not resolved_yp.is_file():
+                    print(
+                        f"Warning: agent_tool YAML not found: {resolved_yp}. Skipping."
+                    )
+                    continue
+                agent_tool_configs_list.append(
+                    AgentToolConfig(
+                        yaml_path=str(resolved_yp),
+                        tool_name=tool_name,
+                        tool_description=tool_description,
+                        is_enabled=is_enabled_resolved,
+                        needs_approval=needs_approval_resolved,
+                        max_turns=max_turns_val,
+                    )
+                )
+            elif "inline" in at_item:
+                inline_cfg = at_item.get("inline")
+                if not isinstance(inline_cfg, dict):
+                    print(
+                        f"Warning: agent_tool 'inline' value must be a dict in {config_path}. Skipping."
+                    )
+                    continue
+                try:
+                    inline_spec = _parse_inline_agent_spec(
+                        inline_cfg, base_dir, _loading_stack
+                    )
+                except Exception as e:
+                    print(f"Warning: Failed to parse inline agent_tool: {e}. Skipping.")
+                    continue
+                agent_tool_configs_list.append(
+                    AgentToolConfig(
+                        inline_spec=inline_spec,
+                        tool_name=tool_name,
+                        tool_description=tool_description,
+                        is_enabled=is_enabled_resolved,
+                        needs_approval=needs_approval_resolved,
+                        max_turns=max_turns_val,
+                    )
+                )
+            else:
+                print(
+                    f"Warning: agent_tool item must have 'yaml' or 'inline' in {config_path}. Skipping."
+                )
+
+    # --- Model Provider Configuration ---
+    # Optional `model_provider:` block that controls how the run-level
+    # ModelProvider is constructed. Currently used to opt into the
+    # Responses-over-WebSocket transport.
+    model_provider_config = config.get("model_provider")
+    if model_provider_config is not None and not isinstance(
+        model_provider_config, dict
+    ):
+        print(f"Warning: 'model_provider' in {config_path} should be a dict. Ignoring.")
+        model_provider_config = None
+    if isinstance(model_provider_config, dict):
+        # Apply env var substitution so users can keep ${OPENAI_API_KEY} etc.
+        try:
+            model_provider_config = _substitute_env_vars(model_provider_config)
+        except ValueError as e:
+            print(
+                f"Warning: env substitution failed for model_provider: {e}. Ignoring."
+            )
+            model_provider_config = None
+
+    # If reasoning_content_replay was set under model_settings, fold it into the
+    # model_provider config so the runtime wiring sees it in one place.
+    if _reasoning_replay_cfg is not None:
+        if not isinstance(model_provider_config, dict):
+            model_provider_config = {}
+        model_provider_config["reasoning_content_replay"] = _reasoning_replay_cfg
 
     # --- Safety Configuration ---
     use_safe = config.get("use_safe_agent", True)  # Default to safe
@@ -1592,12 +1779,6 @@ def load_agent_spec_from_yaml(
             print(f"Warning: Failed to resolve error_handlers: {e}. Ignoring.")
             error_handlers_cfg = None
 
-    # model_provider: spec-level provider config (LiteLLM, OpenAI-compatible, etc.)
-    model_provider_raw = config.get("model_provider") or None
-    if model_provider_raw is not None and not isinstance(model_provider_raw, dict):
-        print("Warning: 'model_provider' must be a dict. Ignoring.")
-        model_provider_raw = None
-
     # SDK lifecycle hooks (RunHooks / AgentHooks). Discover from
     # ``lifecycle_hooks/`` subdirectory and pick by name from YAML.
     agent_hooks_obj: Optional[Any] = None
@@ -1767,6 +1948,10 @@ def load_agent_spec_from_yaml(
         prompt=prompt,
         # Handoffs
         handoff_configs=handoff_configs_list,
+        # Agent-as-Tool
+        agent_tool_configs=agent_tool_configs_list,
+        # Model Provider
+        model_provider_config=model_provider_config,
         # Guardrails
         input_guardrails=input_guardrails_list,
         output_guardrails=output_guardrails_list,
@@ -1784,7 +1969,6 @@ def load_agent_spec_from_yaml(
         tool_execution_config=tool_execution_cfg,
         error_handlers=error_handlers_cfg,
         retry_settings=(retry_settings_cfg if retry_settings_cfg is not None else None),
-        model_provider_config=model_provider_raw,
         agent_hooks=agent_hooks_obj,
         run_hooks=run_hooks_obj,
         # SDK-native session backend (opt-in; None means use default SQLite)
