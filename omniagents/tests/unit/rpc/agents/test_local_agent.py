@@ -41,54 +41,10 @@ async def test_initialize_restores_spec_builder():
 
 
 @pytest.mark.asyncio
-async def test_custom_builder_preserves_safe_agent_callback(monkeypatch):
-    callback = Mock()
-
-    class FakeSafeAgent:
-        call_args = None
-
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.callback = None
-
-        @classmethod
-        def set_global_safe_tools(cls, tool_names=None, tool_patterns=None):
-            cls.call_args = (tool_names, tool_patterns)
-
-        def set_approval_callback(self, cb):
-            self.callback = cb
-
-    safe_instance = FakeSafeAgent()
-    original_builder = AsyncMock(return_value=safe_instance)
-    spec = make_agent_spec(build_agent=original_builder)
-    agent = LocalAgent(spec, approval_callback=callback)
-
-    monkeypatch.setattr("omniagents.core.agents.safe.SafeAgent", FakeSafeAgent)
-
-    await agent.initialize()
-    built_agent = await spec.build_agent({}, None, None)
-    assert built_agent.callback is callback
-    assert FakeSafeAgent.call_args == ([], [])
-
-    await agent.cleanup()
-
-
-@pytest.mark.asyncio
-async def test_custom_builder_wraps_non_safe_agent(monkeypatch):
-    callback = Mock()
-
-    class FakeSafe:
-        call_args = None
-
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        @classmethod
-        def set_global_safe_tools(cls, tool_names=None, tool_patterns=None):
-            cls.call_args = (tool_names, tool_patterns)
-
-    monkeypatch.setattr("omniagents.core.agents.safe.SafeAgent", FakeSafe)
-
+async def test_custom_builder_returns_user_agent_unchanged():
+    # SDK 0.16+: LocalAgent's custom_build_agent no longer wraps the user
+    # spec's agent in a SafeAgent. Tool approval is wired per-session by
+    # AgentService.configure_tool_approval based on use_safe_agent / opts.
     returned_agent = SimpleNamespace(
         name="core",
         tools=[],
@@ -100,7 +56,6 @@ async def test_custom_builder_wraps_non_safe_agent(monkeypatch):
         handoff_description=None,
         prompt=None,
     )
-
     original_builder = AsyncMock(return_value=returned_agent)
     spec = make_agent_spec(
         build_agent=original_builder,
@@ -111,15 +66,11 @@ async def test_custom_builder_wraps_non_safe_agent(monkeypatch):
             skip_approvals=False,
         ),
     )
-    agent = LocalAgent(spec, approval_callback=callback)
+    agent = LocalAgent(spec)
 
     await agent.initialize()
-
     built_agent = await spec.build_agent({}, None, None)
-    assert isinstance(built_agent, FakeSafe)
-    assert built_agent.kwargs["approval_callback"] is callback
-    assert built_agent.kwargs["safe_tool_names"] == ["ping"]
-    assert FakeSafe.call_args == (["ping"], ["^safe-"])
+    assert built_agent is returned_agent
 
     await agent.cleanup()
 

@@ -29,8 +29,15 @@ def _write(path: Path, content: str) -> None:
     path.write_text(textwrap.dedent(content))
 
 
-def _make_project(tmp_path, *, security=None, agent_overrides=None, tools=None,
-                  allow_user_mcp=False, mcp_servers=None):
+def _make_project(
+    tmp_path,
+    *,
+    security=None,
+    agent_overrides=None,
+    tools=None,
+    allow_user_mcp=False,
+    mcp_servers=None,
+):
     """Scaffold a minimal project.yml + agent.yml in *tmp_path*."""
     agents_dir = tmp_path / "agents" / "test_agent"
     agents_dir.mkdir(parents=True)
@@ -92,17 +99,24 @@ class TestSecurityConfigParsing:
         assert sc.audit.enabled is False
 
     def test_full_config(self):
-        sc = SecurityConfig.from_dict({
-            "safety_mode": "enforced",
-            "blocked_tools": ["dangerous"],
-            "blocked_tool_patterns": ["*_unsafe*"],
-            "mcp_require_allowlist": True,
-            "mcp_allowed_servers": ["server_a"],
-            "tool_timeouts": {"default": 60, "slow": 300},
-            "audit": {"enabled": True, "backend": "file", "path": "/tmp/a.jsonl", "retention_days": 90},
-            "sessions": {"retention_days": 365},
-            "providers": {"auth": {"type": "oidc"}},
-        })
+        sc = SecurityConfig.from_dict(
+            {
+                "safety_mode": "enforced",
+                "blocked_tools": ["dangerous"],
+                "blocked_tool_patterns": ["*_unsafe*"],
+                "mcp_require_allowlist": True,
+                "mcp_allowed_servers": ["server_a"],
+                "tool_timeouts": {"default": 60, "slow": 300},
+                "audit": {
+                    "enabled": True,
+                    "backend": "file",
+                    "path": "/tmp/a.jsonl",
+                    "retention_days": 90,
+                },
+                "sessions": {"retention_days": 365},
+                "providers": {"auth": {"type": "oidc"}},
+            }
+        )
         assert sc.safety_mode == "enforced"
         assert sc.blocked_tools == ["dangerous"]
         assert sc.blocked_tool_patterns == ["*_unsafe*"]
@@ -121,11 +135,13 @@ class TestSecurityConfigParsing:
         assert "not recognised" in capsys.readouterr().out
 
     def test_round_trip(self):
-        original = SecurityConfig.from_dict({
-            "safety_mode": "enforced",
-            "blocked_tools": ["x"],
-            "audit": {"enabled": True},
-        })
+        original = SecurityConfig.from_dict(
+            {
+                "safety_mode": "enforced",
+                "blocked_tools": ["x"],
+                "audit": {"enabled": True},
+            }
+        )
         rebuilt = SecurityConfig.from_dict(original.to_dict())
         assert rebuilt.safety_mode == original.safety_mode
         assert rebuilt.blocked_tools == original.blocked_tools
@@ -147,7 +163,9 @@ class TestSecurityConfigThreading:
         assert spec.security_config["safety_mode"] == "recommended"
 
     def test_security_section_threads_to_spec(self, tmp_path):
-        _make_project(tmp_path, security={"safety_mode": "enforced", "blocked_tools": ["x"]})
+        _make_project(
+            tmp_path, security={"safety_mode": "enforced", "blocked_tools": ["x"]}
+        )
         _, spec = _load(tmp_path)
 
         assert spec.security_config["safety_mode"] == "enforced"
@@ -188,7 +206,9 @@ class TestToolBlocklist:
         _make_project(
             tmp_path,
             tools=TOOLS_PY,
-            agent_overrides={"tools": ["safe_tool", "dangerous_tool", "exec_unsafe_cmd", "read_file"]},
+            agent_overrides={
+                "tools": ["safe_tool", "dangerous_tool", "exec_unsafe_cmd", "read_file"]
+            },
         )
         _, spec = _load(tmp_path)
         names = sorted(getattr(t, "name", "") for t in spec.available_tools)
@@ -222,9 +242,14 @@ class TestToolBlocklist:
     def test_combined_blocklist(self, tmp_path):
         _make_project(
             tmp_path,
-            security={"blocked_tools": ["dangerous_tool"], "blocked_tool_patterns": ["*_unsafe*"]},
+            security={
+                "blocked_tools": ["dangerous_tool"],
+                "blocked_tool_patterns": ["*_unsafe*"],
+            },
             tools=TOOLS_PY,
-            agent_overrides={"tools": ["safe_tool", "dangerous_tool", "exec_unsafe_cmd", "read_file"]},
+            agent_overrides={
+                "tools": ["safe_tool", "dangerous_tool", "exec_unsafe_cmd", "read_file"]
+            },
         )
         _, spec = _load(tmp_path)
         names = sorted(getattr(t, "name", "") for t in spec.available_tools)
@@ -241,7 +266,10 @@ class TestSafetyModeEnforcement:
         _make_project(
             tmp_path,
             security={"safety_mode": "recommended"},
-            agent_overrides={"use_safe_agent": False, "safe_agent_options": {"skip_approvals": True}},
+            agent_overrides={
+                "use_safe_agent": False,
+                "safe_agent_options": {"skip_approvals": True},
+            },
         )
         _, spec = _load(tmp_path)
         assert spec.use_safe_agent is False
@@ -268,7 +296,10 @@ class TestSafetyModeEnforcement:
     def test_no_security_section_respects_agent(self, tmp_path):
         _make_project(
             tmp_path,
-            agent_overrides={"use_safe_agent": False, "safe_agent_options": {"skip_approvals": True}},
+            agent_overrides={
+                "use_safe_agent": False,
+                "safe_agent_options": {"skip_approvals": True},
+            },
         )
         _, spec = _load(tmp_path)
         assert spec.use_safe_agent is False
@@ -282,12 +313,16 @@ class TestSafetyModeEnforcement:
 
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "agent.yml"
-            p.write_text(yaml.dump({
-                "name": "eval_agent",
-                "instructions": "Test",
-                "welcome_text": "Hi",
-                "use_safe_agent": True,
-            }))
+            p.write_text(
+                yaml.dump(
+                    {
+                        "name": "eval_agent",
+                        "instructions": "Test",
+                        "welcome_text": "Hi",
+                        "use_safe_agent": True,
+                    }
+                )
+            )
             spec = load_agent_spec_from_yaml(str(p))
             # Simulate what eval pipeline does
             spec.use_safe_agent = False
@@ -303,8 +338,18 @@ class TestSafetyModeEnforcement:
 class TestMCPAllowlist:
     def _mcp_servers(self):
         return [
-            {"name": "allowed_server", "type": "stdio", "command": "echo", "args": ["hi"]},
-            {"name": "blocked_server", "type": "stdio", "command": "echo", "args": ["hi"]},
+            {
+                "name": "allowed_server",
+                "type": "stdio",
+                "command": "echo",
+                "args": ["hi"],
+            },
+            {
+                "name": "blocked_server",
+                "type": "stdio",
+                "command": "echo",
+                "args": ["hi"],
+            },
         ]
 
     def test_no_allowlist_all_servers_pass(self, tmp_path):
@@ -316,7 +361,10 @@ class TestMCPAllowlist:
     def test_allowlist_filters_servers(self, tmp_path):
         _make_project(
             tmp_path,
-            security={"mcp_require_allowlist": True, "mcp_allowed_servers": ["allowed_server"]},
+            security={
+                "mcp_require_allowlist": True,
+                "mcp_allowed_servers": ["allowed_server"],
+            },
             mcp_servers=self._mcp_servers(),
         )
         _, spec = _load(tmp_path)
@@ -379,21 +427,35 @@ class TestSessionRetention:
         old = (datetime.utcnow() - timedelta(days=100)).strftime("%Y-%m-%d %H:%M:%S")
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
-        conn.execute("INSERT INTO sessions (session_id, created_at) VALUES (?, ?)", ("old1", old))
-        conn.execute("INSERT INTO sessions (session_id, created_at) VALUES (?, ?)", ("old2", old))
-        conn.execute("INSERT INTO sessions (session_id, created_at) VALUES (?, ?)", ("new1", now))
-        conn.execute("INSERT INTO history (session_id, msg_json, created_at) VALUES (?, ?, ?)",
-                      ("old1", json.dumps({"role": "user"}), old))
-        conn.execute("INSERT INTO history (session_id, msg_json, created_at) VALUES (?, ?, ?)",
-                      ("old2", json.dumps({"role": "user"}), old))
-        conn.execute("INSERT INTO history (session_id, msg_json, created_at) VALUES (?, ?, ?)",
-                      ("new1", json.dumps({"role": "user"}), now))
+        conn.execute(
+            "INSERT INTO sessions (session_id, created_at) VALUES (?, ?)", ("old1", old)
+        )
+        conn.execute(
+            "INSERT INTO sessions (session_id, created_at) VALUES (?, ?)", ("old2", old)
+        )
+        conn.execute(
+            "INSERT INTO sessions (session_id, created_at) VALUES (?, ?)", ("new1", now)
+        )
+        conn.execute(
+            "INSERT INTO history (session_id, msg_json, created_at) VALUES (?, ?, ?)",
+            ("old1", json.dumps({"role": "user"}), old),
+        )
+        conn.execute(
+            "INSERT INTO history (session_id, msg_json, created_at) VALUES (?, ?, ?)",
+            ("old2", json.dumps({"role": "user"}), old),
+        )
+        conn.execute(
+            "INSERT INTO history (session_id, msg_json, created_at) VALUES (?, ?, ?)",
+            ("new1", json.dumps({"role": "user"}), now),
+        )
         conn.commit()
 
         purged = purge_old_sessions(30, project_slug="proj", agent_slug="agt")
         assert purged == 2
 
-        remaining = [r[0] for r in conn.execute("SELECT session_id FROM sessions").fetchall()]
+        remaining = [
+            r[0] for r in conn.execute("SELECT session_id FROM sessions").fetchall()
+        ]
         assert remaining == ["new1"]
         assert conn.execute("SELECT COUNT(*) FROM history").fetchone()[0] == 1
 
@@ -404,7 +466,9 @@ class TestSessionRetention:
         self._patch_store(monkeypatch, (conn, lock), "proj", "agt")
 
         old = (datetime.utcnow() - timedelta(days=999)).strftime("%Y-%m-%d %H:%M:%S")
-        conn.execute("INSERT INTO sessions (session_id, created_at) VALUES (?, ?)", ("old", old))
+        conn.execute(
+            "INSERT INTO sessions (session_id, created_at) VALUES (?, ?)", ("old", old)
+        )
         conn.commit()
 
         assert purge_old_sessions(0, project_slug="proj", agent_slug="agt") == 0
@@ -417,7 +481,10 @@ class TestSessionRetention:
         self._patch_store(monkeypatch, (conn, lock), "proj", "agt")
 
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-        conn.execute("INSERT INTO sessions (session_id, created_at) VALUES (?, ?)", ("recent", now))
+        conn.execute(
+            "INSERT INTO sessions (session_id, created_at) VALUES (?, ?)",
+            ("recent", now),
+        )
         conn.commit()
 
         assert purge_old_sessions(30, project_slug="proj", agent_slug="agt") == 0
@@ -467,8 +534,10 @@ class TestFileAuditBackend:
         old_ts = (datetime.now(timezone.utc) - timedelta(days=100)).isoformat()
         new_ts = datetime.now(timezone.utc).isoformat()
         log_path.write_text(
-            json.dumps({"event_type": "old", "timestamp": old_ts}) + "\n"
-            + json.dumps({"event_type": "new", "timestamp": new_ts}) + "\n"
+            json.dumps({"event_type": "old", "timestamp": old_ts})
+            + "\n"
+            + json.dumps({"event_type": "new", "timestamp": new_ts})
+            + "\n"
         )
 
         # Creating backend with retention_days triggers purge on init
@@ -483,7 +552,9 @@ class TestFileAuditBackend:
 
         log_path = tmp_path / "audit.jsonl"
         old_ts = (datetime.now(timezone.utc) - timedelta(days=999)).isoformat()
-        log_path.write_text(json.dumps({"event_type": "ancient", "timestamp": old_ts}) + "\n")
+        log_path.write_text(
+            json.dumps({"event_type": "ancient", "timestamp": old_ts}) + "\n"
+        )
 
         backend = FileAuditBackend(path=str(log_path), retention_days=0)
         lines = log_path.read_text().strip().splitlines()
@@ -607,8 +678,13 @@ class TestAuditEvents:
         from omniagents.core.audit import events
 
         for name in [
-            "RUN_STARTED", "RUN_END", "TOOL_CALLED", "TOOL_RESULT",
-            "TOOL_APPROVED", "TOOL_REJECTED", "GUARDRAIL_TRIGGERED",
+            "RUN_STARTED",
+            "RUN_END",
+            "TOOL_CALLED",
+            "TOOL_RESULT",
+            "TOOL_APPROVED",
+            "TOOL_REJECTED",
+            "GUARDRAIL_TRIGGERED",
         ]:
             assert isinstance(getattr(events, name), str)
 
@@ -657,6 +733,7 @@ class TestProviderRegistry:
 
     def test_available_providers(self):
         from omniagents.core.providers import available_providers
+
         # Trigger registration by importing the domain packages
         import omniagents.core.providers.auth  # noqa: F401
         import omniagents.core.providers.content_scanner  # noqa: F401
@@ -723,9 +800,9 @@ class TestRegexScanner:
         import asyncio
         from omniagents.core.providers.content_scanner.regex import RegexScanner
 
-        scanner = RegexScanner({
-            "extra_patterns": [{"name": "patient_id", "pattern": r"PT-\d{6}"}]
-        })
+        scanner = RegexScanner(
+            {"extra_patterns": [{"name": "patient_id", "pattern": r"PT-\d{6}"}]}
+        )
         result = asyncio.get_event_loop().run_until_complete(
             scanner.scan("Patient PT-123456 admitted")
         )
@@ -773,6 +850,7 @@ class TestProviderWiring:
         assert isinstance(p, EnvSecretsProvider)
         # Verify it works through the interface
         import os
+
         os.environ["_TEST_WIRING_KEY"] = "wired"
         assert p.get_secret("_TEST_WIRING_KEY") == "wired"
         del os.environ["_TEST_WIRING_KEY"]
@@ -783,9 +861,11 @@ class TestProviderWiring:
 
         original = hdb._encryption_provider
         try:
+
             class FakeProvider:
                 def get_connection(self, db_path):
                     import sqlite3
+
                     conn = sqlite3.connect(db_path, check_same_thread=False)
                     conn.execute("PRAGMA journal_mode=WAL")
                     return conn
@@ -978,7 +1058,10 @@ class TestLegalHold:
         conn, lock = self._make_db(tmp_path)
         self._patch_store(monkeypatch, (conn, lock), "proj", "agt")
 
-        assert set_session_hold("nonexistent", project_slug="proj", agent_slug="agt") is False
+        assert (
+            set_session_hold("nonexistent", project_slug="proj", agent_slug="agt")
+            is False
+        )
 
     def test_get_session_hold(self, tmp_path, monkeypatch):
         from omniagents.core.session.history_db import (
@@ -1041,14 +1124,13 @@ class TestHMACChainIntegrity:
         from omniagents.core.audit.integrity import verify_audit_log
 
         log_path = tmp_path / "signed.jsonl"
-        backend = FileAuditBackend(
-            path=str(log_path), signing_key="test_key"
-        )
+        backend = FileAuditBackend(path=str(log_path), signing_key="test_key")
 
         for i in range(3):
             asyncio.get_event_loop().run_until_complete(
                 backend.handle_event(
-                    event_type="test", timestamp=f"2026-01-0{i+1}T00:00:00",
+                    event_type="test",
+                    timestamp=f"2026-01-0{i+1}T00:00:00",
                     details={"i": i},
                 )
             )
@@ -1065,14 +1147,13 @@ class TestHMACChainIntegrity:
         from omniagents.core.audit.integrity import verify_audit_log
 
         log_path = tmp_path / "tampered.jsonl"
-        backend = FileAuditBackend(
-            path=str(log_path), signing_key="test_key"
-        )
+        backend = FileAuditBackend(path=str(log_path), signing_key="test_key")
 
         for i in range(3):
             asyncio.get_event_loop().run_until_complete(
                 backend.handle_event(
-                    event_type="test", timestamp=f"2026-01-0{i+1}T00:00:00",
+                    event_type="test",
+                    timestamp=f"2026-01-0{i+1}T00:00:00",
                     details={"i": i},
                 )
             )
@@ -1114,24 +1195,22 @@ class TestHMACChainIntegrity:
         log_path = tmp_path / "recovery.jsonl"
 
         # Write 2 entries with first backend instance
-        backend1 = FileAuditBackend(
-            path=str(log_path), signing_key="test_key"
-        )
+        backend1 = FileAuditBackend(path=str(log_path), signing_key="test_key")
         for i in range(2):
             asyncio.get_event_loop().run_until_complete(
                 backend1.handle_event(
-                    event_type="test", timestamp=f"2026-01-0{i+1}T00:00:00",
+                    event_type="test",
+                    timestamp=f"2026-01-0{i+1}T00:00:00",
                     details={"i": i},
                 )
             )
 
         # Create new backend instance (simulates restart) — should recover chain
-        backend2 = FileAuditBackend(
-            path=str(log_path), signing_key="test_key"
-        )
+        backend2 = FileAuditBackend(path=str(log_path), signing_key="test_key")
         asyncio.get_event_loop().run_until_complete(
             backend2.handle_event(
-                event_type="test", timestamp="2026-01-03T00:00:00",
+                event_type="test",
+                timestamp="2026-01-03T00:00:00",
                 details={"i": 2},
             )
         )
@@ -1230,6 +1309,7 @@ class TestOIDCAuthProvider:
         }
 
         import importlib
+
         jwt_mod = MagicMock()
         jwt_mod.decode.return_value = fake_claims
         monkeypatch.setitem(__import__("sys").modules, "jwt", jwt_mod)
@@ -1258,7 +1338,9 @@ class TestOIDCAuthProvider:
         provider = self._make_provider()
 
         mock_jwks_client = MagicMock()
-        mock_jwks_client.get_signing_key_from_jwt.side_effect = Exception("Key not found")
+        mock_jwks_client.get_signing_key_from_jwt.side_effect = Exception(
+            "Key not found"
+        )
         provider._jwks_client = mock_jwks_client
 
         result = await provider.authenticate("bad_token")
@@ -1379,7 +1461,9 @@ class TestUserIdentityThreading:
         conn, lock = self._make_db(tmp_path)
         self._patch_store(monkeypatch, (conn, lock), "proj", "agt")
 
-        register_session("s1", project_slug="proj", agent_slug="agt", user_id="user-abc")
+        register_session(
+            "s1", project_slug="proj", agent_slug="agt", user_id="user-abc"
+        )
 
         row = conn.execute(
             "SELECT user_id FROM sessions WHERE session_id='s1'"
@@ -1491,7 +1575,9 @@ class TestSQLCipherEncryption:
         provider = SQLCipherEncryption({"key_secret": "OMNIAGENTS_SESSION_DB_KEY"})
         conn = provider.get_connection("/tmp/test.db")
 
-        mock_sqlcipher.connect.assert_called_once_with("/tmp/test.db", check_same_thread=False)
+        mock_sqlcipher.connect.assert_called_once_with(
+            "/tmp/test.db", check_same_thread=False
+        )
         # Verify PRAGMA key was called
         calls = [str(c) for c in mock_conn.execute.call_args_list]
         assert any("PRAGMA key" in c for c in calls)
@@ -1544,7 +1630,9 @@ class TestPresidioScanner:
         mock_anonymizer_mod.entities = MagicMock()
         mock_anonymizer_mod.entities.OperatorConfig = MagicMock()
         monkeypatch.setitem(sys.modules, "presidio_anonymizer", mock_anonymizer_mod)
-        monkeypatch.setitem(sys.modules, "presidio_anonymizer.entities", mock_anonymizer_mod.entities)
+        monkeypatch.setitem(
+            sys.modules, "presidio_anonymizer.entities", mock_anonymizer_mod.entities
+        )
 
         from omniagents.core.providers.content_scanner.presidio import PresidioScanner
 
@@ -1584,7 +1672,9 @@ class TestPresidioScanner:
         mock_anonymizer_mod.entities = MagicMock()
         mock_anonymizer_mod.entities.OperatorConfig = MagicMock()
         monkeypatch.setitem(sys.modules, "presidio_anonymizer", mock_anonymizer_mod)
-        monkeypatch.setitem(sys.modules, "presidio_anonymizer.entities", mock_anonymizer_mod.entities)
+        monkeypatch.setitem(
+            sys.modules, "presidio_anonymizer.entities", mock_anonymizer_mod.entities
+        )
 
         from omniagents.core.providers.content_scanner.presidio import PresidioScanner
 
@@ -1649,42 +1739,23 @@ class TestPresidioScanner:
 
 
 class TestReviewerIdentity:
-    def test_safe_agent_has_reviewer_id(self):
-        from omniagents.core.agents.safe import SafeAgent
+    def test_audit_event_payload_carries_reviewer_id(self):
+        # Reviewer identity now flows through audit hooks emitted from the
+        # service-side approval response handler. We verify the audit
+        # event payload carries the reviewer/user id directly.
+        from omniagents.core.audit.events import make_audit_event
 
-        agent = SafeAgent.__new__(SafeAgent)
-        agent._audit_emit = None
-        agent._reviewer_id = None
-        assert agent._reviewer_id is None
-        agent._reviewer_id = "reviewer-abc"
-        assert agent._reviewer_id == "reviewer-abc"
-
-    @pytest.mark.asyncio
-    async def test_audit_emit_includes_reviewer_id(self):
-        captured = []
-
-        async def mock_emit(event_type, tool_name, details, reviewer_id=None):
-            captured.append({
-                "event_type": event_type,
-                "tool_name": tool_name,
-                "details": details,
-                "reviewer_id": reviewer_id,
-            })
-
-        from omniagents.core.agents.safe import SafeAgent
-
-        agent = SafeAgent.__new__(SafeAgent)
-        agent._audit_emit = mock_emit
-        agent._reviewer_id = "reviewer-xyz"
-
-        # Simulate what safe.py does on approval
-        await agent._audit_emit(
-            "tool_approved", "test_tool", {}, agent._reviewer_id
+        event = make_audit_event(
+            "tool_approved",
+            session_id="sess-xyz",
+            user_id="reviewer-xyz",
+            run_id="run-1",
+            agent_name="agent",
+            details={"tool": "delete_file"},
         )
-
-        assert len(captured) == 1
-        assert captured[0]["reviewer_id"] == "reviewer-xyz"
-        assert captured[0]["event_type"] == "tool_approved"
+        assert event["user_id"] == "reviewer-xyz"
+        assert event["event_type"] == "tool_approved"
+        assert event["details"]["tool"] == "delete_file"
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1786,7 +1857,9 @@ class TestSessionExport:
         conn, lock = self._make_db(tmp_path)
         self._patch_store(monkeypatch, (conn, lock), "proj", "agt")
 
-        result = await export_session("nonexistent", project_slug="proj", agent_slug="agt")
+        result = await export_session(
+            "nonexistent", project_slug="proj", agent_slug="agt"
+        )
         assert result["message_count"] == 0
         assert result["messages"] == []
 
@@ -1798,16 +1871,26 @@ class TestAuditLogExport:
 
         log_path = tmp_path / "audit.jsonl"
         entries = [
-            {"event_type": "tool_called", "session_id": "s1", "timestamp": "2026-01-01T00:00:00"},
-            {"event_type": "run_started", "session_id": "s1", "timestamp": "2026-01-01T01:00:00"},
-            {"event_type": "tool_called", "session_id": "s2", "timestamp": "2026-01-02T00:00:00"},
+            {
+                "event_type": "tool_called",
+                "session_id": "s1",
+                "timestamp": "2026-01-01T00:00:00",
+            },
+            {
+                "event_type": "run_started",
+                "session_id": "s1",
+                "timestamp": "2026-01-01T01:00:00",
+            },
+            {
+                "event_type": "tool_called",
+                "session_id": "s2",
+                "timestamp": "2026-01-02T00:00:00",
+            },
         ]
         log_path.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
 
         # Filter by session_id
-        result = await export_audit_log(
-            str(log_path), filters={"session_id": "s1"}
-        )
+        result = await export_audit_log(str(log_path), filters={"session_id": "s1"})
         assert len(result) == 2
 
         # Filter by event_type
@@ -1897,10 +1980,12 @@ class TestNotificationProvider:
 
         from omniagents.core.providers.notification.webhook import WebhookNotification
 
-        provider = WebhookNotification({
-            "url": "https://hooks.example.com/test",
-            "notify_on": ["incident"],
-        })
+        provider = WebhookNotification(
+            {
+                "url": "https://hooks.example.com/test",
+                "notify_on": ["incident"],
+            }
+        )
 
         mock_post = MagicMock()
         monkeypatch.setattr("requests.post", mock_post)
@@ -1917,10 +2002,12 @@ class TestNotificationProvider:
 
         from omniagents.core.providers.notification.webhook import WebhookNotification
 
-        provider = WebhookNotification({
-            "url": "https://hooks.example.com/test",
-            "notify_on": ["incident"],
-        })
+        provider = WebhookNotification(
+            {
+                "url": "https://hooks.example.com/test",
+                "notify_on": ["incident"],
+            }
+        )
 
         mock_post = MagicMock()
         monkeypatch.setattr("requests.post", mock_post)
@@ -1935,10 +2022,12 @@ class TestNotificationProvider:
 
         from omniagents.core.providers.notification.webhook import WebhookNotification
 
-        provider = WebhookNotification({
-            "url": "https://hooks.example.com/test",
-            "notify_on": [],  # empty = all events
-        })
+        provider = WebhookNotification(
+            {
+                "url": "https://hooks.example.com/test",
+                "notify_on": [],  # empty = all events
+            }
+        )
 
         mock_post = MagicMock()
         monkeypatch.setattr("requests.post", mock_post)
@@ -1965,10 +2054,12 @@ class TestNotificationProvider:
 
         from omniagents.core.providers.notification.webhook import WebhookNotification
 
-        provider = WebhookNotification({
-            "url": "https://hooks.example.com",
-            "headers": {"Authorization": "${MY_TOKEN}"},
-        })
+        provider = WebhookNotification(
+            {
+                "url": "https://hooks.example.com",
+                "headers": {"Authorization": "${MY_TOKEN}"},
+            }
+        )
 
         assert provider._headers["Authorization"] == "secret123"
 

@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
+from agents import Agent
 from agents.tool import FunctionTool
 from omniagents.core.agents.builder import (
     _build_handoffs_from_configs,
     _default_build_agent,
 )
-from omniagents.core.agents.safe import SafeAgent
 from omniagents.core.agents.service import AgentService
 from omniagents.core.agents.specs import (
     AgentSpec,
@@ -105,7 +105,9 @@ async def test_default_build_agent_uses_provided_mcp_servers(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_default_build_agent_wraps_safe_agent(monkeypatch):
+async def test_default_build_agent_returns_plain_agent_when_safe_set():
+    # SDK 0.16: builder no longer wraps; needs_approval is configured
+    # per-session in AgentService.configure_tool_approval.
     spec = make_spec()
     spec.use_safe_agent = True
     spec.safe_agent_options = SafeAgentOptions(
@@ -120,20 +122,11 @@ async def test_default_build_agent_wraps_safe_agent(monkeypatch):
         on_invoke_tool=lambda ctx, params_json: asyncio.sleep(0),
     )
     spec.available_tools = [tool]
-    calls = []
 
-    def record(cls, tool_names=None, tool_patterns=None):
-        calls.append((tool_names, tool_patterns))
-
-    monkeypatch.setattr(SafeAgent, "set_global_safe_tools", classmethod(record))
-
-    async def approval(name, args, metadata=None):
-        return True, False, None
-
-    agent = await _default_build_agent({}, None, spec, approval)
-    assert isinstance(agent, SafeAgent)
-    assert calls == [(["allowed"], ["tool-.*"])]
-    assert agent._approval_callback is approval
+    agent = await _default_build_agent({}, None, spec, None)
+    assert isinstance(agent, Agent)
+    # Builder leaves needs_approval unset; the service applies it per session.
+    assert tool.needs_approval is False
 
 
 @pytest.mark.asyncio
@@ -224,76 +217,88 @@ async def test_build_handoffs_from_configs_skips_circular(monkeypatch, tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_agent_service_wraps_agent_and_sets_callback(monkeypatch):
+async def test_agent_service_configures_needs_approval_when_safe_set(monkeypatch):
+    # When use_safe_agent is true, the service walks the agent's tool list
+    # and attaches a needs_approval predicate to every FunctionTool that
+    # does not already declare one.
     spec = make_spec()
     spec.use_safe_agent = True
     spec.safe_agent_options = SafeAgentOptions(
-        safe_tool_names=["x"], safe_tool_patterns=[], skip_approvals=False
+        safe_tool_names=["allowed"], safe_tool_patterns=[], skip_approvals=False
     )
 
-    from agents import Agent
-
-    async def fake_build(
-        settings, mcp_servers, spec_arg, approval_callback, _loading_stack=None
-    ):
-        return Agent(name="base", tools=[], instructions="", model="m")
-
-    monkeypatch.setattr(
-        "omniagents.core.agents.builder._default_build_agent", fake_build
+    tool_a = FunctionTool(
+        name="risky",
+        description="",
+        params_json_schema={},
+        on_invoke_tool=lambda ctx, params_json: asyncio.sleep(0),
     )
-    monkeypatch.setattr(AgentService, "_clone_agent", lambda self, agent: agent)
-
-    service = AgentService(spec, default_workspace_root="/tmp")
-    session = service._session_manager.get_or_create(None)
-
-    async def approval(name, args, metadata=None):
-        return True, False, None
-
-    agent = await service._build_agent_for_session(session, approval)
-    assert isinstance(agent, SafeAgent)
-    assert agent._approval_callback is approval
-
-
-@pytest.mark.asyncio
-async def test_agent_service_reuses_safe_agent_and_injects_callback(monkeypatch):
-    spec = make_spec()
-
-    tool = FunctionTool(
-        name="t",
+    tool_b = FunctionTool(
+        name="allowed",
         description="",
         params_json_schema={},
         on_invoke_tool=lambda ctx, params_json: asyncio.sleep(0),
     )
 
-    async def builder(settings, mcp_servers, app):
-        agent = SafeAgent(
-            name="safe",
-            tools=[tool],
-            instructions="",
-            model="m",
-            approval_callback=None,
-            skip_approvals=False,
-        )
-        agent.recorded = []
-        original = agent.set_approval_callback
+    async def fake_build(
+        settings, mcp_servers, spec_arg, approval_callback, _loading_stack=None, **_
+    ):
+        return Agent(name="base", tools=[tool_a, tool_b], instructions="", model="m")
 
-        def recorder(callback):
-            agent.recorded.append(callback)
-            original(callback)
-
-        agent.set_approval_callback = recorder
-        return agent
-
-    spec.build_agent = builder
+    # service.py imports _default_build_agent at module load time, so we
+    # patch the module-local reference rather than the source.
+    monkeypatch.setattr(
+        "omniagents.core.agents.service._default_build_agent", fake_build
+    )
     monkeypatch.setattr(AgentService, "_clone_agent", lambda self, agent: agent)
 
     service = AgentService(spec, default_workspace_root="/tmp")
     session = service._session_manager.get_or_create(None)
+    agent = await service._build_agent_for_session(session, None)
 
-    async def approval(name, args, metadata=None):
-        return True, False, None
+    assert isinstance(agent, Agent)
+    # Both tools have a callable predicate now.
+    assert callable(tool_a.needs_approval)
+    assert callable(tool_b.needs_approval)
 
-    agent = await service._build_agent_for_session(session, approval)
-    assert isinstance(agent, SafeAgent)
-    assert agent._approval_callback is approval
-    assert agent.recorded == [approval, approval]
+    # The "allowed" tool is in the spec safe list, so its predicate
+    # returns False (no approval needed).
+    no_approval = await tool_b.needs_approval(None, {}, "call-1")
+    assert no_approval is False
+    # The "risky" tool is not allowlisted, so it does need approval.
+    needs = await tool_a.needs_approval(None, {}, "call-2")
+    assert needs is True
+
+
+@pytest.mark.asyncio
+async def test_agent_service_skip_approvals_disables_predicate(monkeypatch):
+    spec = make_spec()
+    spec.use_safe_agent = True
+    spec.safe_agent_options = SafeAgentOptions(skip_approvals=True)
+
+    tool = FunctionTool(
+        name="anything",
+        description="",
+        params_json_schema={},
+        on_invoke_tool=lambda ctx, params_json: asyncio.sleep(0),
+    )
+
+    async def fake_build(
+        settings, mcp_servers, spec_arg, approval_callback, _loading_stack=None, **_
+    ):
+        return Agent(name="base", tools=[tool], instructions="", model="m")
+
+    # service.py imports _default_build_agent at module load time, so we
+    # patch the module-local reference rather than the source.
+    monkeypatch.setattr(
+        "omniagents.core.agents.service._default_build_agent", fake_build
+    )
+    monkeypatch.setattr(AgentService, "_clone_agent", lambda self, agent: agent)
+
+    service = AgentService(spec, default_workspace_root="/tmp")
+    session = service._session_manager.get_or_create(None)
+    await service._build_agent_for_session(session, None)
+
+    # skip_approvals=True → predicate is attached but always returns False.
+    assert callable(tool.needs_approval)
+    assert (await tool.needs_approval(None, {}, "call-1")) is False

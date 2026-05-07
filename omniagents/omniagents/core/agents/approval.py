@@ -70,7 +70,12 @@ def _make_predicate(
 
 
 def _walk_agents(root: Any) -> Iterable[Any]:
-    """Yield ``root`` and every agent reachable via ``handoffs``."""
+    """Yield ``root`` and every agent reachable via ``handoffs``.
+
+    ``Agent.handoffs`` may contain bare ``Agent`` instances (the common case
+    when handoffs are declared inline) or ``Handoff`` wrapper objects with
+    an ``agent`` / ``_agent`` reference.
+    """
 
     seen: set[int] = set()
     stack: List[Any] = [root]
@@ -81,7 +86,11 @@ def _walk_agents(root: Any) -> Iterable[Any]:
         seen.add(id(agent))
         yield agent
         for handoff in getattr(agent, "handoffs", []) or []:
-            target = getattr(handoff, "agent", None) or getattr(handoff, "_agent", None)
+            target = (
+                getattr(handoff, "agent", None)
+                or getattr(handoff, "_agent", None)
+                or handoff  # bare Agent
+            )
             if target is not None:
                 stack.append(target)
 

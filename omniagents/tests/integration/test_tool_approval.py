@@ -1,219 +1,153 @@
-"""
-Simplified tests for tool approval patterns used in OmniAgents.
-Focus on the actual patterns rather than full SafeAgent implementation.
+"""Tool approval primitives — unit tests for the SDK 0.16+ flow.
+
+The SafeAgent class is gone; tool approval is now driven by:
+
+* :func:`omniagents.core.agents.approval.configure_tool_approval` —
+  attaches per-tool ``needs_approval`` predicates to every FunctionTool.
+* The session's ``always_allow_tools`` / ``always_allow_patterns`` sets,
+  consulted by those predicates.
+* The service-side ``request_tool_approval`` /
+  ``tool_approval_response`` pair (tested in test_tool_approval_routing).
 """
 
 import asyncio
-from unittest.mock import Mock, AsyncMock
+
 import pytest
+from agents import Agent
+from agents.tool import FunctionTool
+
+from omniagents.core.agents.approval import configure_tool_approval
 
 
-class TestToolApprovalPatterns:
-    """Test the tool approval patterns used in the system."""
+def _make_tool(name: str) -> FunctionTool:
+    async def _invoke(ctx, params_json: str):
+        return ""
 
-    @pytest.mark.asyncio
-    async def test_approval_callback_pattern(self):
-        """Test the approval callback pattern."""
-        # This is the pattern used by SafeAgent
+    return FunctionTool(
+        name=name,
+        description="",
+        params_json_schema={
+            "additionalProperties": False,
+            "type": "object",
+            "properties": {},
+        },
+        on_invoke_tool=_invoke,
+    )
 
-        async def approval_callback(tool_name: str, formatted_args: str):
-            """Standard approval callback signature."""
-            # Return (approved, always_approve, error_message)
-            if tool_name == "safe_tool":
-                return (True, False, None)
-            elif tool_name == "always_approve_tool":
-                return (True, True, None)
-            else:
-                return (False, False, "User rejected the tool")
 
-        # Test different scenarios
-        result = await approval_callback("safe_tool", "{}")
-        assert result == (True, False, None)
+class _FakeSession:
+    """Minimal session stub for approval predicates."""
 
-        result = await approval_callback("always_approve_tool", "{}")
-        assert result == (True, True, None)
+    def __init__(self):
+        self.always_allow_tools: set[str] = set()
+        self.always_allow_patterns: set[str] = set()
 
-        result = await approval_callback("dangerous_tool", "{}")
-        assert result == (False, False, "User rejected the tool")
 
-    @pytest.mark.asyncio
-    async def test_server_approval_flow(self):
-        """Test the server's approval request/response flow."""
-        # Simulate the server's approval mechanism
+@pytest.mark.asyncio
+async def test_predicate_requires_approval_by_default():
+    tool = _make_tool("delete_file")
+    agent = Agent(name="A", instructions="", tools=[tool], model="m")
 
-        pending_approvals = {}
+    session = _FakeSession()
+    configure_tool_approval(agent, session=session)
 
-        async def request_approval(tool_name: str, args: str):
-            """Server requests approval from client."""
-            import uuid
+    assert callable(tool.needs_approval)
+    assert (await tool.needs_approval(None, {}, "call_1")) is True
 
-            approval_id = uuid.uuid4().hex
 
-            # Create future to wait for response
-            future = asyncio.get_event_loop().create_future()
-            pending_approvals[approval_id] = future
+@pytest.mark.asyncio
+async def test_predicate_skips_when_session_allows_tool():
+    tool = _make_tool("read_file")
+    agent = Agent(name="A", instructions="", tools=[tool], model="m")
 
-            # Would send to client via channel.async_call
-            # Here we just return the approval_id for testing
+    session = _FakeSession()
+    session.always_allow_tools.add("read_file")
+    configure_tool_approval(agent, session=session)
 
-            # Wait for response
-            try:
-                result = await future
-                return result
-            finally:
-                pending_approvals.pop(approval_id, None)
+    assert (await tool.needs_approval(None, {}, "call_1")) is False
 
-        async def respond_to_approval(
-            approval_id: str, approved: bool, always_approve: bool = False
-        ):
-            """Client responds to approval request."""
-            future = pending_approvals.get(approval_id)
-            if future and not future.done():
-                future.set_result((approved, always_approve, None))
-                return True
-            return False
 
-        # Start approval request
-        approval_task = asyncio.create_task(request_approval("test_tool", "{}"))
+@pytest.mark.asyncio
+async def test_predicate_honors_session_pattern():
+    tool = _make_tool("get_user_info")
+    agent = Agent(name="A", instructions="", tools=[tool], model="m")
 
-        # Get the approval_id (in real server, this comes from the request)
-        await asyncio.sleep(0.01)  # Let task start
-        approval_id = list(pending_approvals.keys())[0]
+    session = _FakeSession()
+    session.always_allow_patterns.add(r"^get_")
+    configure_tool_approval(agent, session=session)
 
-        # Respond with approval
-        success = await respond_to_approval(approval_id, True, False)
-        assert success is True
+    assert (await tool.needs_approval(None, {}, "call_1")) is False
 
-        # Get result
-        result = await approval_task
-        assert result == (True, False, None)
 
-    def test_safe_tool_patterns(self):
-        """Test patterns for marking tools as safe."""
-        # Pattern used by SafeAgent
+@pytest.mark.asyncio
+async def test_predicate_honors_spec_allow_list_and_patterns():
+    safe = _make_tool("list_dir")
+    risky = _make_tool("rm_rf")
+    safe_pattern = _make_tool("status_health")
+    agent = Agent(
+        name="A", instructions="", tools=[safe, risky, safe_pattern], model="m"
+    )
 
-        safe_tool_names = ["read_file", "list_directory"]
-        safe_tool_patterns = [r"^get_.*", r".*_info$"]
+    session = _FakeSession()
+    configure_tool_approval(
+        agent,
+        session=session,
+        safe_tool_names=["list_dir"],
+        safe_tool_patterns=[r".*_health$"],
+    )
 
-        def is_tool_safe(tool_name: str) -> bool:
-            # Check exact names
-            if tool_name in safe_tool_names:
-                return True
+    assert (await safe.needs_approval(None, {}, "c1")) is False
+    assert (await safe_pattern.needs_approval(None, {}, "c2")) is False
+    assert (await risky.needs_approval(None, {}, "c3")) is True
 
-            # Check patterns
-            import re
 
-            for pattern in safe_tool_patterns:
-                if re.match(pattern, tool_name):
-                    return True
+@pytest.mark.asyncio
+async def test_skip_approvals_disables_predicate():
+    tool = _make_tool("anything")
+    agent = Agent(name="A", instructions="", tools=[tool], model="m")
 
-            return False
+    session = _FakeSession()
+    configure_tool_approval(agent, session=session, skip_approvals=True)
 
-        # Test exact matches
-        assert is_tool_safe("read_file") is True
-        assert is_tool_safe("list_directory") is True
+    # Predicate is attached but always returns False.
+    assert callable(tool.needs_approval)
+    assert (await tool.needs_approval(None, {}, "c1")) is False
 
-        # Test pattern matches
-        assert is_tool_safe("get_user_info") is True  # Matches ^get_.*
-        assert is_tool_safe("system_info") is True  # Matches .*_info$
 
-        # Test non-matches
-        assert is_tool_safe("delete_file") is False
-        assert is_tool_safe("execute_command") is False
+@pytest.mark.asyncio
+async def test_existing_needs_approval_is_not_overridden():
+    tool = _make_tool("custom")
 
-    @pytest.mark.asyncio
-    async def test_approval_with_timeout(self):
-        """Test approval with timeout handling."""
+    async def custom_predicate(ctx, args, call_id):
+        return True
 
-        async def request_approval_with_timeout(timeout: float = 30.0):
-            future = asyncio.get_event_loop().create_future()
+    tool.needs_approval = custom_predicate
+    agent = Agent(name="A", instructions="", tools=[tool], model="m")
 
-            try:
-                result = await asyncio.wait_for(future, timeout=timeout)
-                return result
-            except asyncio.TimeoutError:
-                return (False, False, "Approval timed out")
+    session = _FakeSession()
+    configure_tool_approval(agent, session=session)
 
-        # Test timeout
-        result = await request_approval_with_timeout(timeout=0.1)
-        assert result == (False, False, "Approval timed out")
+    assert tool.needs_approval is custom_predicate
 
-    def test_approval_message_format(self):
-        """Test the format of approval messages."""
-        # Format used in server
 
-        def format_approval_request(tool_name: str, arguments: dict) -> dict:
-            import json
+@pytest.mark.asyncio
+async def test_predicate_propagates_to_handoff_agents():
+    sub_tool = _make_tool("sub_tool")
+    sub_agent = Agent(name="Sub", instructions="", tools=[sub_tool], model="m")
 
-            return {
-                "approval_id": "test_123",
-                "tool": tool_name,
-                "arguments": json.dumps(arguments),
-            }
+    main_tool = _make_tool("main_tool")
+    main_agent = Agent(
+        name="Main",
+        instructions="",
+        tools=[main_tool],
+        model="m",
+        handoffs=[sub_agent],
+    )
 
-        # Test formatting
-        request = format_approval_request(
-            "write_file", {"path": "/tmp/test.txt", "content": "Hello"}
-        )
+    session = _FakeSession()
+    configure_tool_approval(main_agent, session=session)
 
-        assert request["tool"] == "write_file"
-        assert request["approval_id"] == "test_123"
-
-        # Arguments should be JSON string
-        import json
-
-        args = json.loads(request["arguments"])
-        assert args["path"] == "/tmp/test.txt"
-        assert args["content"] == "Hello"
-
-    @pytest.mark.asyncio
-    async def test_approval_state_management(self):
-        """Test managing approval state across requests."""
-        # Pattern for tracking approvals
-
-        class ApprovalManager:
-            def __init__(self):
-                self.pending_approvals = {}
-                self.always_approved_tools = set()
-
-            async def request_approval(self, tool_name: str) -> tuple:
-                # Check if always approved
-                if tool_name in self.always_approved_tools:
-                    return (True, False, None)
-
-                # Create pending approval
-                import uuid
-
-                approval_id = uuid.uuid4().hex
-                future = asyncio.get_event_loop().create_future()
-                self.pending_approvals[approval_id] = (tool_name, future)
-
-                return await future
-
-            def respond_to_approval(
-                self, approval_id: str, approved: bool, always_approve: bool
-            ):
-                if approval_id in self.pending_approvals:
-                    tool_name, future = self.pending_approvals.pop(approval_id)
-
-                    if always_approve and approved:
-                        self.always_approved_tools.add(tool_name)
-
-                    if not future.done():
-                        future.set_result((approved, always_approve, None))
-
-        manager = ApprovalManager()
-
-        # First approval with always_approve
-        approval_task = asyncio.create_task(manager.request_approval("safe_tool"))
-        await asyncio.sleep(0.01)
-
-        approval_id = list(manager.pending_approvals.keys())[0]
-        manager.respond_to_approval(approval_id, True, True)
-
-        result = await approval_task
-        assert result == (True, True, None)
-
-        # Second request should auto-approve
-        result2 = await manager.request_approval("safe_tool")
-        assert result2 == (True, False, None)  # Auto-approved
+    # Both the main agent's tool and the handoff target's tool should be configured.
+    assert callable(main_tool.needs_approval)
+    assert callable(sub_tool.needs_approval)
+    assert (await sub_tool.needs_approval(None, {}, "c1")) is True

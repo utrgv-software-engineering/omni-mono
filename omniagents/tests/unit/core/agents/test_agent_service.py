@@ -109,36 +109,39 @@ async def test_request_client_function_timeout():
 
 @pytest.mark.asyncio
 async def test_request_tool_approval_queues_and_adds_safe():
+    # SDK 0.16+: approval flows through tool_approval_requested events and
+    # the tool_approval_response RPC. With no channel attached, the event
+    # is queued on session.pending_tool_approvals for replay; "always
+    # approve" mutates session.always_allow_tools.
     service = AgentService(make_spec())
     session = service._session_manager.get_or_create()
     session.pending_events = []
 
     async def responder():
-        while not session.pending_events:
+        # Wait until the request has been queued before responding.
+        while "call_xyz" not in session.pending_tool_approvals:
             await asyncio.sleep(0)
-        _, payload = session.pending_events[0]
-        await asyncio.sleep(0)
-        await service.client_response(
-            request_id=payload["request_id"],
-            ok=True,
-            result={"approved": True, "always_approve": True},
-            error=None,
+        await service.tool_approval_response(
+            call_id="call_xyz",
+            decision="approve",
+            always_approve=True,
         )
 
     task = asyncio.create_task(responder())
-    approved, always, error = await service._request_tool_approval(
-        "tool_name",
-        "{}",
-        session,
+    response = await service.request_tool_approval(
+        session=session,
+        call_id="call_xyz",
+        tool_name="tool_name",
+        arguments=None,
     )
     await task
-    assert approved is True
-    assert always is True
-    assert error is None
-    assert session.pending_events[0][0] == "client_request"
+    assert response["decision"] == "approve"
+    assert response["always_approve"] is True
+    assert response["rejection_message"] is None
     assert "tool_name" in session.always_allow_tools
-    assert session.pending_client_requests == {}
-    assert service._client_request_sessions == {}
+    # Pending tracking is cleared once resolved.
+    assert "call_xyz" not in session.pending_tool_approvals
+    assert "call_xyz" not in service._pending_tool_approvals
 
 
 @pytest.mark.asyncio

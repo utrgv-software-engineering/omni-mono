@@ -2,11 +2,12 @@ from pathlib import Path
 
 import pytest
 
+from agents import Agent
+
 from omniagents.core.agents.builder import (
     _default_build_agent,
     _build_handoffs_from_configs,
 )
-from omniagents.core.agents.safe import SafeAgent
 from omniagents.core.agents.specs import AgentSpec, HandoffConfig
 
 
@@ -22,13 +23,16 @@ def make_spec(**overrides):
 
 
 @pytest.mark.asyncio
-async def test_default_build_agent_wraps_safe_agent():
+async def test_default_build_agent_returns_plain_agent():
+    # SDK 0.16 builder no longer wraps with SafeAgent. Approval policy is
+    # applied per-session in AgentService.configure_tool_approval, so the
+    # builder returns a plain Agent regardless of use_safe_agent.
     spec = make_spec()
     spec.use_safe_agent = True
     agent = await _default_build_agent(
         {}, None, spec, approval_callback=lambda *a, **k: None
     )
-    assert isinstance(agent, SafeAgent)
+    assert isinstance(agent, Agent)
 
 
 @pytest.mark.asyncio

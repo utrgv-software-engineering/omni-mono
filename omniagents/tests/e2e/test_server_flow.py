@@ -133,10 +133,11 @@ class TestServerUnifiedAgent:
         mock_stream.assert_awaited()
 
     @pytest.mark.asyncio
-    async def test_safe_agent_approval_callback(
+    async def test_safe_agent_configures_needs_approval(
         self, mock_spec, mock_channel, mock_session
     ):
-        """Test that approval callback is passed for SafeAgent."""
+        """When use_safe_agent is true, the service wires per-tool
+        needs_approval predicates via configure_tool_approval."""
         mock_spec.use_safe_agent = True
 
         service = AgentService(mock_spec)
@@ -146,15 +147,16 @@ class TestServerUnifiedAgent:
         service._session_manager.get_or_create.return_value = mock_session
         service._session_manager.bind_task = Mock()
 
-        captured_kwargs: Dict[str, Any] = {}
+        configure_calls: list[dict] = []
 
-        class DummySafeAgent(DummyAgent):
-            def __init__(self, *args, **kwargs):
-                captured_kwargs.update(kwargs)
-                super().__init__("SafeAgent")
+        def fake_configure(agent, **kwargs):
+            configure_calls.append(kwargs)
 
         with (
-            patch("omniagents.core.agents.service.SafeAgent", DummySafeAgent),
+            patch(
+                "omniagents.core.agents.service.configure_tool_approval",
+                fake_configure,
+            ),
             patch(
                 "omniagents.core.agents.service.stream_agent",
                 new_callable=AsyncMock,
@@ -165,7 +167,9 @@ class TestServerUnifiedAgent:
             await _drain_run_tasks()
 
         mock_spec.build_agent.assert_awaited()
-        assert captured_kwargs["approval_callback"] is not None
+        assert configure_calls, "configure_tool_approval should be invoked"
+        # Predicate must be scoped to the current session.
+        assert configure_calls[0]["session"] is mock_session
 
     @pytest.mark.asyncio
     async def test_stream_agent_with_unified_agent(self, mock_session):
