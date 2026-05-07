@@ -87,6 +87,20 @@ class WorkerManager:
                         pass
                 continue
 
+            if method == "mcp_approval_requested":
+                # Mirror the function-tool auto-approval: workers should not
+                # block on hosted-MCP approval prompts.
+                request_id = params.get("request_id")
+                if request_id:
+                    try:
+                        await agent._client.other.mcp_approval_response(
+                            request_id=request_id,
+                            decision="approve",
+                        )
+                    except Exception:
+                        pass
+                continue
+
             if method == "message_output":
                 handle.result = params.get("content", "")
                 continue

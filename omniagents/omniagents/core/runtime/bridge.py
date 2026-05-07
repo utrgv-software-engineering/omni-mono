@@ -978,6 +978,33 @@ async def stream_agent(
             interruptions = list(getattr(result, "interruptions", []) or [])
             if not interruptions:
                 break
+
+            # Detect hosted-MCP approval interruptions (raw_item is a
+            # ``McpApprovalRequest``). These take a different RPC route so
+            # the wire payload carries server label / tool name / arguments
+            # instead of the function-tool ``call_id``-based shape.
+            try:
+                from openai.types.responses.response_output_item import (
+                    McpApprovalRequest as _McpApprovalRequest,
+                )
+            except Exception:  # pragma: no cover - SDK should always have this
+                _McpApprovalRequest = None  # type: ignore[assignment]
+
+            def _is_mcp_approval(it: Any) -> bool:
+                raw = getattr(it, "raw_item", None)
+                if _McpApprovalRequest is not None and isinstance(
+                    raw, _McpApprovalRequest
+                ):
+                    return True
+                if isinstance(raw, dict):
+                    provider_data = raw.get("provider_data") or {}
+                    if (
+                        raw.get("type") == "hosted_tool_call"
+                        and provider_data.get("type") == "mcp_approval_request"
+                    ):
+                        return True
+                return False
+
             if service is None:
                 # No service to mediate approval — reject everything to keep
                 # the run from hanging.
@@ -996,6 +1023,51 @@ async def stream_agent(
             state = result.to_state()
             for item in interruptions:
                 raw = getattr(item, "raw_item", None)
+
+                if _is_mcp_approval(item):
+                    # Hosted-MCP approval: ``raw_item`` is a
+                    # ``McpApprovalRequest`` with ``id``, ``server_label``,
+                    # ``name`` and ``arguments``.
+                    if isinstance(raw, dict):
+                        request_id = raw.get("id") or raw.get("approval_request_id")
+                        server_label = raw.get("server_label") or "mcp"
+                        mcp_tool_name = raw.get("name") or "mcp_tool"
+                        mcp_arguments = raw.get("arguments")
+                    else:
+                        request_id = getattr(raw, "id", None) or getattr(
+                            raw, "approval_request_id", None
+                        )
+                        server_label = getattr(raw, "server_label", None) or "mcp"
+                        mcp_tool_name = getattr(raw, "name", None) or "mcp_tool"
+                        mcp_arguments = getattr(raw, "arguments", None)
+
+                    if not request_id:
+                        state.reject(
+                            item,
+                            rejection_message=(
+                                "MCP approval request missing id; auto-rejected"
+                            ),
+                        )
+                        continue
+
+                    response = await service.request_mcp_approval(
+                        session=session,
+                        request_id=str(request_id),
+                        server_label=str(server_label),
+                        tool_name=str(mcp_tool_name),
+                        arguments=mcp_arguments,
+                        run_id=current_run_id,
+                    )
+                    if response.get("decision") == "approve":
+                        state.approve(item, always_approve=False)
+                    else:
+                        state.reject(
+                            item,
+                            rejection_message=response.get("rejection_message"),
+                        )
+                    continue
+
+                # ----- Function-tool / generic approval path -----
                 tool_call_id = getattr(raw, "call_id", None) or getattr(raw, "id", None)
                 if not tool_call_id:
                     # Without a stable call_id we can't correlate a response.

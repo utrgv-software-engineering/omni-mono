@@ -84,6 +84,10 @@ class Session:  # noqa: D101
         # Tool approval prompts awaiting user response (SDK 0.16+ flow).
         # Keyed by tool call_id; replayed to channels that connect mid-run.
         self.pending_tool_approvals: Dict[str, dict] = {}
+        # Hosted-MCP approval prompts awaiting user response (SDK 0.16+).
+        # Keyed by ``McpApprovalRequest.id``; replayed on reconnect like
+        # ``pending_tool_approvals``.
+        self.pending_mcp_approvals: Dict[str, dict] = {}
         # Model configuration for runtime switching
         self.active_model: str | None = None
         self.model_config: Dict[str, Any] | None = None

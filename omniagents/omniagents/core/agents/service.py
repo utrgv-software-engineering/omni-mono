@@ -325,6 +325,10 @@ class AgentService(RpcMethodsBase):
         self._client_request_sessions: dict[str, Session] = {}
         # Tool-approval futures keyed by call_id (SDK 0.16 interruption flow)
         self._pending_tool_approvals: dict[str, tuple[asyncio.Future, Session]] = {}
+        # MCP-approval futures keyed by request_id (hosted MCP approvals from
+        # SDK 0.16 ``HostedMCPTool``). Tracked separately from function-tool
+        # approvals so the wire format stays clean.
+        self._pending_mcp_approvals: dict[str, tuple[asyncio.Future, Session]] = {}
         # Server functions registry (client→server dynamic functions)
         # Map name -> {"func": callable, "description": str | None, "params_schema": dict | None, "result_schema": dict | None}
         self._server_functions: dict[str, dict] = {}
@@ -445,6 +449,65 @@ class AgentService(RpcMethodsBase):
                     "variables": {"type": "object"},
                 },
                 "required": ["session_id"],
+            },
+            strict=False,
+        )
+
+        # MCP resource access (SDK 0.16): list/read MCP resources from servers
+        # already attached to the agent via ``mcp_servers:`` in YAML.
+        self.register_server_function(
+            "mcp.list_resources",
+            self._sf_mcp_list_resources,
+            description=(
+                "List resources exposed by a configured MCP server. "
+                "``server_name`` matches the ``name`` field of an entry in the "
+                "agent's ``mcp_servers`` config."
+            ),
+            params_schema={
+                "type": "object",
+                "properties": {
+                    "server_name": {"type": "string"},
+                    "cursor": {"type": "string"},
+                },
+                "required": ["server_name"],
+                "additionalProperties": False,
+            },
+            result_schema={
+                "type": "object",
+                "properties": {
+                    "server_name": {"type": "string"},
+                    "resources": {"type": "array"},
+                    "next_cursor": {"type": "string"},
+                },
+                "required": ["server_name", "resources"],
+            },
+            strict=False,
+        )
+        self.register_server_function(
+            "mcp.read_resource",
+            self._sf_mcp_read_resource,
+            description=(
+                "Read a resource (by URI) from a configured MCP server. "
+                "``server_name`` matches the ``name`` field of an entry in the "
+                "agent's ``mcp_servers`` config."
+            ),
+            params_schema={
+                "type": "object",
+                "properties": {
+                    "server_name": {"type": "string"},
+                    "uri": {"type": "string"},
+                },
+                "required": ["server_name", "uri"],
+                "additionalProperties": False,
+            },
+            result_schema={
+                "type": "object",
+                "properties": {
+                    "server_name": {"type": "string"},
+                    "uri": {"type": "string"},
+                    "contents": {"type": "array"},
+                },
+                "required": ["server_name", "uri", "contents"],
             },
             strict=False,
         )
@@ -1068,6 +1131,124 @@ class AgentService(RpcMethodsBase):
             "variables": target_session.variables,
         }
 
+    # ------------------------------------------------------------------
+    #  MCP resource server functions (SDK 0.16+)
+    # ------------------------------------------------------------------
+
+    async def _resolve_mcp_server_by_name(
+        self, session: Session | None, server_name: str
+    ):
+        """Look up an active MCP server by name for the session/agent.
+
+        Ensures session-level MCP servers are running, then matches by the
+        ``name`` attribute (which mirrors the YAML ``mcp_servers[*].name``).
+        Returns ``None`` if no server matches.
+        """
+        if session is None:
+            return None
+        try:
+            servers = await self._ensure_session_mcp_servers(session)
+        except Exception:
+            servers = list(getattr(session, "_mcp_servers_active", []) or [])
+        for server in servers or []:
+            if getattr(server, "name", None) == server_name:
+                return server
+        return None
+
+    async def _sf_mcp_list_resources(
+        self, session: Session | None, args: dict | None = None
+    ) -> dict:
+        payload = args or {}
+        server_name = str(payload.get("server_name") or "")
+        cursor = payload.get("cursor")
+        if not server_name:
+            raise ValueError("server_name is required")
+
+        server = await self._resolve_mcp_server_by_name(session, server_name)
+        if server is None:
+            raise ValueError(f"Unknown or inactive MCP server: {server_name}")
+        if not hasattr(server, "list_resources"):
+            raise ValueError(
+                f"MCP server '{server_name}' does not support list_resources "
+                "(SDK 0.16+ required)"
+            )
+
+        result = (
+            await server.list_resources(cursor=cursor)
+            if cursor
+            else await server.list_resources()
+        )
+        # ``ListResourcesResult`` from the mcp package is a pydantic model.
+        resources_attr = getattr(result, "resources", []) or []
+        next_cursor = getattr(result, "next_cursor", None) or getattr(
+            result, "nextCursor", None
+        )
+        out: list[dict] = []
+        for res in resources_attr:
+            if hasattr(res, "model_dump"):
+                try:
+                    out.append(res.model_dump(mode="json"))
+                    continue
+                except Exception:
+                    pass
+            if hasattr(res, "dict"):
+                try:
+                    out.append(res.dict())
+                    continue
+                except Exception:
+                    pass
+            out.append({"raw": str(res)})
+        response: dict[str, Any] = {
+            "server_name": server_name,
+            "resources": out,
+        }
+        if next_cursor:
+            response["next_cursor"] = next_cursor
+        return response
+
+    async def _sf_mcp_read_resource(
+        self, session: Session | None, args: dict | None = None
+    ) -> dict:
+        payload = args or {}
+        server_name = str(payload.get("server_name") or "")
+        uri = str(payload.get("uri") or "")
+        if not server_name:
+            raise ValueError("server_name is required")
+        if not uri:
+            raise ValueError("uri is required")
+
+        server = await self._resolve_mcp_server_by_name(session, server_name)
+        if server is None:
+            raise ValueError(f"Unknown or inactive MCP server: {server_name}")
+        if not hasattr(server, "read_resource"):
+            raise ValueError(
+                f"MCP server '{server_name}' does not support read_resource "
+                "(SDK 0.16+ required)"
+            )
+
+        result = await server.read_resource(uri)
+        contents_attr = getattr(result, "contents", []) or []
+        out: list[dict] = []
+        for content in contents_attr:
+            if hasattr(content, "model_dump"):
+                try:
+                    out.append(content.model_dump(mode="json"))
+                    continue
+                except Exception:
+                    pass
+            if hasattr(content, "dict"):
+                try:
+                    out.append(content.dict())
+                    continue
+                except Exception:
+                    pass
+            out.append({"raw": str(content)})
+        return {
+            "server_name": server_name,
+            "uri": uri,
+            "contents": out,
+        }
+
     def _record_live_event(
         self, session: Session | None, method: str, payload: dict
     ) -> None:
@@ -1100,6 +1281,9 @@ class AgentService(RpcMethodsBase):
         session.pending_client_requests.clear()
         if hasattr(session, "pending_tool_approvals"):
             session.pending_tool_approvals.clear()
+        pending_mcp = getattr(session, "pending_mcp_approvals", None)
+        if pending_mcp is not None:
+            pending_mcp.clear()
 
     async def _replay_live_state(self, session: Session, channel) -> None:
         if session is None or channel is None:
@@ -1118,6 +1302,10 @@ class AgentService(RpcMethodsBase):
         if hasattr(session, "pending_tool_approvals"):
             for payload in session.pending_tool_approvals.values():
                 events.append(("tool_approval_requested", payload))
+        pending_mcp = getattr(session, "pending_mcp_approvals", None)
+        if pending_mcp:
+            for payload in pending_mcp.values():
+                events.append(("mcp_approval_requested", payload))
         for method, payl in events:
             await self._safe_notify(channel, method, payl)
 
@@ -1518,6 +1706,180 @@ class AgentService(RpcMethodsBase):
             pass
 
         return response
+
+    # ------------------------------------------------------------------
+    #  MCP-approval interruption flow (SDK 0.16+ HostedMCPTool).
+    #
+    #  Hosted MCP tool calls that require approval surface as
+    #  ``ToolApprovalItem`` interruptions whose ``raw_item`` is a
+    #  ``McpApprovalRequest``. The bridge detects them and routes through
+    #  ``request_mcp_approval`` so the wire payload carries MCP-specific
+    #  context (server label, tool name) instead of generic function-tool
+    #  arguments. The response RPC method is ``mcp_approval_response``.
+    # ------------------------------------------------------------------
+
+    async def request_mcp_approval(
+        self,
+        *,
+        session: Session,
+        request_id: str,
+        server_label: str,
+        tool_name: str,
+        arguments: str | None,
+        run_id: str | None = None,
+    ) -> dict:
+        """Emit an ``mcp_approval_requested`` event and await the response.
+
+        Returns a dict with ``decision`` (``"approve"`` | ``"reject"``) and
+        optional ``rejection_message`` (str | None). Always-approve is not
+        currently propagated through hosted-MCP approvals because the SDK's
+        approval status cache is keyed by ``(server_label, tool_name)`` and
+        we have no equivalent of the per-session function-tool always-allow
+        set on the MCP path.
+        """
+
+        if session is None:
+            raise RuntimeError(
+                "MCP approval requests require an explicit session context"
+            )
+
+        payload: dict[str, Any] = {
+            "kind": "mcp",
+            "request_id": request_id,
+            "server_label": server_label,
+            "tool_name": tool_name,
+            "arguments": arguments or "",
+            "session_id": session.id,
+        }
+        if run_id is not None:
+            payload["run_id"] = run_id
+
+        if Debug.enabled():
+            logger.debug(
+                f"  → mcp_approval_requested request_id={request_id}"
+                f" server={server_label} tool={tool_name}"
+                f" session={session.id} run_id={run_id}"
+            )
+
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._pending_mcp_approvals[request_id] = (fut, session)
+
+        # Track for replay on reconnect (sessions may not have the attr if
+        # they predate this feature; we only register if present).
+        pending_attr = getattr(session, "pending_mcp_approvals", None)
+        if pending_attr is None and hasattr(session, "pending_tool_approvals"):
+            try:
+                setattr(session, "pending_mcp_approvals", {})
+                pending_attr = session.pending_mcp_approvals
+            except Exception:
+                pending_attr = None
+        if pending_attr is not None:
+            pending_attr[request_id] = dict(payload)
+
+        await self._broadcast_session(
+            session,
+            "mcp_approval_requested",
+            payload,
+            queue_if_unseen=True,
+        )
+
+        try:
+            response = await fut
+        finally:
+            self._pending_mcp_approvals.pop(request_id, None)
+            pending_attr = getattr(session, "pending_mcp_approvals", None)
+            if pending_attr is not None:
+                pending_attr.pop(request_id, None)
+
+        if not isinstance(response, dict):
+            return {
+                "decision": "reject",
+                "rejection_message": "Invalid approval response",
+            }
+
+        # Audit hook mirrors the function-tool path so backends see a
+        # uniform ``tool_approved`` / ``tool_rejected`` stream regardless of
+        # transport.
+        try:
+            from omniagents.core.audit.events import make_audit_event
+
+            decision = response.get("decision")
+            event_type = "tool_approved" if decision == "approve" else "tool_rejected"
+            details: dict[str, Any] = {
+                "tool": tool_name,
+                "transport": "mcp",
+                "server_label": server_label,
+            }
+            if decision != "approve" and response.get("rejection_message"):
+                details["reason"] = response["rejection_message"]
+            await self.emit_runtime_hook(
+                "audit",
+                **make_audit_event(
+                    event_type,
+                    session_id=session.id,
+                    user_id=getattr(session, "user_id", None),
+                    run_id=run_id,
+                    agent_name=getattr(self.spec, "name", None),
+                    details=details,
+                ),
+            )
+        except Exception:
+            pass
+
+        return response
+
+    async def mcp_approval_response(
+        self,
+        request_id: str,
+        decision: str,
+        rejection_message: str | None = None,
+    ) -> bool:  # noqa: D401
+        """Resolve a pending hosted MCP approval prompt.
+
+        Parameters
+        ----------
+        request_id : str
+            Identifier from the matching ``mcp_approval_requested`` event
+            (corresponds to ``McpApprovalRequest.id`` from the model).
+        decision : str
+            Either ``"approve"`` or ``"reject"``.
+        rejection_message : str | None, optional
+            Message returned to the model in place of the tool result when
+            the user rejects.
+        """
+        _debug_rpc(
+            "mcp_approval_response",
+            {
+                "request_id": request_id,
+                "decision": decision,
+                "rejection_message": rejection_message,
+            },
+        )
+        entry = self._pending_mcp_approvals.get(request_id)
+        if entry is None:
+            return False
+        fut, sess = entry
+
+        if not fut.done():
+            fut.set_result(
+                {
+                    "decision": decision,
+                    "rejection_message": rejection_message,
+                }
+            )
+
+        # Notify all channels so multi-tab UIs can dismiss any visible
+        # prompt for the same request_id.
+        try:
+            await self._broadcast_session(
+                sess,
+                "mcp_approval_resolved",
+                {"request_id": request_id, "session_id": sess.id},
+            )
+        except Exception:
+            pass
+
+        return True
 
     async def start_run(
         self,
