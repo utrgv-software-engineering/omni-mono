@@ -74,81 +74,30 @@ class LocalAgent(RemoteAgent):
         # Create in-memory transport pair
         self._client_transport, self._server_transport = InMemoryTransport.create_pair()
 
-        # Create custom build_agent function that captures settings and callbacks
+        # Create custom build_agent function that captures settings.
+        # Tool approval is no longer wired into the agent here — the
+        # service-side configure_tool_approval pass handles it once the
+        # session exists. Any LocalAgent ``approval_callback`` is now routed
+        # through the JSON-RPC wire format (tool_approval_requested event +
+        # tool_approval_response RPC).
         settings = self.settings
-        approval_callback = self.approval_callback
         mcp_servers = self.mcp_servers
 
         # Store the original builder before replacing it
         self._original_builder = self.spec.build_agent
 
         async def custom_build_agent(stub_settings, mcp_server, stub_app):
-            # Set global approval callback and safe tools if we have them
-            from omniagents.core.agents.safe import SafeAgent
-
-            if self.spec.safe_agent_options:
-                SafeAgent.set_global_safe_tools(
-                    tool_names=self.spec.safe_agent_options.safe_tool_names,
-                    tool_patterns=self.spec.safe_agent_options.safe_tool_patterns,
-                )
-
-            # If spec already has a custom builder, use it
+            # If spec already has a custom builder, use it directly.
             if self._original_builder:
-                agent = await self._original_builder(
+                return await self._original_builder(
                     settings, mcp_servers[0] if mcp_servers else mcp_server, self.spec
                 )
 
-                # Check if agent is already a SafeAgent that needs callback
-                if isinstance(agent, SafeAgent) and approval_callback:
-                    # Set the instance callback as well for this specific agent
-                    agent.set_approval_callback(approval_callback)
-
-                # If safe mode is enabled and agent is not already a SafeAgent, wrap it
-                elif (
-                    self.spec.use_safe_agent
-                    and approval_callback
-                    and not isinstance(agent, SafeAgent)
-                ):
-                    opts = self.spec.safe_agent_options
-
-                    # Create SafeAgent, passing through all attributes via **kwargs
-                    # SafeAgent's __init__ accepts **kwargs and passes them to Agent.__init__
-                    safe_agent = SafeAgent(
-                        name=agent.name,
-                        tools=agent.tools,  # Use static tools at build time
-                        instructions=agent.instructions,
-                        model=agent.model,
-                        model_settings=getattr(agent, "model_settings", None),
-                        mcp_servers=getattr(agent, "mcp_servers", [])
-                        or [],  # Ensure it's a list, not None
-                        # Pass through other Agent attributes
-                        handoffs=getattr(agent, "handoffs", []),
-                        handoff_description=getattr(agent, "handoff_description", None),
-                        prompt=getattr(agent, "prompt", None),
-                        # SafeAgent specific parameters
-                        approval_callback=approval_callback,
-                        safe_tool_names=opts.safe_tool_names,
-                        safe_tool_patterns=opts.safe_tool_patterns,
-                        skip_approvals=opts.skip_approvals,
-                        halt_on_rejection=opts.halt_on_rejection,
-                    )
-                    return safe_agent
-
-                return agent
-
-            # Otherwise use the default builder
+            # Otherwise use the default builder.
             from omniagents.core.agents.builder import _default_build_agent
 
-            # Use our captured settings instead of stub_settings
-            # Use our captured MCP servers, preferring the first one if available
-            if mcp_servers:
-                mcp_to_use = mcp_servers
-            else:
-                mcp_to_use = mcp_server
-
-            return await _default_build_agent(
-                settings, mcp_to_use, self.spec, approval_callback
-            )
+            mcp_to_use = mcp_servers if mcp_servers else mcp_server
+            return await _default_build_agent(settings, mcp_to_use, self.spec, None)
 
         # Set the custom builder on the spec
         self.spec.build_agent = custom_build_agent

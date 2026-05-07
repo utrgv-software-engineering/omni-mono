@@ -227,16 +227,8 @@ async def _default_build_agent(
         # Never fail agent construction due to env wiring
         pass
 
-    # Set global approval callback and safe tools if we have them
-    # This will be available to all SafeAgent instances including handoffs
-    # Set global safe tool settings
-    if spec.safe_agent_options:
-        from omniagents.core.agents.safe import SafeAgent
-
-        SafeAgent.set_global_safe_tools(
-            tool_names=spec.safe_agent_options.safe_tool_names,
-            tool_patterns=spec.safe_agent_options.safe_tool_patterns,
-        )
+    # Tool-approval policy (formerly SafeAgent) is applied per-session in
+    # AgentService via FunctionTool.needs_approval — see core/agents/approval.py.
 
     # Get core config from spec/settings
     agent_name = spec.name
@@ -486,41 +478,5 @@ async def _default_build_agent(
         input_guardrails=input_guardrails,
         output_guardrails=output_guardrails,
     )
-
-    # Apply project-level safety mode enforcement
-    _use_safe = spec.use_safe_agent
-    _skip_approvals = spec.safe_agent_options.skip_approvals
-    if spec.security_config and spec.security_config.get("safety_mode") == "enforced":
-        _use_safe = True
-        _skip_approvals = False
-
-    # Optionally wrap with SafeAgent
-    if _use_safe and approval_callback:
-        from omniagents.core.agents.safe import SafeAgent
-
-        opts = spec.safe_agent_options
-        safe_agent = SafeAgent(
-            name=base_agent.name,
-            tools=base_agent.tools,  # Use static tools at build time
-            instructions=base_agent.instructions,
-            model=base_agent.model,
-            model_settings=base_agent.model_settings,
-            mcp_servers=base_agent.mcp_servers,
-            mcp_config=base_agent.mcp_config,
-            handoffs=base_agent.handoffs,  # Pass handoffs through
-            handoff_description=base_agent.handoff_description,
-            reset_tool_choice=base_agent.reset_tool_choice,
-            tool_use_behavior=base_agent.tool_use_behavior,
-            output_type=base_agent.output_type,
-            prompt=base_agent.prompt,
-            input_guardrails=base_agent.input_guardrails,
-            output_guardrails=base_agent.output_guardrails,
-            approval_callback=approval_callback,
-            safe_tool_names=opts.safe_tool_names,
-            safe_tool_patterns=opts.safe_tool_patterns,
-            skip_approvals=_skip_approvals,
-            halt_on_rejection=opts.halt_on_rejection,
-        )
-        return safe_agent
 
     return base_agent

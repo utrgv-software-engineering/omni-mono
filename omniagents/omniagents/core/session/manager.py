@@ -81,6 +81,9 @@ class Session:  # noqa: D101
         self.active_run_set_status_payload: dict | None = None
         self.active_session_state_payload: dict | None = None
         self.pending_client_requests: Dict[str, dict] = {}
+        # Tool approval prompts awaiting user response (SDK 0.16+ flow).
+        # Keyed by tool call_id; replayed to channels that connect mid-run.
+        self.pending_tool_approvals: Dict[str, dict] = {}
         # Model configuration for runtime switching
         self.active_model: str | None = None
         self.model_config: Dict[str, Any] | None = None

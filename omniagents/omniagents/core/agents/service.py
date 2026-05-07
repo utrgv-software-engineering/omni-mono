@@ -44,7 +44,7 @@ except ImportError:
 
 from omniagents.rpc import RpcMethodsBase
 from omniagents.core.agents.specs import AgentSpec
-from omniagents.core.agents.safe import SafeAgent
+from omniagents.core.agents.approval import configure_tool_approval
 from omniagents.core.session import Session, SessionManager
 from omniagents.core.session.history_db import get_user_messages
 from omniagents.core.runtime.bridge import stream_agent
@@ -244,7 +244,9 @@ class AgentService(RpcMethodsBase):
         super().__init__()
         self.spec = spec
         self._default_workspace_root: str | None = (
-            default_workspace_root if isinstance(default_workspace_root, str) and default_workspace_root.strip()
+            default_workspace_root
+            if isinstance(default_workspace_root, str)
+            and default_workspace_root.strip()
             else None
         )
         project_slug = _safe_slug(getattr(self.spec, "project_slug", None), "default")
@@ -321,6 +323,8 @@ class AgentService(RpcMethodsBase):
         # Optional capability registry per connected channel
         self._client_capabilities: dict[Any, dict] = {}
         self._client_request_sessions: dict[str, Session] = {}
+        # Tool-approval futures keyed by call_id (SDK 0.16 interruption flow)
+        self._pending_tool_approvals: dict[str, tuple[asyncio.Future, Session]] = {}
         # Server functions registry (client→server dynamic functions)
         # Map name -> {"func": callable, "description": str | None, "params_schema": dict | None, "result_schema": dict | None}
         self._server_functions: dict[str, dict] = {}
@@ -626,7 +630,9 @@ class AgentService(RpcMethodsBase):
                         return _json.dumps({"error": "Client tool call timed out"})
                     if not resp.get("ok"):
                         err = resp.get("error", {})
-                        return _json.dumps({"error": err.get("message", "Client tool call failed")})
+                        return _json.dumps(
+                            {"error": err.get("message", "Client tool call failed")}
+                        )
                     return _json.dumps(resp.get("result", {}))
 
                 return _invoke
@@ -665,33 +671,6 @@ class AgentService(RpcMethodsBase):
             if self.spec.build_agent:
                 primary_server = active_servers[0] if active_servers else None
                 agent = await self.spec.build_agent(settings, primary_server, stub_app)
-                if (
-                    self.spec.use_safe_agent
-                    and approval_callback
-                    and not isinstance(agent, SafeAgent)
-                ):
-                    opts = self.spec.safe_agent_options
-                    agent = SafeAgent(
-                        name=agent.name,
-                        tools=agent.tools,
-                        instructions=agent.instructions,
-                        model=agent.model,
-                        model_settings=getattr(agent, "model_settings", None),
-                        mcp_servers=getattr(agent, "mcp_servers", []) or [],
-                        handoffs=getattr(agent, "handoffs", []),
-                        handoff_description=getattr(agent, "handoff_description", None),
-                        prompt=getattr(agent, "prompt", None),
-                        approval_callback=approval_callback,
-                        safe_tool_names=opts.safe_tool_names,
-                        safe_tool_patterns=opts.safe_tool_patterns,
-                        skip_approvals=opts.skip_approvals,
-                        halt_on_rejection=opts.halt_on_rejection,
-                    )
-                elif isinstance(agent, SafeAgent) and approval_callback:
-                    try:
-                        agent.set_approval_callback(approval_callback)
-                    except Exception:
-                        pass
             else:
                 agent = await _default_build_agent(
                     settings,
@@ -709,45 +688,28 @@ class AgentService(RpcMethodsBase):
                 existing.extend(client_tools)
                 agent.tools = existing
 
-            if (
-                approval_callback
-                and hasattr(agent, "set_approval_callback")
-                and callable(getattr(agent, "set_approval_callback"))
-            ):
-                try:
-                    agent.set_approval_callback(approval_callback)
-                except Exception:
-                    pass
-
             self._apply_session_tool_policy(session, agent)
 
-            # Wire audit emit callback on SafeAgent if audit is active
-            if hasattr(agent, "_audit_emit") and self._runtime_hooks.get("audit"):
-                _service_ref = self
-                _session_ref = session
-
-                async def _safe_agent_audit(event_type, tool_name, details, reviewer_id=None):
-                    from omniagents.core.audit.events import make_audit_event
-
-                    _uid = reviewer_id or getattr(_session_ref, "user_id", None)
-                    _extra = {"tool": tool_name, **details}
-                    if reviewer_id:
-                        _extra["reviewer_id"] = reviewer_id
-                    await _service_ref.emit_runtime_hook(
-                        "audit",
-                        **make_audit_event(
-                            event_type,
-                            session_id=getattr(_session_ref, "id", None),
-                            user_id=_uid,
-                            agent_name=getattr(_service_ref.spec, "name", None),
-                            details=_extra,
-                        ),
-                    )
-
-                agent._audit_emit = _safe_agent_audit
-                # Set reviewer identity from authenticated session
-                if hasattr(agent, "_reviewer_id"):
-                    agent._reviewer_id = getattr(session, "user_id", None)
+            # Wire tool-approval predicates per session if safety is enabled.
+            # The SDK pauses the run with ToolApprovalItem interruptions when
+            # any predicate returns True; the bridge handles request/response.
+            opts = self.spec.safe_agent_options
+            _use_safe = self.spec.use_safe_agent
+            _skip_approvals = bool(getattr(opts, "skip_approvals", False))
+            if (
+                self.spec.security_config
+                and self.spec.security_config.get("safety_mode") == "enforced"
+            ):
+                _use_safe = True
+                _skip_approvals = False
+            if _use_safe:
+                configure_tool_approval(
+                    agent,
+                    session=session,
+                    safe_tool_names=opts.safe_tool_names if opts else None,
+                    safe_tool_patterns=opts.safe_tool_patterns if opts else None,
+                    skip_approvals=_skip_approvals,
+                )
 
             return agent
         except Exception:
@@ -802,30 +764,17 @@ class AgentService(RpcMethodsBase):
         return cloned
 
     def _apply_session_tool_policy(self, session: Session, agent: Any) -> None:
+        # The session's always_allow_tools / always_allow_patterns sets are
+        # consulted directly by the per-tool needs_approval predicates wired
+        # in configure_tool_approval, so no per-agent state to mirror here.
+        # We still surface the merged set on the agent for any external code
+        # that introspects it.
         names = getattr(session, "always_allow_tools", None)
-        patterns = getattr(session, "always_allow_patterns", None)
-
-        if not names and not patterns:
+        if not names:
             return
-
-        if isinstance(agent, SafeAgent):
-            if names:
-                for tool_name in names:
-                    try:
-                        agent.add_safe_tool(tool_name)
-                    except Exception:
-                        pass
-            if patterns:
-                for pattern in patterns:
-                    try:
-                        agent.add_safe_tool_pattern(pattern)
-                    except Exception:
-                        pass
-            return
-
         try:
             existing = set(getattr(agent, "always_allow_tools", set()))
-            merged = existing | set(names or [])
+            merged = existing | set(names)
             setattr(agent, "always_allow_tools", merged)
         except Exception:
             pass
@@ -1033,9 +982,7 @@ class AgentService(RpcMethodsBase):
             context if context_provided else getattr(session, "context", None)
         )
         variables_value = (
-            variables
-            if variables_provided
-            else getattr(session, "variables", None)
+            variables if variables_provided else getattr(session, "variables", None)
         )
 
         def _ensure_mapping(value):
@@ -1151,6 +1098,8 @@ class AgentService(RpcMethodsBase):
         for req_id in list(session.pending_client_requests.keys()):
             self._client_request_sessions.pop(req_id, None)
         session.pending_client_requests.clear()
+        if hasattr(session, "pending_tool_approvals"):
+            session.pending_tool_approvals.clear()
 
     async def _replay_live_state(self, session: Session, channel) -> None:
         if session is None or channel is None:
@@ -1166,6 +1115,9 @@ class AgentService(RpcMethodsBase):
             events.append(("client_request", session.active_session_state_payload))
         for payload in session.pending_client_requests.values():
             events.append(("client_request", payload))
+        if hasattr(session, "pending_tool_approvals"):
+            for payload in session.pending_tool_approvals.values():
+                events.append(("tool_approval_requested", payload))
         for method, payl in events:
             await self._safe_notify(channel, method, payl)
 
@@ -1232,24 +1184,71 @@ class AgentService(RpcMethodsBase):
 
     async def tool_approval_response(
         self,
-        approval_id: str,
-        approved: bool,
+        call_id: str,
+        decision: str,
         always_approve: bool = False,
-        error_message: str | None = None,
+        rejection_message: str | None = None,
     ) -> bool:  # noqa: D401
+        """Resolve a pending tool approval prompt.
+
+        Parameters
+        ----------
+        call_id : str
+            Identifier of the tool call that paused the run.
+        decision : str
+            Either ``"approve"`` or ``"reject"``.
+        always_approve : bool, optional
+            When ``decision == "approve"`` and this flag is set, the tool
+            is added to the session's always-allow list so subsequent
+            invocations execute without further prompts.
+        rejection_message : str | None, optional
+            Message returned to the model in place of the tool result when
+            the user rejects.
+        """
         _debug_rpc(
             "tool_approval_response",
             {
-                "approval_id": approval_id,
-                "approved": approved,
+                "call_id": call_id,
+                "decision": decision,
                 "always_approve": always_approve,
-                "error_message": error_message,
+                "rejection_message": rejection_message,
             },
         )
-        raise RuntimeError(
-            "tool_approval_response is deprecated; respond via client_request/"
-            "client_response instead"
-        )
+        entry = self._pending_tool_approvals.get(call_id)
+        if entry is None:
+            return False
+        fut, sess = entry
+
+        if decision == "approve" and always_approve:
+            allow_set = getattr(sess, "always_allow_tools", None)
+            if allow_set is None:
+                allow_set = set()
+                setattr(sess, "always_allow_tools", allow_set)
+            tool_name = getattr(sess, "_pending_approval_tool_names", {}).get(call_id)
+            if tool_name:
+                allow_set.add(tool_name)
+
+        if not fut.done():
+            fut.set_result(
+                {
+                    "decision": decision,
+                    "always_approve": bool(always_approve),
+                    "rejection_message": rejection_message,
+                }
+            )
+
+        # Notify any other connected channels (multi-tab / voice + chat) so
+        # their UI can dismiss any visible approval prompt.
+        try:
+            await self._broadcast_session(
+                sess,
+                "tool_approval_resolved",
+                {"call_id": call_id, "session_id": sess.id},
+            )
+        except Exception:
+            pass
+
+        return True
 
     # ------------------------------------------------------------------
     #  Client function registration (capability handshake)
@@ -1395,150 +1394,130 @@ class AgentService(RpcMethodsBase):
         return bool(ok)
 
     # ------------------------------------------------------------------
-    #  Callback passed to SafeAgent: emits a *request* to the client and
-    #  waits for the matching response.
+    #  Tool-approval interruption flow (SDK 0.16+).
+    #
+    #  When the SDK pauses a run with ToolApprovalItem interruptions, the
+    #  bridge calls request_tool_approval() per interruption. We emit a
+    #  ``tool_approval_requested`` notification, register a future, and
+    #  resolve it from ``tool_approval_response``.
     # ------------------------------------------------------------------
 
-    async def _request_tool_approval(
+    async def request_tool_approval(
         self,
+        *,
+        session: Session,
+        call_id: str,
         tool_name: str,
-        formatted_args: str,
-        _sess: Session,
-        metadata: Optional[Dict[str, Any]] = None,
-        _run_id: str | None = None,
-    ):  # noqa: D401
-        """Ask the client for approval; buffer request if not delivered."""
+        arguments: str | None,
+        run_id: str | None = None,
+    ) -> dict:
+        """Emit a ``tool_approval_requested`` event and await the response.
 
-        if _sess is None:
+        Returns a dict with ``decision`` (``"approve"`` | ``"reject"``),
+        ``always_approve`` (bool), and ``rejection_message`` (str | None).
+        """
+
+        if session is None:
             raise RuntimeError(
                 "Tool approval requests require an explicit session context"
             )
 
-        approval_id = uuid.uuid4().hex
-        run_id = _run_id
-        if run_id is None:
-            current_task = asyncio.current_task()
-            if current_task is not None:
-                try:
-                    run_id = current_task.get_name()
-                except Exception:
-                    run_id = None
-        payload = {
-            "approval_id": approval_id,
-            "tool": tool_name,
-            "arguments": formatted_args,
+        # Compute rich metadata for the approval dialog.
+        try:
+            from omniagents.core.tools import get_approval_metadata
+
+            args_dict = _json.loads(arguments) if arguments else {}
+            metadata = get_approval_metadata(tool_name, args_dict)
+        except Exception:
+            metadata = None
+
+        payload: dict[str, Any] = {
+            "call_id": call_id,
+            "tool_name": tool_name,
+            "arguments": arguments or "",
+            "session_id": session.id,
         }
-        if run_id:
+        if run_id is not None:
             payload["run_id"] = run_id
-
-        payload["session_id"] = _sess.id
-
         if metadata:
             payload["metadata"] = metadata
 
         if Debug.enabled():
             logger.debug(
-                f"  → tool_approval_request approval_id={approval_id}"
-                f" session={_sess.id}"
-                f" run_id={run_id}"
-            )
-            logger.debug(
-                f"  → tool_approval_request approval_id={approval_id} details={payload}"
+                f"  → tool_approval_requested call_id={call_id}"
+                f" tool={tool_name} session={session.id} run_id={run_id}"
             )
 
-        request_args = dict(payload)
-        req_id = uuid.uuid4().hex
-        request_args.pop("approval_id", None)
-
-        event_payload = {
-            "request_id": req_id,
-            "function": "ui.request_tool_approval",
-            "args": request_args,
-            "session_id": payload.get("session_id"),
-            "run_id": payload.get("run_id"),
-            "approval_id": approval_id,
-        }
-
-        _sess.pending_client_requests[req_id] = dict(event_payload)
-        self._client_request_sessions[req_id] = _sess
-
-        targets: list[Any] = []
-        if run_id:
-            preferred = _sess.run_channels.get(run_id)
-            if preferred is not None:
-                targets.append(preferred)
-        for ch in _sess.channels:
-            if ch is None:
-                continue
-            if ch not in targets:
-                targets.append(ch)
+        # Track the tool name so the response handler can update the
+        # always-allow set without re-deriving it.
+        try:
+            tracker = getattr(session, "_pending_approval_tool_names", None)
+            if tracker is None:
+                tracker = {}
+                setattr(session, "_pending_approval_tool_names", tracker)
+            tracker[call_id] = tool_name
+        except Exception:
+            pass
 
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
-        self._pending_client_requests[req_id] = fut
+        self._pending_tool_approvals[call_id] = (fut, session)
 
-        delivered_any = False
-        dead_channels = []
-        for ch in list(targets):
-            if ch is None:
-                continue
-            ok = await self._safe_notify(
-                ch,
-                "client_request",
-                event_payload,
-            )
-            if ok:
-                delivered_any = True
-            else:
-                dead_channels.append(ch)
+        # Track for replay on reconnect.
+        if hasattr(session, "pending_tool_approvals"):
+            session.pending_tool_approvals[call_id] = dict(payload)
 
-        for dead in dead_channels:
-            try:
-                _sess.channels.remove(dead)
-            except ValueError:
-                pass
-            if run_id and _sess.run_channels.get(run_id) is dead:
-                _sess.run_channels.pop(run_id, None)
-
-        if not delivered_any and hasattr(_sess, "pending_events"):
-            _sess.pending_events.append(
-                (
-                    "client_request",
-                    event_payload,
-                )
-            )
+        await self._broadcast_session(
+            session,
+            "tool_approval_requested",
+            payload,
+            queue_if_unseen=True,
+        )
 
         try:
-            envelope = await fut
+            response = await fut
         finally:
-            self._pending_client_requests.pop(req_id, None)
-            self._forget_pending_request(req_id)
+            self._pending_tool_approvals.pop(call_id, None)
+            try:
+                if hasattr(session, "pending_tool_approvals"):
+                    session.pending_tool_approvals.pop(call_id, None)
+                tracker = getattr(session, "_pending_approval_tool_names", None)
+                if tracker is not None:
+                    tracker.pop(call_id, None)
+            except Exception:
+                pass
 
-        if not isinstance(envelope, dict):
-            raise RuntimeError("Invalid client response for tool approval")
+        if not isinstance(response, dict):
+            return {
+                "decision": "reject",
+                "always_approve": False,
+                "rejection_message": "Invalid approval response",
+            }
 
-        ok = envelope.get("ok")
-        result = envelope.get("result") or {}
-        error = envelope.get("error") or {}
+        # Audit hook: emit tool_approved / tool_rejected so file/remote
+        # backends keep the record they used to receive from SafeAgent.
+        try:
+            from omniagents.core.audit.events import make_audit_event
 
-        if not ok:
-            return (
-                False,
-                False,
-                (error.get("message") if isinstance(error, dict) else None),
+            decision = response.get("decision")
+            event_type = "tool_approved" if decision == "approve" else "tool_rejected"
+            details: dict[str, Any] = {"tool": tool_name}
+            if decision != "approve" and response.get("rejection_message"):
+                details["reason"] = response["rejection_message"]
+            await self.emit_runtime_hook(
+                "audit",
+                **make_audit_event(
+                    event_type,
+                    session_id=session.id,
+                    user_id=getattr(session, "user_id", None),
+                    run_id=run_id,
+                    agent_name=getattr(self.spec, "name", None),
+                    details=details,
+                ),
             )
+        except Exception:
+            pass
 
-        approved = bool(result.get("approved"))
-        always_approve = bool(result.get("always_approve"))
-        error_message = result.get("error_message")
-
-        if approved and always_approve:
-            allow_set = getattr(_sess, "always_allow_tools", None)
-            if allow_set is None:
-                allow_set = set()
-                setattr(_sess, "always_allow_tools", allow_set)
-            allow_set.add(tool_name)
-
-        return approved, always_approve, error_message
+        return response
 
     async def start_run(
         self,
@@ -1685,17 +1664,7 @@ class AgentService(RpcMethodsBase):
                     still_pending.append((meth, payl))
             sess.pending_events = still_pending
 
-        approval_callback_base = getattr(sess, "approval_callback_base", None)
-        if approval_callback_base is None:
-            approval_callback_base = (
-                lambda name, args, metadata=None: self._request_tool_approval(
-                    name, args, sess, metadata
-                )
-            )
-            sess.approval_callback_base = approval_callback_base
-        sess.approval_callback = approval_callback_base
-
-        agent = await self._build_agent_for_session(sess, approval_callback_base)
+        agent = await self._build_agent_for_session(sess, None)
 
         async def _worker():
             end_reason = "error"  # Default in case of unexpected exception
@@ -1704,22 +1673,6 @@ class AgentService(RpcMethodsBase):
 
             current_task = asyncio.current_task()
             run_name = current_task.get_name() if current_task else None
-
-            async def run_scoped_approval(
-                tool_name: str, args: str, metadata: Optional[Dict[str, Any]] = None
-            ):  # noqa: ANN001
-                return await self._request_tool_approval(
-                    tool_name, args, sess, metadata, _run_id=run_name
-                )
-
-            try:
-                if hasattr(agent, "set_approval_callback") and callable(
-                    getattr(agent, "set_approval_callback")
-                ):
-                    agent.set_approval_callback(run_scoped_approval)
-            except Exception:
-                pass
-            sess.approval_callback = run_scoped_approval
 
             # Resolve runtime context once
             # When a build_context factory exists, always call it so that
@@ -2403,9 +2356,7 @@ class AgentService(RpcMethodsBase):
         mcp_servers = getattr(self.spec, "mcp_servers", None)
         if mcp_servers:
             self.spec.mcp_servers = [
-                s
-                for s in mcp_servers
-                if getattr(s, "name", None) != server_name
+                s for s in mcp_servers if getattr(s, "name", None) != server_name
             ]
 
     async def report_incident(

@@ -660,248 +660,309 @@ async def stream_agent(
         # Import Runner locally to avoid module-level import
         from agents import Runner as _Runner
 
-        result = _Runner.run_streamed(
-            agent,
-            agent_input,
-            context=context,
-            max_turns=max_turns,
-            run_config=run_config,
-        )
-        session.current_stream_result = result
+        run_input: Any = agent_input
+        result = None
 
-        async for event in result.stream_events():
-            # Handle raw response events to emit usage on turn completion
-            if event.type == "raw_response_event":
-                data = getattr(event, "data", None)
-                if (
-                    isinstance(data, ResponseCompletedEvent)
-                    and data.response
-                    and data.response.usage
-                ):
-                    # Use the usage directly from OpenAI's response (already cumulative)
-                    # This bypasses the agents library's incorrect double-accumulation
-                    raw_usage = data.response.usage
-                    # Try to capture the actual model used for this turn (if provided by provider)
-                    model_used = getattr(data.response, "model", None)
-                    if model_used:
-                        last_model_info["model"] = model_used
-                    current_totals = {
-                        "requests": turn_counter
-                        + 1,  # Increment request count ourselves
-                        "input_tokens": raw_usage.input_tokens,
-                        "output_tokens": raw_usage.output_tokens,
-                        "total_tokens": raw_usage.total_tokens,
-                        "input_tokens_details": {
-                            "cached_tokens": (
-                                getattr(
-                                    raw_usage.input_tokens_details, "cached_tokens", 0
-                                )
-                                if raw_usage.input_tokens_details
-                                else 0
-                            )
-                        },
-                        "output_tokens_details": {
-                            "reasoning_tokens": (
-                                getattr(
-                                    raw_usage.output_tokens_details,
-                                    "reasoning_tokens",
-                                    0,
-                                )
-                                if raw_usage.output_tokens_details
-                                else 0
-                            )
-                        },
-                    }
-                    delta = {
-                        "requests": current_totals["requests"]
-                        - last_usage_totals["requests"],
-                        "input_tokens": current_totals["input_tokens"]
-                        - last_usage_totals["input_tokens"],
-                        "output_tokens": current_totals["output_tokens"]
-                        - last_usage_totals["output_tokens"],
-                        "total_tokens": current_totals["total_tokens"]
-                        - last_usage_totals["total_tokens"],
-                        "input_tokens_details": {
-                            "cached_tokens": current_totals["input_tokens_details"][
-                                "cached_tokens"
-                            ]
-                            - last_usage_totals["input_tokens_details"][
-                                "cached_tokens"
-                            ],
-                        },
-                        "output_tokens_details": {
-                            "reasoning_tokens": current_totals["output_tokens_details"][
-                                "reasoning_tokens"
-                            ]
-                            - last_usage_totals["output_tokens_details"][
-                                "reasoning_tokens"
-                            ],
-                        },
-                    }
-                    turn_counter += 1
-                    usage_payload = {
-                        "run_id": asyncio.current_task().get_name(),
-                        "session_id": session.id,
-                        "turn": turn_counter,
-                        "delta": delta,
-                        "totals": current_totals,
-                        "response_id": getattr(data.response, "id", None),
-                        # Optional model info so clients can adjust UI per-turn
-                        "model": last_model_info.get("model"),
-                        "max_input_tokens": last_model_info.get("max_input_tokens"),
-                        "max_output_tokens": last_model_info.get("max_output_tokens"),
-                        "truncation": last_model_info.get("truncation"),
-                    }
-                    # Drop None values to avoid sending JSON null for optional fields
-                    for key in [
-                        "model",
-                        "max_input_tokens",
-                        "max_output_tokens",
-                        "truncation",
-                    ]:
-                        if usage_payload.get(key) is None:
-                            usage_payload.pop(key, None)
-                    await _broadcast(session, "token", usage_payload)
-                    if service is not None:
-                        try:
-                            emit = getattr(service, "emit_runtime_hook", None)
-                            if emit is not None:
-                                await emit(
-                                    "token",
-                                    session=session,
-                                    run_id=asyncio.current_task().get_name(),
-                                    params=usage_payload,
-                                )
-                        except Exception:
-                            pass
-                    last_usage_totals = current_totals
-                # Continue to next event after handling raw response
-                continue
-
-            # Skip low-level / uninterested event types
-            if event.type not in ("run_item_stream_event",):
-                continue
-
-            item = event.item
-            method, payload = _stream_event_payload(
-                item,
-                run_id=asyncio.current_task().get_name(),
-                session_id=session.id,
+        while True:
+            result = _Runner.run_streamed(
+                agent,
+                run_input,
+                context=context,
+                max_turns=max_turns,
+                run_config=run_config,
             )
+            session.current_stream_result = result
 
-            # Track tool calls that need results
-            if method == "tool_called" and payload.get("call_id"):
-                call_id = payload["call_id"]
-                tool_name = payload.get("tool", "unknown")
-                pending_tool_calls[call_id] = tool_name
-                # If the tool has a client-status override, emit it as a client_request
-                try:
-                    # Attempt to find a matching tool object on the agent
-                    for t in getattr(agent, "tools", []) or []:
-                        name = getattr(t, "name", None)
-                        if name == tool_name and hasattr(t, "_client_status_text"):
-                            text = str(getattr(t, "_client_status_text"))
-                            if text:
-                                status_payload = {
-                                    "request_id": f"status_{call_id}",
-                                    "function": "ui.set_status",
-                                    "args": {"text": text, "show_spinner": True},
-                                    "run_id": asyncio.current_task().get_name(),
-                                    "session_id": session.id,
-                                }
-                                await _broadcast(
-                                    session,
-                                    "client_request",
-                                    status_payload,
+            async for event in result.stream_events():
+                # Handle raw response events to emit usage on turn completion
+                if event.type == "raw_response_event":
+                    data = getattr(event, "data", None)
+                    if (
+                        isinstance(data, ResponseCompletedEvent)
+                        and data.response
+                        and data.response.usage
+                    ):
+                        # Use the usage directly from OpenAI's response (already cumulative)
+                        # This bypasses the agents library's incorrect double-accumulation
+                        raw_usage = data.response.usage
+                        # Try to capture the actual model used for this turn (if provided by provider)
+                        model_used = getattr(data.response, "model", None)
+                        if model_used:
+                            last_model_info["model"] = model_used
+                        current_totals = {
+                            "requests": turn_counter
+                            + 1,  # Increment request count ourselves
+                            "input_tokens": raw_usage.input_tokens,
+                            "output_tokens": raw_usage.output_tokens,
+                            "total_tokens": raw_usage.total_tokens,
+                            "input_tokens_details": {
+                                "cached_tokens": (
+                                    getattr(
+                                        raw_usage.input_tokens_details,
+                                        "cached_tokens",
+                                        0,
+                                    )
+                                    if raw_usage.input_tokens_details
+                                    else 0
                                 )
-                                _status_calls[call_id] = text
-                            break
-                except Exception:
-                    # Best-effort; ignore if lookup fails
-                    pass
-            elif method == "tool_result" and payload.get("call_id"):
-                # Tool got a result, remove from pending
-                call_id = payload["call_id"]
-                pending_tool_calls.pop(call_id, None)
-                # Clear any status override we set for this call
-                if call_id in _status_calls:
-                    try:
-                        clear_payload = {
-                            "request_id": f"status_clear_{call_id}",
-                            "function": "ui.set_status",
-                            "args": {"text": "", "show_spinner": False},
+                            },
+                            "output_tokens_details": {
+                                "reasoning_tokens": (
+                                    getattr(
+                                        raw_usage.output_tokens_details,
+                                        "reasoning_tokens",
+                                        0,
+                                    )
+                                    if raw_usage.output_tokens_details
+                                    else 0
+                                )
+                            },
+                        }
+                        delta = {
+                            "requests": current_totals["requests"]
+                            - last_usage_totals["requests"],
+                            "input_tokens": current_totals["input_tokens"]
+                            - last_usage_totals["input_tokens"],
+                            "output_tokens": current_totals["output_tokens"]
+                            - last_usage_totals["output_tokens"],
+                            "total_tokens": current_totals["total_tokens"]
+                            - last_usage_totals["total_tokens"],
+                            "input_tokens_details": {
+                                "cached_tokens": current_totals["input_tokens_details"][
+                                    "cached_tokens"
+                                ]
+                                - last_usage_totals["input_tokens_details"][
+                                    "cached_tokens"
+                                ],
+                            },
+                            "output_tokens_details": {
+                                "reasoning_tokens": current_totals[
+                                    "output_tokens_details"
+                                ]["reasoning_tokens"]
+                                - last_usage_totals["output_tokens_details"][
+                                    "reasoning_tokens"
+                                ],
+                            },
+                        }
+                        turn_counter += 1
+                        usage_payload = {
                             "run_id": asyncio.current_task().get_name(),
                             "session_id": session.id,
-                        }
-                        await _broadcast(
-                            session,
-                            "client_request",
-                            clear_payload,
-                        )
-                    except Exception:
-                        pass
-                    finally:
-                        _status_calls.pop(call_id, None)
-
-            if method:
-                delivered = await _broadcast(session, method, payload)
-                if not delivered:
-                    session.pending_events.append((method, payload))
-
-                # Emit audit events for tool_called / tool_result
-                if service is not None and method in ("tool_called", "tool_result"):
-                    try:
-                        from omniagents.core.audit.events import (
-                            make_audit_event,
-                            truncate_for_audit,
-                            TOOL_CALLED,
-                            TOOL_RESULT,
-                        )
-
-                        _et = TOOL_CALLED if method == "tool_called" else TOOL_RESULT
-                        _max = 4096
-                        if method == "tool_called":
-                            _details = {
-                                "tool": payload.get("tool"),
-                                "call_id": payload.get("call_id"),
-                                "input": truncate_for_audit(
-                                    payload.get("input", ""), _max
-                                ),
-                            }
-                        else:
-                            _details = {
-                                "tool": payload.get("tool"),
-                                "call_id": payload.get("call_id"),
-                                "output": truncate_for_audit(
-                                    payload.get("output", ""), _max
-                                ),
-                            }
-                        await service.emit_runtime_hook(
-                            "audit",
-                            **make_audit_event(
-                                _et,
-                                session_id=getattr(session, "id", None),
-                                user_id=getattr(session, "user_id", None),
-                                run_id=payload.get("run_id"),
-                                details=_details,
+                            "turn": turn_counter,
+                            "delta": delta,
+                            "totals": current_totals,
+                            "response_id": getattr(data.response, "id", None),
+                            # Optional model info so clients can adjust UI per-turn
+                            "model": last_model_info.get("model"),
+                            "max_input_tokens": last_model_info.get("max_input_tokens"),
+                            "max_output_tokens": last_model_info.get(
+                                "max_output_tokens"
                             ),
-                        )
+                            "truncation": last_model_info.get("truncation"),
+                        }
+                        # Drop None values to avoid sending JSON null for optional fields
+                        for key in [
+                            "model",
+                            "max_input_tokens",
+                            "max_output_tokens",
+                            "truncation",
+                        ]:
+                            if usage_payload.get(key) is None:
+                                usage_payload.pop(key, None)
+                        await _broadcast(session, "token", usage_payload)
+                        if service is not None:
+                            try:
+                                emit = getattr(service, "emit_runtime_hook", None)
+                                if emit is not None:
+                                    await emit(
+                                        "token",
+                                        session=session,
+                                        run_id=asyncio.current_task().get_name(),
+                                        params=usage_payload,
+                                    )
+                            except Exception:
+                                pass
+                        last_usage_totals = current_totals
+                    # Continue to next event after handling raw response
+                    continue
+
+                # Skip low-level / uninterested event types
+                if event.type not in ("run_item_stream_event",):
+                    continue
+
+                item = event.item
+                method, payload = _stream_event_payload(
+                    item,
+                    run_id=asyncio.current_task().get_name(),
+                    session_id=session.id,
+                )
+
+                # Track tool calls that need results
+                if method == "tool_called" and payload.get("call_id"):
+                    call_id = payload["call_id"]
+                    tool_name = payload.get("tool", "unknown")
+                    pending_tool_calls[call_id] = tool_name
+                    # If the tool has a client-status override, emit it as a client_request
+                    try:
+                        # Attempt to find a matching tool object on the agent
+                        for t in getattr(agent, "tools", []) or []:
+                            name = getattr(t, "name", None)
+                            if name == tool_name and hasattr(t, "_client_status_text"):
+                                text = str(getattr(t, "_client_status_text"))
+                                if text:
+                                    status_payload = {
+                                        "request_id": f"status_{call_id}",
+                                        "function": "ui.set_status",
+                                        "args": {"text": text, "show_spinner": True},
+                                        "run_id": asyncio.current_task().get_name(),
+                                        "session_id": session.id,
+                                    }
+                                    await _broadcast(
+                                        session,
+                                        "client_request",
+                                        status_payload,
+                                    )
+                                    _status_calls[call_id] = text
+                                break
+                    except Exception:
+                        # Best-effort; ignore if lookup fails
+                        pass
+                elif method == "tool_result" and payload.get("call_id"):
+                    # Tool got a result, remove from pending
+                    call_id = payload["call_id"]
+                    pending_tool_calls.pop(call_id, None)
+                    # Clear any status override we set for this call
+                    if call_id in _status_calls:
+                        try:
+                            clear_payload = {
+                                "request_id": f"status_clear_{call_id}",
+                                "function": "ui.set_status",
+                                "args": {"text": "", "show_spinner": False},
+                                "run_id": asyncio.current_task().get_name(),
+                                "session_id": session.id,
+                            }
+                            await _broadcast(
+                                session,
+                                "client_request",
+                                clear_payload,
+                            )
+                        except Exception:
+                            pass
+                        finally:
+                            _status_calls.pop(call_id, None)
+
+                if method:
+                    delivered = await _broadcast(session, method, payload)
+                    if not delivered:
+                        session.pending_events.append((method, payload))
+
+                    # Emit audit events for tool_called / tool_result
+                    if service is not None and method in ("tool_called", "tool_result"):
+                        try:
+                            from omniagents.core.audit.events import (
+                                make_audit_event,
+                                truncate_for_audit,
+                                TOOL_CALLED,
+                                TOOL_RESULT,
+                            )
+
+                            _et = (
+                                TOOL_CALLED if method == "tool_called" else TOOL_RESULT
+                            )
+                            _max = 4096
+                            if method == "tool_called":
+                                _details = {
+                                    "tool": payload.get("tool"),
+                                    "call_id": payload.get("call_id"),
+                                    "input": truncate_for_audit(
+                                        payload.get("input", ""), _max
+                                    ),
+                                }
+                            else:
+                                _details = {
+                                    "tool": payload.get("tool"),
+                                    "call_id": payload.get("call_id"),
+                                    "output": truncate_for_audit(
+                                        payload.get("output", ""), _max
+                                    ),
+                                }
+                            await service.emit_runtime_hook(
+                                "audit",
+                                **make_audit_event(
+                                    _et,
+                                    session_id=getattr(session, "id", None),
+                                    user_id=getattr(session, "user_id", None),
+                                    run_id=payload.get("run_id"),
+                                    details=_details,
+                                ),
+                            )
+                        except Exception:
+                            pass
+
+                # Persist item into session history
+                if hasattr(item, "to_input_item"):
+                    try:
+                        inp = item.to_input_item()
+                        if inp:
+                            session.append_message(inp)
                     except Exception:
                         pass
 
-            # Persist item into session history
-            if hasattr(item, "to_input_item"):
-                try:
-                    inp = item.to_input_item()
-                    if inp:
-                        session.append_message(inp)
-                except Exception:
-                    pass
+                if method:
+                    Debug.log(
+                        f"[srv]   → {method} run={payload.get('run_id','')} details={payload}"
+                    )
 
-            if method:
-                Debug.log(
-                    f"[srv]   → {method} run={payload.get('run_id','')} details={payload}"
+            # ----- Handle tool-approval interruptions (SDK 0.16+) -----
+            interruptions = list(getattr(result, "interruptions", []) or [])
+            if not interruptions:
+                break
+            if service is None:
+                # No service to mediate approval — reject everything to keep
+                # the run from hanging.
+                state = result.to_state()
+                for item in interruptions:
+                    state.reject(
+                        item,
+                        rejection_message="Tool approval unavailable in this context",
+                    )
+                run_input = state
+                continue
+
+            current_run_id = (
+                asyncio.current_task().get_name() if asyncio.current_task() else None
+            )
+            state = result.to_state()
+            for item in interruptions:
+                raw = getattr(item, "raw_item", None)
+                tool_call_id = getattr(raw, "call_id", None) or getattr(raw, "id", None)
+                if not tool_call_id:
+                    # Without a stable call_id we can't correlate a response.
+                    state.reject(
+                        item,
+                        rejection_message="Tool call missing call_id; auto-rejected",
+                    )
+                    continue
+                tool_name = item.tool_name or getattr(raw, "name", None) or "tool"
+                arguments = getattr(raw, "arguments", None)
+                response = await service.request_tool_approval(
+                    session=session,
+                    call_id=tool_call_id,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    run_id=current_run_id,
                 )
+                if response.get("decision") == "approve":
+                    state.approve(item, always_approve=False)
+                else:
+                    state.reject(
+                        item,
+                        rejection_message=response.get("rejection_message"),
+                    )
+
+            run_input = state
+            session.current_stream_result = None
+            # Loop and resume with the approval-applied state.
 
     except asyncio.CancelledError:
         # Run was cancelled - the finally block will handle pending tool calls
