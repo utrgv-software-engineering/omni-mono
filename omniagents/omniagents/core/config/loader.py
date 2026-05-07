@@ -59,6 +59,7 @@ from omniagents.core.agents.specs import (
     RealtimeSettings,
 )
 from omniagents.core.tools.discovery import discover_functions_in_dir
+from omniagents.core.tools.hosted import build_hosted_tool
 from omniagents.core.guardrails.discovery import discover_guardrails_in_dir
 from omniagents.core.context.discovery import (
     discover_context_factories,
@@ -288,12 +289,23 @@ def _parse_inline_agent_spec(
         all_discovered_functions.update(tools_found)
 
     selected_tool_functions = []
-    for tool_name in tool_names:
-        if tool_name in all_discovered_functions:
+    for tool_entry in tool_names:
+        # Hosted tool entry (dict with 'hosted' key) — build via SDK factory
+        if isinstance(tool_entry, dict) and "hosted" in tool_entry:
+            try:
+                selected_tool_functions.append(build_hosted_tool(tool_entry))
+            except Exception as e:
+                print(
+                    f"Warning: Failed to build hosted tool {tool_entry!r} for inline agent '{agent_name}': {e}"
+                )
+            continue
+        # Function tool reference (string name, or dict without 'hosted')
+        tool_name = tool_entry if isinstance(tool_entry, str) else None
+        if tool_name and tool_name in all_discovered_functions:
             selected_tool_functions.append(all_discovered_functions[tool_name])
         else:
             print(
-                f"Warning: Tool '{tool_name}' not found for inline agent '{agent_name}'"
+                f"Warning: Tool {tool_entry!r} not found for inline agent '{agent_name}'"
             )
 
     # Parse model settings if provided
@@ -913,11 +925,22 @@ def load_agent_spec_from_yaml(
         activated_tool_names = []
 
     if not remote_ws_url:
-        for tool_name in activated_tool_names:
-            if tool_name in all_discovered_functions:
+        for tool_entry in activated_tool_names:
+            # Hosted tool entry (dict with 'hosted' key) — build via SDK factory
+            if isinstance(tool_entry, dict) and "hosted" in tool_entry:
+                try:
+                    selected_tool_functions.append(build_hosted_tool(tool_entry))
+                except Exception as e:
+                    print(
+                        f"Warning: Failed to build hosted tool {tool_entry!r} in '{config_path}': {e}"
+                    )
+                continue
+            # Function tool reference (string name, or dict without 'hosted')
+            tool_name = tool_entry if isinstance(tool_entry, str) else None
+            if tool_name and tool_name in all_discovered_functions:
                 selected_tool_functions.append(all_discovered_functions[tool_name])
             else:
-                missing_tools.append(tool_name)
+                missing_tools.append(tool_entry if tool_name is None else tool_name)
 
     if missing_tools:
         # Updated error message
@@ -926,7 +949,7 @@ def load_agent_spec_from_yaml(
         except ValueError:
             display_path = tools_dir_path
         print(
-            f"Warning: The following tools listed in '{config_path}' were not found in the agent's tools directory '{display_path}' or are not valid marked functions: {', '.join(missing_tools)}"
+            f"Warning: The following tools listed in '{config_path}' were not found in the agent's tools directory '{display_path}' or are not valid marked functions: {', '.join(str(t) for t in missing_tools)}"
         )
         # Continue without missing tools
 
