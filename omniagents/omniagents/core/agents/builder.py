@@ -11,7 +11,12 @@ from omniagents.core.agents.mcp import build_mcp_servers
 
 if TYPE_CHECKING:
     from agents.mcp import MCPServer
-    from omniagents.core.agents.specs import AgentSpec, AgentLike, HandoffConfig
+    from omniagents.core.agents.specs import (
+        AgentSpec,
+        AgentLike,
+        HandoffConfig,
+        AgentToolConfig,
+    )
     from agents.handoffs import Handoff
 
 logger = get_logger(__name__)
@@ -44,14 +49,19 @@ def _apply_tool_timeouts(tools: List[Any], timeouts: Dict[str, Any]) -> List[Any
         def _make_timed_invoke(orig, tname, tout):
             async def timed_invoke(context, params_json: str):
                 try:
-                    return await asyncio.wait_for(orig(context, params_json), timeout=tout)
+                    return await asyncio.wait_for(
+                        orig(context, params_json), timeout=tout
+                    )
                 except asyncio.TimeoutError:
                     logger.warning(f"Tool '{tname}' timed out after {tout}s")
-                    return _json.dumps({
-                        "error": "TOOL_TIMEOUT",
-                        "tool": tname,
-                        "timeout_seconds": tout,
-                    })
+                    return _json.dumps(
+                        {
+                            "error": "TOOL_TIMEOUT",
+                            "tool": tname,
+                            "timeout_seconds": tout,
+                        }
+                    )
+
             return timed_invoke
 
         timed_tool = FunctionTool(
@@ -62,7 +72,11 @@ def _apply_tool_timeouts(tools: List[Any], timeouts: Dict[str, Any]) -> List[Any
             strict_json_schema=tool.strict_json_schema,
         )
         # Preserve custom attributes
-        for attr in ("_is_omniagents_core_tool", "_original_func", "_client_status_text"):
+        for attr in (
+            "_is_omniagents_core_tool",
+            "_original_func",
+            "_client_status_text",
+        ):
             if hasattr(tool, attr):
                 setattr(timed_tool, attr, getattr(tool, attr))
         timed_tool._timeout_seconds = timeout
@@ -139,11 +153,15 @@ async def _build_handoffs_from_configs(
             )
 
             # Create the handoff with optional overrides
-            handoff_obj = handoff(
-                agent=handoff_agent,
-                tool_name_override=handoff_config.tool_name_override,
-                tool_description_override=handoff_config.tool_description_override,
-            )
+            handoff_kwargs: Dict[str, Any] = {
+                "agent": handoff_agent,
+                "tool_name_override": handoff_config.tool_name_override,
+                "tool_description_override": handoff_config.tool_description_override,
+            }
+            # Pass through is_enabled when set (SDK supports bool or callable).
+            if handoff_config.is_enabled is not None:
+                handoff_kwargs["is_enabled"] = handoff_config.is_enabled
+            handoff_obj = handoff(**handoff_kwargs)
             handoffs.append(handoff_obj)
 
         except Exception as e:
@@ -158,6 +176,98 @@ async def _build_handoffs_from_configs(
             continue
 
     return handoffs
+
+
+async def _build_agent_tools_from_configs(
+    agent_tool_configs: List["AgentToolConfig"],
+    settings: Dict[str, Any],
+    approval_callback: Optional[Any] = None,
+    _loading_stack: Optional[Set[Path]] = None,
+    parent_spec: Optional["AgentSpec"] = None,
+) -> List[Any]:
+    """Build agent-as-tool FunctionTool objects via Agent.as_tool().
+
+    Mirrors ``_build_handoffs_from_configs`` but invokes ``Agent.as_tool()``
+    instead of ``handoff()``. The resulting FunctionTool instances are returned
+    so the caller can extend the agent's tool list.
+    """
+    from omniagents.core.config.loader import load_agent_spec_from_yaml
+
+    if _loading_stack is None:
+        _loading_stack = set()
+
+    built_tools: List[Any] = []
+    for at_cfg in agent_tool_configs:
+        try:
+            if at_cfg.yaml_path:
+                yaml_path = Path(at_cfg.yaml_path).resolve()
+                if yaml_path in _loading_stack:
+                    logger.warning(
+                        f"agent_tools: circular reference at {yaml_path} — skipping"
+                    )
+                    continue
+                tool_registry = parent_spec._tool_registry if parent_spec else None
+                guardrails_registry = (
+                    parent_spec._guardrails_registry if parent_spec else None
+                )
+                server_functions_registry = (
+                    parent_spec._server_functions_registry if parent_spec else None
+                )
+                sub_spec = load_agent_spec_from_yaml(
+                    str(yaml_path),
+                    tool_registry=tool_registry,
+                    guardrails_registry=guardrails_registry,
+                    server_functions_registry=server_functions_registry,
+                )
+                new_loading_stack = _loading_stack.copy()
+                new_loading_stack.add(yaml_path)
+            elif at_cfg.inline_spec:
+                sub_spec = at_cfg.inline_spec
+                new_loading_stack = _loading_stack.copy()
+            else:
+                logger.error("AgentToolConfig has neither yaml_path nor inline_spec")
+                continue
+
+            sub_agent = await _default_build_agent(
+                settings=settings,
+                mcp_servers=None,
+                spec=sub_spec,
+                approval_callback=approval_callback,
+                _loading_stack=new_loading_stack,
+            )
+
+            # Build kwargs for as_tool(); only pass keys we have to keep
+            # compatibility with SDK signature defaults.
+            as_tool_kwargs: Dict[str, Any] = {
+                "tool_name": at_cfg.tool_name,
+                "tool_description": at_cfg.tool_description,
+            }
+            if at_cfg.is_enabled is not None:
+                as_tool_kwargs["is_enabled"] = at_cfg.is_enabled
+            if at_cfg.needs_approval is not None:
+                as_tool_kwargs["needs_approval"] = at_cfg.needs_approval
+            if at_cfg.max_turns is not None:
+                as_tool_kwargs["max_turns"] = at_cfg.max_turns
+
+            # `as_tool` is defined on the SDK Agent. SafeAgent wraps Agent so
+            # the method is inherited; if a custom builder produced something
+            # without `as_tool`, surface the error rather than silently skip.
+            if not hasattr(sub_agent, "as_tool"):
+                logger.error(
+                    f"agent_tools: sub-agent {sub_spec.name} has no `as_tool()` method"
+                )
+                continue
+
+            tool_obj = sub_agent.as_tool(**as_tool_kwargs)
+            built_tools.append(tool_obj)
+        except Exception as e:
+            ident = at_cfg.yaml_path or (
+                at_cfg.inline_spec.name if at_cfg.inline_spec else "unknown"
+            )
+            logger.error(f"agent_tools: failed to build {ident}: {e}", exc_info=True)
+            continue
+
+    return built_tools
 
 
 async def _default_build_agent(
@@ -291,6 +401,22 @@ async def _default_build_agent(
             parent_spec=spec,
         )
 
+    # Build agent-as-tool FunctionTools and append to the tool list
+    if getattr(spec, "agent_tool_configs", None):
+        try:
+            agent_tools_built = await _build_agent_tools_from_configs(
+                agent_tool_configs=spec.agent_tool_configs,
+                settings=settings,
+                approval_callback=approval_callback,
+                _loading_stack=_loading_stack,
+                parent_spec=spec,
+            )
+            if agent_tools_built:
+                # Don't mutate the caller's list — concatenate into a new one.
+                tools = list(tools) + list(agent_tools_built)
+        except Exception as e:
+            logger.error(f"Failed to build agent_tools for '{spec.name}': {e}")
+
     # Configure API key for the default client if provided.
     # Note: We do this unconditionally so that server/TUI paths (where a default
     # client may already exist) still receive the key from settings/.env.
@@ -367,13 +493,19 @@ async def _default_build_agent(
         model_level_settings = session_model_config["model_settings"]
         if isinstance(model_level_settings, dict):
             model_settings_kwargs.update(model_level_settings)
-            logger.debug(f"Applied model-level settings: {list(model_level_settings.keys())}")
+            logger.debug(
+                f"Applied model-level settings: {list(model_level_settings.keys())}"
+            )
 
     # Override with agent-level settings from spec (if present)
     if spec.model_settings:
         # Deep merge for nested dicts like extra_body
         for key, value in spec.model_settings.items():
-            if key in model_settings_kwargs and isinstance(value, dict) and isinstance(model_settings_kwargs[key], dict):
+            if (
+                key in model_settings_kwargs
+                and isinstance(value, dict)
+                and isinstance(model_settings_kwargs[key], dict)
+            ):
                 # Merge nested dicts (e.g., extra_body)
                 model_settings_kwargs[key] = {**model_settings_kwargs[key], **value}
             else:

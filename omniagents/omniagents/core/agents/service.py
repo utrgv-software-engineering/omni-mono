@@ -244,7 +244,9 @@ class AgentService(RpcMethodsBase):
         super().__init__()
         self.spec = spec
         self._default_workspace_root: str | None = (
-            default_workspace_root if isinstance(default_workspace_root, str) and default_workspace_root.strip()
+            default_workspace_root
+            if isinstance(default_workspace_root, str)
+            and default_workspace_root.strip()
             else None
         )
         project_slug = _safe_slug(getattr(self.spec, "project_slug", None), "default")
@@ -626,7 +628,9 @@ class AgentService(RpcMethodsBase):
                         return _json.dumps({"error": "Client tool call timed out"})
                     if not resp.get("ok"):
                         err = resp.get("error", {})
-                        return _json.dumps({"error": err.get("message", "Client tool call failed")})
+                        return _json.dumps(
+                            {"error": err.get("message", "Client tool call failed")}
+                        )
                     return _json.dumps(resp.get("result", {}))
 
                 return _invoke
@@ -726,7 +730,9 @@ class AgentService(RpcMethodsBase):
                 _service_ref = self
                 _session_ref = session
 
-                async def _safe_agent_audit(event_type, tool_name, details, reviewer_id=None):
+                async def _safe_agent_audit(
+                    event_type, tool_name, details, reviewer_id=None
+                ):
                     from omniagents.core.audit.events import make_audit_event
 
                     _uid = reviewer_id or getattr(_session_ref, "user_id", None)
@@ -1033,9 +1039,7 @@ class AgentService(RpcMethodsBase):
             context if context_provided else getattr(session, "context", None)
         )
         variables_value = (
-            variables
-            if variables_provided
-            else getattr(session, "variables", None)
+            variables if variables_provided else getattr(session, "variables", None)
         )
 
         def _ensure_mapping(value):
@@ -1843,6 +1847,24 @@ class AgentService(RpcMethodsBase):
                 # routes requests to the right endpoint.
                 model_provider = None
                 session_model_config = getattr(sess, "model_config", None)
+
+                # Spec-declared model_provider (YAML `model_provider:` block)
+                # takes effect ONLY when there's no session model override —
+                # session overrides are explicit user actions and must win.
+                spec_provider_cfg = getattr(self.spec, "model_provider_config", None)
+                if not session_model_config and spec_provider_cfg:
+                    try:
+                        from omniagents.core.agents.run_options import (
+                            build_model_provider,
+                        )
+
+                        model_provider = build_model_provider(spec_provider_cfg)
+                        if model_provider is not None:
+                            logger.debug(
+                                "Using model_provider from spec.model_provider_config"
+                            )
+                    except Exception as e:
+                        logger.warning(f"Failed to build spec model_provider: {e}")
                 if session_model_config:
                     provider_type = session_model_config.get("provider")
                     if provider_type == "litellm":
@@ -2403,9 +2425,7 @@ class AgentService(RpcMethodsBase):
         mcp_servers = getattr(self.spec, "mcp_servers", None)
         if mcp_servers:
             self.spec.mcp_servers = [
-                s
-                for s in mcp_servers
-                if getattr(s, "name", None) != server_name
+                s for s in mcp_servers if getattr(s, "name", None) != server_name
             ]
 
     async def report_incident(

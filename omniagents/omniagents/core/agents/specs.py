@@ -69,12 +69,38 @@ class HandoffConfig:
     tool_description_override: Optional[str] = (
         None  # Override the default tool description
     )
+    # Optional callable predicate (or static bool) that gates handoff visibility.
+    # Resolved by the loader from a `module:func` style string into a real callable.
+    is_enabled: Optional[Any] = None
 
     def __post_init__(self):
         # Validate that exactly one of yaml_path or inline_spec is provided
         if (self.yaml_path is None) == (self.inline_spec is None):
             raise ValueError(
                 "HandoffConfig must have exactly one of 'yaml_path' or 'inline_spec'"
+            )
+
+
+# --- Agent-as-Tool ----------------------------------------------------------
+# AgentToolConfig mirrors HandoffConfig but is used for agents exposed via
+# Agent.as_tool() — the called agent receives generated input (not full
+# conversation history) and returns to the caller after running.
+@dataclass
+class AgentToolConfig:
+    """Configuration for exposing another agent as a callable tool."""
+
+    yaml_path: Optional[str] = None  # Path to the agent's YAML file
+    inline_spec: Optional["AgentSpec"] = None  # Or an inline spec
+    tool_name: Optional[str] = None  # Tool name override (defaults to agent name)
+    tool_description: Optional[str] = None  # Tool description override
+    is_enabled: Optional[Any] = None  # bool or callable predicate
+    needs_approval: Optional[Any] = None  # bool or callable predicate
+    max_turns: Optional[int] = None  # Max turns for the nested agent run
+
+    def __post_init__(self):
+        if (self.yaml_path is None) == (self.inline_spec is None):
+            raise ValueError(
+                "AgentToolConfig must have exactly one of 'yaml_path' or 'inline_spec'"
             )
 
 
@@ -195,6 +221,16 @@ class AgentSpec:
     handoff_configs: List[HandoffConfig] = field(
         default_factory=list
     )  # List of handoff configurations
+
+    # --- Agent-as-Tool ---
+    # Sub-agents exposed as callable tools via Agent.as_tool().
+    agent_tool_configs: List[AgentToolConfig] = field(default_factory=list)
+
+    # --- Model Provider (optional override of session-derived provider) ---
+    # When present, controls how the Runner-level model_provider is built.
+    # See loader._parse_model_provider_config and run_options.build_model_provider.
+    # Example: {"type": "openai", "use_responses_websocket": True, "websocket_options": {...}}
+    model_provider_config: Optional[Dict[str, Any]] = None
 
     # --- Guardrails ---
     input_guardrails: List[Any] = field(
