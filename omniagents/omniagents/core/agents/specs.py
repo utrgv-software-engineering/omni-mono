@@ -167,7 +167,8 @@ class AgentSpec:
     ]
     available_tools: List[Callable] = field(default_factory=list)
     model_name: Optional[str] = None  # Model name used by default builder
-    max_turns: int = 20  # Maximum turns per run (overrides Runner default)
+    # Maximum turns per run. ``None`` disables the limit (SDK 0.16+).
+    max_turns: Optional[int] = 20
     handoff_description: Optional[str] = None  # Description when used as a handoff
     reset_tool_choice: bool = True  # Reset tool choice after tool call
     tool_use_behavior: str | Dict[str, Any] = (
@@ -219,6 +220,19 @@ class AgentSpec:
     build_context: Optional[Callable[[Dict[str, Any]], Any]] = (
         None  # Factory to build context from variables
     )
+
+    # --- Run-level toggles (SDK 0.16+) ---
+    nest_handoff_history: bool = False
+    """RunConfig.nest_handoff_history — opt-in collapsed transcript on handoff."""
+
+    tool_execution_config: Optional[Dict[str, Any]] = None
+    """RunConfig.tool_execution — currently supports max_function_tool_concurrency."""
+
+    error_handlers: Optional[Dict[str, Callable[[Any], Any]]] = None
+    """RunErrorHandlers — maps 'max_turns' and 'model_refusal' to handler callables."""
+
+    retry_settings: Optional[Any] = None
+    """Pre-built ``ModelRetrySettings`` applied to ``ModelSettings.retry``."""
 
     # --- Tracing Configuration ---
     tracing_config: Optional[Dict[str, Any]] = None

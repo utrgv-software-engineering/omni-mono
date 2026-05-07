@@ -521,7 +521,21 @@ def load_agent_spec_from_yaml(
 
     # --- Extract and Derive Basic Info ---
     agent_name = config.get("name", "Unnamed Agent")
-    max_turns_cfg = config.get("max_turns", 20)
+    # max_turns: int, or null to disable the limit (SDK 0.16+)
+    if "max_turns" in config:
+        _raw_max_turns = config.get("max_turns")
+        if _raw_max_turns is None:
+            max_turns_cfg = None
+        else:
+            try:
+                max_turns_cfg = int(_raw_max_turns)
+            except (TypeError, ValueError):
+                print(
+                    f"Warning: 'max_turns' must be an integer or null. Got {_raw_max_turns!r}. Using 20."
+                )
+                max_turns_cfg = 20
+    else:
+        max_turns_cfg = 20
     label_from_yaml = (
         config.get("label") if isinstance(config.get("label"), str) else None
     )
@@ -1519,6 +1533,57 @@ def load_agent_spec_from_yaml(
     # We pass None here; AgentApp will use its internal builder.
     build_agent_func = None
 
+    # --- Run-level toggles (SDK 0.16+) ---
+    nest_handoff_history_cfg = bool(config.get("nest_handoff_history", False))
+    tool_execution_cfg = config.get("tool_execution") or None
+    if tool_execution_cfg is not None and not isinstance(tool_execution_cfg, dict):
+        print("Warning: 'tool_execution' must be a dict. Ignoring.")
+        tool_execution_cfg = None
+
+    # error_handlers: resolve names via discovery (similar to guardrails),
+    # falling back to dotted-path import.
+    error_handlers_raw = config.get("error_handlers") or None
+    if error_handlers_raw is not None and not isinstance(error_handlers_raw, dict):
+        print("Warning: 'error_handlers' must be a dict. Ignoring.")
+        error_handlers_raw = None
+    error_handlers_cfg = None
+    if error_handlers_raw:
+        from omniagents.core.agents.run_options import resolve_error_handlers
+
+        try:
+            # Pull the project-level error-handler registry off the spec
+            # (populated by project loader) when available; fall back to None
+            # so dotted-path resolution kicks in.
+            _eh_registry = None
+            try:
+                if isinstance(project_defaults, dict):
+                    _eh_registry = (project_defaults or {}).get(
+                        "error_handlers_registry"
+                    )
+            except Exception:
+                _eh_registry = None
+            error_handlers_cfg = resolve_error_handlers(
+                error_handlers_raw, registry=_eh_registry
+            )
+        except Exception as e:
+            print(f"Warning: Failed to resolve error_handlers: {e}. Ignoring.")
+            error_handlers_cfg = None
+
+    # retry_policy: coerce to ModelRetrySettings stored on spec.retry_settings.
+    retry_policy_raw = config.get("retry_policy") or None
+    if retry_policy_raw is not None and not isinstance(retry_policy_raw, dict):
+        print("Warning: 'retry_policy' must be a dict. Ignoring.")
+        retry_policy_raw = None
+    retry_settings_cfg: Any = None
+    if retry_policy_raw:
+        from omniagents.core.agents.run_options import resolve_retry_settings
+
+        try:
+            retry_settings_cfg = resolve_retry_settings(retry_policy_raw)
+        except Exception as e:
+            print(f"Warning: Failed to resolve retry_policy: {e}. Ignoring.")
+            retry_settings_cfg = None
+
     # --- Construct AgentSpec ---
     spec = AgentSpec(
         # Basic Info
@@ -1556,6 +1621,11 @@ def load_agent_spec_from_yaml(
         context=context_config,
         variables=variables_for_spec,
         build_context=build_context_func,
+        # Run-level toggles (SDK 0.16+)
+        nest_handoff_history=nest_handoff_history_cfg,
+        tool_execution_config=tool_execution_cfg,
+        error_handlers=error_handlers_cfg,
+        retry_settings=(retry_settings_cfg if retry_settings_cfg is not None else None),
         # Tracing Config
         tracing_config=tracing_config,
         # MCP Config

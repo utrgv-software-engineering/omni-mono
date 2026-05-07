@@ -1913,6 +1913,13 @@ class AgentService(RpcMethodsBase):
                             user_content=content,
                             model_provider=model_provider,
                             model_label=_model_label,
+                            nest_handoff_history=getattr(
+                                self.spec, "nest_handoff_history", False
+                            ),
+                            tool_execution_config=getattr(
+                                self.spec, "tool_execution_config", None
+                            ),
+                            error_handlers=getattr(self.spec, "error_handlers", None),
                         )
                         end_reason = sess.cancel_end_reason or "completed"
                         error_info = None

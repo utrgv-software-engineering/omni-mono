@@ -417,6 +417,15 @@ async def _default_build_agent(
 
         model_settings_kwargs["reasoning"] = Reasoning(effort="medium")
 
+    # Apply spec-level retry policy (SDK 0.16+) onto ModelSettings.retry.
+    # Spec stores a pre-built ``ModelRetrySettings`` (resolved by the YAML
+    # loader) so we just plug it in without further coercion.
+    if (
+        getattr(spec, "retry_settings", None) is not None
+        and "retry" not in model_settings_kwargs
+    ):
+        model_settings_kwargs["retry"] = spec.retry_settings
+
     # Create ModelSettings from merged kwargs
     if model_settings_kwargs:
         model_settings = ModelSettings(**model_settings_kwargs)

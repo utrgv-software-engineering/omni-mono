@@ -480,7 +480,7 @@ async def stream_agent(
     rpc_channel,
     *,
     service: Any | None = None,
-    max_turns: int = 20,
+    max_turns: Optional[int] = 20,
     context: Optional[Any] = None,
     max_input_tokens: Optional[int] = None,
     max_output_tokens: Optional[int] = None,
@@ -491,6 +491,9 @@ async def stream_agent(
     user_content: Optional[Any] = None,
     model_provider: Optional[Any] = None,
     model_label: Optional[str] = None,
+    nest_handoff_history: bool = False,
+    tool_execution_config: Optional[Any] = None,
+    error_handlers: Optional[dict] = None,
 ) -> dict | None:  # noqa: D401
     """Drive agent.run_streamed and forward events to *rpc_channel*.
 
@@ -655,6 +658,25 @@ async def stream_agent(
         }
         if model_provider is not None:
             run_config_kwargs["model_provider"] = model_provider
+        if nest_handoff_history:
+            run_config_kwargs["nest_handoff_history"] = True
+        # Coerce a YAML dict spec into ToolExecutionConfig if needed
+        if tool_execution_config is not None:
+            try:
+                from agents.run_config import ToolExecutionConfig
+
+                if isinstance(tool_execution_config, dict):
+                    run_config_kwargs["tool_execution"] = ToolExecutionConfig(
+                        **{
+                            k: v
+                            for k, v in tool_execution_config.items()
+                            if k in {"max_function_tool_concurrency"}
+                        }
+                    )
+                else:
+                    run_config_kwargs["tool_execution"] = tool_execution_config
+            except Exception as e:
+                logger.warning(f"Failed to apply tool_execution config: {e}")
         run_config = RunConfig(**run_config_kwargs)
 
         # Import Runner locally to avoid module-level import
@@ -664,13 +686,14 @@ async def stream_agent(
         result = None
 
         while True:
-            result = _Runner.run_streamed(
-                agent,
-                run_input,
-                context=context,
-                max_turns=max_turns,
-                run_config=run_config,
-            )
+            run_kwargs = {
+                "context": context,
+                "max_turns": max_turns,
+                "run_config": run_config,
+            }
+            if error_handlers:
+                run_kwargs["error_handlers"] = error_handlers
+            result = _Runner.run_streamed(agent, run_input, **run_kwargs)
             session.current_stream_result = result
 
             async for event in result.stream_events():
@@ -1016,6 +1039,9 @@ async def stream_agent(
                             user_content=user_content,
                             model_provider=model_provider,
                             model_label=model_label,
+                            nest_handoff_history=nest_handoff_history,
+                            tool_execution_config=tool_execution_config,
+                            error_handlers=error_handlers,
                         )
             except Exception:
                 pass
