@@ -513,6 +513,7 @@ async def stream_agent(
     error_handlers: Optional[dict] = None,
     run_hooks: Optional[Any] = None,
     sdk_session: Optional[Any] = None,
+    sandbox_run_config: Optional[Any] = None,
 ) -> dict | None:  # noqa: D401
     """Drive agent.run_streamed and forward events to *rpc_channel*.
 
@@ -708,6 +709,9 @@ async def stream_agent(
                     run_config_kwargs["tool_execution"] = tool_execution_config
             except Exception as e:
                 logger.warning(f"Failed to apply tool_execution config: {e}")
+        # Sandbox (SDK 0.14+): pass through pre-built SandboxRunConfig.
+        if sandbox_run_config is not None:
+            run_config_kwargs["sandbox"] = sandbox_run_config
         run_config = RunConfig(**run_config_kwargs)
 
         # Import Runner locally to avoid module-level import

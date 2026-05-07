@@ -270,6 +270,44 @@ class AgentSpec:
     ``compaction_mode``).
     """
 
+    # --- Sandbox (SDK 0.14+) ---
+    sandbox_config: Optional[Dict[str, Any]] = None
+    """Raw ``sandbox:`` YAML block, kept verbatim for downstream consumers.
+
+    The resolved SDK objects live alongside in ``sandbox_run_config``,
+    ``sandbox_capabilities``, and ``sandbox_use_sandbox_agent``.
+    """
+
+    sandbox_run_config: Optional[Any] = None
+    """Pre-built ``agents.run_config.SandboxRunConfig`` resolved from
+    ``sandbox_config``.
+
+    Forwarded to ``RunConfig(sandbox=...)`` by the runtime bridge when set.
+    ``None`` (the default) means no sandbox is configured and OmniAgents
+    behaves exactly as it did before SDK 0.14.
+    """
+
+    sandbox_capabilities: Optional[List[Any]] = None
+    """Resolved sandbox ``Capability`` instances from
+    ``sandbox.capabilities``.
+
+    Only consulted by the agent builder when
+    ``sandbox_use_sandbox_agent`` is true; passed to ``SandboxAgent(...)``
+    via the ``capabilities=`` kwarg. ``None`` means the SDK default set
+    (Filesystem + Shell + Compaction) is used.
+    """
+
+    sandbox_use_sandbox_agent: bool = False
+    """When true, the agent builder constructs a
+    :class:`agents.sandbox.SandboxAgent` instead of a plain
+    :class:`agents.Agent`. Default off; opt-in only.
+    """
+
+    sandbox_run_as: Optional[str] = None
+    """Optional ``run_as`` user identity for sandbox tools. Forwarded to
+    ``SandboxAgent.run_as`` when ``sandbox_use_sandbox_agent`` is true.
+    """
+
     # --- Tracing Configuration ---
     tracing_config: Optional[Dict[str, Any]] = None
 

@@ -63,6 +63,30 @@ session-mongodb = [
 session-encrypted = [
     "openai-agents[encrypt]>=0.16.0,<0.17",
 ]
+sandbox-docker = [
+    "openai-agents[docker]>=0.16.0,<0.17",
+]
+sandbox-e2b = [
+    "openai-agents[e2b]>=0.16.0,<0.17",
+]
+sandbox-modal = [
+    "openai-agents[modal]>=0.16.0,<0.17",
+]
+sandbox-runloop = [
+    "openai-agents[runloop]>=0.16.0,<0.17",
+]
+sandbox-daytona = [
+    "openai-agents[daytona]>=0.16.0,<0.17",
+]
+sandbox-blaxel = [
+    "openai-agents[blaxel]>=0.16.0,<0.17",
+]
+sandbox-vercel = [
+    "openai-agents[vercel]>=0.16.0,<0.17",
+]
+sandbox-cloudflare = [
+    "openai-agents[cloudflare]>=0.16.0,<0.17",
+]
 presidio = [
     "presidio-analyzer>=2.2.0",
     "presidio-anonymizer>=2.2.0",

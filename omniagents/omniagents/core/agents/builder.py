@@ -490,6 +490,38 @@ async def _default_build_agent(
     if getattr(spec, "agent_hooks", None) is not None:
         agent_kwargs["hooks"] = spec.agent_hooks
 
+    # Sandbox: when ``sandbox.use_sandbox_agent`` is true, build a
+    # SandboxAgent (subclass of Agent) and forward the resolved
+    # capabilities/manifest/run_as fields. The SDK accepts None for
+    # capabilities (it falls back to Capabilities.default()), so we only
+    # pass it through when the YAML configured an explicit list.
+    use_sandbox_agent = bool(getattr(spec, "sandbox_use_sandbox_agent", False))
+    if use_sandbox_agent:
+        try:
+            from agents.sandbox import SandboxAgent  # type: ignore
+
+            sandbox_kwargs: Dict[str, Any] = {}
+            sandbox_run_config = getattr(spec, "sandbox_run_config", None)
+            default_manifest = (
+                getattr(sandbox_run_config, "manifest", None)
+                if sandbox_run_config is not None
+                else None
+            )
+            if default_manifest is not None:
+                sandbox_kwargs["default_manifest"] = default_manifest
+            capabilities = getattr(spec, "sandbox_capabilities", None)
+            if capabilities is not None:
+                sandbox_kwargs["capabilities"] = capabilities
+            run_as = getattr(spec, "sandbox_run_as", None)
+            if run_as:
+                sandbox_kwargs["run_as"] = run_as
+            base_agent = SandboxAgent(**agent_kwargs, **sandbox_kwargs)
+            return base_agent
+        except Exception as e:
+            logger.warning(
+                "Failed to build SandboxAgent (falling back to Agent): %s", e
+            )
+
     base_agent = Agent(**agent_kwargs)
 
     return base_agent

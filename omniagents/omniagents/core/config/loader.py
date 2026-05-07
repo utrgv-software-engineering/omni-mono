@@ -1689,6 +1689,59 @@ def load_agent_spec_from_yaml(
         if compaction_raw:
             session_compaction_cfg = dict(compaction_raw)
 
+    # --- Sandbox (SDK 0.14+) ---
+    # YAML schema:
+    #   sandbox:
+    #     use_sandbox_agent: false
+    #     run_as: "user"
+    #     client:
+    #       type: unix_local | docker | e2b | modal | runloop |
+    #             daytona | blaxel | vercel | cloudflare
+    #     options: { ... }
+    #     manifest:
+    #       entries: { ... }
+    #     snapshot:
+    #       type: local | remote | noop
+    #     concurrency_limits:
+    #       manifest_entries: 4
+    #       local_dir_files: 8
+    #     capabilities:
+    #       - filesystem
+    #       - shell
+    #       - skills: { ... }
+    sandbox_block = config.get("sandbox")
+    if sandbox_block is not None and not isinstance(sandbox_block, dict):
+        print("Warning: 'sandbox' must be a dict. Ignoring.")
+        sandbox_block = None
+    sandbox_run_config_obj: Any = None
+    sandbox_capabilities_list: Optional[List[Any]] = None
+    sandbox_use_agent_flag = False
+    sandbox_run_as_value: Optional[str] = None
+    if isinstance(sandbox_block, dict):
+        sandbox_use_agent_flag = bool(sandbox_block.get("use_sandbox_agent", False))
+        run_as_raw = sandbox_block.get("run_as")
+        if isinstance(run_as_raw, str):
+            sandbox_run_as_value = run_as_raw
+        try:
+            from omniagents.core.sandbox.factory import (
+                build_sandbox_capabilities,
+                build_sandbox_run_config,
+            )
+
+            sandbox_run_config_obj = build_sandbox_run_config(sandbox_block)
+            sandbox_capabilities_list = build_sandbox_capabilities(sandbox_block)
+        except ImportError as e:
+            print(f"Warning: {e}. Sandbox configuration disabled.")
+            sandbox_run_config_obj = None
+            sandbox_capabilities_list = None
+        except Exception as e:
+            print(
+                f"Warning: Failed to resolve sandbox configuration: {e}. "
+                "Sandbox configuration disabled."
+            )
+            sandbox_run_config_obj = None
+            sandbox_capabilities_list = None
+
     # --- Construct AgentSpec ---
     spec = AgentSpec(
         # Basic Info
@@ -1737,6 +1790,12 @@ def load_agent_spec_from_yaml(
         # SDK-native session backend (opt-in; None means use default SQLite)
         session_backend=session_backend_obj,
         session_compaction_config=session_compaction_cfg,
+        # Sandbox (SDK 0.14+; opt-in)
+        sandbox_config=sandbox_block,
+        sandbox_run_config=sandbox_run_config_obj,
+        sandbox_capabilities=sandbox_capabilities_list,
+        sandbox_use_sandbox_agent=sandbox_use_agent_flag,
+        sandbox_run_as=sandbox_run_as_value,
         # Tracing Config
         tracing_config=tracing_config,
         # MCP Config

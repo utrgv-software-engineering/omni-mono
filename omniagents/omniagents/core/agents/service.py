@@ -2257,6 +2257,9 @@ class AgentService(RpcMethodsBase):
                             error_handlers=getattr(self.spec, "error_handlers", None),
                             run_hooks=getattr(self.spec, "run_hooks", None),
                             sdk_session=sdk_session,
+                            sandbox_run_config=getattr(
+                                self.spec, "sandbox_run_config", None
+                            ),
                         )
                         end_reason = sess.cancel_end_reason or "completed"
                         error_info = None
