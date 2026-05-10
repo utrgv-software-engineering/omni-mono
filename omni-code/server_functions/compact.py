@@ -19,11 +19,38 @@ from omniagents.core.runtime.compaction import (
     extract_user_messages,
     format_tool_events_block,
     format_user_messages_block,
-    history_since_last_summary,
     is_context_length_exceeded,
 )
 from omniagents.core.session.manager import Session
 from openai import APIStatusError, BadRequestError
+
+
+def history_since_last_summary(
+    history: list[dict], *, include_summary: bool = False
+) -> list[dict]:
+    """Return history items after the most recent ``context_summary`` marker.
+
+    Inlined from omniagents (removed in the SDK 0.16 migration); the
+    ``omniagents.kind == "context_summary"`` marker is omni-code's own
+    convention for indicating a summary checkpoint inside the session.
+    """
+    if not history:
+        return []
+    last_summary_idx: int | None = None
+    for idx in range(len(history) - 1, -1, -1):
+        item = history[idx]
+        if (
+            isinstance(item, dict)
+            and item.get("role") == "assistant"
+            and isinstance(item.get("omniagents"), dict)
+            and item["omniagents"].get("kind") == "context_summary"
+        ):
+            last_summary_idx = idx
+            break
+    if last_summary_idx is None:
+        return list(history)
+    start = last_summary_idx if include_summary else last_summary_idx + 1
+    return list(history[start:])
 
 
 def _last_user_message(history: list[dict]) -> str | None:
