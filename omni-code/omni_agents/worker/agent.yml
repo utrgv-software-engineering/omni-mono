@@ -35,3 +35,9 @@ max_turns: 200
 
 context: build_worker_context
 variables: {}
+
+session:
+  compaction:
+    enabled: true
+    model: gpt-5.2
+    compaction_mode: auto

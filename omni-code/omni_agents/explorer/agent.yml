@@ -19,3 +19,9 @@ model_settings:
   parallel_tool_calls: true
 
 max_turns: 50
+
+session:
+  compaction:
+    enabled: true
+    model: gpt-5.2
+    compaction_mode: auto

@@ -22,3 +22,9 @@ safe_agent_options:
     - glob_files
     - grep_files
     - read_file
+
+session:
+  compaction:
+    enabled: true
+    model: gpt-5.2
+    compaction_mode: auto

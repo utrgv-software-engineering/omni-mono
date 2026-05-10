@@ -108,3 +108,15 @@ server_functions:
 context: build_coding_context
 model_config_resolver: resolve_default_model
 variables: {}
+
+# SDK 0.16+ proactive compaction. Wraps the session with
+# OpenAIResponsesCompactionSession so OpenAI's responses.compact endpoint
+# trims context after each turn (default trigger: >=10 candidate items).
+# Only runs against OpenAI Responses models; for other providers the wrap
+# helper logs a warning and falls back to the unwrapped session, leaving
+# the on_error reactive-compaction path as the safety net.
+session:
+  compaction:
+    enabled: true
+    model: gpt-5.2
+    compaction_mode: auto
