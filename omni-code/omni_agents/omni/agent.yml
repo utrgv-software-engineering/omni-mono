@@ -8,7 +8,6 @@ welcome_text: |
 tools:
   - read_image
   - dispatch
-  - explore
   - list_directory
   - read_file
   - display_artifact
@@ -108,6 +107,28 @@ server_functions:
 context: build_coding_context
 model_config_resolver: resolve_default_model
 variables: {}
+
+# Sub-agents exposed as callable function tools via Agent.as_tool().
+# The sub-agent inherits the parent's RunConfig (model_provider with
+# credentials) and the parent's RunContextWrapper (workspace_root,
+# session vars). Its own model_config_resolver picks up the user's
+# currently-selected model from omni-code's models.json so the explorer
+# follows the parent's model selection rather than the provider default.
+agent_tools:
+  - yaml: ../explorer/agent.yml
+    tool_name: explore
+    tool_description: |
+      Ask a read-only sub-agent to explore the codebase and answer a
+      question. Use this for broad codebase exploration when you need to
+      search across multiple files or don't know where to look (e.g.
+      "how is authentication implemented?", "find all API route
+      definitions", "what files handle database migrations?").
+
+      For targeted lookups of a specific file or symbol you already know
+      about, use read_file or grep_files directly — they are faster.
+
+      You can run multiple explore calls in parallel when investigating
+      different aspects of the codebase.
 
 # SDK 0.16+ proactive compaction. Wraps the session with
 # OpenAIResponsesCompactionSession so OpenAI's responses.compact endpoint

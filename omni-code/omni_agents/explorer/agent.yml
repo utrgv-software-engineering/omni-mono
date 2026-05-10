@@ -20,6 +20,8 @@ model_settings:
 
 max_turns: 50
 
+model_config_resolver: resolve_default_model
+
 session:
   compaction:
     enabled: true
