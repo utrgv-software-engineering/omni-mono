@@ -3,6 +3,22 @@ label: Explorer
 description: "Fast read-only codebase exploration sub-agent"
 instructions_file: instructions.md
 
+# LLM-facing description used when this agent is exposed via
+# `agent_tools:` (Agent.as_tool()). agent_tools entries that omit their
+# own `tool_description:` fall back to this — single source of truth.
+tool_description: |
+  Ask a read-only sub-agent to explore the codebase and answer a
+  question. Use this for broad codebase exploration when you need to
+  search across multiple files or don't know where to look (e.g.
+  "how is authentication implemented?", "find all API route
+  definitions", "what files handle database migrations?").
+
+  For targeted lookups of a specific file or symbol you already know
+  about, use read_file or grep_files directly — they are faster.
+
+  You can run multiple explore calls in parallel when investigating
+  different aspects of the codebase.
+
 additional_tools_dirs:
   - ../../tools
 
