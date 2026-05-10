@@ -178,6 +178,7 @@ async def stream_agent(
     max_input_tokens: Optional[int] = None,
     max_output_tokens: Optional[int] = None,
     include_user_message: bool = True,
+    context_error_retry: bool = False,
     workflow_name: Optional[str] = None,
     group_id: Optional[str] = None,
     user_content: Optional[Any] = None,
@@ -804,14 +805,27 @@ async def stream_agent(
         raise
     except Exception as e:
         # Notify user-defined runtime "error" hooks so they can react.
-        # Context-length retry logic was removed when SDK-native compaction
-        # took over context-window management; provider-managed retries now
-        # live behind the YAML ``retry_policy`` knob.
-        if service is not None and session is not None and include_user_message:
+        # Network/timeout/retry-after retries live behind the SDK
+        # ``retry_policy`` knob; context-window recovery has no SDK
+        # equivalent for non-Responses providers (LiteLLM, any-llm, etc.),
+        # so we keep a hook-driven retry primitive: the hook may inspect
+        # ``params["is_context_length_exceeded"]``, perform compaction, and
+        # return ``{"retry": True}`` to re-enter the run with the (now
+        # smaller) session history.
+        if (
+            not context_error_retry
+            and service is not None
+            and session is not None
+            and include_user_message
+        ):
             try:
                 invoke = getattr(service, "invoke_runtime_hooks", None)
                 if invoke is not None:
-                    await invoke(
+                    from omniagents.core.runtime.compaction import (
+                        is_context_length_exceeded as _is_ctx_len,
+                    )
+
+                    hook_result = await invoke(
                         "error",
                         session=session,
                         run_id=(
@@ -822,8 +836,37 @@ async def stream_agent(
                         params={
                             "prompt": prompt,
                             "error": e,
+                            "is_context_length_exceeded": _is_ctx_len(e),
                         },
                     )
+                    if (
+                        isinstance(hook_result, dict)
+                        and hook_result.get("retry") is True
+                    ):
+                        return await stream_agent(
+                            agent,
+                            prompt,
+                            session,
+                            rpc_channel,
+                            service=service,
+                            max_turns=max_turns,
+                            context=context,
+                            max_input_tokens=max_input_tokens,
+                            max_output_tokens=max_output_tokens,
+                            include_user_message=False,
+                            context_error_retry=True,
+                            workflow_name=workflow_name,
+                            group_id=group_id,
+                            user_content=user_content,
+                            model_provider=model_provider,
+                            model_label=model_label,
+                            nest_handoff_history=nest_handoff_history,
+                            tool_execution_config=tool_execution_config,
+                            error_handlers=error_handlers,
+                            run_hooks=run_hooks,
+                            sdk_session=sdk_session,
+                            sandbox_run_config=sandbox_run_config,
+                        )
             except Exception:
                 pass
 

@@ -4,11 +4,43 @@ import copy
 import json
 from typing import Any
 
-# Note: ``history_since_last_summary`` and ``is_context_length_exceeded`` were
-# removed when SDK-native compaction (``OpenAIResponsesCompactionSession``)
-# took over context-window management.  The remaining helpers below are kept
-# because they are still consumed by runtime hooks and tests for transcript
-# extraction / tool-event sanitisation / resume-protocol blocks.
+# Note: ``history_since_last_summary`` was removed when SDK-native compaction
+# (``OpenAIResponsesCompactionSession``) took over context-window management.
+# ``is_context_length_exceeded`` was restored because the SDK has no
+# equivalent classifier and the bridge still needs one to drive the
+# hook-driven retry primitive (LiteLLM and other non-Responses providers
+# have no SDK-side compaction recovery path).
+
+
+def is_context_length_exceeded(err: Exception) -> bool:
+    """Heuristic detector for context-window-exceeded errors.
+
+    Covers OpenAI's ``code: context_length_exceeded`` shape, LiteLLM's
+    ``ContextWindowExceededError`` class name, LiteLLM proxy errors that bury
+    the real reason inside ``body.error.message``, and bare-message variants.
+    """
+    if err.__class__.__name__ == "ContextWindowExceededError":
+        return True
+    body = getattr(err, "body", None)
+    if isinstance(body, dict):
+        error_obj = body.get("error")
+        if isinstance(error_obj, dict):
+            if error_obj.get("code") == "context_length_exceeded":
+                return True
+            error_message = str(error_obj.get("message", "")).lower()
+            if "context_length_exceeded" in error_message:
+                return True
+            if "context window" in error_message and "exceed" in error_message:
+                return True
+    code = getattr(err, "code", None)
+    if code == "context_length_exceeded":
+        return True
+    msg = str(err).lower()
+    if "context window" in msg and "exceed" in msg:
+        return True
+    if "maximum context length" in msg:
+        return True
+    return False
 
 
 def extract_transcript(history: list[dict]) -> str:
