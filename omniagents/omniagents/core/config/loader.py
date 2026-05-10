@@ -952,8 +952,16 @@ def load_agent_spec_from_yaml(
                         f"Warning: Failed to build hosted tool {tool_entry!r} in '{config_path}': {e}"
                     )
                 continue
-            # Function tool reference (string name, or dict without 'hosted')
-            tool_name = tool_entry if isinstance(tool_entry, str) else None
+            # Function tool reference: bare string ("bash_kill") OR dict
+            # form ({name: bash_kill, is_enabled: my_predicate}). The
+            # is_enabled value is applied later in a second pass that
+            # mutates the FunctionTool's is_enabled attribute.
+            if isinstance(tool_entry, str):
+                tool_name = tool_entry
+            elif isinstance(tool_entry, dict):
+                tool_name = tool_entry.get("name") or tool_entry.get("tool")
+            else:
+                tool_name = None
             if tool_name and tool_name in all_discovered_functions:
                 selected_tool_functions.append(all_discovered_functions[tool_name])
             else:
