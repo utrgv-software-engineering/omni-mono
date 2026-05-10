@@ -14,9 +14,14 @@ tools:
   - apply_patch
   - write_file
   - execute_bash
-  - bash_status
-  - bash_logs
-  - bash_kill
+  # bash_*: only useful once at least one background job exists.
+  # Hidden from the LLM's tool schema until then.
+  - name: bash_status
+    is_enabled: any_bash_jobs_exist
+  - name: bash_logs
+    is_enabled: any_bash_jobs_exist
+  - name: bash_kill
+    is_enabled: any_bash_jobs_exist
   - web_fetch
   - web_search
   - youtube_search
@@ -26,12 +31,19 @@ tools:
   - read_notebook
   - edit_notebook
   - spawn_worker
-  - get_worker_status
-  - wait_for_workers
-  - send_worker_message
-  - close_worker
-  - resume_worker
-  - cleanup_worker_worktree
+  # worker consumer tools: only useful once at least one worker is spawned.
+  - name: get_worker_status
+    is_enabled: any_workers_exist
+  - name: wait_for_workers
+    is_enabled: any_workers_exist
+  - name: send_worker_message
+    is_enabled: any_workers_exist
+  - name: close_worker
+    is_enabled: any_workers_exist
+  - name: resume_worker
+    is_enabled: any_workers_exist
+  - name: cleanup_worker_worktree
+    is_enabled: any_workers_exist
   - task_create
   - task_list
   - task_get
