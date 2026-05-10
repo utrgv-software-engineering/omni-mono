@@ -196,6 +196,12 @@ class AgentSpec:
     # Maximum turns per run. ``None`` disables the limit (SDK 0.16+).
     max_turns: Optional[int] = 20
     handoff_description: Optional[str] = None  # Description when used as a handoff
+    # Description when used as a function tool via Agent.as_tool() / agent_tools.
+    # Distinct from handoff_description because handoffs transfer conversation
+    # control while as_tool is a function call with structured input — the LLM
+    # contracts differ. agent_tools entries fall back to this when their own
+    # tool_description is omitted.
+    tool_description: Optional[str] = None
     reset_tool_choice: bool = True  # Reset tool choice after tool call
     tool_use_behavior: str | Dict[str, Any] = (
         "run_llm_again"  # How to handle tool use (string or StopAtTools dict)

@@ -237,10 +237,17 @@ async def _build_agent_tools_from_configs(
             )
 
             # Build kwargs for as_tool(); only pass keys we have to keep
-            # compatibility with SDK signature defaults.
+            # compatibility with SDK signature defaults. tool_description
+            # falls back to the sub-agent's own ``tool_description`` field
+            # so a single-mode sub-agent can declare its LLM-facing
+            # description once on its own spec instead of having every
+            # caller repeat it.
+            resolved_tool_description = at_cfg.tool_description or getattr(
+                sub_spec, "tool_description", None
+            )
             as_tool_kwargs: Dict[str, Any] = {
                 "tool_name": at_cfg.tool_name,
-                "tool_description": at_cfg.tool_description,
+                "tool_description": resolved_tool_description,
             }
             if at_cfg.is_enabled is not None:
                 as_tool_kwargs["is_enabled"] = at_cfg.is_enabled

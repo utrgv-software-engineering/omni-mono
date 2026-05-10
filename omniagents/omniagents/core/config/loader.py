@@ -414,6 +414,7 @@ def _parse_inline_agent_spec(
         model_name=model_name,
         max_turns=config.get("max_turns", 20),
         handoff_description=config.get("handoff_description"),
+        tool_description=config.get("tool_description"),
         reset_tool_choice=config.get("reset_tool_choice", True),
         tool_use_behavior=config.get("tool_use_behavior", "run_llm_again"),
         model_settings=model_settings_config if model_settings_config else None,
@@ -573,6 +574,9 @@ def load_agent_spec_from_yaml(
     handoff_description = config.get(
         "handoff_description"
     )  # Optional description for handoffs
+    tool_description = config.get(
+        "tool_description"
+    )  # Optional description for agent_tools (Agent.as_tool())
     reset_tool_choice = config.get("reset_tool_choice", True)  # Default to True
     tool_use_behavior_config = config.get(
         "tool_use_behavior", "run_llm_again"
@@ -1935,6 +1939,7 @@ def load_agent_spec_from_yaml(
         model_name=model_name_from_config if not remote_ws_url else None,
         max_turns=max_turns_cfg,
         handoff_description=handoff_description,
+        tool_description=tool_description,
         reset_tool_choice=reset_tool_choice,
         tool_use_behavior=tool_use_behavior,
         model_settings=model_settings_config if model_settings_config else None,
