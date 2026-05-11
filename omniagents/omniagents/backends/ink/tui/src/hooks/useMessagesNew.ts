@@ -44,8 +44,15 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
   useEffect(() => {
     if (!client || !rpcReady) return;
 
-    // Load history if we have a session ID
-    if (sessionId) {
+    // Load history if we have a session ID, UNLESS App just minted this
+    // id from a sendMessage response — in that case our local optimistic
+    // state is more authoritative than the server's persisted view (which
+    // typically hasn't recorded the user message yet) and we'd otherwise
+    // clobber the optimistic addMessage with setMessages([]).
+    const skipHistoryLoad =
+      !!sessionId &&
+      useAppStore.getState().actions.consumeMintedSession(sessionId);
+    if (sessionId && !skipHistoryLoad) {
       client
         .getSessionHistory(sessionId)
         .then((history) => {

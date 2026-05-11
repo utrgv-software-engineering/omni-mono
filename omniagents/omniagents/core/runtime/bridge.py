@@ -6,7 +6,9 @@ import logging
 from typing import AsyncGenerator, Optional, Any
 
 from agents import RunConfig, ItemHelpers
+from agents.run_state import RunState
 from openai.types.responses import ResponseCompletedEvent
+from omniagents.core.agents import mcp_ui
 from omniagents.core.debug import Debug
 from omniagents.core.tools.artifacts import (
     reset_artifact_callback,
@@ -95,6 +97,11 @@ def _stream_event_payload(item, run_id: str, *, session_id: str):
         inp = item.to_input_item() or {}
         name = inp.get("name", "<tool>")
         call_id = inp.get("call_id")
+        # Memoize so the matching ``tool_call_output_item`` (which has no
+        # ``.name`` attribute on the SDK side) can recover the tool name
+        # for the MCP-Apps UI side-channel lookup below.
+        if isinstance(call_id, str) and isinstance(name, str):
+            mcp_ui.remember_call(call_id, name)
         return "tool_called", {
             "run_id": run_id,
             "session_id": session_id,
@@ -114,19 +121,37 @@ def _stream_event_payload(item, run_id: str, *, session_id: str):
 
         # Extract metadata from RichToolOutput if present
         output = getattr(item, "output", "")
-        ui_metadata = {}
+        ui_metadata: dict = {}
 
         # Check if output is a RichToolOutput instance
         from omniagents.core.tools import RichToolOutput
 
         if isinstance(output, RichToolOutput):
-            ui_metadata = output.ui_metadata
+            ui_metadata = dict(output.ui_metadata)
             # String conversion will use __str__ which returns only llm_output
+
+        # The SDK's ``ToolCallOutputItem`` exposes ``call_id`` but no
+        # ``name`` — recover the tool name from the ``call_id`` map we
+        # populated on the preceding ``tool_call_item`` event.
+        tool_name = getattr(item, "name", None)
+        if not tool_name and isinstance(call_id, str):
+            tool_name = mcp_ui.lookup_tool_name(call_id)
+        if not tool_name:
+            tool_name = "<tool>"
+
+        # MCP Apps: if the underlying MCP server returned a UI resource we
+        # stashed via ``mcp_ui.record`` (see ``core/agents/mcp.py``), attach
+        # it here so the host can render the inline UI alongside the
+        # tool result.
+        mcp_ui_payload = mcp_ui.pop(tool_name)
+        if mcp_ui_payload is not None:
+            ui_metadata["display_type"] = "mcp_ui"
+            ui_metadata["mcp_ui"] = mcp_ui_payload
 
         payload = {
             "run_id": run_id,
             "session_id": session_id,
-            "tool": getattr(item, "name", "<tool>"),
+            "tool": tool_name,
             "output": str(output),  # This calls __str__ for RichToolOutput
             **({"call_id": call_id} if call_id else {}),
         }
@@ -401,11 +426,19 @@ async def stream_agent(
         result = None
 
         while True:
-            run_kwargs = {
-                "context": context,
+            run_kwargs: dict[str, Any] = {
                 "max_turns": max_turns,
                 "run_config": run_config,
             }
+            # Seed ``context`` only on the initial call. On resume the SDK's
+            # ``resolve_resumed_context`` replaces ``run_state._context`` with
+            # a fresh ``RunContextWrapper`` whenever ``context is not None``,
+            # which throws away the approval entries that ``state.approve()``
+            # just wrote — the SDK then re-emits the same ToolApprovalItem on
+            # the next stream and the UI dialog reappears after the user
+            # already answered it.
+            if not isinstance(run_input, RunState):
+                run_kwargs["context"] = context
             if error_handlers:
                 run_kwargs["error_handlers"] = error_handlers
             if run_hooks is not None:

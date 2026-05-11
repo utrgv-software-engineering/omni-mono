@@ -632,6 +632,11 @@ export const App: React.FC<AppProps> = ({
         // Send to server and get session ID back
         const response = await sendMessage(message, sessionId);
         if (!sessionId) {
+          // Tag the freshly-minted id so useMessagesNew skips its
+          // history-load fetch — the server may not have persisted the
+          // user message yet, and an empty fetch would clobber the
+          // optimistic addMessage above.
+          actions.markSessionAsMinted(response.session_id);
           actions.setSessionId(response.session_id);
         }
       } catch (err) {

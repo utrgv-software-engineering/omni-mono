@@ -6,7 +6,12 @@
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import { immer } from "zustand/middleware/immer";
+import { enableMapSet } from "immer";
 import { debugLog } from "../utils/debugLog.js";
+
+// Opt into Immer's Map/Set support so producers can mutate `Set` fields
+// (e.g. mintedSessionIds) directly. Safe to call repeatedly.
+enableMapSet();
 
 export interface ToolCallInfo {
   tool: string;
@@ -85,6 +90,11 @@ interface AppState {
   sessionModel: string | null;
   sessionReasoningEffort: string | null;
   sessionId: string | undefined;
+  // sessionIds that were created locally via a first sendMessage response
+  // (as opposed to resumed via the picker / supplied at launch). Consumed
+  // exactly once by useMessagesNew before the history-load fetch — see
+  // markSessionAsMinted / consumeMintedSession below.
+  mintedSessionIds: Set<string>;
 
   // UI State
   thinking: boolean;
@@ -123,6 +133,14 @@ interface AppState {
       reasoning_effort?: string | null;
     }) => void;
     setSessionId: (sessionId: string | undefined) => void;
+    // Tag `id` as having been minted by a local first-send response. The
+    // history-load effect treats local optimistic state as canonical for
+    // minted ids and skips the server fetch (which would race against the
+    // server persisting the user message and could clobber it with []).
+    markSessionAsMinted: (id: string) => void;
+    // Returns true and clears the mark if `id` was previously marked as
+    // minted; returns false otherwise. Idempotent / single-shot per id.
+    consumeMintedSession: (id: string) => boolean;
     setCurrentRunId: (runId: string | null) => void;
     setPreamble: (preamble: string | null) => void;
     cancelRun: (runId: string) => void;
@@ -141,6 +159,7 @@ export const useAppStore = create<AppState>()(
     sessionModel: null,
     sessionReasoningEffort: null,
     sessionId: undefined,
+    mintedSessionIds: new Set<string>(),
     thinking: false,
     status: null,
     statusType: null,
@@ -275,6 +294,21 @@ export const useAppStore = create<AppState>()(
         set((state) => {
           state.sessionId = sessionId;
         }),
+
+      markSessionAsMinted: (id) =>
+        set((state) => {
+          state.mintedSessionIds.add(id);
+        }),
+
+      consumeMintedSession: (id) => {
+        const had = get().mintedSessionIds.has(id);
+        if (had) {
+          set((state) => {
+            state.mintedSessionIds.delete(id);
+          });
+        }
+        return had;
+      },
 
       setCurrentRunId: (runId) =>
         set((state) => {

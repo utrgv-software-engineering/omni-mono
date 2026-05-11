@@ -511,6 +511,69 @@ class AgentService(RpcMethodsBase):
             },
             strict=False,
         )
+        # MCP Apps (https://github.com/modelcontextprotocol/ext-apps):
+        # list_tools surfaces ``_meta.ui.resourceUri`` so hosts can discover
+        # which tools have an embedded UI before invoking them. call_tool is
+        # an out-of-band dispatch used for postMessage routing from rendered
+        # MCP-Apps UIs back to the server — the agent does not see these.
+        self.register_server_function(
+            "mcp.list_tools",
+            self._sf_mcp_list_tools,
+            description=(
+                "List tools exposed by a configured MCP server, including "
+                "``_meta`` (so MCP-Apps hosts can detect ``_meta.ui.resourceUri``). "
+                "``server_name`` matches an entry in the agent's ``mcp_servers``."
+            ),
+            params_schema={
+                "type": "object",
+                "properties": {
+                    "server_name": {"type": "string"},
+                    "cursor": {"type": "string"},
+                },
+                "required": ["server_name"],
+                "additionalProperties": False,
+            },
+            result_schema={
+                "type": "object",
+                "properties": {
+                    "server_name": {"type": "string"},
+                    "tools": {"type": "array"},
+                    "next_cursor": {"type": "string"},
+                },
+                "required": ["server_name", "tools"],
+            },
+            strict=False,
+        )
+        self.register_server_function(
+            "mcp.call_tool",
+            self._sf_mcp_call_tool,
+            description=(
+                "Invoke a tool on a configured MCP server out-of-band. The "
+                "agent does NOT observe this call — it is intended for hosts "
+                "routing postMessage actions from rendered MCP-Apps UIs back "
+                "to the server."
+            ),
+            params_schema={
+                "type": "object",
+                "properties": {
+                    "server_name": {"type": "string"},
+                    "tool_name": {"type": "string"},
+                    "arguments": {"type": "object"},
+                },
+                "required": ["server_name", "tool_name"],
+                "additionalProperties": False,
+            },
+            result_schema={
+                "type": "object",
+                "properties": {
+                    "server_name": {"type": "string"},
+                    "tool_name": {"type": "string"},
+                    "result": {"type": "object"},
+                },
+                "required": ["server_name", "tool_name", "result"],
+            },
+            strict=False,
+        )
 
     async def _ensure_session_mcp_servers(self, session: Session) -> list[Any]:
         """Ensure MCP servers are initialized and running for this session.
@@ -1232,13 +1295,13 @@ class AgentService(RpcMethodsBase):
         for content in contents_attr:
             if hasattr(content, "model_dump"):
                 try:
-                    out.append(content.model_dump(mode="json"))
+                    out.append(content.model_dump(mode="json", exclude_none=True))
                     continue
                 except Exception:
                     pass
             if hasattr(content, "dict"):
                 try:
-                    out.append(content.dict())
+                    out.append(content.dict(exclude_none=True))
                     continue
                 except Exception:
                     pass
@@ -1247,6 +1310,120 @@ class AgentService(RpcMethodsBase):
             "server_name": server_name,
             "uri": uri,
             "contents": out,
+        }
+
+    async def _sf_mcp_list_tools(
+        self, session: Session | None, args: dict | None = None
+    ) -> dict:
+        payload = args or {}
+        server_name = str(payload.get("server_name") or "")
+        cursor = payload.get("cursor")
+        if not server_name:
+            raise ValueError("server_name is required")
+
+        server = await self._resolve_mcp_server_by_name(session, server_name)
+        if server is None:
+            raise ValueError(f"Unknown or inactive MCP server: {server_name}")
+        if not hasattr(server, "list_tools"):
+            raise ValueError(
+                f"MCP server '{server_name}' does not support list_tools"
+            )
+
+        # ``list_tools`` on the agents SDK MCPServer subclasses takes an
+        # optional ``run_context``/``agent`` kwargs depending on SDK version.
+        # We don't have either in this OOB path, so call positionally without
+        # arguments — the SDK falls back to listing all tools.
+        try:
+            result = await server.list_tools()
+        except TypeError:
+            result = await server.list_tools(run_context=None, agent=None)
+
+        # ``MCPServer.list_tools`` returns ``list[mcp.types.Tool]`` directly.
+        # Some transports wrap it as ``ListToolsResult`` (with .tools).
+        tools_attr: list[Any]
+        if isinstance(result, list):
+            tools_attr = list(result)
+        else:
+            tools_attr = list(getattr(result, "tools", []) or [])
+        next_cursor = getattr(result, "next_cursor", None) or getattr(
+            result, "nextCursor", None
+        )
+        out: list[dict] = []
+        for tool in tools_attr:
+            if hasattr(tool, "model_dump"):
+                try:
+                    # by_alias preserves ``_meta`` (the Pydantic alias of ``meta``).
+                    # exclude_none drops explicit ``null`` for optional fields
+                    # like ``annotations``/``_meta`` that MCP-Apps Zod schemas
+                    # treat as a union-type validation error.
+                    out.append(
+                        tool.model_dump(mode="json", by_alias=True, exclude_none=True)
+                    )
+                    continue
+                except Exception:
+                    pass
+            if hasattr(tool, "dict"):
+                try:
+                    out.append(tool.dict(exclude_none=True))
+                    continue
+                except Exception:
+                    pass
+            out.append({"raw": str(tool)})
+        response: dict[str, Any] = {
+            "server_name": server_name,
+            "tools": out,
+        }
+        if next_cursor:
+            response["next_cursor"] = next_cursor
+        return response
+
+    async def _sf_mcp_call_tool(
+        self, session: Session | None, args: dict | None = None
+    ) -> dict:
+        payload = args or {}
+        server_name = str(payload.get("server_name") or "")
+        tool_name = str(payload.get("tool_name") or "")
+        arguments = payload.get("arguments") or {}
+        if not server_name:
+            raise ValueError("server_name is required")
+        if not tool_name:
+            raise ValueError("tool_name is required")
+        if not isinstance(arguments, dict):
+            raise ValueError("arguments must be an object")
+
+        server = await self._resolve_mcp_server_by_name(session, server_name)
+        if server is None:
+            raise ValueError(f"Unknown or inactive MCP server: {server_name}")
+        if not hasattr(server, "call_tool"):
+            raise ValueError(
+                f"MCP server '{server_name}' does not support call_tool"
+            )
+
+        result = await server.call_tool(tool_name, arguments)
+        result_dict: dict[str, Any]
+        if hasattr(result, "model_dump"):
+            try:
+                # ``exclude_none`` strips ``None`` values so the host doesn't
+                # ship explicit nulls for optional fields like ``annotations``
+                # and ``_meta``. Without this, MCP-Apps guests (e.g. Prefab's
+                # Zod schema) reject the result with a union-type validation
+                # error — ``null`` isn't a valid ``object``/``record``.
+                result_dict = result.model_dump(
+                    mode="json", by_alias=True, exclude_none=True
+                )
+            except Exception:
+                result_dict = {"raw": str(result)}
+        elif hasattr(result, "dict"):
+            try:
+                result_dict = result.dict(exclude_none=True)
+            except Exception:
+                result_dict = {"raw": str(result)}
+        else:
+            result_dict = {"raw": str(result)}
+        return {
+            "server_name": server_name,
+            "tool_name": tool_name,
+            "result": result_dict,
         }
 
     def _record_live_event(
@@ -2209,7 +2386,11 @@ class AgentService(RpcMethodsBase):
                             wrap_with_compaction,
                         )
 
-                        wrapped = wrap_with_compaction(sess, _compaction_cfg)
+                        wrapped = wrap_with_compaction(
+                            sess,
+                            _compaction_cfg,
+                            model_config=session_model_config,
+                        )
                         # ``wrap_with_compaction`` returns ``sess`` itself
                         # when wrapping is disabled or fails; only memoise
                         # when an actual wrapper was produced.
