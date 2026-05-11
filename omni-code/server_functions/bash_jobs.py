@@ -27,37 +27,22 @@ from typing import Optional
 
 from omniagents import server_function
 
-# Load `tools/_bash_jobs.py` by file path under a private module name rather
-# than `from tools._bash_jobs import ...`. The package-style import would
-# register `sys.modules['tools']` pointing at this project's tools/ during
-# omniagents server-function discovery (which lacks sys.modules cleanup).
-# That pollution then prevents `omniagents.core.tools.discovery` from
-# importing the BUILTIN tools at `omniagents/builtin/tools/` — Python's
-# import machinery sees `tools` already cached and looks for `file_tools`,
-# `read_file`, etc. inside the project's tools/, doesn't find them, and the
-# agent ends up running without `read_file`, `list_directory`,
-# `write_file`, `apply_patch`, `display_artifact`, and the web tools.
-# Loading by file path under a unique name sidesteps the package machinery
-# entirely.
-import importlib.util as _importlib_util
-import sys as _sys
-from pathlib import Path as _Path
-
-_bjmod_path = _Path(__file__).resolve().parent.parent / "tools" / "_bash_jobs.py"
-_bjmod_spec = _importlib_util.spec_from_file_location(
-    "_omni_code_bash_jobs_helper", _bjmod_path
+# Share the registry with ``tools.bash_tool`` via a normal package import.
+# We previously loaded this module by file path under a private name to
+# avoid an old ``tools`` sys.modules collision during omniagents builtin
+# discovery, but that workaround created a SECOND ``_JobRegistry`` here
+# while ``execute_bash`` (in tools.bash_tool) was registering jobs in the
+# first one — the sweeper polled the empty second registry and the UI
+# panel stayed on "running" forever after a background job exited.
+from tools._bash_jobs import (  # noqa: E402
+    JobSweeper,
+    get_registry,
+    job_state_dict,
+    jobs_snapshot,
+    read_job_log,
+    session_ids_with_jobs,
+    terminate_job,
 )
-_bjmod = _importlib_util.module_from_spec(_bjmod_spec)
-_sys.modules["_omni_code_bash_jobs_helper"] = _bjmod
-_bjmod_spec.loader.exec_module(_bjmod)
-
-JobSweeper = _bjmod.JobSweeper
-get_registry = _bjmod.get_registry
-job_state_dict = _bjmod.job_state_dict
-jobs_snapshot = _bjmod.jobs_snapshot
-read_job_log = _bjmod.read_job_log
-session_ids_with_jobs = _bjmod.session_ids_with_jobs
-terminate_job = _bjmod.terminate_job
 
 
 def _job_visible_to_session(job, session_id: Optional[str]) -> bool:

@@ -91,7 +91,6 @@ async def load_skill(
                 "summary": f"Skill {name!r} not found",
                 "preview": llm_output,
                 "truncated": False,
-                "hidden": True,
                 "metadata": {"success": False, "skill_name": name},
             },
         )
@@ -105,7 +104,6 @@ async def load_skill(
             "summary": f"Loaded skill {name!r}",
             "preview": f"Loaded {path} ({len(text):,} chars)",
             "truncated": False,
-            "hidden": True,
             "metadata": {
                 "success": True,
                 "skill_name": name,

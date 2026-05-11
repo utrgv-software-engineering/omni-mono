@@ -18,6 +18,7 @@ import os
 import secrets
 import signal
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -98,11 +99,35 @@ class _JobRegistry:
             return list(self._jobs.values())
 
 
-_registry = _JobRegistry()
+# Stash the singleton on ``sys`` rather than as a module global so it
+# survives ``omniagents.core.tools.discovery.discover_functions_in_dir``'s
+# sys.modules cleanup. Discovery loads every .py in tools/ and then
+# deletes those modules from sys.modules afterward — and later
+# ``server_functions/bash_jobs.py`` does ``from tools._bash_jobs import …``,
+# which re-imports the module fresh. With a module-global, that yielded
+# a SECOND ``_JobRegistry`` — the sweeper polled it (empty) while
+# ``execute_bash`` registered jobs in the first one, and the UI panel
+# stayed on "running" forever.
+_REGISTRY_ATTR = "__omni_code_bash_job_registry__"
 
 
 def get_registry() -> _JobRegistry:
-    return _registry
+    reg = getattr(sys.modules["sys"], _REGISTRY_ATTR, None)
+    if reg is None:
+        reg = _JobRegistry()
+        setattr(sys.modules["sys"], _REGISTRY_ATTR, reg)
+    return reg
+
+
+# Alias kept for any in-process callers that grabbed the symbol when the
+# registry was a module global. The lookup goes through ``get_registry``
+# so reads always resolve to the live singleton.
+class _RegistryProxy:
+    def __getattr__(self, name):
+        return getattr(get_registry(), name)
+
+
+_registry = _RegistryProxy()
 
 
 def new_job_id() -> str:
