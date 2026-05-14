@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import Spinner from "ink-spinner";
-import { useBashJobs } from "../store/appStore.js";
+import { useBashJobs, useThinking } from "../store/appStore.js";
 import type { BashJobSummary } from "../store/appStore.js";
 import { TokyoNightTheme } from "../theme.js";
 
@@ -9,7 +9,7 @@ const RUNNING_GLYPH = "◐";
 const SUCCESS_GLYPH = "●";
 const FAILURE_GLYPH = "✗";
 
-const MAX_VISIBLE = 6;
+const MAX_VISIBLE = 5;
 const COMMAND_TRUNCATE_FOCUSED = 50;
 const COMMAND_TRUNCATE_UNFOCUSED = 60;
 const LOGS_PREVIEW_LINES = 18;
@@ -64,7 +64,12 @@ type Props = {
 // parent App flips ``focused`` (Ctrl+B chord). Server-side kill/tail are
 // reused via the same callbacks the web buttons use.
 export const BashJobs = React.memo(({ focused, onUnfocus, onKill, onTail }: Props) => {
-  const jobs = useBashJobs();
+  const allJobs = useBashJobs();
+  const thinking = useThinking();
+  // Once the run ends, drop exited jobs so the panel quiets down — matches
+  // the launcher's behavior and lets the dock disappear when nothing is left
+  // running. Background jobs that outlive the run stay visible.
+  const jobs = thinking ? allJobs : allJobs.filter((j) => j.running);
 
   // 1Hz tick while at least one job is running so elapsed time updates.
   const [, setNowTick] = useState(0);

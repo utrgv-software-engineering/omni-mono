@@ -867,9 +867,9 @@ export function App() {
         <div className="flex-1 flex flex-row min-h-0 min-w-0">
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
             <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} onMcpApprovalDecision={handleMcpApprovalDecision} statusItalic={statusItalic} onReaction={handleReaction} currentRunId={runId} toolStatusText={toolStatus} />
-            <Tasks tasks={tasks} />
+            <Tasks tasks={thinking ? tasks : tasks.filter(t => t.status !== 'completed')} />
             <BashJobs
-              jobs={bashJobs}
+              jobs={thinking ? bashJobs : bashJobs.filter(j => j.running)}
               onKill={async (job_id) => {
                 const res = (await client.serverCall('bash_jobs.kill', { job_id }, sessionId)) as unknown as BashJobsKillResult
                 if (Array.isArray(res?.snapshot)) setBashJobs(res.snapshot as BashJobSummary[])

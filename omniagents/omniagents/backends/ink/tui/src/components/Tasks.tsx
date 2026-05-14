@@ -1,7 +1,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
-import { useTasks } from "../store/appStore.js";
+import { useTasks, useThinking } from "../store/appStore.js";
 import type { TaskSummary } from "../store/appStore.js";
 import { TokyoNightTheme } from "../theme.js";
 
@@ -17,12 +17,16 @@ const STATUS_COLOR: Record<TaskSummary["status"], string> = {
   completed: TokyoNightTheme.success,
 };
 
-const MAX_VISIBLE = 8;
+const MAX_VISIBLE = 5;
 
 // Docked task list rendered just above the input prompt. Returns null
 // when there are no tasks so the message area reclaims the space.
 export const Tasks = React.memo(() => {
-  const tasks = useTasks();
+  const allTasks = useTasks();
+  const thinking = useThinking();
+  // Once the run ends, drop completed rows so the panel quiets down — matches
+  // the launcher's behavior and lets the dock disappear when nothing is left.
+  const tasks = thinking ? allTasks : allTasks.filter((t) => t.status !== "completed");
   if (!tasks || tasks.length === 0) {
     return null;
   }
