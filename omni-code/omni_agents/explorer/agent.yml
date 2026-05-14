@@ -36,6 +36,14 @@ model_settings:
 
 max_turns: 50
 
+# Headless subagent — runs inside the parent's session via
+# Agent.as_tool(). Today the parent's configure_tool_approval walk
+# doesn't descend into agent_tools so predicates aren't attached, but
+# this line keeps the explorer headless if it's ever switched back to
+# its own LocalAgent/AgentService (see worker/agent.yml for the same
+# reason).
+use_safe_agent: false
+
 model_config_resolver: resolve_default_model
 
 session:

@@ -45,6 +45,12 @@ model_settings:
 
 max_turns: 200
 
+# Headless: the YAML header comment ("No safe-agent wrapping") states
+# the intent, and the eval pipeline forces use_safe_agent=False anyway
+# (omniagents/core/eval/pipeline.py:400). Set it explicitly so the
+# documented behavior holds even outside the eval runner.
+use_safe_agent: false
+
 # Reuse the production model resolver so this agent picks up the same
 # credentials the user configured for `omni`. Without this it falls
 # through to bare env vars and explodes on stale tokens.

@@ -5,6 +5,13 @@ instructions_file: instructions.md
 
 tools: []
 
+# Headless subagent — invoked by server_functions/compact.py via direct
+# Runner.run (bypasses AgentService entirely, so configure_tool_approval
+# never runs against it). Empty tool list also makes hangs impossible.
+# Setting use_safe_agent: false documents the intent and stays correct
+# if this agent is ever moved onto AgentService.
+use_safe_agent: false
+
 model_settings:
   tool_choice: none
 

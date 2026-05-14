@@ -33,6 +33,15 @@ model_settings:
 
 max_turns: 200
 
+# Headless subagent — spawned by WorkerManager (tools/worker_tools.py).
+# omniagents' YAML loader defaults use_safe_agent to True when absent
+# (omniagents/core/config/loader.py:1536); leaving it unset causes
+# AgentService to attach needs_approval predicates with an empty safe
+# list, so every tool call interrupts and round-trips through
+# WorkerManager's auto-approve (workers.py:74-88) — which looks like a
+# hang. Opt out explicitly.
+use_safe_agent: false
+
 context: build_worker_context
 variables: {}
 
