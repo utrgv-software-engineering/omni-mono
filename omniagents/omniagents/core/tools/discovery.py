@@ -1,7 +1,10 @@
-import os
+import hashlib
 import importlib
+import importlib.util
 import inspect
+import os
 import sys
+import types
 from pathlib import Path
 from typing import Dict, Callable, Optional, Any, Tuple
 import traceback
@@ -235,6 +238,23 @@ def get_approval_metadata(tool_name: str, args: dict) -> Optional[Dict[str, Any]
 # --- Updated Discovery Function --- #
 
 
+def _resolve_canonical_package_name(base_path: Path) -> Optional[str]:
+    """Compute the dotted canonical module name for ``base_path``.
+
+    Walks up while ``__init__.py`` exists in the parent. Returns ``None``
+    when ``base_path`` is not a real Python package — the caller falls
+    back to a synthetic, collision-proof prefix in that case.
+    """
+    if not (base_path / "__init__.py").exists():
+        return None
+    parts = [base_path.name]
+    current = base_path.parent
+    while (current / "__init__.py").exists():
+        parts.insert(0, current.name)
+        current = current.parent
+    return ".".join(parts)
+
+
 def discover_functions_in_dir(
     base_dir: str = "tools", debug: bool = None
 ) -> Dict[str, Callable]:
@@ -242,7 +262,13 @@ def discover_functions_in_dir(
     Discovers Python functions marked with the omniagents_core @function_tool
     decorator (which adds the '_is_omniagents_core_tool' attribute).
 
-    It temporarily adds the directory's parent and the directory itself to sys.path.
+    Modules are loaded under their full canonical dotted name when the
+    directory is a real Python package (so two directories named ``tools/``
+    in different package roots — e.g. ``omniagents/builtin/tools/`` and a
+    project's local ``tools/`` — don't collide on ``sys.modules['tools']``).
+    Directories without an ``__init__.py`` chain, or whose canonical name
+    is already bound to a different path, fall back to a unique synthetic
+    prefix so discovery still works.
 
     Args:
         base_dir: The directory path (relative or absolute) to scan for .py files.
@@ -258,6 +284,44 @@ def discover_functions_in_dir(
         return {}
 
     Debug.log(f"Starting tool discovery (looking for marker) in directory: {base_path}")
+
+    # Pick a module-name prefix that won't collide with anything else
+    # already loaded. Canonical when possible (preserves registry
+    # singleton semantics for tools whose state must be a process
+    # singleton, e.g. local ``tools/_bash_jobs.py``); synthetic when the
+    # canonical name is already pointing somewhere else.
+    canonical_name = _resolve_canonical_package_name(base_path)
+    canonical_init = (base_path / "__init__.py").resolve() if canonical_name else None
+    use_synthetic = canonical_name is None
+    if canonical_name and not use_synthetic:
+        existing = sys.modules.get(canonical_name)
+        if existing is not None:
+            existing_file = getattr(existing, "__file__", None)
+            if existing_file:
+                try:
+                    if Path(existing_file).resolve() != canonical_init:
+                        use_synthetic = True
+                except OSError:
+                    use_synthetic = True
+            else:
+                use_synthetic = True
+
+    synth_pkg: Optional[str] = None
+    synth_pkg_registered = False
+    if use_synthetic:
+        synth_pkg = (
+            "_omniagents_disco_"
+            + hashlib.md5(str(base_path).encode()).hexdigest()[:12]
+        )
+        if synth_pkg not in sys.modules:
+            pkg = types.ModuleType(synth_pkg)
+            pkg.__path__ = [str(base_path)]
+            pkg.__package__ = synth_pkg
+            sys.modules[synth_pkg] = pkg
+            synth_pkg_registered = True
+        module_prefix = synth_pkg
+    else:
+        module_prefix = canonical_name
 
     parent_path = str(base_path.parent)
     base_path_str = str(base_path)
@@ -281,22 +345,43 @@ def discover_functions_in_dir(
                 continue
 
             try:
-                relative_path = filepath.relative_to(base_path.parent)
-                module_path = str(relative_path.with_suffix("")).replace(os.sep, ".")
+                relative_path = filepath.relative_to(base_path)
             except ValueError:
                 print(
-                    f"Warning: Skipping file {filepath} as it seems outside the expected parent directory {base_path.parent}"
+                    f"Warning: Skipping file {filepath} as it seems outside the expected directory {base_path}"
                 )
                 continue
 
-                Debug.log(f"Attempting to import module: {module_path} from {filepath}")
+            sub_name = ".".join(relative_path.with_suffix("").parts)
+            module_path = f"{module_prefix}.{sub_name}"
+            Debug.log(f"Attempting to import module: {module_path} from {filepath}")
 
             try:
-                module = importlib.import_module(module_path)
-                loaded_modules.add(module.__name__)
-                package_root = module.__name__.split(".", 1)[0]
-                if package_root not in preexisting_modules:
-                    loaded_packages.add(package_root)
+                if use_synthetic:
+                    if module_path in sys.modules:
+                        module = sys.modules[module_path]
+                        if module_path not in preexisting_modules:
+                            loaded_modules.add(module_path)
+                    else:
+                        spec = importlib.util.spec_from_file_location(
+                            module_path, str(filepath)
+                        )
+                        if spec is None or spec.loader is None:
+                            raise ImportError(
+                                f"could not build import spec for {filepath}"
+                            )
+                        module = importlib.util.module_from_spec(spec)
+                        module.__package__ = synth_pkg
+                        sys.modules[module_path] = module
+                        loaded_modules.add(module_path)
+                        spec.loader.exec_module(module)
+                else:
+                    module = importlib.import_module(module_path)
+                    if module.__name__ not in preexisting_modules:
+                        loaded_modules.add(module.__name__)
+                    package_root = module.__name__.split(".", 1)[0]
+                    if package_root not in preexisting_modules:
+                        loaded_packages.add(package_root)
                 for name, obj in inspect.getmembers(module):
                     # --- Check for the marker attribute set by our wrapper decorator --- #
                     if hasattr(obj, "_is_omniagents_core_tool"):
@@ -314,12 +399,21 @@ def discover_functions_in_dir(
                 print(
                     f"ERROR: Could not import module '{module_path}' from '{filepath}': {e}"
                 )
+                if use_synthetic:
+                    sys.modules.pop(module_path, None)
+                    loaded_modules.discard(module_path)
             except SyntaxError as e:
                 print(f"ERROR: Syntax error in file '{filepath}': {e}")
                 print(traceback.format_exc())
+                if use_synthetic:
+                    sys.modules.pop(module_path, None)
+                    loaded_modules.discard(module_path)
             except Exception as e:
                 print(f"ERROR: Unexpected error processing file '{filepath}': {e}")
                 print(traceback.format_exc())
+                if use_synthetic:
+                    sys.modules.pop(module_path, None)
+                    loaded_modules.discard(module_path)
 
     finally:
         sys.path = original_sys_path
@@ -341,6 +435,8 @@ def discover_functions_in_dir(
                     del sys.modules[package_name]
             except Exception:
                 pass
+        if synth_pkg_registered and synth_pkg in sys.modules:
+            sys.modules.pop(synth_pkg, None)
 
     Debug.log(
         f"Completed tool discovery: Found {len(discovered_functions)} marked tools in '{base_dir}'."

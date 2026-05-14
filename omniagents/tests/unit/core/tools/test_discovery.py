@@ -1,4 +1,5 @@
 import asyncio
+import importlib
 import inspect
 import json
 import sys
@@ -137,6 +138,74 @@ def test_discover_functions_in_dir_detects_marked_tools(tmp_path, capsys):
 def test_discover_functions_in_dir_handles_missing_dir(tmp_path):
     missing = tmp_path / "not_there"
     assert discovery.discover_functions_in_dir(str(missing)) == {}
+
+
+def test_discover_functions_in_dir_isolates_same_named_dirs(tmp_path):
+    """Two tool directories named the same thing must not collide on
+    sys.modules. Regression for the case where a host app imports
+    `tools._bash_jobs` (binding sys.modules['tools'] to its local
+    `tools/` package) and then discovery is invoked on a separate
+    `tools/` directory whose files differ — the second discovery used to
+    fail because Python's already-cached `tools` package didn't contain
+    the second dir's submodules.
+    """
+    # First "tools" package — looks like the host app's tools dir.
+    host = tmp_path / "host" / "tools"
+    host.mkdir(parents=True)
+    (host / "__init__.py").write_text("")
+    (host / "host_only.py").write_text(
+        textwrap.dedent(
+            """
+            from omniagents.core.tools.discovery import function_tool
+
+
+            @function_tool
+            def host_only_tool():
+                return "host"
+            """
+        )
+    )
+
+    # Second "tools" package — same dirname, different content.
+    other = tmp_path / "other" / "tools"
+    other.mkdir(parents=True)
+    (other / "__init__.py").write_text("")
+    (other / "other_only.py").write_text(
+        textwrap.dedent(
+            """
+            from omniagents.core.tools.discovery import function_tool
+
+
+            @function_tool
+            def other_only_tool():
+                return "other"
+            """
+        )
+    )
+
+    # Pre-bind `tools` in sys.modules pointing at the first package, the
+    # way a host app would after a real `from tools.host_only import ...`.
+    sys.path.insert(0, str(tmp_path / "host"))
+    try:
+        host_pkg = importlib.import_module("tools")
+        assert host_pkg.__file__ == str(host / "__init__.py")
+
+        # Now discover on the OTHER `tools/` dir. Before the fix this
+        # failed: discovery tried `tools.other_only` and Python resolved
+        # `tools` to the already-cached host package, finding no
+        # `other_only` submodule → ImportError on every file.
+        discovered = discovery.discover_functions_in_dir(str(other))
+    finally:
+        try:
+            sys.path.remove(str(tmp_path / "host"))
+        except ValueError:
+            pass
+        for mod in list(sys.modules):
+            if mod == "tools" or mod.startswith("tools."):
+                sys.modules.pop(mod, None)
+
+    assert "other_only_tool" in discovered
+    assert "host_only_tool" not in discovered
 
 
 def test_discover_functions_in_dir_cleans_sys_modules(tmp_path):
