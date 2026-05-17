@@ -188,7 +188,40 @@ def _load_and_configure_spec(model: Optional[str]):
     return spec, model_runtime
 
 
-_MANAGER = WorkerManager(spec_loader=_load_and_configure_spec)
+async def _on_worker_complete(handle) -> None:
+    """Push a single-line completion notice to the parent (orchestrator)
+    session via the batched notification path. Drops silently when the
+    worker wasn't spawned with a parent session (tests, direct invocation)
+    or when the service capture hasn't fired yet."""
+    parent_sid = getattr(handle, "parent_session_id", None)
+    if not parent_sid:
+        return
+    try:
+        from tools._service_capture import get_service
+    except Exception:
+        return
+    service = get_service()
+    if service is None:
+        return
+    worker_id = getattr(handle, "worker_id", "") or "?"
+    status = handle.status
+    summary = handle.result if status == "completed" else (handle.error or "")
+    summary = (summary or "")[:200]
+    content = f"[worker] {worker_id} status={status} {summary}".rstrip()
+    try:
+        await service.enqueue_notification(
+            session_id=parent_sid,
+            content=content,
+            source="worker.complete",
+        )
+    except Exception:
+        pass
+
+
+_MANAGER = WorkerManager(
+    spec_loader=_load_and_configure_spec,
+    on_complete=_on_worker_complete,
+)
 _WORKERS = _MANAGER.workers
 
 
@@ -499,10 +532,17 @@ async def spawn_worker(
                 },
             )
 
+    # Capture the orchestrator session id so worker completion notices
+    # land in the right session. Reuses bash_tool's canonical accessor
+    # for parity with how Job.session_id is captured.
+    from tools.bash_tool import _session_id_from_ctx
+    parent_sid = _session_id_from_ctx(ctx)
+
     await _MANAGER.spawn(
         worker_id=worker_id,
         task_description=task,
         context={"workspace_root": worker_workspace, "task_scope": worker_id},
+        parent_session_id=parent_sid,
     )
 
     response: dict[str, Any] = {

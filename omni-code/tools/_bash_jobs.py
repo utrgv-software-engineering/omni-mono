@@ -125,9 +125,44 @@ async def _watch_job(job: Job) -> None:
                 ec = result.exit_code
                 job.exit_code = ec if ec is not None else -1
                 job.finished_at_monotonic = time.monotonic()
+                await _notify_job_exit(job)
                 return
     except asyncio.CancelledError:
         pass
+
+
+async def _notify_job_exit(job: Job) -> None:
+    """Push a single-line completion notice to the owning session via
+    the service's batched notification path. Drops silently for jobs
+    without a session tag (tests, legacy spawns) or before the service
+    handle has been captured by the first server_function on_invoke."""
+    if not job.session_id:
+        return
+    try:
+        from tools._service_capture import get_service
+    except Exception:
+        return
+    service = get_service()
+    if service is None:
+        _log.debug(
+            "bash job %s exit: no service captured; skipping notify",
+            job.job_id,
+        )
+        return
+    content = (
+        f"[bash-job] {job.job_id} exited "
+        f"code={job.exit_code} wall={job.wall_time_ms()}ms"
+    )
+    try:
+        await service.enqueue_notification(
+            session_id=job.session_id,
+            content=content,
+            source="bash_jobs.exit",
+        )
+    except Exception as e:
+        _log.warning(
+            "enqueue_notification failed for %s: %s", job.job_id, e
+        )
 
 
 class _JobRegistry:
