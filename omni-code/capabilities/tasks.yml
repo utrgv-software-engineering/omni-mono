@@ -1,0 +1,16 @@
+name: tasks
+tools:
+  - task_create
+  - task_list
+  - task_get
+  - task_update
+instructions: |
+  Track work-in-progress with a session-scoped task list rendered above
+  the prompt. Use for non-trivial multi-step work, refactors with phases,
+  or any time you'd benefit from checkpoints.
+
+  - One task `in_progress` at a time; mark `completed` immediately when
+    done — no batching.
+  - Task `subject` is a short imperative title; `description` carries
+    enough context that someone else could execute the step.
+  - Use `addBlockedBy` to link sequenced steps so order isn't hidden.

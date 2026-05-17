@@ -37,7 +37,7 @@ async def fs_get_cwd() -> dict:
     return {"path": os.getcwd()}
 
 
-@server_function(description="Get workspace root for current session (fallback to cwd)", strict=True)
+@server_function(description="Get workspace root for current session (falls back to manifest root, then cwd)", strict=True)
 async def fs_get_workspace_root(session: Session) -> dict:
     try:
         wr = None
@@ -53,6 +53,17 @@ async def fs_get_workspace_root(session: Session) -> dict:
                 wr = vars_.get("workspace_root")
         if isinstance(wr, str) and wr.strip():
             return {"path": os.path.abspath(wr)}
+    except Exception:
+        pass
+    # When the session has no stored workspace_root yet, prefer the
+    # sandbox manifest root over omni serve's host cwd — they're the same
+    # for unix_local but differ for clients that mount under /workspace.
+    try:
+        from omni_code.agent_workspace_state import get_manifest_root
+
+        manifest_root = get_manifest_root()
+        if isinstance(manifest_root, str) and manifest_root.strip():
+            return {"path": manifest_root}
     except Exception:
         pass
     return {"path": os.getcwd()}

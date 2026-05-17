@@ -101,7 +101,11 @@ def _make_service():
         bj.bash_jobs_tail,
     ):
         service.register_server_function(
-            fn.__name__ if not hasattr(fn, "_server_function_name") else fn._server_function_name,
+            (
+                fn.__name__
+                if not hasattr(fn, "_server_function_name")
+                else fn._server_function_name
+            ),
             fn,
         )
     # The decorator sets ``_server_function_name`` to the override; use
@@ -133,36 +137,49 @@ def _make_service():
     return service
 
 
-def _spawn_quick_job(tmp_path: Path, session_id: str | None) -> str:
-    """Spawn a real bg job through the same Job-registration path that
-    ``execute_bash(background=True)`` uses. Returns the job_id."""
+async def _spawn_quick_job_async(tmp_path: Path, session_id: str | None) -> str:
+    """Spawn a real bg job through the workspace.spawn path that the
+    migrated ``execute_bash(background=True)`` uses. Returns the job_id."""
+    from omniagents import workspace as _ws
+    import asyncio as _asyncio
+    import shlex as _shlex
+    from tools._bash_jobs import _watch_job
+
     job_id = new_job_id()
     log_path = log_path_for(str(tmp_path), job_id)
     Path(log_path).parent.mkdir(parents=True, exist_ok=True)
-    log_handle = open(log_path, "wb", buffering=0)
-    popen = subprocess.Popen(
-        "echo done && sleep 0.2",
-        shell=True,
-        cwd=str(tmp_path),
-        stdout=log_handle,
-        stderr=subprocess.STDOUT,
-        stdin=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+
+    # Pre-create the log file so the spawn's append-redirect lands on
+    # something that exists, then spawn the command via the workspace.
+    Path(log_path).touch()
+
+    wrapped = f"(echo done && sleep 0.2) >> {_shlex.quote(log_path)} 2>&1 < /dev/null"
+    handle = await _ws.spawn(wrapped, cwd=str(tmp_path), shell=True, pty=False)
+
     job = Job(
         job_id=job_id,
-        pid=popen.pid,
         command="echo done && sleep 0.2",
         cwd=str(tmp_path),
         log_path=log_path,
         started_at_wall=time.time(),
         started_at_monotonic=time.monotonic(),
-        popen=popen,
-        log_file_handle=log_handle,
+        handle=handle,
         session_id=session_id,
+    )
+    job.watcher_task = _asyncio.create_task(
+        _watch_job(job), name=f"bash-job-watcher-{job_id}"
     )
     get_registry().register(job)
     return job_id
+
+
+def _spawn_quick_job(tmp_path: Path, session_id: str | None) -> str:
+    """Sync wrapper around the async spawn helper for tests that aren't
+    already running on a loop. Uses ``asyncio.run`` — fine here because
+    this test file's tests don't multi-call across loops."""
+    import asyncio as _asyncio
+
+    return _asyncio.run(_spawn_quick_job_async(tmp_path, session_id))
 
 
 def test_registry_unified_under_real_discovery_flow():
@@ -191,9 +208,7 @@ def test_registry_unified_under_real_discovery_flow():
     discover_functions_in_dir(
         "/home/emm/Omni/Workspace/omniagents/omniagents/builtin/tools"
     )
-    tools_map = discover_functions_in_dir(
-        "/home/emm/Omni/Workspace/omni-code/tools"
-    )
+    tools_map = discover_functions_in_dir("/home/emm/Omni/Workspace/omni-code/tools")
     sfs_map = discover_server_functions_in_dir(
         "/home/emm/Omni/Workspace/omni-code/server_functions"
     )
@@ -229,8 +244,10 @@ async def test_sweeper_broadcasts_exit_to_session_channel(tmp_path):
     channel = _FakeChannel()
     session.channels.append(channel)
 
-    # 1) Spawn a real bg job tagged to this session.
-    job_id = _spawn_quick_job(tmp_path, session_id="sess-X")
+    # 1) Spawn a real bg job tagged to this session. We're already inside
+    # the test's async scope so call the async helper directly rather
+    # than the sync wrapper.
+    job_id = await _spawn_quick_job_async(tmp_path, session_id="sess-X")
 
     # 2) Kick the sweeper via the Ink-warmup path: server_call(bash_jobs.list).
     await service.server_call("bash_jobs.list", session_id="sess-X")

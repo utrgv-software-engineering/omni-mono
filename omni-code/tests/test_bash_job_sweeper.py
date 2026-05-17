@@ -20,17 +20,18 @@ from tools._bash_jobs import JobSweeper, get_registry
 
 
 @pytest.fixture(autouse=True)
-def _isolate_registry():
+def _isolate_registry(invoke_tool):
     reg = get_registry()
     reg._jobs.clear()  # type: ignore[attr-defined]
     yield
     for job in list(reg._jobs.values()):  # type: ignore[attr-defined]
-        if job.poll_returncode() is None:
+        if job.exit_code is None:
             try:
-                job.popen.kill()
-                job.popen.wait(timeout=2)
+                invoke_tool.run(job.handle.terminate(force_after=0.5))
             except Exception:
                 pass
+        if job.watcher_task is not None and not job.watcher_task.done():
+            job.watcher_task.cancel()
     reg._jobs.clear()  # type: ignore[attr-defined]
 
 
@@ -86,7 +87,7 @@ def test_sweeper_fires_broadcast_when_job_exits(invoke_tool, tmp_path):
         assert entry["running"] is False
         assert entry["exit_code"] == 0
 
-    asyncio.run(scenario())
+    invoke_tool.run(scenario())
 
 
 def test_sweeper_no_broadcast_when_steady_state(invoke_tool, tmp_path):
@@ -107,7 +108,7 @@ def test_sweeper_no_broadcast_when_steady_state(invoke_tool, tmp_path):
         # follow because the job stays running. So zero broadcasts expected.
         assert rec.calls == []
 
-    asyncio.run(scenario())
+    invoke_tool.run(scenario())
 
 
 def test_sweeper_stop_cancels_task(invoke_tool, tmp_path):
@@ -120,7 +121,7 @@ def test_sweeper_stop_cancels_task(invoke_tool, tmp_path):
         await asyncio.sleep(0.1)
         assert not sweeper.running
 
-    asyncio.run(scenario())
+    invoke_tool.run(scenario())
 
 
 def test_sweeper_broadcasts_per_session(invoke_tool, tmp_path):
@@ -158,10 +159,10 @@ def test_sweeper_broadcasts_per_session(invoke_tool, tmp_path):
             assert job_b in ids
             assert job_a not in ids, "sess-B leaked sess-A's job"
 
-    asyncio.run(scenario())
+    invoke_tool.run(scenario())
 
 
-def test_sweeper_idempotent_start():
+def test_sweeper_idempotent_start(invoke_tool):
     async def scenario():
         rec = _Recorder()
         sweeper = JobSweeper(rec, interval_s=0.05)
@@ -172,7 +173,7 @@ def test_sweeper_idempotent_start():
         sweeper.stop()
         await asyncio.sleep(0.1)
 
-    asyncio.run(scenario())
+    invoke_tool.run(scenario())
 
 
 def test_sweeper_swallows_broadcast_exceptions(invoke_tool, tmp_path):
@@ -204,7 +205,7 @@ def test_sweeper_swallows_broadcast_exceptions(invoke_tool, tmp_path):
         # and still be operational (not crashed).
         assert angry.calls >= 1
 
-    asyncio.run(scenario())
+    invoke_tool.run(scenario())
     # And the registry's view of the job is still consistent.
     job = get_registry().get(job_id)
     assert job is not None

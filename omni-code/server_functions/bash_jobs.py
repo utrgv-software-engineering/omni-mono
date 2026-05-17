@@ -203,7 +203,7 @@ async def bash_jobs_kill(
             "snapshot": jobs_snapshot(session_id=_session_id),
         }
 
-    signal_sent = terminate_job(job, grace_seconds=grace)
+    signal_sent = await terminate_job(job, grace_seconds=grace)
     state = job_state_dict(job)
     state["signal_sent"] = signal_sent
     return {
@@ -266,7 +266,11 @@ async def bash_jobs_tail(
     from_start: Optional[bool] = None,
     _session_id: Optional[str] = None,
 ) -> dict:
-    n = _BASH_TAIL_DEFAULT_LINES if lines is None else min(int(lines), _BASH_TAIL_MAX_LINES)
+    n = (
+        _BASH_TAIL_DEFAULT_LINES
+        if lines is None
+        else min(int(lines), _BASH_TAIL_MAX_LINES)
+    )
     head = bool(from_start)
 
     job = get_registry().get(job_id)
@@ -279,7 +283,7 @@ async def bash_jobs_tail(
         }
 
     try:
-        body, total_lines, log_size_bytes = read_job_log(
+        body, total_lines, log_size_bytes = await read_job_log(
             job, lines=n, from_start=head
         )
     except OSError as e:
@@ -338,9 +342,7 @@ def _format_elapsed(ms: int) -> str:
 
 def _format_job_line(j: dict) -> str:
     state = "running" if j["running"] else f"exit {j['exit_code']}"
-    return (
-        f"  {j['job_id']}  {state:>9}  {_format_elapsed(j['wall_time_ms']):>7}  {j['command']}"
-    )
+    return f"  {j['job_id']}  {state:>9}  {_format_elapsed(j['wall_time_ms']):>7}  {j['command']}"
 
 
 @server_function(
@@ -368,7 +370,9 @@ async def bj_list(_session_id: Optional[str] = None) -> dict:
     strict=True,
     name_override="bj-kill",
 )
-async def bj_kill(text: Optional[str] = None, _session_id: Optional[str] = None) -> dict:
+async def bj_kill(
+    text: Optional[str] = None, _session_id: Optional[str] = None
+) -> dict:
     job_id = (text or "").strip()
     if not job_id:
         return {"message": "Usage: /bj-kill <job_id>"}
@@ -415,7 +419,9 @@ setattr(bj_list, "_server_function_on_invoke", _bj_list_on_invoke)
     strict=True,
     name_override="bj-logs",
 )
-async def bj_logs(text: Optional[str] = None, _session_id: Optional[str] = None) -> dict:
+async def bj_logs(
+    text: Optional[str] = None, _session_id: Optional[str] = None
+) -> dict:
     job_id = (text or "").strip()
     if not job_id:
         return {"message": "Usage: /bj-logs <job_id>"}

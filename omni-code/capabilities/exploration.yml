@@ -1,0 +1,13 @@
+name: exploration
+agent_tools:
+  - agent: explorer
+    tool_name: explore
+    needs_approval: false
+instructions: |
+  For broad codebase questions ("how is X implemented?", "find all Y") use
+  `explore` — it spawns a read-only sub-agent that searches multiple files
+  in parallel. Cheaper than running many `read_file` / `grep_files` calls
+  yourself when you don't yet know where to look.
+
+  After `explore` returns, re-read the key files it referenced with
+  `read_file` to verify the information before acting on it.

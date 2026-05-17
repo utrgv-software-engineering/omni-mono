@@ -10,21 +10,16 @@ welcome_text: |
 additional_tools_dirs:
   - ../../tools
 
-tools:
-  - dispatch
-  - list_directory
-  - glob_files
-  - grep_files
-  - read_file
-  - apply_patch
-  - write_file
-  - execute_bash
-  - web_fetch
-  - web_search
-  - youtube_search
-  - scholar_search
-  - download_file
-  - convert_to_markdown
+# Voice agent gets a focused subset — file/shell + web/search + slash
+# dispatch + markdown conversion. No notebook, workers, tasks, or
+# exploration; voice latency favors a tighter tool surface.
+capabilities:
+  - filesystem
+  - shell
+  - web
+  - serpapi
+  - markdown
+  - slash
 
 model_settings:
   reasoning:

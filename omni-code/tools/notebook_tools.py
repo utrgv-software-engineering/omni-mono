@@ -37,17 +37,21 @@ def _resolve_path(ctx: RunContextWrapper[Any] | None, path: str) -> str:
     return path
 
 
-def _load_notebook(file_path: str) -> dict:
-    """Load and parse a .ipynb file."""
-    with open(file_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+async def _load_notebook(file_path: str) -> dict:
+    """Load and parse a .ipynb file via the workspace contextvar so the
+    same body works in host and sandbox modes."""
+    from omniagents import workspace as _ws
+
+    text = await _ws.read_text(file_path)
+    return json.loads(text)
 
 
-def _save_notebook(file_path: str, nb: dict) -> None:
-    """Write a notebook dict back to disk."""
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(nb, f, indent=1, ensure_ascii=False)
-        f.write("\n")
+async def _save_notebook(file_path: str, nb: dict) -> None:
+    """Write a notebook dict back via the workspace contextvar."""
+    from omniagents import workspace as _ws
+
+    text = json.dumps(nb, indent=1, ensure_ascii=False) + "\n"
+    await _ws.write_text(file_path, text)
 
 
 def _format_cell(index: int, cell: dict) -> str:
@@ -101,7 +105,7 @@ def _get_cells(nb: dict) -> list:
 
 
 @rich_function_tool
-def read_notebook(
+async def read_notebook(
     ctx: RunContextWrapper[Any],
     file_path: str,
 ) -> RichToolOutput:
@@ -118,31 +122,39 @@ def read_notebook(
     Returns:
         Formatted text showing all cells with indices, types, content, and outputs.
     """
+    from omniagents import workspace as _ws
+
     file_path = _resolve_path(ctx, file_path)
-    if not os.path.exists(file_path):
+    if not await _ws.exists(file_path):
         error_msg = f"File not found: {file_path}"
-        return RichToolOutput(error_msg, {
-            "value": error_msg,
-            "display_type": "error",
-            "summary": "File not found",
-            "preview": error_msg,
-            "truncated": False,
-            "metadata": {"success": False, "error_type": "file_not_found"},
-        })
+        return RichToolOutput(
+            error_msg,
+            {
+                "value": error_msg,
+                "display_type": "error",
+                "summary": "File not found",
+                "preview": error_msg,
+                "truncated": False,
+                "metadata": {"success": False, "error_type": "file_not_found"},
+            },
+        )
 
     if not file_path.endswith(".ipynb"):
         error_msg = f"Not a notebook file: {file_path}"
-        return RichToolOutput(error_msg, {
-            "value": error_msg,
-            "display_type": "error",
-            "summary": "Invalid file type",
-            "preview": error_msg,
-            "truncated": False,
-            "metadata": {"success": False, "error_type": "invalid_file_type"},
-        })
+        return RichToolOutput(
+            error_msg,
+            {
+                "value": error_msg,
+                "display_type": "error",
+                "summary": "Invalid file type",
+                "preview": error_msg,
+                "truncated": False,
+                "metadata": {"success": False, "error_type": "invalid_file_type"},
+            },
+        )
 
     try:
-        nb = _load_notebook(file_path)
+        nb = await _load_notebook(file_path)
         cells = _get_cells(nb)
 
         if not cells:
@@ -152,43 +164,52 @@ def read_notebook(
             content = "\n\n".join(formatted)
 
         preview = content[:500]
-        return RichToolOutput(content, {
-            "value": content,
-            "display_type": "notebook",
-            "summary": f"Read {os.path.basename(file_path)} ({len(cells)} cells)",
-            "preview": preview,
-            "truncated": len(content) > 500,
-            "metadata": {
-                "success": True,
-                "file_path": file_path,
-                "cell_count": len(cells),
-                "content_length": len(content),
+        return RichToolOutput(
+            content,
+            {
+                "value": content,
+                "display_type": "notebook",
+                "summary": f"Read {os.path.basename(file_path)} ({len(cells)} cells)",
+                "preview": preview,
+                "truncated": len(content) > 500,
+                "metadata": {
+                    "success": True,
+                    "file_path": file_path,
+                    "cell_count": len(cells),
+                    "content_length": len(content),
+                },
             },
-        })
+        )
     except json.JSONDecodeError as e:
         error_msg = f"Invalid notebook JSON: {e}"
-        return RichToolOutput(error_msg, {
-            "value": error_msg,
-            "display_type": "error",
-            "summary": "Parse error",
-            "preview": str(e),
-            "truncated": False,
-            "metadata": {"success": False, "error_type": "parse_error"},
-        })
+        return RichToolOutput(
+            error_msg,
+            {
+                "value": error_msg,
+                "display_type": "error",
+                "summary": "Parse error",
+                "preview": str(e),
+                "truncated": False,
+                "metadata": {"success": False, "error_type": "parse_error"},
+            },
+        )
     except Exception as e:
         error_msg = f"Error reading notebook: {e}"
-        return RichToolOutput(error_msg, {
-            "value": error_msg,
-            "display_type": "error",
-            "summary": "Read error",
-            "preview": str(e),
-            "truncated": False,
-            "metadata": {"success": False, "error_type": "read_error"},
-        })
+        return RichToolOutput(
+            error_msg,
+            {
+                "value": error_msg,
+                "display_type": "error",
+                "summary": "Read error",
+                "preview": str(e),
+                "truncated": False,
+                "metadata": {"success": False, "error_type": "read_error"},
+            },
+        )
 
 
 @rich_function_tool
-def edit_notebook(
+async def edit_notebook(
     ctx: RunContextWrapper[Any],
     file_path: str,
     cell_number: int,
@@ -215,55 +236,76 @@ def edit_notebook(
     Returns:
         Confirmation message with the updated cell content.
     """
+    from omniagents import workspace as _ws
+
     file_path = _resolve_path(ctx, file_path)
-    if not os.path.exists(file_path):
+    if not await _ws.exists(file_path):
         error_msg = f"File not found: {file_path}"
-        return RichToolOutput(error_msg, {
-            "value": error_msg,
-            "display_type": "error",
-            "summary": "File not found",
-            "preview": error_msg,
-            "truncated": False,
-            "metadata": {"success": False, "error_type": "file_not_found"},
-        })
+        return RichToolOutput(
+            error_msg,
+            {
+                "value": error_msg,
+                "display_type": "error",
+                "summary": "File not found",
+                "preview": error_msg,
+                "truncated": False,
+                "metadata": {"success": False, "error_type": "file_not_found"},
+            },
+        )
 
     if edit_mode not in ("replace", "insert", "delete"):
-        error_msg = f"Invalid edit_mode: {edit_mode}. Must be 'replace', 'insert', or 'delete'."
-        return RichToolOutput(error_msg, {
-            "value": error_msg,
-            "display_type": "error",
-            "summary": "Invalid edit mode",
-            "preview": error_msg,
-            "truncated": False,
-            "metadata": {"success": False, "error_type": "invalid_edit_mode"},
-        })
+        error_msg = (
+            f"Invalid edit_mode: {edit_mode}. Must be 'replace', 'insert', or 'delete'."
+        )
+        return RichToolOutput(
+            error_msg,
+            {
+                "value": error_msg,
+                "display_type": "error",
+                "summary": "Invalid edit mode",
+                "preview": error_msg,
+                "truncated": False,
+                "metadata": {"success": False, "error_type": "invalid_edit_mode"},
+            },
+        )
 
     try:
-        nb = _load_notebook(file_path)
+        nb = await _load_notebook(file_path)
         cells = _get_cells(nb)
 
         if edit_mode == "insert":
             if cell_type not in ("code", "markdown"):
-                error_msg = "cell_type is required for insert and must be 'code' or 'markdown'."
-                return RichToolOutput(error_msg, {
-                    "value": error_msg,
-                    "display_type": "error",
-                    "summary": "Missing cell_type",
-                    "preview": error_msg,
-                    "truncated": False,
-                    "metadata": {"success": False, "error_type": "missing_cell_type"},
-                })
+                error_msg = (
+                    "cell_type is required for insert and must be 'code' or 'markdown'."
+                )
+                return RichToolOutput(
+                    error_msg,
+                    {
+                        "value": error_msg,
+                        "display_type": "error",
+                        "summary": "Missing cell_type",
+                        "preview": error_msg,
+                        "truncated": False,
+                        "metadata": {
+                            "success": False,
+                            "error_type": "missing_cell_type",
+                        },
+                    },
+                )
 
             if cell_number < 0 or cell_number > len(cells):
                 error_msg = f"cell_number {cell_number} out of range (0-{len(cells)})."
-                return RichToolOutput(error_msg, {
-                    "value": error_msg,
-                    "display_type": "error",
-                    "summary": "Index out of range",
-                    "preview": error_msg,
-                    "truncated": False,
-                    "metadata": {"success": False, "error_type": "index_error"},
-                })
+                return RichToolOutput(
+                    error_msg,
+                    {
+                        "value": error_msg,
+                        "display_type": "error",
+                        "summary": "Index out of range",
+                        "preview": error_msg,
+                        "truncated": False,
+                        "metadata": {"success": False, "error_type": "index_error"},
+                    },
+                )
 
             new_cell = {
                 "cell_type": cell_type,
@@ -279,32 +321,44 @@ def edit_notebook(
 
         elif edit_mode == "delete":
             if cell_number < 0 or cell_number >= len(cells):
-                error_msg = f"cell_number {cell_number} out of range (0-{len(cells) - 1})."
-                return RichToolOutput(error_msg, {
-                    "value": error_msg,
-                    "display_type": "error",
-                    "summary": "Index out of range",
-                    "preview": error_msg,
-                    "truncated": False,
-                    "metadata": {"success": False, "error_type": "index_error"},
-                })
+                error_msg = (
+                    f"cell_number {cell_number} out of range (0-{len(cells) - 1})."
+                )
+                return RichToolOutput(
+                    error_msg,
+                    {
+                        "value": error_msg,
+                        "display_type": "error",
+                        "summary": "Index out of range",
+                        "preview": error_msg,
+                        "truncated": False,
+                        "metadata": {"success": False, "error_type": "index_error"},
+                    },
+                )
 
             deleted = cells.pop(cell_number)
             deleted_source = "".join(deleted.get("source", []))
-            action = f"Deleted cell {cell_number} ({deleted.get('cell_type', 'unknown')})"
+            action = (
+                f"Deleted cell {cell_number} ({deleted.get('cell_type', 'unknown')})"
+            )
             new_source = deleted_source  # for preview
 
         else:  # replace
             if cell_number < 0 or cell_number >= len(cells):
-                error_msg = f"cell_number {cell_number} out of range (0-{len(cells) - 1})."
-                return RichToolOutput(error_msg, {
-                    "value": error_msg,
-                    "display_type": "error",
-                    "summary": "Index out of range",
-                    "preview": error_msg,
-                    "truncated": False,
-                    "metadata": {"success": False, "error_type": "index_error"},
-                })
+                error_msg = (
+                    f"cell_number {cell_number} out of range (0-{len(cells) - 1})."
+                )
+                return RichToolOutput(
+                    error_msg,
+                    {
+                        "value": error_msg,
+                        "display_type": "error",
+                        "summary": "Index out of range",
+                        "preview": error_msg,
+                        "truncated": False,
+                        "metadata": {"success": False, "error_type": "index_error"},
+                    },
+                )
 
             cell = cells[cell_number]
             if cell_type:
@@ -316,50 +370,71 @@ def edit_notebook(
                 cell["execution_count"] = None
             action = f"Replaced cell {cell_number} ({cell.get('cell_type', 'unknown')})"
 
-        _save_notebook(file_path, nb)
+        await _save_notebook(file_path, nb)
 
         preview = new_source[:300] if new_source else "(empty)"
         content = f"{action}\n\n{preview}"
 
-        return RichToolOutput(content, {
-            "value": content,
-            "display_type": "notebook_edit",
-            "summary": action,
-            "preview": preview,
-            "truncated": len(new_source) > 300 if new_source else False,
-            "metadata": {
-                "success": True,
-                "file_path": file_path,
-                "edit_mode": edit_mode,
-                "cell_number": cell_number,
-                "cell_count": len(cells),
+        return RichToolOutput(
+            content,
+            {
+                "value": content,
+                "display_type": "notebook_edit",
+                "summary": action,
+                "preview": preview,
+                "truncated": len(new_source) > 300 if new_source else False,
+                "metadata": {
+                    "success": True,
+                    "file_path": file_path,
+                    "edit_mode": edit_mode,
+                    "cell_number": cell_number,
+                    "cell_count": len(cells),
+                },
             },
-        })
+        )
     except json.JSONDecodeError as e:
         error_msg = f"Invalid notebook JSON: {e}"
-        return RichToolOutput(error_msg, {
-            "value": error_msg,
-            "display_type": "error",
-            "summary": "Parse error",
-            "preview": str(e),
-            "truncated": False,
-            "metadata": {"success": False, "error_type": "parse_error"},
-        })
+        return RichToolOutput(
+            error_msg,
+            {
+                "value": error_msg,
+                "display_type": "error",
+                "summary": "Parse error",
+                "preview": str(e),
+                "truncated": False,
+                "metadata": {"success": False, "error_type": "parse_error"},
+            },
+        )
     except Exception as e:
         error_msg = f"Error editing notebook: {e}"
-        return RichToolOutput(error_msg, {
-            "value": error_msg,
-            "display_type": "error",
-            "summary": "Edit error",
-            "preview": str(e),
-            "truncated": False,
-            "metadata": {"success": False, "error_type": "edit_error"},
-        })
+        return RichToolOutput(
+            error_msg,
+            {
+                "value": error_msg,
+                "display_type": "error",
+                "summary": "Edit error",
+                "preview": str(e),
+                "truncated": False,
+                "metadata": {"success": False, "error_type": "edit_error"},
+            },
+        )
 
 
 # ---------------------------------------------------------------------------
 # Approval metadata
 # ---------------------------------------------------------------------------
+
+
+def _load_notebook_sync_for_approval(file_path: str) -> dict:
+    """Sync notebook load for the approval preview generator.
+
+    The approval-metadata decorator is called from the sync approval-UI
+    pipeline which always runs host-side, so this intentionally bypasses
+    the workspace contextvar. Mirrors the analogous host-side fallback
+    in omniagents' ``apply_patch_approval``.
+    """
+    with open(file_path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 @approval_metadata()
@@ -386,7 +461,7 @@ def edit_notebook_approval(
                 "metadata": {"file_path": file_path, "operation": edit_mode},
             }
 
-        nb = _load_notebook(file_path)
+        nb = _load_notebook_sync_for_approval(file_path)
         cells = _get_cells(nb)
 
         if edit_mode == "insert":
@@ -413,14 +488,16 @@ def edit_notebook_approval(
                 old_source = ""
                 old_type = "unknown"
 
-            diff_lines = list(difflib.unified_diff(
-                old_source.splitlines(keepends=True),
-                [],
-                fromfile=f"{basename} cell {cell_number}",
-                tofile="/dev/null",
-                lineterm="",
-                n=3,
-            ))
+            diff_lines = list(
+                difflib.unified_diff(
+                    old_source.splitlines(keepends=True),
+                    [],
+                    fromfile=f"{basename} cell {cell_number}",
+                    tofile="/dev/null",
+                    lineterm="",
+                    n=3,
+                )
+            )
             preview = "".join(diff_lines[:20])
             return {
                 "display_type": "diff",
@@ -432,7 +509,11 @@ def edit_notebook_approval(
                     "file_path": file_path,
                     "operation": "delete",
                     "cell_number": cell_number,
-                    "deletions": sum(1 for l in diff_lines if l.startswith("-") and not l.startswith("---")),
+                    "deletions": sum(
+                        1
+                        for l in diff_lines
+                        if l.startswith("-") and not l.startswith("---")
+                    ),
                 },
             }
 
@@ -442,22 +523,32 @@ def edit_notebook_approval(
         else:
             old_source = ""
 
-        diff_lines = list(difflib.unified_diff(
-            old_source.splitlines(keepends=True),
-            new_source.splitlines(keepends=True),
-            fromfile=f"{basename} cell {cell_number}",
-            tofile=f"{basename} cell {cell_number}",
-            lineterm="",
-            n=3,
-        ))
+        diff_lines = list(
+            difflib.unified_diff(
+                old_source.splitlines(keepends=True),
+                new_source.splitlines(keepends=True),
+                fromfile=f"{basename} cell {cell_number}",
+                tofile=f"{basename} cell {cell_number}",
+                lineterm="",
+                n=3,
+            )
+        )
         preview = "".join(diff_lines[:20])
-        additions = sum(1 for l in diff_lines if l.startswith("+") and not l.startswith("+++"))
-        deletions = sum(1 for l in diff_lines if l.startswith("-") and not l.startswith("---"))
+        additions = sum(
+            1 for l in diff_lines if l.startswith("+") and not l.startswith("+++")
+        )
+        deletions = sum(
+            1 for l in diff_lines if l.startswith("-") and not l.startswith("---")
+        )
 
         return {
             "display_type": "diff",
             "summary": f"Replace cell {cell_number} in {basename}",
-            "value": {"old_text": old_source, "new_text": new_source, "diff_lines": diff_lines},
+            "value": {
+                "old_text": old_source,
+                "new_text": new_source,
+                "diff_lines": diff_lines,
+            },
             "preview": preview,
             "truncated": len(diff_lines) > 20,
             "metadata": {

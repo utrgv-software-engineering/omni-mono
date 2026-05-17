@@ -1,2 +1,3 @@
 include project.yml
 recursive-include omni_code/sandbox *
+include omni_code/sandbox_profile_default.yml

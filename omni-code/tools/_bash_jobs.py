@@ -8,6 +8,11 @@ The registry is intentionally in-memory only: jobs do not survive a
 host-process restart. Their stdout/stderr is streamed to a log file under
 ``workspace_root/.omni-code/jobs/`` so output is recoverable from disk
 even if the registry entry is lost.
+
+Each Job wraps a workspace ``ProcessHandle`` rather than a raw
+``subprocess.Popen``, so backgrounding works against both
+``HostWorkspace`` (asyncio subprocess) and ``SandboxWorkspace``
+(``pty_exec_start``-tracked process inside the sandbox).
 """
 
 from __future__ import annotations
@@ -16,13 +21,13 @@ import asyncio
 import logging
 import os
 import secrets
-import signal
-import subprocess
 import sys
 import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Tuple
+
+from omniagents.workspace import ProcessHandle
 
 
 _log = logging.getLogger(__name__)
@@ -33,52 +38,96 @@ _JOBS_DIRNAME = os.path.join(".omni-code", "jobs")
 
 @dataclass
 class Job:
+    """A background bash job tracked by the registry.
+
+    ``handle`` is the workspace's ``ProcessHandle`` for the spawned
+    process. ``exit_code``/``finished_at_monotonic`` are populated by a
+    background watcher task (see ``_watch_job``) that polls the handle
+    until the process exits. The state-snapshot helpers and the sweeper
+    read these cached fields synchronously.
+    """
+
     job_id: str
-    pid: int
     command: str
     cwd: str
     log_path: str
     started_at_wall: float
     started_at_monotonic: float
-    popen: subprocess.Popen
-    log_file_handle: Optional["object"] = None  # file handle held until process exits
+    handle: ProcessHandle
     # Owning session id, captured from ctx.context at spawn time. ``None``
     # means "uncategorized" — visible to every session as a backstop for
     # callers (mostly tests) that don't run inside a real session.
     session_id: Optional[str] = None
 
-    # Cached final state — populated lazily by ``poll_returncode``.
+    # Cached final state — populated by the watcher task. Reads are sync.
     exit_code: Optional[int] = None
     finished_at_monotonic: Optional[float] = None
 
+    # The asyncio task that polls handle.wait()/handle.status() to detect
+    # natural exit. Held so the registry can cancel it on cleanup.
+    watcher_task: Optional[asyncio.Task] = None
+
+    @property
+    def pid(self) -> Optional[int]:
+        """OS pid of the spawned process when available.
+
+        Host backend always provides it; sandbox backend may return
+        ``None`` since some sandbox transports don't surface the
+        in-container pid. Callers MUST NOT use pid for cross-process
+        operations — go through the handle.
+        """
+        return self.handle.pid
+
     def is_running(self) -> bool:
-        return self.poll_returncode() is None
+        return self.exit_code is None
 
     def poll_returncode(self) -> Optional[int]:
-        """Return exit code if the process has finished, else ``None``.
+        """Return the cached exit code, or ``None`` if still running.
 
-        Caches the finish time on the first poll that observes termination
-        so wall_time stays stable across subsequent calls.
+        Unlike the old ``Popen.poll`` shim, this is a pure read of cached
+        state — the watcher task is responsible for updating it. The
+        sweeper and snapshot helpers stay sync.
         """
-        if self.exit_code is not None:
-            return self.exit_code
-        rc = self.popen.poll()
-        if rc is None:
-            return None
-        self.exit_code = rc
-        self.finished_at_monotonic = time.monotonic()
-        # Release the log file handle now that the child can no longer write.
-        if self.log_file_handle is not None:
-            try:
-                self.log_file_handle.close()
-            except Exception:
-                pass
-            self.log_file_handle = None
-        return rc
+        return self.exit_code
 
     def wall_time_ms(self) -> int:
         end = self.finished_at_monotonic or time.monotonic()
         return int((end - self.started_at_monotonic) * 1000)
+
+
+async def _watch_job(job: Job) -> None:
+    """Background task that observes ``job.handle`` until the process
+    exits and caches the final exit code on the Job.
+
+    Implementation: poll ``handle.wait(timeout=…)`` in a loop. On host
+    the wait() blocks until the proc exits or hits the timeout. On
+    sandbox it returns immediately with the latest cached state from the
+    session — so we need to call it repeatedly to keep polling the
+    underlying pty stream. The handle's own ``status()`` is the
+    authoritative check for "is it done?"
+    """
+    try:
+        while True:
+            try:
+                result = await job.handle.wait(timeout=1.0)
+            except Exception:
+                # Transient errors during polling — back off and retry.
+                await asyncio.sleep(1.0)
+                continue
+            try:
+                status = await job.handle.status()
+            except Exception:
+                status = "running"
+            if status != "running":
+                # Cache the final exit code (mapping -1 from "still
+                # running" timeouts is impossible here since status said
+                # we're done).
+                ec = result.exit_code
+                job.exit_code = ec if ec is not None else -1
+                job.finished_at_monotonic = time.monotonic()
+                return
+    except asyncio.CancelledError:
+        pass
 
 
 class _JobRegistry:
@@ -211,45 +260,42 @@ def session_ids_with_jobs() -> List[Optional[str]]:
 SignalSent = Literal["none", "SIGTERM", "SIGKILL"]
 
 
-def terminate_job(job: Job, *, grace_seconds: int = 5) -> SignalSent:
-    """Send SIGTERM, wait up to ``grace_seconds``, escalate to SIGKILL.
+async def terminate_job(job: Job, *, grace_seconds: int = 5) -> SignalSent:
+    """Terminate a background job and wait for it to actually exit.
 
-    No-op (returns ``"none"``) if the job has already finished. Signals the
-    full session group on POSIX so shell-spawned children also die, falling
-    back to ``Popen.terminate/kill`` if the pgid lookup fails or on Windows.
+    Returns ``"none"`` if the job has already finished, ``"SIGTERM"`` if
+    the graceful terminate caught it, ``"SIGKILL"`` if we escalated past
+    the grace window. The actual signal mechanics are delegated to
+    ``ProcessHandle.terminate`` — the handle owns whatever escalation
+    pattern works for its backend (POSIX process-group signals on host,
+    pty terminate on sandbox).
     """
-    if job.poll_returncode() is not None:
+    if job.exit_code is not None:
         return "none"
 
-    signal_sent: SignalSent = "SIGTERM"
-    if os.name != "nt":
-        try:
-            pgid = os.getpgid(job.pid)
-            os.killpg(pgid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            job.popen.terminate()
-    else:
-        job.popen.terminate()
-
+    grace = max(grace_seconds, 0)
     try:
-        job.popen.wait(timeout=max(grace_seconds, 0))
-    except subprocess.TimeoutExpired:
-        signal_sent = "SIGKILL"
-        if os.name != "nt":
-            try:
-                pgid = os.getpgid(job.pid)
-                os.killpg(pgid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                job.popen.kill()
-        else:
-            job.popen.kill()
-        try:
-            job.popen.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
+        await job.handle.terminate(force_after=float(grace))
+    except Exception as exc:
+        _log.warning("ProcessHandle.terminate raised for %s: %s", job.job_id, exc)
 
-    job.poll_returncode()  # refresh cached state after wait()
-    return signal_sent
+    # Wait briefly for the watcher to record the final exit. Cover the
+    # grace window plus a small slack so escalation has time to land.
+    deadline = time.monotonic() + grace + 5.0
+    while job.exit_code is None and time.monotonic() < deadline:
+        await asyncio.sleep(0.05)
+
+    # The handle hides the SIGTERM-vs-SIGKILL distinction. Approximate
+    # it from observed exit timing: if the watcher recorded an exit
+    # within the grace window, terminate succeeded gracefully; otherwise
+    # report SIGKILL (the handle's force_after path).
+    if job.exit_code is None:
+        # Watcher hasn't seen the exit yet — treat as forceful kill.
+        return "SIGKILL"
+    elapsed_after_terminate = job.finished_at_monotonic or time.monotonic()
+    if (elapsed_after_terminate - (job.started_at_monotonic + 0.0)) > grace:
+        return "SIGKILL"
+    return "SIGTERM"
 
 
 # ---------------------------------------------------------------------------
@@ -271,7 +317,9 @@ def terminate_job(job: Job, *, grace_seconds: int = 5) -> SignalSent:
 _DEFAULT_SWEEP_INTERVAL_S = 2.0
 
 
-def _fingerprint_snapshot(snapshot: List[Dict[str, Any]]) -> Dict[str, Tuple[bool, Optional[int]]]:
+def _fingerprint_snapshot(
+    snapshot: List[Dict[str, Any]],
+) -> Dict[str, Tuple[bool, Optional[int]]]:
     """A tiny per-job fingerprint we can diff cheaply between ticks."""
     return {j["job_id"]: (bool(j["running"]), j["exit_code"]) for j in snapshot}
 
@@ -363,20 +411,29 @@ class JobSweeper:
             await self._broadcast(sid, session_snap)
 
 
-def read_job_log(job: Job, *, lines: int = 200, from_start: bool = False) -> Tuple[str, int, int]:
-    """Read the job's log file from disk.
+async def read_job_log(
+    job: Job, *, lines: int = 200, from_start: bool = False
+) -> Tuple[str, int, int]:
+    """Read the job's log file from disk via the workspace contextvar.
 
     Returns ``(body, total_lines, log_size_bytes)``. ``body`` is the joined
     selected lines (no truncation applied — callers can shape further).
-    Raises ``OSError`` if the file is unreadable.
+    Raises ``OSError`` (or workspace error) if the file is unreadable.
+
+    Background-mode spawn itself is host-only, but the log file lives at
+    ``workspace_root/.omni-code/jobs/<id>.log`` which is inside the
+    workspace. Routing the read through ``workspace.read_bytes`` keeps the
+    abstraction consistent and makes the read work for any backend that
+    can see that path.
     """
-    with open(job.log_path, "rb") as f:
-        raw = f.read()
+    from omniagents import workspace as _ws
+
+    raw = await _ws.read_bytes(job.log_path)
     text = raw.decode("utf-8", errors="replace")
     all_lines = text.splitlines()
     total = len(all_lines)
     if from_start:
         selected = all_lines[: max(lines, 0)]
     else:
-        selected = all_lines[-max(lines, 0):] if lines > 0 else []
+        selected = all_lines[-max(lines, 0) :] if lines > 0 else []
     return "\n".join(selected), total, len(raw)

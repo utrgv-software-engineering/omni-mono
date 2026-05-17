@@ -1,0 +1,7 @@
+name: notebook_readonly
+tools:
+  - read_notebook
+instructions: |
+  `read_notebook` returns all cells and outputs of a Jupyter notebook
+  (.ipynb). No edit surface here — pull in the full `notebook` capability
+  if you need `edit_notebook`.

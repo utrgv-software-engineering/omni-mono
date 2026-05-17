@@ -19,15 +19,11 @@ tool_description: |
   You can run multiple explore calls in parallel when investigating
   different aspects of the codebase.
 
-additional_tools_dirs:
-  - ../../tools
-
-tools:
-  - list_directory
-  - glob_files
-  - grep_files
-  - read_file
-  - read_notebook
+# Read-only exploration surface. `filesystem_readonly` is intentionally
+# narrower than the full `filesystem` cap — no write/edit/apply_patch.
+capabilities:
+  - filesystem_readonly
+  - notebook_readonly
 
 model_settings:
   reasoning:

@@ -1,0 +1,14 @@
+name: shell
+tools:
+  - execute_bash
+  - bash_status
+  - bash_logs
+  - bash_kill
+instructions: |
+  Shell execution with background-job support:
+  - `execute_bash` runs a command. For long-running work (dev servers, soak
+    tests, builds longer than ~30s), pass `bg=true` to get back a job id
+    instead of waiting.
+  - `bash_status` polls a backgrounded job; `bash_logs` reads its combined
+    stdout/stderr; `bash_kill` terminates it (SIGTERM, then SIGKILL).
+  Prefer `rg` and `rg --files` for text/file discovery over piping `cat`.

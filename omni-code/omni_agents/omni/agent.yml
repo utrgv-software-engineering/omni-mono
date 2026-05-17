@@ -5,38 +5,23 @@ instructions_file: instructions.md
 welcome_text: |
   Welcome to Omni Code! I'm here to help you with your coding needs.
 
-tools:
-  - read_image
-  - dispatch
-  - list_directory
-  - read_file
-  - display_artifact
-  - apply_patch
-  - write_file
-  - execute_bash
-  - bash_status
-  - bash_logs
-  - bash_kill
-  - web_fetch
-  - web_search
-  - youtube_search
-  - scholar_search
-  - download_file
-  - convert_to_markdown
-  - read_notebook
-  - edit_notebook
-  - spawn_worker
-  - get_worker_status
-  - wait_for_workers
-  - send_worker_message
-  - close_worker
-  - resume_worker
-  - cleanup_worker_worktree
-  - task_create
-  - task_list
-  - task_get
-  - task_update
-  - load_skill
+# Tool surface composed from capability packs (see capabilities/*.yml and
+# omniagents builtin capabilities). Each cap bundles a tool family plus an
+# instructions fragment. `shell` overrides the builtin single-tool shell
+# with omni-code's job-tracking variant.
+capabilities:
+  - filesystem    # read/list/glob/grep/write/edit/apply_patch + read_image (builtin)
+  - shell         # execute_bash + bash_status/logs/kill (omni-code override)
+  - web           # web_fetch + download_file (builtin, provider-agnostic)
+  - serpapi       # web_search / youtube_search / scholar_search (builtin)
+  - markdown      # convert_to_markdown
+  - notebook      # read_notebook / edit_notebook
+  - workers       # spawn_worker family
+  - tasks         # task_create / list / get / update
+  - skills        # load_skill
+  - slash         # dispatch
+  - artifacts     # display_artifact (builtin)
+  - exploration   # explorer subagent exposed as `explore`
 
 model_settings:
   reasoning:
@@ -108,17 +93,13 @@ context: build_coding_context
 model_config_resolver: resolve_default_model
 variables: {}
 
-# Sub-agents exposed as callable function tools via Agent.as_tool().
-# The sub-agent inherits the parent's RunConfig (model_provider with
-# credentials) and the parent's RunContextWrapper (workspace_root,
-# session vars). Its own model_config_resolver picks up the user's
-# currently-selected model from omni-code's models.json so the explorer
-# follows the parent's model selection rather than the provider default.
-agent_tools:
-  - yaml: ../explorer/agent.yml
-    tool_name: explore
-    # tool_description omitted — falls back to explorer's own
-    # tool_description so the LLM contract stays consistent across callers.
+# Sub-agent (explorer) is bundled into the `exploration` capability above
+# via agent_tools: [{agent: explorer, tool_name: explore, ...}]. The
+# sub-agent inherits the parent's RunConfig (model_provider with
+# credentials) and the parent's RunContextWrapper (workspace_root, session
+# vars). Its own model_config_resolver picks up the user's currently-
+# selected model from omni-code's models.json so the explorer follows the
+# parent's model selection rather than the provider default.
 
 # SDK 0.16+ proactive compaction. Wraps the session with
 # OpenAIResponsesCompactionSession so the Responses ``compact`` endpoint

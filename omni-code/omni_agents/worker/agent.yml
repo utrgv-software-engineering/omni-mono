@@ -6,25 +6,17 @@ instructions_file: instructions.md
 additional_tools_dirs:
   - ../../tools
 
-tools:
-  - list_directory
-  - glob_files
-  - grep_files
-  - read_file
-  - read_notebook
-  - convert_to_markdown
-  - apply_patch
-  - write_file
-  - edit_notebook
-  - execute_bash
-  - bash_status
-  - bash_logs
-  - bash_kill
-  - task_create
-  - task_list
-  - task_get
-  - task_update
-  - load_skill
+# Worker is a focused coding subagent — it gets the file/shell/notebook
+# surface it needs to execute a task, plus task tracking and skills, but
+# no nested workers, no slash dispatch, no exploration subagent (workers
+# already operate on a focused task scope).
+capabilities:
+  - filesystem
+  - shell
+  - notebook
+  - markdown
+  - tasks
+  - skills
 
 model_settings:
   reasoning:

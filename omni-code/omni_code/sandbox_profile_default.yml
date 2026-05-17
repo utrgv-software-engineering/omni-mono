@@ -1,0 +1,20 @@
+version: 1
+
+# Built-in default sandbox profile shipped with omni-code.
+#
+# Resolution: this is the lowest layer. The launcher overrides it via
+# ~/.config/omni_code/sandbox/default.yml (user-default) and
+# ~/.config/omni_code/projects/<projectId>/sandbox.yml (per-project).
+# CLI `--profile <path>` is an explicit override above all of those.
+
+client:
+  type: unix_local
+
+manifest:
+  # ${workspace_dir} is replaced with `omni serve --workspace <dir>` before
+  # the profile is handed to the SDK. unix_local treats this as the sandbox
+  # root in-place, so the agent edits the user's files directly.
+  root: ${workspace_dir}
+
+# No services and no exposed ports by default — pure agent + workspace.
+# Dev environments (code-server, VNC, etc.) are the launcher's concern.

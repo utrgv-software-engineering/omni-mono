@@ -1,0 +1,23 @@
+name: workers
+tools:
+  - spawn_worker
+  - get_worker_status
+  - wait_for_workers
+  - send_worker_message
+  - close_worker
+  - resume_worker
+  - cleanup_worker_worktree
+instructions: |
+  Spawn autonomous worker subagents for parallel coding subtasks. Each
+  worker has its own conversation, full read/write access, and runs
+  concurrently with the orchestrator and other workers.
+
+  - `spawn_worker(task)` returns a worker id; each task description must
+    include goal, file scope, context, conventions, boundaries, and
+    acceptance criteria.
+  - `get_worker_status(id, tail=N)` is non-blocking; `wait_for_workers([ids])`
+    blocks until at least one finishes.
+  - `send_worker_message(id, msg)` injects a user message mid-run to
+    course-correct.
+  - `close_worker` cancels; `resume_worker` restarts a finished one with
+    a follow-up. Clean up worktrees with `cleanup_worker_worktree`.

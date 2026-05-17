@@ -5,6 +5,7 @@ paths:
   agents: omni_agents
   tools: tools
   server_functions: server_functions
+  capabilities: capabilities
   evaluations: evaluations
   target: target
 agents:

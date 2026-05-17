@@ -90,6 +90,11 @@ def cli_main(argv=None) -> None:
 
         return sandbox_main(args[1:])
 
+    if not force_prompt_mode and args and args[0] == "serve":
+        from omni_code.serve_cli import main as serve_main
+
+        return serve_main(args[1:])
+
     if not force_prompt_mode and args and args[0] == "sessions":
         from omni_code.sessions_cli import main as sessions_main
 

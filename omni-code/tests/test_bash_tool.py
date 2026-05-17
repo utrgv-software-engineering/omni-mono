@@ -25,19 +25,21 @@ from tools._bash_jobs import get_registry
 
 
 @pytest.fixture(autouse=True)
-def _isolate_registry():
+def _isolate_registry(invoke_tool):
     """Drop any leftover jobs between tests so list_all is deterministic."""
     reg = get_registry()
     reg._jobs.clear()  # type: ignore[attr-defined]
     yield
-    # Best-effort: kill anything we forgot about.
+    # Best-effort: kill anything we forgot about — terminate via the
+    # workspace ProcessHandle, on the shared test event loop.
     for job in list(reg._jobs.values()):  # type: ignore[attr-defined]
-        if job.poll_returncode() is None:
+        if job.exit_code is None:
             try:
-                job.popen.kill()
-                job.popen.wait(timeout=2)
+                invoke_tool.run(job.handle.terminate(force_after=0.5))
             except Exception:
                 pass
+        if job.watcher_task is not None and not job.watcher_task.done():
+            job.watcher_task.cancel()
     reg._jobs.clear()  # type: ignore[attr-defined]
 
 
@@ -158,7 +160,7 @@ class TestBackgroundExecuteBash:
         # all as running=False with exit_codes set.
         for entry in snap_b:
             job = get_registry().get(entry["job_id"])
-            job.popen.wait(timeout=5)
+            invoke_tool.wait_for_job_exit(job, timeout=5)
         status_b = invoke_tool(
             bash_tool.bash_status,
             job_id=_meta(spawn_b)["job_id"],
@@ -261,7 +263,7 @@ class TestBashStatus:
 
         # Wait for the sleep to finish.
         job = get_registry().get(job_id)
-        job.popen.wait(timeout=5)
+        invoke_tool.wait_for_job_exit(job, timeout=5)
 
         finished = invoke_tool(
             bash_tool.bash_status,
@@ -323,7 +325,7 @@ class TestBashLogs:
             workspace_root=str(tmp_path),
         )
         job_id = _meta(spawn)["job_id"]
-        get_registry().get(job_id).popen.wait(timeout=5)
+        invoke_tool.wait_for_job_exit(get_registry().get(job_id), timeout=5)
 
         result = invoke_tool(
             bash_tool.bash_logs,
@@ -344,7 +346,7 @@ class TestBashLogs:
             workspace_root=str(tmp_path),
         )
         job_id = _meta(spawn)["job_id"]
-        get_registry().get(job_id).popen.wait(timeout=5)
+        invoke_tool.wait_for_job_exit(get_registry().get(job_id), timeout=5)
 
         result = invoke_tool(
             bash_tool.bash_logs,
@@ -405,7 +407,7 @@ class TestBashKill:
             workspace_root=str(tmp_path),
         )
         job_id = _meta(spawn)["job_id"]
-        get_registry().get(job_id).popen.wait(timeout=5)
+        invoke_tool.wait_for_job_exit(get_registry().get(job_id), timeout=5)
 
         result = invoke_tool(
             bash_tool.bash_kill,

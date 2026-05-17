@@ -25,17 +25,18 @@ from tools._bash_jobs import get_registry
 
 
 @pytest.fixture(autouse=True)
-def _isolate_registry():
+def _isolate_registry(invoke_tool):
     reg = get_registry()
     reg._jobs.clear()  # type: ignore[attr-defined]
     yield
     for job in list(reg._jobs.values()):  # type: ignore[attr-defined]
-        if job.poll_returncode() is None:
+        if job.exit_code is None:
             try:
-                job.popen.kill()
-                job.popen.wait(timeout=2)
+                invoke_tool.run(job.handle.terminate(force_after=0.5))
             except Exception:
                 pass
+        if job.watcher_task is not None and not job.watcher_task.done():
+            job.watcher_task.cancel()
     reg._jobs.clear()  # type: ignore[attr-defined]
 
 
@@ -70,7 +71,7 @@ def test_list_empty():
 
 def test_list_returns_known_jobs(invoke_tool, tmp_path):
     job_id = _spawn_background(invoke_tool, tmp_path, "echo hi")
-    res = asyncio.run(bj.bash_jobs_list())
+    res = invoke_tool.run(bj.bash_jobs_list())
     ids = {j["job_id"] for j in res["snapshot"]}
     assert job_id in ids
 
@@ -82,7 +83,7 @@ def test_list_returns_known_jobs(invoke_tool, tmp_path):
 
 def test_kill_running_job(invoke_tool, tmp_path):
     job_id = _spawn_background(invoke_tool, tmp_path, "sleep 30")
-    res = asyncio.run(bj.bash_jobs_kill(job_id=job_id, grace_seconds=2))
+    res = invoke_tool.run(bj.bash_jobs_kill(job_id=job_id, grace_seconds=2))
     assert res["ok"] is True
     assert res["signal_sent"] in {"SIGTERM", "SIGKILL"}
     assert res["job"]["running"] is False
@@ -93,8 +94,8 @@ def test_kill_running_job(invoke_tool, tmp_path):
 
 def test_kill_already_exited_job(invoke_tool, tmp_path):
     job_id = _spawn_background(invoke_tool, tmp_path, "echo done")
-    get_registry().get(job_id).popen.wait(timeout=5)
-    res = asyncio.run(bj.bash_jobs_kill(job_id=job_id))
+    invoke_tool.wait_for_job_exit(get_registry().get(job_id), timeout=5)
+    res = invoke_tool.run(bj.bash_jobs_kill(job_id=job_id))
     assert res["ok"] is True
     assert res["signal_sent"] == "none"
     assert res["job"]["exit_code"] == 0
@@ -116,8 +117,8 @@ def test_tail_returns_recent_log_lines(invoke_tool, tmp_path):
     job_id = _spawn_background(
         invoke_tool, tmp_path, "for i in $(seq 1 10); do echo line-$i; done"
     )
-    get_registry().get(job_id).popen.wait(timeout=5)
-    res = asyncio.run(bj.bash_jobs_tail(job_id=job_id, lines=3))
+    invoke_tool.wait_for_job_exit(get_registry().get(job_id), timeout=5)
+    res = invoke_tool.run(bj.bash_jobs_tail(job_id=job_id, lines=3))
     assert res["ok"] is True
     assert res["total_lines"] == 10
     body_lines = res["text"].splitlines()
@@ -129,8 +130,8 @@ def test_tail_from_start(invoke_tool, tmp_path):
     job_id = _spawn_background(
         invoke_tool, tmp_path, "for i in $(seq 1 5); do echo line-$i; done"
     )
-    get_registry().get(job_id).popen.wait(timeout=5)
-    res = asyncio.run(bj.bash_jobs_tail(job_id=job_id, lines=2, from_start=True))
+    invoke_tool.wait_for_job_exit(get_registry().get(job_id), timeout=5)
+    res = invoke_tool.run(bj.bash_jobs_tail(job_id=job_id, lines=2, from_start=True))
     assert res["ok"] is True
     assert res["text"].splitlines() == ["line-1", "line-2"]
     assert res["from_start"] is True
@@ -148,8 +149,8 @@ def test_tail_clamps_to_max_lines(invoke_tool, tmp_path, monkeypatch):
     job_id = _spawn_background(
         invoke_tool, tmp_path, "for i in $(seq 1 20); do echo line-$i; done"
     )
-    get_registry().get(job_id).popen.wait(timeout=5)
-    res = asyncio.run(bj.bash_jobs_tail(job_id=job_id, lines=999_999))
+    invoke_tool.wait_for_job_exit(get_registry().get(job_id), timeout=5)
+    res = invoke_tool.run(bj.bash_jobs_tail(job_id=job_id, lines=999_999))
     assert res["ok"] is True
     assert len(res["text"].splitlines()) == 5
 
@@ -171,8 +172,17 @@ class _FakeService:
         # _all_sessions helper finds something to fan out to.
         self._session_manager = type("M", (), {"_by_id": {}})()
 
-    async def request_client_function(self, function, args=None, *, session=None, expect_result=False):
-        self.calls.append({"function": function, "args": args, "session": session, "expect_result": expect_result})
+    async def request_client_function(
+        self, function, args=None, *, session=None, expect_result=False
+    ):
+        self.calls.append(
+            {
+                "function": function,
+                "args": args,
+                "session": session,
+                "expect_result": expect_result,
+            }
+        )
         return True
 
 
@@ -185,7 +195,9 @@ def test_kill_invoke_handler_broadcasts_snapshot(invoke_tool, tmp_path):
     sess = _FakeSession()
     handler = getattr(bj.bash_jobs_kill, "_server_function_on_invoke")
 
-    res = asyncio.run(handler(service, sess, {"job_id": job_id, "grace_seconds": 1}))
+    res = invoke_tool.run(
+        handler(service, sess, {"job_id": job_id, "grace_seconds": 1})
+    )
 
     assert res["ok"] is True
     assert len(service.calls) == 1
@@ -216,7 +228,7 @@ def test_broadcast_failure_is_swallowed(invoke_tool, tmp_path):
 
     job_id = _spawn_background(invoke_tool, tmp_path, "sleep 10")
     handler = getattr(bj.bash_jobs_kill, "_server_function_on_invoke")
-    res = asyncio.run(
+    res = invoke_tool.run(
         handler(_AngryService(), _FakeSession(), {"job_id": job_id, "grace_seconds": 1})
     )
     # Broadcast failed but the kill went through.
@@ -236,9 +248,9 @@ def test_bj_list_empty():
 
 def test_bj_list_running_and_exited(invoke_tool, tmp_path):
     a = _spawn_background(invoke_tool, tmp_path, "echo a")
-    get_registry().get(a).popen.wait(timeout=5)
+    invoke_tool.wait_for_job_exit(get_registry().get(a), timeout=5)
     b = _spawn_background(invoke_tool, tmp_path, "sleep 30")
-    res = asyncio.run(bj.bj_list())
+    res = invoke_tool.run(bj.bj_list())
     assert "1 running" in res["message"]
     assert "1 exited" in res["message"]
     assert a in res["message"]
@@ -252,7 +264,9 @@ def test_bj_kill_no_arg():
 
 def test_bj_kill_running_job(invoke_tool, tmp_path):
     job_id = _spawn_background(invoke_tool, tmp_path, "sleep 30")
-    res = asyncio.run(bj.bj_kill(text=f"  {job_id}  "))  # Leading/trailing whitespace
+    res = invoke_tool.run(
+        bj.bj_kill(text=f"  {job_id}  ")
+    )  # Leading/trailing whitespace
     assert res["message"].startswith(f"Killed {job_id}")
     assert res["job"]["running"] is False
 
@@ -269,7 +283,7 @@ def test_bj_kill_invoke_handler_broadcasts(invoke_tool, tmp_path):
     job_id = _spawn_background(invoke_tool, tmp_path, "sleep 30")
     service = _FakeService()
     handler = getattr(bj.bj_kill, "_server_function_on_invoke")
-    res = asyncio.run(handler(service, _FakeSession(), {"text": job_id}))
+    res = invoke_tool.run(handler(service, _FakeSession(), {"text": job_id}))
     assert res["job"]["running"] is False
     assert any(c["function"] == "ui.bash_jobs.update" for c in service.calls)
 
@@ -283,8 +297,8 @@ def test_bj_logs_returns_tail(invoke_tool, tmp_path):
     job_id = _spawn_background(
         invoke_tool, tmp_path, "for i in $(seq 1 5); do echo line-$i; done"
     )
-    get_registry().get(job_id).popen.wait(timeout=5)
-    res = asyncio.run(bj.bj_logs(text=job_id))
+    invoke_tool.wait_for_job_exit(get_registry().get(job_id), timeout=5)
+    res = invoke_tool.run(bj.bj_logs(text=job_id))
     assert "exited(0)" in res["message"]
     assert "line-5" in res["message"]
 

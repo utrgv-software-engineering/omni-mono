@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import random
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Any, Optional
@@ -17,7 +18,19 @@ _WORKER_AGENT_YAML = (
     Path(__file__).resolve().parent.parent / "omni_agents" / "worker" / "agent.yml"
 )
 
-_WORKTREES_DIR = Path.home() / "Omni" / "Worktrees"
+
+def _worktrees_dir() -> str:
+    """Resolve the worktree parent directory for the active workspace.
+
+    Lives under the workspace abstraction's framework-owned scratch root
+    so it stays outside the user's project files (host: ``~/.omniagents/
+    scratch/worktrees``; sandbox: ``/var/lib/omniagents/scratch/worktrees``).
+    Tools that previously read ``_WORKTREES_DIR`` should call this instead.
+    """
+    from omniagents import workspace as _ws
+
+    return os.path.join(_ws.scratch_root(), "worktrees")
+
 
 # ---------------------------------------------------------------------------
 # Whimsical worker name generator
@@ -219,36 +232,45 @@ def _workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _is_git_repo(workspace_root: str) -> bool:
-    """Check if workspace_root is inside a git repository."""
-    try:
-        subprocess.run(
-            ["git", "-C", workspace_root, "rev-parse", "--is-inside-work-tree"],
-            capture_output=True,
-            timeout=5,
-            check=True,
-        )
-        return True
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
-        return False
+async def _is_git_repo(workspace_root: str) -> bool:
+    """Check if workspace_root is inside a git repository.
 
+    Routed through ``workspace.exec`` so the same body works against a
+    SandboxWorkspace (where the git binary lives inside the sandbox).
+    """
+    from omniagents import workspace as _ws
 
-def _is_git_dirty(workspace_root: str) -> bool:
-    """Check if the workspace has uncommitted changes."""
     try:
-        result = subprocess.run(
-            ["git", "-C", workspace_root, "status", "--porcelain"],
-            capture_output=True,
-            timeout=5,
-            check=True,
+        result = await _ws.exec(
+            f"git -C {shlex.quote(workspace_root)} rev-parse --is-inside-work-tree",
+            timeout=5.0,
+            shell=True,
         )
-        output = result.stdout.decode() if isinstance(result.stdout, bytes) else result.stdout
-        return bool(output.strip())
+        return result.exit_code == 0
     except Exception:
         return False
 
 
-def _create_worker_worktree(workspace_root: str, worker_id: str) -> dict[str, str]:
+async def _is_git_dirty(workspace_root: str) -> bool:
+    """Check if the workspace has uncommitted changes."""
+    from omniagents import workspace as _ws
+
+    try:
+        result = await _ws.exec(
+            f"git -C {shlex.quote(workspace_root)} status --porcelain",
+            timeout=5.0,
+            shell=True,
+        )
+        if result.exit_code != 0:
+            return False
+        return bool((result.stdout or "").strip())
+    except Exception:
+        return False
+
+
+async def _create_worker_worktree(
+    workspace_root: str, worker_id: str
+) -> dict[str, str]:
     """Create a git worktree for an isolated worker.
 
     Works whether the supervisor is in a regular repo or an existing worktree —
@@ -256,38 +278,58 @@ def _create_worker_worktree(workspace_root: str, worker_id: str) -> dict[str, st
 
     Returns dict with worktree_path, worktree_branch, worktree_name, parent_workspace.
     """
+    from omniagents import workspace as _ws
+
     # Derive a worktree name from the workspace directory name + worker id.
-    # e.g. supervisor in ~/Omni/Worktrees/bold-hawk → "bold-hawk-worker-pip"
-    # e.g. supervisor in ~/projects/my-app → "my-app-worker-pip"
+    # e.g. supervisor in /workspace/bold-hawk → "bold-hawk-worker-pip"
+    # e.g. supervisor in ~/projects/my-app    → "my-app-worker-pip"
     parent_name = Path(workspace_root).name
     worktree_name = f"{parent_name}-worker-{worker_id}"
     worktree_branch = f"worker/{worktree_name}"
-    worktree_path = str(_WORKTREES_DIR / worktree_name)
+    worktrees_dir = _worktrees_dir()
+    worktree_path = os.path.join(worktrees_dir, worktree_name)
 
-    # Handle path collision
-    if Path(worktree_path).exists():
+    # Existence check + mkdir via exec rather than the workspace's typed
+    # methods. Reason: sandbox ``scratch_root`` lives outside the manifest
+    # mount, so ``session.mkdir`` / ``session.exists`` may be blocked by
+    # path policy. ``session.exec`` (which workspace.exec routes through)
+    # is not path-policy checked and can read/write anywhere the shell
+    # has permission. Host backend evaluates the same shell commands
+    # locally, so behavior is consistent.
+    async def _scratch_exists(p: str) -> bool:
+        probe = await _ws.exec(f"test -e {shlex.quote(p)}", shell=True, timeout=5.0)
+        return probe.exit_code == 0
+
+    if await _scratch_exists(worktree_path):
         n = 2
-        while Path(f"{worktree_path}-{n}").exists():
+        while await _scratch_exists(f"{worktree_path}-{n}"):
             n += 1
         worktree_name = f"{worktree_name}-{n}"
         worktree_branch = f"worker/{worktree_name}"
-        worktree_path = str(_WORKTREES_DIR / worktree_name)
+        worktree_path = os.path.join(worktrees_dir, worktree_name)
 
-    # Ensure parent directory exists
-    _WORKTREES_DIR.mkdir(parents=True, exist_ok=True)
-
-    subprocess.run(
-        [
-            "git", "-C", workspace_root,
-            "worktree", "add",
-            "-b", worktree_branch,
-            worktree_path,
-            "HEAD",
-        ],
-        capture_output=True,
-        timeout=30,
-        check=True,
+    mkdir_result = await _ws.exec(
+        f"mkdir -p {shlex.quote(worktrees_dir)}", shell=True, timeout=10.0
     )
+    if mkdir_result.exit_code != 0:
+        raise OSError(
+            f"Failed to create worktrees scratch dir {worktrees_dir!r}: "
+            f"{mkdir_result.stderr or mkdir_result.stdout}"
+        )
+
+    result = await _ws.exec(
+        f"git -C {shlex.quote(workspace_root)} worktree add "
+        f"-b {shlex.quote(worktree_branch)} {shlex.quote(worktree_path)} HEAD",
+        timeout=30.0,
+        shell=True,
+    )
+    if result.exit_code != 0:
+        raise subprocess.CalledProcessError(
+            result.exit_code,
+            ["git", "worktree", "add"],
+            output=(result.stdout or "").encode("utf-8"),
+            stderr=(result.stderr or "").encode("utf-8"),
+        )
 
     return {
         "worktree_path": worktree_path,
@@ -297,7 +339,7 @@ def _create_worker_worktree(workspace_root: str, worker_id: str) -> dict[str, st
     }
 
 
-def _remove_worker_worktree(worker_id: str) -> bool:
+async def _remove_worker_worktree(worker_id: str) -> bool:
     """Remove a worker's worktree and branch. Returns True if cleanup succeeded."""
     info = _WORKER_WORKTREES.get(worker_id)
     if info is None:
@@ -308,20 +350,22 @@ def _remove_worker_worktree(worker_id: str) -> bool:
     wt_name = info["worktree_name"]
     branch = info["worktree_branch"]
 
+    from omniagents import workspace as _ws
+
     try:
-        subprocess.run(
-            ["git", "-C", parent, "worktree", "remove", "--force", wt_path],
-            capture_output=True,
-            timeout=10,
+        await _ws.exec(
+            f"git -C {shlex.quote(parent)} worktree remove --force {shlex.quote(wt_path)}",
+            timeout=10.0,
+            shell=True,
         )
     except Exception:
         pass
 
     try:
-        subprocess.run(
-            ["git", "-C", parent, "branch", "-D", branch],
-            capture_output=True,
-            timeout=5,
+        await _ws.exec(
+            f"git -C {shlex.quote(parent)} branch -D {shlex.quote(branch)}",
+            timeout=5.0,
+            shell=True,
         )
     except Exception:
         pass
@@ -376,12 +420,14 @@ async def spawn_worker(
     worker_workspace = workspace_root
 
     if isolation == "worktree":
-        if not _is_git_repo(workspace_root):
-            llm_output = json.dumps({
-                "worker_id": worker_id,
-                "status": "error",
-                "error": "Cannot create worktree: workspace is not a git repository.",
-            })
+        if not await _is_git_repo(workspace_root):
+            llm_output = json.dumps(
+                {
+                    "worker_id": worker_id,
+                    "status": "error",
+                    "error": "Cannot create worktree: workspace is not a git repository.",
+                }
+            )
             return RichToolOutput(
                 llm_output,
                 {
@@ -394,14 +440,16 @@ async def spawn_worker(
             )
 
         try:
-            worktree_info = _create_worker_worktree(workspace_root, worker_id)
+            worktree_info = await _create_worker_worktree(workspace_root, worker_id)
         except subprocess.CalledProcessError as e:
             stderr = e.stderr.decode() if isinstance(e.stderr, bytes) else str(e.stderr)
-            llm_output = json.dumps({
-                "worker_id": worker_id,
-                "status": "error",
-                "error": f"Failed to create worktree: {stderr.strip()}",
-            })
+            llm_output = json.dumps(
+                {
+                    "worker_id": worker_id,
+                    "status": "error",
+                    "error": f"Failed to create worktree: {stderr.strip()}",
+                }
+            )
             return RichToolOutput(
                 llm_output,
                 {
@@ -426,18 +474,20 @@ async def spawn_worker(
 
         # The worker's worktree is checked out from HEAD and will not contain
         # any uncommitted changes. Fail unless the LLM opts in with allow_dirty.
-        if not allow_dirty and _is_git_dirty(workspace_root):
+        if not allow_dirty and await _is_git_dirty(workspace_root):
             # Roll back the worktree we just created.
-            _remove_worker_worktree(worker_id)
-            llm_output = json.dumps({
-                "worker_id": worker_id,
-                "status": "error",
-                "error": (
-                    "Workspace has uncommitted changes that would not be visible "
-                    "in the worker's worktree. Commit your changes first, or set "
-                    "allow_dirty=True if the uncommitted changes are not relevant."
-                ),
-            })
+            await _remove_worker_worktree(worker_id)
+            llm_output = json.dumps(
+                {
+                    "worker_id": worker_id,
+                    "status": "error",
+                    "error": (
+                        "Workspace has uncommitted changes that would not be visible "
+                        "in the worker's worktree. Commit your changes first, or set "
+                        "allow_dirty=True if the uncommitted changes are not relevant."
+                    ),
+                }
+            )
             return RichToolOutput(
                 llm_output,
                 {
@@ -787,7 +837,9 @@ async def close_worker(worker_id: str) -> RichToolOutput:
 
 
 @rich_function_tool(client_status="Resuming worker...")
-async def resume_worker(ctx: RunContextWrapper[Any], worker_id: str, message: str) -> RichToolOutput:
+async def resume_worker(
+    ctx: RunContextWrapper[Any], worker_id: str, message: str
+) -> RichToolOutput:
     """Resume a previously closed or completed worker with a new message.
 
     Restores the worker's full conversation history and starts a new run.
@@ -901,11 +953,13 @@ async def cleanup_worker_worktree(worker_id: str) -> RichToolOutput:
     """
     wt = _WORKER_WORKTREES.get(worker_id)
     if wt is None:
-        llm_output = json.dumps({
-            "worker_id": worker_id,
-            "status": "no_worktree",
-            "error": "No worktree found for this worker.",
-        })
+        llm_output = json.dumps(
+            {
+                "worker_id": worker_id,
+                "status": "no_worktree",
+                "error": "No worktree found for this worker.",
+            }
+        )
         return RichToolOutput(
             llm_output,
             {
@@ -919,14 +973,16 @@ async def cleanup_worker_worktree(worker_id: str) -> RichToolOutput:
 
     worktree_path = wt["worktree_path"]
     worktree_branch = wt["worktree_branch"]
-    _remove_worker_worktree(worker_id)
+    await _remove_worker_worktree(worker_id)
 
-    llm_output = json.dumps({
-        "worker_id": worker_id,
-        "status": "cleaned_up",
-        "removed_path": worktree_path,
-        "removed_branch": worktree_branch,
-    })
+    llm_output = json.dumps(
+        {
+            "worker_id": worker_id,
+            "status": "cleaned_up",
+            "removed_path": worktree_path,
+            "removed_branch": worktree_branch,
+        }
+    )
     return RichToolOutput(
         llm_output,
         {
@@ -945,7 +1001,9 @@ async def cleanup_worker_worktree(worker_id: str) -> RichToolOutput:
 
 
 @approval_metadata()
-def spawn_worker_approval(task: str, isolation: Optional[str] = None, allow_dirty: bool = False) -> dict:
+def spawn_worker_approval(
+    task: str, isolation: Optional[str] = None, allow_dirty: bool = False
+) -> dict:
     """Generate approval metadata for spawn_worker showing the full task description."""
     lines = task.splitlines()
     preview = task
