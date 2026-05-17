@@ -1,0 +1,7 @@
+name: artifacts
+tools:
+  - display_artifact
+instructions: |
+  `display_artifact` surfaces a named output (text, code, table, etc.) in
+  the UI artifacts panel. Use when the user should see and interact with a
+  produced result rather than just read it inline.

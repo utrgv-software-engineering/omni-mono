@@ -14,6 +14,7 @@ dependencies = [
     "requests",
     "beautifulsoup4",
     "pygit2",
+    "pathspec>=0.12",
     "jsonref>=1.0.0",
 ]
 
@@ -95,7 +96,9 @@ platform = [
     "PyJWT[crypto]>=2.8.0",
 ]
 enterprise = ["omniagents[oidc,sqlcipher,presidio,platform]"]
-all = ["omniagents[server,web,studio,studio-server,voice]"]
+all = [
+    "omniagents[server,web,studio,studio-server,voice,litellm,oidc,sqlcipher,presidio,platform,session-sqlalchemy,session-redis,session-mongodb,session-encrypted,sandbox-docker,sandbox-e2b,sandbox-modal,sandbox-runloop,sandbox-daytona,sandbox-blaxel,sandbox-vercel,sandbox-cloudflare]",
+]
 dev = [
     "pytest",
     "pytest-asyncio",
@@ -205,6 +208,13 @@ include-package-data = true
 "omniagents.core.project" = [
     "templates/*",
     "templates/**/*",
+]
+# Pyodide worker — pure JS, no Python at runtime, but the .mjs has to ship
+# with the wheel so PyodideWorkspace can spawn it via importlib.resources.
+"omniagents.workspace.pyodide_worker" = [
+    "worker.mjs",
+    "package.json",
+    "README.md",
 ]
 
 [tool.setuptools.dynamic]

@@ -20,8 +20,17 @@ from .factory import (
     build_sandbox_client,
     build_sandbox_run_config,
 )
+# Importing these entry classes registers them with BaseEntry's
+# subclass registry so manifests using their ``type`` strings resolve
+# correctly. Must happen before any manifest is parsed.
+from .local_git_archive import LocalGitArchive, LocalGitArchiveError
+from .permissive_local_dir import PermissiveLocalDir, PermissiveLocalDirError
 
 __all__ = [
+    "LocalGitArchive",
+    "LocalGitArchiveError",
+    "PermissiveLocalDir",
+    "PermissiveLocalDirError",
     "build_manifest",
     "build_sandbox_client",
     "build_sandbox_run_config",

@@ -17,6 +17,9 @@ YAML schema (all fields optional unless marked required)::
               daytona | blaxel | vercel | cloudflare        # required
         # remaining keys are forwarded as kwargs to the matching
         # ``*SandboxClient`` constructor (provider-specific)
+        cap_add: ["NET_ADMIN"]        # docker: extra capabilities
+        security_opt: ["seccomp=unconfined"]  # docker: relax seccomp (required for iptables-nft)
+        network_mode: "none"          # docker: container network mode
       options:                        # optional client options dict
         # forwarded to the matching ``*SandboxClientOptions``
         image: my/image:tag           # docker
@@ -93,10 +96,60 @@ def _build_unix_local_options(options: Dict[str, Any]) -> Any:
 
 def _build_docker_client(client_kwargs: Dict[str, Any]) -> Any:
     try:
-        from agents.sandbox.sandboxes import DockerSandboxClient  # type: ignore
+        import docker as docker_sdk  # type: ignore
     except Exception as e:  # pragma: no cover - exercised when extra missing
         raise ImportError(_missing_extra_message("docker", "sandbox-docker")) from e
-    return DockerSandboxClient(**client_kwargs)
+
+    from omniagents.core.sandbox.docker_extended import BindSpec, ExtendedDockerSandboxClient
+
+    # YAML-driven docker clients always come from the local engine. Callers
+    # who need a custom docker SDK client can construct the sandbox client
+    # in Python directly. ``cap_add`` and friends are routed here
+    # (factory's ``options:`` block stripped them out of the SDK's options
+    # since they're not first-class SDK fields).
+    cap_add = tuple(client_kwargs.pop("cap_add", ()))
+    network_mode = client_kwargs.pop("network_mode", None)
+    security_opt = tuple(client_kwargs.pop("security_opt", ()))
+    user = client_kwargs.pop("user", None)
+    binds_raw = client_kwargs.pop("binds", None) or []
+    binds = _parse_binds(binds_raw)
+    docker_client = client_kwargs.pop("docker_client", None) or docker_sdk.from_env()
+
+    return ExtendedDockerSandboxClient(
+        docker_client,
+        cap_add=cap_add,
+        network_mode=network_mode,
+        security_opt=security_opt,
+        user=user,
+        binds=binds,
+        **client_kwargs,
+    )
+
+
+def _parse_binds(raw: Any) -> list[Any]:
+    """Parse the YAML ``client.binds:`` list into ``BindSpec`` instances.
+
+    Accepts a list of mappings: ``[{source: ..., target: ..., read_only: ...}, ...]``.
+    Required keys: ``source``, ``target``. ``read_only`` defaults False.
+    """
+    from omniagents.core.sandbox.docker_extended import BindSpec
+
+    if not raw:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError("sandbox.client.binds must be a list")
+    out: list[Any] = []
+    for idx, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ValueError(f"sandbox.client.binds[{idx}] must be a mapping")
+        source = item.get("source")
+        target = item.get("target")
+        if not isinstance(source, str) or not source:
+            raise ValueError(f"sandbox.client.binds[{idx}].source is required (string)")
+        if not isinstance(target, str) or not target:
+            raise ValueError(f"sandbox.client.binds[{idx}].target is required (string)")
+        out.append(BindSpec(source=source, target=target, read_only=bool(item.get("read_only", False))))
+    return out
 
 
 def _build_docker_options(options: Dict[str, Any]) -> Any:

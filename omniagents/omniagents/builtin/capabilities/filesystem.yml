@@ -1,0 +1,16 @@
+name: filesystem
+tools:
+  - read_file
+  - read_image
+  - list_directory
+  - glob_files
+  - grep_files
+  - write_file
+  - edit_file
+  - apply_patch
+instructions: |
+  Filesystem operations are available:
+  - `read_file`, `list_directory`, `glob_files`, `grep_files` for inspection.
+  - `read_image` to load a local image file into the conversation.
+  - `apply_patch` is preferred for edits to existing files.
+  - `write_file` for creating new files; `edit_file` for line-based edits.

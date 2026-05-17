@@ -68,12 +68,11 @@ youtube_module = importlib.import_module("omniagents.builtin.tools.youtube_searc
 
 
 def unwrap(tool):
-    impl = tool.on_invoke_tool.__closure__[0].cell_contents
-    async_wrapper = impl.__closure__[-1].cell_contents
-    closure = getattr(async_wrapper, "__closure__", None)
-    if closure:
-        return closure[0].cell_contents
-    return async_wrapper
+    """Return the original function the tool wraps (set by our
+    ``function_tool`` / ``rich_function_tool`` decorators as
+    ``_original_func``). Avoids digging through SDK closures, which
+    change shape between agents-sdk releases."""
+    return tool._original_func
 
 
 class DummyResponse:

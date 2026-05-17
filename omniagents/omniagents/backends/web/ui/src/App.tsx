@@ -149,9 +149,11 @@ export function App() {
           const names = new Set(funcs.map(f => f.name))
           if (names.has('fs_list_dir') && names.has('fs_get_workspace_root')) {
             setWorkspaceSupported(true)
-            // Get initial workspace (cwd)
+            // Use fs_get_workspace_root, not fs_get_cwd: for sandboxed
+            // agents the manifest root is what the agent's tools see;
+            // omni serve's host cwd may differ.
             try {
-              const res = await client.serverCall('fs_get_cwd') as any
+              const res = await client.serverCall('fs_get_workspace_root') as any
               if (res?.path) setWorkspacePath(res.path)
             } catch {}
           }
@@ -642,11 +644,13 @@ export function App() {
     setRunId(undefined)
     // Reset or restore workspace state
     if (!id) {
-      // New chat — unlock workspace, restore default (cwd)
+      // New chat — unlock workspace, restore default (manifest root,
+      // not host cwd, so sandboxed agents show the path their tools
+      // actually operate on).
       setWorkspaceLocked(false)
       if (workspaceSupported) {
         try {
-          const res = await client.serverCall('fs_get_cwd') as any
+          const res = await client.serverCall('fs_get_workspace_root') as any
           if (res?.path) setWorkspacePath(res.path)
         } catch {}
       }

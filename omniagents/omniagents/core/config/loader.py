@@ -443,6 +443,8 @@ def load_agent_spec_from_yaml(
     tool_registry: Optional[Dict[str, Any]] = None,
     guardrails_registry: Optional[Dict[str, Dict[str, Any]]] = None,
     server_functions_registry: Optional[Dict[str, Any]] = None,
+    agents_map: Optional[Dict[str, Path]] = None,
+    capability_registry: Optional[Dict[str, Any]] = None,
     project_defaults: Optional[Dict[str, Any]] = None,
     user_mcp_servers: Optional[List[MCPServerConfig]] = None,
 ) -> AgentSpec:
@@ -1350,9 +1352,49 @@ def load_agent_spec_from_yaml(
             handoffs_config = []
 
         for handoff_item in handoffs_config:
+            # Bare-string shorthand: `handoffs: [explorer]` is sugar for
+            # `handoffs: [{agent: explorer}]`. Mirrors the agent_tools shape.
+            if isinstance(handoff_item, str):
+                handoff_item = {"agent": handoff_item}
+
             if isinstance(handoff_item, dict):
+                # `agent: <name>` resolves against the project agent registry
+                # (built by core/project/runtime.py from paths.agents). Translates
+                # to the same yaml_path the `yaml:` branch produces, so downstream
+                # HandoffConfig handling is unchanged.
+                if "agent" in handoff_item:
+                    agent_name = handoff_item.get("agent")
+                    if not isinstance(agent_name, str) or not agent_name.strip():
+                        print(
+                            f"Warning: handoff 'agent' value must be a non-empty string in {config_path}. Skipping."
+                        )
+                        continue
+                    if agents_map is None:
+                        print(
+                            f"Warning: handoff entry uses 'agent: {agent_name}' but no project agent registry is available "
+                            f"(loader was called without agents_map). Skipping. Use 'yaml:' or load via project."
+                        )
+                        continue
+                    handoff_yaml_path = agents_map.get(agent_name)
+                    if handoff_yaml_path is None:
+                        print(
+                            f"Warning: handoff 'agent: {agent_name}' not found in project. "
+                            f"Available: {sorted(agents_map.keys())}. Skipping."
+                        )
+                        continue
+                    handoff_config = HandoffConfig(
+                        yaml_path=str(handoff_yaml_path),
+                        tool_name_override=handoff_item.get("tool_name_override"),
+                        tool_description_override=handoff_item.get(
+                            "tool_description_override"
+                        ),
+                        is_enabled=resolve_predicate(
+                            handoff_item.get("is_enabled"), predicate_registry
+                        ),
+                    )
+                    handoff_configs_list.append(handoff_config)
                 # Check if it's an external YAML reference
-                if "yaml" in handoff_item:
+                elif "yaml" in handoff_item:
                     yaml_path = handoff_item.get("yaml")
 
                     # Resolve path relative to current YAML file
@@ -1414,11 +1456,11 @@ def load_agent_spec_from_yaml(
 
                 else:
                     print(
-                        f"Warning: Handoff item must have either 'yaml' or 'inline' field in {config_path}. Skipping."
+                        f"Warning: Handoff item must have 'agent', 'yaml', or 'inline' field in {config_path}. Skipping."
                     )
             else:
                 print(
-                    f"Warning: Invalid handoff item in {config_path}. Expected dict. Skipping."
+                    f"Warning: Invalid handoff item in {config_path}. Expected dict or string. Skipping."
                 )
 
     # --- Agent-as-Tool Configuration ---
@@ -1434,9 +1476,15 @@ def load_agent_spec_from_yaml(
             agent_tools_config = []
 
         for at_item in agent_tools_config:
+            # Bare-string shorthand: `agent_tools: [explorer]` is sugar for
+            # `agent_tools: [{agent: explorer}]`. Mirrors the bare-string
+            # form `tools:` already accepts.
+            if isinstance(at_item, str):
+                at_item = {"agent": at_item}
+
             if not isinstance(at_item, dict):
                 print(
-                    f"Warning: Invalid agent_tool item in {config_path}. Expected dict. Skipping."
+                    f"Warning: Invalid agent_tool item in {config_path}. Expected dict or string. Skipping."
                 )
                 continue
 
@@ -1453,7 +1501,41 @@ def load_agent_spec_from_yaml(
             )
             max_turns_val = at_item.get("max_turns")
 
-            if "yaml" in at_item:
+            # `agent: <name>` resolves against the project agent registry
+            # (built by core/project/runtime.py from paths.agents). Translates
+            # to the same yaml_path the `yaml:` branch produces, so downstream
+            # AgentToolConfig handling is unchanged.
+            if "agent" in at_item:
+                agent_name = at_item.get("agent")
+                if not isinstance(agent_name, str) or not agent_name.strip():
+                    print(
+                        f"Warning: agent_tool 'agent' value must be a non-empty string in {config_path}. Skipping."
+                    )
+                    continue
+                if agents_map is None:
+                    print(
+                        f"Warning: agent_tool entry uses 'agent: {agent_name}' but no project agent registry is available "
+                        f"(loader was called without agents_map). Skipping. Use 'yaml:' or load via project."
+                    )
+                    continue
+                resolved_yp = agents_map.get(agent_name)
+                if resolved_yp is None:
+                    print(
+                        f"Warning: agent_tool 'agent: {agent_name}' not found in project. "
+                        f"Available: {sorted(agents_map.keys())}. Skipping."
+                    )
+                    continue
+                agent_tool_configs_list.append(
+                    AgentToolConfig(
+                        yaml_path=str(resolved_yp),
+                        tool_name=tool_name,
+                        tool_description=tool_description,
+                        is_enabled=is_enabled_resolved,
+                        needs_approval=needs_approval_resolved,
+                        max_turns=max_turns_val,
+                    )
+                )
+            elif "yaml" in at_item:
                 yp = at_item.get("yaml")
                 if not isinstance(yp, str) or not yp.strip():
                     print(
@@ -1502,8 +1584,116 @@ def load_agent_spec_from_yaml(
                 )
             else:
                 print(
-                    f"Warning: agent_tool item must have 'yaml' or 'inline' in {config_path}. Skipping."
+                    f"Warning: agent_tool item must have 'agent', 'yaml', or 'inline' in {config_path}. Skipping."
                 )
+
+    # --- Capabilities (Phase 0) ---
+    # `capabilities:` is a list of references to capabilities defined at
+    # project scope (inline in project.yml or under paths.capabilities/).
+    # Each entry is either a bare name string or a dict with `name:` plus
+    # optional `overrides:` (approvals/instructions/options/sampling_params).
+    # The agent builder calls cap.tools() on each resolved capability and
+    # merges into agent.tools at build time.
+    resolved_capabilities_list: List[Any] = []
+    capabilities_config = config.get("capabilities", [])
+    if capabilities_config and not isinstance(capabilities_config, list):
+        print(
+            f"Warning: 'capabilities' key in {config_path} must be a list. Ignoring."
+        )
+        capabilities_config = []
+
+    for cap_entry in capabilities_config:
+        # Bare-string shorthand: `capabilities: [filesystem]` references the
+        # capability as-defined; no overrides.
+        if isinstance(cap_entry, str):
+            cap_name = cap_entry
+            overrides_block = None
+        elif isinstance(cap_entry, dict):
+            cap_name = cap_entry.get("name")
+            overrides_block = cap_entry.get("overrides")
+            if not isinstance(cap_name, str) or not cap_name.strip():
+                print(
+                    f"Warning: capability entry in {config_path} requires a string 'name'. Skipping."
+                )
+                continue
+            if overrides_block is not None and not isinstance(overrides_block, dict):
+                print(
+                    f"Warning: capability {cap_name!r} 'overrides' must be a dict in {config_path}. Skipping overrides."
+                )
+                overrides_block = None
+        else:
+            print(
+                f"Warning: capability entry in {config_path} must be a string or dict. Skipping."
+            )
+            continue
+
+        if capability_registry is None:
+            print(
+                f"Warning: agent {config_path} references capability {cap_name!r} but no project "
+                "capability_registry is available (loader was called without one). Skipping. "
+                "Capabilities require loading via project."
+            )
+            continue
+        cap = capability_registry.get(cap_name)
+        if cap is None:
+            print(
+                f"Warning: capability {cap_name!r} not found in project. "
+                f"Available: {sorted(capability_registry.keys())}. Skipping."
+            )
+            continue
+
+        # Apply per-agent overrides without mutating the shared registry
+        # instance. Currently supported: approvals (replace), instructions
+        # (append), options (shallow merge for Python-class caps).
+        if overrides_block:
+            try:
+                cap = cap.model_copy(deep=False)  # Pydantic copy
+            except Exception:
+                # Capability isn't a Pydantic model — skip override and warn.
+                print(
+                    f"Warning: capability {cap_name!r} does not support overrides "
+                    f"(not a Pydantic model). Ignoring overrides in {config_path}."
+                )
+            else:
+                if "approvals" in overrides_block:
+                    new_approvals = overrides_block.get("approvals") or {}
+                    if isinstance(new_approvals, dict):
+                        cap.approvals_spec = new_approvals  # type: ignore[attr-defined]
+                if "instructions" in overrides_block:
+                    appended = overrides_block.get("instructions")
+                    if isinstance(appended, str):
+                        existing = getattr(cap, "instructions_text", None) or ""
+                        cap.instructions_text = (  # type: ignore[attr-defined]
+                            (existing + "\n\n" + appended) if existing else appended
+                        )
+
+        resolved_capabilities_list.append(cap)
+
+    # Tool-name conflicts across capabilities used by the same agent are a
+    # modeling mistake (see CAPABILITY_PACKS_DESIGN.md §10 Q1). Surface them
+    # at load time rather than letting the model see two tools with the same
+    # name and pick arbitrarily.
+    seen_tool_names: Dict[str, str] = {}
+    for cap in resolved_capabilities_list:
+        cap_label = getattr(cap, "capability_name", None) or getattr(cap, "type", "?")
+        for tool in cap.tools():
+            tname = getattr(tool, "name", None) or getattr(tool, "__name__", None)
+            if tname is None:
+                continue
+            if tname in seen_tool_names:
+                raise ValueError(
+                    f"Capability tool name conflict in {config_path}: tool {tname!r} "
+                    f"appears in both {seen_tool_names[tname]!r} and {cap_label!r}. "
+                    "A tool can only belong to one active capability per agent."
+                )
+            seen_tool_names[tname] = cap_label
+
+    # Capabilities can also bundle agent_tools (subagent-as-tool refs).
+    # Flatten them into the agent's own agent_tool_configs so the existing
+    # builder path (_build_agent_tools_from_configs) handles them uniformly.
+    for cap in resolved_capabilities_list:
+        cap_at = getattr(cap, "agent_tool_configs", None) or []
+        agent_tool_configs_list.extend(cap_at)
 
     # --- Model Provider Configuration ---
     # Optional `model_provider:` block that controls how the run-level
@@ -1993,6 +2183,8 @@ def load_agent_spec_from_yaml(
         sandbox_capabilities=sandbox_capabilities_list,
         sandbox_use_sandbox_agent=sandbox_use_agent_flag,
         sandbox_run_as=sandbox_run_as_value,
+        # Capability Packs (Phase 0)
+        resolved_capabilities=resolved_capabilities_list,
         # Tracing Config
         tracing_config=tracing_config,
         # MCP Config
@@ -2040,6 +2232,8 @@ def load_agent_spec_from_yaml(
     spec._tool_registry = tool_registry
     spec._guardrails_registry = guardrails_registry
     spec._server_functions_registry = server_functions_registry
+    spec._agents_map = agents_map
+    spec._capability_registry = capability_registry
     spec._runtime_hooks_registry = None
 
     return spec

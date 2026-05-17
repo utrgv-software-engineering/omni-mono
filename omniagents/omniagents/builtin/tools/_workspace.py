@@ -11,7 +11,7 @@ invoked outside the AgentService flow without populating context).
 from __future__ import annotations
 
 import os
-from typing import Any, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from agents.run_context import RunContextWrapper
 
@@ -51,3 +51,36 @@ def require_workspace_root(
     if wr is None:
         raise WorkspaceRootRequiredError(where=where)
     return wr
+
+
+def shell_unavailable_payload(
+    *, tool: str, command: str
+) -> Tuple[str, Dict[str, Any]]:
+    """Standard error shape for shell-needing tools against shell-less backends.
+
+    Returns ``(llm_output, ui_metadata)`` ready to drop into a
+    :class:`RichToolOutput`. Used by ``execute_bash`` (omniagents builtin and
+    omni-code variants) when the active workspace returns
+    ``supports_shell == False`` — e.g. :class:`PyodideWorkspace`.
+
+    Kept here rather than on the workspace package so the wording can stay
+    tool-specific (the model gets a clear "use run_python instead" hint).
+    """
+    msg = (
+        f"{tool}: the active workspace has no shell — pyodide and similar "
+        "no-shell backends can't run arbitrary commands. Use run_python(...) "
+        "for Python code, or switch to a shell-capable backend (host, docker, "
+        "unix_local) for git/npm/bash workflows."
+    )
+    ui_metadata = {
+        "value": msg,
+        "display_type": "error",
+        "summary": "Shell not available",
+        "preview": f"{tool} cannot run {command!r} — workspace has no shell.",
+        "truncated": False,
+        "metadata": {
+            "error_type": "shell_unavailable",
+            "command": command,
+        },
+    }
+    return msg, ui_metadata

@@ -1,8 +1,6 @@
 import os
-import shutil
-import subprocess
 import time
-from typing import Dict, Any, Optional
+from typing import Any, Optional
 from agents.run_context import RunContextWrapper
 from omniagents.core.tools import rich_function_tool, RichToolOutput, approval_metadata
 
@@ -13,6 +11,20 @@ _BASH_DEFAULT_MAX_OUTPUT_CHARS = 40000  # ~40KB, reasonable for most commands
 _BASH_MAX_LINE_LENGTH = 500
 
 
+class _BashTimeoutMarker(Exception):
+    """Internal sentinel used to route a workspace.exec timeout into the
+    same error-handling branch as the previous ``subprocess.TimeoutExpired``
+    path. The workspace layer flattens timeouts into ``ExecResult`` instead
+    of raising; we re-raise this marker so the existing structured error
+    output (and the original error_type='timeout' metadata) is preserved
+    without rewriting the tool's exception flow.
+    """
+
+    def __init__(self, timeout: int, wall_time_ms: int) -> None:
+        self.timeout = timeout
+        self.wall_time_ms = wall_time_ms
+
+
 def _command_summary(exit_code: int, wall_time_ms: int, truncated: bool) -> str:
     """Build a concise summary string for the ToolCard header."""
     parts = [f"exit {exit_code}", f"{wall_time_ms}ms"]
@@ -21,9 +33,7 @@ def _command_summary(exit_code: int, wall_time_ms: int, truncated: bool) -> str:
     return f"Ran command ({', '.join(parts)})"
 
 
-def _truncate_output_head_tail(
-    text: str, max_chars: int
-) -> tuple[str, int, bool]:
+def _truncate_output_head_tail(text: str, max_chars: int) -> tuple[str, int, bool]:
     """
     Truncate text preserving head and tail, dropping the middle.
 
@@ -50,7 +60,9 @@ def _truncate_output_head_tail(
     return truncated, chars_removed, True
 
 
-def _truncate_long_lines(text: str, max_line_length: int = _BASH_MAX_LINE_LENGTH) -> tuple[str, int]:
+def _truncate_long_lines(
+    text: str, max_line_length: int = _BASH_MAX_LINE_LENGTH
+) -> tuple[str, int]:
     """
     Truncate individual lines that exceed max_line_length.
 
@@ -71,7 +83,7 @@ def _truncate_long_lines(text: str, max_line_length: int = _BASH_MAX_LINE_LENGTH
 
 
 @rich_function_tool(client_status="Running shell command...")
-def execute_bash(
+async def execute_bash(
     ctx: RunContextWrapper[Any],
     command: str,
     timeout: Optional[int] = None,
@@ -125,7 +137,22 @@ def execute_bash(
     if max_output_chars is None:
         max_output_chars = _BASH_DEFAULT_MAX_OUTPUT_CHARS
 
-    # Determine working directory. Mirrors file_tools._resolve_path: an
+    from omniagents import workspace as _ws
+
+    # Short-circuit for shell-less backends (e.g. PyodideWorkspace). Going
+    # through workspace.exec would raise WorkspaceFeatureUnavailable which
+    # surfaces as a generic "Error executing command"; we want a clear
+    # actionable message instead, and to avoid spending the wall-time budget
+    # spinning up a doomed call.
+    if not _ws.current_workspace().supports_shell:
+        from omniagents.builtin.tools._workspace import shell_unavailable_payload
+
+        llm_output, ui_metadata = shell_unavailable_payload(
+            tool="execute_bash", command=command
+        )
+        return RichToolOutput(llm_output, ui_metadata)
+
+    # Determine working directory. Mirrors the original behavior: an
     # absolute cwd is honored as-is; a missing or relative cwd is anchored
     # to workspace_root. The framework guarantees workspace_root is on the
     # run context by the time a tool executes — if it isn't,
@@ -149,37 +176,38 @@ def execute_bash(
     start_time = time.monotonic()
 
     try:
-        run_kwargs: Dict[str, Any] = {}
-        if os.name != "nt":
-            shell_executable = None
-            for candidate in ("/bin/bash", "/usr/bin/bash"):
-                if os.path.exists(candidate):
-                    shell_executable = candidate
-                    break
-            if shell_executable is None:
-                shell_executable = shutil.which("bash")
-            if shell_executable:
-                run_kwargs["executable"] = shell_executable
-
-        process = subprocess.run(
+        # Route through the workspace exec primitive so the tool transparently
+        # runs the command on the host or inside a sandbox session.
+        exec_result = await _ws.exec(
             command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
             cwd=cwd,
-            **run_kwargs,
+            timeout=float(timeout),
+            shell=True,
         )
 
         wall_time_ms = int((time.monotonic() - start_time) * 1000)
 
+        stdout_str = exec_result.stdout or ""
+        stderr_str = exec_result.stderr or ""
+        return_code = exec_result.exit_code
+
+        # Detect host-side timeout: HostWorkspace.exec encodes the timeout by
+        # returning exit_code=-1 and a "timed out" suffix on stdout. Reproduce
+        # the original tool's TimeoutExpired branch so the error metadata
+        # matches existing tests and downstream consumers.
+        timed_out = return_code == -1 and (
+            "timed out" in stdout_str.lower() or "timed out" in stderr_str.lower()
+        )
+        if timed_out:
+            raise _BashTimeoutMarker(timeout=timeout, wall_time_ms=wall_time_ms)
+
         # Combine stdout and stderr
-        combined_output = process.stdout
-        if process.stderr:
+        combined_output = stdout_str
+        if stderr_str:
             combined_output = (
                 combined_output
                 + ("\n" if combined_output else "")
-                + f"[stderr]\n{process.stderr}"
+                + f"[stderr]\n{stderr_str}"
             )
 
         original_length = len(combined_output)
@@ -199,18 +227,26 @@ def execute_bash(
         header_lines = []
 
         # Status line
-        if process.returncode == 0:
+        if return_code == 0:
             header_lines.append(f"Exit code: 0 (success) | Wall time: {wall_time_ms}ms")
         else:
-            header_lines.append(f"Exit code: {process.returncode} (failed) | Wall time: {wall_time_ms}ms")
+            header_lines.append(
+                f"Exit code: {return_code} (failed) | Wall time: {wall_time_ms}ms"
+            )
 
         # Truncation notices
         if was_truncated or lines_truncated > 0:
-            header_lines.append(f"Total output: {original_length:,} chars, {total_lines:,} lines")
+            header_lines.append(
+                f"Total output: {original_length:,} chars, {total_lines:,} lines"
+            )
             if lines_truncated > 0:
-                header_lines.append(f"[{lines_truncated} lines exceeded {_BASH_MAX_LINE_LENGTH} chars and were truncated]")
+                header_lines.append(
+                    f"[{lines_truncated} lines exceeded {_BASH_MAX_LINE_LENGTH} chars and were truncated]"
+                )
             if was_truncated:
-                header_lines.append(f"[Output truncated: {chars_removed:,} characters removed from middle]")
+                header_lines.append(
+                    f"[Output truncated: {chars_removed:,} characters removed from middle]"
+                )
 
         if header_lines:
             header = "\n".join(header_lines) + "\n\n"
@@ -225,22 +261,24 @@ def execute_bash(
         # Create preview for UI (first 20 lines)
         preview_lines = combined_output.split("\n")[:20] if combined_output else []
         preview = "\n".join(preview_lines)
-        ui_truncated = len(combined_output.split("\n")) > 20 if combined_output else False
+        ui_truncated = (
+            len(combined_output.split("\n")) > 20 if combined_output else False
+        )
 
         # Create rich metadata for UI
         ui_metadata = {
             "value": combined_output,
             "display_type": "command",
-            "summary": _command_summary(process.returncode, wall_time_ms, was_truncated),
+            "summary": _command_summary(return_code, wall_time_ms, was_truncated),
             "preview": preview,
             "truncated": ui_truncated or was_truncated,
             "metadata": {
                 "command": command,
-                "stdout": process.stdout,
-                "stderr": process.stderr,
-                "exit_code": process.returncode,
-                "success": process.returncode == 0,
-                "has_stderr": bool(process.stderr),
+                "stdout": stdout_str,
+                "stderr": stderr_str,
+                "exit_code": return_code,
+                "success": return_code == 0,
+                "has_stderr": bool(stderr_str),
                 "wall_time_ms": wall_time_ms,
                 "original_chars": original_length,
                 "returned_chars": len(combined_output),
@@ -254,9 +292,11 @@ def execute_bash(
 
         return RichToolOutput(llm_output, ui_metadata)
 
-    except subprocess.TimeoutExpired:
-        wall_time_ms = int((time.monotonic() - start_time) * 1000)
-        llm_output = f"Command timed out after {timeout} seconds (wall time: {wall_time_ms}ms)"
+    except _BashTimeoutMarker as marker:
+        wall_time_ms = marker.wall_time_ms
+        llm_output = (
+            f"Command timed out after {timeout} seconds (wall time: {wall_time_ms}ms)"
+        )
 
         ui_metadata = {
             "value": f"Command timed out after {timeout} seconds",

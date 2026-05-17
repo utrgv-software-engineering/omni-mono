@@ -1,0 +1,7 @@
+name: shell
+tools:
+  - execute_bash
+instructions: |
+  `execute_bash` runs shell commands. Use it for one-off commands that
+  inspect the workspace or run tests/builds. Long-running commands may be
+  truncated or time out; prefer narrow, fast invocations.

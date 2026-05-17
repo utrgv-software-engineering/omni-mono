@@ -1,16 +1,18 @@
+import asyncio
 import os
 import tempfile
-import requests
-from typing import Dict, Any, Optional
-from agents.run_context import RunContextWrapper
-from omniagents.core.tools import rich_function_tool, RichToolOutput, approval_metadata
+from pathlib import Path
+from typing import Any, Optional
 
+import requests
+from agents.run_context import RunContextWrapper
 
 from omniagents.builtin.tools._workspace import require_workspace_root
+from omniagents.core.tools import RichToolOutput, approval_metadata, rich_function_tool
 
 
 @rich_function_tool(client_status="Downloading file...")
-def download_file(
+async def download_file(
     ctx: RunContextWrapper[Any],
     url: str,
     output_path: Optional[str] = None,
@@ -37,13 +39,20 @@ def download_file(
         if result["success"]:
             markdown_result = convert_to_markdown(result["file_path"])
     """
+    from omniagents import workspace as _ws
+
     try:
-        # Make the request to the URL
+        # Make the request to the URL. The network call is host-side
+        # regardless of which workspace backend is active — only the
+        # final write routes through the workspace. We run requests in a
+        # thread so this remains compatible with the async event loop.
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
 
-        response = requests.get(url, headers=headers, stream=True, timeout=30)
+        response = await asyncio.to_thread(
+            requests.get, url, headers=headers, stream=True, timeout=30
+        )
 
         if response.status_code != 200:
             error_msg = f"Request failed with status code {response.status_code}"
@@ -68,18 +77,15 @@ def download_file(
 
         # Determine filename or extension for the temporary file
         if output_path:
-            # User provided a specific path to use. Anchor relative paths to
-            # the workspace root so the agent's "downloads/foo" lands inside
+            # User provided a specific path. Anchor relative paths to the
+            # workspace root so the agent's "downloads/foo" lands inside
             # its workspace, not the host process cwd. Absolute paths are
-            # honored as-is.
+            # honored as-is. The workspace ``write_bytes`` below creates
+            # parent directories on demand, so no host-side mkdir here.
             if not os.path.isabs(output_path):
                 wr = require_workspace_root(ctx, where="download_file")
                 output_path = os.path.join(wr, output_path)
-            file_dir = os.path.dirname(os.path.abspath(output_path))
             filename = os.path.basename(output_path)
-
-            # Create directory for output_path if it doesn't exist
-            os.makedirs(file_dir, exist_ok=True)
 
             # Use the provided output path
             final_path = output_path
@@ -141,12 +147,25 @@ def download_file(
                 fd, final_path = tempfile.mkstemp(suffix=suffix)
                 os.close(fd)  # Close the file descriptor
 
-        # Save the file
-        with open(final_path, "wb") as f:
+        # Accumulate the response body off the event loop.
+        def _read_body() -> bytes:
+            buf = bytearray()
             for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
+                buf.extend(chunk)
+            return bytes(buf)
 
-        file_size = os.path.getsize(final_path)
+        data = await asyncio.to_thread(_read_body)
+        file_size = len(data)
+
+        # Save the file. User-supplied output_paths route through the
+        # workspace so sandbox mode lands the file inside the manifest.
+        # The tempfile fallback (output_path is None) is by definition a
+        # host-side temp location — bypass the workspace for that case
+        # since the path lives outside any workspace root.
+        if output_path is not None:
+            await _ws.write_bytes(final_path, data)
+        else:
+            await asyncio.to_thread(Path(final_path).write_bytes, data)
 
         # Create LLM-friendly output
         llm_output = f"Successfully downloaded file from {url} to {final_path} ({file_size} bytes)"

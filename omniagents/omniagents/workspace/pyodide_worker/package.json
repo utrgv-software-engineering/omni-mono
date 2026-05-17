@@ -1,0 +1,14 @@
+{
+  "name": "@omniagents/pyodide-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Node host for the pyodide-backed Workspace. Loaded as a subprocess by omniagents.workspace.pyodide.PyodideWorkspace.",
+  "main": "worker.mjs",
+  "scripts": {
+    "start": "node worker.mjs"
+  },
+  "dependencies": {
+    "pyodide": "^0.28.0"
+  }
+}

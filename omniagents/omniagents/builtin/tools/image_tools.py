@@ -7,26 +7,8 @@ from agents.run_context import RunContextWrapper
 from agents.tool import ToolOutputText, ToolOutputImage
 
 
-from omniagents.builtin.tools._workspace import require_workspace_root
-
-
-def _resolve_path(ctx: RunContextWrapper[Any] | None, path: Optional[str]) -> str:
-    """Resolve a path relative to workspace_root, or accept an absolute path.
-
-    Mirrors ``file_tools._resolve_path``: absolute paths are returned as-is;
-    everything else requires ``workspace_root`` on the run context.
-    """
-    p = path if isinstance(path, str) else (str(path) if path is not None else "")
-    if p and os.path.isabs(p):
-        return p
-    wr = require_workspace_root(ctx, where="read_image")
-    if not p:
-        return wr
-    return os.path.abspath(os.path.join(wr, p))
-
-
 @function_tool(client_status="Loading image...")
-def read_image(
+async def read_image(
     ctx: RunContextWrapper[Any],
     image_path: str,
     detail: Optional[str] = None,
@@ -64,20 +46,21 @@ def read_image(
         # Read a photo with auto detail level
         read_image("/path/to/photo.jpg", detail="auto")
     """
-    try:
-        # Resolve the path
-        image_path = _resolve_path(ctx, image_path)
+    from omniagents import workspace as _ws
 
-        # Check if file exists
-        if not os.path.exists(image_path):
+    try:
+        # Check if file exists / is a regular file via the workspace so the
+        # tool transparently works in both host and sandbox modes.
+        if not await _ws.exists(image_path):
             error_text = f"Error reading image: File not found at {image_path}"
             return [ToolOutputText(type="text", text=error_text)]
 
-        if not os.path.isfile(image_path):
+        if not await _ws.is_file(image_path):
             error_text = f"Error reading image: Path is not a file: {image_path}"
             return [ToolOutputText(type="text", text=error_text)]
 
-        # Determine MIME type
+        # Determine MIME type from the (possibly relative) input path; the
+        # extension carries all the info we need without resolving.
         mime_type, _ = mimetypes.guess_type(image_path)
         if mime_type is None or not mime_type.startswith("image/"):
             # Try to detect from extension
@@ -93,9 +76,8 @@ def read_image(
             }
             mime_type = mime_map.get(ext, "image/png")
 
-        # Read the image file
-        with open(image_path, "rb") as f:
-            image_data = f.read()
+        # Read the image file via the workspace
+        image_data = await _ws.read_bytes(image_path)
 
         # Convert to base64
         base64_data = base64.b64encode(image_data).decode("utf-8")

@@ -59,6 +59,10 @@ class ProjectContext:
     tool_registry: Dict[str, Any]
     guardrails_registry: Dict[str, Dict[str, Any]]
     server_functions_registry: Dict[str, Any]
+    # Capability registry: name → resolved Capability instance.
+    # Built from `paths.capabilities/*.yml` files plus inline `capabilities:`
+    # block in project.yml. Empty dict when no capabilities are configured.
+    capability_registry: Dict[str, Any] = field(default_factory=dict)
     # User-supplied MCP server support
     allow_user_mcp_servers: bool = False
     user_mcp_servers: List["MCPServerConfig"] = field(default_factory=list)
@@ -117,6 +121,7 @@ def load_project(project_path: str) -> ProjectContext:
     guardrails_dirs = _resolve_many("guardrails", "guardrails")
     server_functions_dirs = _resolve_many("server_functions", "server_functions")
     agents_dir = _resolve_many("agents", "agents")
+    capabilities_dirs = _resolve_many("capabilities", "capabilities")
     eval_dir = _resolve_many("evaluations", "evaluations")
     target_dir = _resolve_many("target", "target")
     paths: Dict[str, List[Path]] = {
@@ -124,6 +129,7 @@ def load_project(project_path: str) -> ProjectContext:
         "guardrails": guardrails_dirs,
         "server_functions": server_functions_dirs,
         "agents": agents_dir,
+        "capabilities": capabilities_dirs,
         "evaluations": eval_dir,
         "target": target_dir,
     }
@@ -265,6 +271,92 @@ def load_project(project_path: str) -> ProjectContext:
             except Exception:
                 pass
 
+    # --- Capability Discovery ---
+    # Three sources, parsed with the same schema: omniagents builtin caps
+    # (omniagents/builtin/capabilities/), inline `capabilities:` block in
+    # project.yml, and YAML files under paths.capabilities/. Tool registry
+    # must be built first because the parser resolves tool name → instance
+    # eagerly, so capability-spec errors surface here rather than at agent
+    # build time.
+    #
+    # Precedence: project-defined capabilities (inline or paths.capabilities/)
+    # *override* builtins of the same name — letting users redefine the
+    # standard bundles for their project. Two project-side definitions of
+    # the same name are an error (silent dedup hides modeling mistakes).
+    capability_registry: Dict[str, Any] = {}
+    try:
+        from omniagents.core.capabilities import (
+            discover_capabilities_in_dir,
+            parse_capability_spec,
+        )
+
+        # Builtin capabilities first; users can override below. Builtin caps
+        # don't currently use agent_tools (they bundle FunctionTools only),
+        # so passing agents_map is harmless but unnecessary.
+        builtin_caps_dir = (core_root / "builtin" / "capabilities").resolve()
+        if builtin_caps_dir.is_dir():
+            try:
+                builtin_caps = discover_capabilities_in_dir(
+                    str(builtin_caps_dir),
+                    tool_registry=tool_registry,
+                    agents_map=agents_map,
+                )
+                capability_registry.update(builtin_caps)
+            except Exception as e:
+                print(
+                    f"Warning: builtin capability discovery failed: {e}. "
+                    "Builtin capabilities unavailable."
+                )
+
+        # Project-side capabilities. Track which names came from the project
+        # so a duplicate between two project sources errors out, while a
+        # project name silently overrides a builtin (intentional precedence).
+        project_cap_names: set[str] = set()
+        for cap_dir in capabilities_dirs:
+            if cap_dir.is_dir():
+                discovered = discover_capabilities_in_dir(
+                    str(cap_dir),
+                    tool_registry=tool_registry,
+                    agents_map=agents_map,
+                )
+                for cap_name, cap in discovered.items():
+                    if cap_name in project_cap_names:
+                        raise ValueError(
+                            f"Duplicate capability name {cap_name!r} in {cap_dir}"
+                        )
+                    project_cap_names.add(cap_name)
+                    capability_registry[cap_name] = cap
+
+        inline_caps = proj.get("capabilities")
+        if inline_caps is not None:
+            if not isinstance(inline_caps, list):
+                print(
+                    "Warning: project.yml 'capabilities' must be a list. Ignoring."
+                )
+            else:
+                for cap_spec in inline_caps:
+                    cap = parse_capability_spec(
+                        cap_spec,
+                        tool_registry=tool_registry,
+                        agents_map=agents_map,
+                        source="project.yml",
+                    )
+                    cap_name = getattr(cap, "capability_name", None) or cap_spec.get("name")
+                    if cap_name in project_cap_names:
+                        raise ValueError(
+                            f"Duplicate capability name {cap_name!r}: defined inline "
+                            f"in project.yml and also under paths.capabilities/"
+                        )
+                    project_cap_names.add(cap_name)
+                    capability_registry[cap_name] = cap
+    except ValueError:
+        # Capability spec errors are user-facing — re-raise so the project
+        # fails to load rather than silently dropping capabilities.
+        raise
+    except Exception as e:
+        print(f"Warning: Capability discovery failed: {e}. Capabilities disabled.")
+        capability_registry = {}
+
     # --- Security Configuration ---
     security = SecurityConfig.from_dict(proj.get("security"))
 
@@ -309,6 +401,7 @@ def load_project(project_path: str) -> ProjectContext:
         tool_registry=tool_registry,
         guardrails_registry=guardrails_registry,
         server_functions_registry=server_functions_registry,
+        capability_registry=capability_registry,
         allow_user_mcp_servers=allow_user_mcp,
         user_mcp_servers=user_mcp_configs,
         security=security,
@@ -352,6 +445,8 @@ def build_spec_from_project(
         tool_registry=project.tool_registry,
         guardrails_registry=project.guardrails_registry,
         server_functions_registry=project.server_functions_registry,
+        agents_map=project.agents_map,
+        capability_registry=project.capability_registry,
         project_defaults=pdefs,
         user_mcp_servers=(
             project.user_mcp_servers if project.allow_user_mcp_servers else None
@@ -371,6 +466,8 @@ def build_spec_from_project(
                 tool_registry=project.tool_registry,
                 guardrails_registry=project.guardrails_registry,
                 server_functions_registry=project.server_functions_registry,
+                agents_map=project.agents_map,
+                capability_registry=project.capability_registry,
                 project_defaults=pdefs,
                 user_mcp_servers=(
                     project.user_mcp_servers if project.allow_user_mcp_servers else None

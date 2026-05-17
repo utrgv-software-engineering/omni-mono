@@ -130,8 +130,63 @@ def _resolve_path(ctx: RunContextWrapper[Any] | None, path: Optional[str]) -> st
     return os.path.abspath(os.path.join(wr, p))
 
 
+async def _ws_walk_files(start: str) -> List[str]:
+    """Recursive workspace walk that yields absolute file/dir paths.
+
+    Used by the migrated ``glob_files``/``grep_files`` to enumerate the
+    workspace through ``workspace.list_dir`` instead of ``os.walk`` so the
+    same body works in host and sandbox modes. Includes hidden entries —
+    coding workspaces want dotfiles visible (config, hooks, etc.).
+    """
+    from omniagents import workspace as _ws
+
+    out: List[str] = []
+    stack = [start]
+    while stack:
+        current = stack.pop()
+        try:
+            entries = await _ws.list_dir(
+                current,
+                include_hidden=True,
+                respect_gitignore=False,
+            )
+        except Exception:
+            continue
+        for entry in entries:
+            full = _ws.resolve(entry.path)
+            if entry.is_dir and not entry.is_symlink:
+                stack.append(full)
+                out.append(full)
+            else:
+                out.append(full)
+    return out
+
+
+async def _ws_is_binary_file(path: str) -> bool:
+    """Workspace-routed binary detection. Mirrors ``_is_binary_file``: a
+    file is binary when its first 8KB contain a NUL byte or fail UTF-8
+    decoding."""
+    from omniagents import workspace as _ws
+
+    try:
+        if not await _ws.is_file(path):
+            return False
+        data = await _ws.read_bytes(path)
+        chunk = data[:8192]
+        if not chunk:
+            return False
+        if b"\0" in chunk:
+            return True
+        chunk.decode("utf-8")
+        return False
+    except UnicodeDecodeError:
+        return True
+    except Exception:
+        return False
+
+
 @rich_function_tool(client_status="Finding matching files...")
-def glob_files(
+async def glob_files(
     ctx: RunContextWrapper[Any],
     pattern: str,
     path: Optional[str] = None,
@@ -175,17 +230,21 @@ def glob_files(
         # Find all log files in a specific directory
         glob_files("*.log", path="/var/log")
     """
+    from omniagents import workspace as _ws
+
     try:
-        # Defaults
-        resolved_path = _resolve_path(ctx, path)
-        resolved_path = os.path.abspath(resolved_path)
-        base_is_file = os.path.isfile(resolved_path)
+        # Defaults — route path resolution through the workspace so the
+        # tool works identically against host and sandbox backends.
+        if not path:
+            resolved_path = _ws.resolve(".")
+        else:
+            resolved_path = _ws.resolve(path)
+        base_is_file = await _ws.is_file(resolved_path)
         relative_base = (
             os.path.dirname(resolved_path) if base_is_file else resolved_path
         )
         if not relative_base:
             relative_base = "."
-        relative_base = os.path.abspath(relative_base)
         repo_root = relative_base
         if respect_gitignore is None:
             respect_gitignore = True  # preserve current behavior
@@ -232,39 +291,46 @@ def glob_files(
         skipped_binary = 0
         if base_is_file:
             if not _should_skip(resolved_path, repo_root, respect_gitignore):
-                if _is_binary_file(resolved_path):
+                if await _ws_is_binary_file(resolved_path):
                     skipped_binary += 1
                 else:
                     segs = rel_segments(repo_root, resolved_path)
                     if match_segments(pat_segs, segs):
                         matches.append(resolved_path)
         else:
-            for root, dirs, filenames in os.walk(resolved_path):
-                pruned = []
-                for d in list(dirs):
-                    d_full = os.path.join(root, d)
-                    if _should_skip(d_full, repo_root, respect_gitignore):
-                        pruned.append(d)
-                for d in pruned:
-                    if d in dirs:
-                        dirs.remove(d)
-
-                for d in dirs:
-                    d_full = os.path.join(root, d)
-                    segs = rel_segments(relative_base, d_full)
-                    if match_segments(pat_segs, segs):
-                        matches.append(d_full)
-
-                for fname in filenames:
-                    f_full = os.path.join(root, fname)
-                    if _should_skip(f_full, repo_root, respect_gitignore):
+            # Recursive workspace walk. Apply gitignore pruning, binary
+            # filtering, and segment matching as paths are produced.
+            stack = [resolved_path]
+            visited: set = set()
+            while stack:
+                current = stack.pop()
+                if current in visited:
+                    continue
+                visited.add(current)
+                try:
+                    entries = await _ws.list_dir(
+                        current,
+                        include_hidden=True,
+                        respect_gitignore=False,
+                    )
+                except Exception:
+                    continue
+                for entry in entries:
+                    full = _ws.resolve(entry.path)
+                    if _should_skip(full, repo_root, respect_gitignore):
                         continue
-                    if _is_binary_file(f_full):
-                        skipped_binary += 1
-                        continue
-                    segs = rel_segments(relative_base, f_full)
-                    if match_segments(pat_segs, segs):
-                        matches.append(f_full)
+                    if entry.is_dir and not entry.is_symlink:
+                        stack.append(full)
+                        segs = rel_segments(relative_base, full)
+                        if match_segments(pat_segs, segs):
+                            matches.append(full)
+                    else:
+                        if await _ws_is_binary_file(full):
+                            skipped_binary += 1
+                            continue
+                        segs = rel_segments(relative_base, full)
+                        if match_segments(pat_segs, segs):
+                            matches.append(full)
 
         # Sort matches by modification time (newest first)
         matches.sort(
@@ -346,7 +412,7 @@ _GREP_DEFAULT_TIMEOUT = 30
 
 
 @rich_function_tool(client_status="Searching file contents...")
-def grep_files(
+async def grep_files(
     ctx: RunContextWrapper[Any],
     pattern: str,
     path: Optional[str] = None,
@@ -402,15 +468,19 @@ def grep_files(
     if respect_gitignore is None:
         respect_gitignore = True
 
+    from omniagents import workspace as _ws
+
     try:
-        # Resolve path
-        resolved_path = _resolve_path(ctx, path)
-        resolved_path = os.path.abspath(resolved_path)
-        base_is_file = os.path.isfile(resolved_path)
+        # Resolve path through the workspace so the same body works against
+        # host and sandbox backends.
+        if not path:
+            resolved_path = _ws.resolve(".")
+        else:
+            resolved_path = _ws.resolve(path)
+        base_is_file = await _ws.is_file(resolved_path)
         repo_root = os.path.dirname(resolved_path) if base_is_file else resolved_path
         if not repo_root:
             repo_root = "."
-        repo_root = os.path.abspath(repo_root)
 
         results = []
         files_with_matches = 0
@@ -439,12 +509,12 @@ def grep_files(
         files_to_search: List[str] = []
         real_to_index: Dict[str, int] = {}
 
-        def record_file(candidate: str) -> None:
+        async def record_file(candidate: str) -> None:
             nonlocal skipped_gitignored, skipped_binary
             if respect_gitignore and _is_ignored(candidate, repo_root):
                 skipped_gitignored += 1
                 return
-            if os.path.isfile(candidate) and _is_binary_file(candidate):
+            if await _ws.is_file(candidate) and await _ws_is_binary_file(candidate):
                 skipped_binary += 1
                 return
             real_path = os.path.realpath(candidate)
@@ -460,27 +530,36 @@ def grep_files(
             files_to_search.append(candidate)
 
         if base_is_file:
-            record_file(resolved_path)
+            await record_file(resolved_path)
         else:
-            for root, dirs, filenames in os.walk(resolved_path):
-                # Check timeout during directory walk
+            # Recursive workspace walk with gitignore-aware pruning.
+            stack = [resolved_path]
+            visited: set = set()
+            while stack:
                 if time_module.monotonic() - start_time > timeout:
                     timed_out = True
                     break
-
-                pruned_dirs = []
-                for d in list(dirs):
-                    d_full = os.path.join(root, d)
-                    if respect_gitignore and _is_ignored(d_full, repo_root):
-                        pruned_dirs.append(d)
-                        skipped_gitignored += 1
-                for d in pruned_dirs:
-                    if d in dirs:
-                        dirs.remove(d)
-
-                for fname in filenames:
-                    f_full = os.path.join(root, fname)
-                    record_file(f_full)
+                current = stack.pop()
+                if current in visited:
+                    continue
+                visited.add(current)
+                try:
+                    entries = await _ws.list_dir(
+                        current,
+                        include_hidden=True,
+                        respect_gitignore=False,
+                    )
+                except Exception:
+                    continue
+                for entry in entries:
+                    full = _ws.resolve(entry.path)
+                    if entry.is_dir and not entry.is_symlink:
+                        if respect_gitignore and _is_ignored(full, repo_root):
+                            skipped_gitignored += 1
+                            continue
+                        stack.append(full)
+                    else:
+                        await record_file(full)
 
         # Apply include filter
         if include is not None and include != "":
@@ -512,18 +591,20 @@ def grep_files(
             files_searched += 1
 
             try:
-                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                    match_count = 0
-                    for line in f:
-                        if regex.search(line):
-                            match_count += 1
+                text = await _ws.read_text(file_path)
+                match_count = 0
+                for line in text.splitlines():
+                    if regex.search(line):
+                        match_count += 1
 
-                    if match_count > 0:
-                        files_with_matches += 1
-                        results.append({
+                if match_count > 0:
+                    files_with_matches += 1
+                    results.append(
+                        {
                             "file": file_path,
                             "match_count": match_count,
-                        })
+                        }
+                    )
             except Exception:
                 # Skip files that can't be read
                 continue
@@ -537,7 +618,9 @@ def grep_files(
         output_lines = []
 
         if timed_out:
-            output_lines.append(f"Search timed out after {timeout}s (searched {files_searched} files)")
+            output_lines.append(
+                f"Search timed out after {timeout}s (searched {files_searched} files)"
+            )
             output_lines.append("")
 
         if len(results) == 0:
@@ -554,14 +637,20 @@ def grep_files(
 
             # Summary
             if len(results) >= limit or more_files_possible:
-                output_lines.append(f"Found matches in {files_with_matches}+ files (showing {len(results)}):")
+                output_lines.append(
+                    f"Found matches in {files_with_matches}+ files (showing {len(results)}):"
+                )
             else:
-                output_lines.append(f"Found {total_matches} matches in {len(results)} files:")
+                output_lines.append(
+                    f"Found {total_matches} matches in {len(results)} files:"
+                )
             output_lines.append("")
 
             # File list with match counts
             for result in results:
-                output_lines.append(f"{result['file']}: {result['match_count']} matches")
+                output_lines.append(
+                    f"{result['file']}: {result['match_count']} matches"
+                )
 
             # Truncation notice
             if len(results) >= limit or more_files_possible:
@@ -571,7 +660,9 @@ def grep_files(
         llm_output = "\n".join(output_lines)
 
         # Create preview for UI
-        preview_lines = [f"{r['file']}: {r['match_count']} matches" for r in results[:10]]
+        preview_lines = [
+            f"{r['file']}: {r['match_count']} matches" for r in results[:10]
+        ]
         if len(results) > 10:
             preview_lines.append(f"... and {len(results) - 10} more files")
         preview = "\n".join(preview_lines) if preview_lines else "No matches found"
@@ -628,12 +719,16 @@ _LIST_DIR_MAX_ENTRY_LENGTH = 500
 _LIST_DIR_INDENT_SPACES = 2
 
 
-def _truncate_entry_name(name: str, max_length: int = _LIST_DIR_MAX_ENTRY_LENGTH) -> str:
+def _truncate_entry_name(
+    name: str, max_length: int = _LIST_DIR_MAX_ENTRY_LENGTH
+) -> str:
     """Truncate an entry name to max_length, preserving UTF-8 char boundaries."""
     if len(name) <= max_length:
         return name
-    return name[:max_length].encode("utf-8", errors="ignore")[:max_length].decode(
-        "utf-8", errors="ignore"
+    return (
+        name[:max_length]
+        .encode("utf-8", errors="ignore")[:max_length]
+        .decode("utf-8", errors="ignore")
     )
 
 
@@ -667,7 +762,7 @@ class _DirEntry:
         return f"{indent}{self.display_name}{suffix}"
 
 
-def _collect_entries_with_depth(
+async def _collect_entries_with_depth(
     dir_path: str,
     base_path: str,
     current_depth: int,
@@ -676,36 +771,44 @@ def _collect_entries_with_depth(
 ) -> List[_DirEntry]:
     """
     Collect directory entries up to max_depth levels deep.
-    Returns entries in sorted order with proper nesting.
+    Returns entries in sorted order with proper nesting. Routes filesystem
+    reads through the workspace contextvar so the same body works in host
+    and sandbox modes.
     """
-    entries = []
+    from omniagents import workspace as _ws
+
+    entries: List[_DirEntry] = []
 
     try:
-        with os.scandir(dir_path) as scanner:
-            items = list(scanner)
+        items = await _ws.list_dir(
+            dir_path,
+            include_hidden=True,
+            respect_gitignore=False,
+        )
     except PermissionError:
         return entries
+    except Exception:
+        return entries
 
-    # Sort items by name
+    # workspace.list_dir already sorts by name; resort defensively.
     items.sort(key=lambda e: e.name)
 
     for item in items:
+        full_path = _ws.resolve(item.path)
+
         # Check if should skip
-        if _should_skip(item.path, base_path, respect_gitignore):
+        if _should_skip(full_path, base_path, respect_gitignore):
             continue
 
-        # Determine entry type
-        try:
-            if item.is_symlink():
-                entry_type = "symlink"
-            elif item.is_dir():
-                entry_type = "dir"
-            elif item.is_file():
-                entry_type = "file"
-            else:
-                entry_type = "other"
-        except OSError:
-            entry_type = "other"
+        # Determine entry type from the workspace's FileEntry view.
+        if item.is_symlink:
+            entry_type = "symlink"
+        elif item.is_dir:
+            entry_type = "dir"
+        else:
+            # Files (and unknown types) fall through to "file"; the host
+            # workspace doesn't surface block/char/socket/fifo specifically.
+            entry_type = "file"
 
         # Create display name (truncated if needed)
         display_name = _truncate_entry_name(item.name)
@@ -713,7 +816,7 @@ def _collect_entries_with_depth(
         entry = _DirEntry(
             name=item.name,
             display_name=display_name,
-            full_path=item.path,
+            full_path=full_path,
             depth=current_depth,
             entry_type=entry_type,
         )
@@ -721,8 +824,8 @@ def _collect_entries_with_depth(
 
         # Recurse into directories if within depth limit
         if entry_type == "dir" and current_depth < max_depth - 1:
-            child_entries = _collect_entries_with_depth(
-                item.path,
+            child_entries = await _collect_entries_with_depth(
+                full_path,
                 base_path,
                 current_depth + 1,
                 max_depth,
@@ -734,7 +837,7 @@ def _collect_entries_with_depth(
 
 
 @rich_function_tool(client_status="Listing directory...")
-def list_directory(
+async def list_directory(
     ctx: RunContextWrapper[Any],
     path: str,
     offset: Optional[int] = None,
@@ -802,9 +905,11 @@ def list_directory(
         if respect_gitignore is None:
             respect_gitignore = True
 
-        path = _resolve_path(ctx, path)
+        from omniagents import workspace as _ws
 
-        if not os.path.isdir(path):
+        path = _ws.resolve(path)
+
+        if not await _ws.is_dir(path):
             return RichToolOutput(
                 f"Error: '{path}' is not a directory",
                 {
@@ -818,7 +923,7 @@ def list_directory(
             )
 
         # Collect all entries with depth-limited traversal
-        all_entries = _collect_entries_with_depth(
+        all_entries = await _collect_entries_with_depth(
             path, path, 0, depth, respect_gitignore
         )
 
@@ -871,7 +976,9 @@ def list_directory(
         was_truncated = remaining > 0
         if was_truncated:
             next_offset = end_idx + 1
-            output_lines.append(f"[{remaining} more entries. Use offset={next_offset} to continue.]")
+            output_lines.append(
+                f"[{remaining} more entries. Use offset={next_offset} to continue.]"
+            )
 
         llm_output = "\n".join(output_lines)
 
@@ -880,7 +987,9 @@ def list_directory(
         preview_entries = selected_entries[:preview_limit]
         preview_lines = [entry.format_line() for entry in preview_entries]
         if len(selected_entries) > preview_limit:
-            preview_lines.append(f"... and {len(selected_entries) - preview_limit} more")
+            preview_lines.append(
+                f"... and {len(selected_entries) - preview_limit} more"
+            )
         preview = "\n".join(preview_lines) if preview_lines else "(empty)"
 
         # Count dirs and files in selection
@@ -1057,10 +1166,7 @@ def _read_file_indentation_mode(
         # Expand downward
         if down_idx < total_lines:
             if effective_indents[down_idx] >= min_indent:
-                if (
-                    effective_indents[down_idx] == min_indent
-                    and not include_siblings
-                ):
+                if effective_indents[down_idx] == min_indent and not include_siblings:
                     if down_min_indent_count > 0:
                         down_idx = total_lines  # Stop going down
                     else:
@@ -1089,7 +1195,7 @@ def _read_file_indentation_mode(
 
 
 @rich_function_tool(client_status="Reading file...")
-def read_file(
+async def read_file(
     ctx: RunContextWrapper[Any],
     file_path: str,
     start_line: Optional[int] = None,
@@ -1151,9 +1257,21 @@ def read_file(
         if include_header is None:
             include_header = True
 
-        file_path = _resolve_path(ctx, file_path)
-        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-            all_lines = f.readlines()
+        from omniagents import workspace as _ws
+
+        text = await _ws.read_text(file_path)
+        # Match the prior ``f.readlines()`` behavior: each line retains its
+        # trailing newline (if any), and a no-final-newline file produces a
+        # final tail line without one. ``splitlines(keepends=True)`` matches
+        # exactly.
+        all_lines = text.splitlines(keepends=True)
+
+        # Resolve once for display / metadata purposes. Falls back to the
+        # input path if resolution fails (e.g. tests with stubbed workspaces).
+        try:
+            file_path = _ws.resolve(file_path)
+        except Exception:
+            pass
 
         total_file_lines = len(all_lines)
         truncation_notices = []
@@ -1215,7 +1333,9 @@ def read_file(
 
             end_idx = min(start_idx + num_lines, total_file_lines)
             selected_lines = all_lines[start_idx:end_idx]
-            selected_line_numbers = list(range(start_line, start_line + len(selected_lines)))
+            selected_line_numbers = list(
+                range(start_line, start_line + len(selected_lines))
+            )
 
             # Check if we hit the limit
             remaining_lines = total_file_lines - end_idx
@@ -1317,8 +1437,12 @@ def read_file(
                 "lines_returned": len(formatted_lines),
                 "lines_truncated": lines_truncated_count,
                 "language": language,
-                "start_line": selected_line_numbers[0] if selected_line_numbers else start_line,
-                "end_line": selected_line_numbers[-1] if selected_line_numbers else start_line,
+                "start_line": (
+                    selected_line_numbers[0] if selected_line_numbers else start_line
+                ),
+                "end_line": (
+                    selected_line_numbers[-1] if selected_line_numbers else start_line
+                ),
                 "mode": mode,
                 "was_content_truncated": was_truncated,
                 "preview_lines": min(len(formatted_lines), preview_limit),
@@ -1343,7 +1467,7 @@ def read_file(
 
 
 @rich_function_tool(client_status="Applying edits...")
-def edit_file(
+async def edit_file(
     ctx: RunContextWrapper[Any],
     file_path: str,
     old_text: str,
@@ -1404,11 +1528,17 @@ def edit_file(
             dry_run=True,
         )
     """
+    from omniagents import workspace as _ws
+
     try:
-        # Read the file content
-        file_path = _resolve_path(ctx, file_path)
-        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-            content = f.read()
+        # Read existing content via the workspace so the same body works in
+        # host and sandbox modes. Resolve to an absolute path for display /
+        # metadata fields that the existing tool exposes.
+        content = await _ws.read_text(file_path)
+        try:
+            file_path = _ws.resolve(file_path)
+        except Exception:
+            pass
 
         # Prepare target window (optional line range)
         lines = content.splitlines(keepends=True)
@@ -1537,9 +1667,8 @@ def edit_file(
             }
             return RichToolOutput(llm_output, ui_metadata)
 
-        # Write the modified content back to the file
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(new_content)
+        # Write the modified content back via the workspace
+        await _ws.write_text(file_path, new_content)
 
         # LLM output
         llm_output = f"Successfully updated {os.path.basename(file_path)} - made {replacements} replacement(s)"
@@ -1586,7 +1715,7 @@ def edit_file(
 
 
 @rich_function_tool(client_status="Writing file...")
-def write_file(
+async def write_file(
     ctx: RunContextWrapper[Any], file_path: str, content: str, append: Optional[bool]
 ) -> RichToolOutput:
     """
@@ -1613,21 +1742,26 @@ def write_file(
         # Append to a log file
         write_file("/path/to/log.txt", "New log entry\\n", append=True)
     """
+    from omniagents import workspace as _ws
+
     try:
         # Default to overwrite if not specified
         if append is None:
             append = False
 
-        # Resolve file path relative to workspace and ensure directory exists
-        file_path = _resolve_path(ctx, file_path)
-        os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
-
-        # Write mode: 'a' for append, 'w' for overwrite
-        mode = "a" if append else "w"
         operation = "append" if append else "write"
 
-        with open(file_path, mode, encoding="utf-8") as f:
-            bytes_written = f.write(content)
+        await _ws.write_text(file_path, content, append=append)
+
+        # Resolve for display so the summary/metadata reflect the
+        # workspace-relative absolute path even when the caller passed
+        # a relative one.
+        try:
+            resolved_path = _ws.resolve(file_path)
+        except Exception:
+            resolved_path = file_path
+
+        bytes_written = len(content)
 
         # Create preview of written content
         lines = content.split("\n")
@@ -1640,17 +1774,17 @@ def write_file(
             truncated = len(content) > 500
 
         # LLM output
-        llm_output = f"Successfully {operation} {os.path.basename(file_path)} ({bytes_written} bytes written)"
+        llm_output = f"Successfully {operation} {os.path.basename(resolved_path)} ({bytes_written} bytes written)"
 
         # UI metadata
         ui_metadata = {
             "value": f"{bytes_written} bytes written",  # The actual result
             "display_type": "file_edit",
-            "summary": f"{operation.capitalize()} {os.path.basename(file_path)} ({bytes_written} bytes)",
+            "summary": f"{operation.capitalize()} {os.path.basename(resolved_path)} ({bytes_written} bytes)",
             "preview": preview,
             "truncated": truncated,
             "metadata": {
-                "file_path": file_path,
+                "file_path": resolved_path,
                 "operation": operation,
                 "bytes_written": bytes_written,
                 "line_count": len(lines),
@@ -2155,37 +2289,35 @@ def seek_sequence(
     return None
 
 
-def apply_hunks(hunks: List[Hunk]) -> Dict[str, str]:
+async def apply_hunks(hunks: List[Hunk]) -> Dict[str, str]:
     """
     Apply the parsed hunks and return affected files summary.
-    Returns dict with keys: 'added', 'modified', 'deleted' containing file paths
+    Returns dict with keys: 'added', 'modified', 'deleted' containing file paths.
+    Routes filesystem reads and writes through the workspace contextvar so the
+    same body works against host and sandbox backends.
     """
+    from omniagents import workspace as _ws
+
     added = []
     modified = []
     deleted = []
 
     for hunk in hunks:
         if isinstance(hunk, AddFile):
-            # Create parent directories if needed
-            parent = os.path.dirname(hunk.path)
-            if parent and not os.path.exists(parent):
-                os.makedirs(parent, exist_ok=True)
-
-            with open(hunk.path, "w", encoding="utf-8") as f:
-                f.write(hunk.contents)
+            # workspace.write_text creates parent directories by default
+            await _ws.write_text(hunk.path, hunk.contents)
             added.append(hunk.path)
 
         elif isinstance(hunk, DeleteFile):
-            if os.path.exists(hunk.path):
-                os.remove(hunk.path)
+            if await _ws.exists(hunk.path):
+                await _ws.remove(hunk.path)
                 deleted.append(hunk.path)
             else:
                 raise FileNotFoundError(f"Cannot delete non-existent file: {hunk.path}")
 
         elif isinstance(hunk, UpdateFile):
-            # Read original file
-            with open(hunk.path, "r", encoding="utf-8") as f:
-                original = f.read()
+            # Read original file via the workspace
+            original = await _ws.read_text(hunk.path)
 
             lines = original.splitlines()
 
@@ -2241,20 +2373,13 @@ def apply_hunks(hunks: List[Hunk]) -> Dict[str, str]:
                 new_content += "\n"
 
             if hunk.move_path:
-                # Write to new location
-                parent = os.path.dirname(hunk.move_path)
-                if parent and not os.path.exists(parent):
-                    os.makedirs(parent, exist_ok=True)
-
-                with open(hunk.move_path, "w", encoding="utf-8") as f:
-                    f.write(new_content)
-
+                # Write to new location (workspace.write_text creates parents)
+                await _ws.write_text(hunk.move_path, new_content)
                 # Remove original
-                os.remove(hunk.path)
+                await _ws.remove(hunk.path)
                 modified.append(hunk.move_path)
             else:
-                with open(hunk.path, "w", encoding="utf-8") as f:
-                    f.write(new_content)
+                await _ws.write_text(hunk.path, new_content)
                 modified.append(hunk.path)
 
     return {"added": added, "modified": modified, "deleted": deleted}
@@ -2475,7 +2600,7 @@ def apply_patch_approval(
 
 
 @rich_function_tool(client_status="Applying patch...")
-def apply_patch(
+async def apply_patch(
     ctx: RunContextWrapper[Any],
     patch: str,
 ) -> RichToolOutput:
@@ -2560,6 +2685,8 @@ def apply_patch(
     - When creating files, remember the '+' prefix on EVERY line
     - You can combine multiple file operations in a single patch
     """
+    from omniagents import workspace as _ws
+
     try:
         # Parse the patch
         base_dir = _workspace_root_from_ctx(ctx)
@@ -2650,8 +2777,7 @@ def apply_patch(
                 combined_diff.extend(file_diff)
             elif isinstance(h, DeleteFile):
                 try:
-                    with open(h.path, "r", encoding="utf-8", errors="replace") as f:
-                        old_text = f.read()
+                    old_text = await _ws.read_text(h.path)
                 except Exception:
                     old_text = ""
                 old_lines = old_text.splitlines(keepends=True)
@@ -2668,8 +2794,7 @@ def apply_patch(
                 combined_diff.extend(file_diff)
             elif isinstance(h, UpdateFile):
                 try:
-                    with open(h.path, "r", encoding="utf-8", errors="replace") as f:
-                        original_text = f.read()
+                    original_text = await _ws.read_text(h.path)
                 except Exception:
                     original_text = ""
 
@@ -2728,7 +2853,7 @@ def apply_patch(
         )
 
         # Now apply the hunks to actually write the changes
-        results = apply_hunks(hunks)
+        results = await apply_hunks(hunks)
 
         # Build LLM-facing summary
         summary_lines = []

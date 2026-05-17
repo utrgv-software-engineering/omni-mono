@@ -223,6 +223,32 @@ async def stream_agent(
     server-to-client notifications.
     """
 
+    # Install the host workspace contextvar for this run. Sandbox runs
+    # override this during SDK setup via WorkspaceBindingCapability.bind;
+    # host runs keep the HostWorkspace so omniagents.workspace.* operations
+    # resolve relative to the agent's configured workspace_root rather than
+    # the server process's cwd.
+    workspace_token = None
+    try:
+        ws_root: Optional[str] = None
+        if isinstance(context, dict):
+            v = context.get("workspace_root")
+            if isinstance(v, str) and v.strip():
+                ws_root = v
+        else:
+            v = getattr(context, "workspace_root", None)
+            if isinstance(v, str) and v.strip():
+                ws_root = v
+        if ws_root:
+            from omniagents.workspace import HostWorkspace as _HostWorkspace
+            from omniagents.workspace import set_workspace as _set_workspace
+
+            workspace_token = _set_workspace(_HostWorkspace(root=ws_root))
+    except Exception:
+        # Workspace setup is best-effort; fall back to default lazy
+        # HostWorkspace(cwd) if anything goes wrong here.
+        workspace_token = None
+
     token = None
     if service is not None and session is not None:
         loop = asyncio.get_running_loop()
@@ -1056,6 +1082,14 @@ async def stream_agent(
         if token is not None:
             try:
                 reset_artifact_callback(token)
+            except Exception:
+                pass
+
+        if workspace_token is not None:
+            try:
+                from omniagents.workspace import reset_workspace as _reset_workspace
+
+                _reset_workspace(workspace_token)
             except Exception:
                 pass
 

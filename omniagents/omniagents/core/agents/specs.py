@@ -350,6 +350,17 @@ class AgentSpec:
     ``SandboxAgent.run_as`` when ``sandbox_use_sandbox_agent`` is true.
     """
 
+    # --- Capability Packs (Phase 0) ---
+    resolved_capabilities: List[Any] = field(default_factory=list)
+    """Capability instances resolved from the YAML ``capabilities:`` list
+    against the project's capability registry. Each entry is an ``agents.sandbox.
+    capabilities.Capability`` (subclass) instance. The agent builder calls
+    ``cap.tools()`` on each and merges results into ``agent.tools``, appends
+    ``cap.instructions(None)`` to the system prompt, and translates the
+    capability's ``approvals_spec`` into per-tool ``needs_approval`` predicates.
+    Empty list when no capabilities are configured (default behavior unchanged).
+    """
+
     # --- Tracing Configuration ---
     tracing_config: Optional[Dict[str, Any]] = None
 

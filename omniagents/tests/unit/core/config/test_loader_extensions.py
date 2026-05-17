@@ -75,6 +75,229 @@ def test_loader_parses_inline_agent_tools(tmp_path):
     assert cfg.inline_spec.name == "InlineSub"
 
 
+def test_loader_parses_agent_tools_by_name(tmp_path):
+    """`agent: <name>` resolves against agents_map to the same yaml_path
+    a `yaml: <path>` entry would produce."""
+    sub_path = tmp_path / "sub.yaml"
+    _write(
+        sub_path,
+        """
+        name: SubAgent
+        instructions: Be a sub
+        """,
+    )
+    main_path = tmp_path / "main.yaml"
+    _write(
+        main_path,
+        """
+        name: MainAgent
+        instructions: Be main
+        agent_tools:
+          - agent: SubAgent
+            tool_name: ask_sub
+            tool_description: Consult the sub
+            max_turns: 5
+        """,
+    )
+
+    spec = load_agent_spec_from_yaml(
+        str(main_path),
+        agents_map={"SubAgent": sub_path.resolve()},
+    )
+    assert len(spec.agent_tool_configs) == 1
+    cfg = spec.agent_tool_configs[0]
+    assert cfg.tool_name == "ask_sub"
+    assert cfg.tool_description == "Consult the sub"
+    assert cfg.max_turns == 5
+    assert cfg.yaml_path == str(sub_path.resolve())
+
+
+def test_loader_parses_agent_tools_bare_string(tmp_path):
+    """`agent_tools: [explorer]` is shorthand for `[{agent: explorer}]`."""
+    sub_path = tmp_path / "sub.yaml"
+    _write(
+        sub_path,
+        """
+        name: explorer
+        instructions: Explore
+        """,
+    )
+    main_path = tmp_path / "main.yaml"
+    _write(
+        main_path,
+        """
+        name: MainAgent
+        instructions: Be main
+        agent_tools:
+          - explorer
+        """,
+    )
+
+    spec = load_agent_spec_from_yaml(
+        str(main_path),
+        agents_map={"explorer": sub_path.resolve()},
+    )
+    assert len(spec.agent_tool_configs) == 1
+    cfg = spec.agent_tool_configs[0]
+    # tool_name not specified — left None so SDK Agent.as_tool() defaults
+    # it to the sub-agent's name (per AgentToolConfig.tool_name docstring).
+    assert cfg.tool_name is None
+    assert cfg.yaml_path == str(sub_path.resolve())
+
+
+def test_loader_agent_tools_unknown_name_skips(tmp_path, capsys):
+    """Unknown agent name produces a clear warning and skips the entry."""
+    main_path = tmp_path / "main.yaml"
+    _write(
+        main_path,
+        """
+        name: MainAgent
+        instructions: Be main
+        agent_tools:
+          - agent: nonexistent
+        """,
+    )
+
+    spec = load_agent_spec_from_yaml(
+        str(main_path),
+        agents_map={"explorer": tmp_path / "explorer.yaml"},
+    )
+    assert spec.agent_tool_configs == []
+    captured = capsys.readouterr()
+    assert "nonexistent" in captured.out
+    assert "explorer" in captured.out  # available agents listed
+
+
+def test_loader_agent_tools_no_registry_skips(tmp_path, capsys):
+    """`agent: <name>` without an agents_map produces a clear warning,
+    so callers loading standalone YAML get an actionable error."""
+    main_path = tmp_path / "main.yaml"
+    _write(
+        main_path,
+        """
+        name: MainAgent
+        instructions: Be main
+        agent_tools:
+          - agent: explorer
+        """,
+    )
+
+    spec = load_agent_spec_from_yaml(str(main_path))  # no agents_map
+    assert spec.agent_tool_configs == []
+    captured = capsys.readouterr()
+    assert "agent: explorer" in captured.out
+    assert "agents_map" in captured.out
+
+
+def test_loader_parses_handoffs_by_name(tmp_path):
+    """`agent: <name>` in handoffs resolves against agents_map to the same
+    yaml_path a `yaml: <path>` entry would produce."""
+    sub_path = tmp_path / "sub.yaml"
+    _write(
+        sub_path,
+        """
+        name: SubAgent
+        instructions: Be a sub
+        """,
+    )
+    main_path = tmp_path / "main.yaml"
+    _write(
+        main_path,
+        """
+        name: MainAgent
+        instructions: Be main
+        handoffs:
+          - agent: SubAgent
+            tool_name_override: hand_to_sub
+            tool_description_override: Switch to the sub
+        """,
+    )
+
+    spec = load_agent_spec_from_yaml(
+        str(main_path),
+        agents_map={"SubAgent": sub_path.resolve()},
+    )
+    assert len(spec.handoff_configs) == 1
+    cfg = spec.handoff_configs[0]
+    assert cfg.tool_name_override == "hand_to_sub"
+    assert cfg.tool_description_override == "Switch to the sub"
+    assert cfg.yaml_path == str(sub_path.resolve())
+
+
+def test_loader_parses_handoffs_bare_string(tmp_path):
+    """`handoffs: [explorer]` is shorthand for `[{agent: explorer}]`."""
+    sub_path = tmp_path / "sub.yaml"
+    _write(
+        sub_path,
+        """
+        name: explorer
+        instructions: Explore
+        """,
+    )
+    main_path = tmp_path / "main.yaml"
+    _write(
+        main_path,
+        """
+        name: MainAgent
+        instructions: Be main
+        handoffs:
+          - explorer
+        """,
+    )
+
+    spec = load_agent_spec_from_yaml(
+        str(main_path),
+        agents_map={"explorer": sub_path.resolve()},
+    )
+    assert len(spec.handoff_configs) == 1
+    cfg = spec.handoff_configs[0]
+    assert cfg.tool_name_override is None
+    assert cfg.yaml_path == str(sub_path.resolve())
+
+
+def test_loader_handoffs_unknown_name_skips(tmp_path, capsys):
+    """Unknown handoff agent name produces a clear warning and skips."""
+    main_path = tmp_path / "main.yaml"
+    _write(
+        main_path,
+        """
+        name: MainAgent
+        instructions: Be main
+        handoffs:
+          - agent: nonexistent
+        """,
+    )
+
+    spec = load_agent_spec_from_yaml(
+        str(main_path),
+        agents_map={"explorer": tmp_path / "explorer.yaml"},
+    )
+    assert spec.handoff_configs == []
+    captured = capsys.readouterr()
+    assert "nonexistent" in captured.out
+    assert "explorer" in captured.out
+
+
+def test_loader_handoffs_no_registry_skips(tmp_path, capsys):
+    """`agent: <name>` in handoffs without an agents_map produces a clear warning."""
+    main_path = tmp_path / "main.yaml"
+    _write(
+        main_path,
+        """
+        name: MainAgent
+        instructions: Be main
+        handoffs:
+          - agent: explorer
+        """,
+    )
+
+    spec = load_agent_spec_from_yaml(str(main_path))  # no agents_map
+    assert spec.handoff_configs == []
+    captured = capsys.readouterr()
+    assert "agent: explorer" in captured.out
+    assert "agents_map" in captured.out
+
+
 # -- 2. is_enabled on handoffs and agent_tools --------------------------------
 
 

@@ -22,6 +22,40 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _resolve_capability_approval_policy(policy: Any) -> Any:
+    """Translate a capability's approval YAML value into something the SDK's
+    ``FunctionTool.needs_approval`` accepts (bool or async callable).
+
+    Accepted shapes:
+
+    * ``True`` / ``False`` — explicit always/never; returned as-is.
+    * dict with ``fn:`` key — ``{fn: "module.function"}`` resolves the
+      dotted path to a callable.
+    * string — treated as a dotted path (or registry name when one is in
+      scope; capability-level approvals don't currently consult the
+      project predicate registry).
+
+    Returns ``None`` when the policy can't be resolved so the caller can
+    decide whether to warn or fall through.
+    """
+    from omniagents.core.predicates.discovery import resolve_predicate
+
+    if policy is None:
+        return None
+    if isinstance(policy, bool):
+        return policy
+    if callable(policy):
+        return policy
+    if isinstance(policy, str):
+        return resolve_predicate(policy, None)
+    if isinstance(policy, dict):
+        fn_spec = policy.get("fn")
+        if fn_spec is None:
+            return None
+        return resolve_predicate(fn_spec, None)
+    return None
+
+
 def _apply_tool_timeouts(tools: List[Any], timeouts: Dict[str, Any]) -> List[Any]:
     """Wrap tool invoke methods with ``asyncio.wait_for`` timeouts.
 
@@ -122,12 +156,22 @@ async def _build_handoffs_from_configs(
                 server_functions_registry = (
                     parent_spec._server_functions_registry if parent_spec else None
                 )
+                agents_map = (
+                    getattr(parent_spec, "_agents_map", None) if parent_spec else None
+                )
+                capability_registry = (
+                    getattr(parent_spec, "_capability_registry", None)
+                    if parent_spec
+                    else None
+                )
 
                 handoff_spec = load_agent_spec_from_yaml(
                     str(yaml_path),
                     tool_registry=tool_registry,
                     guardrails_registry=guardrails_registry,
                     server_functions_registry=server_functions_registry,
+                    agents_map=agents_map,
+                    capability_registry=capability_registry,
                 )
 
                 # Add this path to building stack for recursive building
@@ -213,11 +257,21 @@ async def _build_agent_tools_from_configs(
                 server_functions_registry = (
                     parent_spec._server_functions_registry if parent_spec else None
                 )
+                agents_map = (
+                    getattr(parent_spec, "_agents_map", None) if parent_spec else None
+                )
+                capability_registry = (
+                    getattr(parent_spec, "_capability_registry", None)
+                    if parent_spec
+                    else None
+                )
                 sub_spec = load_agent_spec_from_yaml(
                     str(yaml_path),
                     tool_registry=tool_registry,
                     guardrails_registry=guardrails_registry,
                     server_functions_registry=server_functions_registry,
+                    agents_map=agents_map,
+                    capability_registry=capability_registry,
                 )
                 new_loading_stack = _loading_stack.copy()
                 new_loading_stack.add(yaml_path)
@@ -350,7 +404,32 @@ async def _default_build_agent(
             model_name = session_model_config["model"]
             logger.debug(f"Using session model override: {model_name}")
 
-    instructions = process_instructions(spec.get_agent_instructions())
+    # When sandbox mode is on, the SDK's sandbox runtime owns the capability
+    # lifecycle (bind, tools, instructions) — we must NOT also merge tools or
+    # append instructions in this builder, otherwise the model sees both
+    # copies. Pull the flag once and gate the two merge points below.
+    use_sandbox_agent = bool(getattr(spec, "sandbox_use_sandbox_agent", False))
+
+    # Gather capability instruction fragments BEFORE process_instructions so
+    # they can be appended to the raw string and pass through Jinja2 rendering
+    # alongside the agent's own template (e.g. {{ available_skills_block }}).
+    raw_instructions = spec.get_agent_instructions()
+    resolved_caps = list(getattr(spec, "resolved_capabilities", []) or [])
+    cap_instructions_parts: List[str] = []
+    for cap in resolved_caps:
+        text = getattr(cap, "instructions_text", None)
+        if isinstance(text, str) and text.strip():
+            cap_instructions_parts.append(text.strip())
+    if (
+        not use_sandbox_agent
+        and cap_instructions_parts
+        and isinstance(raw_instructions, str)
+    ):
+        raw_instructions = (
+            raw_instructions.rstrip() + "\n\n" + "\n\n".join(cap_instructions_parts)
+        )
+
+    instructions = process_instructions(raw_instructions)
     tools = spec.available_tools
 
     # Apply spec-level tool guardrails to every FunctionTool the agent uses.
@@ -431,6 +510,73 @@ async def _default_build_agent(
                 tools = list(tools) + list(agent_tools_built)
         except Exception as e:
             logger.error(f"Failed to build agent_tools for '{spec.name}': {e}")
+
+    # Capability packs (Phase 0): merge each resolved capability's tools into
+    # the agent's tool list and attach per-tool approval predicates from the
+    # capability's approvals_spec. Predicates are set directly on the
+    # FunctionTool's needs_approval attribute, which the SDK consults before
+    # each call. configure_tool_approval (run later by AgentService) skips
+    # tools whose needs_approval is already non-default, so capability-level
+    # rules win over the agent-level safe_tool_names allowlist — matching the
+    # precedence in CAPABILITY_PACKS_DESIGN.md §6.
+    #
+    # Instructions composition for capabilities happens earlier, before
+    # process_instructions, so the appended fragments flow through Jinja2.
+    #
+    # Sandbox mode: skip this merge entirely. SandboxAgent's runtime walks
+    # `capabilities` itself (binding session, calling tools()) and produces
+    # the final tool list. Doing both produces duplicates.
+    if resolved_caps and not use_sandbox_agent:
+        cap_tools: List[Any] = []
+        for cap in resolved_caps:
+            cap_label = (
+                getattr(cap, "capability_name", None) or getattr(cap, "type", "?")
+            )
+            try:
+                this_caps_tools = list(cap.tools())
+            except Exception as e:
+                logger.error(
+                    "Capability %r tools() raised: %s. Skipping its tools.",
+                    cap_label,
+                    e,
+                )
+                continue
+
+            approvals_spec = getattr(cap, "approvals_spec", None) or {}
+            for tool in this_caps_tools:
+                tname = getattr(tool, "name", None)
+                if not tname or tname not in approvals_spec:
+                    continue
+                policy = approvals_spec[tname]
+                # Tool-level explicit needs_approval already wins over
+                # everything (loader behavior at approval.py:123). Don't
+                # overwrite it here.
+                if getattr(tool, "needs_approval", None) not in (False, None):
+                    continue
+                resolved = _resolve_capability_approval_policy(policy)
+                if resolved is None:
+                    logger.warning(
+                        "Capability %r approval for tool %r could not be resolved "
+                        "(policy=%r). Tool will fall through to agent-level allowlist.",
+                        cap_label,
+                        tname,
+                        policy,
+                    )
+                    continue
+                try:
+                    tool.needs_approval = resolved
+                except Exception as e:
+                    logger.warning(
+                        "Failed to attach capability %r approval to tool %r: %s",
+                        cap_label,
+                        tname,
+                        e,
+                    )
+
+            cap_tools.extend(this_caps_tools)
+
+        if cap_tools:
+            tools = list(tools) + cap_tools
 
     # Configure API key for the default client if provided.
     # Note: We do this unconditionally so that server/TUI paths (where a default
@@ -619,7 +765,6 @@ async def _default_build_agent(
     # capabilities/manifest/run_as fields. The SDK accepts None for
     # capabilities (it falls back to Capabilities.default()), so we only
     # pass it through when the YAML configured an explicit list.
-    use_sandbox_agent = bool(getattr(spec, "sandbox_use_sandbox_agent", False))
     if use_sandbox_agent:
         try:
             from agents.sandbox import SandboxAgent  # type: ignore
@@ -633,10 +778,36 @@ async def _default_build_agent(
             )
             if default_manifest is not None:
                 sandbox_kwargs["default_manifest"] = default_manifest
-            capabilities = getattr(spec, "sandbox_capabilities", None)
-            if capabilities is not None:
-                sandbox_kwargs["capabilities"] = capabilities
+
+            # Combine the legacy `sandbox.capabilities:` YAML block with the
+            # new top-level `capabilities:` packs. Both end up as SDK
+            # Capability instances; SandboxAgent's runtime calls bind/tools/
+            # instructions on each during run prep. Pure-YAML caps are
+            # benign here — their bind is a no-op and their tools() returns
+            # the host-side FunctionTools they bundled (web/serpapi/tasks
+            # etc. that don't touch workspace state).
+            legacy_caps = list(getattr(spec, "sandbox_capabilities", None) or [])
+            pack_caps = list(resolved_caps or [])
+
+            # Prepend a side-effect capability that wires the omniagents
+            # workspace contextvar to the bound session — see
+            # omniagents/workspace/binding.py. With this in place, any tool
+            # body that uses `omniagents.workspace.read_text(...)` etc.
+            # automatically routes through the sandbox session for the
+            # duration of the run, with no per-tool changes.
+            from omniagents.workspace.binding import WorkspaceBindingCapability
+
             run_as = getattr(spec, "sandbox_run_as", None)
+            # WorkspaceBindingCapability honors run_as so the workspace
+            # contextvar bound for tools (e.g. the bash tool) defaults
+            # exec/spawn/read/write calls to that user identity. Without
+            # this, the SDK's docker session runs as root, letting agent
+            # code modify in-container security state (iptables, mounts).
+            combined_caps = (
+                [WorkspaceBindingCapability(run_as=run_as)] + legacy_caps + pack_caps
+            )
+            sandbox_kwargs["capabilities"] = combined_caps
+
             if run_as:
                 sandbox_kwargs["run_as"] = run_as
             base_agent = SandboxAgent(**agent_kwargs, **sandbox_kwargs)

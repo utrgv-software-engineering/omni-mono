@@ -58,18 +58,30 @@ if "bs4" not in sys.modules:
     fake_bs4.BeautifulSoup = _FakeSoup
     sys.modules["bs4"] = fake_bs4
 
+import pytest
 import requests
 
 download_module = importlib.import_module("omniagents.builtin.tools.download_file")
+from omniagents.workspace import HostWorkspace, reset_workspace, set_workspace
 
 
 def unwrap(tool):
-    impl = tool.on_invoke_tool.__closure__[0].cell_contents
-    async_wrapper = impl.__closure__[-1].cell_contents
-    closure = getattr(async_wrapper, "__closure__", None)
-    if closure:
-        return closure[0].cell_contents
-    return async_wrapper
+    """Return the original function the tool wraps (set by our
+    ``function_tool`` / ``rich_function_tool`` decorators as
+    ``_original_func``). Avoids digging through SDK closures, which
+    change shape between agents-sdk releases."""
+    return tool._original_func
+
+
+@pytest.fixture
+def routed_workspace(tmp_path):
+    """Install a HostWorkspace rooted at tmp_path for tests that pass an
+    absolute output_path inside tmp_path — the W4-migrated download_file
+    writes via the workspace contextvar for explicit output paths."""
+    ws = HostWorkspace(root=str(tmp_path))
+    token = set_workspace(ws)
+    yield ws
+    reset_workspace(token)
 
 
 class DummyResponse:
@@ -92,7 +104,10 @@ class DummyResponse:
             yield chunk
 
 
-def test_download_file_success_with_output_path(monkeypatch, tmp_path):
+@pytest.mark.asyncio
+async def test_download_file_success_with_output_path(
+    monkeypatch, tmp_path, routed_workspace
+):
     target = tmp_path / "out.bin"
     response = DummyResponse(
         status_code=200,
@@ -106,8 +121,8 @@ def test_download_file_success_with_output_path(monkeypatch, tmp_path):
         lambda url, headers, stream, timeout: response,
     )
 
-    result = unwrap(download_module.download_file)(
-        "https://example.com/file.bin", str(target)
+    result = await unwrap(download_module.download_file)(
+        None, "https://example.com/file.bin", str(target)
     )
 
     assert target.exists()
@@ -116,7 +131,8 @@ def test_download_file_success_with_output_path(monkeypatch, tmp_path):
     assert result.ui_metadata["metadata"]["file_path"] == str(target)
 
 
-def test_download_file_success_header_filename(monkeypatch, tmp_path):
+@pytest.mark.asyncio
+async def test_download_file_success_header_filename(monkeypatch, tmp_path):
     response = DummyResponse(
         status_code=200,
         headers={
@@ -132,7 +148,9 @@ def test_download_file_success_header_filename(monkeypatch, tmp_path):
         lambda url, headers, stream, timeout: response,
     )
 
-    result = unwrap(download_module.download_file)("https://example.com/doc")
+    result = await unwrap(download_module.download_file)(
+        None, "https://example.com/doc"
+    )
 
     meta = result.ui_metadata["metadata"]
     path = meta["file_path"]
@@ -141,7 +159,8 @@ def test_download_file_success_header_filename(monkeypatch, tmp_path):
     assert meta["is_temporary"] is True
 
 
-def test_download_file_http_error(monkeypatch):
+@pytest.mark.asyncio
+async def test_download_file_http_error(monkeypatch):
     response = DummyResponse(status_code=404, text="nope")
 
     monkeypatch.setattr(
@@ -150,19 +169,24 @@ def test_download_file_http_error(monkeypatch):
         lambda url, headers, stream, timeout: response,
     )
 
-    result = unwrap(download_module.download_file)("https://example.com/missing")
+    result = await unwrap(download_module.download_file)(
+        None, "https://example.com/missing"
+    )
 
     assert result.llm_output == "Request failed with status code 404"
     assert result.ui_metadata["metadata"]["success"] is False
 
 
-def test_download_file_network_error(monkeypatch):
+@pytest.mark.asyncio
+async def test_download_file_network_error(monkeypatch):
     def fake_get(url, headers, stream, timeout):
         raise requests.RequestException("network down")
 
     monkeypatch.setattr(download_module.requests, "get", fake_get)
 
-    result = unwrap(download_module.download_file)("https://example.com/network")
+    result = await unwrap(download_module.download_file)(
+        None, "https://example.com/network"
+    )
 
     assert result.llm_output == "Network error occurred: network down"
     assert result.ui_metadata["metadata"]["error_type"] == "network_error"

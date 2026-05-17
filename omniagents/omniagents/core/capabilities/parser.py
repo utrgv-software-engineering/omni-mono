@@ -1,0 +1,295 @@
+"""Parse YAML capability declarations into Capability instances.
+
+Capabilities are declared in two places:
+
+* Inline in ``project.yml`` under a top-level ``capabilities:`` list.
+* As individual YAML files under ``paths.capabilities/``.
+
+Both produce the same shape — a list of dicts. Each dict has ``name``,
+optional ``type``, optional ``tools``/``agent_tools``, optional
+``instructions``/``approvals``/``options``/``sampling_params``. This module
+parses each dict into a Capability instance, resolving tool references
+against the project tool registry.
+
+The parser is intentionally narrow: it produces Capability instances and
+nothing else. Wiring (storing on ProjectContext, threading into the agent
+loader) lives in :mod:`omniagents.core.project.runtime`.
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import yaml
+
+from .registry import resolve_capability_class, list_registered_capabilities
+from .yaml_capability import _YamlCapability
+
+logger = logging.getLogger(__name__)
+
+
+def _resolve_tool(name: str, tool_registry: Optional[Dict[str, Any]]) -> Any:
+    """Look up a tool by name in the project registry. Raises ``ValueError``
+    with an actionable message when the tool is missing."""
+    if tool_registry is None:
+        raise ValueError(
+            f"Cannot resolve tool {name!r}: no tool_registry was provided to the "
+            "capability parser. Capabilities must be parsed in a project context "
+            "where tools have been discovered."
+        )
+    tool = tool_registry.get(name)
+    if tool is None:
+        available = sorted(tool_registry.keys())
+        raise ValueError(
+            f"Capability references unknown tool {name!r}. "
+            f"Available tools ({len(available)}): {available[:20]}"
+            + ("..." if len(available) > 20 else "")
+        )
+    return tool
+
+
+def _resolve_agent_tool_entry(
+    entry: Any,
+    *,
+    agents_map: Optional[Dict[str, Any]],
+    cap_name: str,
+    source: str,
+) -> Optional[Any]:
+    """Translate one capability ``agent_tools:`` YAML entry into an
+    ``AgentToolConfig``. Capability agent_tools currently support the
+    name-based ``agent: <name>`` form (and the bare-string shorthand) only;
+    ``yaml:`` paths and ``inline:`` definitions are intentionally not
+    supported here — capability YAMLs live under ``paths.capabilities/`` so
+    relative paths would be ambiguous, and inline subagents inside a
+    capability are an anti-pattern (define them as proper agents instead).
+    """
+    from omniagents.core.agents.specs import AgentToolConfig
+
+    if isinstance(entry, str):
+        entry = {"agent": entry}
+    if not isinstance(entry, dict):
+        raise ValueError(
+            f"Capability {cap_name!r} agent_tools entry at {source} must be a "
+            f"string or dict, got {type(entry).__name__}"
+        )
+    agent_name = entry.get("agent")
+    if not isinstance(agent_name, str) or not agent_name.strip():
+        raise ValueError(
+            f"Capability {cap_name!r} agent_tools entry at {source} requires "
+            "an 'agent' name (yaml: and inline: are not supported in capabilities)"
+        )
+    if agents_map is None:
+        raise ValueError(
+            f"Capability {cap_name!r} references agent_tools agent {agent_name!r} "
+            "but no agents_map was provided to the capability parser. Capabilities "
+            "with agent_tools must be parsed in a project context."
+        )
+    yaml_path = agents_map.get(agent_name)
+    if yaml_path is None:
+        raise ValueError(
+            f"Capability {cap_name!r} agent_tools agent {agent_name!r} not found "
+            f"in project. Available: {sorted(agents_map.keys())}"
+        )
+    return AgentToolConfig(
+        yaml_path=str(yaml_path),
+        tool_name=entry.get("tool_name"),
+        tool_description=entry.get("tool_description"),
+        is_enabled=entry.get("is_enabled"),
+        needs_approval=entry.get("needs_approval"),
+        max_turns=entry.get("max_turns"),
+    )
+
+
+def parse_capability_spec(
+    spec: Dict[str, Any],
+    *,
+    tool_registry: Optional[Dict[str, Any]] = None,
+    agents_map: Optional[Dict[str, Any]] = None,
+    source: str = "<inline>",
+) -> Any:
+    """Parse a single capability YAML dict into a Capability instance.
+
+    *spec* is the raw dict from YAML (as it appears in ``project.yml``'s
+    ``capabilities:`` list, or the body of a file under ``paths.capabilities/``).
+    *source* is a human-readable origin used in error messages.
+
+    Returns a Capability instance. Raises ``ValueError`` for missing/invalid
+    fields so the caller can decide whether to abort discovery or skip.
+    """
+    if not isinstance(spec, dict):
+        raise ValueError(
+            f"Capability spec at {source} must be a dict, got {type(spec).__name__}"
+        )
+
+    name = spec.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError(
+            f"Capability at {source} requires a non-empty 'name' field"
+        )
+
+    tools_list = spec.get("tools") or []
+    agent_tools_list = spec.get("agent_tools") or []
+    cap_type = spec.get("type")
+    # Pure-YAML capabilities must declare their tool surface explicitly.
+    # Python-class capabilities (`type: <name>`) are exempt — the class owns
+    # its tool construction (e.g. SDK Filesystem brings apply_patch/view_image
+    # via its own tools() implementation, no YAML list needed).
+    if cap_type is None and not tools_list and not agent_tools_list:
+        raise ValueError(
+            f"Capability {name!r} at {source} must declare at least one of "
+            "'tools' or 'agent_tools' (or use 'type:' to reference a "
+            "registered Capability class that owns its tool construction)"
+        )
+    if not isinstance(tools_list, list):
+        raise ValueError(
+            f"Capability {name!r} 'tools' must be a list, "
+            f"got {type(tools_list).__name__}"
+        )
+
+    # Resolve tool names against the project tool registry now so capability
+    # construction fails fast on typos.
+    resolved_tools: List[Any] = []
+    for tool_name in tools_list:
+        if not isinstance(tool_name, str) or not tool_name.strip():
+            raise ValueError(
+                f"Capability {name!r} 'tools' entries must be non-empty strings; "
+                f"got {tool_name!r}"
+            )
+        resolved_tools.append(_resolve_tool(tool_name, tool_registry))
+
+    # Resolve agent_tools entries (subagent-as-tool refs) into AgentToolConfig
+    # instances. Empty when no agent_tools are declared on this cap.
+    if not isinstance(agent_tools_list, list):
+        raise ValueError(
+            f"Capability {name!r} 'agent_tools' must be a list, "
+            f"got {type(agent_tools_list).__name__}"
+        )
+    resolved_agent_tools: List[Any] = []
+    for entry in agent_tools_list:
+        cfg = _resolve_agent_tool_entry(
+            entry, agents_map=agents_map, cap_name=name, source=source
+        )
+        if cfg is not None:
+            resolved_agent_tools.append(cfg)
+
+    instructions_text = spec.get("instructions")
+    if instructions_text is not None and not isinstance(instructions_text, str):
+        raise ValueError(
+            f"Capability {name!r} 'instructions' must be a string, "
+            f"got {type(instructions_text).__name__}"
+        )
+
+    approvals_spec = spec.get("approvals") or {}
+    if not isinstance(approvals_spec, dict):
+        raise ValueError(
+            f"Capability {name!r} 'approvals' must be a dict, "
+            f"got {type(approvals_spec).__name__}"
+        )
+
+    sampling_params_override = spec.get("sampling_params") or {}
+    if not isinstance(sampling_params_override, dict):
+        raise ValueError(
+            f"Capability {name!r} 'sampling_params' must be a dict, "
+            f"got {type(sampling_params_override).__name__}"
+        )
+
+    # Python-class capability: type: <name> resolves via the class registry.
+    if cap_type is not None:
+        cls = resolve_capability_class(cap_type)
+        if cls is None:
+            raise ValueError(
+                f"Capability {name!r} type {cap_type!r} is not registered. "
+                f"Available types: {list_registered_capabilities()}. "
+                "Register via omniagents.core.capabilities.register_capability "
+                "or the 'omniagents.capabilities' entry point group."
+            )
+        options = spec.get("options") or {}
+        if not isinstance(options, dict):
+            raise ValueError(
+                f"Capability {name!r} 'options' must be a dict, "
+                f"got {type(options).__name__}"
+            )
+        # Python-class capabilities own their tool construction; the YAML
+        # tools: list is forwarded as a kwarg so the class can decide
+        # whether to use it. The class is also responsible for instructions
+        # and approvals (its instructions() method runs; its approvals are
+        # stashed on the instance for the builder to read).
+        try:
+            instance = cls(**options)
+        except Exception as e:
+            raise ValueError(
+                f"Failed to construct capability {name!r} (type {cap_type!r}): {e}"
+            ) from e
+        # Stash declarative metadata on the instance via object.__setattr__
+        # — SDK Capability subclasses are strict Pydantic models that reject
+        # ad-hoc field assignment through normal setattr. Builder code reads
+        # these via getattr(cap, ..., default) so missing values are fine.
+        for field_name, value in (
+            ("capability_name", name),
+            ("resolved_tools", resolved_tools),
+            ("agent_tool_configs", resolved_agent_tools),
+            ("instructions_text", instructions_text),
+            ("approvals_spec", approvals_spec),
+        ):
+            object.__setattr__(instance, field_name, value)
+        return instance
+
+    # Pure-YAML capability: synthesize a _YamlCapability instance.
+    return _YamlCapability(
+        capability_name=name,
+        resolved_tools=resolved_tools,
+        agent_tool_configs=resolved_agent_tools,
+        instructions_text=instructions_text,
+        approvals_spec=approvals_spec,
+        sampling_params_override=sampling_params_override,
+    )
+
+
+def discover_capabilities_in_dir(
+    base_dir: str | Path,
+    *,
+    tool_registry: Optional[Dict[str, Any]] = None,
+    agents_map: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Walk *base_dir* for ``*.yml`` / ``*.yaml`` files; parse each as a
+    capability spec. Returns a name → Capability instance map.
+
+    Errors during a single file's parse are logged and the file is skipped
+    so one broken capability doesn't disable the whole project. Duplicate
+    capability names across files raise ``ValueError`` — silent dedup hides
+    modeling mistakes.
+    """
+    base_path = Path(base_dir).resolve()
+    if not base_path.is_dir():
+        return {}
+
+    out: Dict[str, Any] = {}
+    for yaml_file in sorted(base_path.glob("*.yml")) + sorted(base_path.glob("*.yaml")):
+        try:
+            with yaml_file.open("r", encoding="utf-8") as f:
+                spec = yaml.safe_load(f)
+        except Exception as e:
+            logger.warning("Failed to read capability YAML %s: %s. Skipping.", yaml_file, e)
+            continue
+        if spec is None:
+            continue
+        try:
+            cap = parse_capability_spec(
+                spec,
+                tool_registry=tool_registry,
+                agents_map=agents_map,
+                source=str(yaml_file),
+            )
+        except ValueError as e:
+            logger.warning("Failed to parse capability %s: %s. Skipping.", yaml_file, e)
+            continue
+        cap_name = getattr(cap, "capability_name", None) or spec.get("name")
+        if cap_name in out:
+            raise ValueError(
+                f"Duplicate capability name {cap_name!r} in {yaml_file} "
+                f"(also defined elsewhere under {base_path})"
+            )
+        out[cap_name] = cap
+    return out
