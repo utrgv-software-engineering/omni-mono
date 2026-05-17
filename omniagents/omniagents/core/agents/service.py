@@ -7,6 +7,7 @@ execution modes (CLI, Flet, Server), exposing methods via JSON-RPC protocol.
 
 import os
 import asyncio
+import time
 import uuid
 import copy
 import logging
@@ -46,6 +47,7 @@ from omniagents.rpc import RpcMethodsBase
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.agents.approval import configure_tool_approval
 from omniagents.core.session import Session, SessionManager
+from omniagents.core.session.manager import QueuedItem
 from omniagents.core.session.history_db import get_user_messages
 from omniagents.core.runtime.bridge import stream_agent
 from omniagents.core.agents.builder import _default_build_agent
@@ -209,6 +211,23 @@ def _build_guardrail_error_info(
     return error_info
 
 
+# Process-wide handle to the most-recently-instantiated AgentService.
+# Lets tools that don't get a service via ctx (background bash watcher,
+# worker-completion callbacks, hooks, schedulers) call back into the
+# service without an explicit injection step. Single-service is the
+# overwhelmingly common case for omni-code / ink / launcher — multi-
+# service hosts (eval pipelines spawning many short-lived services)
+# would need to coordinate, but those don't fire background notifications.
+_CURRENT_SERVICE: "AgentService | None" = None
+
+
+def current_service() -> "AgentService | None":
+    """Return the process's current AgentService, or None before any has
+    been instantiated. Tools should treat None as "no host to notify"
+    and drop the call gracefully."""
+    return _CURRENT_SERVICE
+
+
 class AgentService(RpcMethodsBase):
     """JSON-RPC methods for agent operations.
 
@@ -242,6 +261,8 @@ class AgentService(RpcMethodsBase):
                 cwd.
         """
         super().__init__()
+        global _CURRENT_SERVICE
+        _CURRENT_SERVICE = self
         self.spec = spec
         self._default_workspace_root: str | None = (
             default_workspace_root
@@ -2068,6 +2089,7 @@ class AgentService(RpcMethodsBase):
         workflow_name: str | None = None,
         group_id: str | None = None,
         safe_tool_overrides: dict | None = None,
+        prompt_role: str = "user",
     ) -> dict:  # noqa: D401
         sess: Session = self._session_manager.get_or_create(session_id)
         channel = getattr(self, "channel", None)
@@ -2205,6 +2227,18 @@ class AgentService(RpcMethodsBase):
 
         agent = await self._build_agent_for_session(sess, None)
 
+        # When the caller supplies a non-user prompt role, write the
+        # message to history with that role and tell the worker to
+        # resume from history rather than inject a fresh user turn.
+        # Used by _notification_flusher to land batched bash-job /
+        # worker completion notices as assistant messages while still
+        # triggering a run.
+        _resume_from_history = prompt_role != "user"
+        if _resume_from_history:
+            sess.append_message(
+                {"role": prompt_role, "content": prompt, "type": "message"}
+            )
+
         async def _worker():
             end_reason = "error"  # Default in case of unexpected exception
             final_details: dict | None = None
@@ -2316,7 +2350,7 @@ class AgentService(RpcMethodsBase):
                 return any(k in msg for k in retry_keywords)
 
             attempt = 0
-            include_user_message = True
+            include_user_message = not _resume_from_history
             try:
                 # Determine workflow_name: session override > spec config > default
                 workflow_name_override = getattr(sess, "workflow_name", None)
@@ -2630,12 +2664,18 @@ class AgentService(RpcMethodsBase):
         # Proactively notify clients that the run has started so UIs can
         # correlate subsequent status and end events even if they arrive
         # before the RPC response is processed client-side.
+        # ``prompt`` is included so clients whose run wasn't user-initiated
+        # (e.g. queued via enqueue_message + drainer, or background
+        # automation) can render the originating user message in their
+        # transcript — without it, the message_output stream would arrive
+        # with no anchoring user turn.
         await self._broadcast_session(
             sess,
             "run_started",
             {
                 "run_id": task_name,
                 "session_id": sess.id,
+                "prompt": prompt,
             },
             track_live=True,
         )
@@ -2744,6 +2784,404 @@ class AgentService(RpcMethodsBase):
             pass
         _debug_rpc("get_agent_info", info)
         return info
+
+    # ------------------------------------------------------------------
+    #  Background-injected message queue.
+    #
+    #  Lets in-process callers (hooks, schedulers, webhooks) and external
+    #  RPC clients inject messages into a session's history without
+    #  racing against an in-flight run. ``start_run`` enforces "one run
+    #  per session" by raising at service.py "Run already active in this
+    #  session" — the drainer awaits ``current_task`` so queued work
+    #  serializes cleanly against user-initiated runs.
+    # ------------------------------------------------------------------
+
+    async def enqueue_message(
+        self,
+        session_id: str,
+        content: str,
+        role: str = "user",
+        trigger_run: bool = False,
+        variables: dict | None = None,
+        safe_tool_overrides: dict | None = None,
+        source: str | None = None,
+    ) -> dict:  # noqa: D401
+        """Queue a message for serialized processing on a session.
+
+        - ``trigger_run=False``: append to history, no run.
+        - ``trigger_run=True``:  call ``start_run`` with ``content`` as the
+          prompt — ``start_run`` writes the user turn and drives the agent.
+
+        Items are processed in FIFO order. The drainer waits for any
+        in-flight run (queued or user-initiated) before starting a new one,
+        so two runs never overlap on the same session.
+        """
+        _debug_rpc(
+            "enqueue_message",
+            {
+                "session_id": session_id,
+                "role": role,
+                "trigger_run": trigger_run,
+                "source": source,
+            },
+        )
+        sess = self._session_manager.get_or_create(session_id)
+        # Drain pending background notifications first so they keep
+        # chronological order in history relative to this real message.
+        # The recursive enqueue_message call from _flush_notifications
+        # uses source="notifications:batch" and is skipped here, so no
+        # infinite loop.
+        if source != "notifications:batch" and sess.pending_notifications:
+            await self._flush_notifications(sess)
+        if len(sess.message_queue) >= sess.message_queue_max:
+            return {
+                "ok": False,
+                "reason": "queue_full",
+                "depth": len(sess.message_queue),
+                "session_id": sess.id,
+            }
+        item = QueuedItem(
+            content=content,
+            role=role,
+            trigger_run=trigger_run,
+            variables=variables,
+            safe_tool_overrides=safe_tool_overrides,
+            source=source,
+        )
+        sess.message_queue.append(item)
+        await self._broadcast_queue_changed(sess)
+        self._ensure_drainer(sess)
+        return {
+            "ok": True,
+            "id": item.id,
+            "depth": len(sess.message_queue),
+            "session_id": sess.id,
+            "enqueued_at": item.enqueued_at,
+        }
+
+    async def queue_status(self, session_id: str) -> dict:  # noqa: D401
+        """Return the queue/run state for a session."""
+        sess = self._session_manager.get_or_create(session_id)
+        return {
+            "session_id": sess.id,
+            "depth": len(sess.message_queue),
+            "draining": bool(sess.drainer_task and not sess.drainer_task.done()),
+            "run_active": bool(sess.current_task and not sess.current_task.done()),
+            "active_run_id": sess.active_run_id,
+        }
+
+    async def list_queue(self, session_id: str) -> dict:  # noqa: D401
+        """Return the current queue contents for a session.
+
+        Clients call this on connect / session-switch to seed local state,
+        then subscribe to ``queue_changed`` notifications for updates.
+        """
+        sess = self._session_manager.get_or_create(session_id)
+        return {
+            "session_id": sess.id,
+            "depth": len(sess.message_queue),
+            "items": [item.to_dict() for item in sess.message_queue],
+        }
+
+    async def cancel_queued_message(
+        self, session_id: str, item_id: str
+    ) -> dict:  # noqa: D401
+        """Remove a queued item by id.
+
+        Returns ``{ok: false, reason: "not_found"}`` if the item has already
+        been popped by the drainer (running or completed) — cancelling an
+        actively-running turn requires ``stop_run`` instead.
+        """
+        sess = self._session_manager.get_or_create(session_id)
+        for i, item in enumerate(sess.message_queue):
+            if item.id == item_id:
+                del sess.message_queue[i]
+                await self._broadcast_queue_changed(sess)
+                return {"ok": True, "id": item_id, "depth": len(sess.message_queue)}
+        return {"ok": False, "reason": "not_found", "id": item_id}
+
+    async def _broadcast_queue_changed(self, sess: Session) -> None:
+        """Fan a full snapshot of the queue out to every connected channel.
+
+        Snapshot rather than delta because the queue is small (max 100) and
+        full-replace is dead-simple for clients to apply. Queue is also
+        queued-for-replay on reconnect via ``_broadcast_session(...,
+        queue_if_unseen=True)`` so a tab opening mid-drain still sees the
+        latest state without an extra ``list_queue`` round-trip.
+        """
+        await self._broadcast_session(
+            sess,
+            "queue_changed",
+            {
+                "session_id": sess.id,
+                "depth": len(sess.message_queue),
+                "items": [item.to_dict() for item in sess.message_queue],
+            },
+            queue_if_unseen=True,
+        )
+
+    def _ensure_drainer(self, sess: Session) -> None:
+        """Spawn a drainer task if one isn't already running for the session.
+
+        Self-scheduling: the drainer exits when the queue empties and is
+        respawned by the next ``enqueue_message`` call. No teardown needed.
+        """
+        if sess.drainer_task and not sess.drainer_task.done():
+            return
+        sess.drainer_task = asyncio.create_task(
+            self._drain_queue(sess), name=f"drain-{sess.id[:8]}"
+        )
+
+    async def _drain_queue(self, sess: Session) -> None:
+        async def _wait_for_current_task() -> None:
+            """Await ``sess.current_task`` but swallow its cancellation/errors.
+
+            ``contextlib.suppress(Exception)`` won't catch ``CancelledError``
+            (it's a ``BaseException`` since 3.8). We need to distinguish
+            "the awaited task was cancelled" (keep draining) from "the
+            drainer itself was cancelled" (propagate).
+            """
+            task = sess.current_task
+            if task is None or task.done():
+                return
+            try:
+                await task
+            except asyncio.CancelledError:
+                # If our own drainer task is being cancelled, re-raise so
+                # the cancellation propagates. Otherwise the inner task
+                # was cancelled — fine, move on.
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
+                    raise
+            except Exception:
+                pass
+
+        while sess.message_queue:
+            # Wait for any in-flight run BEFORE popping the next item.
+            # This is what makes the queue visible to clients: items
+            # stay in ``sess.message_queue`` (and therefore in every
+            # client's "Up next" panel) for the entire duration of the
+            # current run, not just the microsecond between pop and the
+            # next broadcast. Pop only when we're actually ready to
+            # process — that's the moment the user sees "this one is
+            # starting now". The loop's own re-check at the top
+            # subsumes the post-start_run wait we used to do, so the
+            # serialization guarantee is unchanged.
+            await _wait_for_current_task()
+            # The queue may have been emptied by cancel_queued_message
+            # while we were waiting — re-check before popping.
+            if not sess.message_queue:
+                break
+            item = sess.message_queue.pop(0)
+            await self._broadcast_queue_changed(sess)
+            try:
+                if item.trigger_run:
+                    # start_run appends the prompt to history AND drives a
+                    # turn. Don't pre-append — that would duplicate.
+                    # prompt_role lets non-user notifications (assistant-
+                    # role batches from _notification_flusher) land in
+                    # history with their real role while still triggering
+                    # a run via the resume-from-history path.
+                    await self.start_run(
+                        prompt=item.content,
+                        session_id=sess.id,
+                        variables=item.variables,
+                        safe_tool_overrides=item.safe_tool_overrides,
+                        prompt_role=item.role,
+                    )
+                    # Shepherd the run we just scheduled to completion
+                    # before exiting the drainer. The loop's outer wait
+                    # at the top would catch this on the next iteration
+                    # too, but if this was the last queued item we'd
+                    # otherwise exit while the run was still in flight.
+                    await _wait_for_current_task()
+                else:
+                    sess.append_message(
+                        {
+                            "role": item.role,
+                            "content": item.content,
+                            "type": "message",
+                        }
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "drain failed",
+                    extra={"session": sess.id, "source": item.source},
+                )
+
+    # ------------------------------------------------------------------
+    #  Background notifications (batched, role="assistant").
+    #
+    #  enqueue_notification buffers per-session; _notification_flusher
+    #  coalesces a burst into ONE QueuedItem with trigger_run=True at:
+    #    - the moment ``current_task`` ends (run-active case)
+    #    - after a debounce window (idle case)
+    #    - immediately when a real user message arrives (chronological
+    #      ordering, via the enqueue_message hook above).
+    #
+    #  The combined item lands in history as role="assistant" so it
+    #  reads as the agent observing its own background activity, then
+    #  triggers a new run that continues from history without a fresh
+    #  user turn. Works on every model/provider — no capability check.
+    # ------------------------------------------------------------------
+
+    _NOTIFICATION_DEBOUNCE_S = 0.5
+    _NOTIFICATION_IDLE_EXIT_S = 5.0
+
+    async def enqueue_notification(
+        self,
+        session_id: str,
+        content: str,
+        source: str,
+    ) -> dict:  # noqa: D401
+        """Buffer a background notification for batched delivery.
+
+        Always coalesced with any other notifications in the same
+        window and always delivered as a role="assistant" history item
+        that triggers a fresh run.
+        """
+        _debug_rpc(
+            "enqueue_notification",
+            {"session_id": session_id, "source": source},
+        )
+        sess = self._session_manager.get_or_create(session_id)
+        sess.pending_notifications.append(
+            {
+                "content": content,
+                "source": source,
+                "enqueued_at": time.time(),
+            }
+        )
+        sess.notification_signal.set()
+        self._ensure_notification_flusher(sess)
+        return {
+            "ok": True,
+            "buffered": len(sess.pending_notifications),
+            "session_id": sess.id,
+        }
+
+    def _ensure_notification_flusher(self, sess: Session) -> None:
+        if (
+            sess.notification_flusher_task
+            and not sess.notification_flusher_task.done()
+        ):
+            return
+        sess.notification_flusher_task = asyncio.create_task(
+            self._notification_flusher(sess),
+            name=f"notif-flush-{sess.id[:8]}",
+        )
+
+    async def _flush_notifications(self, sess: Session) -> None:
+        """Drain ``pending_notifications`` into ONE combined QueuedItem.
+
+        Always role="assistant", always trigger_run=True. Safe to call
+        with an empty buffer (no-op). The drainer routes the role
+        through ``start_run(prompt_role=...)`` which appends to history
+        with the real role and resumes the run without injecting a
+        fresh user turn, so the notification reads as the agent
+        observing its own background activity rather than as fake user
+        input."""
+        if not sess.pending_notifications:
+            return
+        items = sess.pending_notifications[:]
+        sess.pending_notifications.clear()
+        combined = self._format_notification_batch(items)
+        await self.enqueue_message(
+            session_id=sess.id,
+            content=combined,
+            role="assistant",
+            trigger_run=True,
+            source="notifications:batch",
+        )
+
+    def _format_notification_batch(self, items: list[dict]) -> str:
+        """Combine buffered notifications into a single message body,
+        grouped by source so a burst of bash-job exits reads as one
+        section, not N unrelated lines."""
+        if len(items) == 1:
+            return items[0]["content"]
+        groups: dict[str, list[str]] = {}
+        for it in items:
+            groups.setdefault(it["source"], []).append(it["content"])
+        parts: list[str] = []
+        for source, contents in groups.items():
+            if len(contents) == 1:
+                parts.append(contents[0])
+            else:
+                parts.append(f"[{source}] {len(contents)} events:")
+                parts.extend(f"  - {c}" for c in contents)
+        return "\n".join(parts)
+
+    @staticmethod
+    async def _await_swallow(task: asyncio.Task) -> None:
+        try:
+            await task
+        except BaseException:
+            pass
+
+    async def _notification_flusher(self, sess: Session) -> None:
+        """Long-lived per-session task that batches notifications and
+        turns them into a single QueuedItem at the right moment.
+
+        Loop:
+          1. Wait for at least one notification (timeout => idle exit;
+             respawned by next enqueue_notification).
+          2. Decide WHEN to flush:
+               - run active => wait for current_task OR flush_now signal
+               - run idle   => debounce briefly to coalesce bursts
+          3. Drain buffer into one assistant-role QueuedItem; the
+             drainer then pops it and calls start_run with
+             prompt_role="assistant" — the agent wakes up and runs.
+        """
+        try:
+            while True:
+                try:
+                    await asyncio.wait_for(
+                        sess.notification_signal.wait(),
+                        timeout=self._NOTIFICATION_IDLE_EXIT_S,
+                    )
+                except asyncio.TimeoutError:
+                    if not sess.pending_notifications:
+                        return
+                sess.notification_signal.clear()
+
+                if sess.current_task and not sess.current_task.done():
+                    flush_now = asyncio.create_task(
+                        sess.notification_flush_now.wait(), name="flush-now"
+                    )
+                    wait_run = asyncio.create_task(
+                        self._await_swallow(sess.current_task), name="wait-run"
+                    )
+                    _, pending = await asyncio.wait(
+                        {flush_now, wait_run},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                else:
+                    flush_now = asyncio.create_task(
+                        sess.notification_flush_now.wait(), name="flush-now"
+                    )
+                    debounce = asyncio.create_task(
+                        asyncio.sleep(self._NOTIFICATION_DEBOUNCE_S),
+                        name="debounce",
+                    )
+                    _, pending = await asyncio.wait(
+                        {flush_now, debounce},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                for t in pending:
+                    t.cancel()
+                sess.notification_flush_now.clear()
+
+                # No-op when enqueue_message's hook already drained.
+                await self._flush_notifications(sess)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "notification flusher failed", extra={"session": sess.id}
+            )
 
     async def archive_session(self, session_id: str) -> bool:  # noqa: D401
         """Archive *session_id* so clients can hide it."""

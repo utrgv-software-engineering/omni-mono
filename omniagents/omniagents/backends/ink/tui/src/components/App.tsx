@@ -16,6 +16,7 @@ import { useMessagesOptimized } from "../hooks/useMessagesNew.js";
 import {
   useMessages,
   useThinking,
+  useQueuedMessages,
   useApproval,
   useMcpApproval,
   useUsage,
@@ -41,6 +42,7 @@ import { SessionList } from "./SessionList.js";
 import { Scrollable } from "./Scrollable.js";
 import { Tasks } from "./Tasks.js";
 import { BashJobs } from "./BashJobs.js";
+import { QueuedMessages } from "./QueuedMessages.js";
 import { MouseProvider } from "../contexts/MouseContext.js";
 import { ScrollProvider } from "../contexts/ScrollProvider.js";
 import { TokyoNightTheme } from "../theme.js";
@@ -272,6 +274,7 @@ export const App: React.FC<AppProps> = ({
   // Get state from atomic store
   const messages = useMessages();
   const thinking = useThinking();
+  const queuedMessages = useQueuedMessages();
   const approval = useApproval();
   const mcpApproval = useMcpApproval();
   const usage = useUsage();
@@ -613,19 +616,42 @@ export const App: React.FC<AppProps> = ({
         // Fall through to send to LLM if not handled
       }
 
-      // Add user message to UI immediately
-      actions.addMessage({
-        role: "user",
-        content: message,
-        timestamp: new Date(),
-      });
-
-      // Add to history (avoid duplicates)
+      // Always update input-recall history (regardless of which path
+      // the submit takes — queued or direct).
       setMessageHistory((prev) => {
         if (prev.length === 0 || prev[prev.length - 1] !== message) {
           return [...prev, message];
         }
         return prev;
+      });
+
+      // Queue path: a run is in flight or there's already a queued item
+      // ahead of us. Skip the optimistic addMessage — the user message
+      // will land in the transcript when the drainer fires start_run
+      // and we get run_started with the prompt. Requires a sessionId
+      // (the server needs to know which session to queue against);
+      // sendMessage's mint-on-first-call only works for direct starts.
+      if ((thinking || queuedMessages.length > 0) && sessionId) {
+        try {
+          await client.enqueueMessage(sessionId, message, {
+            triggerRun: true,
+            role: "user",
+            source: "ink",
+          });
+        } catch (err) {
+          const errorMessage =
+            err instanceof Error ? err.message : "Failed to enqueue message";
+          actions.setThinking(false, `Error: ${errorMessage}`);
+        }
+        return;
+      }
+
+      // Direct path: optimistic add, then sendMessage (which calls
+      // start_run server-side).
+      actions.addMessage({
+        role: "user",
+        content: message,
+        timestamp: new Date(),
       });
 
       try {
@@ -647,7 +673,7 @@ export const App: React.FC<AppProps> = ({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [client, connected, sendMessage, sessionId, handleSlashCommand],
+    [client, connected, sendMessage, sessionId, handleSlashCommand, thinking, queuedMessages.length],
   );
 
   // Handle session list input (only when in session_select state)
@@ -852,6 +878,11 @@ export const App: React.FC<AppProps> = ({
             {/* Docked task list - renders nothing when empty */}
             <Tasks />
 
+            {/* "Up next" panel for queued user messages - renders nothing
+                when empty. Items land here when the user submits while a
+                run is active. */}
+            <QueuedMessages />
+
             {/* Docked background-bash-jobs panel - renders nothing when empty */}
             <BashJobs
               focused={bashPanelFocused}
@@ -876,14 +907,17 @@ export const App: React.FC<AppProps> = ({
               }}
             />
 
-            {/* Input prompt - always rendered, disabled during approval/thinking */}
+            {/* Input prompt - always rendered, disabled only during
+                approval prompts or when a side panel owns the keyboard.
+                Submission while ``thinking`` is allowed now — handleSubmit
+                routes those through enqueue_message so they queue
+                instead of racing against the active run. */}
             <Box marginTop={1}>
               <MultiLineInputOptimized
                 onSubmit={handleSubmit}
                 disabled={
                   !connected || !!approval || !!mcpApproval || bashPanelFocused
                 }
-                disableSubmit={thinking}
                 history={messageHistory}
               />
             </Box>

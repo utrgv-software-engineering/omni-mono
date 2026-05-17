@@ -49,7 +49,8 @@ export type ServerEvent =
   | ToolApprovalRequestedEvent
   | ToolApprovalResolvedEvent
   | McpApprovalRequestedEvent
-  | McpApprovalResolvedEvent;
+  | McpApprovalResolvedEvent
+  | QueueChangedEvent;
 
 export interface ToolCalledEvent {
   jsonrpc: "2.0";
@@ -92,6 +93,10 @@ export interface RunStartedEvent {
   params: {
     run_id: string;
     session_id: string;
+    // Present when the server initiated the run from a queued item or
+    // background automation. Clients use this to render the user turn
+    // in the transcript, since no local submit happened to push it.
+    prompt?: string;
   };
 }
 
@@ -242,6 +247,28 @@ export interface McpApprovalResolvedEvent {
   params: {
     request_id: string;
     session_id?: string;
+  };
+}
+
+// Snapshot broadcast after every enqueue / cancel / drainer pop. The
+// server sends a full replace (not a delta) — the queue is bounded
+// (default 100) so it's trivial to apply.
+export interface QueueChangedEvent {
+  jsonrpc: "2.0";
+  method: "queue_changed";
+  params: {
+    session_id: string;
+    depth: number;
+    items: Array<{
+      id: string;
+      content: string;
+      role: string;
+      trigger_run: boolean;
+      variables: Record<string, unknown> | null;
+      safe_tool_overrides: Record<string, unknown> | null;
+      source: string | null;
+      enqueued_at: number;
+    }>;
   };
 }
 

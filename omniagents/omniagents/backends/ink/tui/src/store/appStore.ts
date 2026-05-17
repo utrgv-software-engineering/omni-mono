@@ -83,6 +83,20 @@ export interface BashJobSummary {
   cwd?: string;
 }
 
+// Mirror of QueuedItem.to_dict() on the server. Drives the "Up next"
+// dock; items appear when a user submits while a run is active and
+// disappear when the drainer pops them (or the user cancels).
+export interface QueuedMessage {
+  id: string;
+  content: string;
+  role: string;
+  trigger_run: boolean;
+  variables: Record<string, unknown> | null;
+  safe_tool_overrides: Record<string, unknown> | null;
+  source: string | null;
+  enqueued_at: number;
+}
+
 interface AppState {
   // Data
   messages: Message[];
@@ -107,6 +121,7 @@ interface AppState {
   preamble: string | null;
   tasks: TaskSummary[];
   bashJobs: BashJobSummary[];
+  queuedMessages: QueuedMessage[];
 
   // Actions (ONLY way to update state)
   actions: {
@@ -148,6 +163,7 @@ interface AppState {
     clearMessages: () => void;
     setTasks: (tasks: TaskSummary[]) => void;
     setBashJobs: (jobs: BashJobSummary[]) => void;
+    setQueuedMessages: (items: QueuedMessage[]) => void;
   };
 }
 
@@ -170,6 +186,7 @@ export const useAppStore = create<AppState>()(
     preamble: null,
     tasks: [],
     bashJobs: [],
+    queuedMessages: [],
 
     actions: {
       addMessage: (msg) =>
@@ -388,6 +405,11 @@ export const useAppStore = create<AppState>()(
         set((state) => {
           state.bashJobs = jobs;
         }),
+
+      setQueuedMessages: (items) =>
+        set((state) => {
+          state.queuedMessages = items;
+        }),
     },
   })),
 );
@@ -414,4 +436,5 @@ export const useCurrentRunId = () => useAppStore((s) => s.currentRunId);
 export const usePreamble = () => useAppStore((s) => s.preamble);
 export const useTasks = () => useAppStore((s) => s.tasks);
 export const useBashJobs = () => useAppStore((s) => s.bashJobs);
+export const useQueuedMessages = () => useAppStore((s) => s.queuedMessages);
 export const useActions = () => useAppStore((s) => s.actions);

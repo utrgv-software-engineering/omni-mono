@@ -337,6 +337,67 @@ export class RPCClient extends EventEmitter {
     return this.call<Record<string, unknown>>("server_call", params);
   }
 
+  // ---------------------------------------------------------------------
+  // Queue — background-injected messages serialized against current_task.
+  // See omniagents/core/agents/service.py::enqueue_message and friends.
+  // ---------------------------------------------------------------------
+
+  async enqueueMessage(
+    sessionId: string,
+    content: string,
+    opts?: {
+      role?: string;
+      triggerRun?: boolean;
+      variables?: Record<string, unknown>;
+      safeToolOverrides?: Record<string, unknown>;
+      source?: string;
+    },
+  ): Promise<{
+    ok: boolean;
+    id?: string;
+    depth?: number;
+    reason?: string;
+    session_id?: string;
+    enqueued_at?: number;
+  }> {
+    const params: Record<string, unknown> = { session_id: sessionId, content };
+    if (opts?.role) params.role = opts.role;
+    if (opts?.triggerRun) params.trigger_run = true;
+    if (opts?.variables) params.variables = opts.variables;
+    if (opts?.safeToolOverrides) params.safe_tool_overrides = opts.safeToolOverrides;
+    if (opts?.source) params.source = opts.source;
+    return this.call("enqueue_message", params);
+  }
+
+  async listQueue(
+    sessionId: string,
+  ): Promise<{
+    session_id: string;
+    depth: number;
+    items: Array<{
+      id: string;
+      content: string;
+      role: string;
+      trigger_run: boolean;
+      variables: Record<string, unknown> | null;
+      safe_tool_overrides: Record<string, unknown> | null;
+      source: string | null;
+      enqueued_at: number;
+    }>;
+  }> {
+    return this.call("list_queue", { session_id: sessionId });
+  }
+
+  async cancelQueuedMessage(
+    sessionId: string,
+    itemId: string,
+  ): Promise<{ ok: boolean; id?: string; depth?: number; reason?: string }> {
+    return this.call("cancel_queued_message", {
+      session_id: sessionId,
+      item_id: itemId,
+    });
+  }
+
   /**
    * Make a generic RPC call
    */
@@ -450,6 +511,9 @@ export class RPCClient extends EventEmitter {
         break;
       case "mcp_approval_resolved":
         this.emit("mcp_approval_resolved", event.params);
+        break;
+      case "queue_changed":
+        this.emit("queue_changed", event.params);
         break;
       default:
         this.log("Unknown notification method:", event.method);

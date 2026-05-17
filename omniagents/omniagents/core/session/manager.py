@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import time
 import uuid
+from dataclasses import dataclass, field
 from typing import Dict, Optional, Any
 
 from omniagents.core.debug import Debug
@@ -20,12 +21,49 @@ from .history_db import (
 )
 
 __all__ = [
+    "QueuedItem",
     "Session",
     "SessionManager",
     "sm",
     "filter_history_for_api",
     "strip_internal_keys_for_api",
 ]
+
+
+@dataclass
+class QueuedItem:
+    """A message queued for serialized processing on a session.
+
+    Two flavours:
+    - ``trigger_run=False``: append to history, no run.
+    - ``trigger_run=True``:  ``start_run`` with this content (which itself
+      appends the prompt and drives a turn).
+
+    Each item carries a stable ``id`` so clients can target it for
+    cancellation/edit while it's still in the queue.
+    """
+
+    content: str
+    role: str = "user"
+    trigger_run: bool = False
+    variables: Optional[Dict[str, Any]] = None
+    safe_tool_overrides: Optional[Dict[str, Any]] = None
+    source: Optional[str] = None
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    enqueued_at: float = field(default_factory=time.time)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """JSON-safe wire shape for ``list_queue`` and ``queue_changed``."""
+        return {
+            "id": self.id,
+            "content": self.content,
+            "role": self.role,
+            "trigger_run": self.trigger_run,
+            "variables": self.variables,
+            "safe_tool_overrides": self.safe_tool_overrides,
+            "source": self.source,
+            "enqueued_at": self.enqueued_at,
+        }
 
 
 # ---------------------------------------------------------------------
@@ -440,6 +478,26 @@ class Session:  # noqa: D101
         # Keyed by ``McpApprovalRequest.id``; replayed on reconnect like
         # ``pending_tool_approvals``.
         self.pending_mcp_approvals: Dict[str, dict] = {}
+        # Background-injected messages awaiting serialized processing.
+        # Drained by AgentService._drain_queue, which serializes against
+        # ``current_task`` so queued runs never collide with user-initiated ones.
+        # Backed by a list (not asyncio.Queue) so clients can list/cancel
+        # items by id via ``list_queue`` / ``cancel_queued_message``.
+        self.message_queue: list[QueuedItem] = []
+        self.message_queue_max: int = 100
+        self.drainer_task: Optional[asyncio.Task] = None
+        # Background-notification batching. Sources that produce
+        # automated notifications (bash jobs exiting, workers
+        # completing, webhooks) call AgentService.enqueue_notification
+        # instead of enqueue_message. Those notifications buffer here
+        # and are coalesced into ONE combined QueuedItem (trigger_run=
+        # True, role="assistant") by _notification_flusher at the next
+        # safe boundary: active run ends, short debounce when idle, or
+        # immediately when a real user message is enqueued.
+        self.pending_notifications: list[dict] = []
+        self.notification_signal: asyncio.Event = asyncio.Event()
+        self.notification_flush_now: asyncio.Event = asyncio.Event()
+        self.notification_flusher_task: Optional[asyncio.Task] = None
         # Model configuration for runtime switching
         self.active_model: str | None = None
         self.model_config: Dict[str, Any] | None = None

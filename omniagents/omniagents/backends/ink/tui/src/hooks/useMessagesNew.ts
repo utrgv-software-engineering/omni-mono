@@ -145,6 +145,16 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
           debugLog(`Session history loaded (not changing thinking state)`);
         })
         .catch(console.error);
+      // Also seed the "Up next" panel for this session. queue_changed
+      // notifications take over from here. Run in parallel; failure is
+      // non-fatal — the panel just stays empty until the next broadcast.
+      client
+        .listQueue(sessionId)
+        .then((snap) => actions.setQueuedMessages(snap.items as any))
+        .catch(() => actions.setQueuedMessages([]));
+    } else if (!sessionId) {
+      // No active session — clear any leftover queue state from a prior one.
+      actions.setQueuedMessages([]);
     }
 
     // Helper to mark buffered messages as superseded (don't add to conversation)
@@ -254,6 +264,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     const handleRunStarted = (params: {
       run_id: string;
       session_id: string;
+      prompt?: string;
     }) => {
       const timestamp = Date.now();
       debugLog(
@@ -269,6 +280,43 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
         actions.setPreamble(null);
         actions.setCurrentRunId(params.run_id);
         actions.setThinking(true, null);
+
+        // Queue-drainer / background-automation path: the server started
+        // the run without a local sendMessage call, so no user message
+        // has been pushed to the transcript yet. Append it from
+        // params.prompt unless the last user message already matches
+        // (idempotency for the direct-submit case where handleSubmit
+        // already optimistic-added it).
+        const promptFromEvent = typeof params.prompt === "string" ? params.prompt : "";
+        if (promptFromEvent) {
+          const messages = useAppStore.getState().messages;
+          const lastUser = [...messages].reverse().find((m) => m.role === "user");
+          if (!lastUser || lastUser.content !== promptFromEvent) {
+            actions.addMessage({
+              role: "user",
+              content: promptFromEvent,
+              timestamp: new Date(),
+            });
+          }
+        }
+      });
+    };
+
+    // QUEUE CHANGED - replace local queue snapshot
+    const handleQueueChanged = (params: {
+      session_id: string;
+      depth: number;
+      items: any[];
+    }) => {
+      // Session filter: only accept events for the active session so a
+      // stale broadcast from a session we just switched away from doesn't
+      // poison the "Up next" dock.
+      const liveSessionId = useAppStore.getState().sessionId;
+      if (params.session_id && liveSessionId && params.session_id !== liveSessionId) {
+        return;
+      }
+      batcher.add(() => {
+        actions.setQueuedMessages(Array.isArray(params.items) ? params.items : []);
       });
     };
 
@@ -528,6 +576,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     client.on("tool_approval_resolved", handleToolApprovalResolved);
     client.on("mcp_approval_requested", handleMcpApprovalRequested);
     client.on("mcp_approval_resolved", handleMcpApprovalResolved);
+    client.on("queue_changed", handleQueueChanged);
 
     // Register client functions
     client.registerClientFunction("ui.set_status", handleSetStatus);
@@ -550,6 +599,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       client.off("tool_approval_resolved", handleToolApprovalResolved);
       client.off("mcp_approval_requested", handleMcpApprovalRequested);
       client.off("mcp_approval_resolved", handleMcpApprovalResolved);
+      client.off("queue_changed", handleQueueChanged);
 
       // Cleanup registered client functions
       client.unregisterClientFunction("ui.set_status");

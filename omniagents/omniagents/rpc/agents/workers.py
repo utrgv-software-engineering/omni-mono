@@ -17,6 +17,8 @@ class WorkerHandle:
     status: str = "running"
     result: str | None = None
     error: str | None = None
+    worker_id: str = ""
+    parent_session_id: str | None = None
 
 
 class WorkerManager:
@@ -25,12 +27,29 @@ class WorkerManager:
         *,
         spec_loader: Callable[[str | None], tuple[Any, dict | None]],
         agent_factory: Callable[[Any], Any] | None = None,
+        on_complete: Callable[["WorkerHandle"], Awaitable[None]] | None = None,
     ) -> None:
         self._spec_loader = spec_loader
         self._agent_factory = agent_factory or (
             lambda spec: LocalAgent(spec=spec, settings={})
         )
+        self._on_complete = on_complete
         self._workers: dict[str, WorkerHandle] = {}
+
+    async def _finalize(self, handle: WorkerHandle) -> None:
+        """Signal terminal state and notify any on_complete observer.
+
+        Called from every terminal path in _monitor_worker (success,
+        cancellation, error, queue close, connection failure) so the
+        notification fires regardless of how the worker ended."""
+        handle.done_event.set()
+        if self._on_complete is not None:
+            try:
+                await self._on_complete(handle)
+            except Exception:
+                # Notification failure must never poison the worker
+                # lifecycle. Caller logs through its own path.
+                pass
 
     @property
     def workers(self) -> dict[str, WorkerHandle]:
@@ -43,7 +62,7 @@ class WorkerManager:
         except Exception:
             handle.status = "error"
             handle.error = "Failed to connect to worker agent."
-            handle.done_event.set()
+            await self._finalize(handle)
             return
 
         while True:
@@ -52,7 +71,7 @@ class WorkerManager:
             except Exception:
                 handle.status = "error"
                 handle.error = "Event queue closed unexpectedly."
-                handle.done_event.set()
+                await self._finalize(handle)
                 return
 
             method = msg.get("method", "")
@@ -132,7 +151,7 @@ class WorkerManager:
                 if not handle.result:
                     handle.result = "Worker completed but produced no output."
 
-            handle.done_event.set()
+            await self._finalize(handle)
             return
 
     async def _create_worker(
@@ -143,6 +162,7 @@ class WorkerManager:
         model: str | None,
         session_id: str | None = None,
         context: dict | None = None,
+        parent_session_id: str | None = None,
     ) -> WorkerHandle:
         spec, _runtime = self._spec_loader(model)
         variables = getattr(spec, "variables", None)
@@ -178,6 +198,8 @@ class WorkerManager:
             session_id=sess_id,
             done_event=asyncio.Event(),
             monitor_task=None,
+            worker_id=worker_id,
+            parent_session_id=parent_session_id,
         )
         handle.monitor_task = asyncio.create_task(
             self._monitor_worker(handle), name=f"worker-monitor-{run_id or worker_id}"
@@ -191,12 +213,14 @@ class WorkerManager:
         task_description: str,
         model: str | None = None,
         context: dict | None = None,
+        parent_session_id: str | None = None,
     ) -> WorkerHandle:
         handle = await self._create_worker(
             worker_id=worker_id,
             task_description=task_description,
             model=model,
             context=context,
+            parent_session_id=parent_session_id,
         )
         self._workers[worker_id] = handle
         return handle

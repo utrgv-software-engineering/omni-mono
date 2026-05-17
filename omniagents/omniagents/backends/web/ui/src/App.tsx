@@ -3,6 +3,7 @@ import { Header } from './components/Header'
 import { MessageList, type MessageItem } from './components/MessageList'
 import { Input } from './components/Input'
 import { Tasks, type TaskSummary } from './components/Tasks'
+import { QueuedMessages } from './components/QueuedMessages'
 import {
   BashJobs,
   type BashJobSummary,
@@ -36,6 +37,7 @@ export function App() {
   const [artifacts, setArtifacts] = useState<ArtifactItem[]>([])
   const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [bashJobs, setBashJobs] = useState<BashJobSummary[]>([])
+  const [queuedMessages, setQueuedMessages] = useState<import('./rpc/client').QueuedMessage[]>([])
   const [thinking, setThinking] = useState(false)
   const [status, setStatus] = useState<string | undefined>(undefined)
   const [statusSpinner, setStatusSpinner] = useState<boolean>(false)
@@ -204,6 +206,14 @@ export function App() {
       setStatus(undefined)
       setStatusItalic(false)
     })
+    const offQueueChanged = client.on('queue_changed', (p: any) => {
+      // Full-snapshot replace. Only accept events for the currently-loaded
+      // session so stale broadcasts (e.g. after switching sessions) don't
+      // poison the "Up next" panel.
+      const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
+      if (eventSessionId && sessionIdRef.current && sessionIdRef.current !== eventSessionId) return
+      setQueuedMessages(Array.isArray(p?.items) ? p.items : [])
+    })
     const offRunStarted = client.on('run_started', (p: any) => {
       const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
       if (eventSessionId) {
@@ -221,6 +231,19 @@ export function App() {
       setStatusSpinner(false)
       setStatusItalic(false)
       refreshSessions()
+      // Queue-drainer / background-automation path: the run was started
+      // server-side without a local handleSubmit, so no user message has
+      // been pushed into the transcript yet. Append it from event.prompt
+      // when the last user item doesn't already match (idempotency for
+      // the direct-submit case where the optimistic push already ran).
+      const promptFromEvent = typeof p?.prompt === 'string' ? p.prompt : ''
+      if (promptFromEvent) {
+        setItems(prev => {
+          const lastUser = [...prev].reverse().find(it => it.type === 'chat' && (it as any).role === 'user') as any
+          if (lastUser && lastUser.content === promptFromEvent) return prev
+          return [...prev, { type: 'chat', role: 'user', content: promptFromEvent } as MessageItem]
+        })
+      }
     })
     const offRunEnd = client.on('run_end', (p: any) => {
       const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
@@ -444,7 +467,7 @@ export function App() {
     })
 
     return () => {
-      offMessageOutput(); offRunStarted(); offRunEnd(); offRunStatus(); offClientRequest(); offClientRequestResolved(); offToolApprovalRequested(); offToolApprovalResolved(); offMcpApprovalRequested(); offMcpApprovalResolved(); offToken(); offToolCalled(); offToolResult()
+      offQueueChanged(); offMessageOutput(); offRunStarted(); offRunEnd(); offRunStatus(); offClientRequest(); offClientRequestResolved(); offToolApprovalRequested(); offToolApprovalResolved(); offMcpApprovalRequested(); offMcpApprovalResolved(); offToken(); offToolCalled(); offToolResult()
       client.disconnect()
     }
   }, [client, normalizeAgentName, refreshSessions])
@@ -482,8 +505,14 @@ export function App() {
         const funcs = await client.listServerFunctions()
         const found = funcs.find(f => String(f.name).toLowerCase() === name.toLowerCase())
         if (!found) {
-          // Not a known server function; send to LLM
-          await client.startRun(text, sessionId)
+          // Not a known server function; send to LLM. Route through the
+          // queue when a run is active or the queue is non-empty — same
+          // guard as the main path below.
+          if ((thinking || queuedMessages.length > 0) && sessionId) {
+            await client.enqueueMessage(sessionId, text, { triggerRun: true, role: 'user', source: 'ui' })
+          } else {
+            await client.startRun(text, sessionId)
+          }
           return
         }
         let args: Record<string, unknown> = {}
@@ -555,11 +584,32 @@ export function App() {
         attachments = processed.map(p => p.attachment)
         content = parts
       }
-      setItems(prev => [...prev, { type: 'chat', role: 'user', content: text, attachments }])
       // Always pass workspace_root as variables so the context factory picks it up
       const variables = (workspacePath && workspaceSupported)
         ? { workspace_root: workspacePath }
         : undefined
+
+      // Queue the message instead of starting a run directly when a run
+      // is currently active or the queue is non-empty. The server-side
+      // drainer calls start_run for us once the current run finishes,
+      // and the run_started handler appends the user message to the
+      // transcript via event.prompt when the queued run actually fires.
+      // Skip the optimistic local push on this path — it would land in
+      // the transcript before the queue is even drained.
+      if ((thinking || queuedMessages.length > 0) && sessionId) {
+        startingRunRef.current = false
+        await client.enqueueMessage(sessionId, text, {
+          triggerRun: true,
+          role: 'user',
+          variables,
+          source: 'ui',
+        })
+        if (workspaceSupported) setWorkspaceLocked(true)
+        return
+      }
+
+      // Direct-start path: optimistic user-message push, then start_run.
+      setItems(prev => [...prev, { type: 'chat', role: 'user', content: text, attachments }])
       await client.startRun(text, sessionId, variables, content)
       if (workspaceSupported) setWorkspaceLocked(true)
     } catch (e) {
@@ -567,7 +617,7 @@ export function App() {
       setStatus(String((e as Error)?.message || 'Failed to start run'))
       setStatusItalic(false)
     }
-  }, [client, sessionId, workspacePath, workspaceSupported])
+  }, [client, sessionId, workspacePath, workspaceSupported, thinking, queuedMessages.length])
 
   const handleStop = useCallback(() => {
     if (!runId) return
@@ -642,6 +692,16 @@ export function App() {
     setStatusSpinner(false)
     setStatusItalic(false)
     setRunId(undefined)
+    // Reset the queue panel; we'll seed it from server state below if the
+    // newly-selected session has anything pending. ``queue_changed``
+    // notifications keep it fresh after that.
+    setQueuedMessages([])
+    if (id) {
+      try {
+        const snap = await client.listQueue(id)
+        setQueuedMessages(snap.items)
+      } catch {}
+    }
     // Reset or restore workspace state
     if (!id) {
       // New chat — unlock workspace, restore default (manifest root,
@@ -890,6 +950,17 @@ export function App() {
                 const res = (await client.serverCall('bash_jobs.list', {}, sessionId)) as unknown as { snapshot?: BashJobSummary[] }
                 if (Array.isArray(res?.snapshot)) setBashJobs(res.snapshot as BashJobSummary[])
                 return res
+              }}
+            />
+            <QueuedMessages
+              items={queuedMessages}
+              onCancel={(id) => {
+                if (!sessionId) return
+                // Optimistic remove — server queue_changed broadcast is
+                // the source of truth and will overwrite this if the
+                // cancel raced with a drainer pop (returns not_found).
+                setQueuedMessages(prev => prev.filter(it => it.id !== id))
+                client.cancelQueuedMessage(sessionId, id).catch(() => {})
               }}
             />
             <Input
