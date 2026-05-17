@@ -263,6 +263,10 @@ class AgentService(RpcMethodsBase):
         super().__init__()
         global _CURRENT_SERVICE
         _CURRENT_SERVICE = self
+        # In-process per-session run_end listeners (autopilot loops,
+        # /goal server function, scheduled hooks). Fan-out happens
+        # inside _broadcast_session before client channels are touched.
+        self._run_end_listeners: Dict[str, list] = {}
         self.spec = spec
         self._default_workspace_root: str | None = (
             default_workspace_root
@@ -1527,6 +1531,34 @@ class AgentService(RpcMethodsBase):
         except Exception:
             return False
 
+    # ------------------------------------------------------------------
+    #  In-process event listeners.
+    #
+    #  Lets server-functions, hooks, schedulers, and the goal/autopilot
+    #  loop subscribe to per-session events without going through the
+    #  WebSocket channel mechanism. Fires from ``_broadcast_session``
+    #  regardless of whether any client channel is connected, so the
+    #  autopilot keeps running even when the user closed the TUI.
+    # ------------------------------------------------------------------
+
+    def add_run_end_listener(
+        self, session_id: str, cb
+    ) -> None:
+        """Register an async callback fired once per ``run_end`` event for
+        the session. Callback receives the run_end payload dict."""
+        self._run_end_listeners.setdefault(session_id, []).append(cb)
+
+    def remove_run_end_listener(self, session_id: str, cb) -> None:
+        lst = self._run_end_listeners.get(session_id)
+        if not lst:
+            return
+        try:
+            lst.remove(cb)
+        except ValueError:
+            pass
+        if not lst:
+            self._run_end_listeners.pop(session_id, None)
+
     async def _broadcast_session(
         self,
         session: Session,
@@ -1538,6 +1570,18 @@ class AgentService(RpcMethodsBase):
     ) -> bool:
         if track_live:
             self._record_live_event(session, method, payload)
+        # Fire in-process listeners BEFORE the channel fan-out so the
+        # autopilot can act even if no client is connected. Listener
+        # exceptions are logged but never block the broadcast.
+        if method == "run_end":
+            for cb in list(self._run_end_listeners.get(session.id, [])):
+                try:
+                    await cb(payload)
+                except Exception:
+                    logger.exception(
+                        "run_end listener failed",
+                        extra={"session": session.id},
+                    )
         if not session.channels:
             if queue_if_unseen and hasattr(session, "pending_events"):
                 session.pending_events.append((method, payload))

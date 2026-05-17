@@ -87,7 +87,21 @@ export function App() {
     }
   })
   const [workspaceSupported, setWorkspaceSupported] = useState(false)
-  const [workspacePath, setWorkspacePath] = useState<string | null>(null)
+  // Seed from ``window.__OMNI_BOOT__`` injected by the web backend's SPA
+  // shell route. Kills the "Select workspace" flash that would otherwise
+  // last the entire boot window — ``fs_get_workspace_root`` still runs
+  // post-connect and overwrites with the live manifest root once it
+  // resolves. Falls back to null in dev mode or if the server doesn't
+  // bake the global (older builds).
+  const [workspacePath, setWorkspacePath] = useState<string | null>(() => {
+    try {
+      const boot = (window as unknown as { __OMNI_BOOT__?: { workspace_root?: unknown } }).__OMNI_BOOT__
+      const root = boot?.workspace_root
+      return typeof root === 'string' && root ? root : null
+    } catch {
+      return null
+    }
+  })
   const [workspaceLocked, setWorkspaceLocked] = useState(false)
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false)
   const [initialSessionParam] = useState<string | undefined>(() => {

@@ -170,6 +170,22 @@ class LocalGitArchive(BaseEntry):
                 src=src_resolved,
             )
 
+        # Host-mode short-circuit. See PermissiveLocalDir for the full
+        # rationale — same overlap pathology, same in-memory tar cost.
+        # When the agent already sees the host workspace (unix_local) and
+        # the source overlaps the destination, materializing is at best
+        # redundant and at worst recursive.
+        from agents.sandbox.sandboxes.unix_local import (  # noqa: PLC0415
+            UnixLocalSandboxSession,
+        )
+
+        if isinstance(session, UnixLocalSandboxSession) and _host_paths_overlap(
+            src_resolved, Path(dest)
+        ):
+            await session.mkdir(dest, parents=True)
+            await self._apply_metadata(session, dest)
+            return []
+
         archive_bytes = await asyncio.to_thread(
             _build_workspace_tar, src_resolved, self.include_untracked
         )
@@ -204,6 +220,28 @@ class LocalGitArchive(BaseEntry):
         # each file out of the container; ``GitRepo`` makes the same
         # call, see entries/artifacts.py:692.
         return []
+
+
+def _host_paths_overlap(a: Path, b: Path) -> bool:
+    """Return True if two host paths overlap — equal, or one contains
+    the other. *b* may not exist on disk yet (seed destination created
+    by ``session.mkdir``); ``resolve(strict=False)`` handles that.
+    """
+    a_norm = a.resolve(strict=False)
+    b_norm = b.resolve(strict=False)
+    if a_norm == b_norm:
+        return True
+    try:
+        a_norm.relative_to(b_norm)
+        return True
+    except ValueError:
+        pass
+    try:
+        b_norm.relative_to(a_norm)
+        return True
+    except ValueError:
+        pass
+    return False
 
 
 def _list_git_paths(src: Path, include_untracked: bool) -> list[str]:

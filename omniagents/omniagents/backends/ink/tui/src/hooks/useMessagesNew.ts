@@ -197,12 +197,26 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       });
     };
 
+    // Tools that opt out of transcript rendering. Their tool_called /
+    // tool_result events still flow through (session history sees them,
+    // the LLM sees them) but we don't push a message row. Today this is
+    // only ``goal_complete`` — a structured signal to stop the /goal
+    // autopilot loop, surfaced via the docked goal panel instead of as
+    // a transcript row. Add new names here when introducing other
+    // "control" tools that should be silent in the chat log.
+    const HIDDEN_TOOLS = new Set(["goal_complete"]);
+
     // TOOL CALLED - marks buffer as superseded but KEEPS preamble visible
     const handleToolCalled = (params: {
       tool: string;
       input: string;
       call_id: string;
     }) => {
+      if (HIDDEN_TOOLS.has(params.tool)) {
+        // Don't render — handleToolResult also bails for the matching
+        // call_id, so no half-rendered row is left behind.
+        return;
+      }
       batcher.add(() => {
         // Previous message(s) were intermediate thinking - mark as superseded
         markBufferAsSuperseded();
@@ -232,6 +246,15 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       call_id: string;
       metadata?: Record<string, unknown>;
     }) => {
+      // Belt-and-suspenders: skip on both name (no tool_call message to
+      // update) and metadata.display_type === "hidden" (catches tools
+      // that aren't in HIDDEN_TOOLS yet but still asked to be silent).
+      if (
+        HIDDEN_TOOLS.has(params.tool) ||
+        params.metadata?.display_type === "hidden"
+      ) {
+        return;
+      }
       batcher.add(() => {
         // Mark previous messages as superseded
         markBufferAsSuperseded();
@@ -564,6 +587,19 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       return { ack: true };
     };
 
+    // Server-pushed goal panel refresh. The /goal autopilot loop fires
+    // this on start, every turn boundary, retry, and stop. snapshot
+    // null means "no goal set" and clears the panel.
+    const handleGoalUpdate = async (args: Record<string, unknown>) => {
+      const snap = (args as { snapshot?: unknown }).snapshot;
+      if (snap === null || snap === undefined) {
+        actions.setGoal(null);
+      } else if (typeof snap === "object") {
+        actions.setGoal(snap as any);
+      }
+      return { ack: true };
+    };
+
     // Register event handlers
     client.on("message_output", handleMessageOutput);
     client.on("tool_called", handleToolCalled);
@@ -585,6 +621,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       handleSetSessionState,
     );
     client.registerClientFunction("ui.bash_jobs.update", handleBashJobsUpdate);
+    client.registerClientFunction("ui.goal.update", handleGoalUpdate);
 
     // Cleanup
     return () => {
@@ -605,6 +642,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       client.unregisterClientFunction("ui.set_status");
       client.unregisterClientFunction("ui.set_session_state");
       client.unregisterClientFunction("ui.bash_jobs.update");
+      client.unregisterClientFunction("ui.goal.update");
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, sessionId, rpcReady, batcher]);

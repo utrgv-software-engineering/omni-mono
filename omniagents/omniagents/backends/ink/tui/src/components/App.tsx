@@ -43,6 +43,7 @@ import { Scrollable } from "./Scrollable.js";
 import { Tasks } from "./Tasks.js";
 import { BashJobs } from "./BashJobs.js";
 import { QueuedMessages } from "./QueuedMessages.js";
+import { Goal } from "./Goal.js";
 import { MouseProvider } from "../contexts/MouseContext.js";
 import { ScrollProvider } from "../contexts/ScrollProvider.js";
 import { TokyoNightTheme } from "../theme.js";
@@ -314,6 +315,32 @@ export const App: React.FC<AppProps> = ({
         bashJobsWarmupRef.current = false;
       });
   }, [anyBashJobRunning, client, connected, sessionId]);
+
+  // Seed the goal panel on connect / session-switch. The /goal autopilot
+  // loop broadcasts ui.goal.update on every state change, but if a goal
+  // is already running when the TUI reconnects we'd otherwise show an
+  // empty panel until the next turn boundary. One read-only RPC fills it.
+  const goalSeedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!client || !connected || !sessionId) return;
+    if (goalSeedRef.current === sessionId) return;
+    goalSeedRef.current = sessionId;
+    client
+      .serverCall("goal.status", {}, sessionId)
+      .then((res) => {
+        const snap = (res as { snapshot?: unknown } | undefined)?.snapshot;
+        if (snap === null || snap === undefined) {
+          actions.setGoal(null);
+        } else if (typeof snap === "object") {
+          actions.setGoal(snap as any);
+        }
+      })
+      .catch(() => {
+        // goal.status may not be registered on every agent — silently
+        // ignore so the panel just stays empty.
+        goalSeedRef.current = null;
+      });
+  }, [client, connected, sessionId, actions]);
 
   useLayoutEffect(() => {
     if (controlsRef.current) {
@@ -874,6 +901,11 @@ export const App: React.FC<AppProps> = ({
           <Box ref={controlsRef} flexDirection="column">
             {/* Status indicator - ALWAYS in DOM, just hidden - isolated subscription */}
             <StatusIndicatorWrapper approval={approval} thinking={thinking} />
+
+            {/* Compact /goal autopilot panel - renders nothing when no goal
+                is set. Sits above Tasks so the overall objective is visible
+                first. */}
+            <Goal />
 
             {/* Docked task list - renders nothing when empty */}
             <Tasks />

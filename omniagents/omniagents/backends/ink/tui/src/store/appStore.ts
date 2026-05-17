@@ -97,6 +97,20 @@ export interface QueuedMessage {
   enqueued_at: number;
 }
 
+// Mirror of goal_snapshot_dict on the server (omni-code
+// server_functions/goal.py). Drives the docked goal panel; null means
+// no goal is set on this session (panel renders nothing).
+export interface GoalSnapshot {
+  goal: string;
+  turn: number;
+  max_turns: number;
+  attempt: number;
+  max_attempts: number;
+  last_reason: string | null;
+  status: "active" | "completed" | "cancelled";
+  started_at: number;
+}
+
 interface AppState {
   // Data
   messages: Message[];
@@ -122,6 +136,7 @@ interface AppState {
   tasks: TaskSummary[];
   bashJobs: BashJobSummary[];
   queuedMessages: QueuedMessage[];
+  goal: GoalSnapshot | null;
 
   // Actions (ONLY way to update state)
   actions: {
@@ -164,6 +179,7 @@ interface AppState {
     setTasks: (tasks: TaskSummary[]) => void;
     setBashJobs: (jobs: BashJobSummary[]) => void;
     setQueuedMessages: (items: QueuedMessage[]) => void;
+    setGoal: (goal: GoalSnapshot | null) => void;
   };
 }
 
@@ -187,6 +203,7 @@ export const useAppStore = create<AppState>()(
     tasks: [],
     bashJobs: [],
     queuedMessages: [],
+    goal: null,
 
     actions: {
       addMessage: (msg) =>
@@ -410,6 +427,11 @@ export const useAppStore = create<AppState>()(
         set((state) => {
           state.queuedMessages = items;
         }),
+
+      setGoal: (goal) =>
+        set((state) => {
+          state.goal = goal;
+        }),
     },
   })),
 );
@@ -437,4 +459,5 @@ export const usePreamble = () => useAppStore((s) => s.preamble);
 export const useTasks = () => useAppStore((s) => s.tasks);
 export const useBashJobs = () => useAppStore((s) => s.bashJobs);
 export const useQueuedMessages = () => useAppStore((s) => s.queuedMessages);
+export const useGoal = () => useAppStore((s) => s.goal);
 export const useActions = () => useAppStore((s) => s.actions);

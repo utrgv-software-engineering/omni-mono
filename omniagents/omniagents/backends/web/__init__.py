@@ -140,6 +140,15 @@ class WebBackend:
                 print("  npm install")
                 print("  npm run build")
                 sys.exit(1)
+            # SPA shell with pre-bootstrap workspace seed. We intercept GET /
+            # and GET /index.html before the StaticFiles mount so we can inject
+            # ``window.__OMNI_BOOT__`` carrying the workspace_root. The SPA
+            # reads it for the initial workspace-pill state — otherwise the
+            # pill flashes "Select workspace" for the entire boot window
+            # while ``fs_get_workspace_root`` round-trips. The asset routes
+            # (everything except the two HTML paths) still go through the
+            # StaticFiles mount registered below.
+            self._register_spa_shell_route(app, dist_dir, workspace_root=os.getcwd())
             app.mount(
                 "/", StaticFiles(directory=str(dist_dir), html=True), name="webui"
             )
@@ -260,6 +269,48 @@ class WebBackend:
                 time.sleep(0.2)
         except KeyboardInterrupt:
             pass
+
+    @staticmethod
+    def _register_spa_shell_route(app, dist_dir: Path, *, workspace_root: str) -> None:
+        """Serve ``index.html`` with an injected ``window.__OMNI_BOOT__`` blob
+        so the SPA can seed boot-dependent UI (today: the workspace pill)
+        before the first server round-trip resolves.
+
+        Mounted on ``GET /`` and ``GET /index.html``. Registered *before* the
+        catch-all StaticFiles mount in the caller; FastAPI's route matcher
+        prefers the explicit routes, so only the HTML shell is rewritten —
+        all other asset paths fall through to StaticFiles unmodified.
+        """
+        import json as _json
+        from fastapi.responses import HTMLResponse
+
+        index_path = dist_dir / "index.html"
+
+        def _build_payload() -> bytes:
+            html = index_path.read_text(encoding="utf-8")
+            blob = _json.dumps({"workspace_root": workspace_root})
+            # Inline script that runs before any module script — ``<script>``
+            # tags execute in document order, and the inlined assignment
+            # synchronously beats the deferred Vite module bundle. We inject
+            # right before ``</head>`` so the global is set during HTML
+            # parsing, well before React mounts.
+            inject = f"<script>window.__OMNI_BOOT__ = {blob};</script>"
+            if "</head>" in html:
+                return html.replace("</head>", inject + "</head>", 1).encode("utf-8")
+            # Fallback: no </head> (unexpected Vite output) — prepend instead
+            # of failing, the global still lands before <body>.
+            return (inject + html).encode("utf-8")
+
+        async def _serve_shell():
+            return HTMLResponse(_build_payload())
+
+        app.add_api_route("/", _serve_shell, methods=["GET"], include_in_schema=False)
+        app.add_api_route(
+            "/index.html",
+            _serve_shell,
+            methods=["GET"],
+            include_in_schema=False,
+        )
 
     @staticmethod
     def _find_available_port(start_port: int, max_attempts: int = 20) -> int:

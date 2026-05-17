@@ -118,6 +118,26 @@ class PermissiveLocalDir(BaseEntry):
                 src=src_resolved,
             )
 
+        # Host-mode short-circuit: when running against ``unix_local`` and
+        # the destination path overlaps the source on the host filesystem
+        # (src == dest, src inside dest, or dest inside src), the seed is
+        # either redundant (workspace already contains the files) or
+        # recursive (would tar src into a subdir of itself, the next boot
+        # picks up the subdir, geometric explosion → OOM). The agent
+        # already sees the host workspace in unix_local mode, so we
+        # no-op the materialization. Permissions still applied so the
+        # entry's declared metadata wins.
+        from agents.sandbox.sandboxes.unix_local import (  # noqa: PLC0415
+            UnixLocalSandboxSession,
+        )
+
+        if isinstance(session, UnixLocalSandboxSession) and _host_paths_overlap(
+            src_resolved, Path(dest)
+        ):
+            await session.mkdir(dest, parents=True)
+            await self._apply_metadata(session, dest)
+            return []
+
         archive_bytes = await asyncio.to_thread(_build_dir_tar, src_resolved)
 
         await session.mkdir(dest, parents=True)
@@ -142,6 +162,33 @@ class PermissiveLocalDir(BaseEntry):
 
         await self._apply_metadata(session, dest)
         return []
+
+
+def _host_paths_overlap(a: Path, b: Path) -> bool:
+    """Return True if two host paths overlap — equal, or one contains
+    the other after symlink resolution.
+
+    *b* may not exist on disk yet (it's the seed destination that
+    ``session.mkdir`` will create). ``resolve(strict=False)`` returns
+    the absolute path with the existing prefix's symlinks resolved and
+    the non-existent suffix left intact — sufficient for the overlap
+    check the caller cares about.
+    """
+    a_norm = a.resolve(strict=False)
+    b_norm = b.resolve(strict=False)
+    if a_norm == b_norm:
+        return True
+    try:
+        a_norm.relative_to(b_norm)
+        return True
+    except ValueError:
+        pass
+    try:
+        b_norm.relative_to(a_norm)
+        return True
+    except ValueError:
+        pass
+    return False
 
 
 def _build_dir_tar(src: Path) -> bytes:
