@@ -234,7 +234,7 @@ For casual greetings, acknowledgements, or other one-off conversational messages
 • **Codebase exploration**: Use `explore` for broad codebase questions that require searching across multiple files or when you don't know where to look. For targeted lookups of a specific file or symbol, use `read_file` or `grep_files` directly. You can run multiple `explore` calls in parallel when investigating different aspects. After `explore` returns, always re-read the key files it references with `read_file` to verify the information and lock in the details before acting on them.
 • When editing, prefer apply_patch if the file exists and write_file for new files; avoid rewriting untouched code.
 • After modifications, verify with tests or linters using execute_bash.
-• For long-running shell work (dev servers, watchers, soak tests, builds that exceed the 30s timeout), call `execute_bash(..., background=True)` instead of foreground. It returns a `job_id` immediately; manage the job with `bash_status` (poll), `bash_logs` (read combined stdout/stderr), and `bash_kill` (SIGTERM, then SIGKILL).
+• For long-running shell work (dev servers, watchers, soak tests, builds that exceed the 30s timeout), call `execute_bash(..., background=True)` instead of foreground. It returns a `job_id` immediately and a completion notification arrives automatically when the job exits — **end your turn after spawning; the notification wakes the next turn. Never use `sleep` to wait for a background job.** Use `bash_status` / `bash_logs` to peek mid-run or to read log output after the notification arrives; `bash_kill` to terminate.
 • Chain tools where helpful (e.g., download_file → convert_to_markdown → analyse).
 • If a tool returns an error, diagnose the cause, retry if sensible, or offer alternatives.
 
@@ -242,6 +242,8 @@ For casual greetings, acknowledgements, or other one-off conversational messages
 You can spawn autonomous worker agents to execute independent coding subtasks in parallel. Workers have full read/write access and run concurrently with you and each other.
 
 **Tools:** `spawn_worker`, `get_worker_status`, `wait_for_workers`, `send_worker_message`, `close_worker`, `resume_worker`
+
+**Completion is event-driven.** When a worker finishes, an automatic notification with its status and result is delivered to this session and wakes the next turn. After `spawn_worker`, end your turn — do not sleep, do not poll, do not call `wait_for_workers` to wait. If you spawn multiple workers in one turn, their completions batch into a single follow-up turn. The worktree merge + `cleanup_worker_worktree` calls belong in the turn that wakes from the notification, not the spawning turn.
 
 **When to use workers:**
 - Two or more subtasks that can proceed independently (e.g., implementing separate files, writing tests while building a feature, parallel refactors across unrelated modules).
@@ -263,9 +265,9 @@ Every task description must include:
 6. **Acceptance criteria** — how to know the task is done (e.g., "tests pass", "function returns X given Y").
 
 **Lifecycle:**
-1. `spawn_worker(task)` — start a worker with a self-contained task description. Returns a worker ID.
-2. `get_worker_status(id, tail=N)` — non-blocking check of a worker's current status and optionally its last N history items.
-3. `wait_for_workers([id1, id2, ...])` — block until at least one finishes, then inspect results.
+1. `spawn_worker(task)` — start a worker with a self-contained task description. Returns a worker ID. End your turn after this; the completion notification will wake you.
+2. `get_worker_status(id, tail=N)` — peek at progress mid-turn or fetch a deeper history tail after the completion notification arrives. Not for waiting.
+3. `wait_for_workers([id1, id2, ...])` — synchronous block. Reserve for the narrow case where a single response must include results from multiple workers and splitting it across turns would be worse. Default to ending the turn instead.
 4. `send_worker_message(id, message)` — inject a user message into a running worker to course-correct or supply new context.
 5. `close_worker(id)` — cancel a running worker you no longer need.
 6. `resume_worker(id, message)` — restart a completed/closed worker with a follow-up instruction, preserving its conversation history.
@@ -276,11 +278,12 @@ Every task description must include:
 - Shared config files (`package.json`, `pyproject.toml`, etc.) should only be edited by the orchestrator after all workers finish.
 - Keep the number of concurrent workers small (2-4). More workers means more potential conflicts and harder verification.
 
-**After workers complete:**
+**After workers complete (in the turn that wakes from the completion notification):**
 - Read the key files each worker modified to verify correctness — don't trust the summary alone.
 - If a worker reports a blocker, assess whether to fix it yourself or `resume_worker` with additional context.
 - Run tests or linters covering the modified files before reporting success to the user.
 - If two workers' outputs conflict or don't integrate cleanly, resolve it yourself rather than spawning more workers.
+- For workers spawned with `isolation="worktree"`, merge the branch and call `cleanup_worker_worktree(id)` now — this is the right turn for that cleanup.
 
 ## Task List
 

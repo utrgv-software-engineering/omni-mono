@@ -22,6 +22,8 @@ capabilities:
   - slash         # dispatch
   - artifacts     # display_artifact (builtin)
   - exploration   # explorer subagent exposed as `explore`
+  - goal          # goal_complete (signals /goal autopilot stop)
+  - human         # notify / escalate (UI-implemented client tools)
 
 model_settings:
   reasoning:
@@ -61,6 +63,9 @@ safe_agent_options:
     - task_get
     - task_update
     - load_skill
+    - goal_complete
+    - notify
+    - escalate
 
 server_functions:
   - help
@@ -88,6 +93,9 @@ server_functions:
   - fs_get_home
   - fs_list_dir
   - session_ensure
+  - goal
+  - goal.stop
+  - goal.status
 
 context: build_coding_context
 model_config_resolver: resolve_default_model

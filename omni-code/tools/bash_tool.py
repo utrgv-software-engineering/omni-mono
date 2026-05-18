@@ -185,8 +185,13 @@ async def execute_bash(
             stderr to a per-job log file under
             ``workspace_root/.omni-code/jobs/<job_id>.log``, and return
             immediately with the job handle (``job_id``, ``pid``, ``log_path``).
-            Use ``bash_status``, ``bash_logs``, and ``bash_kill`` to manage the
-            running job.
+
+            When the job exits, an automatic notification is delivered to
+            this session — the next turn starts with the exit code and
+            timing in context. You can end the current turn after
+            spawning; the completion will wake you. Use ``bash_status`` /
+            ``bash_logs`` only if you need to inspect mid-execution
+            within the same turn. Use ``bash_kill`` to terminate early.
 
     Returns:
         RichToolOutput. In foreground mode the metadata mirrors the synchronous
@@ -488,7 +493,10 @@ async def _execute_bash_background(
     llm_output = (
         f"Started background job {job_id} (pid {pid_str}).\n"
         f"Logs: {log_path}\n"
-        f"Use bash_status('{job_id}'), bash_logs('{job_id}'), or bash_kill('{job_id}') to manage it."
+        f"A completion notification (with exit code and timing) will arrive "
+        f"automatically when the job exits — you can end this turn after spawning.\n"
+        f"Use bash_status('{job_id}') / bash_logs('{job_id}') only if you need "
+        f"to peek mid-run, or bash_kill('{job_id}') to terminate early."
     )
     ui_metadata = {
         "value": llm_output,
@@ -527,6 +535,11 @@ async def bash_status(
     """
     Reports the state of background bash jobs spawned via
     ``execute_bash(background=True)``.
+
+    Usually unnecessary for "did it finish?" — a completion notification
+    is delivered automatically when each job exits. Use this only to
+    peek at running state mid-turn (e.g., is it making progress?) or
+    after a kill to confirm the job is gone.
 
     Args:
         job_id: The job to query. Required unless ``list_all=True``.
@@ -643,6 +656,11 @@ async def bash_logs(
 ) -> RichToolOutput:
     """
     Returns log output (combined stdout/stderr) for a background bash job.
+
+    Useful for inspecting what a long-running job has printed without
+    killing it, or for fetching detailed output after a completion
+    notification arrived (the notification carries only the exit code
+    and timing — the actual log lines live on disk and are read here).
 
     Args:
         job_id: The job whose logs to read.

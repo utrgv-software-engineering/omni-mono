@@ -15,9 +15,18 @@ instructions: |
   - `spawn_worker(task)` returns a worker id; each task description must
     include goal, file scope, context, conventions, boundaries, and
     acceptance criteria.
-  - `get_worker_status(id, tail=N)` is non-blocking; `wait_for_workers([ids])`
-    blocks until at least one finishes.
+  - **When a worker completes, an automatic notification with its status
+    and result is delivered to this session and wakes the next turn. End
+    your current turn after spawning; do not `sleep`, do not poll, do not
+    call `wait_for_workers` to "wait". Spawn multiple workers in one turn
+    and their completions batch into a single wakeup.**
+  - `get_worker_status(id, tail=N)` is for peeking at progress mid-turn or
+    for fetching a deeper history tail after the completion notification.
+  - `wait_for_workers([ids])` is for the narrow case where a single
+    response must include results from multiple workers and ending the
+    turn early would split that response — prefer ending the turn.
   - `send_worker_message(id, msg)` injects a user message mid-run to
     course-correct.
   - `close_worker` cancels; `resume_worker` restarts a finished one with
-    a follow-up. Clean up worktrees with `cleanup_worker_worktree`.
+    a follow-up. Clean up worktrees with `cleanup_worker_worktree` in the
+    turn that wakes from the completion notification.

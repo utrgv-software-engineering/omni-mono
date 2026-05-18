@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import random
 import shlex
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -135,14 +137,149 @@ _WORKERS: dict[str, object] = {}
 #                     "worktree_name": str, "parent_workspace": str}
 _WORKER_WORKTREES: dict[str, dict[str, str]] = {}
 
+# Display metadata for the workers panel — populated at spawn time so the
+# UI can show the task description and a wall-time alongside the
+# WorkerHandle's status/result/error. Keyed by worker_id; entries persist
+# after worker completion so the panel can render recently-exited rows
+# until the user starts a new session.
+_WORKER_META: dict[str, dict] = {}
+
+_workers_log = logging.getLogger(__name__)
+
+
+def _truncate_task(task: str, limit: int = 200) -> str:
+    one_line = " ".join(task.split())
+    if len(one_line) <= limit:
+        return one_line
+    return one_line[: limit - 1] + "…"
+
+
+def worker_state_dict(worker_id: str) -> Optional[dict]:
+    """Snapshot a single worker for the UI panel. Combines the runtime
+    handle (status/result/error) with display metadata (task description,
+    timestamps). Returns ``None`` when the worker_id is unknown."""
+    handle = _MANAGER.workers.get(worker_id)
+    if handle is None:
+        return None
+    meta = _WORKER_META.get(worker_id, {})
+    started = meta.get("started_at")
+    finished = meta.get("finished_at")
+    wall_ms: Optional[int] = None
+    if started is not None:
+        end = finished if finished is not None else time.time()
+        wall_ms = int((end - started) * 1000)
+    return {
+        "worker_id": worker_id,
+        "status": handle.status,
+        "task": meta.get("task") or "",
+        "parent_session_id": getattr(handle, "parent_session_id", None),
+        "session_id": getattr(handle, "session_id", ""),
+        "run_id": getattr(handle, "run_id", ""),
+        "result": handle.result if handle.status == "completed" else None,
+        "error": handle.error if handle.status in ("error", "cancelled") else None,
+        "isolation": meta.get("isolation"),
+        "started_at": started,
+        "finished_at": finished,
+        "wall_time_ms": wall_ms,
+    }
+
+
+def workers_snapshot(parent_session_id: Optional[str] = None) -> list[dict]:
+    """Return every worker visible to ``parent_session_id``. Untagged
+    workers (test fixtures / direct invocation) are visible to every
+    session so they don't get orphaned. Mirrors ``_bash_jobs``'s
+    visibility contract so the two panels behave identically."""
+    out: list[dict] = []
+    for wid in list(_MANAGER.workers.keys()):
+        state = worker_state_dict(wid)
+        if state is None:
+            continue
+        if parent_session_id is not None:
+            owner = state.get("parent_session_id")
+            if owner is not None and owner != parent_session_id:
+                continue
+        out.append(state)
+    return out
+
+
+async def broadcast_workers_snapshot(
+    service, parent_session_id: Optional[str]
+) -> None:
+    """Push the per-session workers snapshot to every connected client of
+    ``parent_session_id`` via ``ui.workers.update``. Best-effort: silently
+    drops on broadcast failure (the next state change will catch it up).
+    """
+    if service is None or not parent_session_id:
+        return
+    try:
+        manager = getattr(service, "_session_manager", None)
+        sess = None
+        if manager is not None:
+            sess = getattr(manager, "_by_id", {}).get(parent_session_id)
+        if sess is None:
+            return
+        await service.request_client_function(
+            "ui.workers.update",
+            {"snapshot": workers_snapshot(parent_session_id=parent_session_id)},
+            session=sess,
+            expect_result=False,
+        )
+    except Exception as e:
+        _workers_log.warning("ui.workers.update broadcast failed: %s", e)
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
 
+_FALLBACK_PROJECT_CONTEXT: Any = None
+
+
+def _resolve_project_context() -> Any:
+    """Return the ProjectContext to load the worker spec against.
+
+    Prefer the one published by ``omni serve`` (``set_project_context``)
+    so the worker shares the running server's resolved registries. Fall
+    back to discovering ``project.yml`` relative to this file — that path
+    is used by tests and direct invocations where serve_cli never ran.
+    The fallback is cached because ``load_project`` walks the agents/
+    tools/capabilities directories and is too expensive to repeat per
+    spawn.
+    """
+    from omni_code.agent_workspace_state import get_project_context
+
+    ctx = get_project_context()
+    if ctx is not None:
+        return ctx
+
+    global _FALLBACK_PROJECT_CONTEXT
+    if _FALLBACK_PROJECT_CONTEXT is None:
+        from omniagents.core.project.runtime import load_project
+
+        project_yml = Path(__file__).resolve().parent.parent / "project.yml"
+        _FALLBACK_PROJECT_CONTEXT = load_project(str(project_yml))
+    return _FALLBACK_PROJECT_CONTEXT
+
+
 def _load_and_configure_spec(model: Optional[str]):
-    from omniagents.core.config.loader import load_agent_spec_from_yaml
+    """Build the worker spec.
+
+    Routes through ``build_spec_from_project`` — the same path the
+    orchestrator uses (omni_code/serve_cli.py:_load_spec) — so the worker
+    inherits the project's full capability_registry, tool_registry,
+    guardrails_registry, server_functions_registry, agents_map, and
+    project_defaults. Loading the worker YAML directly via
+    ``load_agent_spec_from_yaml`` would pass capability_registry=None and
+    silently skip every entry in the worker's ``capabilities:`` list,
+    leaving the worker with zero tools.
+
+    On top of that, forward the running orchestrator's sandbox attachment
+    (sandbox_use_sandbox_agent / sandbox_run_as / sandbox_run_config) so
+    worker tools route through the same SandboxSession in sandbox mode.
+    """
+    from omniagents.core.project.runtime import build_spec_from_project
+    from omni_code.agent_workspace_state import get_orchestrator_spec
     from omni_code.models import load_models_config, resolve_model_for_runtime
 
     load_models_config()
@@ -150,24 +287,27 @@ def _load_and_configure_spec(model: Optional[str]):
         resolve_model_for_runtime(model) if model else resolve_model_for_runtime()
     )
 
-    spec = load_agent_spec_from_yaml(str(_WORKER_AGENT_YAML))
+    proj = _resolve_project_context()
+    spec = build_spec_from_project(proj, agent_key="worker")
 
-    # Inherit project context so worker sessions/traces land under omni_code
+    # build_spec_from_project sets project_slug from project.name — which
+    # is "omni_code" — but pin it explicitly so worker sessions/traces
+    # stay grouped even if the project name ever drifts.
     spec.project_slug = "omni_code"
 
-    if not getattr(spec, "tracing_config", None):
-        project_yml = Path(__file__).resolve().parent.parent / "project.yml"
-        if project_yml.exists():
-            try:
-                import yaml
-
-                with open(project_yml) as f:
-                    project_raw = yaml.safe_load(f) or {}
-                tracing_raw = project_raw.get("tracing")
-                if isinstance(tracing_raw, dict):
-                    spec.tracing_config = tracing_raw
-            except Exception:
-                pass
+    # Forward sandbox state from the running orchestrator. Skips silently
+    # when the orchestrator hasn't published (tests, direct invocation)
+    # or when the orchestrator isn't running in sandbox mode.
+    orch = get_orchestrator_spec()
+    if orch is not None:
+        if getattr(orch, "sandbox_use_sandbox_agent", False):
+            spec.sandbox_use_sandbox_agent = True
+        run_as = getattr(orch, "sandbox_run_as", None)
+        if run_as:
+            spec.sandbox_run_as = run_as
+        run_cfg = getattr(orch, "sandbox_run_config", None)
+        if run_cfg is not None:
+            spec.sandbox_run_config = run_cfg
 
     resolved_model = (
         model_runtime.get("model") if isinstance(model_runtime, dict) else None
@@ -189,31 +329,46 @@ def _load_and_configure_spec(model: Optional[str]):
 
 
 async def _on_worker_complete(handle) -> None:
-    """Push a single-line completion notice to the parent (orchestrator)
-    session via the batched notification path. Drops silently when the
-    worker wasn't spawned with a parent session (tests, direct invocation)
-    or when the service capture hasn't fired yet."""
+    """Push the worker's completion summary to the parent (orchestrator)
+    session via the batched notification path. The summary is the worker's
+    full final result — the orchestrator reads it to decide what to do
+    next, so no truncation. Drops silently when the worker wasn't spawned
+    with a parent session (tests, direct invocation) or when the service
+    capture hasn't fired yet."""
     parent_sid = getattr(handle, "parent_session_id", None)
     if not parent_sid:
         return
     try:
-        from tools._service_capture import get_service
+        from omniagents.core.agents.service import current_service
     except Exception:
         return
-    service = get_service()
+    service = current_service()
     if service is None:
         return
     worker_id = getattr(handle, "worker_id", "") or "?"
+    # Stamp the finish time so the panel can render wall-time for exited
+    # workers. ``_WORKER_META`` is the display-only sidecar populated at
+    # spawn; ``handle`` is the runtime truth (status, result, error).
+    meta = _WORKER_META.get(worker_id)
+    if meta is not None and "finished_at" not in meta:
+        meta["finished_at"] = time.time()
     status = handle.status
     summary = handle.result if status == "completed" else (handle.error or "")
-    summary = (summary or "")[:200]
-    content = f"[worker] {worker_id} status={status} {summary}".rstrip()
+    content = f"[worker] {worker_id} status={status} {summary or ''}".rstrip()
     try:
         await service.enqueue_notification(
             session_id=parent_sid,
             content=content,
             source="worker.complete",
         )
+    except Exception:
+        pass
+    # Refresh the docked workers panel on the parent session so the row
+    # flips from running → completed/cancelled/error in every connected
+    # client. Best-effort: a stale panel just lingers until the user
+    # hits ``/workers`` (or whatever the next state change is).
+    try:
+        await broadcast_workers_snapshot(service, parent_sid)
     except Exception:
         pass
 
@@ -429,8 +584,16 @@ async def spawn_worker(
     separate files, running independent refactors, or writing tests while another
     worker builds the feature.
 
-    Returns a short worker ID you can pass to wait_for_workers, send_worker_message,
-    close_worker, or resume_worker.
+    When the worker completes, an automatic notification with its status and
+    result is delivered to this session — the next turn starts with that
+    available in context. You can end the current turn after spawning; you
+    don't need to call wait_for_workers. Spawn multiple workers in the same
+    turn and their completions will be batched into one wakeup.
+
+    Returns a short worker ID. Use it with send_worker_message (steer mid-run),
+    get_worker_status (peek without blocking), close_worker (cancel), or
+    resume_worker (restart with new instructions). wait_for_workers exists for
+    the rare case you need to block synchronously within the same turn.
 
     Args:
         task: A precise, self-contained description of the subtask. Include all
@@ -438,9 +601,10 @@ async def spawn_worker(
               because the worker has no access to conversation history.
         isolation: Set to "worktree" to give the worker its own git worktree
               branching from the current HEAD. The worker can commit freely
-              without affecting the main workspace. After the worker completes,
-              merge its branch and call cleanup_worker_worktree to remove the
-              worktree. Requires the workspace to be a git repository.
+              without affecting the main workspace. After the completion
+              notification arrives, merge the branch and call
+              cleanup_worker_worktree to remove the worktree. Requires the
+              workspace to be a git repository.
         allow_dirty: Only relevant when isolation="worktree". If the workspace
               has uncommitted changes, worktree creation fails by default because
               the worker would not see those changes. Set to True to proceed
@@ -545,17 +709,45 @@ async def spawn_worker(
         parent_session_id=parent_sid,
     )
 
+    # Record display metadata + broadcast to the workers panel so the row
+    # appears immediately in every connected client rather than waiting
+    # for the next user action. The handle in ``_MANAGER.workers`` is the
+    # runtime truth; ``_WORKER_META`` is the display sidecar.
+    _WORKER_META[worker_id] = {
+        "task": _truncate_task(task),
+        "started_at": time.time(),
+        "isolation": isolation,
+        "finished_at": None,
+    }
+    try:
+        from omniagents.core.agents.service import current_service
+
+        _svc = current_service()
+        if _svc is not None and parent_sid:
+            await broadcast_workers_snapshot(_svc, parent_sid)
+    except Exception:
+        pass
+
     response: dict[str, Any] = {
         "worker_id": worker_id,
         "status": "spawned",
-        "hint": "Use wait_for_workers to collect the result before responding.",
+        "hint": (
+            "Worker is running asynchronously. A completion notification with "
+            "its status and result will arrive automatically — you can end "
+            "this turn after spawning. Use wait_for_workers only if you need "
+            "to block synchronously within the current turn."
+        ),
     }
     if worktree_info:
         response["worktree_path"] = worktree_info["worktree_path"]
         response["worktree_branch"] = worktree_info["worktree_branch"]
         response["hint"] = (
-            "Use wait_for_workers to collect the result. "
-            "Then merge the worker branch and call cleanup_worker_worktree."
+            f"Worker is running asynchronously in worktree "
+            f"{worktree_info['worktree_path']} on branch "
+            f"{worktree_info['worktree_branch']}. A completion notification "
+            f"will arrive automatically — end this turn after spawning, then "
+            f"in the turn that wakes you, merge the branch and call "
+            f"cleanup_worker_worktree({worker_id})."
         )
 
     llm_output = json.dumps(response)
@@ -583,6 +775,14 @@ async def wait_for_workers(
     timeout_seconds: Optional[float] = None,
 ) -> RichToolOutput:
     """Wait for one or more workers to finish and return their results.
+
+    Usually unnecessary: every worker completion sends an automatic
+    notification to this session that wakes the next turn with the
+    result in context. Prefer ending your turn after spawning and
+    letting the notification bring you back. Use this tool only when
+    you need to block synchronously within the current turn — for
+    example, when a single response must include results from multiple
+    workers and ending the turn early would split that response.
 
     If any listed workers are already done, their results are returned
     immediately. Otherwise blocks until at least one running worker completes
@@ -663,6 +863,11 @@ async def get_worker_status(
     """Check a worker's current status and optionally retrieve recent history.
 
     Non-blocking — returns immediately with whatever state the worker is in.
+
+    Useful for peeking at progress mid-turn without waiting, or for
+    fetching the full history tail after a completion notification
+    arrived (the notification carries only the final status and a short
+    summary; deeper inspection lives here).
 
     Args:
         worker_id: The worker ID returned by spawn_worker.

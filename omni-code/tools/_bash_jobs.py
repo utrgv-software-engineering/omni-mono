@@ -139,10 +139,10 @@ async def _notify_job_exit(job: Job) -> None:
     if not job.session_id:
         return
     try:
-        from tools._service_capture import get_service
+        from omniagents.core.agents.service import current_service
     except Exception:
         return
-    service = get_service()
+    service = current_service()
     if service is None:
         _log.debug(
             "bash job %s exit: no service captured; skipping notify",

@@ -120,15 +120,9 @@ def _all_sessions(service) -> list:
 
 
 def _ensure_sweeper(service) -> None:
-    """Start the global sweeper on first call. Subsequent calls update the
-    captured service reference (so we always broadcast through the latest
-    one) but don't restart the task.
-    """
-    # Capture the service handle process-wide so tools/_bash_jobs.py's
-    # _watch_job can fire enqueue_notification on natural job exit.
-    # Safe to call repeatedly — last writer wins.
-    from tools._service_capture import set_service
-    set_service(service)
+    """Start the global sweeper on first call. Subsequent calls are
+    no-ops (the sweeper resolves the live service via
+    ``omniagents.core.agents.service.current_service`` on each tick)."""
     global _sweeper
 
     async def _broadcast_to_session(session_id: Optional[str], snapshot):

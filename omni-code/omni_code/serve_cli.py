@@ -288,16 +288,28 @@ def _build_snapshot(
     *,
     snapshot_dir: Optional[Path],
     session_id: str,
+    client_type: Optional[str],
 ) -> Any:
     """Return a configured ``LocalSnapshot`` or ``None``.
 
-    A snapshot is configured only when *snapshot_dir* is set. The
-    snapshot id is the caller-supplied (or auto-generated) session id,
-    which is the stable identifier for this resumable workspace. The
+    A snapshot is configured only when *snapshot_dir* is set AND the
+    sandbox client has an ephemeral workspace. For ``unix_local`` the
+    workspace IS a host directory; ``persist_workspace`` would just tar
+    the host dir and ``hydrate_workspace`` would untar it back into the
+    same path on resume — pure overhead, with no state to preserve that
+    isn't already sitting on disk. Host mode therefore falls through to
+    a noop snapshot regardless of ``--snapshot-dir``, which also sidesteps
+    the unsafe-symlink accumulation that ``_scrub_session_snapshot``
+    exists to mop up.
+
+    The snapshot id is the caller-supplied (or auto-generated) session
+    id, which is the stable identifier for this resumable workspace. The
     next ``client.create()`` with the same session id restores the
     prior workspace state instead of re-running the seed entry.
     """
     if snapshot_dir is None:
+        return None
+    if client_type == "unix_local":
         return None
     from agents.sandbox.snapshot import LocalSnapshot
 
@@ -415,8 +427,17 @@ def _load_spec(project_path: Path, agent_key: Optional[str]) -> Any:
         build_spec_from_project,
         load_project,
     )
+    from omni_code.agent_workspace_state import set_project_context
 
     proj = load_project(str(project_path))
+    # Publish the resolved ProjectContext so worker spec loading
+    # (tools/worker_tools._load_and_configure_spec) can route the worker
+    # through build_spec_from_project with the same capability/tool/
+    # guardrail registries. Without this, the worker would load its
+    # agent.yml in isolation with capability_registry=None and silently
+    # drop every entry in its `capabilities:` list, leaving it with zero
+    # tools attached.
+    set_project_context(proj)
     return build_spec_from_project(proj, agent_key=agent_key)
 
 
@@ -590,9 +611,11 @@ async def _serve(args: argparse.Namespace) -> int:
     # auto-generated here (first start). Emitted in the readiness
     # payload so the launcher can capture and persist it for next time.
     session_id = args.session_id or str(uuid.uuid4())
+    client_type_raw = (profile.raw.get("client") or {}).get("type")
     snapshot = _build_snapshot(
         snapshot_dir=args.snapshot_dir,
         session_id=session_id,
+        client_type=client_type_raw if isinstance(client_type_raw, str) else None,
     )
 
     session = await client.create(
@@ -616,6 +639,17 @@ async def _serve(args: argparse.Namespace) -> int:
     agent_project_path = _resolve_agent_project_path(args.agent_project)
     spec = _load_spec(agent_project_path, args.agent)
     _attach_session_to_spec(spec, session, profile.raw)
+
+    # Publish the now-sandbox-attached orchestrator spec so the worker
+    # spec loader can forward sandbox_use_sandbox_agent / sandbox_run_as
+    # / sandbox_run_config to spawned workers. Worker specs are loaded
+    # fresh from worker/agent.yml per spawn and have none of these set
+    # by default — without forwarding, workers in sandbox mode build a
+    # non-sandbox agent and their filesystem/shell tools target the host
+    # instead of the user's sandbox.
+    from omni_code.agent_workspace_state import set_orchestrator_spec
+
+    set_orchestrator_spec(spec)
 
     # --- FastAPI app + uvicorn ---
     from omniagents.backends.server.app import build_app
