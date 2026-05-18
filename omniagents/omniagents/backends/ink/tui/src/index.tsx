@@ -6,6 +6,7 @@ import React from "react";
 import { render } from "ink";
 import meow from "meow";
 import { App } from "./components/App.js";
+import { KeypressProvider } from "./contexts/KeypressContext.js";
 import { enableDebugLog, getDebugLogPath } from "./utils/debugLog.js";
 
 const cli = meow(
@@ -94,17 +95,19 @@ process.stdout.write("\x1b[?7l");
 
 // Render the app
 const app = render(
-  <App
-    serverUrl={server}
-    agentName={name}
-    token={token}
-    sessionId={session}
-    resumeMode={resume}
-    welcomeText={welcome}
-    initialMessage={initialMessage}
-    debug={debug}
-    enableMouse={mouse}
-  />,
+  <KeypressProvider>
+    <App
+      serverUrl={server}
+      agentName={name}
+      token={token}
+      sessionId={session}
+      resumeMode={resume}
+      welcomeText={welcome}
+      initialMessage={initialMessage}
+      debug={debug}
+      enableMouse={mouse}
+    />
+  </KeypressProvider>,
   {
     exitOnCtrlC: false,
     // Enable alternate buffer to eliminate flickering

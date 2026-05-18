@@ -10,12 +10,15 @@ import React, {
   useRef,
   useLayoutEffect,
 } from "react";
-import { Box, Text, useInput, useApp, useStdout, measureElement } from "ink";
+import { Box, Text, useApp, useStdout, measureElement } from "ink";
+import { useKeypress } from "../hooks/useKeypress.js";
+import { KeypressPriority } from "../contexts/KeypressContext.js";
 import { useRPC } from "../hooks/useRPC.js";
 import { useMessagesOptimized } from "../hooks/useMessagesNew.js";
 import {
   useMessages,
   useThinking,
+  useStatus,
   useQueuedMessages,
   useApproval,
   useMcpApproval,
@@ -26,7 +29,6 @@ import {
   useSessionId,
   useCurrentRunId,
   usePreamble,
-  useTasks,
   useBashJobs,
   useActions,
 } from "../store/appStore.js";
@@ -114,74 +116,93 @@ const McpApprovalDialogWrapper = React.memo<{
 );
 
 /**
- * Scrollable message list with keyboard and mouse support
+ * Inline "⠋ Thinking…" / status indicator rendered at the bottom of the
+ * message transcript (above the dock panels). Reads its own subscriptions
+ * so the parent doesn't have to re-render when thinking/status flips, and
+ * returns null when there's nothing to show — no phantom row when idle.
+ *
+ * Hidden while an approval dialog is up: the approval surface itself
+ * communicates the paused state.
  */
-const ScrollableMessageList = React.memo<{
+const InlineStatusIndicator = React.memo(() => {
+  const thinking = useThinking();
+  const statusObj = useStatus() as unknown as { status: string | null };
+  const approval = useApproval();
+  const mcpApproval = useMcpApproval();
+  if (approval || mcpApproval) return null;
+  if (!thinking && !statusObj?.status) return null;
+  // No margins: the parent column owns spacing via gap={1}. This
+  // applies to every element in the scroll region — messages, status,
+  // preamble, dock panels, approval surfaces.
+  return <StatusIndicator />;
+});
+
+/**
+ * Scrollable message list with keyboard and mouse support.
+ *
+ * Layout inside the scroll region (top-to-bottom):
+ *   1. MessageListOptimized — full transcript
+ *   2. InlineStatusIndicator — "⠋ Thinking…" / status line, only when active
+ *   3. Preamble — animated streaming agent text, co-located with status
+ *   4. ``children`` — dock panels (Goal/Tasks/Workers/QueuedMessages/
+ *      Notifications/BashJobs/EscalationBanner) passed in from App
+ *   5. Approval / MCP approval dialog, when present
+ *
+ * Pin-to-bottom keeps the newest content visible by default; scrolling
+ * up via mouse wheel or shift+↑/↓ clears the pin (see Scrollable.tsx).
+ */
+const ScrollableMessageList: React.FC<{
   availableHeight: number;
   onApprove: (value: "yes" | "always" | "no") => void;
   onMcpApprove: (value: "yes" | "no") => void;
-}>(
-  ({ availableHeight, onApprove, onMcpApprove }) => {
-    const messages = useMessages();
-    const approval = useApproval();
-    const mcpApproval = useMcpApproval();
-    const preamble = usePreamble();
-    const contentVersion = messages.length;
-    return (
-      <Scrollable
-        hasFocus={true}
-        scrollToBottom={true}
-        maxHeight={availableHeight}
-        flexGrow={1}
-        contentVersion={contentVersion}
-      >
-        <Box flexDirection="column">
-          <MessageListOptimized />
+  children?: React.ReactNode;
+}> = ({ availableHeight, onApprove, onMcpApprove, children }) => {
+  const messages = useMessages();
+  const approval = useApproval();
+  const mcpApproval = useMcpApproval();
+  const preamble = usePreamble();
+  const contentVersion = messages.length;
+  return (
+    <Scrollable
+      hasFocus={true}
+      scrollToBottom={true}
+      maxHeight={availableHeight}
+      flexGrow={1}
+      contentVersion={contentVersion}
+    >
+      {/* Outer gap={1}: 1-row rhythm between transcript, Thinking…,
+          Preamble, the panel group, and approvals. Inner gap={0} on
+          the panel-group wrapper lets bordered panels stack with
+          their borders touching (no empty row between them). Children
+          must not carry their own marginTop / marginBottom. */}
+      <Box flexDirection="column" gap={1}>
+        <MessageListOptimized />
 
-          {approval && (
-            <Box marginTop={1}>
-              <ApprovalDialogWrapper
-                approval={approval}
-                onApprove={onApprove}
-              />
-            </Box>
-          )}
+        <InlineStatusIndicator />
 
-          {mcpApproval && (
-            <Box marginTop={1}>
-              <McpApprovalDialogWrapper
-                approval={mcpApproval}
-                onApprove={onMcpApprove}
-              />
-            </Box>
-          )}
+        {preamble && <Preamble content={preamble} />}
 
-          {preamble && <Preamble content={preamble} />}
+        <Box flexDirection="column" gap={0}>
+          {children}
         </Box>
-      </Scrollable>
-    );
-  },
-  (prev, next) => prev.availableHeight === next.availableHeight,
-);
 
-/**
- * Isolate StatusIndicator subscription to prevent parent re-renders
- */
-const StatusIndicatorWrapper = React.memo<{
-  approval: ApprovalInfo | null;
-  thinking: boolean;
-}>(
-  ({ approval, thinking }) => {
-    return (
-      <Box paddingX={1} marginTop={1} display={!approval ? "flex" : "none"}>
-        <StatusIndicator />
+        {approval && (
+          <ApprovalDialogWrapper
+            approval={approval}
+            onApprove={onApprove}
+          />
+        )}
+
+        {mcpApproval && (
+          <McpApprovalDialogWrapper
+            approval={mcpApproval}
+            onApprove={onMcpApprove}
+          />
+        )}
       </Box>
-    );
-  },
-  (prev, next) => {
-    return prev.approval === next.approval && prev.thinking === next.thinking;
-  },
-);
+    </Scrollable>
+  );
+};
 
 /**
  * Isolate Help subscription to prevent parent re-renders
@@ -290,7 +311,6 @@ export const App: React.FC<AppProps> = ({
   const sessionModel = useSessionModel();
   const sessionId = useSessionId();
   const currentRunId = useCurrentRunId();
-  const tasks = useTasks();
   const bashJobs = useBashJobs();
   const actions = useActions();
 
@@ -393,7 +413,7 @@ export const App: React.FC<AppProps> = ({
         setControlsHeight(measurement.height);
       }
     }
-  }, [terminalHeight, approval, mcpApproval, thinking, tasks]);
+  }, [terminalHeight, approval, mcpApproval, thinking]);
 
   // Calculate available height for messages (gemini-cli approach)
   const availableTerminalHeight = Math.max(
@@ -809,27 +829,37 @@ export const App: React.FC<AppProps> = ({
     ],
   );
 
-  // Handle session list input (only when in session_select state)
-  useInput(
+  // Handle session list input (only when in session_select state).
+  // Critical priority: session select is full-screen modal so it must beat
+  // everything else when active.
+  useKeypress(
     (input, key) => {
       if (debug) {
-        console.error("[DEBUG] useInput triggered:", {
+        const flags = key as unknown as Record<string, unknown>;
+        console.error("[DEBUG] useKeypress triggered:", {
           input,
-          key: Object.keys(key).filter((k) => key[k]),
+          key: Object.keys(flags).filter((k) => flags[k]),
           uiState,
           isActive: uiState === "session_select",
         });
       }
       if (uiState === "session_select") {
         handleSessionListInput(input, key);
+        return true;
       }
+      return false;
     },
-    { isActive: uiState === "session_select" },
+    {
+      isActive: uiState === "session_select",
+      priority: KeypressPriority.Critical,
+    },
   );
 
-  // Handle Ctrl+C - double tap to quit (like bubbletea)
-  // Only active in chat mode to avoid conflicts with session selection
-  useInput(
+  // Handle Ctrl+C - double tap to quit (like bubbletea).
+  // Only active in chat mode to avoid conflicts with session selection.
+  // Low priority: this is the global fallback handler that runs after panels
+  // (High) and modals (Critical) have had their chance to consume.
+  useKeypress(
     useCallback(
       (input, key) => {
         // Ctrl+B: enter the bash-jobs panel for keyboard management. Only
@@ -916,7 +946,10 @@ export const App: React.FC<AppProps> = ({
         notifications.length,
       ],
     ),
-    { isActive: uiState === "chat" || !!approval || !!mcpApproval },
+    {
+      isActive: uiState === "chat" || !!approval || !!mcpApproval,
+      priority: KeypressPriority.Low,
+    },
   );
 
   // If every job vanishes (cleared, archived) while the panel is focused,
@@ -1006,7 +1039,13 @@ export const App: React.FC<AppProps> = ({
   return (
     <MouseProvider mouseEventsEnabled={!!enableMouse}>
       <ScrollProvider>
-        <Box flexDirection="column">
+        {/* Outer chat column. gap={0} so the scroll region butts up
+            directly against the input below; the input carries its own
+            top border, which provides enough visual separation without
+            an extra blank row. Header carries its own internal paddingY
+            (in Header.tsx / Logo.tsx) so it still has breathing room
+            when visible. */}
+        <Box flexDirection="column" gap={0}>
           {/* Header with logo and welcome message - visible only before first message */}
           <Header
             agentName={agentName}
@@ -1014,81 +1053,71 @@ export const App: React.FC<AppProps> = ({
             visible={messages.length === 0}
           />
 
-          {/* Message history - scrollable with keyboard/mouse support */}
-          <Box paddingX={1} marginTop={1} flexGrow={1}>
+          {/* Message history + dock panels - all scrollable together.
+              Goal/Tasks/Workers/QueuedMessages/Notifications/BashJobs/
+              EscalationBanner sit after the transcript and scroll with
+              history; pin-to-bottom keeps them visible by default.
+              No paddingX so panels sit flush with the input below; the
+              Scrollable's own paddingRight reserves the scrollbar lane
+              and the input's paddingRight (added below) keeps its right
+              border aligned with the panels' right border. */}
+          <Box flexGrow={1}>
             <ScrollableMessageList
               availableHeight={availableTerminalHeight}
               onApprove={handleApproval}
               onMcpApprove={handleMcpApproval}
-            />
+            >
+              <Goal />
+              <Tasks />
+              <Workers />
+              <QueuedMessages />
+              <Notifications
+                focused={notificationsPanelFocused}
+                onUnfocus={() => setNotificationsPanelFocused(false)}
+              />
+              <BashJobs
+                focused={bashPanelFocused}
+                onUnfocus={() => setBashPanelFocused(false)}
+                onKill={async (job_id) => {
+                  if (!client) return {};
+                  return await client.serverCall(
+                    "bash_jobs.kill",
+                    { job_id },
+                    sessionId || undefined,
+                  );
+                }}
+                onTail={async (job_id, lines) => {
+                  if (!client) return { ok: false, error: "no client" };
+                  const args: Record<string, unknown> = { job_id };
+                  if (typeof lines === "number") args.lines = lines;
+                  return (await client.serverCall(
+                    "bash_jobs.tail",
+                    args,
+                    sessionId || undefined,
+                  )) as any;
+                }}
+              />
+              <EscalationBanner />
+            </ScrollableMessageList>
           </Box>
 
-          {/* Controls/footer section - measured for dynamic height calculation */}
-          <Box ref={controlsRef} flexDirection="column">
-            {/* Status indicator - ALWAYS in DOM, just hidden - isolated subscription */}
-            <StatusIndicatorWrapper approval={approval} thinking={thinking} />
-
-            {/* Compact /goal autopilot panel - renders nothing when no goal
-                is set. Sits above Tasks so the overall objective is visible
-                first. */}
-            <Goal />
-
-            {/* Docked task list - renders nothing when empty */}
-            <Tasks />
-
-            {/* Docked workers panel - lists workers spawned via
-                spawn_worker. Renders nothing when empty. */}
-            <Workers />
-
-            {/* "Up next" panel for queued user messages - renders nothing
-                when empty. Items land here when the user submits while a
-                run is active. */}
-            <QueuedMessages />
-
-            {/* Docked notifications panel - accumulates `notify` calls
-                from the agent. Persistent until user dismisses; Ctrl+N
-                opens the panel for keyboard navigation + dismissal. */}
-            <Notifications
-              focused={notificationsPanelFocused}
-              onUnfocus={() => setNotificationsPanelFocused(false)}
-            />
-
-            {/* Docked background-bash-jobs panel - renders nothing when empty */}
-            <BashJobs
-              focused={bashPanelFocused}
-              onUnfocus={() => setBashPanelFocused(false)}
-              onKill={async (job_id) => {
-                if (!client) return {};
-                return await client.serverCall(
-                  "bash_jobs.kill",
-                  { job_id },
-                  sessionId || undefined,
-                );
-              }}
-              onTail={async (job_id, lines) => {
-                if (!client) return { ok: false, error: "no client" };
-                const args: Record<string, unknown> = { job_id };
-                if (typeof lines === "number") args.lines = lines;
-                return (await client.serverCall(
-                  "bash_jobs.tail",
-                  args,
-                  sessionId || undefined,
-                )) as any;
-              }}
-            />
-
-            {/* Escalation banner — renders only when the agent has
-                called the ``escalate`` builtin. The next user submit
-                is routed back as the tool's reply via the interceptor
-                above. */}
-            <EscalationBanner />
-
+          {/* Controls/footer section - measured for dynamic height
+              calculation. StatusIndicator (Thinking…) lives inside the
+              scrollable region now (just under the transcript), so the
+              footer is just input + help. gap={0} — input's bottom
+              border provides enough visual break to the help line
+              below; help still has paddingBottom for the
+              terminal-bottom gap. */}
+          <Box ref={controlsRef} flexDirection="column" gap={0}>
             {/* Input prompt - always rendered, disabled only during
                 approval prompts or when a side panel owns the keyboard.
                 Submission while ``thinking`` is allowed now — handleSubmit
                 routes those through enqueue_message so they queue
-                instead of racing against the active run. */}
-            <Box marginTop={1}>
+                instead of racing against the active run.
+                paddingRight={1} mirrors the scrollbar lane above so the
+                input border's right edge aligns with the panels' right
+                border. */}
+            <Box paddingRight={1}>
               <MultiLineInputOptimized
                 onSubmit={handleSubmit}
                 disabled={

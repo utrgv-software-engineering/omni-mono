@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
+import { useKeypress } from "../hooks/useKeypress.js";
+import { KeypressPriority } from "../contexts/KeypressContext.js";
 import Spinner from "ink-spinner";
 import {
   useBashJobs,
@@ -154,43 +156,47 @@ export const BashJobs = React.memo(({ focused, onUnfocus, onKill, onTail }: Prop
   //      the next keypress).
   //   2) Row list active: arrows move, x kills, l toggles log preview,
   //      Enter is an alias for l, Esc unfocuses the panel entirely.
-  useInput(
+  useKeypress(
     (_input, key) => {
       if (key.escape) {
         setLogsForJobId(null);
         setLogsError(null);
-        return;
+        return true;
       }
       // Any other key dismisses logs and falls through to the next render's
       // row-list handler — feels natural ("press anything to close").
       setLogsForJobId(null);
+      return true;
     },
-    { isActive: focused && logsForJobId !== null },
+    {
+      isActive: focused && logsForJobId !== null,
+      priority: KeypressPriority.Critical,
+    },
   );
 
-  useInput(
+  useKeypress(
     (input, key) => {
       if (key.escape) {
         onUnfocus();
-        return;
+        return true;
       }
-      if (visible.length === 0) return;
+      if (visible.length === 0) return false;
       if (key.upArrow) {
         setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
-        return;
+        return true;
       }
       if (key.downArrow) {
         setSelectedIndex((prev) =>
           prev < visible.length - 1 ? prev + 1 : prev,
         );
-        return;
+        return true;
       }
       const sel = visible[selectedIndex];
-      if (!sel) return;
+      if (!sel) return false;
       if (input === "x") {
         if (!sel.running) {
           setStatusLine(`${sel.job_id} already exited`);
-          return;
+          return true;
         }
         setStatusLine(`Killing ${sel.job_id}…`);
         onKill(sel.job_id)
@@ -198,14 +204,18 @@ export const BashJobs = React.memo(({ focused, onUnfocus, onKill, onTail }: Prop
           .catch((e) =>
             setStatusLine(`Kill failed: ${(e as Error).message ?? String(e)}`),
           );
-        return;
+        return true;
       }
       if (input === "l" || key.return) {
         loadLogs(sel.job_id);
-        return;
+        return true;
       }
+      return false;
     },
-    { isActive: focused && logsForJobId === null },
+    {
+      isActive: focused && logsForJobId === null,
+      priority: KeypressPriority.High,
+    },
   );
 
   if (!jobs || jobs.length === 0) {
@@ -221,9 +231,10 @@ export const BashJobs = React.memo(({ focused, onUnfocus, onKill, onTail }: Prop
     if (running.length === 0) return null;
     const noun = running.length === 1 ? "background job" : "background jobs";
     return (
-      // Match StatusIndicatorWrapper's paddingX={1} so the spinner here
-      // aligns with the spinner in "⠋ Thinking..." one row up.
-      <Box paddingX={1}>
+      // Borderless single-line panel — aligns with the InlineStatus
+      // spinner and the other borderless dock items above. Parent
+      // owns vertical spacing via gap={1}.
+      <Box>
         <Text>
           <Text color={TokyoNightTheme.info}>
             <Spinner type="dots" />
@@ -246,8 +257,6 @@ export const BashJobs = React.memo(({ focused, onUnfocus, onKill, onTail }: Prop
       flexDirection="column"
       borderStyle="round"
       borderColor={TokyoNightTheme.info}
-      paddingX={1}
-      marginX={1}
     >
       <Box>
         <Text color={TokyoNightTheme.defaultText}>Bash jobs  </Text>

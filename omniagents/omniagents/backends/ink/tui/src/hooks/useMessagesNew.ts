@@ -719,6 +719,22 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     const currentCallId = currentApprovalCallIdRef.current;
     if (!currentCallId || !client) return;
 
+    // When the user picks "always" for tool X, the server-side allow-set
+    // only covers FUTURE tool calls — sibling approvals already in the
+    // queue (typical for parallel calls like three execute_bash in one
+    // turn) would still prompt. Drain matching siblings here and approve
+    // them too, so the user really only answers once.
+    const currentTool = useAppStore.getState().approval?.tool;
+    let siblings: ApprovalInfo[] = [];
+    if (approved && alwaysApprove && currentTool) {
+      siblings = approvalQueueRef.current.filter(
+        (a) => a.tool === currentTool,
+      );
+      approvalQueueRef.current = approvalQueueRef.current.filter(
+        (a) => a.tool !== currentTool,
+      );
+    }
+
     const next = approvalQueueRef.current.shift() || null;
     currentApprovalCallIdRef.current = next ? next.call_id : null;
 
@@ -739,6 +755,16 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     } catch (err) {
       // Best-effort; if the response fails the server will eventually time
       // out the future or the run will be cancelled.
+    }
+
+    // Fire-and-forget approve for each sibling — they share the tool
+    // name of the just-approved call so "always" intent covers them.
+    // Failures here are non-fatal (server times out the call's future
+    // if no response arrives).
+    for (const sibling of siblings) {
+      client
+        .toolApprovalResponse(sibling.call_id, "approve", true)
+        .catch(() => {});
     }
   };
 

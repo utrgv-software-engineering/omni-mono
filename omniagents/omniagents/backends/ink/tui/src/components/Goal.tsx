@@ -32,7 +32,7 @@ export const Goal = React.memo(() => {
       : TokyoNightTheme.info;
 
   return (
-    <Box paddingX={1} marginX={1}>
+    <Box>
       <Text color={glyphColor}>
         {isActive ? <Spinner type="dots" /> : isCompleted ? "●" : "✗"}
       </Text>

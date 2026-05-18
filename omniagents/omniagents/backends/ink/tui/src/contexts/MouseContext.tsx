@@ -1,5 +1,12 @@
 /**
- * Mouse event context for handling mouse wheel scrolling
+ * Mouse event context for handling mouse wheel scrolling.
+ *
+ * Ink 7 switched stdin from flowing mode (`stdin.on('data', ...)`) to paused
+ * mode (`stdin.addListener('readable', ...)` + `stdin.read()`). In paused
+ * mode, once ink reads a chunk it is consumed from the stream — so a parallel
+ * `stdin.on('data', ...)` listener never fires. We instead subscribe to
+ * ink's `internal_eventEmitter`, which emits every chunk ink reads, so this
+ * MouseProvider sees the SGR mouse sequences alongside ink's keypress parser.
  */
 
 import React, { createContext, useContext, useEffect, useRef, useCallback, useMemo } from "react";
@@ -24,7 +31,7 @@ export const MouseProvider: React.FC<{ children: React.ReactNode; mouseEventsEna
   children,
   mouseEventsEnabled = false,
 }) => {
-  const { stdin } = useStdin();
+  const stdinCtx = useStdin();
   const handlersRef = useRef<Set<MouseHandler>>(new Set());
 
   const subscribe = useCallback((handler: MouseHandler) => {
@@ -36,9 +43,18 @@ export const MouseProvider: React.FC<{ children: React.ReactNode; mouseEventsEna
   }, []);
 
   useEffect(() => {
-    if (!mouseEventsEnabled || !stdin) {
+    if (!mouseEventsEnabled) {
       return;
     }
+    // `internal_eventEmitter` is added by ink 7; gate on its presence so we
+    // also work under older ink versions during a transitional install.
+    const emitter = (stdinCtx as unknown as {
+      internal_eventEmitter?: {
+        on: (event: string, listener: (chunk: string) => void) => void;
+        off: (event: string, listener: (chunk: string) => void) => void;
+      };
+    }).internal_eventEmitter;
+    if (!emitter) return;
 
     process.stdout.write("\x1b[?1002h\x1b[?1006h");
 
@@ -66,8 +82,10 @@ export const MouseProvider: React.FC<{ children: React.ReactNode; mouseEventsEna
       return true;
     };
 
-    const handleData = (data: Buffer) => {
-      buffer += data.toString("utf-8");
+    const handleInput = (chunk: string) => {
+      // Ink sets stdin encoding to utf8 and emits string chunks; no Buffer
+      // conversion needed (older Buffer path was for the flowing-mode hook).
+      buffer += chunk;
 
       if (buffer.length > 4096) buffer = buffer.slice(-4096);
 
@@ -89,13 +107,13 @@ export const MouseProvider: React.FC<{ children: React.ReactNode; mouseEventsEna
       }
     };
 
-    stdin.on("data", handleData);
+    emitter.on("input", handleInput);
 
     return () => {
-      stdin.off("data", handleData);
+      emitter.off("input", handleInput);
       process.stdout.write("\x1b[?1006l\x1b[?1002l");
     };
-  }, [stdin, mouseEventsEnabled]);
+  }, [stdinCtx, mouseEventsEnabled]);
 
   const contextValue = useMemo(
     () => ({ subscribe, unsubscribe }),

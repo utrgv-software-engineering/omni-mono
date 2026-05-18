@@ -29,8 +29,6 @@ export const QueuedMessages = React.memo(() => {
       flexDirection="column"
       borderStyle="round"
       borderColor={TokyoNightTheme.border}
-      paddingX={1}
-      marginX={1}
     >
       <Box>
         <Text color={TokyoNightTheme.defaultText}>Up next  </Text>

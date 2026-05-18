@@ -1,10 +1,22 @@
 /**
- * Optimized message list with virtual scrolling
- * Alternate buffer eliminates need for Static component
+ * Optimized message list.
+ *
+ * When mounted inside a <Scrollable> (the common case), uses VirtualizedList
+ * to render only messages in the visible viewport. Off-viewport items become
+ * a single spacer Box of the correct measured height so the parent
+ * Scrollable's scroll geometry stays accurate.
+ *
+ * Visible "frozen" messages (not the tail, not a running tool call) are
+ * wrapped in <StaticRender> so their Yoga layout is cached — re-renders of
+ * the list don't re-run layout on every visible message.
+ *
+ * Falls back to a plain map when no viewport info is available (e.g. when
+ * rendered outside a Scrollable, in tests, or before first measurement). The
+ * fallback still uses StaticRender for per-item layout caching.
  */
 
-import React, { useMemo } from "react";
-import { Box, Text } from "ink";
+import React, { useCallback, useMemo } from "react";
+import { Box, Text, StaticRender, useStdout } from "ink";
 import { useMessages } from "../store/appStore.js";
 import type { Message } from "../store/appStore.js";
 import { TokyoNightTheme } from "../theme.js";
@@ -12,31 +24,90 @@ import { formatToolArgumentsSmart } from "../utils/formatArguments.js";
 import { renderMarkdownCached } from "../utils/markdownCache.js";
 import { parseRichMetadata } from "../types/richMetadata.js";
 import { RichToolOutput } from "../utils/richToolOutput.js";
+import { VirtualizedList } from "./shared/VirtualizedList.js";
+import { useScrollViewport } from "./Scrollable.js";
+
+function messageKey(message: Message, index: number): string {
+  const contentPreview = message.content
+    ? message.content.slice(0, 20)
+    : "empty";
+  const role = message.role || "unknown";
+  return (
+    message.toolCall?.call_id ||
+    (message.timestamp ? `${role}-${message.timestamp.getTime()}` : undefined) ||
+    `${role}-${contentPreview}-${index}`
+  );
+}
 
 export const MessageListOptimized = React.memo(() => {
   const messages = useMessages();
+  const { stdout } = useStdout();
+  const terminalWidth = stdout?.columns ?? 80;
+  const viewport = useScrollViewport();
+
+  const renderItem = useCallback(
+    (message: Message, _index: number) => <MessageItem message={message} />,
+    [],
+  );
+
+  const lastIndex = messages.length - 1;
+  const isStaticItem = useCallback(
+    (message: Message, index: number) => {
+      const isTail = index === lastIndex;
+      const isRunning = message.toolCall?.running === true;
+      return !isTail && !isRunning;
+    },
+    [lastIndex],
+  );
 
   if (messages.length === 0) {
     return null;
   }
 
+  // Virtualized path: only when a Scrollable above us reports a real
+  // viewport. The Box gap={1} that the legacy renderer used is preserved
+  // here by adding a 1-row spacer to each item's measured height
+  // implicitly via `flexDirection="column"` on VirtualizedList items.
+  if (viewport && viewport.innerHeight > 0) {
+    return (
+      <VirtualizedList<Message>
+        data={messages}
+        renderItem={renderItem}
+        keyExtractor={messageKey}
+        estimatedItemHeight={3}
+        containerHeight={viewport.innerHeight}
+        scrollTop={viewport.scrollTop}
+        width={terminalWidth}
+        isStaticItem={isStaticItem}
+      />
+    );
+  }
+
+  // Fallback: render everything, with per-item StaticRender for frozen items.
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" gap={1}>
       {messages.map((message, index) => {
-        // Generate a safe key, handling cases where content/role might be undefined
-        const contentPreview = message.content
-          ? message.content.slice(0, 20)
-          : "empty";
-        const role = message.role || "unknown";
+        const key = messageKey(message, index);
+        const canFreeze = isStaticItem(message, index);
 
-        const key =
-          message.toolCall?.call_id ||
-          (message.timestamp
-            ? `${role}-${message.timestamp.getTime()}`
-            : undefined) ||
-          `${role}-${contentPreview}-${index}`;
+        if (!canFreeze) {
+          return <MessageItem key={key} message={message} />;
+        }
 
-        return <MessageItem key={key} message={message} />;
+        return (
+          <StaticRender
+            key={key}
+            width={terminalWidth}
+            deps={[
+              message.content,
+              message.toolCall?.output,
+              message.toolCall?.metadata,
+              terminalWidth,
+            ]}
+          >
+            {() => <MessageItem message={message} />}
+          </StaticRender>
+        );
       })}
     </Box>
   );
@@ -91,16 +162,29 @@ const UserMessage = React.memo<{ message: Message }>(
     const prefix = "> ";
     const prefixWidth = prefix.length;
 
+    // Split on newlines and render one row per line, matching
+    // AssistantMessage. A single <Text> here would collapse multi-line
+    // content against the prefix column and look like whitespace was
+    // stripped on submit.
+    const lines = useMemo(
+      () => (message.content ?? "").split("\n"),
+      [message.content],
+    );
+
     return (
-      <Box flexDirection="column" marginBottom={1}>
-        <Box flexDirection="row">
-          <Box width={prefixWidth}>
-            <Text color={TokyoNightTheme.messagePrompt}>{prefix}</Text>
+      <Box flexDirection="column">
+        {lines.map((line, index) => (
+          <Box key={index} flexDirection="row">
+            <Box width={prefixWidth}>
+              {index === 0 && (
+                <Text color={TokyoNightTheme.messagePrompt}>{prefix}</Text>
+              )}
+            </Box>
+            <Box flexGrow={1}>
+              <Text color={TokyoNightTheme.userMessage}>{line}</Text>
+            </Box>
           </Box>
-          <Box flexGrow={1}>
-            <Text color={TokyoNightTheme.userMessage}>{message.content}</Text>
-          </Box>
-        </Box>
+        ))}
       </Box>
     );
   },
@@ -125,7 +209,7 @@ const AssistantMessage = React.memo<{ message: Message }>(
     );
 
     return (
-      <Box flexDirection="column" marginBottom={1}>
+      <Box flexDirection="column">
         {lines.map((line, index) => (
           <Box key={index} flexDirection="row">
             <Box width={prefixWidth}>
@@ -166,7 +250,7 @@ const ToolCallMessage = React.memo<{ message: Message }>(
     // Handle cancelled tool calls
     if (output === "[Cancelled]") {
       return (
-        <Box flexDirection="column" marginBottom={1}>
+        <Box flexDirection="column">
           <Box flexDirection="row">
             <Box width={prefixWidth}>
               <Text color={TokyoNightTheme.toolName}>{prefix}</Text>
@@ -188,7 +272,7 @@ const ToolCallMessage = React.memo<{ message: Message }>(
     }
 
     return (
-      <Box flexDirection="column" marginBottom={1}>
+      <Box flexDirection="column">
         <Box flexDirection="row">
           <Box width={prefixWidth}>
             <Text color={TokyoNightTheme.toolName}>{prefix}</Text>

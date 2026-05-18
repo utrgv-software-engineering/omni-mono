@@ -4,8 +4,10 @@
  */
 
 import React, { useReducer, useCallback, useEffect, useLayoutEffect } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
 import chalk from "chalk";
+import { useKeypress } from "../hooks/useKeypress.js";
+import { KeypressPriority } from "../contexts/KeypressContext.js";
 import { TokyoNightTheme } from "../theme.js";
 
 interface InputState {
@@ -380,12 +382,10 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
       }
     }, [history]);
 
-    useInput((input, key) => {
+    useKeypress(
+      (input, key) => {
       const current = stateRef.current;
 
-      if (disabled) {
-        return;
-      }
 
       if (key.escape) {
         onEscape?.();
@@ -468,7 +468,9 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
           insertText(clean);
         }
       }
-    });
+    },
+      { isActive: !disabled, priority: KeypressPriority.Normal },
+    );
 
     // Calculate visible lines (only render what fits on screen)
     const visibleHeight = Math.min(state.lines.length, maxHeight);

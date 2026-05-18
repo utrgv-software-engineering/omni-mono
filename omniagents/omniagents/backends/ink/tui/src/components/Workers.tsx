@@ -93,8 +93,6 @@ export const Workers = React.memo(() => {
       flexDirection="column"
       borderStyle="round"
       borderColor={TokyoNightTheme.border}
-      paddingX={1}
-      marginX={1}
     >
       <Box>
         <Text color={TokyoNightTheme.defaultText}>Workers  </Text>

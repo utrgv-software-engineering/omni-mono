@@ -2,8 +2,8 @@
  * Tool approval dialog component - routes to specialized dialogs based on metadata
  */
 
-import React, { useState } from "react";
-import { Box, Text, useInput } from "ink";
+import React from "react";
+import { Box, Text } from "ink";
 import { TokyoNightTheme } from "../theme.js";
 import { parseRichMetadata } from "../types/richMetadata.js";
 import {
@@ -11,12 +11,13 @@ import {
   FileWriteApproval,
   CommandApproval,
 } from "./ApprovalDialogs.js";
+import { DialogShell } from "./shared/DialogShell.js";
+import {
+  BaseSelectionList,
+  type SelectionOption,
+} from "./shared/BaseSelectionList.js";
 
-export interface ApprovalOption {
-  title: string;
-  description: string;
-  value: "yes" | "always" | "no";
-}
+export type ApprovalOption = SelectionOption<"yes" | "always" | "no">;
 
 export interface ApprovalDialogProps {
   tool: string;
@@ -83,31 +84,6 @@ export const ApprovalDialog = React.memo<ApprovalDialogProps>(
       );
     }
 
-    // Default: text-based approval
-    const [selectedIndex, setSelectedIndex] = useState(0);
-
-    useInput((input, key) => {
-      if (key.shift && (key.upArrow || key.downArrow)) {
-        return;
-      }
-      if (key.upArrow) {
-        setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
-      } else if (key.downArrow) {
-        setSelectedIndex((prev) =>
-          prev < DEFAULT_OPTIONS.length - 1 ? prev + 1 : prev,
-        );
-      } else if (key.return) {
-        // Enter key - select current option
-        onApprove(DEFAULT_OPTIONS[selectedIndex].value);
-      } else if (input === "1") {
-        onApprove("yes");
-      } else if (input === "2") {
-        onApprove("always");
-      } else if (input === "3") {
-        onApprove("no");
-      }
-    });
-
     // Memoize arguments parsing
     const argsDisplay = React.useMemo(() => {
       try {
@@ -119,20 +95,11 @@ export const ApprovalDialog = React.memo<ApprovalDialogProps>(
     }, [args]);
 
     return (
-      <Box
-        flexDirection="column"
-        borderStyle="single"
-        borderColor={TokyoNightTheme.border}
-        paddingX={2}
-        paddingY={1}
+      <DialogShell
+        title={`Tool Approval: ${tool}`}
+        footer="Use ↑↓ to navigate, Enter to select, ESC to deny"
       >
-        <Box marginBottom={1}>
-          <Text bold color={TokyoNightTheme.approvalTitle}>
-            Tool Approval: {tool}
-          </Text>
-        </Box>
-
-        <Box marginBottom={1} flexDirection="column">
+        <Box flexDirection="column">
           <Text color={TokyoNightTheme.defaultText}>Arguments:</Text>
           <Text color={TokyoNightTheme.toolResult}>
             {argsDisplay.length > 200
@@ -140,29 +107,8 @@ export const ApprovalDialog = React.memo<ApprovalDialogProps>(
               : argsDisplay}
           </Text>
         </Box>
-
-        <Box flexDirection="column" marginBottom={1}>
-          {DEFAULT_OPTIONS.map((option, index) => (
-            <Box key={option.value}>
-              {index === selectedIndex ? (
-                <Text bold color={TokyoNightTheme.approvalSelected}>
-                  ▶ {option.title} - {option.description}
-                </Text>
-              ) : (
-                <Text color={TokyoNightTheme.approvalUnselected}>
-                  {option.title} - {option.description}
-                </Text>
-              )}
-            </Box>
-          ))}
-        </Box>
-
-        <Box>
-          <Text color={TokyoNightTheme.defaultText}>
-            Use ↑↓ to navigate, Enter to select, ESC to deny
-          </Text>
-        </Box>
-      </Box>
+        <BaseSelectionList options={DEFAULT_OPTIONS} onSelect={onApprove} />
+      </DialogShell>
     );
   },
   (prevProps, nextProps) => {

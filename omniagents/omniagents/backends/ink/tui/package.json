@@ -31,7 +31,7 @@
     "chalk": "^5.3.0",
     "figures": "^6.1.0",
     "immer": "^10.2.0",
-    "ink": "npm:@jrichman/ink@6.4.0",
+    "ink": "npm:@jrichman/ink@7.0.0",
     "ink-select-input": "^6.0.0",
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^6.0.0",

@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
 import {
   useActions,
   useNotifications,
 } from "../store/appStore.js";
+import { useKeypress } from "../hooks/useKeypress.js";
+import { KeypressPriority } from "../contexts/KeypressContext.js";
 import { TokyoNightTheme } from "../theme.js";
 
 const MAX_VISIBLE = 5;
@@ -47,34 +49,35 @@ export const Notifications = React.memo(({ focused, onUnfocus }: Props) => {
     });
   }, [visible.length]);
 
-  useInput(
+  useKeypress(
     (input, key) => {
       if (key.escape) {
         onUnfocus();
-        return;
+        return true;
       }
-      if (visible.length === 0) return;
+      if (visible.length === 0) return false;
       if (key.upArrow) {
         setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
-        return;
+        return true;
       }
       if (key.downArrow) {
         setSelectedIndex((prev) =>
           prev < visible.length - 1 ? prev + 1 : prev,
         );
-        return;
+        return true;
       }
       if (input === "D") {
         actions.clearNotifications();
-        return;
+        return true;
       }
       if (input === "d") {
         const sel = visible[selectedIndex];
         if (sel) actions.removeNotification(sel.id);
-        return;
+        return true;
       }
+      return false;
     },
-    { isActive: focused },
+    { isActive: focused, priority: KeypressPriority.High },
   );
 
   if (notifications.length === 0) return null;
@@ -86,8 +89,6 @@ export const Notifications = React.memo(({ focused, onUnfocus }: Props) => {
       flexDirection="column"
       borderStyle="round"
       borderColor={focused ? TokyoNightTheme.info : TokyoNightTheme.toolResult}
-      paddingX={1}
-      marginX={1}
     >
       <Box>
         <Text color={TokyoNightTheme.defaultText}>Notifications  </Text>

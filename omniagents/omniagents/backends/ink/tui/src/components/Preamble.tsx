@@ -26,7 +26,7 @@ export const Preamble: React.FC<PreambleProps> = ({ content }) => {
   }, []);
 
   return (
-    <Box flexDirection="column" marginTop={1}>
+    <Box flexDirection="column">
       <Box>
         <Box marginRight={1}>
           <Text color={TokyoNightTheme.warning}>{STAR_FRAMES[frame]}</Text>

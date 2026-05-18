@@ -81,8 +81,12 @@ export const ScrollProvider: React.FC<{ children: React.ReactNode }> = ({
     scrollablesRef.current.delete(id);
   }, []);
 
+  // Mouse wheel sends one event per notch; most terminals expect a
+  // multi-line scroll per wheel click. Keyboard shift+↑/↓ stays at
+  // 1 line for fine-grained control (handled in Scrollable.tsx).
+  const WHEEL_STEP = 3;
   const handleScroll = (direction: "up" | "down", mouseEvent: MouseEvent) => {
-    const delta = direction === "up" ? -1 : 1;
+    const delta = (direction === "up" ? -1 : 1) * WHEEL_STEP;
     let candidates = findScrollableCandidates(
       mouseEvent,
       scrollablesRef.current,
