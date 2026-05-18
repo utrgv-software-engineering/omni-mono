@@ -45,6 +45,30 @@ export interface McpApprovalInfo {
   run_id?: string;
 }
 
+// Escalation prompts surface when the agent calls the ``escalate``
+// builtin (a blocking client-function tool). The TUI shows the banner,
+// the user's next submitted message becomes the tool's reply, and the
+// banner clears. ``request_id`` lets the input-submit path route the
+// reply via ``client_response`` instead of starting a new run.
+export interface EscalationInfo {
+  request_id: string;
+  message: string;
+  session_id?: string;
+  run_id?: string;
+}
+
+// Notifications accumulate in a docked panel between user submissions.
+// The agent's ``notify`` calls during a run pile up here so a user
+// returning to a long-running session can see every heads-up they
+// missed at a glance. The panel clears when the user starts the next
+// run (handleSubmit), so each "user → run → user" cycle gets a fresh
+// notification window.
+export interface NotificationInfo {
+  id: string;
+  message: string;
+  timestamp: number;
+}
+
 export interface Message {
   role: "user" | "assistant" | "system" | "tool_call" | "approval_request";
   content: string;
@@ -83,6 +107,24 @@ export interface BashJobSummary {
   cwd?: string;
 }
 
+// Mirror of worker_state_dict on the server (omni-code
+// tools/worker_tools.py). Drives the docked workers panel; empty list
+// means no workers are tracked for this session.
+export interface WorkerSummary {
+  worker_id: string;
+  status: "running" | "completed" | "cancelled" | "error";
+  task: string;
+  parent_session_id: string | null;
+  session_id: string;
+  run_id: string;
+  result: string | null;
+  error: string | null;
+  isolation: string | null;
+  started_at: number | null;
+  finished_at: number | null;
+  wall_time_ms: number | null;
+}
+
 // Mirror of QueuedItem.to_dict() on the server. Drives the "Up next"
 // dock; items appear when a user submits while a run is active and
 // disappear when the drainer pops them (or the user cancels).
@@ -104,11 +146,11 @@ export interface GoalSnapshot {
   goal: string;
   turn: number;
   max_turns: number;
-  attempt: number;
-  max_attempts: number;
+  tick_interval: number;
   last_reason: string | null;
   status: "active" | "completed" | "cancelled";
   started_at: number;
+  completion_reason: string | null;
 }
 
 interface AppState {
@@ -131,12 +173,24 @@ interface AppState {
   statusSpinner: boolean;
   approval: ApprovalInfo | null;
   mcpApproval: McpApprovalInfo | null;
+  escalation: EscalationInfo | null;
+  notifications: NotificationInfo[];
   currentRunId: string | null;
   preamble: string | null;
   tasks: TaskSummary[];
   bashJobs: BashJobSummary[];
+  workers: WorkerSummary[];
   queuedMessages: QueuedMessage[];
   goal: GoalSnapshot | null;
+  // IDs of dock items the user has "moved past" — snapshotted from
+  // currently-terminal items each time the user submits, so the next
+  // run starts with a clean dock instead of dragging the previous
+  // run's exits forward. New items spawned by the next run aren't in
+  // these sets and render normally; their IDs are added on the *next*
+  // submit. Reset on session change.
+  dismissedWorkerIds: Set<string>;
+  dismissedJobIds: Set<string>;
+  dismissedTaskIds: Set<string>;
 
   // Actions (ONLY way to update state)
   actions: {
@@ -155,6 +209,10 @@ interface AppState {
     ) => void;
     setApproval: (approval: ApprovalInfo | null) => void;
     setMcpApproval: (approval: McpApprovalInfo | null) => void;
+    setEscalation: (escalation: EscalationInfo | null) => void;
+    addNotification: (message: string) => void;
+    removeNotification: (id: string) => void;
+    clearNotifications: () => void;
     setUsage: (usage: UsageInfo) => void;
     setSessionState: (state: {
       model?: string | null;
@@ -178,8 +236,16 @@ interface AppState {
     clearMessages: () => void;
     setTasks: (tasks: TaskSummary[]) => void;
     setBashJobs: (jobs: BashJobSummary[]) => void;
+    setWorkers: (workers: WorkerSummary[]) => void;
     setQueuedMessages: (items: QueuedMessage[]) => void;
     setGoal: (goal: GoalSnapshot | null) => void;
+    // Add every currently-terminal dock item (exited workers / bash
+    // jobs, completed tasks) to its dismissed set. Call this at the
+    // start of handleSubmit so the next run shows a clean dock.
+    dismissDockTerminals: () => void;
+    // Wipe all three dismissed sets — used on session change so the
+    // freshly bound session starts with full server-side state.
+    resetDockDismissals: () => void;
   };
 }
 
@@ -198,10 +264,16 @@ export const useAppStore = create<AppState>()(
     statusSpinner: false,
     approval: null,
     mcpApproval: null,
+    escalation: null,
+    notifications: [],
     currentRunId: null,
     preamble: null,
     tasks: [],
     bashJobs: [],
+    workers: [],
+    dismissedWorkerIds: new Set<string>(),
+    dismissedJobIds: new Set<string>(),
+    dismissedTaskIds: new Set<string>(),
     queuedMessages: [],
     goal: null,
 
@@ -297,6 +369,42 @@ export const useAppStore = create<AppState>()(
             state.status = null;
             state.statusType = null;
             state.statusSpinner = false;
+          }
+        }),
+
+      setEscalation: (escalation) =>
+        set((state) => {
+          state.escalation = escalation;
+          // While an escalation is pending the agent is blocked on the
+          // tool call awaiting our client_response, so the thinking
+          // spinner is misleading — turn it off and let the banner speak
+          // for itself.
+          if (escalation) {
+            state.thinking = false;
+            state.status = null;
+            state.statusType = null;
+            state.statusSpinner = false;
+          }
+        }),
+
+      addNotification: (message) =>
+        set((state) => {
+          state.notifications.push({
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            message,
+            timestamp: Date.now(),
+          });
+        }),
+
+      removeNotification: (id) =>
+        set((state) => {
+          state.notifications = state.notifications.filter((n) => n.id !== id);
+        }),
+
+      clearNotifications: () =>
+        set((state) => {
+          if (state.notifications.length > 0) {
+            state.notifications = [];
           }
         }),
 
@@ -423,6 +531,11 @@ export const useAppStore = create<AppState>()(
           state.bashJobs = jobs;
         }),
 
+      setWorkers: (workers) =>
+        set((state) => {
+          state.workers = workers;
+        }),
+
       setQueuedMessages: (items) =>
         set((state) => {
           state.queuedMessages = items;
@@ -431,6 +544,26 @@ export const useAppStore = create<AppState>()(
       setGoal: (goal) =>
         set((state) => {
           state.goal = goal;
+        }),
+
+      dismissDockTerminals: () =>
+        set((state) => {
+          for (const w of state.workers) {
+            if (w.status !== "running") state.dismissedWorkerIds.add(w.worker_id);
+          }
+          for (const j of state.bashJobs) {
+            if (!j.running) state.dismissedJobIds.add(j.job_id);
+          }
+          for (const t of state.tasks) {
+            if (t.status === "completed") state.dismissedTaskIds.add(t.id);
+          }
+        }),
+
+      resetDockDismissals: () =>
+        set((state) => {
+          state.dismissedWorkerIds = new Set<string>();
+          state.dismissedJobIds = new Set<string>();
+          state.dismissedTaskIds = new Set<string>();
         }),
     },
   })),
@@ -449,6 +582,8 @@ export const useStatus = () =>
   );
 export const useApproval = () => useAppStore((s) => s.approval);
 export const useMcpApproval = () => useAppStore((s) => s.mcpApproval);
+export const useEscalation = () => useAppStore((s) => s.escalation);
+export const useNotifications = () => useAppStore((s) => s.notifications);
 export const useUsage = () => useAppStore((s) => s.usage);
 export const useSessionModel = () => useAppStore((s) => s.sessionModel);
 export const useSessionReasoningEffort = () =>
@@ -458,6 +593,12 @@ export const useCurrentRunId = () => useAppStore((s) => s.currentRunId);
 export const usePreamble = () => useAppStore((s) => s.preamble);
 export const useTasks = () => useAppStore((s) => s.tasks);
 export const useBashJobs = () => useAppStore((s) => s.bashJobs);
+export const useWorkers = () => useAppStore((s) => s.workers);
+export const useDismissedWorkerIds = () =>
+  useAppStore((s) => s.dismissedWorkerIds);
+export const useDismissedJobIds = () => useAppStore((s) => s.dismissedJobIds);
+export const useDismissedTaskIds = () =>
+  useAppStore((s) => s.dismissedTaskIds);
 export const useQueuedMessages = () => useAppStore((s) => s.queuedMessages);
 export const useGoal = () => useAppStore((s) => s.goal);
 export const useActions = () => useAppStore((s) => s.actions);

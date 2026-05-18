@@ -7,6 +7,7 @@ execution modes (CLI, Flet, Server), exposing methods via JSON-RPC protocol.
 
 import os
 import asyncio
+import contextvars
 import time
 import uuid
 import copy
@@ -211,21 +212,30 @@ def _build_guardrail_error_info(
     return error_info
 
 
-# Process-wide handle to the most-recently-instantiated AgentService.
-# Lets tools that don't get a service via ctx (background bash watcher,
-# worker-completion callbacks, hooks, schedulers) call back into the
-# service without an explicit injection step. Single-service is the
-# overwhelmingly common case for omni-code / ink / launcher — multi-
-# service hosts (eval pipelines spawning many short-lived services)
-# would need to coordinate, but those don't fire background notifications.
-_CURRENT_SERVICE: "AgentService | None" = None
+# Run-scoped handle to the AgentService that "owns" the currently
+# executing task tree. Implemented as a ``ContextVar`` so background
+# callbacks (worker completion, bash-job watchers, ``Session.set_tick``,
+# ``@client_function_tool`` bodies) that don't receive a service via
+# ctx can still call back into the *right* service in multi-service
+# processes — namely, whichever service started the run that spawned
+# their task. ``asyncio.create_task`` snapshots the current context so
+# tasks created during a run inherit the value automatically; a
+# sub-service constructed in a nested scope (e.g. ``LocalAgent``'s
+# in-process ``AgentService``) does not bleed back into the parent task
+# the way a module-global would.
+#
+# Mirrors the same pattern used by ``omniagents.rpc.base._current_channel``
+# and ``omniagents.workspace._runtime._workspace_var``.
+_current_service: contextvars.ContextVar["AgentService | None"] = contextvars.ContextVar(
+    "omniagents_current_service", default=None
+)
 
 
 def current_service() -> "AgentService | None":
-    """Return the process's current AgentService, or None before any has
-    been instantiated. Tools should treat None as "no host to notify"
-    and drop the call gracefully."""
-    return _CURRENT_SERVICE
+    """Return the AgentService that owns the currently executing task
+    tree, or None if no run has activated. Tools should treat None as
+    "no host to notify" and drop the call gracefully."""
+    return _current_service.get()
 
 
 class AgentService(RpcMethodsBase):
@@ -261,8 +271,6 @@ class AgentService(RpcMethodsBase):
                 cwd.
         """
         super().__init__()
-        global _CURRENT_SERVICE
-        _CURRENT_SERVICE = self
         # In-process per-session run_end listeners (autopilot loops,
         # /goal server function, scheduled hooks). Fan-out happens
         # inside _broadcast_session before client channels are touched.
@@ -1803,6 +1811,61 @@ class AgentService(RpcMethodsBase):
             self._pending_client_requests.pop(req_id, None)
             return None
 
+    # ------------------------------------------------------------------
+    #  Session variables — mutate + broadcast.
+    #
+    #  Server functions and tools that want subscribers (UI panels,
+    #  consumer apps mirroring state) to see variable changes go through
+    #  this method instead of mutating ``session.variables`` directly.
+    #  Sync mutation lives on ``Session.update_variables``.
+    # ------------------------------------------------------------------
+
+    async def update_session_variables(
+        self,
+        session_id: str,
+        updates: Dict[str, Any],
+        *,
+        silent: bool = False,
+    ) -> Dict[str, Any]:
+        """Merge ``updates`` into the session's variables dict, persist,
+        and broadcast a ``session_variables_changed`` event to channels +
+        in-process listeners (unless ``silent=True`` or nothing actually
+        changed).
+
+        Returns the merged variables dict.
+        """
+        sess = self._session_manager.get_or_create(session_id)
+        before = dict(sess.variables) if isinstance(sess.variables, dict) else {}
+        merged = sess.update_variables(updates, persist=True)
+        if silent:
+            return merged
+        # Compute the keys that actually changed (added, removed, or
+        # different value). Skip the broadcast entirely on a no-op write
+        # so consumers don't get spammed with redundant events.
+        after = merged if isinstance(merged, dict) else {}
+        changed: Dict[str, Any] = {}
+        for k, v in updates.items():
+            if before.get(k) != after.get(k):
+                changed[k] = after.get(k)
+        if not changed:
+            return merged
+        try:
+            await self._broadcast_session(
+                sess,
+                "session_variables_changed",
+                {
+                    "session_id": sess.id,
+                    "changed": changed,
+                    "variables": dict(after),
+                },
+            )
+        except Exception:
+            logger.exception(
+                "session_variables_changed broadcast failed",
+                extra={"session": sess.id},
+            )
+        return merged
+
     # Convenience: set status message on client (best-effort UI hint)
     async def set_client_status(
         self,
@@ -2284,6 +2347,15 @@ class AgentService(RpcMethodsBase):
             )
 
         async def _worker():
+            # Mark this run's task tree as owned by ``self``. Background
+            # tasks spawned during the run (worker monitors, bash job
+            # watchers, ``Session.set_tick`` loops, drainers triggered
+            # by ``enqueue_notification``) snapshot this value via
+            # ``asyncio.create_task`` and will resolve ``current_service()``
+            # to the right host even when a worker's ``LocalAgent`` has
+            # constructed its own ``AgentService`` in a nested scope.
+            _current_service.set(self)
+
             end_reason = "error"  # Default in case of unexpected exception
             final_details: dict | None = None
             error_info: dict | None = None
@@ -2710,9 +2782,12 @@ class AgentService(RpcMethodsBase):
         # before the RPC response is processed client-side.
         # ``prompt`` is included so clients whose run wasn't user-initiated
         # (e.g. queued via enqueue_message + drainer, or background
-        # automation) can render the originating user message in their
-        # transcript — without it, the message_output stream would arrive
-        # with no anchoring user turn.
+        # automation) can render the originating turn in their transcript —
+        # without it, the message_output stream would arrive with no
+        # anchoring turn. ``prompt_role`` lets clients render that turn
+        # with the right role: notification batches arrive as "assistant"
+        # so the wakeup reads as the agent observing its own background
+        # activity, not as fake user input.
         await self._broadcast_session(
             sess,
             "run_started",
@@ -2720,6 +2795,7 @@ class AgentService(RpcMethodsBase):
                 "run_id": task_name,
                 "session_id": sess.id,
                 "prompt": prompt,
+                "prompt_role": prompt_role,
             },
             track_live=True,
         )

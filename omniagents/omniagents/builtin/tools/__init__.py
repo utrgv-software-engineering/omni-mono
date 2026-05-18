@@ -10,6 +10,7 @@ from .file_tools import (
     write_file,
     apply_patch,
 )
+from .human import notify, escalate
 from .image_tools import read_image
 from .scholar_search import scholar_search
 from .web_fetch import web_fetch
@@ -27,6 +28,8 @@ __all__ = [
     "edit_file",
     "write_file",
     "apply_patch",
+    "notify",
+    "escalate",
     "read_image",
     "scholar_search",
     "web_fetch",

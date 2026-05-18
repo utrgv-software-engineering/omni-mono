@@ -19,6 +19,8 @@ import {
   useQueuedMessages,
   useApproval,
   useMcpApproval,
+  useEscalation,
+  useNotifications,
   useUsage,
   useSessionModel,
   useSessionId,
@@ -41,9 +43,13 @@ import { Help } from "./Help.js";
 import { SessionList } from "./SessionList.js";
 import { Scrollable } from "./Scrollable.js";
 import { Tasks } from "./Tasks.js";
+import { Workers } from "./Workers.js";
 import { BashJobs } from "./BashJobs.js";
 import { QueuedMessages } from "./QueuedMessages.js";
 import { Goal } from "./Goal.js";
+import { EscalationBanner } from "./EscalationBanner.js";
+import { Notifications } from "./Notifications.js";
+import { resolveEscalation } from "../hooks/escalationBridge.js";
 import { MouseProvider } from "../contexts/MouseContext.js";
 import { ScrollProvider } from "../contexts/ScrollProvider.js";
 import { TokyoNightTheme } from "../theme.js";
@@ -278,6 +284,8 @@ export const App: React.FC<AppProps> = ({
   const queuedMessages = useQueuedMessages();
   const approval = useApproval();
   const mcpApproval = useMcpApproval();
+  const escalation = useEscalation();
+  const notifications = useNotifications();
   const usage = useUsage();
   const sessionModel = useSessionModel();
   const sessionId = useSessionId();
@@ -289,6 +297,11 @@ export const App: React.FC<AppProps> = ({
   // Measure controls/footer height dynamically (like gemini-cli)
   const controlsRef = useRef<any>(null);
   const [controlsHeight, setControlsHeight] = useState(0);
+
+  // Notifications panel focus: Ctrl+N toggles the panel and lets the
+  // user dismiss individual / all queued notifications. Mirrors the
+  // Ctrl+B bash-jobs chord.
+  const [notificationsPanelFocused, setNotificationsPanelFocused] = useState(false);
 
   // Bash-jobs panel focus: Ctrl+B toggles a "panel mode" that hijacks
   // arrow keys / x / l for navigation + kill + log preview. Esc inside the
@@ -341,6 +354,37 @@ export const App: React.FC<AppProps> = ({
         goalSeedRef.current = null;
       });
   }, [client, connected, sessionId, actions]);
+
+  // Seed the workers panel on connect / session-switch. Same rationale
+  // as the goal seed above — picks up workers that were already running
+  // before we attached. workers.list may not be registered on every
+  // agent; silently ignore so the panel stays empty.
+  const workersSeedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!client || !connected || !sessionId) return;
+    if (workersSeedRef.current === sessionId) return;
+    workersSeedRef.current = sessionId;
+    client
+      .serverCall("workers.list", {}, sessionId)
+      .then((res) => {
+        const snap = (res as { snapshot?: unknown } | undefined)?.snapshot;
+        if (Array.isArray(snap)) {
+          actions.setWorkers(snap as any);
+        } else {
+          actions.setWorkers([]);
+        }
+      })
+      .catch(() => {
+        workersSeedRef.current = null;
+      });
+  }, [client, connected, sessionId, actions]);
+
+  // Reset dock dismissal sets on session change so the freshly bound
+  // session starts with the panels showing their full server-side
+  // snapshot.
+  useEffect(() => {
+    actions.resetDockDismissals();
+  }, [sessionId, actions]);
 
   useLayoutEffect(() => {
     if (controlsRef.current) {
@@ -569,8 +613,38 @@ export const App: React.FC<AppProps> = ({
         );
 
         if (!found) {
-          // Not a server function - fall back to LLM
+          // Not a server function - fall back to LLM. sendMessage
+          // (useRPC) mints a session on first call, so we don't need to
+          // pre-ensure here.
           return { sendToLLM: true };
+        }
+
+        // Anchor a session before dispatching the server function.
+        // Slash commands like /goal short-circuit sendMessage's
+        // mint-on-first-call (which only runs for regular chat), so when
+        // /goal is the user's very first action there's no sessionId to
+        // pass — the function fires session-less and goal returns
+        // "No session context". session.ensure({}) mints one on the
+        // server and returns its id; we mirror it into local store so
+        // subsequent UI state stays consistent.
+        let sid: string | undefined = sessionId || undefined;
+        if (!sid) {
+          try {
+            const ensured = (await client!.serverCall(
+              "session.ensure",
+              {},
+            )) as { session_id?: unknown } | undefined;
+            const ensuredId =
+              typeof ensured?.session_id === "string"
+                ? ensured.session_id
+                : undefined;
+            if (ensuredId) {
+              sid = ensuredId;
+              actions.setSessionId(ensuredId);
+            }
+          } catch {
+            /* best-effort — let the server function attempt the call anyway */
+          }
         }
 
         // Parse arguments
@@ -594,11 +668,7 @@ export const App: React.FC<AppProps> = ({
         }
 
         // Call server function
-        const result = await client!.serverCall(
-          fn,
-          args,
-          sessionId || undefined,
-        );
+        const result = await client!.serverCall(fn, args, sid);
 
         // Format result
         if (result.message && typeof result.message === "string") {
@@ -615,13 +685,39 @@ export const App: React.FC<AppProps> = ({
         return { sendToLLM: false, result: `Error: ${err}` };
       }
     },
-    [client, sessionId, exit],
+    [client, sessionId, exit, actions],
   );
 
   // Handle user input
   const handleSubmit = useCallback(
     async (message: string) => {
       if (!client || !connected) {
+        return;
+      }
+
+      // Snapshot every currently-terminal dock item into the dismissed
+      // sets so the next run starts with a clean dock. Items spawned by
+      // the new run aren't in the set yet and render normally; their
+      // IDs land in the set on the *next* submit. Fires for slash
+      // commands too — a slash is still a user step boundary.
+      actions.dismissDockTerminals();
+
+      // Escalation interception: when the agent has called ``escalate``,
+      // route the user's next message back as the tool's reply via
+      // client_response (and clear the banner) instead of starting a
+      // new run. Slash commands still pass through to the slash handler
+      // — they're an opt-out for users who want to issue /goal.stop or
+      // /help during an escalation rather than reply to it.
+      if (escalation && !message.startsWith("/")) {
+        const resolved = resolveEscalation(escalation.request_id, message);
+        actions.setEscalation(null);
+        if (resolved) {
+          actions.addMessage({
+            role: "user",
+            content: message,
+            timestamp: new Date(),
+          });
+        }
         return;
       }
 
@@ -700,7 +796,17 @@ export const App: React.FC<AppProps> = ({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [client, connected, sendMessage, sessionId, handleSlashCommand, thinking, queuedMessages.length],
+    [
+      client,
+      connected,
+      sendMessage,
+      sessionId,
+      handleSlashCommand,
+      thinking,
+      queuedMessages.length,
+      escalation,
+      actions,
+    ],
   );
 
   // Handle session list input (only when in session_select state)
@@ -737,9 +843,19 @@ export const App: React.FC<AppProps> = ({
           }
           return;
         }
-        // While the panel owns input, swallow other keys here so they
+        // Ctrl+N: enter the notifications panel. Same pattern — only
+        // toggles on when there's at least one notification to manage.
+        if (key.ctrl && input === "n") {
+          if (!notificationsPanelFocused && notifications.length > 0) {
+            setNotificationsPanelFocused(true);
+          } else if (notificationsPanelFocused) {
+            setNotificationsPanelFocused(false);
+          }
+          return;
+        }
+        // While a panel owns input, swallow other keys here so they
         // don't double-handle (the panel registers its own useInput).
-        if (bashPanelFocused) {
+        if (bashPanelFocused || notificationsPanelFocused) {
           return;
         }
         if (key.escape) {
@@ -796,6 +912,8 @@ export const App: React.FC<AppProps> = ({
         exit,
         bashPanelFocused,
         bashJobs.length,
+        notificationsPanelFocused,
+        notifications.length,
       ],
     ),
     { isActive: uiState === "chat" || !!approval || !!mcpApproval },
@@ -808,6 +926,14 @@ export const App: React.FC<AppProps> = ({
       setBashPanelFocused(false);
     }
   }, [bashPanelFocused, bashJobs.length]);
+
+  // Same fallback for notifications — user dismissed the last one while
+  // the panel was focused, drop focus back to the prompt.
+  useEffect(() => {
+    if (notificationsPanelFocused && notifications.length === 0) {
+      setNotificationsPanelFocused(false);
+    }
+  }, [notificationsPanelFocused, notifications.length]);
 
   // Cleanup timer on unmount
   useEffect(() => {
@@ -910,10 +1036,22 @@ export const App: React.FC<AppProps> = ({
             {/* Docked task list - renders nothing when empty */}
             <Tasks />
 
+            {/* Docked workers panel - lists workers spawned via
+                spawn_worker. Renders nothing when empty. */}
+            <Workers />
+
             {/* "Up next" panel for queued user messages - renders nothing
                 when empty. Items land here when the user submits while a
                 run is active. */}
             <QueuedMessages />
+
+            {/* Docked notifications panel - accumulates `notify` calls
+                from the agent. Persistent until user dismisses; Ctrl+N
+                opens the panel for keyboard navigation + dismissal. */}
+            <Notifications
+              focused={notificationsPanelFocused}
+              onUnfocus={() => setNotificationsPanelFocused(false)}
+            />
 
             {/* Docked background-bash-jobs panel - renders nothing when empty */}
             <BashJobs
@@ -939,6 +1077,12 @@ export const App: React.FC<AppProps> = ({
               }}
             />
 
+            {/* Escalation banner — renders only when the agent has
+                called the ``escalate`` builtin. The next user submit
+                is routed back as the tool's reply via the interceptor
+                above. */}
+            <EscalationBanner />
+
             {/* Input prompt - always rendered, disabled only during
                 approval prompts or when a side panel owns the keyboard.
                 Submission while ``thinking`` is allowed now — handleSubmit
@@ -948,7 +1092,11 @@ export const App: React.FC<AppProps> = ({
               <MultiLineInputOptimized
                 onSubmit={handleSubmit}
                 disabled={
-                  !connected || !!approval || !!mcpApproval || bashPanelFocused
+                  !connected ||
+                  !!approval ||
+                  !!mcpApproval ||
+                  bashPanelFocused ||
+                  notificationsPanelFocused
                 }
                 history={messageHistory}
               />

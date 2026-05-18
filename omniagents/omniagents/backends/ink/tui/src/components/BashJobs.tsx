@@ -1,7 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import Spinner from "ink-spinner";
-import { useBashJobs, useThinking } from "../store/appStore.js";
+import {
+  useBashJobs,
+  useDismissedJobIds,
+  useThinking,
+} from "../store/appStore.js";
 import type { BashJobSummary } from "../store/appStore.js";
 import { TokyoNightTheme } from "../theme.js";
 
@@ -65,11 +69,13 @@ type Props = {
 // reused via the same callbacks the web buttons use.
 export const BashJobs = React.memo(({ focused, onUnfocus, onKill, onTail }: Props) => {
   const allJobs = useBashJobs();
+  const dismissed = useDismissedJobIds();
   const thinking = useThinking();
-  // Once the run ends, drop exited jobs so the panel quiets down — matches
-  // the launcher's behavior and lets the dock disappear when nothing is left
-  // running. Background jobs that outlive the run stay visible.
-  const jobs = thinking ? allJobs : allJobs.filter((j) => j.running);
+  // Filter out jobs the user moved past on their last submit; then apply
+  // the idle-mode "running only" rule so the panel quiets down between
+  // runs. Running jobs always stay visible regardless of dismissal.
+  const live = allJobs.filter((j) => j.running || !dismissed.has(j.job_id));
+  const jobs = thinking ? live : live.filter((j) => j.running);
 
   // 1Hz tick while at least one job is running so elapsed time updates.
   const [, setNowTick] = useState(0);

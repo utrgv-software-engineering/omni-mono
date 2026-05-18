@@ -15,17 +15,15 @@ function shortGoal(goal: string, max: number): string {
 // Compact single-line docked panel for the /goal autopilot loop.
 // Renders nothing when no goal is set.
 //
-// Active:        ⠋ goal · refactor foo to use bar · turn 3/10
-// Retrying:      ⠋ goal · refactor foo to use bar · turn 3/10 · retry 1/3 after error
-// Completed:     ● goal · refactor foo to use bar · completed at turn 4
-// Cancelled:     ✗ goal · refactor foo to use bar · cancelled at turn 2
+// Active:    ⠋ goal · refactor foo to use bar
+// Completed: ● goal · refactor foo to use bar · completed
+// Cancelled: ✗ goal · refactor foo to use bar · cancelled
 export const Goal = React.memo(() => {
   const goal = useGoal();
   if (!goal) return null;
 
   const isActive = goal.status === "active";
   const isCompleted = goal.status === "completed";
-  const retrying = isActive && goal.attempt > 0;
 
   const glyphColor = isCompleted
     ? TokyoNightTheme.success
@@ -43,32 +41,11 @@ export const Goal = React.memo(() => {
       <Text color={TokyoNightTheme.inputText}>
         {shortGoal(goal.goal, GOAL_TRUNCATE)}
       </Text>
-      <Text color={TokyoNightTheme.toolResult}> · </Text>
-      {isActive ? (
+      {!isActive && (
         <>
-          <Text color={TokyoNightTheme.defaultText}>turn </Text>
-          <Text color={TokyoNightTheme.info}>{goal.turn}</Text>
-          <Text color={TokyoNightTheme.defaultText}>
-            /{goal.max_turns}
-          </Text>
-          {retrying && (
-            <>
-              <Text color={TokyoNightTheme.toolResult}> · </Text>
-              <Text color={TokyoNightTheme.warning}>
-                retry {goal.attempt}/{goal.max_attempts}
-              </Text>
-              {goal.last_reason && (
-                <Text color={TokyoNightTheme.defaultText}>
-                  {" "}after {goal.last_reason}
-                </Text>
-              )}
-            </>
-          )}
+          <Text color={TokyoNightTheme.toolResult}> · </Text>
+          <Text color={TokyoNightTheme.defaultText}>{goal.status}</Text>
         </>
-      ) : (
-        <Text color={TokyoNightTheme.defaultText}>
-          {goal.status} at turn {goal.turn}
-        </Text>
       )}
     </Box>
   );

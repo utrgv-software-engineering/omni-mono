@@ -10,6 +10,7 @@ from .history_db import (
     list_sessions,
 )
 from .manager import Session, SessionManager
+from .helpers import session_id_from_ctx, session_from_ctx, session_variables
 from .query import (
     count_sessions,
     ensure_sessions_schema,
@@ -43,4 +44,8 @@ __all__ = [
     # Session management
     "Session",
     "SessionManager",
+    # Tool-side helpers for accessing session from ctx
+    "session_id_from_ctx",
+    "session_from_ctx",
+    "session_variables",
 ]

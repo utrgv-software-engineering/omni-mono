@@ -13,6 +13,7 @@ import type {
   McpApprovalInfo,
   Message,
 } from "../store/appStore.js";
+import { registerEscalationResolver } from "./escalationBridge.js";
 
 export interface UseMessagesOptions {
   client: RPCClient | null;
@@ -204,7 +205,14 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     // autopilot loop, surfaced via the docked goal panel instead of as
     // a transcript row. Add new names here when introducing other
     // "control" tools that should be silent in the chat log.
+    //
+    // Tools whose name matches a registered client function are also
+    // auto-hidden — they're UI dispatches (notify, escalate, etc.) and
+    // the registered handler paints the user-visible side-effect, so
+    // the transcript row would be redundant.
     const HIDDEN_TOOLS = new Set(["goal_complete"]);
+    const isHiddenTool = (toolName: string) =>
+      HIDDEN_TOOLS.has(toolName) || client.hasClientFunction(toolName);
 
     // TOOL CALLED - marks buffer as superseded but KEEPS preamble visible
     const handleToolCalled = (params: {
@@ -212,7 +220,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       input: string;
       call_id: string;
     }) => {
-      if (HIDDEN_TOOLS.has(params.tool)) {
+      if (isHiddenTool(params.tool)) {
         // Don't render — handleToolResult also bails for the matching
         // call_id, so no half-rendered row is left behind.
         return;
@@ -249,10 +257,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       // Belt-and-suspenders: skip on both name (no tool_call message to
       // update) and metadata.display_type === "hidden" (catches tools
       // that aren't in HIDDEN_TOOLS yet but still asked to be silent).
-      if (
-        HIDDEN_TOOLS.has(params.tool) ||
-        params.metadata?.display_type === "hidden"
-      ) {
+      if (isHiddenTool(params.tool) || params.metadata?.display_type === "hidden") {
         return;
       }
       batcher.add(() => {
@@ -587,6 +592,18 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       return { ack: true };
     };
 
+    // Server-pushed workers panel refresh. Fired on every worker spawn
+    // and on every terminal state (completed/cancelled/error) from
+    // omni-code's tools/worker_tools.py. Snapshot is the full per-session
+    // workers list; replace state wholesale.
+    const handleWorkersUpdate = async (args: Record<string, unknown>) => {
+      const snap = (args as { snapshot?: unknown }).snapshot;
+      if (Array.isArray(snap)) {
+        actions.setWorkers(snap as any);
+      }
+      return { ack: true };
+    };
+
     // Server-pushed goal panel refresh. The /goal autopilot loop fires
     // this on start, every turn boundary, retry, and stop. snapshot
     // null means "no goal set" and clears the panel.
@@ -598,6 +615,49 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
         actions.setGoal(snap as any);
       }
       return { ack: true };
+    };
+
+    // Agent called the ``notify`` builtin (fire-and-forget heads-up).
+    // The tool itself is hidden from the transcript (see isHiddenTool);
+    // we push the message into the docked notifications panel. The
+    // panel accumulates between user submissions and clears when the
+    // user starts the next run, so a user returning to a long-running
+    // session sees every notification they missed at a glance.
+    const handleNotify = async (args: Record<string, unknown>) => {
+      const message = (args.message as string) ?? "";
+      if (message) {
+        actions.addNotification(message);
+      }
+      return { ack: true };
+    };
+
+    // Agent called the ``escalate`` builtin (blocking — expects a reply
+    // before the tool call returns). Surface the banner, park a resolver
+    // keyed by request_id, and return a promise the App.tsx submit
+    // handler resolves with the user's next message. While the promise
+    // is pending the RPC client doesn't send client_response, so the
+    // agent's tool call stays blocked. The builtin has a 30-min
+    // server-side timeout as the safety net. The tool itself uses
+    // display_type="hidden" — the banner + the user's reply (rendered
+    // as a normal user message by the submit interceptor) cover the
+    // user-visible side of the interaction.
+    const handleEscalate = async (args: Record<string, unknown>) => {
+      const message = (args.message as string) ?? "";
+      const requestId = (args.request_id as string) ?? "";
+      const sessionIdArg = args.session_id as string | undefined;
+      const runIdArg = args.run_id as string | undefined;
+      if (!requestId) {
+        return { ok: false, error: "missing request_id" };
+      }
+      actions.setEscalation({
+        request_id: requestId,
+        message,
+        session_id: sessionIdArg,
+        run_id: runIdArg,
+      });
+      return new Promise<{ reply: string }>((resolve) => {
+        registerEscalationResolver(requestId, resolve);
+      });
     };
 
     // Register event handlers
@@ -621,7 +681,10 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       handleSetSessionState,
     );
     client.registerClientFunction("ui.bash_jobs.update", handleBashJobsUpdate);
+    client.registerClientFunction("ui.workers.update", handleWorkersUpdate);
     client.registerClientFunction("ui.goal.update", handleGoalUpdate);
+    client.registerClientFunction("notify", handleNotify);
+    client.registerClientFunction("escalate", handleEscalate);
 
     // Cleanup
     return () => {
@@ -642,7 +705,10 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       client.unregisterClientFunction("ui.set_status");
       client.unregisterClientFunction("ui.set_session_state");
       client.unregisterClientFunction("ui.bash_jobs.update");
+      client.unregisterClientFunction("ui.workers.update");
       client.unregisterClientFunction("ui.goal.update");
+      client.unregisterClientFunction("notify");
+      client.unregisterClientFunction("escalate");
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, sessionId, rpcReady, batcher]);

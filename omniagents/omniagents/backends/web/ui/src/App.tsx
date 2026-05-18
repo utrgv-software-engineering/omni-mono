@@ -3,7 +3,11 @@ import { Header } from './components/Header'
 import { MessageList, type MessageItem } from './components/MessageList'
 import { Input } from './components/Input'
 import { Tasks, type TaskSummary } from './components/Tasks'
+import { Notifications, type NotificationInfo } from './components/Notifications'
+import { EscalationBanner, type EscalationInfo } from './components/EscalationBanner'
 import { QueuedMessages } from './components/QueuedMessages'
+import { GoalPanel, type GoalSnapshot } from './components/GoalPanel'
+import { WorkersPanel, type WorkerSummary, type WorkersKillResult } from './components/WorkersPanel'
 import {
   BashJobs,
   type BashJobSummary,
@@ -19,6 +23,13 @@ import { WorkspacePicker } from './components/WorkspacePicker'
 import { RPCClient } from './rpc/client'
 
 type UIState = 'connecting' | 'resume' | 'chat' | 'error'
+
+// Tools whose user-visible side-effect is painted entirely by client-
+// side handlers (see the ``client_request`` switch below) — their
+// tool_called / tool_result events are suppressed in the transcript so
+// the docked panel / banner is the only render. ``goal_complete`` is a
+// pure control signal surfaced via the goal state instead.
+const HIDDEN_TOOLS = new Set(['notify', 'escalate', 'goal_complete'])
 
 function wsUrlFromLocation(): string {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
@@ -37,6 +48,21 @@ export function App() {
   const [artifacts, setArtifacts] = useState<ArtifactItem[]>([])
   const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [bashJobs, setBashJobs] = useState<BashJobSummary[]>([])
+  const [goalSnapshot, setGoalSnapshot] = useState<GoalSnapshot | null>(null)
+  const [workers, setWorkers] = useState<WorkerSummary[]>([])
+  // Dismissed IDs for each docked panel. Snapshotted on user submit so
+  // the next run starts with a clean dock — items currently in a
+  // terminal state get added to the set and filtered out at render
+  // time. Items spawned by the new run aren't in the set yet, so they
+  // show normally.
+  const [dismissedWorkerIds, setDismissedWorkerIds] = useState<Set<string>>(new Set())
+  const [dismissedJobIds, setDismissedJobIds] = useState<Set<string>>(new Set())
+  const [dismissedTaskIds, setDismissedTaskIds] = useState<Set<string>>(new Set())
+  // Notifications accumulate from the agent's `notify` builtin calls;
+  // dismissed manually via the panel buttons.
+  const [notifications, setNotifications] = useState<NotificationInfo[]>([])
+  // Pending agent escalation — the next user submit becomes the reply.
+  const [escalation, setEscalation] = useState<EscalationInfo | null>(null)
   const [queuedMessages, setQueuedMessages] = useState<import('./rpc/client').QueuedMessage[]>([])
   const [thinking, setThinking] = useState(false)
   const [status, setStatus] = useState<string | undefined>(undefined)
@@ -311,6 +337,11 @@ export function App() {
         if (!sessionIdRef.current && !startingRunRef.current) return
       }
       const tool = String(p?.tool ?? '')
+      // Hide tools whose UX is painted entirely by client-side handlers
+      // (notify -> notifications panel, escalate -> banner, goal_complete
+      // -> goal panel). Their tool_called / tool_result events still flow
+      // through (LLM still sees them) but the transcript row is noise.
+      if (HIDDEN_TOOLS.has(tool)) return
       const input = typeof p?.input === 'string' ? p?.input : JSON.stringify(p?.input)
       const call_id = String(p?.call_id ?? '')
       preambleBufferRef.current.forEach(m => { m.superseded = true })
@@ -323,6 +354,7 @@ export function App() {
         if (!sessionIdRef.current && !startingRunRef.current) return
       }
       const tool = String(p?.tool ?? '')
+      if (HIDDEN_TOOLS.has(tool)) return
       const output = typeof p?.output === 'string' ? p?.output : JSON.stringify(p?.output)
       const call_id = String(p?.call_id ?? '')
       const metadata = p?.metadata
@@ -375,6 +407,52 @@ export function App() {
         }
         return
       }
+      if (fn === 'ui.workers.update') {
+        // Broadcast from omni-code's worker spawn / completion hooks.
+        // Replace the workers list wholesale.
+        const request_id = String(p?.request_id ?? '')
+        const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
+        if (eventSessionId && sessionIdRef.current && sessionIdRef.current !== eventSessionId) {
+          if (request_id) {
+            client.clientResponse(request_id, true, { ack: true }).catch(() => {})
+          }
+          return
+        }
+        const args = p?.args || {}
+        const snap = args?.snapshot
+        if (Array.isArray(snap)) {
+          setWorkers(snap as WorkerSummary[])
+        }
+        if (request_id) {
+          client.clientResponse(request_id, true, { ack: true }).catch(() => {})
+        }
+        return
+      }
+      if (fn === 'ui.goal.update') {
+        // /goal autopilot loop snapshot. Fired on start, every turn end,
+        // and on completion/cancellation. snapshot=null means torn down
+        // (panel clears). The omni-code server_functions/goal.py is the
+        // source.
+        const request_id = String(p?.request_id ?? '')
+        const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
+        if (eventSessionId && sessionIdRef.current && sessionIdRef.current !== eventSessionId) {
+          if (request_id) {
+            client.clientResponse(request_id, true, { ack: true }).catch(() => {})
+          }
+          return
+        }
+        const args = p?.args || {}
+        const snap = args?.snapshot
+        if (snap === null || snap === undefined) {
+          setGoalSnapshot(null)
+        } else if (typeof snap === 'object') {
+          setGoalSnapshot(snap as GoalSnapshot)
+        }
+        if (request_id) {
+          client.clientResponse(request_id, true, { ack: true }).catch(() => {})
+        }
+        return
+      }
       if (fn === 'ui.bash_jobs.update') {
         const request_id = String(p?.request_id ?? '')
         const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
@@ -413,6 +491,62 @@ export function App() {
         if (request_id) {
           client.clientResponse(request_id, true, { ack: true }).catch(() => {})
         }
+        return
+      }
+      if (fn === 'notify') {
+        // Agent ``notify`` builtin — fire-and-forget heads-up. Push to
+        // the docked notifications panel and ack immediately; the user
+        // dismisses manually.
+        const request_id = String(p?.request_id ?? '')
+        const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
+        if (eventSessionId && sessionIdRef.current && sessionIdRef.current !== eventSessionId) {
+          if (request_id) {
+            client.clientResponse(request_id, true, { ack: true }).catch(() => {})
+          }
+          return
+        }
+        const args = p?.args || {}
+        const message = typeof args?.message === 'string' ? args.message : ''
+        if (message) {
+          setNotifications(prev => [
+            ...prev,
+            {
+              id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              message,
+              timestamp: Date.now(),
+            },
+          ])
+        }
+        if (request_id) {
+          client.clientResponse(request_id, true, { ack: true }).catch(() => {})
+        }
+        return
+      }
+      if (fn === 'escalate') {
+        // Agent ``escalate`` builtin — blocking. We surface the banner
+        // and intentionally DO NOT call clientResponse here; the next
+        // user submit reads the pending escalation, sends the reply
+        // via clientResponse, and clears the banner.
+        const request_id = String(p?.request_id ?? '')
+        const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
+        if (eventSessionId && sessionIdRef.current && sessionIdRef.current !== eventSessionId) {
+          if (request_id) {
+            client.clientResponse(request_id, true, { ack: true }).catch(() => {})
+          }
+          return
+        }
+        const args = p?.args || {}
+        const message = typeof args?.message === 'string' ? args.message : ''
+        const runIdArg = typeof p?.run_id === 'string' ? p.run_id : undefined
+        if (!request_id) {
+          return
+        }
+        setEscalation({
+          request_id,
+          message,
+          session_id: eventSessionId,
+          run_id: runIdArg,
+        })
         return
       }
     })
@@ -510,22 +644,94 @@ export function App() {
   // moved below handleSubmit
 
   const handleSubmit = useCallback(async (text: string, files?: File[]) => {
+    // Dismiss currently-terminal items from each docked panel so the
+    // next run starts with a clean dock. Items spawned during the new
+    // run aren't in the set yet and stay visible until the user's next
+    // submit. Slash commands count too — a slash is still a user step
+    // boundary.
+    setDismissedWorkerIds(prev => {
+      const next = new Set(prev)
+      for (const w of workers) {
+        if (w.status !== 'running') next.add(w.worker_id)
+      }
+      return next
+    })
+    setDismissedJobIds(prev => {
+      const next = new Set(prev)
+      for (const j of bashJobs) {
+        if (!j.running) next.add(j.job_id)
+      }
+      return next
+    })
+    setDismissedTaskIds(prev => {
+      const next = new Set(prev)
+      for (const t of tasks) {
+        if (t.status === 'completed') next.add(t.id)
+      }
+      return next
+    })
+
+
+    // Escalation reply: when the agent is paused on an ``escalate``
+    // tool call, route the user's next message back as the tool's
+    // reply via client_response (and clear the banner) instead of
+    // starting a new run. Slash commands pass through so the user can
+    // still issue /goal.stop, /help, etc. mid-escalation.
+    if (escalation && !text.startsWith('/')) {
+      const pending = escalation
+      setEscalation(null)
+      try {
+        await client.clientResponse(pending.request_id, true, { reply: text })
+      } catch {}
+      setItems(prev => [...prev, { type: 'chat', role: 'user', content: text }])
+      return
+    }
+
     // Slash commands
     if (text.startsWith('/')) {
       const parts = text.trim().split(/\s+/)
       const name = parts[0].slice(1)
       const argText = text.slice(parts[0].length).trim()
       try {
+        // Anchor the session before dispatching. Two problems this
+        // solves for the slash path:
+        //   1. ``sessionId`` is undefined when slash is the user's very
+        //      first action — startRun/sendMessage would normally
+        //      mint-on-first-call, but ``serverCall(name, args, undef)``
+        //      hits the function session-less and goal returns
+        //      "No session context". session.ensure mints one and
+        //      returns the id.
+        //   2. Server functions like /goal trigger start_run via the
+        //      drainer, not via our handleSubmit's startRun(variables)
+        //      call — so the session must already carry workspace_root
+        //      or the framework raises WorkspaceRootRequiredError.
+        // Local ``workspacePath`` state tracks both fs_get_workspace_root
+        // and the WorkspacePicker, so a user switching workspace via
+        // the pill before submit is respected.
+        const ensureArgs: Record<string, unknown> = {}
+        if (sessionId) ensureArgs.session_id = sessionId
+        if (workspacePath && workspaceSupported) ensureArgs.workspace_root = workspacePath
+        let sid: string | undefined = sessionId
+        try {
+          const ensured = await client.serverCall('session.ensure', ensureArgs) as { session_id?: unknown } | undefined
+          const ensuredId = typeof ensured?.session_id === 'string' ? ensured.session_id : undefined
+          if (ensuredId) {
+            if (!sid) setSessionId(ensuredId)
+            sid = ensuredId
+          }
+        } catch {
+          /* best-effort — let the dispatch attempt anyway */
+        }
         const funcs = await client.listServerFunctions()
         const found = funcs.find(f => String(f.name).toLowerCase() === name.toLowerCase())
         if (!found) {
           // Not a known server function; send to LLM. Route through the
           // queue when a run is active or the queue is non-empty — same
           // guard as the main path below.
-          if ((thinking || queuedMessages.length > 0) && sessionId) {
-            await client.enqueueMessage(sessionId, text, { triggerRun: true, role: 'user', source: 'ui' })
+          if ((thinking || queuedMessages.length > 0) && sid) {
+            await client.enqueueMessage(sid, text, { triggerRun: true, role: 'user', source: 'ui' })
           } else {
-            await client.startRun(text, sessionId)
+            await client.startRun(text, sid)
           }
           return
         }
@@ -541,7 +747,7 @@ export function App() {
             args = { text: argText }
           }
         }
-        const result = await client.serverCall(name, args, sessionId)
+        const result = await client.serverCall(name, args, sid)
         const formatted = JSON.stringify(result, null, 2)
         setItems(prev => [...prev, { type: 'chat', role: 'assistant', content: formatted === 'null' ? 'Done.' : formatted }])
         return
@@ -631,7 +837,7 @@ export function App() {
       setStatus(String((e as Error)?.message || 'Failed to start run'))
       setStatusItalic(false)
     }
-  }, [client, sessionId, workspacePath, workspaceSupported, thinking, queuedMessages.length])
+  }, [client, sessionId, workspacePath, workspaceSupported, thinking, queuedMessages.length, escalation, workers, bashJobs, tasks])
 
   const handleStop = useCallback(() => {
     if (!runId) return
@@ -831,12 +1037,40 @@ export function App() {
           } catch {}
           setWorkspaceLocked(true)
         }
+        // Seed the /goal panel from server state. The autopilot loop
+        // broadcasts ui.goal.update on every state change, but if a goal
+        // is already running when we bind to this session we need to
+        // pull the current snapshot so the panel renders immediately
+        // instead of waiting for the next turn end.
+        try {
+          const res = await client.serverCall('goal.status', {}, id) as { snapshot?: unknown } | undefined
+          const snap = res?.snapshot
+          setGoalSnapshot(snap && typeof snap === 'object' ? snap as GoalSnapshot : null)
+        } catch {
+          setGoalSnapshot(null)
+        }
+        // Seed the workers panel. Same rationale — picks up workers that
+        // were already running before we bound to this session.
+        try {
+          const res = await client.serverCall('workers.list', {}, id) as { snapshot?: unknown } | undefined
+          const snap = res?.snapshot
+          setWorkers(Array.isArray(snap) ? snap as WorkerSummary[] : [])
+        } catch {
+          setWorkers([])
+        }
       } catch {}
     } else {
       setItems([])
       setTasks([])
       setBashJobs([])
+      setGoalSnapshot(null)
+      setWorkers([])
     }
+    // Reset dock dismissal sets on session change so the fresh session
+    // starts with the panels showing their full server-side snapshot.
+    setDismissedWorkerIds(new Set())
+    setDismissedJobIds(new Set())
+    setDismissedTaskIds(new Set())
     setUI('chat')
   }, [client, appendPendingApprovals, workspaceSupported])
 
@@ -945,9 +1179,15 @@ export function App() {
         <div className="flex-1 flex flex-row min-h-0 min-w-0">
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
             <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} onMcpApprovalDecision={handleMcpApprovalDecision} statusItalic={statusItalic} onReaction={handleReaction} currentRunId={runId} toolStatusText={toolStatus} />
-            <Tasks tasks={thinking ? tasks : tasks.filter(t => t.status !== 'completed')} />
+            <Tasks tasks={(() => {
+              const live = tasks.filter(t => !(t.status === 'completed' && dismissedTaskIds.has(t.id)))
+              return thinking ? live : live.filter(t => t.status !== 'completed')
+            })()} />
             <BashJobs
-              jobs={thinking ? bashJobs : bashJobs.filter(j => j.running)}
+              jobs={(() => {
+                const live = bashJobs.filter(j => !(!j.running && dismissedJobIds.has(j.job_id)))
+                return thinking ? live : live.filter(j => j.running)
+              })()}
               onKill={async (job_id) => {
                 const res = (await client.serverCall('bash_jobs.kill', { job_id }, sessionId)) as unknown as BashJobsKillResult
                 if (Array.isArray(res?.snapshot)) setBashJobs(res.snapshot as BashJobSummary[])
@@ -966,6 +1206,18 @@ export function App() {
                 return res
               }}
             />
+            <GoalPanel snapshot={goalSnapshot} />
+            <WorkersPanel
+              workers={(() => {
+                const live = workers.filter(w => !(w.status !== 'running' && dismissedWorkerIds.has(w.worker_id)))
+                return thinking ? live : live.filter(w => w.status === 'running')
+              })()}
+              onKill={async (worker_id) => {
+                const res = (await client.serverCall('workers.kill', { worker_id }, sessionId)) as unknown as WorkersKillResult
+                if (Array.isArray(res?.snapshot)) setWorkers(res.snapshot as WorkerSummary[])
+                return res
+              }}
+            />
             <QueuedMessages
               items={queuedMessages}
               onCancel={(id) => {
@@ -977,6 +1229,12 @@ export function App() {
                 client.cancelQueuedMessage(sessionId, id).catch(() => {})
               }}
             />
+            <Notifications
+              notifications={notifications}
+              onDismiss={(id) => setNotifications(prev => prev.filter(n => n.id !== id))}
+              onDismissAll={() => setNotifications([])}
+            />
+            <EscalationBanner escalation={escalation} />
             <Input
               disabled={!connected}
               thinking={thinking}

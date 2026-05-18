@@ -71,6 +71,16 @@ export class RPCClient extends EventEmitter {
   }
 
   /**
+   * Return whether the given name is registered as a client function.
+   * Used by the message hook to hide agent tool calls that are actually
+   * UI dispatches — the client paints the user-visible side-effect in
+   * its handler, so the tool's transcript row would be redundant noise.
+   */
+  hasClientFunction(name: string): boolean {
+    return this.registeredClientFunctions.has(name);
+  }
+
+  /**
    * Connect to the WebSocket server
    */
   async connect(): Promise<void> {

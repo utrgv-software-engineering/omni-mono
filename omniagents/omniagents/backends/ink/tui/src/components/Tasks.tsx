@@ -1,7 +1,11 @@
 import React from "react";
 import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
-import { useTasks, useThinking } from "../store/appStore.js";
+import {
+  useDismissedTaskIds,
+  useTasks,
+  useThinking,
+} from "../store/appStore.js";
 import type { TaskSummary } from "../store/appStore.js";
 import { TokyoNightTheme } from "../theme.js";
 
@@ -23,10 +27,17 @@ const MAX_VISIBLE = 5;
 // when there are no tasks so the message area reclaims the space.
 export const Tasks = React.memo(() => {
   const allTasks = useTasks();
+  const dismissed = useDismissedTaskIds();
   const thinking = useThinking();
-  // Once the run ends, drop completed rows so the panel quiets down — matches
-  // the launcher's behavior and lets the dock disappear when nothing is left.
-  const tasks = thinking ? allTasks : allTasks.filter((t) => t.status !== "completed");
+  // Filter out completed tasks the user moved past on their last submit,
+  // then apply the idle-mode "non-completed only" rule so the dock
+  // disappears between runs.
+  const undismissed = allTasks.filter(
+    (t) => t.status !== "completed" || !dismissed.has(t.id),
+  );
+  const tasks = thinking
+    ? undismissed
+    : undismissed.filter((t) => t.status !== "completed");
   if (!tasks || tasks.length === 0) {
     return null;
   }

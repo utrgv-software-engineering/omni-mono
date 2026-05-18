@@ -8,6 +8,7 @@ from .discovery import (
     approval_metadata,
     get_approval_metadata,
 )
+from .client_function import client_function_tool
 from .slash_commands import SlashCommandRegistry
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "discover_functions_in_dir",
     "approval_metadata",
     "get_approval_metadata",
+    "client_function_tool",
     "SlashCommandRegistry",
 ]

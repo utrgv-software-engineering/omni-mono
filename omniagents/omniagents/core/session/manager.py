@@ -498,6 +498,15 @@ class Session:  # noqa: D101
         self.notification_signal: asyncio.Event = asyncio.Event()
         self.notification_flush_now: asyncio.Event = asyncio.Event()
         self.notification_flusher_task: Optional[asyncio.Task] = None
+        # Periodic-tick scheduler. When ``set_tick`` is called the session
+        # spawns a background task that calls ``enqueue_notification`` every
+        # ``interval`` seconds with ``content`` — used by autopilot loops
+        # (e.g. ``/goal``) to drive periodic wake-ups instead of firing a
+        # continuation prompt after every single turn.
+        self._tick_task: Optional[asyncio.Task] = None
+        self._tick_interval: Optional[float] = None
+        self._tick_content: Optional[str] = None
+        self._tick_source: str = "tick"
         # Model configuration for runtime switching
         self.active_model: str | None = None
         self.model_config: Dict[str, Any] | None = None
@@ -533,6 +542,156 @@ class Session:  # noqa: D101
             project_slug=self._project_slug,
             agent_slug=self._agent_slug,
         )
+
+    # ------------------------------------------------------------------
+    # Session variables — mutable, persisted, broadcast-on-change dict
+    # accessible to tools, prompts, and server functions. The free-form
+    # contextvars store for the session. Tools read via
+    # ``omniagents.core.session.helpers.session_variables(ctx)`` and
+    # server functions read directly via ``session.variables``.
+    # ------------------------------------------------------------------
+
+    def get_variable(self, key: str, default: Any = None) -> Any:
+        """Return ``session.variables[key]`` or ``default`` if missing."""
+        vars_dict = self.variables if isinstance(self.variables, dict) else None
+        if not vars_dict:
+            return default
+        return vars_dict.get(key, default)
+
+    def set_variable(self, key: str, value: Any, *, persist: bool = True) -> None:
+        """Set a single variable. Persists by default."""
+        self.update_variables({key: value}, persist=persist)
+
+    # ------------------------------------------------------------------
+    # Periodic tick — fires an ``enqueue_notification`` on the running
+    # AgentService every ``interval`` seconds. Used by autopilot loops
+    # to drive wake-ups instead of "continue after every turn." Opt-in;
+    # default is no tick. Caller cancels via ``cancel_tick()``.
+    # ------------------------------------------------------------------
+
+    def set_tick(
+        self,
+        interval_seconds: float,
+        content: str,
+        *,
+        source: str = "tick",
+    ) -> None:
+        """Schedule a periodic notification. Cancels any prior tick first.
+
+        Notifications use the existing batched-notification path, so they
+        coalesce with bash-job / worker completions and trigger the next
+        run via the standard drainer.
+        """
+        if interval_seconds is None or interval_seconds <= 0:
+            raise ValueError("set_tick: interval_seconds must be positive")
+        self.cancel_tick()
+        self._tick_interval = float(interval_seconds)
+        self._tick_content = content
+        self._tick_source = source or "tick"
+        try:
+            self._tick_task = asyncio.create_task(
+                self._tick_loop(),
+                name=f"tick-{self.id[:8]}",
+            )
+        except RuntimeError:
+            # No running loop (e.g. tests that call set_tick synchronously).
+            # Reset state so caller can retry from an async context.
+            self._tick_task = None
+            self._tick_interval = None
+            self._tick_content = None
+            raise
+
+    def cancel_tick(self) -> None:
+        """Stop the periodic tick if one is running."""
+        task = self._tick_task
+        self._tick_task = None
+        self._tick_interval = None
+        self._tick_content = None
+        if task is not None and not task.done():
+            task.cancel()
+
+    async def _tick_loop(self) -> None:
+        """Background loop: sleep, enqueue notification, repeat. Skips
+        ticks when a run is currently active (the next run will end
+        naturally and the following tick wakes the agent) and dedups
+        already-pending ticks so a burst doesn't pile up while the
+        agent is busy mid-run.
+
+        Defers the service lookup until firing time so it survives
+        transient gaps in ``current_service()``."""
+        from omniagents.core.agents.service import current_service
+
+        interval = self._tick_interval or 0.0
+        content = self._tick_content or ""
+        source = self._tick_source or "tick"
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                # Suppress while a run is in flight — it'll produce a
+                # run_end naturally; the next tick after that wakes the
+                # agent if needed.
+                if self.current_task and not self.current_task.done():
+                    continue
+                # Dedup: don't pile up identical ticks while the flusher
+                # hasn't fired yet.
+                if any(
+                    n.get("source") == source
+                    for n in self.pending_notifications
+                ):
+                    continue
+                svc = current_service()
+                if svc is None:
+                    continue
+                try:
+                    await svc.enqueue_notification(
+                        session_id=self.id,
+                        content=content,
+                        source=source,
+                    )
+                except Exception:
+                    Debug.log(
+                        f"[session] tick enqueue failed session={self.id}"
+                    )
+        except asyncio.CancelledError:
+            return
+
+    def update_variables(
+        self, updates: Dict[str, Any], *, persist: bool = True
+    ) -> Dict[str, Any]:
+        """Merge ``updates`` into ``session.variables``. Returns the merged dict.
+
+        Keys with value ``None`` are *removed* from the dict (idiomatic for
+        callers that want to clear a key without a separate API). The session
+        variables dict is initialized lazily if it didn't exist yet.
+
+        Persistence is sync (SQLite UPDATE). Broadcasting is the caller's
+        responsibility — use ``AgentService.update_session_variables`` when
+        you want subscribers (UI panels, mirror state) to learn about the
+        change.
+        """
+        if not isinstance(updates, dict) or not updates:
+            return self.variables if isinstance(self.variables, dict) else {}
+        current = dict(self.variables) if isinstance(self.variables, dict) else {}
+        for k, v in updates.items():
+            if v is None:
+                current.pop(k, None)
+            else:
+                current[k] = v
+        self.variables = current
+        if persist:
+            try:
+                from .history_db import update_session_metadata
+                update_session_metadata(
+                    self.id,
+                    variables=current,
+                    project_slug=self._project_slug,
+                    agent_slug=self._agent_slug,
+                )
+            except Exception:
+                Debug.log(
+                    f"[session] persist variables failed session={self.id}"
+                )
+        return current
 
     # --- openai-agents SDK Session protocol ---
     # These async methods make Session compatible with agents.memory.Session,
