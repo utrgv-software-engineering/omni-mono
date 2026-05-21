@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from omniagents import context_factory, model_config_resolver
 
@@ -128,11 +128,48 @@ def discover_agents_md(start_dir: str) -> List[str]:
     return found
 
 
-def format_agents_md_block(variables: Dict[str, Any] = None) -> str:
-    """Format AGENTS.md references into an instruction block.
+def _get_published_sources() -> List[Dict[str, Any]]:
+    """Fetch the source descriptors omni serve published for this session.
 
-    Only file locations are injected — content is never embedded in the
-    system prompt. The agent reads files via ``read_file`` at runtime.
+    Best-effort: returns an empty list if ``agent_workspace_state`` isn't
+    importable (e.g. running outside ``omni serve``) or if no sources were
+    declared.
+    """
+    try:
+        from omni_code.agent_workspace_state import get_sources
+    except Exception:
+        return []
+    try:
+        return get_sources()
+    except Exception:
+        return []
+
+
+def _source_local_path(source: Dict[str, Any]) -> Optional[str]:
+    kind = source.get("kind")
+    if kind not in ("local", "local-git"):
+        return None
+    path = source.get("path")
+    if not isinstance(path, str) or not path.strip():
+        return None
+    try:
+        return str(Path(path).expanduser().resolve())
+    except Exception:
+        return path
+
+
+def format_agents_md_block(variables: Dict[str, Any] = None) -> str:
+    """Format AGENTS.md references and workspace-source descriptors into
+    an instruction block.
+
+    Only file locations are injected — file content is never embedded in
+    the system prompt. The agent reads files via ``read_file`` at runtime.
+
+    Multi-source projects: every ``local``/``local-git`` source is walked
+    for AGENTS.md (not just the primary). Under host mode (``unix_local``)
+    these are the actual host paths the agent can touch; under containerised
+    profiles the same descriptors are still useful as informational
+    metadata (the in-container layout is ``<manifest_root>/<mountName>/``).
     """
     variables = variables or {}
     workspace_root = variables.get("workspace_root")
@@ -140,9 +177,49 @@ def format_agents_md_block(variables: Dict[str, Any] = None) -> str:
         base_dir = str(Path(workspace_root).expanduser().resolve())
     else:
         base_dir = str(_resolve_invocation_dir())
-    agents_paths = discover_agents_md(base_dir)
+
+    sources = _get_published_sources()
+
+    walk_dirs: List[str] = [base_dir]
+    seen_walk: set[str] = {base_dir}
+    for src in sources:
+        local_path = _source_local_path(src)
+        if local_path and local_path not in seen_walk:
+            walk_dirs.append(local_path)
+            seen_walk.add(local_path)
+
+    agents_paths: List[str] = []
+    seen_paths: set[str] = set()
+    for d in walk_dirs:
+        if not os.path.isdir(d):
+            continue
+        for path in discover_agents_md(d):
+            if path in seen_paths:
+                continue
+            seen_paths.add(path)
+            agents_paths.append(path)
+    agents_paths.sort(key=lambda path: (path.count(os.sep), path))
 
     parts = [f"\n\n[Workspace]\n{base_dir}\n"]
+
+    if sources:
+        parts.append("\n<workspace_sources>")
+        for src in sources:
+            kind = src.get("kind") or "unknown"
+            mount = src.get("mountName") or ""
+            path = src.get("path")
+            repo_url = src.get("repoUrl")
+            ref = src.get("ref")
+            attrs = [f'kind="{kind}"', f'mount="{mount}"']
+            if isinstance(path, str) and path.strip():
+                resolved = _source_local_path(src) or path
+                attrs.append(f'path="{resolved}"')
+            if isinstance(repo_url, str) and repo_url.strip():
+                attrs.append(f'repo="{repo_url}"')
+            if isinstance(ref, str) and ref.strip():
+                attrs.append(f'ref="{ref}"')
+            parts.append(f"\n<source {' '.join(attrs)} />")
+        parts.append("\n</workspace_sources>\n")
 
     if agents_paths:
         parts.append("\n<agents_md_files>")

@@ -80,6 +80,22 @@ class ServiceSpec:
 
 
 @dataclass(frozen=True)
+class TerminalSpec:
+    """Shape of an interactive shell spawned by the launcher's Terminal app.
+
+    The launcher's main process calls ``terminal.create`` (an omni-code
+    server function) which constructs the shell using these defaults plus
+    any per-call overrides. The shell runs inside the sandbox via
+    :class:`omniagents.rpc.terminal_backends.SessionPtyBackend` — same
+    user/cwd/manifest as the agent's bash tool, just held open with a PTY.
+    """
+
+    command: str = "bash -i"
+    user: Optional[str] = None
+    cwd: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class ResolvedProfile:
     """The merged, substituted profile, split into the layers ``omni serve`` needs."""
 
@@ -99,6 +115,11 @@ class ResolvedProfile:
     exit aborts the launch with the failing command in the error."""
 
     services: List[ServiceSpec]
+    terminal: TerminalSpec
+    """Defaults for ``terminal.create`` server-function calls. The launcher
+    creates one of these per Terminal app tab; the per-call overrides
+    layer on top of these defaults."""
+
     sources: List[Path]
     """Paths of the profile layers actually applied (for debugging / --output)."""
 
@@ -133,12 +154,14 @@ def resolve_profile(
     _inject_network_allowlist(merged)
     init = _parse_init(merged.get("init"))
     services = _parse_services(merged.get("services") or {})
+    terminal = _parse_terminal(merged.get("terminal"), run_as=merged.get("run_as"))
     _validate(merged, services)
 
     return ResolvedProfile(
         raw=merged,
         init=init,
         services=services,
+        terminal=terminal,
         sources=[src for src, _ in layers],
     )
 
@@ -226,6 +249,37 @@ def _parse_init(raw: Any) -> List[str]:
             )
         out.append(item)
     return out
+
+
+def _parse_terminal(raw: Any, *, run_as: Any) -> TerminalSpec:
+    """Parse the optional ``terminal:`` block.
+
+    Missing → use :class:`TerminalSpec` defaults. The block is a mapping
+    with ``command`` (string, defaults to ``"bash -i"``), ``user``
+    (string|None — falls back to top-level ``run_as``), and ``cwd``
+    (string|None — caller resolves against the manifest root).
+    """
+    fallback_user = run_as if isinstance(run_as, str) and run_as.strip() else None
+    if raw is None:
+        return TerminalSpec(user=fallback_user)
+    if not isinstance(raw, dict):
+        raise ValueError("sandbox.terminal must be a mapping")
+
+    command_raw = raw.get("command", "bash -i")
+    if not isinstance(command_raw, str) or not command_raw.strip():
+        raise ValueError("sandbox.terminal.command must be a non-empty string")
+
+    user_raw = raw.get("user")
+    if user_raw is not None and not isinstance(user_raw, str):
+        raise ValueError("sandbox.terminal.user must be a string")
+    user = user_raw if user_raw else fallback_user
+
+    cwd_raw = raw.get("cwd")
+    if cwd_raw is not None and not isinstance(cwd_raw, str):
+        raise ValueError("sandbox.terminal.cwd must be a string")
+    cwd = cwd_raw if cwd_raw else None
+
+    return TerminalSpec(command=command_raw.strip(), user=user, cwd=cwd)
 
 
 def _collect_layers(

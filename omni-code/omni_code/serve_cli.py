@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from omni_code.sandbox_profile import (
     ResolvedProfile,
     ServiceSpec,
+    TerminalSpec,
     resolve_profile,
 )
 
@@ -105,6 +106,21 @@ def _build_parser() -> argparse.ArgumentParser:
             "the launcher captures it and passes it back on the next start "
             "to resume. Used as the snapshot tarball name "
             "(``{session-id}.tar``)."
+        ),
+    )
+    p.add_argument(
+        "--container-id",
+        default=None,
+        help=(
+            "Docker container id captured from a previous launch's readiness "
+            "payload. When supplied AND the resolved profile uses the docker "
+            "backend, the SDK ``client.resume(state)`` path is taken instead "
+            "of ``client.create(...)``: warm reattach to the original "
+            "container if it still exists (preserves running processes / env "
+            "/ apt+pip installs); silently falls back to fresh container + "
+            "snapshot rehydrate if the container is gone. Ignored for non-"
+            "docker backends. The readiness payload's ``resume`` field tells "
+            "the launcher which tier actually happened."
         ),
     )
     p.add_argument(
@@ -284,6 +300,34 @@ def _build_seed_entry(src: Dict[str, Any]) -> Any:
     raise ValueError(f"unknown --source kind: {kind!r}")
 
 
+_DEFAULT_IDLE_THRESHOLD_S = 15 * 60
+
+
+def _parse_idle_threshold(raw: Optional[Any]) -> float:
+    """Read ``idle.pause_after_seconds`` from a resolved profile dict.
+
+    Missing block → 15-minute default. Explicit ``0`` (or negative) disables
+    the watcher. Non-numeric values fall back to the default and log a warning;
+    we'd rather paper over a YAML typo than fail the launch.
+    """
+    if not isinstance(raw, dict):
+        return float(_DEFAULT_IDLE_THRESHOLD_S)
+    value = raw.get("pause_after_seconds")
+    if value is None:
+        return float(_DEFAULT_IDLE_THRESHOLD_S)
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        print(
+            f"[serve] idle.pause_after_seconds is not a number ({value!r}); using default",
+            file=sys.stderr,
+        )
+        return float(_DEFAULT_IDLE_THRESHOLD_S)
+    if seconds < 0:
+        return 0.0
+    return seconds
+
+
 def _build_snapshot(
     *,
     snapshot_dir: Optional[Path],
@@ -315,6 +359,90 @@ def _build_snapshot(
 
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     return LocalSnapshot(id=session_id, base_path=snapshot_dir)
+
+
+async def _create_or_resume_session(
+    *,
+    client: Any,
+    client_type: Optional[str],
+    manifest: Any,
+    options: Any,
+    snapshot: Any,
+    session_id: str,
+    prior_container_id: Optional[str],
+) -> Tuple[Any, Optional[str]]:
+    """Create a new session or resume from a prior container, returning the
+    session plus a tier tag the launcher uses to decide whether to notify the
+    user that runtime state was lost.
+
+    Tier semantics:
+      * ``"reused"`` — warm reattach. The container at ``prior_container_id``
+        was still alive; processes, env, and apt/pip installs all survive.
+      * ``"rehydrated"`` — original container was gone, but the snapshot tar
+        existed. Workspace files restored into a brand-new container; running
+        processes are gone.
+      * ``"fresh"`` — both gone. Manifest-only seed; user lost everything
+        but their on-disk source mounts.
+      * ``None`` — caller did not request resume (first launch / no prior
+        container_id supplied). Treated as the silent baseline.
+
+    Only the docker backend supports the resume path today. For ``unix_local``
+    the host filesystem IS the persistence layer and there's nothing to
+    reattach to. For other backends we conservatively fall through to
+    ``client.create``; future backends can opt into resume.
+    """
+    if prior_container_id and client_type == "docker":
+        # ``DockerSandboxClient.resume(state)`` already handles all three tiers
+        # internally: it tries ``get_container(state.container_id)`` and either
+        # reattaches or creates a replacement with the same session_id and
+        # ``workspace_root_ready=False``. The replacement path triggers
+        # ``_start_workspace`` to restore the snapshot tar (rehydrated) or
+        # apply the manifest from scratch (fresh).
+        import uuid as _uuid
+
+        from agents.sandbox.sandboxes.docker import DockerSandboxSessionState
+        from agents.sandbox.snapshot import resolve_snapshot
+
+        # ``snapshot`` may be ``None`` if --snapshot-dir wasn't set; coerce to
+        # ``NoopSnapshot`` so ``DockerSandboxSessionState`` validates. The
+        # snapshot id is the session_id, matching ``client.create``'s wiring.
+        snapshot_instance = resolve_snapshot(snapshot, session_id)
+        state = DockerSandboxSessionState(
+            session_id=_uuid.UUID(session_id),
+            manifest=manifest,
+            image=options.image,
+            snapshot=snapshot_instance,
+            container_id=prior_container_id,
+            exposed_ports=options.exposed_ports,
+        )
+        # Did the underlying tar actually exist? We answer this BEFORE start()
+        # because the SDK clears the tar's restorability state once hydration
+        # runs (cache invalidation, fingerprint resets). Used to distinguish
+        # rehydrate from fresh below.
+        try:
+            snapshot_restorable = await snapshot_instance.restorable(
+                dependencies=None
+            )
+        except Exception:
+            snapshot_restorable = False
+
+        session = await client.resume(state)
+        # ``resume`` mutates state.container_id to the freshly-minted id when
+        # the old container couldn't be found. Comparing identifies the warm
+        # reattach without poking SDK privates.
+        warm_reattach = str(session.state.container_id) == prior_container_id
+        if warm_reattach:
+            return session, "reused"
+        if snapshot_restorable:
+            return session, "rehydrated"
+        return session, "fresh"
+
+    session = await client.create(
+        manifest=manifest,
+        options=options,
+        snapshot=snapshot,
+    )
+    return session, None
 
 
 def _safe_symlink_target(rel_path: str, target: str) -> bool:
@@ -600,10 +728,15 @@ async def _serve(args: argparse.Namespace) -> int:
 
     # Publish the resolved manifest root so server functions can report the
     # path the agent's tools actually see (e.g. ``/workspace`` for docker)
-    # instead of falling back to the host process cwd.
-    from omni_code.agent_workspace_state import set_manifest_root
+    # instead of falling back to the host process cwd. Also publish the
+    # raw source descriptors so ``fs_get_sources`` and the agent's context
+    # factory can advertise every directory in play — under host mode
+    # (``unix_local``) the manifest entries are no-ops, so this is the
+    # *only* way the agent learns about non-primary sources.
+    from omni_code.agent_workspace_state import set_manifest_root, set_sources
 
     set_manifest_root(str(manifest.root) if manifest.root is not None else None)
+    set_sources(sources_parsed)
 
     # --- Session id + snapshot config ---
     # The session id is the stable identifier for this resumable
@@ -618,12 +751,41 @@ async def _serve(args: argparse.Namespace) -> int:
         client_type=client_type_raw if isinstance(client_type_raw, str) else None,
     )
 
-    session = await client.create(
+    # --- Create or resume the session ---
+    # ``resume_tier`` tracks which of three fallback paths the SDK took, so
+    # the launcher can decide whether to surface a "we replaced your container"
+    # notice. Values: ``"reused"`` (warm reattach — original container still
+    # alive, runtime state preserved), ``"rehydrated"`` (container was gone,
+    # snapshot tar restored into a fresh container — files survive, processes
+    # don't), ``"fresh"`` (no container AND no usable snapshot — manifest seed
+    # only), or ``None`` (no prior state to resume from, i.e. first launch).
+    session, resume_tier = await _create_or_resume_session(
+        client=client,
+        client_type=client_type_raw if isinstance(client_type_raw, str) else None,
         manifest=manifest,
         options=options,
         snapshot=snapshot,
+        session_id=session_id,
+        prior_container_id=args.container_id,
     )
+
+    # Override the session's default idle-pause threshold from the
+    # profile YAML before ``start()`` arms the watcher in ``_after_start``.
+    # Sessions without ``set_idle_threshold`` (non-docker backends) just
+    # don't have the idle surface; nothing to configure.
+    inner = getattr(session, "_inner", session)
+    if hasattr(inner, "set_idle_threshold"):
+        raw_idle = profile.raw.get("idle")
+        if isinstance(raw_idle, dict) and "pause_after_seconds" in raw_idle:
+            inner.set_idle_threshold(_parse_idle_threshold(raw_idle))
+
     await session.start()
+
+    # Publish the live session so ``sandbox.*`` server functions (pause /
+    # unpause) can reach the inner backend without plumbing the reference
+    # through every call site. Cleared in ``_teardown`` for symmetry.
+    from omni_code.agent_workspace_state import set_sandbox_session
+    set_sandbox_session(session)
 
     # --- Init (synchronous, fail-hard) ---
     started_services: List[Tuple[ServiceSpec, int]] = []
@@ -660,6 +822,25 @@ async def _serve(args: argparse.Namespace) -> int:
         spec=spec,
         auth_token=args.auth_token,
     )
+
+    # Install a session-backed TerminalManager so the launcher's Terminal
+    # app routes through the SandboxSession (uniform with the agent's
+    # bash tool — same user, manifest root, network policy). Falls back
+    # silently when the session backend doesn't support streaming;
+    # ``terminal.create`` then uses the cached HostPtyBackend manager and
+    # the launcher surfaces a "backend doesn't support terminals" toast.
+    _install_session_terminal_manager(app, session, profile.terminal)
+
+    # Idle auto-recap: a watcher that fires a session recap once a
+    # conversation has gone quiet (>=3min since the last completed turn,
+    # >=3 turns deep, never twice without fresh activity in between).
+    # Stashed on app.state for teardown + future inspection.
+    from omni_code.recap_scheduler import RecapScheduler
+
+    recap_scheduler = RecapScheduler(app.state.agent_service)
+    app.state.recap_scheduler = recap_scheduler
+    await recap_scheduler.start()
+
     port = _pick_port(args.host, args.port)
     config = uvicorn.Config(
         app,
@@ -686,6 +867,7 @@ async def _serve(args: argparse.Namespace) -> int:
         "services": service_urls,
         "ports": {"ui": port},
         "container_id": container_id,
+        "resume": resume_tier,
         "_debug": {
             "client": (profile.raw.get("client") or {}).get("type"),
             "manifest_root": getattr(session.state.manifest, "root", None),
@@ -712,9 +894,66 @@ async def _serve(args: argparse.Namespace) -> int:
     try:
         await server.serve()
     finally:
+        # Stop the auto-recap watcher (cancels its task + detaches listeners).
+        recap_scheduler_to_stop = getattr(app.state, "recap_scheduler", None)
+        if recap_scheduler_to_stop is not None:
+            try:
+                await recap_scheduler_to_stop.stop()
+            except Exception:
+                pass
+        # Stop the idle watcher first so its tick task is cancelled and
+        # any in-flight pause unwinds before teardown does its own
+        # defensive unpause + snapshot persist.
+        inner_for_idle_stop = getattr(session, "_inner", session)
+        if hasattr(inner_for_idle_stop, "stop_idle_watcher"):
+            try:
+                await inner_for_idle_stop.stop_idle_watcher()
+            except Exception:
+                pass
         await _teardown(session, started_services)
 
     return 0
+
+
+def _install_session_terminal_manager(app: Any, session: Any, terminal: TerminalSpec) -> None:
+    """Attach a session-backed :class:`TerminalManager` to the AgentService.
+
+    Explicit binding, parallel to how
+    :class:`omniagents.workspace.sandbox.SandboxWorkspace` binds a
+    sandbox session to the agent's filesystem/shell surface. The
+    profile's ``terminal:`` block is authoritative for the shell, cwd,
+    and user; ``terminal.create`` callers may override per-call. The
+    legacy ``session.context['workspace_root']`` (a *host* path) is
+    bypassed entirely for this manager — see the explicit-binding
+    branch in :func:`server_functions.terminal.terminal_create`.
+
+    Silent no-op when the session backend can't stream PTY output
+    (e.g. ``e2b``/``modal`` until those backends grow
+    :class:`omniagents.core.sandbox.pty_stream.PtyStreamingSession`
+    support). ``terminal.create`` then falls through to the standalone
+    host-pty path.
+    """
+    try:
+        from omniagents.core.sandbox.pty_stream import coerce_pty_streaming
+        from omniagents.rpc.terminal import TerminalManager
+        from omniagents.rpc.terminal_backends import SessionPtyBackend
+    except Exception:
+        return
+
+    inner = coerce_pty_streaming(session)
+    if inner is None:
+        return
+
+    service = getattr(app.state, "agent_service", None)
+    if service is None:
+        return
+
+    service.terminal_manager = TerminalManager(
+        backend=SessionPtyBackend(inner),
+        default_shell=terminal.command,
+        default_cwd=terminal.cwd,
+        default_user=terminal.user,
+    )
 
 
 async def _teardown(
@@ -725,6 +964,16 @@ async def _teardown(
     if started_services:
         try:
             await session.pty_terminate_all()
+        except Exception:
+            pass
+    # If the container was paused for idle, unpause first — session.stop()
+    # → persist_snapshot drives ``session.exec`` to write the fingerprint
+    # helper output, which hangs forever on a paused container. Cheap
+    # no-op when the session backend doesn't expose unpause.
+    inner = getattr(session, "_inner", session)
+    if hasattr(inner, "unpause"):
+        try:
+            await inner.unpause()
         except Exception:
             pass
     # ``session.stop()`` persists the workspace snapshot internally
@@ -742,6 +991,8 @@ async def _teardown(
         await session.aclose()
     except Exception:
         pass
+    from omni_code.agent_workspace_state import set_sandbox_session
+    set_sandbox_session(None)
 
 
 # ---------------------------------------------------------------------------

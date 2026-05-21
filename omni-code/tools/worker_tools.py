@@ -354,7 +354,16 @@ async def _on_worker_complete(handle) -> None:
         meta["finished_at"] = time.time()
     status = handle.status
     summary = handle.result if status == "completed" else (handle.error or "")
-    content = f"[worker] {worker_id} status={status} {summary or ''}".rstrip()
+    # Frame the wakeup so the model has a clear directive. Without this,
+    # an assistant-role notification with no instructions reads as the
+    # agent's own prior utterance — and the model defaults to a near-
+    # identical re-acknowledgment of whatever it last said.
+    body = f"[worker] {worker_id} status={status} {summary or ''}".rstrip()
+    content = (
+        f"{body}\n\n"
+        "Decide what to do next. If this completes the user's request, "
+        "summarize briefly and stop. Otherwise take the next concrete step."
+    )
     try:
         await service.enqueue_notification(
             session_id=parent_sid,

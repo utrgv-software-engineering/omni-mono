@@ -110,23 +110,47 @@ async def terminal_create(
     cols: Optional[int] = None,
     rows: Optional[int] = None,
 ) -> dict:
-    manager = _get_terminal_manager()
-    try:
-        if getattr(service, "terminal_manager", None) is None:
-            setattr(service, "terminal_manager", manager)
-    except Exception:
-        pass
     width = _coerce_positive_int(cols)
     height = _coerce_positive_int(rows)
-    resolved_cwd = _resolve_workspace_root(session, cwd)
-    data = await manager.create_terminal(
-        session.id,
-        shell=shell,
-        cwd=resolved_cwd,
-        cols=width,
-        rows=height,
-    )
-    data["cwd"] = resolved_cwd
+
+    # Two binding modes. When the embedder (``omni serve``) installs a
+    # ``service.terminal_manager``, it owns the terminal's defaults
+    # (shell/cwd/user from the sandbox profile, see
+    # ``omni_code.serve_cli._install_session_terminal_manager``). We must
+    # NOT consult ``session.context['workspace_root']`` here — that's a
+    # *host* path which doesn't exist inside the sandbox. Only the
+    # caller's explicit cwd is honored; otherwise the manager's
+    # ``default_cwd`` wins.
+    #
+    # When no manager is installed (standalone omniagents server, no
+    # sandbox), we fall back to the host-pty manager and resolve cwd
+    # from the agent's session context — same as before the refactor.
+    manager = getattr(service, "terminal_manager", None)
+    if manager is not None:
+        data = await manager.create_terminal(
+            session.id,
+            shell=shell,
+            cwd=cwd,
+            cols=width,
+            rows=height,
+        )
+        data["cwd"] = data.get("cwd")
+    else:
+        manager = _get_terminal_manager()
+        try:
+            setattr(service, "terminal_manager", manager)
+        except Exception:
+            pass
+        resolved_cwd = _resolve_workspace_root(session, cwd)
+        data = await manager.create_terminal(
+            session.id,
+            shell=shell,
+            cwd=resolved_cwd,
+            cols=width,
+            rows=height,
+        )
+        data["cwd"] = resolved_cwd
+
     data["path"] = "/ws/terminal"
     data["terminal_token"] = data.get("token")
     data["session_id"] = session.id

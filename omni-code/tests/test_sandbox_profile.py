@@ -601,3 +601,93 @@ def test_init_empty_string_rejected(config_dir, workspace, tmp_path):
         sandbox_profile.resolve_profile(
             workspace_dir=workspace, explicit_path=profile_path
         )
+
+
+# ---------------------------------------------------------------------------
+# Terminal block
+# ---------------------------------------------------------------------------
+
+
+def test_terminal_default_when_block_absent(config_dir, workspace):
+    """Profiles without a ``terminal:`` block get sensible defaults."""
+    profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
+    assert profile.terminal.command == "bash -i"
+    assert profile.terminal.user is None
+    assert profile.terminal.cwd is None
+
+
+def test_terminal_block_parses_all_fields(config_dir, workspace, tmp_path):
+    profile_path = _write(
+        tmp_path / "p.yml",
+        """
+        client:
+          type: unix_local
+        manifest:
+          root: ${workspace_dir}
+        terminal:
+          command: "zsh -l"
+          user: "1000:1000"
+          cwd: "/workspace"
+        """,
+    )
+    profile = sandbox_profile.resolve_profile(
+        workspace_dir=workspace, explicit_path=profile_path
+    )
+    assert profile.terminal.command == "zsh -l"
+    assert profile.terminal.user == "1000:1000"
+    assert profile.terminal.cwd == "/workspace"
+
+
+def test_terminal_user_falls_back_to_top_level_run_as(config_dir, workspace, tmp_path):
+    """When ``terminal.user`` is omitted but ``run_as`` is set, materialize it."""
+    profile_path = _write(
+        tmp_path / "p.yml",
+        """
+        client:
+          type: unix_local
+        run_as: "1000:1000"
+        manifest:
+          root: ${workspace_dir}
+        terminal:
+          command: "bash -i"
+        """,
+    )
+    profile = sandbox_profile.resolve_profile(
+        workspace_dir=workspace, explicit_path=profile_path
+    )
+    assert profile.terminal.user == "1000:1000"
+
+
+def test_terminal_empty_command_rejected(config_dir, workspace, tmp_path):
+    profile_path = _write(
+        tmp_path / "p.yml",
+        """
+        client:
+          type: unix_local
+        manifest:
+          root: ${workspace_dir}
+        terminal:
+          command: ""
+        """,
+    )
+    with pytest.raises(ValueError, match="terminal.command"):
+        sandbox_profile.resolve_profile(
+            workspace_dir=workspace, explicit_path=profile_path
+        )
+
+
+def test_terminal_non_mapping_rejected(config_dir, workspace, tmp_path):
+    profile_path = _write(
+        tmp_path / "p.yml",
+        """
+        client:
+          type: unix_local
+        manifest:
+          root: ${workspace_dir}
+        terminal: "bash -i"
+        """,
+    )
+    with pytest.raises(ValueError, match="terminal must be a mapping"):
+        sandbox_profile.resolve_profile(
+            workspace_dir=workspace, explicit_path=profile_path
+        )

@@ -23,6 +23,7 @@ capabilities:
   - artifacts     # display_artifact (builtin)
   - exploration   # explorer subagent exposed as `explore`
   - goal          # goal_complete (signals /goal autopilot stop)
+  - wakeup        # schedule_wakeup / cancel_wakeup (self-scheduled recurring notifications)
   - human         # notify / escalate (UI-implemented client tools)
 
 model_settings:
@@ -64,6 +65,8 @@ safe_agent_options:
     - task_update
     - load_skill
     - goal_complete
+    - schedule_wakeup
+    - cancel_wakeup
     - notify
     - escalate
 
@@ -75,6 +78,7 @@ server_functions:
   - note
   - notes
   - compact
+  - recap
   - models
   - model
   - voice-models
@@ -90,12 +94,15 @@ server_functions:
   - bj-logs
   - fs_get_cwd
   - fs_get_workspace_root
+  - fs_get_sources
   - fs_get_home
   - fs_list_dir
   - session_ensure
   - goal
   - goal.stop
   - goal.status
+  - wakeup.stop
+  - wakeup.status
 
 context: build_coding_context
 model_config_resolver: resolve_default_model

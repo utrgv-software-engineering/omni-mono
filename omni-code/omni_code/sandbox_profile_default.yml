@@ -18,3 +18,10 @@ manifest:
 
 # No services and no exposed ports by default — pure agent + workspace.
 # Dev environments (code-server, VNC, etc.) are the launcher's concern.
+
+# Defaults for the launcher's Terminal app. Under unix_local the
+# SessionPtyBackend invokes this command on the host (the SDK's
+# pty_exec_start spawns a child process of `omni serve`), so this is
+# effectively a host shell — equivalent to the legacy node-pty path.
+terminal:
+  command: "bash -i"

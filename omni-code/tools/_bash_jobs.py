@@ -149,9 +149,16 @@ async def _notify_job_exit(job: Job) -> None:
             job.job_id,
         )
         return
+    # Frame the wakeup so the model has a clear directive. Without this,
+    # an assistant-role notification with no instructions reads as the
+    # agent's own prior utterance — and the model defaults to a near-
+    # identical re-acknowledgment of whatever it last said.
     content = (
         f"[bash-job] {job.job_id} exited "
-        f"code={job.exit_code} wall={job.wall_time_ms()}ms"
+        f"code={job.exit_code} wall={job.wall_time_ms()}ms\n\n"
+        "Decide what to do next. If this completes the user's request, "
+        "summarize briefly and stop. Otherwise inspect the job output "
+        "with bash_logs and take the next concrete step."
     )
     try:
         await service.enqueue_notification(

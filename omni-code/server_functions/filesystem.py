@@ -74,6 +74,27 @@ async def fs_get_home() -> dict:
     return {"path": os.path.expanduser("~")}
 
 
+@server_function(
+    description=(
+        "List the sources that seeded the current workspace. Each entry "
+        "describes one directory or repo attached to this project: 'kind' "
+        "is local | local-git | git-remote, 'mountName' is the slug under "
+        "the manifest root, 'path' (for local kinds) is the host directory "
+        "the agent can operate on directly under host-mode, and 'repoUrl' "
+        "(+ optional 'ref') describes git-remote sources. Returns an "
+        "empty list when no sources were declared."
+    ),
+    strict=True,
+)
+async def fs_get_sources() -> dict:
+    try:
+        from omni_code.agent_workspace_state import get_sources
+
+        return {"sources": get_sources()}
+    except Exception:
+        return {"sources": []}
+
+
 @server_function(description="List a directory for picker UIs", strict=True)
 async def fs_list_dir(path: Optional[str] = None, include_files: Optional[bool] = False, ignore_hidden: Optional[bool] = True) -> dict:
     base = path or os.getcwd()
