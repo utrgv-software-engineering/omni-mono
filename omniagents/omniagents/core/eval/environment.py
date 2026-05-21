@@ -133,6 +133,29 @@ class EvalEnvironment(ABC):
         """
         return {}
 
+    async def prepare_spec(
+        self, spec: Any, context: Optional[EnvironmentContext]
+    ) -> None:
+        """Mutate the agent spec after load, before the agent is constructed.
+
+        Called once per scenario by the runner, after ``setup()`` and after
+        ``context.data`` has been merged into ``spec.context``, but before
+        ``create_unified_agent(spec)``. This is the only hook that runs while
+        the spec is still mutable, so it's where an environment wires runtime
+        objects that cannot live in YAML — e.g. attaching a live
+        ``SandboxSession`` to ``spec.sandbox_run_config`` and flipping
+        ``spec.sandbox_use_sandbox_agent`` so the builder constructs a
+        SandboxAgent whose tools exec inside the container.
+
+        Default is a no-op, so environments that don't need it (and the
+        ``NoOpEnvironment``) are unaffected.
+
+        Args:
+            spec: The loaded ``AgentSpec``, still mutable.
+            context: The context returned by ``setup()`` (may be ``None``).
+        """
+        return None
+
 
 class NoOpEnvironment(EvalEnvironment):
     """A no-op environment for scenarios without external state."""

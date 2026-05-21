@@ -389,13 +389,14 @@ async def _run_scenario(
 ) -> Dict[str, Any]:
     from .multi_turn import _apply_scenario_variables, _build_registries_for_eval
 
-    _tool_reg, _sf_reg = _build_registries_for_eval(
+    _tool_reg, _sf_reg, _cap_reg = _build_registries_for_eval(
         Path(agent_yaml), project_root=project_root
     )
     spec = load_agent_spec_from_yaml(
         agent_yaml,
         tool_registry=_tool_reg if _tool_reg else None,
         server_functions_registry=_sf_reg if _sf_reg else None,
+        capability_registry=_cap_reg if _cap_reg else None,
     )
     spec.use_safe_agent = False
     # Per-scenario session variables (e.g. additional_instructions).

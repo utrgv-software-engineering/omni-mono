@@ -137,6 +137,12 @@ class OmniAgentsAgentAdapter:
                 server_functions = ctx.server_functions_registry or {}
                 if server_functions:
                     self._spec_kwargs["server_functions_registry"] = server_functions
+                # Capabilities (shell/filesystem/workers/...) carry the agent's
+                # real tools. Without them GEPA optimizes against a toolless
+                # agent. The project ctx already resolved them — forward them.
+                capabilities = ctx.capability_registry or {}
+                if capabilities:
+                    self._spec_kwargs["capability_registry"] = capabilities
                 defaults: Dict[str, Any] = {}
                 if ctx.tracing_defaults:
                     defaults["tracing"] = ctx.tracing_defaults

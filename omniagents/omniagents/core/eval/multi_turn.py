@@ -54,15 +54,22 @@ _logger = logging.getLogger(__name__)
 def _build_registries_for_eval(
     compiled_yaml_path: Path,
     project_root: Path | None = None,
-) -> tuple[Dict[str, Any], Dict[str, Any]]:
-    """Build tool and server function registries for evaluation.
+) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+    """Build tool, server function, and capability registries for evaluation.
 
     Discovers tools from builtins, the project-level directories, and the
     agent's own subdirectories so that ``load_agent_spec_from_yaml`` can
     resolve every tool name and server function.
 
+    The capability registry is sourced from the production
+    ``load_project`` loader so the eval-side agent gets the *same* capability
+    surface as a real run — including ``shell`` / ``filesystem`` / ``workers``,
+    which carry the agent's ``execute_bash`` and file tools. Without it the
+    loader skips every ``capabilities:`` entry ("no capability_registry
+    available") and the agent runs toolless.
+
     Returns:
-        Tuple of (tool_registry, server_functions_registry).
+        Tuple of (tool_registry, server_functions_registry, capability_registry).
     """
     from omniagents.core.tools.discovery import discover_functions_in_dir
     from omniagents.core.server_functions.discovery import (
@@ -128,7 +135,27 @@ def _build_registries_for_eval(
         except Exception:
             pass
 
-    return tool_registry, sf_registry
+    # 5. Capability registry — reuse the production project loader so the
+    # eval agent sees the same capabilities (shell/filesystem/workers/...) as
+    # a real run. These carry execute_bash and the file tools; omitting them
+    # leaves the agent unable to act. Best-effort, matching the rest of this
+    # builder: an unloadable project yields an empty capability registry.
+    capability_registry: Dict[str, Any] = {}
+    try:
+        from omniagents.core.project.runtime import load_project
+
+        for candidate in ("project.yml", "project.yaml"):
+            project_yml = project_root / candidate
+            if project_yml.is_file():
+                ctx = load_project(str(project_yml))
+                capability_registry = dict(
+                    getattr(ctx, "capability_registry", {}) or {}
+                )
+                break
+    except Exception:
+        capability_registry = {}
+
+    return tool_registry, sf_registry, capability_registry
 
 
 def _load_user_mcp_for_eval(
@@ -295,8 +322,9 @@ async def run_scenario(
         }
 
     try:
-        # Load agent spec with project registries so all tools/server_functions resolve
-        _tool_reg, _sf_reg = _build_registries_for_eval(
+        # Load agent spec with project registries so all tools/server_functions
+        # /capabilities resolve.
+        _tool_reg, _sf_reg, _cap_reg = _build_registries_for_eval(
             Path(agent_yaml), project_root=project_root
         )
         # Honor ``allow_user_mcp_servers`` in project.yml so evals see the
@@ -309,6 +337,7 @@ async def run_scenario(
             agent_yaml,
             tool_registry=_tool_reg if _tool_reg else None,
             server_functions_registry=_sf_reg if _sf_reg else None,
+            capability_registry=_cap_reg if _cap_reg else None,
             user_mcp_servers=_user_mcp if _user_mcp else None,
         )
         spec.use_safe_agent = False
@@ -338,6 +367,14 @@ async def run_scenario(
             for var_name, var_value in env_vars.items():
                 saved_env_vars[var_name] = os.environ.get(var_name)
                 os.environ[var_name] = str(var_value)
+
+        # Let the environment wire runtime-only objects into the spec while
+        # it's still mutable — e.g. attach a live SandboxSession and flip
+        # sandbox_use_sandbox_agent so the builder constructs a SandboxAgent
+        # whose tools exec inside a container. No-op for environments that
+        # don't override prepare_spec. Runs after the context.data merge
+        # above so it can read anything setup() stashed in the context.
+        await env.prepare_spec(spec, context)
 
         # Create the agent
         agent = await create_unified_agent(spec)
