@@ -70,6 +70,10 @@ class AciContainerSpec:
     exposed_ports: tuple[int, ...] = ()
     file_share: Optional[AciFileShare] = None
     registry: Optional[AciRegistry] = None
+    # When set, the group joins this delegated subnet and gets a *private* IP
+    # (reachable only inside the VNet — e.g. by a VNet-integrated launcher).
+    # When unset, exposed ports are published on a *public* IP.
+    subnet_id: Optional[str] = None
 
 
 @dataclass
@@ -135,6 +139,21 @@ class AciManager:
                 )
             ]
 
+        # Group-level IP exposure. Container-level ``ports`` alone don't make a
+        # service reachable — the group needs an ``ip_address`` listing them.
+        # A subnet_id ⇒ private IP inside the VNet (no public surface); otherwise
+        # a public IP. ACI exec runs over the ARM management plane either way, so
+        # a private group is still fully drivable.
+        ip_address = None
+        subnet_ids = None
+        if spec.exposed_ports:
+            ports = [m.Port(port=p, protocol="TCP") for p in spec.exposed_ports]
+            if spec.subnet_id:
+                ip_address = m.IpAddress(type=m.ContainerGroupIpAddressType.PRIVATE, ports=ports)
+                subnet_ids = [m.ContainerGroupSubnetId(id=spec.subnet_id)]
+            else:
+                ip_address = m.IpAddress(type=m.ContainerGroupIpAddressType.PUBLIC, ports=ports)
+
         return m.ContainerGroup(
             location=self._config.location,
             containers=[container],
@@ -142,6 +161,8 @@ class AciManager:
             restart_policy=m.ContainerGroupRestartPolicy.NEVER,
             image_registry_credentials=registries,
             volumes=volumes or None,
+            ip_address=ip_address,
+            subnet_ids=subnet_ids,
         )
 
     async def create(self, spec: AciContainerSpec) -> None:
@@ -154,6 +175,13 @@ class AciManager:
         group = await self._client.container_groups.get(self._config.resource_group, name)
         iv = getattr(group, "instance_view", None)
         return (getattr(iv, "state", None) or "Unknown") if iv else "Unknown"
+
+    async def get_ip(self, name: str) -> str:
+        """The group's IP — private (VNet) or public, depending on how it was
+        created. Empty string if the group has no exposed ports / IP yet."""
+        group = await self._client.container_groups.get(self._config.resource_group, name)
+        ip = getattr(group, "ip_address", None)
+        return (getattr(ip, "ip", None) or "") if ip else ""
 
     async def wait_running(self, name: str, timeout: float = 240.0, interval: float = 3.0) -> None:
         loop = asyncio.get_running_loop()

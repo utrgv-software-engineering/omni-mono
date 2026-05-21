@@ -40,7 +40,7 @@ from agents.sandbox.session.sandbox_client import BaseSandboxClient, BaseSandbox
 from agents.sandbox.session.sandbox_session import SandboxSession
 from agents.sandbox.session.sandbox_session_state import SandboxSessionState
 from agents.sandbox.snapshot import SnapshotBase, SnapshotSpec, resolve_snapshot
-from agents.sandbox.types import ExecResult, User
+from agents.sandbox.types import ExecResult, ExposedPortEndpoint, User
 
 from omniagents.core.sandbox.aci_engine import (
     AciConfig,
@@ -129,6 +129,7 @@ class AciSandboxSession(BaseSandboxSession):
         self._pty_lock = asyncio.Lock()
         self._pty_processes: dict[int, _AciPtyEntry] = {}
         self._reserved_pty_process_ids: set[int] = set()
+        self._ip: Optional[str] = None
 
     # -- lifecycle hooks ---------------------------------------------------- #
 
@@ -269,6 +270,20 @@ class AciSandboxSession(BaseSandboxSession):
         except Exception:
             return False
 
+    # -- exposed ports ------------------------------------------------------ #
+
+    async def _resolve_exposed_port(self, port: int) -> ExposedPortEndpoint:
+        """Map an exposed container port to the group's IP. Private (VNet) or
+        public depending on how the group was created; the caller (a
+        VNet-integrated launcher, in the private case) reaches it directly.
+        TLS is off — the host/launcher proxy terminates TLS in front."""
+        await self._manager.wait_running(self._name)
+        if not self._ip:
+            self._ip = await self._manager.get_ip(self._name)
+        if not self._ip:
+            return await super()._resolve_exposed_port(port)
+        return ExposedPortEndpoint(host=self._ip, port=port, tls=False)
+
     # -- the one true primitive: everything else rides on this -------------- #
 
     async def _exec_internal(self, *command: str | object, timeout: float | None = None) -> ExecResult:
@@ -340,12 +355,14 @@ class AciSandboxClient(BaseSandboxClient):
         location: str = "southcentralus",
         file_share: Optional[dict | AciFileShare] = None,
         registry: Optional[dict | AciRegistry] = None,
+        subnet_id: Optional[str] = None,
         credential: Optional[object] = None,
         instrumentation: Optional[object] = None,
     ) -> None:
         self._manager = AciManager(AciConfig(subscription_id, resource_group, location), credential)
         self._file_share = _coerce_file_share(file_share)
         self._registry = _coerce_registry(registry)
+        self._subnet_id = subnet_id or None
         self._instrumentation = instrumentation
 
     async def _build_spec(self, name: str, options: AciSandboxClientOptions, manifest: Manifest) -> AciContainerSpec:
@@ -359,6 +376,7 @@ class AciSandboxClient(BaseSandboxClient):
             exposed_ports=tuple(options.exposed_ports),
             file_share=self._file_share,
             registry=self._registry,
+            subnet_id=self._subnet_id,
         )
 
     async def create(
@@ -411,6 +429,7 @@ class AciSandboxClient(BaseSandboxClient):
                     exposed_ports=tuple(state.exposed_ports),
                     file_share=self._file_share,
                     registry=self._registry,
+                    subnet_id=self._subnet_id,
                 )
             )
             await self._manager.wait_running(name)

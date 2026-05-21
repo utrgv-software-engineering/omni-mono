@@ -13,7 +13,12 @@ import asyncio
 import base64
 import re
 
-from omniagents.core.sandbox.aci_engine import AciExecChannel
+from omniagents.core.sandbox.aci_engine import (
+    AciConfig,
+    AciContainerSpec,
+    AciExecChannel,
+    AciManager,
+)
 
 
 class FakeExecWs:
@@ -92,3 +97,38 @@ def test_both_streams_populated():
     assert r.exit_code == 3
     assert r.stdout == b"out-data"
     assert r.stderr == b"err-data"
+
+
+# --- group construction (IP exposure / subnet) ---------------------------- #
+
+
+def _manager() -> AciManager:
+    # A dummy credential keeps DefaultAzureCredential (and its env probing) out
+    # of the picture; _build_group never touches the management client.
+    return AciManager(AciConfig("sub", "rg", "southcentralus"), credential=object())
+
+
+def test_build_group_no_ports_has_no_ip():
+    grp = _manager()._build_group(AciContainerSpec(name="g", image="img"))
+    assert grp.ip_address is None
+    assert grp.subnet_ids is None
+
+
+def test_build_group_public_ip_when_no_subnet():
+    grp = _manager()._build_group(
+        AciContainerSpec(name="g", image="img", exposed_ports=(8080, 6080))
+    )
+    assert grp.subnet_ids is None
+    assert grp.ip_address is not None
+    assert grp.ip_address.type == "Public"
+    assert [p.port for p in grp.ip_address.ports] == [8080, 6080]
+
+
+def test_build_group_private_ip_when_subnet():
+    sid = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Network/virtualNetworks/v/subnets/aci"
+    grp = _manager()._build_group(
+        AciContainerSpec(name="g", image="img", exposed_ports=(8080,), subnet_id=sid)
+    )
+    assert grp.ip_address is not None
+    assert grp.ip_address.type == "Private"
+    assert [s.id for s in grp.subnet_ids] == [sid]
