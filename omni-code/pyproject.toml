@@ -37,6 +37,7 @@ include-package-data = true
 packages = [
     "tools",
     "server_functions",
+    "capabilities",
     "omni_code",
     "omni_agents",
     "omni_agents.omni",
@@ -49,6 +50,10 @@ packages = [
     "project.yml",
     "sandbox/*",
 ]
+# Capability definitions are data-only YAML; ship them at the package root
+# (site-packages/capabilities/) so the packaged project.yml's
+# `paths.capabilities: ../capabilities` resolves in a wheel install.
+"capabilities" = ["*.yml"]
 "omni_agents" = ["*/*.yml", "*/*.md"]
 "omni_agents.omni" = ["*.yml", "*.md"]
 "omni_agents.voice_agent" = ["*.yml", "*.md"]
