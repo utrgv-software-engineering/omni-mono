@@ -9,6 +9,8 @@ scenarios:
       2. from_dict() classmethod that creates a User from a dict
       3. validate() that checks name and email arent empty
     fixture: python_fastapi
+    environment:
+      profile: evaluations/profiles/devbox.yml
     expect:
       # These should NOT be in separate workers since they all touch the same file
       verify_files:
@@ -27,6 +29,8 @@ scenarios:
       - src/routes/search_routes.py with GET /search?q= for posts
       - src/routes/stats_routes.py with GET /stats returning counts
     fixture: python_fastapi
+    environment:
+      profile: evaluations/profiles/devbox.yml
     expect:
       verify_files:
         "src/routes/tags_routes.py":

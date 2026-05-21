@@ -4,7 +4,11 @@ evaluation:
     runs_per_prompt: 1
 
   environment:
-    class: environments.workspace_env.WorkspaceEvalEnvironment
+    # DevboxEvalEnvironment subclasses WorkspaceEvalEnvironment: scenarios
+    # with an `environment.image` run the agent on the host with its shell/
+    # fs tools routed into that pinned container; scenarios without one fall
+    # through to plain host-tempdir behavior unchanged.
+    class: environments.devbox_env.DevboxEvalEnvironment
 
   judges:
     adherence:

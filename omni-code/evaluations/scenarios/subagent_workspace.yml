@@ -34,6 +34,8 @@
 scenarios:
   - name: workspace_root_visible_to_orchestrator_tools
     fixture: subagent_workspace
+    environment:
+      profile: evaluations/profiles/devbox.yml
     runs_per_prompt: 1
     prompt: |
       Use execute_bash to create a file named `marker.txt` in the
@@ -57,6 +59,8 @@ scenarios:
   # instruction by writing the file directly — a false-positive test.
   - name: workspace_root_visible_to_spawned_worker
     fixture: subagent_workspace
+    environment:
+      profile: evaluations/profiles/devbox.yml
     runs_per_prompt: 1
     prompt: |
       Spawn a single worker with this exact task description:
@@ -100,6 +104,8 @@ scenarios:
   #       --reporter pretty
   - name: workspace_root_visible_to_explorer_subagent
     fixture: subagent_workspace
+    environment:
+      profile: evaluations/profiles/devbox.yml
     runs_per_prompt: 1
     prompt: |
       Use the `explore` tool to find the contents of the file

@@ -18,6 +18,8 @@ scenarios:
   - name: agent_fixes_recent_workouts_bug_staged_kanban
     fixture: fitness_tracker
     db_fixture: fitness_bug_ticket_staged
+    environment:
+      profile: evaluations/profiles/devbox-uv.yml
     runs_per_prompt: 3
     agents_md_content: |
       # AGENTS.md
@@ -162,43 +164,39 @@ scenarios:
         JOIN pipeline_columns c ON c.id = t.column_id
         WHERE t.title = 'Recent workouts endpoint returns wrong order'
           AND c.label = 'Done'
-      command: "uv run pytest -q 2>&1"
-      command_timeout_s: 240
-      revert_target: "src/fitness_tracker/routers/workouts.py"
-      test_command: "uv run pytest -q 2>&1"
-      test_timeout_s: 240
       # Backlog → Planning → Implementation → QA → Review = 4 moves.
       min_ticket_moves: 4
-      allowed_modified:
-        - "src/fitness_tracker/routers/workouts.py"
-        - "tests/test_workouts.py"
-        - "pyproject.toml"
-        - "frontend/src/pages/Dashboard.tsx"
-        - "frontend/package.json"
-        - "frontend/package-lock.json"
-      allowed_new:
-        - "uv.lock"
-      allowed_new_dirs:
-        - "tests/"
-        - "acceptance/"
-        - "artifacts/"
-        - "frontend/test-results/"
-        - "frontend/.playwright-cli/"
-        - ".playwright-cli/"
+      # World-state verification runs in the sandbox (same checks as
+      # autopilot_fitness_bug). Each command must exit 0.
+      command_timeout_s: 360
+      commands:
+        - "uv run pytest -q"
+        - |
+          t=src/fitness_tracker/routers/workouts.py
+          git diff --quiet HEAD -- "$t" && { echo 'source unchanged by agent'; exit 1; }
+          cp "$t" /tmp/_agent_ver && git show HEAD:"$t" > "$t"
+          if uv run pytest -q >/dev/null 2>&1; then rc=1; else rc=0; fi
+          cp /tmp/_agent_ver "$t"
+          [ "$rc" = 0 ] || echo 'regression test does not catch the reverted bug'
+          exit $rc
+        - |
+          m=$(ls -t artifacts/*/run.manifest.json 2>/dev/null | head -1)
+          [ -n "$m" ] || { echo 'no acceptance run manifest'; exit 1; }
+          jq -e '[.stories[]|select(.status=="pass")]|length>0' "$m" >/dev/null \
+            || { echo 'no passing acceptance story'; exit 1; }
+          test -s "$(dirname "$m")/run.report.embedded.html" \
+            || { echo 'acceptance report not rendered'; exit 1; }
+        - |
+          git add -A >/dev/null 2>&1
+          bad=$(git status --porcelain | awk '{print $2}' | grep -vE '^(src/fitness_tracker/routers/workouts\.py|tests/|pyproject\.toml|uv\.lock|frontend/src/pages/Dashboard\.tsx|frontend/package\.json|frontend/package-lock\.json|acceptance/|artifacts/|frontend/test-results/|frontend/\.playwright-cli/|\.playwright-cli/)' || true)
+          [ -z "$bad" ] || { echo "out-of-scope changes:"; echo "$bad"; exit 1; }
+    # World-state checks are scenario-owned shell run in the sandbox via
+    # command_in_workspace_succeeds; the SQL checks stay host-side (MCP DB).
     measures:
       outcome:
-        - bug_caught_by_tests
+        - command_in_workspace_succeeds
         - db_row_exists                 # ticket reached Review
         - db_row_absent                 # ticket did not advance past Review
-        - command_in_workspace_succeeds
-        - acceptance_run_completed
-        - acceptance_run_has_passing_story
-      quality:
-        - scope_respected
-        - acceptance_run_manifest_well_formed
-        - acceptance_per_story_manifests_consistent
-        - acceptance_run_has_evidence
-        - acceptance_run_report_rendered
       guard:
         - no_remote_operations
         - no_test_disabling

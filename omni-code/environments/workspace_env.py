@@ -313,6 +313,36 @@ class WorkspaceEvalEnvironment(EvalEnvironment):
             "MISE_TRUSTED_CONFIG_PATHS": str(_DEFAULT_WORKSPACE_ROOT),
         }
 
+    def run_command(
+        self,
+        context: EnvironmentContext,
+        command: str,
+        timeout: int = 120,
+    ) -> tuple[int, str, str]:
+        """Run a shell command in the scenario's workspace.
+
+        Returns ``(exit_code, stdout, stderr)``. This host implementation runs
+        the command in the host temp workspace. ``DevboxEvalEnvironment``
+        overrides it to exec inside the container for containerized scenarios,
+        so measures stay environment-agnostic — they just ask the environment
+        to run a command and read the result.
+        """
+        workspace = context.get("workspace_root") if context else None
+        if not workspace:
+            return (127, "", "no workspace_root in environment context")
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return (124, "", f"command timed out after {timeout}s")
+        return (result.returncode, result.stdout or "", result.stderr or "")
+
     async def verify(
         self, context: EnvironmentContext, expected: Dict[str, Any]
     ) -> Dict[str, Any]:

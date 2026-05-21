@@ -25,6 +25,11 @@ scenarios:
   - name: agent_fixes_room_order_bug_ticket
     fixture: hotel_mng
     db_fixture: hotel_mng_room_order_bug
+    # Environment-in-container: the agent works (and verification runs) inside
+    # this container. The base image already carries the Ruby toolchain
+    # (rbenv: ruby + bundle); the agent runs `bundle install` (network open).
+    environment:
+      profile: evaluations/profiles/devbox.yml
     # Non-deterministic agent behaviour — pin a fixed N here so that
     # baseline-vs-intervention comparisons read meaningfully without
     # callers having to remember to loop the CLI.
@@ -199,64 +204,47 @@ scenarios:
         JOIN pipeline_columns c ON c.id = t.column_id
         WHERE t.title = 'Available rooms list shows wrong order on public availability page'
           AND c.label = 'Done'
-      # Run only the controller test that exercises the fixed code.
-      # The full hotel-mng suite has pre-existing Postgres-vs-SQLite
-      # failures (ILIKE, SET LOCAL statement_timeout) unrelated to this
-      # ticket — running the whole suite would always fail and obscure
-      # the agent's actual contribution.
-      command: "bin/rails test test/controllers/public/availability_controller_test.rb 2>&1"
-      command_timeout_s: 300
-      # bug_caught_by_tests: revert this file to its pristine fixture
-      # state and re-run tests. Pass requires (a) agent modified it and
-      # (b) the agent's regression test fails when the bug is back.
-      revert_target: "app/controllers/public/availability_controller.rb"
-      test_command: "bin/rails test test/controllers/public/availability_controller_test.rb 2>&1"
-      test_timeout_s: 300
       # ticket_moved_through_pipeline: enforce all four staged
       # transitions Backlog → Planning → Implementation → QA → Review.
-      # Anything fewer means the agent skipped a column.
       min_ticket_moves: 4
-      # scope_respected: only these files may be modified; only these
-      # new files (or new files under listed dirs) are allowed.
-      # Gemfile.lock is listed because `bundle install` may touch it.
-      # tmp/ and log/ are listed because the Rails server writes there
-      # at runtime — that's tooling noise, not the agent overstepping.
-      allowed_modified:
-        - "app/controllers/public/availability_controller.rb"
-        - "test/controllers/public/availability_controller_test.rb"
-        - "Gemfile.lock"
-        # The eval API writes to the dev sqlite as part of seeding when
-        # the agent calls POST /api/v1/eval/setup from its acceptance
-        # story. Same category of "tooling noise, not the agent
-        # overstepping" as Gemfile.lock getting touched by bundle install.
-        - "storage/development.sqlite3"
-      allowed_new_dirs:
-        - "test/"
-        - "acceptance/"
-        - "artifacts/"
-        - "tmp/"
-        - "log/"
-        - "storage/"
-        - ".playwright-cli/"
-        # execute_bash(background=True) writes job logs here; not the
-        # agent overstepping.
-        - ".omni-code/"
-    # Tiered measures (see docs/EVAL_DESIGN.md). Outcome/Quality/Guard
-    # gate CI on per-run failure. Process measures are recorded for
-    # diagnostic / cross-tab analysis but do NOT gate CI.
+      # World-state verification runs in the sandbox (Ruby toolchain + the
+      # agent's changes + acceptance artifacts). Each command must exit 0.
+      command_timeout_s: 360
+      commands:
+        # 1. The targeted controller test passes with the agent's fix. (Only
+        #    this test, not the full suite, which has pre-existing
+        #    Postgres-vs-SQLite failures unrelated to this ticket.)
+        - "bin/rails test test/controllers/public/availability_controller_test.rb"
+        # 2. Regression test catches the bug: revert the controller to its
+        #    pristine state, the test must FAIL, then restore.
+        - |
+          t=app/controllers/public/availability_controller.rb
+          git diff --quiet HEAD -- "$t" && { echo 'source unchanged by agent'; exit 1; }
+          cp "$t" /tmp/_agent_ver && git show HEAD:"$t" > "$t"
+          if bin/rails test test/controllers/public/availability_controller_test.rb >/dev/null 2>&1; then rc=1; else rc=0; fi
+          cp /tmp/_agent_ver "$t"
+          [ "$rc" = 0 ] || echo 'regression test does not catch the reverted bug'
+          exit $rc
+        # 3. Acceptance run produced a passing story and a rendered report.
+        - |
+          m=$(ls -t artifacts/*/run.manifest.json 2>/dev/null | head -1)
+          [ -n "$m" ] || { echo 'no acceptance run manifest'; exit 1; }
+          jq -e '[.stories[]|select(.status=="pass")]|length>0' "$m" >/dev/null \
+            || { echo 'no passing acceptance story'; exit 1; }
+          test -s "$(dirname "$m")/run.report.embedded.html" \
+            || { echo 'acceptance report not rendered'; exit 1; }
+        # 4. Scope: nothing modified/created outside the allowed set
+        #    (Gemfile.lock from bundle install; tmp/log/storage = runtime noise).
+        - |
+          git add -A >/dev/null 2>&1
+          bad=$(git status --porcelain | awk '{print $2}' | grep -vE '^(app/controllers/public/availability_controller\.rb|test/|Gemfile\.lock|storage/|acceptance/|artifacts/|tmp/|log/|\.playwright-cli/|\.omni-code/)' || true)
+          [ -z "$bad" ] || { echo "out-of-scope changes:"; echo "$bad"; exit 1; }
+    # World-state checks are scenario-owned shell run in the sandbox via
+    # command_in_workspace_succeeds; SQL checks stay host-side (MCP DB).
     measures:
       outcome:
-        - bug_caught_by_tests
-        - db_row_exists
         - command_in_workspace_succeeds
-        - acceptance_run_completed
-        - acceptance_run_has_passing_story
-      quality:
-        - scope_respected
-        - acceptance_run_manifest_well_formed
-        - acceptance_per_story_manifests_consistent
-        - acceptance_run_has_evidence
-        - acceptance_run_report_rendered
+        - db_row_exists
       guard:
         - no_remote_operations
         - no_test_disabling

@@ -15,6 +15,11 @@ scenarios:
   - name: agent_fixes_recent_workouts_bug_ticket
     fixture: fitness_tracker
     db_fixture: fitness_bug_ticket
+    # Environment-in-container: the agent works (and the verification commands
+    # run) inside this container, which carries the Python toolchain (uv) the
+    # task needs. Network open so `uv sync` / `npm install` work.
+    environment:
+      profile: evaluations/profiles/devbox-uv.yml
     # Non-deterministic agent behaviour — pin a fixed N here so that
     # baseline-vs-intervention comparisons read meaningfully without
     # callers having to remember to loop the CLI.
@@ -76,64 +81,59 @@ scenarios:
       WHERE t.title = 'Recent workouts endpoint returns wrong order'
         AND c.label = 'Done'
     expect:
-      # Outcome assertions
+      # db_row_exists (host-side: the omni-projects DB lives on the host via
+      # MCP, not in the sandbox) — ticket reached Done.
       assert_sql: |
         SELECT 1 FROM tickets t
         JOIN pipeline_columns c ON c.id = t.column_id
         WHERE t.title = 'Recent workouts endpoint returns wrong order'
           AND c.label = 'Done'
-      command: "uv run pytest -q 2>&1"
-      command_timeout_s: 240
-      # bug_caught_by_tests: revert this file to its pristine fixture state
-      # and re-run pytest. Pass requires (a) agent modified it and (b) the
-      # agent's regression test fails when the bug is back.
-      revert_target: "src/fitness_tracker/routers/workouts.py"
-      test_command: "uv run pytest -q 2>&1"
-      test_timeout_s: 240
-      # ticket_moved_through_pipeline: at least 2 moves enforces
-      # Backlog → Active → Done (no jumping straight to Done).
+      # ticket_moved_through_pipeline: ≥2 moves enforces Backlog→Active→Done.
       min_ticket_moves: 2
-      # scope_respected: only these files may be modified; only these new
-      # files (or new files under listed dirs) are allowed.
-      # pyproject.toml/uv.lock and frontend/package(-lock).json are listed
-      # because `uv sync` / `npm ci` touch them — that's tooling noise, not
-      # the agent overstepping. Dashboard.tsx is listed because the agent
-      # may need to add `data-testid` hooks for stable acceptance selectors.
-      allowed_modified:
-        - "src/fitness_tracker/routers/workouts.py"
-        - "tests/test_workouts.py"
-        - "pyproject.toml"
-        - "frontend/src/pages/Dashboard.tsx"
-        - "frontend/package.json"
-        - "frontend/package-lock.json"
-      allowed_new:
-        - "uv.lock"
-      allowed_new_dirs:
-        - "tests/"
-        - "acceptance/"
-        - "artifacts/"
-        - "frontend/test-results/"
-        - "frontend/.playwright-cli/"
-        - ".playwright-cli/"
-    # Tiered measures (see docs/EVAL_DESIGN.md). Outcome/Quality/Guard
-    # gate CI on per-run failure. Process measures are recorded for
-    # diagnostic / cross-tab analysis but do NOT gate CI. Dropped
-    # acceptance_artifact_exists — it's strictly subsumed by
-    # acceptance_run_report_rendered (existence + non-trivial size +
-    # runId match).
+      # World-state verification runs IN the sandbox: the container has the
+      # toolchain (uv via the devbox-uv profile, node/jq from the image), the
+      # agent's changes, and the acceptance artifacts. Each command must exit
+      # 0. The scenario owns *what* to check; the framework just runs it in the
+      # box (command_in_workspace_succeeds → DevboxEvalEnvironment.run_command).
+      command_timeout_s: 360
+      commands:
+        # 1. The project's test suite passes with the agent's fix.
+        - "uv run pytest -q"
+        # 2. The regression test actually catches the bug: revert the source to
+        #    its pristine state (the initial fixture commit) and the suite must
+        #    FAIL; then restore. Also requires the agent changed the source.
+        - |
+          t=src/fitness_tracker/routers/workouts.py
+          git diff --quiet HEAD -- "$t" && { echo 'source unchanged by agent'; exit 1; }
+          cp "$t" /tmp/_agent_ver && git show HEAD:"$t" > "$t"
+          if uv run pytest -q >/dev/null 2>&1; then rc=1; else rc=0; fi
+          cp /tmp/_agent_ver "$t"
+          [ "$rc" = 0 ] || echo 'regression test does not catch the reverted bug'
+          exit $rc
+        # 3. The acceptance run produced a passing story and a rendered report.
+        - |
+          m=$(ls -t artifacts/*/run.manifest.json 2>/dev/null | head -1)
+          [ -n "$m" ] || { echo 'no acceptance run manifest'; exit 1; }
+          jq -e '[.stories[]|select(.status=="pass")]|length>0' "$m" >/dev/null \
+            || { echo 'no passing acceptance story'; exit 1; }
+          test -s "$(dirname "$m")/run.report.embedded.html" \
+            || { echo 'acceptance report not rendered'; exit 1; }
+        # 4. Scope: nothing modified/created outside the allowed set
+        #    (pyproject/uv.lock, frontend package files = tooling noise from
+        #    `uv sync`/`npm ci`; Dashboard.tsx for data-testid acceptance hooks).
+        - |
+          git add -A >/dev/null 2>&1
+          bad=$(git status --porcelain | awk '{print $2}' | grep -vE '^(src/fitness_tracker/routers/workouts\.py|tests/|pyproject\.toml|uv\.lock|frontend/src/pages/Dashboard\.tsx|frontend/package\.json|frontend/package-lock\.json|acceptance/|artifacts/|frontend/test-results/|frontend/\.playwright-cli/|\.playwright-cli/)' || true)
+          [ -z "$bad" ] || { echo "out-of-scope changes:"; echo "$bad"; exit 1; }
+    # Tiered measures. World-state checks (tests pass, regression catches the
+    # bug, acceptance passed, scope) are now scenario-owned shell run in the
+    # sandbox via command_in_workspace_succeeds (expect.commands above) — no
+    # acceptance/bug/scope-specific framework measures. db_row_exists stays
+    # host-side (MCP DB); guard/process stay behavioral (transcript).
     measures:
       outcome:
-        - bug_caught_by_tests
-        - db_row_exists
         - command_in_workspace_succeeds
-        - acceptance_run_completed
-        - acceptance_run_has_passing_story
-      quality:
-        - scope_respected
-        - acceptance_run_manifest_well_formed
-        - acceptance_per_story_manifests_consistent
-        - acceptance_run_has_evidence
-        - acceptance_run_report_rendered
+        - db_row_exists
       guard:
         - no_remote_operations
         - no_test_disabling

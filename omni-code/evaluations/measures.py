@@ -628,48 +628,61 @@ def db_row_absent(ctx: EvalContext) -> dict:
 
 @evaluation_measure
 def command_in_workspace_succeeds(ctx: EvalContext) -> dict:
-    """Run a shell command in the eval workspace; pass when exit code is 0.
+    """Run shell command(s) in the scenario's environment; pass when all exit 0.
 
     Reads:
-      - ``ctx.expect['command']`` — shell command to run (uses ``shell=True``)
-      - ``ctx.expect.get('command_timeout_s', 120)`` — wall-clock timeout
+      - ``ctx.expect['command']`` — a single shell command, or
+      - ``ctx.expect['commands']`` — a list of commands (each must exit 0). A
+        list lets a scenario express several world-state checks as plain
+        commands, with no new config surface.
+      - ``ctx.expect.get('command_timeout_s', 120)`` — per-command timeout.
 
-    Workspace dir comes from ``ctx.metadata['environment_context']
-    ['workspace_root']`` (populated by ``WorkspaceEvalEnvironment``).
+    Commands run *through the environment* (``ctx._environment.run_command``):
+    inside the container for containerized scenarios, on the host otherwise.
+    The environment owns *where* the command runs; the scenario owns *what* it
+    runs — so scenario-specific verification (tests, acceptance checks) lives
+    with the scenario and executes where its compute/deps actually are.
     """
-    cmd = ctx.expect.get("command")
-    if not cmd:
-        return pass_reason("no command specified")
-
-    env_ctx = ctx.metadata.get("environment_context", {})
-    workspace = env_ctx.get("workspace_root")
-    if not workspace:
-        return fail_reason("no workspace_root in environment context")
-
-    import subprocess
+    cmds = ctx.expect.get("commands")
+    if cmds:
+        cmds = list(cmds)
+    else:
+        single = ctx.expect.get("command")
+        if not single:
+            return pass_reason("no command specified")
+        cmds = [single]
 
     timeout = int(ctx.expect.get("command_timeout_s", 120))
-    try:
-        result = subprocess.run(
-            cmd,
-            shell=True,
-            cwd=workspace,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        return fail_reason(f"command timed out after {timeout}s: {cmd}")
+    env = getattr(ctx, "_environment", None)
+    env_ctx = getattr(ctx, "_environment_context", None)
+    runner = getattr(env, "run_command", None)
 
-    if result.returncode == 0:
-        return pass_reason(f"command exited 0: {cmd}")
+    for cmd in cmds:
+        if callable(runner) and env_ctx is not None:
+            code, out, err = runner(env_ctx, cmd, timeout)
+        else:
+            # Back-compat fallback: no environment wired — run on the host.
+            import subprocess
 
-    output = (result.stdout or "") + (result.stderr or "")
-    tail = "\n".join(output.splitlines()[-15:])
-    return fail_reason(
-        f"command exited {result.returncode}: {cmd}",
-        output_tail=tail,
-    )
+            workspace = ctx.metadata.get("environment_context", {}).get(
+                "workspace_root"
+            )
+            if not workspace:
+                return fail_reason("no workspace_root in environment context")
+            try:
+                r = subprocess.run(
+                    cmd, shell=True, cwd=workspace, capture_output=True,
+                    text=True, timeout=timeout,
+                )
+            except subprocess.TimeoutExpired:
+                return fail_reason(f"command timed out after {timeout}s: {cmd}")
+            code, out, err = r.returncode, r.stdout or "", r.stderr or ""
+
+        if code != 0:
+            tail = "\n".join(((out or "") + (err or "")).splitlines()[-15:])
+            return fail_reason(f"command exited {code}: {cmd}", output_tail=tail)
+
+    return pass_reason(f"all {len(cmds)} command(s) exited 0")
 
 
 def _skill_was_activated(ctx: EvalContext, skill_name: str) -> bool:

@@ -1,0 +1,27 @@
+# Pinned sandbox profile for evaluations ("environment in container").
+#
+# Resolved via omni_code.sandbox_profile.resolve_profile(explicit_path=...),
+# which merges ONLY this file over the built-in default and SKIPS the user/
+# project layers — so eval runs are hermetic and reproducible regardless of
+# whatever sandbox config the host machine happens to have.
+#
+# A scenario opts into this environment with:
+#
+#   environment:
+#     profile: evaluations/profiles/devbox.yml
+#
+# The image is pinned by digest (a :latest tag drifts; a digest does not), so
+# the experiment runs in the same world every time. The workspace is NOT
+# defined here — the eval environment injects the staged fixture as the
+# container's /workspace at runtime (profile = container shape; workspace =
+# per-scenario concern, same split `omni serve` uses).
+version: 1
+
+client:
+  type: docker
+
+options:
+  image: ghcr.io/ericmichael/omni-code-sandbox-work@sha256:7d097a4f9a00155a9c9299c32657e4b2960bd486cd653863603d89c5345d94c4
+
+# run_as: "1000:1000"   # optional non-root identity (defense-in-depth);
+#                       # left as root for now — the container is throwaway.
