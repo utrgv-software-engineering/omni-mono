@@ -144,15 +144,20 @@ class AciManager:
         # A subnet_id ⇒ private IP inside the VNet (no public surface); otherwise
         # a public IP. ACI exec runs over the ARM management plane either way, so
         # a private group is still fully drivable.
+        # A subnet_id makes the group join that VNet subnet (private IP), whether
+        # or not it exposes ports — so a no-service sandbox can still reach
+        # private endpoints (Storage/ACR) inside the VNet. ip_address is only set
+        # when ports are exposed: Private (in-VNet) or Public (no subnet).
+        subnet_ids = [m.ContainerGroupSubnetId(id=spec.subnet_id)] if spec.subnet_id else None
         ip_address = None
-        subnet_ids = None
         if spec.exposed_ports:
             ports = [m.Port(port=p, protocol="TCP") for p in spec.exposed_ports]
-            if spec.subnet_id:
-                ip_address = m.IpAddress(type=m.ContainerGroupIpAddressType.PRIVATE, ports=ports)
-                subnet_ids = [m.ContainerGroupSubnetId(id=spec.subnet_id)]
-            else:
-                ip_address = m.IpAddress(type=m.ContainerGroupIpAddressType.PUBLIC, ports=ports)
+            ip_type = (
+                m.ContainerGroupIpAddressType.PRIVATE
+                if spec.subnet_id
+                else m.ContainerGroupIpAddressType.PUBLIC
+            )
+            ip_address = m.IpAddress(type=ip_type, ports=ports)
 
         return m.ContainerGroup(
             location=self._config.location,

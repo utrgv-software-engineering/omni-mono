@@ -143,6 +143,15 @@ def test_build_group_private_ip_when_subnet():
     assert [s.id for s in grp.subnet_ids] == [sid]
 
 
+def test_build_group_subnet_without_ports_joins_vnet_no_ip():
+    # A no-service sandbox still joins the subnet (private IP) so it can reach
+    # private endpoints, but exposes no ports.
+    sid = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Network/virtualNetworks/v/subnets/aci"
+    grp = _manager()._build_group(AciContainerSpec(name="g", image="img", subnet_id=sid))
+    assert grp.ip_address is None
+    assert [s.id for s in grp.subnet_ids] == [sid]
+
+
 # --- Azure Files path mapping ------------------------------------------------ #
 
 
