@@ -226,6 +226,15 @@ class AciManager:
 # Exec channel (one WebSocket == one PTY)
 # --------------------------------------------------------------------------- #
 
+# File bytes per read block. The ACI exec terminal has no output flow control,
+# so a base64 burst can drop bytes — *intermittently*, even at a few KB. We keep
+# each block small (base64 ~2.7 KB) AND verify every block against its true byte
+# length, retrying on any drop. Smaller block ⇒ fewer drops ⇒ fewer retries.
+_READ_CHUNK_BYTES = 2048
+# Per-block retries before giving up — drops are intermittent, so a re-read
+# almost always succeeds.
+_READ_CHUNK_RETRIES = 8
+
 
 def _rand_token() -> str:
     return uuid.uuid4().hex
@@ -320,20 +329,153 @@ class AciExecChannel:
                 return int(mt.group(1))
 
     async def _read_file_b64(self, path: str, tok: str, timeout: float) -> bytes:
-        start = f"__OMNS_{tok}__"
-        end = f"__OMNE_{tok}__"
-        # `echo` emits real newlines, so the payload is delimited by
-        # ``<start>\n<base64>\n<end>``; the echoed command line has the marker
-        # text followed by ``;`` (no newline), so it can't false-match. The
-        # extra bare ``echo`` guarantees a newline between start and end even
-        # when the file is empty (``base64`` of empty emits nothing), so the
-        # regex still matches with an empty payload.
-        await self._ws.send(f"echo {start}; base64 {path} 2>/dev/null; echo; echo {end}\n")
-        pat = re.compile(re.escape(start) + r"\r?\n(.*?)\r?\n" + re.escape(end), re.DOTALL)
-        buf = ""
+        # The ACI exec PTY has no output flow control: a base64 burst beyond a
+        # few KB overruns the terminal buffer and silently drops bytes (verified
+        # — ≤4 KB is exact, ≥16 KB always lossy). So read the file in bounded
+        # blocks whose base64 burst stays in the proven-safe range, looping until
+        # a short/empty block signals EOF (no size query → small reads stay one
+        # round trip). dd ``skip``/``count`` are in block units, so each block is
+        # ``[i*CHUNK, (i+1)*CHUNK)`` and decodes independently (CHUNK is a whole
+        # number of bytes, so per-block base64 padding never corrupts the join).
+        out = bytearray()
+        block = 0
         while True:
-            buf += await self._recv(timeout)
-            mt = pat.search(buf)
-            if mt:
+            chunk = await self._read_chunk_b64(path, block, tok, timeout)
+            out += chunk
+            if len(chunk) < _READ_CHUNK_BYTES:
+                break  # short (or empty) block ⇒ end of file
+            block += 1
+        return bytes(out)
+
+    async def _read_chunk_b64(self, path: str, block: int, tok: str, timeout: float) -> bytes:
+        # Emit the block's base64 AND its true byte length, then verify the
+        # decode matches — a dropped burst yields a bad length / invalid base64
+        # and is retried (a fresh attempt marker keeps stale output from
+        # false-matching). ``dd`` runs twice (once for data, once for the count);
+        # the count is tiny so it never overruns the PTY.
+        dd = f"dd if={path} bs={_READ_CHUNK_BYTES} skip={block} count=1 2>/dev/null"
+        last_err: Exception | None = None
+        for attempt in range(_READ_CHUNK_RETRIES):
+            s = f"__OMNS_{tok}_{block}_{attempt}__"
+            e = f"__OMNE_{tok}_{block}_{attempt}__"
+            z = f"__OMNZ_{tok}_{block}_{attempt}__"
+            # `echo` emits real newlines, so payload is ``<s>\n<base64>\n<e>``;
+            # the echoed command keeps markers on one line, so it can't
+            # false-match. The bare ``echo`` guarantees a newline even for an
+            # empty block. ``<e>\n<len>\n<z>`` carries the verification length.
+            await self._ws.send(f"echo {s}; {dd} | base64; echo; echo {e}; {dd} | wc -c; echo {z}\n")
+            pat = re.compile(
+                re.escape(s) + r"\r?\n(.*?)\r?\n" + re.escape(e) + r"\r?\n\s*(\d+)\s*\r?\n" + re.escape(z),
+                re.DOTALL,
+            )
+            buf = ""
+            while True:
+                buf += await self._recv(timeout)
+                mt = pat.search(buf)
+                if not mt:
+                    continue
+                expected = int(mt.group(2))
                 payload = re.sub(r"\s+", "", mt.group(1))
-                return base64.b64decode(payload) if payload else b""
+                try:
+                    data = base64.b64decode(payload) if payload else b""
+                except ValueError as ex:  # binascii.Error subclasses ValueError
+                    last_err = ex
+                    break
+                if len(data) == expected:
+                    return data
+                last_err = ValueError(f"block {block}: got {len(data)} bytes, expected {expected}")
+                break
+        raise OSError(f"exec read: block {block} failed after {_READ_CHUNK_RETRIES} attempts ({last_err})")
+
+
+# --------------------------------------------------------------------------- #
+# Azure Files fast path (workspace IO without the exec PTY)
+# --------------------------------------------------------------------------- #
+
+
+class AciFilesChannel:
+    """Read/write the workspace Azure Files share directly from the host.
+
+    The launcher holds the storage key and the container mounts the same share
+    at ``mount_path``, so a file written here over the Files REST API appears
+    inside the container instantly — no base64-over-PTY, no size limit, no
+    per-block round trips. Used for paths under the mount; off-mount paths still
+    go through the exec channel.
+    """
+
+    def __init__(self, file_share: AciFileShare) -> None:
+        self._fs = file_share
+        self._svc: object | None = None  # lazy ShareServiceClient (aio)
+
+    def _share(self):
+        if self._svc is None:
+            from azure.storage.fileshare.aio import ShareServiceClient
+
+            self._svc = ShareServiceClient(
+                f"https://{self._fs.account_name}.file.core.windows.net",
+                credential=self._fs.account_key,
+            )
+        return self._svc.get_share_client(self._fs.share_name)  # type: ignore[union-attr]
+
+    def rel_path(self, abs_path: str) -> Optional[str]:
+        """Map a container absolute path to a share-relative path, or None when
+        it's not under the mount (caller falls back to the exec channel)."""
+        mount = self._fs.mount_path.rstrip("/")
+        if abs_path == mount:
+            return ""
+        prefix = mount + "/"
+        if abs_path.startswith(prefix):
+            return abs_path[len(prefix):]
+        return None
+
+    async def _ensure_dirs(self, share, rel_dir: str) -> None:
+        # Azure Files has no ``mkdir -p`` — create each level, ignoring the
+        # 409 when it already exists.
+        if not rel_dir:
+            return
+        cur = ""
+        for part in rel_dir.split("/"):
+            if not part:
+                continue
+            cur = f"{cur}/{part}" if cur else part
+            try:
+                await share.get_directory_client(cur).create_directory()
+            except Exception:
+                pass
+
+    async def write(self, rel_path: str, data: bytes) -> None:
+        share = self._share()
+        parent = "/".join(rel_path.split("/")[:-1])
+        await self._ensure_dirs(share, parent)
+        fc = share.get_file_client(rel_path)
+        await fc.upload_file(data)
+
+    async def read(self, rel_path: str) -> bytes:
+        share = self._share()
+        stream = await share.get_file_client(rel_path).download_file()
+        return await stream.readall()
+
+    async def hydrate(self, root_rel: str, tar_bytes: bytes) -> None:
+        """Extract a tar.gz onto the share under ``root_rel`` (regular files +
+        directories; other member types are skipped)."""
+        import io
+        import tarfile
+
+        share = self._share()
+        with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:*") as tar:
+            for m in tar.getmembers():
+                name = m.name.lstrip("./")
+                if not name:
+                    continue
+                rel = f"{root_rel}/{name}" if root_rel else name
+                if m.isdir():
+                    await self._ensure_dirs(share, rel)
+                elif m.isfile():
+                    await self._ensure_dirs(share, "/".join(rel.split("/")[:-1]))
+                    f = tar.extractfile(m)
+                    await share.get_file_client(rel).upload_file(f.read() if f else b"")
+
+    async def close(self) -> None:
+        if self._svc is not None:
+            await self._svc.close()  # type: ignore[union-attr]
+            self._svc = None

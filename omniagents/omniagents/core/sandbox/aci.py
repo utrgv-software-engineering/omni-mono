@@ -46,6 +46,7 @@ from omniagents.core.sandbox.aci_engine import (
     AciConfig,
     AciContainerSpec,
     AciExecChannel,
+    AciFilesChannel,
     AciFileShare,
     AciManager,
     AciRegistry,
@@ -134,7 +135,13 @@ class AciSandboxSessionState(SandboxSessionState):
 class AciSandboxSession(BaseSandboxSession):
     """Drives one ACI container group via a control-shell exec channel."""
 
-    def __init__(self, manager: AciManager, name: str, state: AciSandboxSessionState) -> None:
+    def __init__(
+        self,
+        manager: AciManager,
+        name: str,
+        state: AciSandboxSessionState,
+        file_share: Optional[AciFileShare] = None,
+    ) -> None:
         self._manager = manager
         self._name = name
         self.state = state
@@ -144,6 +151,10 @@ class AciSandboxSession(BaseSandboxSession):
         self._pty_processes: dict[int, _AciPtyEntry] = {}
         self._reserved_pty_process_ids: set[int] = set()
         self._ip: Optional[str] = None
+        # When the workspace is an Azure Files mount, the launcher writes/reads
+        # it directly over the Files API (fast, no PTY) for paths under the
+        # mount; off-mount paths fall back to the exec channel.
+        self._files: Optional[AciFilesChannel] = AciFilesChannel(file_share) if file_share else None
 
     # -- lifecycle hooks ---------------------------------------------------- #
 
@@ -163,6 +174,8 @@ class AciSandboxSession(BaseSandboxSession):
         if self._chan is not None:
             await self._chan.close()
             self._chan = None
+        if self._files is not None:
+            await self._files.close()
         await self._manager.delete(self._name)
 
     # -- interactive PTYs (one exec WebSocket per terminal) ----------------- #
@@ -306,10 +319,25 @@ class AciSandboxSession(BaseSandboxSession):
         outcome = await chan.run(joined, timeout=timeout or 120.0)
         return ExecResult(stdout=outcome.stdout, stderr=outcome.stderr, exit_code=outcome.exit_code)
 
-    # -- file IO (binary-safe via base64 over exec) ------------------------- #
+    # -- file IO ------------------------------------------------------------ #
+    #
+    # Workspace paths (under the Azure Files mount) go straight over the Files
+    # API — fast and exact, no PTY. Everything else rides the exec channel,
+    # which is binary-safe via base64 (chunked + verified on read, heredoc on
+    # write to survive the PTY's line/output limits).
+
+    def _share_rel(self, abs_path: str) -> Optional[str]:
+        """Share-relative path if ``abs_path`` is under the Files mount, else None."""
+        return self._files.rel_path(abs_path) if self._files else None
 
     async def read(self, path, *, user: str | User | None = None) -> io.IOBase:
         wp = await self._validate_path_access(path)
+        rel = self._share_rel(str(wp))
+        if rel:
+            try:
+                return io.BytesIO(await self._files.read(rel))  # type: ignore[union-attr]
+            except Exception as e:
+                raise FileNotFoundError(f"{wp}: {e}") from e
         res = await self.exec("cat", "--", str(wp), shell=False, user=user)
         if not res.ok():
             raise FileNotFoundError(f"{wp}: {res.stderr.decode('utf-8', 'replace').strip()}")
@@ -320,6 +348,15 @@ class AciSandboxSession(BaseSandboxSession):
         raw = data.read()
         if isinstance(raw, str):
             raw = raw.encode("utf-8")
+
+        # Fast path: workspace files go straight to the Azure Files share. The
+        # container sees them via the mount; chown isn't applicable (the share
+        # maps everything to the mount's uid/gid).
+        rel = self._share_rel(str(wp))
+        if rel:
+            await self._files.write(rel, raw)  # type: ignore[union-attr]
+            return
+
         await self.mkdir(wp.parent, parents=True)
         # Stream the payload as many short heredoc lines, decoded in-container.
         # We drive ``chan.run`` directly rather than ``self.exec``: the latter
@@ -358,6 +395,14 @@ class AciSandboxSession(BaseSandboxSession):
         raw = data.read()
         if isinstance(raw, str):
             raw = raw.encode("utf-8")
+
+        # Fast path: when the workspace root is the Azure Files mount, extract
+        # the tar straight onto the share (no exec, no PTY transfer).
+        root_rel = self._share_rel(root)
+        if root_rel is not None and self._files is not None:
+            await self._files.hydrate(root_rel, raw)
+            return
+
         # mkdir first (small command), then stream the tar via a heredoc and
         # decode|extract — same PTY-line-limit reasoning as ``write``.
         mk = await self.exec("mkdir", "-p", "--", root, shell=False)
@@ -439,7 +484,7 @@ class AciSandboxClient(BaseSandboxClient):
             cpu=options.cpu,
             memory_gb=options.memory_gb,
         )
-        inner = AciSandboxSession(self._manager, name, state)
+        inner = AciSandboxSession(self._manager, name, state, file_share=self._file_share)
         return self._wrap_session(inner, instrumentation=self._instrumentation)
 
     async def delete(self, session: SandboxSession) -> SandboxSession:
@@ -471,7 +516,7 @@ class AciSandboxClient(BaseSandboxClient):
             )
             await self._manager.wait_running(name)
             state.workspace_root_ready = False
-        inner = AciSandboxSession(self._manager, name, state)
+        inner = AciSandboxSession(self._manager, name, state, file_share=self._file_share)
         if alive:
             inner._set_start_state_preserved(True)
         return self._wrap_session(inner, instrumentation=self._instrumentation)

@@ -42,15 +42,24 @@ class FakeExecWs:
             self._frames.append(echo + "\n")
             self._frames.append(f"__OMNIX_{tok}__{self._exit}\n")
             return
-        mb = re.search(r"__OMNS_([0-9a-f]+)__; base64 (\S+)", data)
+        # Chunked, verified file read:
+        #   echo {s}; dd if=PATH bs=N skip=B count=1 … | base64; echo; echo {e};
+        #   dd … | wc -c; echo {z}
+        # Respond with the requested block's base64 + its true length, mirroring
+        # the real protocol so the channel's reassembly/verification is exercised.
+        mb = re.search(r"__OMNS_([0-9a-f]+)_(\d+)_(\d+)__; dd if=(\S+) bs=(\d+) skip=(\d+)", data)
         if mb:
-            tok, path = mb.group(1), mb.group(2)
+            tok, block, attempt = mb.group(1), int(mb.group(2)), int(mb.group(3))
+            path, bs, skip = mb.group(4), int(mb.group(5)), int(mb.group(6))
             which = "o" if path.endswith(f".omni_o_{tok}") else "e"
-            payload = base64.b64encode(self._files[which]).decode()
+            chunk = self._files[which][skip * bs : (skip + 1) * bs]
+            payload = base64.b64encode(chunk).decode()
+            s = f"__OMNS_{tok}_{block}_{attempt}__"
+            e = f"__OMNE_{tok}_{block}_{attempt}__"
+            z = f"__OMNZ_{tok}_{block}_{attempt}__"
             self._frames.append(echo + "\n")
-            # real output: START\n <b64?> \n (extra echo) \n END\n
             body = (payload + "\n") if payload else ""
-            self._frames.append(f"__OMNS_{tok}__\n{body}\n__OMNE_{tok}__\n")
+            self._frames.append(f"{s}\n{body}\n{e}\n{len(chunk)}\n{z}\n")
             return
         # rm cleanup or anything else: no output
         return
@@ -132,3 +141,28 @@ def test_build_group_private_ip_when_subnet():
     assert grp.ip_address is not None
     assert grp.ip_address.type == "Private"
     assert [s.id for s in grp.subnet_ids] == [sid]
+
+
+# --- Azure Files path mapping ------------------------------------------------ #
+
+
+def _files_channel():
+    from omniagents.core.sandbox.aci_engine import AciFileShare, AciFilesChannel
+
+    return AciFilesChannel(
+        AciFileShare(account_name="a", account_key="k", share_name="s", mount_path="/workspace")
+    )
+
+
+def test_rel_path_under_mount():
+    ch = _files_channel()
+    assert ch.rel_path("/workspace/foo/bar.txt") == "foo/bar.txt"
+    assert ch.rel_path("/workspace/top") == "top"
+    assert ch.rel_path("/workspace") == ""  # the mount root itself
+
+
+def test_rel_path_off_mount_is_none():
+    ch = _files_channel()
+    assert ch.rel_path("/tmp/x") is None
+    assert ch.rel_path("/workspaces/x") is None  # near-miss prefix, not under mount
+    assert ch.rel_path("/home/user/.bashrc") is None
