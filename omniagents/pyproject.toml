@@ -189,6 +189,11 @@ include = ["omniagents*"]
 include-package-data = true
 
 [tool.setuptools.package-data]
+# Built-in capability definitions are data-only YAML in a non-package subdir
+# (builtin/capabilities/), so the packages-find scan misses them and they get
+# dropped from the wheel — leaving web/filesystem/artifacts/etc. unavailable at
+# runtime ("capability 'X' not found"). Ship them via the builtin package.
+"omniagents.builtin" = ["capabilities/*.yml"]
 # Ensure the Ink TUI TypeScript sources are included in wheels/sdists
 "omniagents.backends.ink" = [
     "tui/package.json",
