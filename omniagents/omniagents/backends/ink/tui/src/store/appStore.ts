@@ -141,16 +141,46 @@ export interface QueuedMessage {
 
 // Mirror of goal_snapshot_dict on the server (omni-code
 // server_functions/goal.py). Drives the docked goal panel; null means
-// no goal is set on this session (panel renders nothing).
+// no goal is set on this session (panel renders nothing). "paused" is
+// a non-terminal hold state — the periodic tick is off but the goal
+// can be resumed via /goal.resume.
 export interface GoalSnapshot {
   goal: string;
   turn: number;
   max_turns: number;
   tick_interval: number;
   last_reason: string | null;
-  status: "active" | "completed" | "cancelled";
+  status: "active" | "completed" | "cancelled" | "paused";
   started_at: number;
   completion_reason: string | null;
+  // Auditable artifact attached on terminal states (achieved/blocked).
+  // Cited by the agent when calling goal_complete.
+  evidence?: string | null;
+}
+
+// Mirror of wakeup_snapshot_dict on the server (omni-code
+// server_functions/wakeup.py). Drives the docked wakeup panel; null
+// means no schedule is active on this session (panel renders nothing).
+// The server emits a final snapshot=null on cancel/exhaustion, so the
+// panel disappears server-driven — no client-side dismissal needed.
+export interface WakeupSnapshot {
+  message: string;
+  interval_seconds: number;
+  recurring: boolean;
+  end_at: number | null;       // unix timestamp (exclusive bound)
+  end_after: number | null;    // remaining fire count
+  fires: number;
+  started_at: number;
+  status: "active" | "cancelled";
+}
+
+// Session recap (from /recap or the idle auto-recap). Single-slot, prose
+// blob; null means no recap to show. Cleared when the user starts a new
+// run (the recap is a "while you were away" artifact, stale once they
+// re-engage).
+export interface RecapInfo {
+  text: string;
+  timestamp: number;
 }
 
 interface AppState {
@@ -182,6 +212,8 @@ interface AppState {
   workers: WorkerSummary[];
   queuedMessages: QueuedMessage[];
   goal: GoalSnapshot | null;
+  wakeup: WakeupSnapshot | null;
+  recap: RecapInfo | null;
   // IDs of dock items the user has "moved past" — snapshotted from
   // currently-terminal items each time the user submits, so the next
   // run starts with a clean dock instead of dragging the previous
@@ -239,6 +271,8 @@ interface AppState {
     setWorkers: (workers: WorkerSummary[]) => void;
     setQueuedMessages: (items: QueuedMessage[]) => void;
     setGoal: (goal: GoalSnapshot | null) => void;
+    setWakeup: (wakeup: WakeupSnapshot | null) => void;
+    setRecap: (recap: RecapInfo | null) => void;
     // Add every currently-terminal dock item (exited workers / bash
     // jobs, completed tasks) to its dismissed set. Call this at the
     // start of handleSubmit so the next run shows a clean dock.
@@ -276,6 +310,8 @@ export const useAppStore = create<AppState>()(
     dismissedTaskIds: new Set<string>(),
     queuedMessages: [],
     goal: null,
+    wakeup: null,
+    recap: null,
 
     actions: {
       addMessage: (msg) =>
@@ -546,13 +582,26 @@ export const useAppStore = create<AppState>()(
           state.goal = goal;
         }),
 
+      setRecap: (recap) =>
+        set((state) => {
+          state.recap = recap;
+        }),
+      setWakeup: (wakeup) =>
+        set((state) => {
+          state.wakeup = wakeup;
+        }),
+
       dismissDockTerminals: () =>
         set((state) => {
+          // Only auto-dismiss unambiguous successes. Failures
+          // (worker error/cancelled, non-zero or null bash exit) stick
+          // until the user dismisses them so a quietly-failed background
+          // task isn't lost behind the next prompt.
           for (const w of state.workers) {
-            if (w.status !== "running") state.dismissedWorkerIds.add(w.worker_id);
+            if (w.status === "completed") state.dismissedWorkerIds.add(w.worker_id);
           }
           for (const j of state.bashJobs) {
-            if (!j.running) state.dismissedJobIds.add(j.job_id);
+            if (!j.running && j.exit_code === 0) state.dismissedJobIds.add(j.job_id);
           }
           for (const t of state.tasks) {
             if (t.status === "completed") state.dismissedTaskIds.add(t.id);
@@ -601,4 +650,6 @@ export const useDismissedTaskIds = () =>
   useAppStore((s) => s.dismissedTaskIds);
 export const useQueuedMessages = () => useAppStore((s) => s.queuedMessages);
 export const useGoal = () => useAppStore((s) => s.goal);
+export const useWakeup = () => useAppStore((s) => s.wakeup);
+export const useRecap = () => useAppStore((s) => s.recap);
 export const useActions = () => useAppStore((s) => s.actions);

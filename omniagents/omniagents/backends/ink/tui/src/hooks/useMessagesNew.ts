@@ -308,6 +308,12 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
         actions.setPreamble(null);
         actions.setCurrentRunId(params.run_id);
         actions.setThinking(true, null);
+        // A recap is a "while you were away" artifact — stale the moment
+        // the user re-engages. Clear it when a new run starts. (The idle
+        // auto-recap runs via a throwaway Runner.run, not the service run
+        // path, so it never emits run_started here — this only clears on
+        // genuine user activity.)
+        actions.setRecap(null);
 
         // Queue-drainer / background-automation path: the server started
         // the run without a local sendMessage call, so no user message
@@ -617,6 +623,20 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       return { ack: true };
     };
 
+    // Server-pushed wakeup panel refresh. The schedule_wakeup tool /
+    // server_functions.wakeup tick loop fires this on start, every tick,
+    // and on cancel/exhaustion. snapshot null means "no schedule active"
+    // and clears the panel.
+    const handleWakeupUpdate = async (args: Record<string, unknown>) => {
+      const snap = (args as { snapshot?: unknown }).snapshot;
+      if (snap === null || snap === undefined) {
+        actions.setWakeup(null);
+      } else if (typeof snap === "object") {
+        actions.setWakeup(snap as any);
+      }
+      return { ack: true };
+    };
+
     // Agent called the ``notify`` builtin (fire-and-forget heads-up).
     // The tool itself is hidden from the transcript (see isHiddenTool);
     // we push the message into the docked notifications panel. The
@@ -627,6 +647,17 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       const message = (args.message as string) ?? "";
       if (message) {
         actions.addNotification(message);
+      }
+      return { ack: true };
+    };
+
+    // Server-pushed session recap (from /recap or the idle auto-recap).
+    // Single-slot — newest replaces any prior recap. Cleared on the next
+    // run_started.
+    const handleRecap = async (args: Record<string, unknown>) => {
+      const text = (args.text as string) ?? "";
+      if (text) {
+        actions.setRecap({ text, timestamp: Date.now() });
       }
       return { ack: true };
     };
@@ -683,7 +714,9 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     client.registerClientFunction("ui.bash_jobs.update", handleBashJobsUpdate);
     client.registerClientFunction("ui.workers.update", handleWorkersUpdate);
     client.registerClientFunction("ui.goal.update", handleGoalUpdate);
+    client.registerClientFunction("ui.wakeup.update", handleWakeupUpdate);
     client.registerClientFunction("notify", handleNotify);
+    client.registerClientFunction("ui.recap", handleRecap);
     client.registerClientFunction("escalate", handleEscalate);
 
     // Cleanup
@@ -707,7 +740,9 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       client.unregisterClientFunction("ui.bash_jobs.update");
       client.unregisterClientFunction("ui.workers.update");
       client.unregisterClientFunction("ui.goal.update");
+      client.unregisterClientFunction("ui.wakeup.update");
       client.unregisterClientFunction("notify");
+      client.unregisterClientFunction("ui.recap");
       client.unregisterClientFunction("escalate");
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

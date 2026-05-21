@@ -16,6 +16,7 @@ function shortGoal(goal: string, max: number): string {
 // Renders nothing when no goal is set.
 //
 // Active:    ⠋ goal · refactor foo to use bar
+// Paused:    ⏸ goal · refactor foo to use bar · paused
 // Completed: ● goal · refactor foo to use bar · completed
 // Cancelled: ✗ goal · refactor foo to use bar · cancelled
 export const Goal = React.memo(() => {
@@ -24,17 +25,28 @@ export const Goal = React.memo(() => {
 
   const isActive = goal.status === "active";
   const isCompleted = goal.status === "completed";
+  const isPaused = goal.status === "paused";
 
   const glyphColor = isCompleted
     ? TokyoNightTheme.success
-    : goal.status === "cancelled"
-      ? TokyoNightTheme.error
-      : TokyoNightTheme.info;
+    : isPaused
+      ? TokyoNightTheme.warning
+      : goal.status === "cancelled"
+        ? TokyoNightTheme.error
+        : TokyoNightTheme.info;
 
   return (
     <Box>
       <Text color={glyphColor}>
-        {isActive ? <Spinner type="dots" /> : isCompleted ? "●" : "✗"}
+        {isActive ? (
+          <Spinner type="dots" />
+        ) : isCompleted ? (
+          "●"
+        ) : isPaused ? (
+          "⏸"
+        ) : (
+          "✗"
+        )}
       </Text>
       <Text color={TokyoNightTheme.defaultText}> goal </Text>
       <Text color={TokyoNightTheme.toolResult}>· </Text>

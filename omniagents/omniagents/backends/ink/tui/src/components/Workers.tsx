@@ -58,7 +58,10 @@ export const Workers = React.memo(() => {
   const live = allWorkers.filter(
     (w) => w.status === "running" || !dismissed.has(w.worker_id),
   );
-  const workers = thinking ? live : live.filter((w) => w.status === "running");
+  // Idle mode: hide successfully-completed workers (they're already in
+  // the dismissed set after the next submit anyway), keep failures
+  // (error/cancelled) visible until the user dismisses them.
+  const workers = thinking ? live : live.filter((w) => w.status !== "completed");
 
   // 1Hz tick while at least one worker is running so elapsed time updates.
   const [, setNowTick] = useState(0);

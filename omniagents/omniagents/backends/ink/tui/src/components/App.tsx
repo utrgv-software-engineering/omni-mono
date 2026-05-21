@@ -49,6 +49,8 @@ import { Workers } from "./Workers.js";
 import { BashJobs } from "./BashJobs.js";
 import { QueuedMessages } from "./QueuedMessages.js";
 import { Goal } from "./Goal.js";
+import { Wakeup } from "./Wakeup.js";
+import { Recap } from "./Recap.js";
 import { EscalationBanner } from "./EscalationBanner.js";
 import { Notifications } from "./Notifications.js";
 import { resolveEscalation } from "../hooks/escalationBridge.js";
@@ -372,6 +374,30 @@ export const App: React.FC<AppProps> = ({
         // goal.status may not be registered on every agent — silently
         // ignore so the panel just stays empty.
         goalSeedRef.current = null;
+      });
+  }, [client, connected, sessionId, actions]);
+
+  // Seed the wakeup panel on connect / session-switch. Same rationale
+  // as the goal seed above — picks up an active schedule that was
+  // already running before we attached. wakeup.status may not be
+  // registered on every agent; silently ignore so the panel stays empty.
+  const wakeupSeedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!client || !connected || !sessionId) return;
+    if (wakeupSeedRef.current === sessionId) return;
+    wakeupSeedRef.current = sessionId;
+    client
+      .serverCall("wakeup.status", {}, sessionId)
+      .then((res) => {
+        const snap = (res as { snapshot?: unknown } | undefined)?.snapshot;
+        if (snap === null || snap === undefined) {
+          actions.setWakeup(null);
+        } else if (typeof snap === "object") {
+          actions.setWakeup(snap as any);
+        }
+      })
+      .catch(() => {
+        wakeupSeedRef.current = null;
       });
   }, [client, connected, sessionId, actions]);
 
@@ -1068,6 +1094,8 @@ export const App: React.FC<AppProps> = ({
               onMcpApprove={handleMcpApproval}
             >
               <Goal />
+              <Wakeup />
+              <Recap />
               <Tasks />
               <Workers />
               <QueuedMessages />

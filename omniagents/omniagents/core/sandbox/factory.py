@@ -82,9 +82,14 @@ def _missing_extra_message(client_type: str, extra: str) -> str:
 
 
 def _build_unix_local_client(client_kwargs: Dict[str, Any]) -> Any:
-    from agents.sandbox.sandboxes import UnixLocalSandboxClient  # type: ignore
+    # ExtendedUnixLocalSandboxClient adds pty_stream_output / pty_resize on
+    # the session it creates. Drop-in replacement for the SDK class — the
+    # extra capability is invisible to non-streaming callers.
+    from omniagents.core.sandbox.unix_local_extended import (
+        ExtendedUnixLocalSandboxClient,
+    )
 
-    return UnixLocalSandboxClient(**client_kwargs)
+    return ExtendedUnixLocalSandboxClient(**client_kwargs)
 
 
 def _build_unix_local_options(options: Dict[str, Any]) -> Any:
@@ -262,6 +267,20 @@ def _build_cloudflare_options(options: Dict[str, Any]) -> Any:
     return CloudflareSandboxClientOptions(**options)
 
 
+def _build_aci_client(client_kwargs: Dict[str, Any]) -> Any:
+    try:
+        from omniagents.core.sandbox.aci import AciSandboxClient
+    except Exception as e:  # pragma: no cover - exercised when extra missing
+        raise ImportError(_missing_extra_message("aci", "sandbox-aci")) from e
+    return AciSandboxClient(**client_kwargs)
+
+
+def _build_aci_options(options: Dict[str, Any]) -> Any:
+    from omniagents.core.sandbox.aci import AciSandboxClientOptions
+
+    return AciSandboxClientOptions(**options)
+
+
 # Each entry: (client_factory, options_factory_or_None)
 _CLIENT_BUILDERS: Dict[
     str,
@@ -276,6 +295,7 @@ _CLIENT_BUILDERS: Dict[
     "blaxel": (_build_blaxel_client, _build_blaxel_options),
     "vercel": (_build_vercel_client, _build_vercel_options),
     "cloudflare": (_build_cloudflare_client, _build_cloudflare_options),
+    "aci": (_build_aci_client, _build_aci_options),
 }
 
 

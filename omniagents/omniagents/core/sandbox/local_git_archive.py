@@ -50,11 +50,24 @@ Properties:
   ``tar xf``. O(tracked-file bytes), not O(working-tree file count).
 
 What it does *not* include: paths git ignores (``.gitignore``,
-``.git/info/exclude``, global excludes). The agent can still see git
-history via the ``.git`` directory itself — ``git ls-files`` lists
-``.git`` only when explicitly tracked (it isn't), but we ship ``.git``
-as a directory anyway via a separate code path so in-container git
-commands work.
+``.git/info/exclude``, global excludes).
+
+The host's ``.git/`` directory is shipped via a second pass on top of
+the working-tree loop so the container has the user's real branch,
+history, refs, config, and hooks. Without this, ``[ -d .git ]`` in
+the launcher's seed init would be false and the container would fall
+back to ``git init -b main`` — silently losing the host's branch name
+and commit history. Deliberately skipped from ``.git/``:
+
+* ``.git/logs/``      — reflog; unbounded growth, not load-bearing.
+* ``.git/worktrees/`` — host-path pointers that don't resolve inside
+  the container.
+* ``*.lock``          — stale lock files would block in-container
+  git operations.
+
+If the host's ``.git`` is a regular file (linked-worktree gitdir
+pointer) rather than a directory, nothing is shipped from the second
+pass; the container's seed init will create a synthetic baseline.
 
 Residual concern worth naming: walking the working tree (vs. reading
 from ``.git/objects``) means a TOCTOU window exists where a co-tenant
@@ -170,20 +183,19 @@ class LocalGitArchive(BaseEntry):
                 src=src_resolved,
             )
 
-        # Host-mode short-circuit. See PermissiveLocalDir for the full
-        # rationale — same overlap pathology, same in-memory tar cost.
-        # When the agent already sees the host workspace (unix_local) and
-        # the source overlaps the destination, materializing is at best
-        # redundant and at worst recursive.
+        # Host-mode short-circuit: unix_local sessions never relocate files.
+        # The agent operates directly on the host repo, so the source dir is
+        # already "in place" — there is no destination to materialize into.
+        # Skip *everything* (no mkdir, no metadata, no tar) so host mode is
+        # structurally incapable of writing to or relocating any host path
+        # through this entry. Source descriptors still flow through the
+        # manifest as inert records and are surfaced to the agent via
+        # ``agent_workspace_state.get_sources()``.
         from agents.sandbox.sandboxes.unix_local import (  # noqa: PLC0415
             UnixLocalSandboxSession,
         )
 
-        if isinstance(session, UnixLocalSandboxSession) and _host_paths_overlap(
-            src_resolved, Path(dest)
-        ):
-            await session.mkdir(dest, parents=True)
-            await self._apply_metadata(session, dest)
+        if isinstance(session, UnixLocalSandboxSession):
             return []
 
         archive_bytes = await asyncio.to_thread(
@@ -220,28 +232,6 @@ class LocalGitArchive(BaseEntry):
         # each file out of the container; ``GitRepo`` makes the same
         # call, see entries/artifacts.py:692.
         return []
-
-
-def _host_paths_overlap(a: Path, b: Path) -> bool:
-    """Return True if two host paths overlap — equal, or one contains
-    the other. *b* may not exist on disk yet (seed destination created
-    by ``session.mkdir``); ``resolve(strict=False)`` handles that.
-    """
-    a_norm = a.resolve(strict=False)
-    b_norm = b.resolve(strict=False)
-    if a_norm == b_norm:
-        return True
-    try:
-        a_norm.relative_to(b_norm)
-        return True
-    except ValueError:
-        pass
-    try:
-        b_norm.relative_to(a_norm)
-        return True
-    except ValueError:
-        pass
-    return False
 
 
 def _list_git_paths(src: Path, include_untracked: bool) -> list[str]:
@@ -331,7 +321,73 @@ def _build_workspace_tar(src: Path, include_untracked: bool) -> bytes:
             # Other file types (sockets, fifos, devices) are skipped —
             # they wouldn't be in a normal source tree and pose no
             # value for an agent's workspace.
+
+        # Second pass: ship the host's ``.git/`` so the container has
+        # the user's actual branch, history, refs, config, and hooks.
+        # See module docstring for the rationale.
+        _add_git_dir_to_tar(src, tar, seen_dirs)
     return buf.getvalue()
+
+
+_GIT_TOP_LEVEL_SKIP = frozenset({"logs", "worktrees"})
+
+
+def _add_git_dir_to_tar(
+    src: Path, tar: tarfile.TarFile, seen_dirs: set[str]
+) -> None:
+    """Append the host's ``.git/`` directory to *tar*.
+
+    No-op when ``src/.git`` is not a directory (linked-worktree case),
+    so the container's seed init falls back to the synthetic baseline
+    rather than ship an unusable gitdir pointer file.
+
+    Skips ``.git/logs/``, ``.git/worktrees/``, ``*.lock`` files, and
+    symlinks whose target escapes the archive root (same predicate the
+    working-tree loop uses; mirrors the SDK restore validator).
+    """
+    git_dir = src / ".git"
+    if not git_dir.is_dir():
+        return
+
+    for root, dirs, files in os.walk(git_dir, followlinks=False):
+        root_path = Path(root)
+        if root_path == git_dir:
+            dirs[:] = [d for d in dirs if d not in _GIT_TOP_LEVEL_SKIP]
+
+        rel_root = root_path.relative_to(src).as_posix()
+        if rel_root not in seen_dirs:
+            tar.addfile(_dir_tarinfo(rel_root))
+            seen_dirs.add(rel_root)
+
+        for name in files:
+            if name.endswith(".lock"):
+                continue
+            abs_path = root_path / name
+            rel = abs_path.relative_to(src).as_posix()
+            try:
+                st = os.lstat(abs_path)
+            except (FileNotFoundError, OSError):
+                continue
+
+            if stat.S_ISLNK(st.st_mode):
+                target = os.readlink(abs_path)
+                if not _symlink_target_stays_inside(rel, target):
+                    continue
+                info = tarfile.TarInfo(name=rel)
+                info.type = tarfile.SYMTYPE
+                info.linkname = target
+                info.mode = 0o777
+                tar.addfile(info)
+            elif stat.S_ISREG(st.st_mode):
+                try:
+                    with open(abs_path, "rb") as f:
+                        info = tarfile.TarInfo(name=rel)
+                        info.size = st.st_size
+                        info.mode = st.st_mode & 0o777
+                        info.mtime = int(st.st_mtime)
+                        tar.addfile(info, f)
+                except (FileNotFoundError, PermissionError):
+                    continue
 
 
 def _missing_parent_dirs(rel_path: str, seen: set[str]) -> list[str]:

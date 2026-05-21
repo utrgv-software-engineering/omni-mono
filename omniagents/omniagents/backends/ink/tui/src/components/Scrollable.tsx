@@ -71,6 +71,22 @@ export const Scrollable: React.FC<ScrollableProps> = ({
   const previousSizeRef = useRef({ innerHeight: 0, scrollHeight: 0 });
   const pinToBottomRef = useRef(true);
 
+  // Re-entrancy guard for the measurement effect below. The effect calls
+  // setSize/setScrollTop, which re-renders, which re-runs the effect. A
+  // converging layout settles in 1-2 passes; a layout that *won't*
+  // converge — e.g. a bordered, auto-width, wrapping child whose wrap
+  // width flips as the scrollbar lane appears/disappears — would set
+  // state on every pass forever and trip React's "Maximum update depth
+  // exceeded". `loopGuardRef` counts consecutive self-triggered passes
+  // and bails once it exceeds MAX_MEASURE_PASSES, accepting the latest
+  // measurement. `selfUpdateRef` tells genuine external re-renders (new
+  // content, terminal resize, spinner ticks) apart from our own — only
+  // the latter increments the guard; the former resets it so real
+  // content growth is never frozen out by a previously-tripped guard.
+  const loopGuardRef = useRef(0);
+  const selfUpdateRef = useRef(false);
+  const MAX_MEASURE_PASSES = 8;
+
   // This effect needs to run on every render to correctly measure the container
   // and scroll to the bottom if new children are added. The if conditions
   // prevent infinite loops.
@@ -78,6 +94,16 @@ export const Scrollable: React.FC<ScrollableProps> = ({
     if (!ref.current) {
       return;
     }
+    // A render not caused by our own setState is genuine new content or a
+    // resize — reset the oscillation guard so this fresh layout gets a
+    // full budget of measurement passes.
+    const wasSelfUpdate = selfUpdateRef.current;
+    selfUpdateRef.current = false;
+    if (!wasSelfUpdate) {
+      loopGuardRef.current = 0;
+    }
+    const guardTripped = loopGuardRef.current >= MAX_MEASURE_PASSES;
+
     const innerHeight = getInnerHeight(ref.current);
     const scrollHeight = getScrollHeight(ref.current);
 
@@ -90,18 +116,21 @@ export const Scrollable: React.FC<ScrollableProps> = ({
     const contentGrew = scrollHeight - prev.scrollHeight > EPS;
     const containerShrank = prev.innerHeight - innerHeight > EPS;
 
-    if (dimsChanged) {
+    if (dimsChanged && !guardTripped) {
       previousSizeRef.current = { innerHeight, scrollHeight };
       setSize({ innerHeight, scrollHeight });
+      loopGuardRef.current += 1;
+      selfUpdateRef.current = true;
     }
 
     // Only snap to bottom while the user is pinned there. scrollBy
     // clears the pin when the user scrolls up via mouse wheel or
     // shift+arrow so streamed events don't yank them back; once they
     // return to bottom the pin re-engages.
-    if ((contentGrew || containerShrank) && pinToBottomRef.current) {
+    if ((contentGrew || containerShrank) && pinToBottomRef.current && !guardTripped) {
       const bottom = Math.max(0, scrollHeight - innerHeight);
       setScrollTop(bottom);
+      selfUpdateRef.current = true;
     }
   });
 

@@ -4,9 +4,11 @@ import { MessageList, type MessageItem } from './components/MessageList'
 import { Input } from './components/Input'
 import { Tasks, type TaskSummary } from './components/Tasks'
 import { Notifications, type NotificationInfo } from './components/Notifications'
+import { RecapPanel, type RecapInfo } from './components/RecapPanel'
 import { EscalationBanner, type EscalationInfo } from './components/EscalationBanner'
 import { QueuedMessages } from './components/QueuedMessages'
 import { GoalPanel, type GoalSnapshot } from './components/GoalPanel'
+import { WakeupPanel, type WakeupSnapshot } from './components/WakeupPanel'
 import { WorkersPanel, type WorkerSummary, type WorkersKillResult } from './components/WorkersPanel'
 import {
   BashJobs,
@@ -49,6 +51,7 @@ export function App() {
   const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [bashJobs, setBashJobs] = useState<BashJobSummary[]>([])
   const [goalSnapshot, setGoalSnapshot] = useState<GoalSnapshot | null>(null)
+  const [wakeupSnapshot, setWakeupSnapshot] = useState<WakeupSnapshot | null>(null)
   const [workers, setWorkers] = useState<WorkerSummary[]>([])
   // Dismissed IDs for each docked panel. Snapshotted on user submit so
   // the next run starts with a clean dock — items currently in a
@@ -61,6 +64,9 @@ export function App() {
   // Notifications accumulate from the agent's `notify` builtin calls;
   // dismissed manually via the panel buttons.
   const [notifications, setNotifications] = useState<NotificationInfo[]>([])
+  // Most recent session recap (from /recap or idle auto-recap). Single-slot,
+  // newest replaces old, dismissible.
+  const [recap, setRecap] = useState<RecapInfo | null>(null)
   // Pending agent escalation — the next user submit becomes the reply.
   const [escalation, setEscalation] = useState<EscalationInfo | null>(null)
   const [queuedMessages, setQueuedMessages] = useState<import('./rpc/client').QueuedMessage[]>([])
@@ -272,16 +278,26 @@ export function App() {
       setStatusItalic(false)
       refreshSessions()
       // Queue-drainer / background-automation path: the run was started
-      // server-side without a local handleSubmit, so no user message has
-      // been pushed into the transcript yet. Append it from event.prompt
-      // when the last user item doesn't already match (idempotency for
-      // the direct-submit case where the optimistic push already ran).
+      // server-side without a local handleSubmit, so no message has been
+      // pushed into the transcript yet. Append it from event.prompt when
+      // the last item with matching role doesn't already match
+      // (idempotency for the direct-submit case where the optimistic
+      // push already ran). ``prompt_role`` distinguishes user submissions
+      // from assistant-role notification batches (worker/bash-job
+      // completions) — without it, assistant wakeups would render as
+      // user bubbles.
       const promptFromEvent = typeof p?.prompt === 'string' ? p.prompt : ''
+      const promptRoleFromEvent: 'user' | 'assistant' | 'system' =
+        p?.prompt_role === 'assistant' ? 'assistant'
+        : p?.prompt_role === 'system' ? 'system'
+        : 'user'
       if (promptFromEvent) {
         setItems(prev => {
-          const lastUser = [...prev].reverse().find(it => it.type === 'chat' && (it as any).role === 'user') as any
-          if (lastUser && lastUser.content === promptFromEvent) return prev
-          return [...prev, { type: 'chat', role: 'user', content: promptFromEvent } as MessageItem]
+          const lastMatching = [...prev].reverse().find(
+            it => it.type === 'chat' && (it as any).role === promptRoleFromEvent
+          ) as any
+          if (lastMatching && lastMatching.content === promptFromEvent) return prev
+          return [...prev, { type: 'chat', role: promptRoleFromEvent, content: promptFromEvent } as MessageItem]
         })
       }
     })
@@ -453,6 +469,30 @@ export function App() {
         }
         return
       }
+      if (fn === 'ui.wakeup.update') {
+        // schedule_wakeup tick loop snapshot. Fired on start, every tick,
+        // and on cancel/exhaustion. snapshot=null means torn down (panel
+        // clears). The omni-code server_functions/wakeup.py is the source.
+        const request_id = String(p?.request_id ?? '')
+        const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
+        if (eventSessionId && sessionIdRef.current && sessionIdRef.current !== eventSessionId) {
+          if (request_id) {
+            client.clientResponse(request_id, true, { ack: true }).catch(() => {})
+          }
+          return
+        }
+        const args = p?.args || {}
+        const snap = args?.snapshot
+        if (snap === null || snap === undefined) {
+          setWakeupSnapshot(null)
+        } else if (typeof snap === 'object') {
+          setWakeupSnapshot(snap as WakeupSnapshot)
+        }
+        if (request_id) {
+          client.clientResponse(request_id, true, { ack: true }).catch(() => {})
+        }
+        return
+      }
       if (fn === 'ui.bash_jobs.update') {
         const request_id = String(p?.request_id ?? '')
         const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
@@ -516,6 +556,27 @@ export function App() {
               timestamp: Date.now(),
             },
           ])
+        }
+        if (request_id) {
+          client.clientResponse(request_id, true, { ack: true }).catch(() => {})
+        }
+        return
+      }
+      if (fn === 'ui.recap') {
+        // Session recap pushed from the server (/recap or idle auto-recap).
+        // Single-slot panel; newest replaces any prior recap.
+        const request_id = String(p?.request_id ?? '')
+        const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
+        if (eventSessionId && sessionIdRef.current && sessionIdRef.current !== eventSessionId) {
+          if (request_id) {
+            client.clientResponse(request_id, true, { ack: true }).catch(() => {})
+          }
+          return
+        }
+        const args = p?.args || {}
+        const text = typeof args?.text === 'string' ? args.text : ''
+        if (text) {
+          setRecap({ text, timestamp: Date.now() })
         }
         if (request_id) {
           client.clientResponse(request_id, true, { ack: true }).catch(() => {})
@@ -644,22 +705,24 @@ export function App() {
   // moved below handleSubmit
 
   const handleSubmit = useCallback(async (text: string, files?: File[]) => {
-    // Dismiss currently-terminal items from each docked panel so the
-    // next run starts with a clean dock. Items spawned during the new
-    // run aren't in the set yet and stay visible until the user's next
-    // submit. Slash commands count too — a slash is still a user step
-    // boundary.
+    // Dismiss successfully-completed items from each docked panel so the
+    // next run starts with a clean dock. Failures (worker error/cancelled,
+    // non-zero/null bash exit) stick until the user dismisses them so a
+    // quietly-failed background task isn't lost behind the next prompt.
+    // Items spawned during the new run aren't in the set yet and stay
+    // visible until the user's next submit. Slash commands count too — a
+    // slash is still a user step boundary.
     setDismissedWorkerIds(prev => {
       const next = new Set(prev)
       for (const w of workers) {
-        if (w.status !== 'running') next.add(w.worker_id)
+        if (w.status === 'completed') next.add(w.worker_id)
       }
       return next
     })
     setDismissedJobIds(prev => {
       const next = new Set(prev)
       for (const j of bashJobs) {
-        if (!j.running) next.add(j.job_id)
+        if (!j.running && j.exit_code === 0) next.add(j.job_id)
       }
       return next
     })
@@ -1049,6 +1112,17 @@ export function App() {
         } catch {
           setGoalSnapshot(null)
         }
+        // Seed the wakeup panel. Same rationale — picks up a schedule
+        // that was already running before we bound to this session.
+        // wakeup.status may not be registered on every agent; silently
+        // ignore so the panel stays empty.
+        try {
+          const res = await client.serverCall('wakeup.status', {}, id) as { snapshot?: unknown } | undefined
+          const snap = res?.snapshot
+          setWakeupSnapshot(snap && typeof snap === 'object' ? snap as WakeupSnapshot : null)
+        } catch {
+          setWakeupSnapshot(null)
+        }
         // Seed the workers panel. Same rationale — picks up workers that
         // were already running before we bound to this session.
         try {
@@ -1064,6 +1138,7 @@ export function App() {
       setTasks([])
       setBashJobs([])
       setGoalSnapshot(null)
+      setWakeupSnapshot(null)
       setWorkers([])
     }
     // Reset dock dismissal sets on session change so the fresh session
@@ -1186,7 +1261,9 @@ export function App() {
             <BashJobs
               jobs={(() => {
                 const live = bashJobs.filter(j => !(!j.running && dismissedJobIds.has(j.job_id)))
-                return thinking ? live : live.filter(j => j.running)
+                // Idle: keep running jobs and failed exits; only successful
+                // exits (exit_code === 0) drop out of view.
+                return thinking ? live : live.filter(j => j.running || j.exit_code !== 0)
               })()}
               onKill={async (job_id) => {
                 const res = (await client.serverCall('bash_jobs.kill', { job_id }, sessionId)) as unknown as BashJobsKillResult
@@ -1207,10 +1284,13 @@ export function App() {
               }}
             />
             <GoalPanel snapshot={goalSnapshot} />
+            <WakeupPanel snapshot={wakeupSnapshot} />
             <WorkersPanel
               workers={(() => {
                 const live = workers.filter(w => !(w.status !== 'running' && dismissedWorkerIds.has(w.worker_id)))
-                return thinking ? live : live.filter(w => w.status === 'running')
+                // Idle: keep running workers and failures (error/cancelled);
+                // only successful completions drop out of view.
+                return thinking ? live : live.filter(w => w.status !== 'completed')
               })()}
               onKill={async (worker_id) => {
                 const res = (await client.serverCall('workers.kill', { worker_id }, sessionId)) as unknown as WorkersKillResult
@@ -1234,6 +1314,7 @@ export function App() {
               onDismiss={(id) => setNotifications(prev => prev.filter(n => n.id !== id))}
               onDismissAll={() => setNotifications([])}
             />
+            <RecapPanel recap={recap} onDismiss={() => setRecap(null)} />
             <EscalationBanner escalation={escalation} />
             <Input
               disabled={!connected}

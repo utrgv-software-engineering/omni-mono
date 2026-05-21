@@ -227,3 +227,41 @@ def test_tar_extract_failure_raises(tmp_path: Path):
     with pytest.raises(PermissiveLocalDirError) as exc:
         _apply(PermissiveLocalDir(src=src), session)
     assert "tar extract failed" in str(exc.value)
+
+
+# --- unix_local short-circuit ---------------------------------------- #
+
+
+def test_unix_local_session_is_pure_noop(tmp_path: Path):
+    """Under unix_local, apply() must NEVER call into the session.
+
+    The agent operates directly on the host filesystem, so any host write
+    (mkdir, write, exec, metadata) is a relocation we don't want. Source
+    descriptors flow through the manifest as inert records.
+    """
+    from agents.sandbox.sandboxes.unix_local import UnixLocalSandboxSession
+
+    src = tmp_path / "proj"
+    src.mkdir()
+    (src / "a.txt").write_text("a\n")
+    (src / "sub").mkdir()
+    (src / "sub" / "b.txt").write_text("b\n")
+
+    session = MagicMock(spec=UnixLocalSandboxSession)
+    session.mkdir = AsyncMock(return_value=None)
+    session.write = AsyncMock(return_value=None)
+    session.exec = AsyncMock(return_value=MagicMock(ok=lambda: True, stderr=b""))
+
+    # dest is completely unrelated to src — would normally tar+extract.
+    dest = tmp_path / "unrelated_dest"
+    asyncio.run(
+        PermissiveLocalDir(src=src).apply(
+            session=session, dest=dest, base_dir=Path("/")
+        )
+    )
+
+    session.mkdir.assert_not_awaited()
+    session.write.assert_not_awaited()
+    session.exec.assert_not_awaited()
+    # And no directory was created on the host.
+    assert not dest.exists()

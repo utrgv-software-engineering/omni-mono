@@ -386,3 +386,123 @@ def test_tar_extract_failure_surfaces_stderr(repo_with_commit: Path):
     assert session.exec.await_args_list[1].args[0] == "rm"
 
 
+# --- .git directory ships so container has real git state ----------- #
+
+
+def test_git_directory_is_included_in_archive(repo_with_commit: Path):
+    """The host's ``.git/`` ships so in-container ``git`` sees the
+    user's actual branch, history, refs, and config. Without this the
+    launcher's seed init falls back to ``git init -b main`` and the
+    container's git state diverges from the host's.
+    """
+    entry = LocalGitArchive(src=repo_with_commit)
+    session = _make_session()
+    _apply(entry, session)
+
+    _dest, fileobj = session.write.await_args.args
+    fileobj.seek(0)
+    with tarfile.open(fileobj=fileobj, mode="r") as tar:
+        names = set(tar.getnames())
+    assert ".git/HEAD" in names
+    assert ".git/config" in names
+    assert any(n.startswith(".git/refs/heads/") for n in names), names
+    assert any(n.startswith(".git/objects/") for n in names), names
+
+
+def test_git_branch_ref_round_trips(repo_with_commit: Path):
+    """When the host is on a non-default branch, the ref file lands in
+    the archive and ``.git/HEAD`` points at it — the symptom the bug
+    was producing (container stuck on synthetic ``main``).
+    """
+    _git(repo_with_commit, "checkout", "-q", "-b", "feat/my-branch")
+
+    entry = LocalGitArchive(src=repo_with_commit)
+    session = _make_session()
+    _apply(entry, session)
+
+    _dest, fileobj = session.write.await_args.args
+    fileobj.seek(0)
+    with tarfile.open(fileobj=fileobj, mode="r") as tar:
+        names = set(tar.getnames())
+        head_member = tar.extractfile(".git/HEAD")
+        assert head_member is not None
+        head_contents = head_member.read().decode().strip()
+    assert ".git/refs/heads/feat/my-branch" in names
+    assert head_contents == "ref: refs/heads/feat/my-branch"
+
+
+def test_git_logs_and_worktrees_are_skipped(repo_with_commit: Path):
+    """``.git/logs/`` (reflog) and ``.git/worktrees/`` are skipped on
+    purpose — size + cross-machine pointers, neither load-bearing for
+    state restoration.
+    """
+    # Force reflog content by making another commit; force a worktrees
+    # entry by creating an empty subdir (we can't actually `git worktree
+    # add` without polluting the test repo state).
+    _git(repo_with_commit, "commit", "--allow-empty", "-q", "-m", "extra")
+    (repo_with_commit / ".git" / "worktrees").mkdir(exist_ok=True)
+    (repo_with_commit / ".git" / "worktrees" / "stub").mkdir()
+    (repo_with_commit / ".git" / "worktrees" / "stub" / "HEAD").write_text("ref\n")
+
+    entry = LocalGitArchive(src=repo_with_commit)
+    session = _make_session()
+    _apply(entry, session)
+
+    _dest, fileobj = session.write.await_args.args
+    fileobj.seek(0)
+    with tarfile.open(fileobj=fileobj, mode="r") as tar:
+        names = set(tar.getnames())
+    assert not any(n.startswith(".git/logs") for n in names)
+    assert not any(n.startswith(".git/worktrees") for n in names)
+
+
+def test_git_lock_files_are_skipped(repo_with_commit: Path):
+    """Stale ``*.lock`` files in ``.git/`` would block in-container git
+    operations, so we drop them at ship time.
+    """
+    (repo_with_commit / ".git" / "index.lock").write_text("stale\n")
+    (repo_with_commit / ".git" / "refs" / "heads" / "main.lock").write_text("stale\n")
+
+    entry = LocalGitArchive(src=repo_with_commit)
+    session = _make_session()
+    _apply(entry, session)
+
+    _dest, fileobj = session.write.await_args.args
+    fileobj.seek(0)
+    with tarfile.open(fileobj=fileobj, mode="r") as tar:
+        names = set(tar.getnames())
+    assert ".git/index.lock" not in names
+    assert ".git/refs/heads/main.lock" not in names
+
+
+# --- unix_local short-circuit ---------------------------------------- #
+
+
+def test_unix_local_session_is_pure_noop(repo_with_commit: Path, tmp_path: Path):
+    """Under unix_local, apply() must NEVER call into the session.
+
+    The agent operates directly on the host git repo, so any host write
+    (mkdir, write, exec, metadata) is a relocation we don't want. Source
+    descriptors flow through the manifest as inert records.
+    """
+    from agents.sandbox.sandboxes.unix_local import UnixLocalSandboxSession
+
+    session = MagicMock(spec=UnixLocalSandboxSession)
+    session.mkdir = AsyncMock(return_value=None)
+    session.write = AsyncMock(return_value=None)
+    session.exec = AsyncMock(return_value=MagicMock(ok=lambda: True, stderr=b""))
+
+    # dest is completely unrelated to src — would normally tar+extract.
+    dest = tmp_path / "unrelated_dest"
+    asyncio.run(
+        LocalGitArchive(src=repo_with_commit).apply(
+            session=session, dest=dest, base_dir=Path("/")
+        )
+    )
+
+    session.mkdir.assert_not_awaited()
+    session.write.assert_not_awaited()
+    session.exec.assert_not_awaited()
+    assert not dest.exists()
+
+

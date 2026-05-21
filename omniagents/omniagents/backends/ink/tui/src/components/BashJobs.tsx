@@ -74,10 +74,14 @@ export const BashJobs = React.memo(({ focused, onUnfocus, onKill, onTail }: Prop
   const dismissed = useDismissedJobIds();
   const thinking = useThinking();
   // Filter out jobs the user moved past on their last submit; then apply
-  // the idle-mode "running only" rule so the panel quiets down between
-  // runs. Running jobs always stay visible regardless of dismissal.
+  // the idle-mode rule. Running jobs always stay visible regardless of
+  // dismissal; failed exits (non-zero or null exit_code) stick around
+  // until explicitly dismissed so a quietly-failed background job isn't
+  // lost behind the next prompt.
   const live = allJobs.filter((j) => j.running || !dismissed.has(j.job_id));
-  const jobs = thinking ? live : live.filter((j) => j.running);
+  const jobs = thinking
+    ? live
+    : live.filter((j) => j.running || j.exit_code !== 0);
 
   // 1Hz tick while at least one job is running so elapsed time updates.
   const [, setNowTick] = useState(0);
