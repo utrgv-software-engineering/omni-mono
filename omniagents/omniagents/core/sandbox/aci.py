@@ -51,6 +51,20 @@ from omniagents.core.sandbox.aci_engine import (
     AciRegistry,
 )
 
+# Marker for streaming base64 payloads into the container via a heredoc. The
+# exec channel sends each command as a single PTY line, and canonical-mode line
+# discipline silently truncates input past ~4 KB — so a large payload inlined as
+# one ``printf`` arg hangs. Feeding it as many short heredoc lines keeps every
+# line under the limit. base64's alphabet never contains ``_``, so this marker
+# can't collide with the body.
+_B64_HEREDOC_MARKER = "OMNI_B64_HEREDOC_EOF"
+
+
+def _b64_heredoc_lines(raw: bytes) -> str:
+    """base64-encode *raw*, wrapped at 76 cols so each line is a short PTY line."""
+    b64 = base64.b64encode(raw).decode("ascii")
+    return "\n".join(b64[i : i + 76] for i in range(0, len(b64), 76))
+
 
 class _AciPtyEntry:
     """One interactive PTY = one dedicated exec WebSocket, with a background
@@ -306,14 +320,31 @@ class AciSandboxSession(BaseSandboxSession):
         raw = data.read()
         if isinstance(raw, str):
             raw = raw.encode("utf-8")
-        b64 = base64.b64encode(raw).decode("ascii")
         await self.mkdir(wp.parent, parents=True)
-        # Single-line (b64encode emits no newlines), so it survives the control
-        # shell's command wrapper. Large payloads should seed via Azure Files.
-        cmd = f"printf %s {shlex.quote(b64)} | base64 -d > {shlex.quote(str(wp))}"
-        res = await self.exec(cmd, user=user)
-        if not res.ok():
-            raise OSError(f"write {wp} failed: {res.stderr.decode('utf-8', 'replace').strip()}")
+        # Stream the payload as many short heredoc lines, decoded in-container.
+        # We drive ``chan.run`` directly rather than ``self.exec``: the latter
+        # wraps the command in ``sh -lc '…'``, and that extra quoting breaks the
+        # embedded heredoc. The ``__e``/``(exit $__e)`` trailer keeps the heredoc
+        # body off the final token so the control shell's ``{ … ; }`` wrapper
+        # stays valid while still surfacing base64's real exit code.
+        chan = await self._ensure_chan()
+        marker = _B64_HEREDOC_MARKER
+        cmd = (
+            f"base64 -d > {shlex.quote(str(wp))} <<'{marker}'\n"
+            f"{_b64_heredoc_lines(raw)}\n{marker}\n__e=$?\n(exit $__e)"
+        )
+        outcome = await chan.run(cmd, timeout=120.0)
+        if outcome.exit_code != 0:
+            raise OSError(f"write {wp} failed: {outcome.stderr.decode('utf-8', 'replace').strip()}")
+        # Ownership follows the exec user (root) by default; honor an explicit
+        # ``user`` with a follow-up chown (a small command, no payload).
+        if user is not None:
+            uname = user.name if isinstance(user, User) else user
+            res = await self.exec("chown", "--", uname, str(wp), shell=False)
+            if not res.ok():
+                raise OSError(
+                    f"write {wp}: chown -> {uname} failed: {res.stderr.decode('utf-8', 'replace').strip()}"
+                )
 
     async def persist_workspace(self) -> io.IOBase:
         root = str(self.state.manifest.root)
@@ -327,14 +358,20 @@ class AciSandboxSession(BaseSandboxSession):
         raw = data.read()
         if isinstance(raw, str):
             raw = raw.encode("utf-8")
-        b64 = base64.b64encode(raw).decode("ascii")
+        # mkdir first (small command), then stream the tar via a heredoc and
+        # decode|extract — same PTY-line-limit reasoning as ``write``.
+        mk = await self.exec("mkdir", "-p", "--", root, shell=False)
+        if not mk.ok():
+            raise OSError(f"hydrate_workspace mkdir failed: {mk.stderr.decode('utf-8', 'replace').strip()}")
+        chan = await self._ensure_chan()
+        marker = _B64_HEREDOC_MARKER
         cmd = (
-            f"mkdir -p {shlex.quote(root)} && "
-            f"printf %s {shlex.quote(b64)} | base64 -d | tar -xzf - -C {shlex.quote(root)}"
+            f"base64 -d <<'{marker}' | tar -xzf - -C {shlex.quote(root)}\n"
+            f"{_b64_heredoc_lines(raw)}\n{marker}\n__e=$?\n(exit $__e)"
         )
-        res = await self.exec(cmd)
-        if not res.ok():
-            raise OSError(f"hydrate_workspace failed: {res.stderr.decode('utf-8', 'replace').strip()}")
+        outcome = await chan.run(cmd, timeout=120.0)
+        if outcome.exit_code != 0:
+            raise OSError(f"hydrate_workspace failed: {outcome.stderr.decode('utf-8', 'replace').strip()}")
 
 
 # --------------------------------------------------------------------------- #
