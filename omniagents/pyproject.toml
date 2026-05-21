@@ -100,9 +100,9 @@ presidio = [
 platform = [
     "PyJWT[crypto]>=2.8.0",
 ]
-enterprise = ["omniagents[oidc,sqlcipher,presidio,platform]"]
+enterprise = ["omniagents[oidc,presidio,platform]"]
 all = [
-    "omniagents[server,web,studio,studio-server,voice,litellm,oidc,sqlcipher,presidio,platform,session-sqlalchemy,session-redis,session-mongodb,session-encrypted,sandbox-docker,sandbox-e2b,sandbox-modal,sandbox-runloop,sandbox-daytona,sandbox-blaxel,sandbox-vercel,sandbox-cloudflare,sandbox-aci]",
+    "omniagents[server,web,studio,studio-server,voice,litellm,oidc,presidio,platform,session-sqlalchemy,session-redis,session-mongodb,session-encrypted,sandbox-docker,sandbox-e2b,sandbox-modal,sandbox-runloop,sandbox-daytona,sandbox-blaxel,sandbox-vercel,sandbox-cloudflare,sandbox-aci]",
 ]
 dev = [
     "pytest",
