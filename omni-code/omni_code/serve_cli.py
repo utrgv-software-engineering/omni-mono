@@ -26,6 +26,7 @@ import subprocess
 import sys
 import tarfile
 import uuid
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -696,6 +697,272 @@ async def _resolve_service_urls(
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class BroughtUpSession:
+    """Result of bringing a sandbox session up: the live session plus the
+    derived state ``_serve`` and ``perform_switch`` consume afterward."""
+
+    session: Any
+    started_services: List[Tuple[ServiceSpec, int]]
+    service_urls: Dict[str, Any]
+    resume_tier: Optional[str]
+    manifest: Any
+    client_type: Optional[str]
+    container_id: Optional[str]
+
+
+async def bring_up_session(
+    *,
+    profile: ResolvedProfile,
+    sources_parsed: List[Dict[str, Any]],
+    session_id: str,
+    snapshot_dir: Optional[Path],
+    prior_container_id: Optional[str],
+) -> BroughtUpSession:
+    """Build the sandbox client from *profile*, create-or-resume the session,
+    start it, run init + services, and publish the manifest/sources/live-session
+    slots. Raises ``ValueError`` for a bad profile/source; tears the partial
+    session down (re-raising) if init/services fail.
+
+    Shared by first launch (``_serve``) and ``perform_switch`` so both paths
+    bring sessions up identically.
+    """
+    from omni_code.agent_workspace_state import (
+        set_manifest_root,
+        set_sandbox_session,
+        set_sources,
+    )
+
+    client, options, manifest = _build_sandbox(profile, sources=sources_parsed)
+    set_manifest_root(str(manifest.root) if manifest.root is not None else None)
+    set_sources(sources_parsed)
+
+    client_type_raw = (profile.raw.get("client") or {}).get("type")
+    client_type = client_type_raw if isinstance(client_type_raw, str) else None
+    snapshot = _build_snapshot(
+        snapshot_dir=snapshot_dir, session_id=session_id, client_type=client_type
+    )
+
+    session, resume_tier = await _create_or_resume_session(
+        client=client,
+        client_type=client_type,
+        manifest=manifest,
+        options=options,
+        snapshot=snapshot,
+        session_id=session_id,
+        prior_container_id=prior_container_id,
+    )
+
+    # Idle-pause threshold from the profile YAML before start() arms the watcher.
+    inner = getattr(session, "_inner", session)
+    if hasattr(inner, "set_idle_threshold"):
+        raw_idle = profile.raw.get("idle")
+        if isinstance(raw_idle, dict) and "pause_after_seconds" in raw_idle:
+            inner.set_idle_threshold(_parse_idle_threshold(raw_idle))
+
+    await session.start()
+    # Publish so ``sandbox.*`` server functions can reach the inner backend.
+    set_sandbox_session(session)
+
+    started_services: List[Tuple[ServiceSpec, int]] = []
+    try:
+        await _run_init(session, profile.init)
+        started_services = await _start_services(session, profile.services)
+        service_urls = await _resolve_service_urls(session, started_services)
+    except Exception:
+        await teardown_session(session, started_services)
+        raise
+
+    return BroughtUpSession(
+        session=session,
+        started_services=started_services,
+        service_urls=service_urls,
+        resume_tier=resume_tier,
+        manifest=manifest,
+        client_type=client_type,
+        container_id=getattr(session.state, "container_id", None),
+    )
+
+
+def _profile_display_name(explicit_path: Optional[Any], profile: ResolvedProfile) -> str:
+    """Short label for a profile: the file stem when selected by path
+    (``devbox.yml`` → ``devbox``), else the client backend type, else 'default'."""
+    if explicit_path:
+        return Path(str(explicit_path)).stem
+    backend = (profile.raw.get("client") or {}).get("type")
+    return backend if isinstance(backend, str) and backend else "default"
+
+
+def _changed_payload(ctx: Any) -> Dict[str, Any]:
+    return {
+        "profile": ctx.current_profile_name,
+        "backend": ctx.backend,
+        "container_id": ctx.container_id,
+        "services": ctx.service_urls,
+    }
+
+
+async def _broadcast_sandbox_event(
+    service: Any, method: str, payload: Dict[str, Any], session: Any = None
+) -> None:
+    """Best-effort push of a ``ui.sandbox.*`` event to the session's channels.
+    Mirrors ``server_functions.bash_jobs._broadcast_snapshot``."""
+    if service is None:
+        return
+    try:
+        await service.request_client_function(method, payload, session=session, expect_result=False)
+    except Exception as e:  # noqa: BLE001
+        print(f"[sandbox-switch] broadcast {method} failed: {e}", file=sys.stderr)
+
+
+async def _cancel_active_runs(service: Any) -> None:
+    """Cancel any in-flight run so the session swap lands between runs (the
+    in-flight run holds its own per-run SandboxRuntime bound to the old
+    session). Best-effort across every tracked run."""
+    if service is None:
+        return
+    sm = getattr(service, "_session_manager", None)
+    task_map = getattr(sm, "_task_map", None) if sm is not None else None
+    if not isinstance(task_map, dict):
+        return
+    for run_id in list(task_map.keys()):
+        try:
+            await sm.cancel(run_id)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def _attempt_rollback(ctx: Any, prev_profile_path: Optional[str]) -> bool:
+    """Bring the previous profile back up from the (intact) snapshot and re-wire
+    it. Returns True on success. The workspace tar the failed switch's teardown
+    persisted is keyed by session_id, so the rollback rehydrates the same files."""
+    from omni_code.agent_workspace_state import set_orchestrator_spec, set_sandbox_session
+
+    if not prev_profile_path:
+        return False
+    try:
+        prev = resolve_profile(
+            workspace_dir=ctx.workspace_dir,
+            project_id=ctx.project_id,
+            explicit_path=Path(prev_profile_path),
+        )
+        brought = await bring_up_session(
+            profile=prev,
+            sources_parsed=ctx.sources_parsed,
+            session_id=ctx.session_id,
+            snapshot_dir=ctx.snapshot_dir,
+            prior_container_id=None,
+        )
+    except Exception:  # noqa: BLE001
+        return False
+    set_sandbox_session(brought.session)
+    _attach_session_to_spec(ctx.spec, brought.session, prev.raw)
+    set_orchestrator_spec(ctx.spec)
+    _install_session_terminal_manager(ctx.app, brought.session, prev.terminal)
+    ctx.backend = brought.client_type
+    ctx.container_id = brought.container_id
+    ctx.service_urls = brought.service_urls
+    ctx.started_services = brought.started_services
+    return True
+
+
+async def perform_switch(profile_path: str, *, session: Any = None) -> Dict[str, Any]:
+    """Switch the running server's sandbox to the profile at *profile_path*, in
+    place — no process restart. Snapshots the current workspace, brings up the
+    new backend from the same snapshot (rehydrate), re-attaches it to the live
+    agent spec, and broadcasts ``ui.sandbox.changed``. Rolls back to the previous
+    profile if bring-up fails.
+
+    Operator command, invoked by the ``sandbox.switch`` server function (the
+    launcher) — never the LLM. *session* is the calling conversation session,
+    used to route the ``ui.sandbox.*`` broadcasts. Returns
+    ``{ok, profile, backend, container_id, services, reason?}``.
+    """
+    from omni_code.agent_workspace_state import (
+        get_sandbox_session,
+        get_switch_context,
+        set_orchestrator_spec,
+        set_sandbox_session,
+    )
+
+    ctx = get_switch_context()
+    if ctx is None:
+        return {"ok": False, "reason": "no live sandbox server (not running under omni serve)"}
+
+    try:
+        from omniagents.core.agents.service import current_service
+
+        service = current_service()
+    except Exception:
+        service = None
+
+    async with ctx.lock:
+        try:
+            target = resolve_profile(
+                workspace_dir=ctx.workspace_dir,
+                project_id=ctx.project_id,
+                explicit_path=Path(profile_path),
+            )
+        except (FileNotFoundError, ValueError) as e:
+            return {"ok": False, "reason": f"profile: {e}"}
+
+        if ctx.current_profile_path and Path(profile_path) == Path(ctx.current_profile_path):
+            return {"ok": True, **_changed_payload(ctx)}
+
+        target_name = _profile_display_name(profile_path, target)
+        prev_profile_path = ctx.current_profile_path
+
+        # Quiesce before tearing the old sandbox down.
+        await _cancel_active_runs(service)
+
+        ctx.switching = True
+        ctx.last_error = None
+        ctx.ready_event.clear()
+        await _broadcast_sandbox_event(service, "ui.sandbox.switching", {"profile": target_name}, session=session)
+
+        old_session = get_sandbox_session()
+        try:
+            if old_session is not None:
+                await teardown_session(old_session, ctx.started_services)
+            brought = await bring_up_session(
+                profile=target,
+                sources_parsed=ctx.sources_parsed,
+                session_id=ctx.session_id,
+                snapshot_dir=ctx.snapshot_dir,
+                prior_container_id=None,
+            )
+        except Exception as e:  # noqa: BLE001
+            ctx.last_error = str(e)
+            rolled = await _attempt_rollback(ctx, prev_profile_path)
+            ctx.switching = False
+            ctx.ready_event.set()
+            if rolled:
+                await _broadcast_sandbox_event(service, "ui.sandbox.changed", _changed_payload(ctx), session=session)
+                # Old sandbox restored and live — the caller should NOT relaunch.
+                return {"ok": False, "recovered": "rolled_back", "reason": f"switch failed, rolled back: {e}"}
+            await _broadcast_sandbox_event(service, "ui.sandbox.lost", {"reason": str(e)}, session=session)
+            # Sandbox is gone — the caller must cold-relaunch to recover.
+            return {"ok": False, "recovered": "lost", "reason": f"switch failed and rollback failed: {e}"}
+
+        # Re-wire the new session into the live agent.
+        set_sandbox_session(brought.session)
+        _attach_session_to_spec(ctx.spec, brought.session, target.raw)
+        set_orchestrator_spec(ctx.spec)
+        _install_session_terminal_manager(ctx.app, brought.session, target.terminal)
+
+        ctx.current_profile_path = profile_path
+        ctx.current_profile_name = target_name
+        ctx.backend = brought.client_type
+        ctx.container_id = brought.container_id
+        ctx.service_urls = brought.service_urls
+        ctx.started_services = brought.started_services
+        ctx.switching = False
+        ctx.ready_event.set()
+
+        await _broadcast_sandbox_event(service, "ui.sandbox.changed", _changed_payload(ctx), session=session)
+        return {"ok": True, **_changed_payload(ctx)}
+
+
 async def _serve(args: argparse.Namespace) -> int:
     # --- Profile resolution ---
     try:
@@ -721,94 +988,46 @@ async def _serve(args: argparse.Namespace) -> int:
             if not isinstance(parsed, dict):
                 raise ValueError(f"--source must be a JSON object, got {parsed!r}")
             sources_parsed.append(parsed)
-        client, options, manifest = _build_sandbox(profile, sources=sources_parsed)
     except ValueError as e:
         print(json.dumps({"error": f"source: {e}"}), file=sys.stderr)
         return 1
 
-    # Publish the resolved manifest root so server functions can report the
-    # path the agent's tools actually see (e.g. ``/workspace`` for docker)
-    # instead of falling back to the host process cwd. Also publish the
-    # raw source descriptors so ``fs_get_sources`` and the agent's context
-    # factory can advertise every directory in play — under host mode
-    # (``unix_local``) the manifest entries are no-ops, so this is the
-    # *only* way the agent learns about non-primary sources.
-    from omni_code.agent_workspace_state import set_manifest_root, set_sources
-
-    set_manifest_root(str(manifest.root) if manifest.root is not None else None)
-    set_sources(sources_parsed)
-
-    # --- Session id + snapshot config ---
-    # The session id is the stable identifier for this resumable
-    # workspace. Caller-supplied via --session-id (resume case) or
-    # auto-generated here (first start). Emitted in the readiness
-    # payload so the launcher can capture and persist it for next time.
+    # --- Session id ---
+    # The stable identifier for this resumable workspace. Caller-supplied via
+    # --session-id (resume) or auto-generated (first start). Emitted in the
+    # readiness payload so the launcher can capture + persist it for next time.
     session_id = args.session_id or str(uuid.uuid4())
-    client_type_raw = (profile.raw.get("client") or {}).get("type")
-    snapshot = _build_snapshot(
-        snapshot_dir=args.snapshot_dir,
-        session_id=session_id,
-        client_type=client_type_raw if isinstance(client_type_raw, str) else None,
-    )
 
-    # --- Create or resume the session ---
-    # ``resume_tier`` tracks which of three fallback paths the SDK took, so
-    # the launcher can decide whether to surface a "we replaced your container"
-    # notice. Values: ``"reused"`` (warm reattach — original container still
-    # alive, runtime state preserved), ``"rehydrated"`` (container was gone,
-    # snapshot tar restored into a fresh container — files survive, processes
-    # don't), ``"fresh"`` (no container AND no usable snapshot — manifest seed
-    # only), or ``None`` (no prior state to resume from, i.e. first launch).
-    session, resume_tier = await _create_or_resume_session(
-        client=client,
-        client_type=client_type_raw if isinstance(client_type_raw, str) else None,
-        manifest=manifest,
-        options=options,
-        snapshot=snapshot,
-        session_id=session_id,
-        prior_container_id=args.container_id,
-    )
-
-    # Override the session's default idle-pause threshold from the
-    # profile YAML before ``start()`` arms the watcher in ``_after_start``.
-    # Sessions without ``set_idle_threshold`` (non-docker backends) just
-    # don't have the idle surface; nothing to configure.
-    inner = getattr(session, "_inner", session)
-    if hasattr(inner, "set_idle_threshold"):
-        raw_idle = profile.raw.get("idle")
-        if isinstance(raw_idle, dict) and "pause_after_seconds" in raw_idle:
-            inner.set_idle_threshold(_parse_idle_threshold(raw_idle))
-
-    await session.start()
-
-    # Publish the live session so ``sandbox.*`` server functions (pause /
-    # unpause) can reach the inner backend without plumbing the reference
-    # through every call site. Cleared in ``_teardown`` for symmetry.
-    from omni_code.agent_workspace_state import set_sandbox_session
-    set_sandbox_session(session)
-
-    # --- Init (synchronous, fail-hard) ---
-    started_services: List[Tuple[ServiceSpec, int]] = []
+    # --- Bring the session up (shared verbatim with perform_switch) ---
+    # ``resume_tier``: "reused" (warm reattach), "rehydrated" (snapshot restored
+    # into a fresh container), "fresh" (manifest seed only), or None (first
+    # launch). ``bring_up_session`` also publishes the manifest-root, sources,
+    # and live-session slots, and tears the partial session down if init fails.
     try:
-        await _run_init(session, profile.init)
-        started_services = await _start_services(session, profile.services)
-        service_urls = await _resolve_service_urls(session, started_services)
-    except Exception:
-        await _teardown(session, started_services)
-        raise
+        brought = await bring_up_session(
+            profile=profile,
+            sources_parsed=sources_parsed,
+            session_id=session_id,
+            snapshot_dir=args.snapshot_dir,
+            prior_container_id=args.container_id,
+        )
+    except ValueError as e:
+        print(json.dumps({"error": f"source: {e}"}), file=sys.stderr)
+        return 1
+    session = brought.session
+    resume_tier = brought.resume_tier
+    started_services = brought.started_services
+    service_urls = brought.service_urls
 
     # --- Agent spec + session injection ---
     agent_project_path = _resolve_agent_project_path(args.agent_project)
     spec = _load_spec(agent_project_path, args.agent)
     _attach_session_to_spec(spec, session, profile.raw)
 
-    # Publish the now-sandbox-attached orchestrator spec so the worker
-    # spec loader can forward sandbox_use_sandbox_agent / sandbox_run_as
-    # / sandbox_run_config to spawned workers. Worker specs are loaded
-    # fresh from worker/agent.yml per spawn and have none of these set
-    # by default — without forwarding, workers in sandbox mode build a
-    # non-sandbox agent and their filesystem/shell tools target the host
-    # instead of the user's sandbox.
+    # Publish the now-sandbox-attached orchestrator spec so the worker spec
+    # loader can forward sandbox_use_sandbox_agent / sandbox_run_as /
+    # sandbox_run_config to spawned workers (loaded fresh per spawn, otherwise
+    # their filesystem/shell tools would target the host, not the sandbox).
     from omni_code.agent_workspace_state import set_orchestrator_spec
 
     set_orchestrator_spec(spec)
@@ -880,6 +1099,33 @@ async def _serve(args: argparse.Namespace) -> int:
         backend = (profile.raw.get("client") or {}).get("type", "?")
         print(f"Omni Code: {base_url}  (profile backend={backend})", flush=True)
 
+    # --- Publish the switch context ---
+    # Lets the ``sandbox.switch`` server function rebuild + re-attach the
+    # sandbox in place (no process restart). ``ready_event`` starts set: the
+    # sandbox is up. Cleared in the teardown ``finally`` below.
+    from omni_code.agent_workspace_state import SwitchContext, set_switch_context
+
+    switch_ctx = SwitchContext(
+        app=app,
+        spec=spec,
+        session_id=session_id,
+        snapshot_dir=args.snapshot_dir,
+        sources_parsed=sources_parsed,
+        workspace_dir=args.workspace,
+        project_id=args.project,
+        host=args.host,
+        port=port,
+        auth_token=args.auth_token,
+        current_profile_path=str(args.profile) if args.profile else None,
+        current_profile_name=_profile_display_name(args.profile, profile),
+        backend=brought.client_type,
+        container_id=container_id,
+        service_urls=service_urls,
+        started_services=started_services,
+    )
+    switch_ctx.ready_event.set()
+    set_switch_context(switch_ctx)
+
     # --- Run server + clean SIGTERM ---
     def _request_stop(*_: object) -> None:
         server.should_exit = True
@@ -894,6 +1140,19 @@ async def _serve(args: argparse.Namespace) -> int:
     try:
         await server.serve()
     finally:
+        from omni_code.agent_workspace_state import (
+            get_sandbox_session,
+            get_switch_context,
+            set_sandbox_session,
+            set_switch_context,
+        )
+
+        # A switch may have replaced the session/services since startup — tear
+        # down the LIVE ones, not the first-launch locals.
+        live_ctx = get_switch_context()
+        live_session = get_sandbox_session() or session
+        live_services = live_ctx.started_services if live_ctx is not None else started_services
+
         # Stop the auto-recap watcher (cancels its task + detaches listeners).
         recap_scheduler_to_stop = getattr(app.state, "recap_scheduler", None)
         if recap_scheduler_to_stop is not None:
@@ -904,13 +1163,17 @@ async def _serve(args: argparse.Namespace) -> int:
         # Stop the idle watcher first so its tick task is cancelled and
         # any in-flight pause unwinds before teardown does its own
         # defensive unpause + snapshot persist.
-        inner_for_idle_stop = getattr(session, "_inner", session)
+        inner_for_idle_stop = getattr(live_session, "_inner", live_session)
         if hasattr(inner_for_idle_stop, "stop_idle_watcher"):
             try:
                 await inner_for_idle_stop.stop_idle_watcher()
             except Exception:
                 pass
-        await _teardown(session, started_services)
+        await teardown_session(live_session, live_services)
+        # Clear the published process-global slots on exit (teardown_session
+        # deliberately leaves the handle alone so switches can replace it).
+        set_sandbox_session(None)
+        set_switch_context(None)
 
     return 0
 
@@ -956,9 +1219,15 @@ def _install_session_terminal_manager(app: Any, session: Any, terminal: Terminal
     )
 
 
-async def _teardown(
+async def teardown_session(
     session: Any, started_services: List[Tuple[ServiceSpec, int]]
 ) -> None:
+    """Stop services + persist the workspace snapshot + close the session.
+
+    Does NOT clear the published ``set_sandbox_session`` handle — the caller
+    owns that: ``_serve`` nulls it on process exit; ``perform_switch`` replaces
+    it with the new session. Safe to call on a partially-started session.
+    """
     # pty_terminate_all is broad but appropriate — every PTY in this session
     # was started by us.
     if started_services:
@@ -991,8 +1260,6 @@ async def _teardown(
         await session.aclose()
     except Exception:
         pass
-    from omni_code.agent_workspace_state import set_sandbox_session
-    set_sandbox_session(None)
 
 
 # ---------------------------------------------------------------------------

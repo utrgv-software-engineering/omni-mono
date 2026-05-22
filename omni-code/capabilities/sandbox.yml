@@ -1,0 +1,18 @@
+name: sandbox
+tools:
+  - sandbox_get_state
+  - sandbox_wait_until_ready
+instructions: |
+  Observe the sandbox your filesystem/shell tools run in. You CANNOT change
+  it — switching the sandbox profile is an operator action the user triggers in
+  the UI (and a security boundary: you must not move yourself to a less-isolated
+  environment). You can only look and wait:
+
+  - `sandbox_get_state()` — the current profile + backend, and whether a switch
+    is in progress. Check this if you need to know which environment a tool will
+    run in.
+  - `sandbox_wait_until_ready(timeout_seconds=120)` — blocks until an
+    in-progress switch finishes. If the user asks you to do something "after
+    switching to X", call this first: tool calls during a switch fail (the old
+    sandbox is torn down while the new one comes up), so wait for ready, then
+    continue. Returns immediately when nothing is switching.

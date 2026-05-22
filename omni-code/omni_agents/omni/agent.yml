@@ -25,6 +25,7 @@ capabilities:
   - goal          # goal_complete (signals /goal autopilot stop)
   - wakeup        # schedule_wakeup / cancel_wakeup (self-scheduled recurring notifications)
   - human         # notify / escalate (UI-implemented client tools)
+  - sandbox       # sandbox_get_state / sandbox_wait_until_ready (read-only; switching is operator-only)
 
 model_settings:
   reasoning:
@@ -69,6 +70,8 @@ safe_agent_options:
     - cancel_wakeup
     - notify
     - escalate
+    - sandbox_get_state
+    - sandbox_wait_until_ready
 
 server_functions:
   - help
@@ -103,6 +106,10 @@ server_functions:
   - goal.status
   - wakeup.stop
   - wakeup.status
+  - sandbox.pause
+  - sandbox.unpause
+  - sandbox.notify_activity
+  - sandbox.switch
 
 context: build_coding_context
 model_config_resolver: resolve_default_model

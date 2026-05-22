@@ -33,6 +33,8 @@ project.yml relative to their own location.
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 _manifest_root: Optional[str] = None
@@ -101,3 +103,58 @@ def set_sandbox_session(session: Optional[Any]) -> None:
 
 def get_sandbox_session() -> Optional[Any]:
     return _sandbox_session
+
+
+@dataclass
+class SwitchContext:
+    """Everything ``sandbox.switch`` needs to rebuild the SandboxSession for a
+    new profile and re-attach it to the already-running agent server, plus the
+    observable transition state the ``sandbox.get_state`` /
+    ``sandbox.wait_until_ready`` tools report.
+
+    Published once by ``serve_cli._serve`` after the first bring-up. The
+    ``current_*`` / ``started_services`` / ``backend`` / ``container_id`` slots
+    are mutated in place on each successful switch; ``switching`` / ``last_error``
+    / ``ready_event`` track the in-flight transition.
+    """
+
+    # --- wiring to rebuild + re-attach (immutable for the process) ---
+    app: Any
+    spec: Any
+    session_id: str
+    snapshot_dir: Optional[Any]  # pathlib.Path | None
+    sources_parsed: List[Dict[str, Any]]
+    workspace_dir: Any  # pathlib.Path
+    project_id: Optional[str]
+    host: str
+    port: int
+    auth_token: Optional[str]
+
+    # --- current sandbox (mutated per switch) ---
+    current_profile_path: Optional[str] = None
+    current_profile_name: Optional[str] = None
+    backend: Optional[str] = None
+    container_id: Optional[str] = None
+    service_urls: Dict[str, Any] = field(default_factory=dict)
+    started_services: List[Any] = field(default_factory=list)
+
+    # --- transition state ---
+    switching: bool = False
+    last_error: Optional[str] = None
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # Set when the sandbox is ready (idle baseline); cleared while a switch runs.
+    ready_event: asyncio.Event = field(default_factory=asyncio.Event)
+
+
+_switch_context: Optional[SwitchContext] = None
+
+
+def set_switch_context(ctx: Optional["SwitchContext"]) -> None:
+    """Publish (or clear, with ``None``) the live switch context. Cleared in
+    ``_serve``'s teardown so a stale context never outlives the server."""
+    global _switch_context
+    _switch_context = ctx
+
+
+def get_switch_context() -> Optional["SwitchContext"]:
+    return _switch_context

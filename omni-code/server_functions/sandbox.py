@@ -17,7 +17,6 @@ from __future__ import annotations
 from typing import Any
 
 from omniagents import server_function
-from omniagents.core.session import Session
 
 
 def _resolve_inner_session() -> Any:
@@ -67,7 +66,7 @@ _PAUSE_RESULT_SCHEMA = {
     result_schema=_PAUSE_RESULT_SCHEMA,
     strict=True,
 )
-async def sandbox_pause(service: Any, session: Session) -> dict:  # noqa: ARG001
+async def sandbox_pause(service: Any) -> dict:  # noqa: ARG001
     inner = _resolve_inner_session()
     if inner is None:
         return {"ok": False, "supported": False, "reason": "no live sandbox session"}
@@ -103,7 +102,7 @@ async def sandbox_pause(service: Any, session: Session) -> dict:  # noqa: ARG001
     result_schema=_PAUSE_RESULT_SCHEMA,
     strict=True,
 )
-async def sandbox_unpause(service: Any, session: Session) -> dict:  # noqa: ARG001
+async def sandbox_unpause(service: Any) -> dict:  # noqa: ARG001
     inner = _resolve_inner_session()
     if inner is None:
         return {"ok": False, "supported": False, "reason": "no live sandbox session"}
@@ -144,7 +143,7 @@ async def sandbox_unpause(service: Any, session: Session) -> dict:  # noqa: ARG0
     },
     strict=True,
 )
-async def sandbox_notify_activity(service: Any, session: Session) -> dict:  # noqa: ARG001
+async def sandbox_notify_activity(service: Any) -> dict:  # noqa: ARG001
     inner = _resolve_inner_session()
     if inner is None or not hasattr(inner, "notify_activity"):
         return {"ok": False}
@@ -155,4 +154,64 @@ async def sandbox_notify_activity(service: Any, session: Session) -> dict:  # no
     return {"ok": True}
 
 
-SANDBOX_SERVER_FUNCTIONS = [sandbox_pause, sandbox_unpause, sandbox_notify_activity]
+_SWITCH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "profile": {
+            "type": "string",
+            "description": "Path to the target sandbox profile YAML to switch to.",
+        }
+    },
+    "required": ["profile"],
+    "additionalProperties": False,
+}
+
+_SWITCH_RESULT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ok": {"type": "boolean"},
+        "profile": {"type": "string"},
+        "backend": {"type": "string"},
+        "container_id": {"type": "string"},
+        "services": {"type": "object", "additionalProperties": True},
+        "reason": {"type": "string"},
+    },
+    "required": ["ok"],
+    "additionalProperties": True,
+}
+
+
+@server_function(
+    name_override="sandbox.switch",
+    description=(
+        "Switch the running sandbox to a different profile in place, without "
+        "restarting the server: snapshots the current workspace, brings up the "
+        "new backend, rehydrates the workspace, and re-attaches it to the live "
+        "agent. Operator command (the launcher / a slash command) — NOT an "
+        "agent tool: the model cannot move itself to a less-isolated sandbox. "
+        "The conversation and WebSocket stay alive across the switch."
+    ),
+    params_schema=_SWITCH_SCHEMA,
+    result_schema=_SWITCH_RESULT_SCHEMA,
+    # NOT strict: this is an operator RPC (launcher / slash command), never an
+    # LLM tool, so it doesn't need OpenAI strict-schema. Strict would also
+    # reject the `services` map's `additionalProperties: true` and, because the
+    # registrar validates the whole module, would drop sibling sandbox.* server
+    # functions (pause/unpause) too.
+    strict=False,
+)
+async def sandbox_switch(service: Any, profile: str) -> dict:  # noqa: ARG001
+    # Delegate to the serve-side orchestrator, which holds the published
+    # SwitchContext (app/spec/session_id/snapshot_dir/...). Imported lazily so
+    # this module stays importable outside a running ``omni serve``.
+    from omni_code.serve_cli import perform_switch
+
+    return await perform_switch(profile)
+
+
+SANDBOX_SERVER_FUNCTIONS = [
+    sandbox_pause,
+    sandbox_unpause,
+    sandbox_notify_activity,
+    sandbox_switch,
+]
