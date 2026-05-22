@@ -54,8 +54,12 @@ class AciFileShare:
 @dataclass
 class AciRegistry:
     server: str
-    username: str
-    password: str
+    # Admin user/password OR a user-assigned managed-identity resource id. When
+    # `identity` is set the group pulls via that MI (AcrPull) — no shared admin
+    # password — and username/password are ignored.
+    username: Optional[str] = None
+    password: Optional[str] = None
+    identity: Optional[str] = None
 
 
 @dataclass
@@ -130,14 +134,29 @@ class AciManager:
         )
 
         registries = None
+        group_identity = None
         if spec.registry is not None:
-            registries = [
-                m.ImageRegistryCredential(
-                    server=spec.registry.server,
-                    username=spec.registry.username,
-                    password=spec.registry.password,
+            if spec.registry.identity:
+                # Pull via the user-assigned managed identity (AcrPull) — no
+                # admin password. The MI is assigned to the group and named in
+                # the registry credential.
+                registries = [
+                    m.ImageRegistryCredential(
+                        server=spec.registry.server, identity=spec.registry.identity
+                    )
+                ]
+                group_identity = m.ContainerGroupIdentity(
+                    type=m.ResourceIdentityType.USER_ASSIGNED,
+                    user_assigned_identities={spec.registry.identity: {}},
                 )
-            ]
+            else:
+                registries = [
+                    m.ImageRegistryCredential(
+                        server=spec.registry.server,
+                        username=spec.registry.username,
+                        password=spec.registry.password,
+                    )
+                ]
 
         # Group-level IP exposure. Container-level ``ports`` alone don't make a
         # service reachable — the group needs an ``ip_address`` listing them.
@@ -165,6 +184,7 @@ class AciManager:
             os_type=m.OperatingSystemTypes.LINUX,
             restart_policy=m.ContainerGroupRestartPolicy.NEVER,
             image_registry_credentials=registries,
+            identity=group_identity,
             volumes=volumes or None,
             ip_address=ip_address,
             subnet_ids=subnet_ids,

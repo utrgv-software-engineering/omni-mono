@@ -175,3 +175,38 @@ def test_rel_path_off_mount_is_none():
     assert ch.rel_path("/tmp/x") is None
     assert ch.rel_path("/workspaces/x") is None  # near-miss prefix, not under mount
     assert ch.rel_path("/home/user/.bashrc") is None
+
+
+# --- registry: managed-identity pull ---------------------------------------- #
+
+
+def test_build_group_registry_managed_identity():
+    from omniagents.core.sandbox.aci_engine import AciRegistry
+
+    mi = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/mi"
+    grp = _manager()._build_group(
+        AciContainerSpec(
+            name="g", image="acr.azurecr.io/img:latest",
+            registry=AciRegistry(server="acr.azurecr.io", identity=mi),
+        )
+    )
+    cred = grp.image_registry_credentials[0]
+    assert cred.identity == mi
+    assert cred.password is None
+    assert grp.identity is not None
+    assert grp.identity.type == "UserAssigned"
+    assert mi in grp.identity.user_assigned_identities
+
+
+def test_build_group_registry_admin_creds_still_work():
+    from omniagents.core.sandbox.aci_engine import AciRegistry
+
+    grp = _manager()._build_group(
+        AciContainerSpec(
+            name="g", image="acr.azurecr.io/img:latest",
+            registry=AciRegistry(server="acr.azurecr.io", username="u", password="p"),
+        )
+    )
+    cred = grp.image_registry_credentials[0]
+    assert cred.username == "u" and cred.password == "p"
+    assert grp.identity is None
