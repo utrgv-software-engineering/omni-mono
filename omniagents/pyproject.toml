@@ -105,6 +105,27 @@ enterprise = ["omniagents[oidc,presidio,platform]"]
 all = [
     "omniagents[server,web,studio,studio-server,voice,litellm,oidc,presidio,platform,session-sqlalchemy,session-redis,session-mongodb,session-encrypted,sandbox-docker,sandbox-e2b,sandbox-modal,sandbox-runloop,sandbox-daytona,sandbox-blaxel,sandbox-vercel,sandbox-cloudflare,sandbox-aci]",
 ]
+training = [
+    # GRPO/SFT agent fine-tuning (omniagents.training).
+    # transformers>=5.0.0 is required for TRL's tool-using GRPO rollout (which
+    # produces the tool_mask the ECHO world-model loss relies on); jmespath is
+    # required by TRL to parse tool-call responses. trl is pinned to 0.28-0.29:
+    # 0.27 is incompatible with transformers 5 (import_utils change), and this
+    # range is where EchoGRPOTrainer's hooks into TRL internals are verified.
+    "torch>=2.0",
+    "transformers>=5.0.0",
+    "trl>=0.28,<0.30",
+    "accelerate>=1.4.0",
+    "datasets>=2.0",
+    "jmespath>=1.0",
+    "peft>=0.12",            # LoRA / QLoRA (laptop/consumer-GPU training)
+    "bitsandbytes>=0.43",    # 4-bit base for QLoRA (CUDA only)
+    # vLLM (the generation throughput lever) is intentionally NOT pinned here:
+    # it hard-pins torch to a specific version, so the right vLLM depends on
+    # your torch/transformers/CUDA stack. For transformers 5.x install
+    # `vllm==0.21.0` (pulls torch 2.11) and run with VLLM_PLUGINS="". See
+    # examples/echo_rl/README.md ("Faster training with vLLM").
+]
 dev = [
     "pytest",
     "pytest-asyncio",

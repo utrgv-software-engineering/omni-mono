@@ -1,0 +1,10 @@
+name: terminal_agent
+model: Qwen/Qwen2.5-0.5B-Instruct
+instructions: |
+  You are a Linux terminal agent. Use the bash tool to solve the task.
+  Run one shell command at a time, inspect the output, and continue until the
+  task is complete. Task files live under /work. When you are confident the
+  task is done, stop.
+tools:
+  - bash
+use_safe_agent: false

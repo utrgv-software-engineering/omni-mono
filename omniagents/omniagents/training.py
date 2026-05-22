@@ -102,6 +102,11 @@ __all__ = [
     "GRPOTrainingResult",
     "train_grpo",
     "GRPOTrainer",
+    "EchoGRPOTrainer",
+    # Sandbox training environments
+    "SandboxTrainingEnvironment",
+    "make_environment_factory",
+    "sandbox_verifier_reward",
     # Curriculum Learning
     "CurriculumStage",
     "StageResult",
@@ -115,3 +120,18 @@ __all__ = [
     "export_traces_for_sft",
     "eval_results_to_sft_dataset",
 ]
+
+
+def __getattr__(name):
+    # Lazily forward EchoGRPOTrainer (subclasses trl.GRPOTrainer) so importing
+    # omniagents.training does not require `trl` to be installed.
+    if name in (
+        "EchoGRPOTrainer",
+        "SandboxTrainingEnvironment",
+        "make_environment_factory",
+        "sandbox_verifier_reward",
+    ):
+        import omniagents.core.training as _t
+
+        return getattr(_t, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

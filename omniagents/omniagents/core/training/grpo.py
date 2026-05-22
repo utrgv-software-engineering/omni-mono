@@ -231,8 +231,41 @@ class GRPOTrainingConfig:
     gradient_checkpointing: bool = False  # Trade compute for memory (useful for 8GB VRAM)
     torch_dtype: str = "bfloat16"  # Model dtype: "bfloat16", "float16", "float32"
 
+    # LoRA / QLoRA (parameter-efficient fine-tuning). Trains small adapters
+    # instead of the full model, slashing memory so a capable model fits on a
+    # laptop/consumer GPU. Works with ECHO (the aux loss trains the same
+    # adapters). load_in_4bit (QLoRA) needs a CUDA GPU + bitsandbytes.
+    use_lora: bool = False
+    lora_r: int = 16
+    lora_alpha: int = 32
+    lora_dropout: float = 0.05
+    lora_target_modules: Optional[List[str]] = None  # None -> all linear layers
+    load_in_4bit: bool = False  # 4-bit base (QLoRA); implies use_lora
+
     # Tool-related parameters
     max_tool_calling_iterations: int = 5
+
+    # ECHO auxiliary world-modeling loss (Environment Cross-entropy Hybrid Objective)
+    # When > 0, adds an on-policy cross-entropy loss over tool-result tokens (the
+    # "environment" tokens the GRPO loss ignores), teaching the policy a world
+    # model of its tools "for free". 0.0 = vanilla GRPO. Requires the agent to
+    # have tools. See omniagents.core.training.echo.EchoGRPOTrainer.
+    world_model_coeff: float = 0.0
+    # Normalization for the auxiliary loss: "selected_tokens" (token-mean),
+    # "sequence_mean", or "seq_mean_token_sum_norm".
+    world_loss_normalization: str = "selected_tokens"
+
+    # vLLM-accelerated generation (the throughput lever for RL). "colocate"
+    # shares the GPU with training (single-GPU); "server" talks to a separate
+    # vLLM server. Big speedup at scale; needs vllm installed + a CUDA GPU.
+    use_vllm: bool = False
+    vllm_mode: str = "colocate"
+    vllm_gpu_memory_utilization: float = 0.3
+    vllm_max_model_len: Optional[int] = None
+    vllm_tensor_parallel_size: int = 1
+
+    # Reproducibility (for matched baseline-vs-ECHO runs across seeds)
+    seed: int = 0
 
     # Output
     output_dir: str = "./grpo_output"
@@ -273,9 +306,31 @@ class GRPOTrainingConfig:
             temperature=self.temperature,
             mask_truncated_completions=self.mask_truncated_completions,
             gradient_checkpointing=self.gradient_checkpointing,
+            seed=self.seed,
+            use_vllm=self.use_vllm,
+            vllm_mode=self.vllm_mode,
+            vllm_gpu_memory_utilization=self.vllm_gpu_memory_utilization,
+            vllm_max_model_length=self.vllm_max_model_len,
+            vllm_tensor_parallel_size=self.vllm_tensor_parallel_size,
             save_strategy=self.save_strategy,
             logging_steps=self.logging_steps,
             report_to=self.report_to,
+        )
+
+    def build_peft_config(self):
+        """Return a peft LoraConfig if LoRA is enabled, else None."""
+        if not (self.use_lora or self.load_in_4bit):
+            return None
+        try:
+            from peft import LoraConfig
+        except ImportError:
+            raise ImportError("LoRA training requires peft. Install with: pip install peft")
+        return LoraConfig(
+            r=self.lora_r,
+            lora_alpha=self.lora_alpha,
+            lora_dropout=self.lora_dropout,
+            target_modules=self.lora_target_modules or "all-linear",
+            task_type="CAUSAL_LM",
         )
 
 
@@ -721,6 +776,9 @@ class GRPOTrainer:
         reward_weights: Optional[List[float]] = None,
         torch_dtype: str = "bfloat16",
         device_map: str = "auto",
+        environment_factory: Optional[Callable[[], Any]] = None,
+        extra_reward_funcs: Optional[List[Callable]] = None,
+        rollout_func: Optional[Callable] = None,
     ):
         """Initialize the GRPO trainer.
 
@@ -731,6 +789,14 @@ class GRPOTrainer:
             reward_weights: Optional weights for combining multiple rewards
             torch_dtype: Torch dtype for model ("bfloat16", "float16", "float32")
             device_map: Device map for model loading ("auto", "cpu", "cuda")
+            environment_factory: Optional zero-arg factory returning a per-rollout
+                training environment (TRL ``environment_factory``). When set, the
+                environment's public methods become the agent's tools (the agent's
+                own tools are not forwarded to TRL), enabling sandboxed multi-turn
+                rollouts. See ``omniagents.core.training.sandbox_env``.
+            extra_reward_funcs: Optional TRL-style reward functions to use in
+                addition to (or instead of) ``reward_measures`` -- e.g. a
+                verifier reward that inspects each rollout's environment.
         """
         self.agent = agent
         self.reward_measures = reward_measures
@@ -738,6 +804,12 @@ class GRPOTrainer:
         self.reward_weights = reward_weights
         self.torch_dtype = torch_dtype
         self.device_map = device_map
+        self.environment_factory = environment_factory
+        self.extra_reward_funcs = list(extra_reward_funcs or [])
+        # Optional fully-custom rollout (TRL `rollout_func`). For most cases the
+        # recommended fast path is use_vllm=True on the environment_factory path,
+        # where TRL drives vLLM generation + weight sync for you.
+        self.rollout_func = rollout_func
 
         # Extract model name from agent
         self.model_name = _extract_hf_model_name(agent.model)
@@ -773,11 +845,28 @@ class GRPOTrainer:
 
         print(f"Loading model: {self.model_name}...")
         self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        self._model = AutoModelForCausalLM.from_pretrained(
-            self.model_name,
-            torch_dtype=dtype,
-            device_map=self.device_map,
-        )
+
+        model_kwargs = {"torch_dtype": dtype, "device_map": self.device_map}
+        if self.config.load_in_4bit:
+            # QLoRA: load the base in 4-bit (CUDA + bitsandbytes required).
+            from transformers import BitsAndBytesConfig
+
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=dtype,
+                bnb_4bit_use_double_quant=True,
+            )
+            print("  Loading base in 4-bit (QLoRA)")
+        self._model = AutoModelForCausalLM.from_pretrained(self.model_name, **model_kwargs)
+
+        if self.config.load_in_4bit:
+            from peft import prepare_model_for_kbit_training
+
+            self._model = prepare_model_for_kbit_training(
+                self._model,
+                use_gradient_checkpointing=self.config.gradient_checkpointing,
+            )
 
         if self._tokenizer.pad_token is None:
             self._tokenizer.pad_token = self._tokenizer.eos_token
@@ -786,8 +875,11 @@ class GRPOTrainer:
         self._tokenizer.padding_side = "left"
 
         # Set response_schema for models that TRL doesn't natively support
-        # This prevents TRL from calling add_response_schema() which only supports Qwen3
-        if self.tools and not getattr(self._tokenizer, "response_schema", None):
+        # This prevents TRL from calling add_response_schema() which only supports Qwen3.
+        # Tools may come from the agent OR from a training environment (whose
+        # methods become tools), so cover both cases.
+        tool_using = bool(self.tools) or self.environment_factory is not None
+        if tool_using and not getattr(self._tokenizer, "response_schema", None):
             model_lower = self.model_name.lower()
             if "qwen2.5" in model_lower or "qwen2-" in model_lower:
                 print(f"Setting Qwen2.5 response schema for tool parsing...")
@@ -802,13 +894,12 @@ class GRPOTrainer:
             print(f"Agent instructions: {self.instructions[:100]}...")
 
     def _build_reward_fn(self):
-        """Build the combined reward function from measures."""
-        reward_adapters = []
-        for measure in self.reward_measures:
-            adapter = measure_to_reward(measure)
-            reward_adapters.append(adapter)
+        """Build the combined reward function from measures (None if no measures)."""
+        reward_adapters = [measure_to_reward(m) for m in self.reward_measures]
 
-        if len(reward_adapters) == 1:
+        if not reward_adapters:
+            self._reward_fn = None
+        elif len(reward_adapters) == 1:
             self._reward_fn = reward_adapters[0]
         else:
             self._reward_fn = combine_rewards(
@@ -839,8 +930,12 @@ class GRPOTrainer:
         if self._model is None:
             self._load_model()
 
-        if self._reward_fn is None:
-            self._build_reward_fn()
+        self._build_reward_fn()
+        reward_funcs = ([self._reward_fn] if self._reward_fn is not None else []) + self.extra_reward_funcs
+        if not reward_funcs:
+            raise ValueError(
+                "No reward functions: provide reward_measures and/or extra_reward_funcs."
+            )
 
         # Convert suite to HF dataset with conversational format
         print(f"Preparing dataset from {len(suite)} cases...")
@@ -866,14 +961,51 @@ class GRPOTrainer:
             "args": trl_config,
             "train_dataset": train_dataset,
             "processing_class": self._tokenizer,
-            "reward_funcs": self._reward_fn,
+            "reward_funcs": reward_funcs,
         }
 
-        # Add tools if the agent has them
-        if self.tools:
-            trainer_kwargs["tools"] = self.tools
+        # LoRA / QLoRA: TRL wraps the model with PEFT adapters; only the adapters
+        # train (compatible with ECHO). Slashes memory for laptop/consumer GPUs.
+        peft_config = self.config.build_peft_config()
+        if peft_config is not None:
+            trainer_kwargs["peft_config"] = peft_config
+            print(f"  LoRA: r={self.config.lora_r}, alpha={self.config.lora_alpha}"
+                  f"{', 4-bit base (QLoRA)' if self.config.load_in_4bit else ''}")
 
-        self._trl_trainer = TRLGRPOTrainer(**trainer_kwargs)
+        # Tools come from the training environment when one is provided (its
+        # public methods become the tools); otherwise from the agent.
+        if self.rollout_func is not None:
+            trainer_kwargs["rollout_func"] = self.rollout_func
+            print("  Rollout: custom rollout_func")
+        elif self.environment_factory is not None:
+            trainer_kwargs["environment_factory"] = self.environment_factory
+            print("  Training environment: per-rollout sandbox (tools from environment)")
+        elif self.tools:
+            trainer_kwargs["tools"] = self.tools
+        if self.config.use_vllm:
+            print(f"  vLLM: {self.config.vllm_mode} (gpu_mem_util={self.config.vllm_gpu_memory_utilization}, "
+                  f"max_model_len={self.config.vllm_max_model_len})")
+
+        # Enable the ECHO auxiliary world-modeling loss when configured.
+        if self.config.world_model_coeff > 0:
+            if not self.tools and self.environment_factory is None:
+                raise ValueError(
+                    "ECHO world-model loss (world_model_coeff > 0) requires tools: it "
+                    "predicts tool-result tokens, of which there are none without tools. "
+                    "Add tools to the agent, supply an environment_factory, or set "
+                    "world_model_coeff=0.0."
+                )
+            from .echo import EchoGRPOTrainer
+
+            trainer_kwargs["world_model_coeff"] = self.config.world_model_coeff
+            trainer_kwargs["world_loss_normalization"] = self.config.world_loss_normalization
+            print(
+                f"  ECHO world-model loss: coeff={self.config.world_model_coeff}, "
+                f"normalization={self.config.world_loss_normalization}"
+            )
+            self._trl_trainer = EchoGRPOTrainer(**trainer_kwargs)
+        else:
+            self._trl_trainer = TRLGRPOTrainer(**trainer_kwargs)
 
         # Train!
         print("\nStarting GRPO training...\n")
@@ -919,6 +1051,9 @@ def train_grpo(
     reward_weights: Optional[List[float]] = None,
     torch_dtype: Optional[str] = None,  # Defaults to config.torch_dtype
     device_map: str = "auto",
+    environment_factory: Optional[Callable[[], Any]] = None,
+    extra_reward_funcs: Optional[List[Callable]] = None,
+    rollout_func: Optional[Callable] = None,
 ) -> GRPOTrainingResult:
     """Train an agent with GRPO using omniagents evaluation.
 
@@ -1001,6 +1136,9 @@ def train_grpo(
         reward_weights=reward_weights,
         torch_dtype=effective_dtype,
         device_map=device_map,
+        environment_factory=environment_factory,
+        extra_reward_funcs=extra_reward_funcs,
+        rollout_func=rollout_func,
     )
 
     return trainer.train(suite)

@@ -1,0 +1,30 @@
+# Bundled terminal tasks — system operations.
+- id: env_var_to_file
+  prompt: >
+    Read the environment variable TASK_TOKEN and write its value to
+    /work/token.txt.
+  image: python:3.11-slim
+  setup:
+    - "mkdir -p /work && export TASK_TOKEN=swordfish && echo 'placeholder' > /work/seed"
+  verifier: 'test -f /work/token.txt'
+  tags: [system-ops]
+
+- id: find_and_count
+  prompt: >
+    Count how many files (recursively, not directories) exist under /work/tree
+    and write the count to /work/answer.txt.
+  image: python:3.11-slim
+  setup:
+    - "mkdir -p /work/tree/a/b && touch /work/tree/x /work/tree/a/y /work/tree/a/b/z"
+  verifier: 'test "$(cat /work/answer.txt)" = "3"'
+  tags: [system-ops]
+
+- id: archive_dir
+  prompt: >
+    Create a gzipped tar archive at /work/out.tar.gz containing the directory
+    /work/src (so that `tar tzf /work/out.tar.gz` lists its contents).
+  image: python:3.11-slim
+  setup:
+    - "mkdir -p /work/src && echo hi > /work/src/a.txt && echo yo > /work/src/b.txt"
+  verifier: 'tar tzf /work/out.tar.gz >/dev/null 2>&1'
+  tags: [system-ops]

@@ -1,0 +1,9 @@
+name: echo_rl
+paths:
+  agents: agents
+  tools: tools
+  environments: environments
+  evaluations: evaluations
+  target: target
+agents:
+  entrypoint: terminal_agent

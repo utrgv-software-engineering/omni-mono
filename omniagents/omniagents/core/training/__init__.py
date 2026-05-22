@@ -98,6 +98,11 @@ __all__ = [
     "GRPOTrainingResult",
     "train_grpo",
     "GRPOTrainer",
+    "EchoGRPOTrainer",
+    # Sandbox training environments
+    "SandboxTrainingEnvironment",
+    "make_environment_factory",
+    "sandbox_verifier_reward",
     # Curriculum Learning
     "CurriculumStage",
     "StageResult",
@@ -111,3 +116,17 @@ __all__ = [
     "export_traces_for_sft",
     "eval_results_to_sft_dataset",
 ]
+
+
+def __getattr__(name):
+    # Lazily expose the ECHO trainer so importing this package does not require
+    # `trl` to be installed (EchoGRPOTrainer subclasses trl.GRPOTrainer).
+    if name == "EchoGRPOTrainer":
+        from .echo import EchoGRPOTrainer
+
+        return EchoGRPOTrainer
+    if name in ("SandboxTrainingEnvironment", "make_environment_factory", "sandbox_verifier_reward"):
+        from . import sandbox_env
+
+        return getattr(sandbox_env, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
