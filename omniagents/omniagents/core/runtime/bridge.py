@@ -223,11 +223,14 @@ async def stream_agent(
     server-to-client notifications.
     """
 
-    # Install the host workspace contextvar for this run. Sandbox runs
-    # override this during SDK setup via WorkspaceBindingCapability.bind;
-    # host runs keep the HostWorkspace so omniagents.workspace.* operations
-    # resolve relative to the agent's configured workspace_root rather than
-    # the server process's cwd.
+    # Publish the run's requested cwd (the agent's navigable working dir) and,
+    # for HOST runs, install the HostWorkspace rooted there so
+    # omniagents.workspace.* resolves relative to it. Sandbox runs do NOT get
+    # a HostWorkspace here: their cwd is a *container* path, and
+    # WorkspaceBindingCapability.bind installs the SandboxWorkspace (reading
+    # the same requested cwd via the contextvar, clamped to the manifest
+    # root). Building a HostWorkspace from a container path would mkdir it on
+    # the host — exactly the leak we're avoiding.
     workspace_token = None
     try:
         ws_root: Optional[str] = None
@@ -239,7 +242,13 @@ async def stream_agent(
             v = getattr(context, "workspace_root", None)
             if isinstance(v, str) and v.strip():
                 ws_root = v
-        if ws_root:
+
+        from omniagents.workspace import set_requested_cwd as _set_requested_cwd
+
+        _set_requested_cwd(ws_root)
+
+        is_sandbox_run = sandbox_run_config is not None
+        if ws_root and not is_sandbox_run:
             from omniagents.workspace import HostWorkspace as _HostWorkspace
             from omniagents.workspace import set_workspace as _set_workspace
 

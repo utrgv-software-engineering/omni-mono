@@ -26,15 +26,25 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
-import pty
 import secrets
 import shlex
 import struct
-import termios
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Optional, Protocol
 
-import fcntl
+# pty/termios/fcntl are Unix-only. Guard the import so this module loads on
+# Windows: only HostPtyBackend needs them, and it raises a clear error there.
+# SessionPtyBackend (docker/unix_local/etc.) and the protocol types remain
+# usable cross-platform.
+try:
+    import fcntl
+    import pty
+    import termios
+
+    _HOST_PTY_AVAILABLE = True
+except ImportError:  # pragma: no cover - Windows
+    fcntl = pty = termios = None  # type: ignore[assignment]
+    _HOST_PTY_AVAILABLE = False
 
 from omniagents.core.sandbox.pty_stream import PtyStreamingSession
 
@@ -121,6 +131,11 @@ class HostPtyBackend:
         rows: int,
         user: Optional[str] = None,
     ) -> _HostHandle:
+        if not _HOST_PTY_AVAILABLE:
+            raise PtyOpenError(
+                "Host interactive terminals are not supported on this platform "
+                "(no pty/termios). Use a sandbox profile (docker) for terminals here."
+            )
         _ = user  # not enforceable from a host-backed PTY without setuid setup
         cols = max(10, int(cols))
         rows = max(5, int(rows))

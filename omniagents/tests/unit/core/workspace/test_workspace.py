@@ -110,6 +110,110 @@ async def test_exists_returns_false_on_escape(host_ws):
     assert await host_ws.exists("/etc/passwd") is False
 
 
+# -- Confinement (the "host" no-sandbox target) ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_confine_false_allows_out_of_root_absolute(tmp_path: Path):
+    """With confine=False (the host target), absolute paths outside root no
+    longer raise — the agent may reach anywhere the process can."""
+    unconfined = HostWorkspace(root=str(tmp_path), confine=False)
+    # No raise, returns the resolved absolute path verbatim.
+    assert unconfined.resolve("/etc/hostname") == "/etc/hostname"
+    assert unconfined.resolve("../../outside.txt").endswith("outside.txt")
+
+
+@pytest.mark.asyncio
+async def test_confine_false_anchors_relative_at_root(tmp_path: Path):
+    """confine=False still resolves *relative* paths under root (cwd
+    ergonomics unchanged); only the escape rejection is lifted."""
+    unconfined = HostWorkspace(root=str(tmp_path), confine=False)
+    resolved = unconfined.resolve("sub/file.txt")
+    assert resolved == str((tmp_path / "sub" / "file.txt").resolve())
+
+
+@pytest.mark.asyncio
+async def test_confine_true_is_default_and_still_rejects(tmp_path: Path):
+    """Default stays confined — existing callers are unaffected."""
+    confined = HostWorkspace(root=str(tmp_path))
+    assert confined.confine is True
+    with pytest.raises(WorkspaceEscapeError):
+        confined.resolve("/etc/passwd")
+
+
+def test_set_default_workspace_used_when_no_contextvar(tmp_path: Path):
+    """set_default_workspace installs a process-wide fallback that
+    current_workspace returns when no per-run workspace is bound."""
+    from omniagents.workspace import current_workspace, set_default_workspace
+
+    sentinel = HostWorkspace(root=str(tmp_path), confine=False)
+    set_default_workspace(sentinel)
+    try:
+        assert current_workspace() is sentinel
+    finally:
+        set_default_workspace(None)
+
+
+# -- Navigable cwd: clamp_within + sandbox binding ------------------------
+
+
+def test_clamp_within():
+    from omniagents.workspace import clamp_within
+
+    root = "/workspace/proj"
+    # Root itself and descendants are preserved (navigation within boundary).
+    assert clamp_within(root, root) == root
+    assert clamp_within("/workspace/proj/src/app", root) == "/workspace/proj/src/app"
+    # Anything outside the boundary (a host path, a sibling) clamps to root.
+    assert clamp_within("/home/user/proj", root) == root
+    assert clamp_within("/workspace/other", root) == root
+    # Empty / missing requests default to root.
+    assert clamp_within(None, root) == root
+    assert clamp_within("", root) == root
+
+
+def test_binding_roots_sandbox_workspace_at_navigable_cwd(tmp_path: Path):
+    """WorkspaceBindingCapability.bind roots the SandboxWorkspace at the
+    requested cwd when it's within the manifest root, clamps a host-path
+    leak back to the manifest root, and defaults to the manifest root."""
+    from omniagents.workspace import (
+        current_workspace,
+        set_requested_cwd,
+        set_workspace,
+    )
+    from omniagents.workspace.binding import WorkspaceBindingCapability
+
+    class _Manifest:
+        root = "/workspace/proj"
+
+    class _State:
+        manifest = _Manifest()
+
+    class _Session:
+        state = _State()
+        _inner = None
+
+    cap = WorkspaceBindingCapability()
+    try:
+        set_requested_cwd("/workspace/proj/src")
+        cap.bind(_Session())
+        assert current_workspace().root == "/workspace/proj/src"
+
+        set_requested_cwd("/home/user/leaked")  # host path can't root a sandbox run
+        cap.bind(_Session())
+        assert current_workspace().root == "/workspace/proj"
+
+        set_requested_cwd(None)
+        cap.bind(_Session())
+        assert current_workspace().root == "/workspace/proj"
+    finally:
+        # bind() left a SandboxWorkspace rooted at a fake container path on
+        # the contextvar; restore a real workspace so later tests in this
+        # task don't try to mkdir it on the host.
+        set_requested_cwd(None)
+        set_workspace(HostWorkspace(root=str(tmp_path)))
+
+
 # -- Discovery -------------------------------------------------------------
 
 

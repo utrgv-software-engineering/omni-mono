@@ -14,7 +14,7 @@ import copy
 import logging
 from contextlib import AsyncExitStack
 from types import SimpleNamespace
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable
 from pathlib import Path
 import inspect
 
@@ -254,6 +254,7 @@ class AgentService(RpcMethodsBase):
         spec: AgentSpec,
         *,
         default_workspace_root: str | None = None,
+        workspace_root_resolver: "Callable[[str | None], str | None] | None" = None,
     ) -> None:
         """Initialize AgentService with an agent specification.
 
@@ -269,6 +270,16 @@ class AgentService(RpcMethodsBase):
                 ``workspace_root`` raises ``WorkspaceRootRequiredError``
                 rather than anchoring the agent to the server process's
                 cwd.
+            workspace_root_resolver: Maps a *requested* ``workspace_root``
+                (the agent's navigable cwd, from context/variables/payload)
+                to the *effective* one, and is authoritative — it runs at the
+                single point where ``workspace_root`` is written to a session.
+                ``omni serve`` injects one that clamps a sandbox cwd to within
+                the manifest root (so a host path can never root a sandbox
+                run) while still allowing navigation among container
+                subdirectories, and that defaults an empty request to the
+                workspace root. Returning ``None`` falls back to the normal
+                context/variables/``default_workspace_root`` resolution.
         """
         super().__init__()
         # In-process per-session run_end listeners (autopilot loops,
@@ -282,6 +293,7 @@ class AgentService(RpcMethodsBase):
             and default_workspace_root.strip()
             else None
         )
+        self._workspace_root_resolver = workspace_root_resolver
         project_slug = _safe_slug(getattr(self.spec, "project_slug", None), "default")
         agent_slug = _safe_slug(
             getattr(self.spec, "agent_slug", None),
@@ -1114,6 +1126,33 @@ class AgentService(RpcMethodsBase):
         except Exception:
             return []
 
+    @staticmethod
+    def _ws_root_from(d: Any) -> str | None:
+        if isinstance(d, dict):
+            v = d.get("workspace_root")
+            if isinstance(v, str) and v.strip():
+                return v
+        return None
+
+    def _resolve_workspace_root(self, requested: str | None) -> str | None:
+        """Map a requested workspace_root to the effective one.
+
+        Authoritative when a resolver is configured — it runs at the single
+        point workspace_root is written, so e.g. a sandbox cwd is always
+        clamped to within the manifest root (no host-path leak) while
+        navigation among container subdirs is preserved. Without a resolver,
+        the requested value passes through unchanged."""
+        resolver = self._workspace_root_resolver
+        if resolver is None:
+            return requested
+        try:
+            resolved = resolver(requested)
+        except Exception:
+            return requested
+        if isinstance(resolved, str) and resolved.strip():
+            return resolved
+        return None
+
     def _apply_session_metadata(
         self,
         session: Session,
@@ -1143,6 +1182,19 @@ class AgentService(RpcMethodsBase):
         variables_value = (
             variables if variables_provided else getattr(session, "variables", None)
         )
+
+        # Resolve the effective workspace_root (the agent's navigable cwd).
+        # The requested value is the one passed in, else whatever already sits
+        # on the session. This is the single point where workspace_root is
+        # written, so applying the resolver here is authoritative: a sandbox
+        # cwd is clamped to within the manifest root (a host path can never
+        # leak in) while navigation among container subdirs is preserved.
+        requested_root = workspace_root
+        if requested_root is None:
+            requested_root = self._ws_root_from(context_value) or self._ws_root_from(
+                variables_value
+            )
+        workspace_root = self._resolve_workspace_root(requested_root)
 
         def _ensure_mapping(value):
             if isinstance(value, dict):
@@ -2230,17 +2282,15 @@ class AgentService(RpcMethodsBase):
         #   2. default_workspace_root configured on this AgentService
         #      (set by ink/web bootstrappers from os.getcwd())
         #   3. raise WorkspaceRootRequiredError
-        def _ws_root_from(d) -> str | None:
-            if isinstance(d, dict):
-                v = d.get("workspace_root")
-                if isinstance(v, str) and v.strip():
-                    return v
-            return None
-
+        # A configured workspace_root_resolver supplies/clamps the value
+        # itself (e.g. defaulting a sandbox cwd to the manifest root), so it
+        # satisfies the requirement on its own — _apply_session_metadata
+        # applies it below.
         workspace_root: str | None = None
         if (
-            _ws_root_from(merged_context) is None
-            and _ws_root_from(merged_variables) is None
+            self._workspace_root_resolver is None
+            and self._ws_root_from(merged_context) is None
+            and self._ws_root_from(merged_variables) is None
         ):
             if self._default_workspace_root is not None:
                 workspace_root = self._default_workspace_root

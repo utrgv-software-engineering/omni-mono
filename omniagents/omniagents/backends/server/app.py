@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import asyncio
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable
 
 from fastapi import FastAPI, WebSocket, Depends, HTTPException, status
 from fastapi import WebSocketDisconnect
@@ -159,6 +159,7 @@ def build_app(
     auth_token: str | None = None,
     *,
     default_workspace_root: str | None = None,
+    workspace_root_resolver: "Callable[[str | None], str | None] | None" = None,
 ) -> FastAPI:  # noqa: D401
     """Return a fully configured FastAPI app exposing the agent via RPC.
 
@@ -177,6 +178,11 @@ def build_app(
             instead of raising. Production server deployments should leave
             this ``None`` so a missing value fails loudly rather than
             silently anchoring to the server process's cwd.
+        workspace_root_resolver: Maps a requested ``workspace_root`` to the
+            effective one, forwarded to ``AgentService``. ``omni serve`` passes
+            one that clamps a sandbox cwd to within the manifest root (no host
+            path can reach a sandbox run) while allowing navigation among
+            container subdirectories.
     """
 
     # ------------------------------------------------------------------
@@ -239,7 +245,11 @@ def build_app(
     # ------------------------------------------------------------------
     # Create AgentService instance and register RPC endpoint
     # ------------------------------------------------------------------
-    service = AgentService(spec, default_workspace_root=default_workspace_root)
+    service = AgentService(
+        spec,
+        default_workspace_root=default_workspace_root,
+        workspace_root_resolver=workspace_root_resolver,
+    )
     app.state.agent_service = service
     # Allow examples to register custom server functions without changing core
     try:

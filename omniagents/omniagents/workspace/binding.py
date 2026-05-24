@@ -19,7 +19,7 @@ from pydantic import Field
 
 from agents.sandbox.capabilities.capability import Capability
 
-from ._runtime import set_workspace
+from ._runtime import clamp_within, get_requested_cwd, set_workspace
 from .sandbox import SandboxWorkspace
 
 
@@ -54,23 +54,28 @@ class WorkspaceBindingCapability(Capability):
 
     def bind(self, session: Any) -> None:
         super().bind(session)
-        # Prefer the session's manifest root (always set in well-formed
-        # sandbox configs); fall back to the configured default. We don't
-        # store the contextvar token because we never reset — task scope
-        # handles cleanup.
-        root: Optional[str] = self.workspace_root
+        # The manifest root is the workspace boundary; the agent's cwd may be
+        # the root or any descendant of it (set by the run's requested cwd —
+        # the launcher's navigable workspace dir). A requested cwd outside the
+        # boundary (e.g. a host path that leaked through) is clamped back to
+        # the manifest root, so a sandbox run can never be rooted on the host.
+        # We don't store the contextvar token because we never reset — task
+        # scope handles cleanup.
+        boundary: Optional[str] = self.workspace_root
         try:
             manifest_root = session.state.manifest.root
             if isinstance(manifest_root, str) and manifest_root:
-                root = manifest_root
+                boundary = manifest_root
         except Exception:
             # Session may not yet be started, or have no manifest in
             # exotic test contexts. Fall back to the configured default.
             pass
+        boundary = boundary or "/workspace"
+        cwd = clamp_within(get_requested_cwd(), boundary)
         set_workspace(
             SandboxWorkspace(
                 session=session,
-                root=root or "/workspace",
+                root=cwd,
                 default_user=self.run_as,
             )
         )

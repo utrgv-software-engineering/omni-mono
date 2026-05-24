@@ -19,6 +19,9 @@ import pytest
 from agents.sandbox.entries.base import BaseEntry
 
 from omniagents.core.sandbox.permissive_local_dir import (
+    _DEFAULT_MAX_SEED_BYTES,
+    _build_dir_tar,
+    _resolve_max_seed_bytes,
     PermissiveLocalDir,
     PermissiveLocalDirError,
 )
@@ -265,3 +268,64 @@ def test_unix_local_session_is_pure_noop(tmp_path: Path):
     session.exec.assert_not_awaited()
     # And no directory was created on the host.
     assert not dest.exists()
+
+
+# --- seed-size cap ---------------------------------------------------- #
+
+
+def test_seed_cap_aborts_when_exceeded(tmp_path: Path):
+    src = tmp_path / "proj"
+    src.mkdir()
+    for i in range(3):
+        (src / f"f{i}.bin").write_bytes(b"x" * 1000)  # 3000 bytes total
+
+    with pytest.raises(PermissiveLocalDirError) as ei:
+        _build_dir_tar(src, max_bytes=2000)
+    assert "seed limit" in str(ei.value)
+
+
+def test_seed_under_cap_builds_full_tar(tmp_path: Path):
+    src = tmp_path / "proj"
+    src.mkdir()
+    (src / "a.bin").write_bytes(b"x" * 1000)
+    (src / "b.bin").write_bytes(b"x" * 1000)
+
+    tar = tarfile.open(fileobj=io.BytesIO(_build_dir_tar(src, max_bytes=10_000)), mode="r")
+    assert _file_names(tar) == {"a.bin", "b.bin"}
+
+
+def test_gitignored_files_dont_count_toward_cap(tmp_path: Path):
+    src = tmp_path / "proj"
+    src.mkdir()
+    (src / ".gitignore").write_text("big.bin\n")
+    (src / "big.bin").write_bytes(b"x" * 100_000)  # excluded → must not count
+    (src / "keep.txt").write_bytes(b"x" * 100)
+
+    # Cap below big.bin but above the kept content: succeeds because the
+    # size check runs after the gitignore filter (big.bin never counts).
+    tar = tarfile.open(fileobj=io.BytesIO(_build_dir_tar(src, max_bytes=1000)), mode="r")
+    assert _file_names(tar) == {".gitignore", "keep.txt"}
+
+
+def test_cap_disabled_with_none(tmp_path: Path):
+    src = tmp_path / "proj"
+    src.mkdir()
+    (src / "big.bin").write_bytes(b"x" * 50_000)
+    # max_bytes=None at the build level means no cap.
+    tar = tarfile.open(fileobj=io.BytesIO(_build_dir_tar(src, max_bytes=None)), mode="r")
+    assert _file_names(tar) == {"big.bin"}
+
+
+def test_resolve_max_seed_bytes(monkeypatch):
+    monkeypatch.delenv("OMNI_MAX_SEED_BYTES", raising=False)
+    # Unset → default.
+    assert _resolve_max_seed_bytes(None) == _DEFAULT_MAX_SEED_BYTES
+    # Explicit value wins; <=0 means unlimited (None).
+    assert _resolve_max_seed_bytes(123) == 123
+    assert _resolve_max_seed_bytes(0) is None
+    assert _resolve_max_seed_bytes(-5) is None
+    # Env override (only consulted when explicit is None).
+    monkeypatch.setenv("OMNI_MAX_SEED_BYTES", "4096")
+    assert _resolve_max_seed_bytes(None) == 4096
+    monkeypatch.setenv("OMNI_MAX_SEED_BYTES", "0")
+    assert _resolve_max_seed_bytes(None) is None

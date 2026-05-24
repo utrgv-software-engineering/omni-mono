@@ -58,6 +58,41 @@ __all__ = ["PermissiveLocalDir", "PermissiveLocalDirError"]
 _STAGING_TAR_NAME = ".omni_permissive_local_dir.seed.tar"
 _GITIGNORE_NAME = ".gitignore"
 
+# Default ceiling on the total size of files seeded from a host directory.
+# Guards against accidentally picking a huge folder (a home dir, an
+# un-gitignored ``node_modules``, a dataset): the tar is built in memory and,
+# on the ACI heredoc path, base64-streamed in memory too, so an unbounded seed
+# can OOM. Generous enough for normal repos (typically <100 MiB); override per
+# entry via ``max_bytes`` or globally via ``OMNI_MAX_SEED_BYTES`` (set <=0 to
+# disable). Bounded kinds (git-tracked ``LocalGitArchive``, ``GitRepo`` clone)
+# don't need this — only the permissive local-dir walk is unbounded by git.
+_DEFAULT_MAX_SEED_BYTES = 1 * 1024**3  # 1 GiB
+
+
+def _resolve_max_seed_bytes(explicit: int | None) -> int | None:
+    """Resolve the effective seed-size cap. ``None`` (unset) falls back to
+    ``OMNI_MAX_SEED_BYTES`` then the default; a value <= 0 (explicit or env)
+    means unlimited and returns ``None``."""
+    if explicit is not None:
+        return explicit if explicit > 0 else None
+    env = os.getenv("OMNI_MAX_SEED_BYTES")
+    if env is not None:
+        try:
+            value = int(env)
+        except ValueError:
+            value = _DEFAULT_MAX_SEED_BYTES
+        return value if value > 0 else None
+    return _DEFAULT_MAX_SEED_BYTES
+
+
+def _human_bytes(n: int) -> str:
+    value = float(n)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if value < 1024 or unit == "TiB":
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{n} B"
+
 
 class PermissiveLocalDirError(Exception):
     """Raised when :class:`PermissiveLocalDir` cannot materialize the
@@ -92,6 +127,10 @@ class PermissiveLocalDir(BaseEntry):
     type: Literal["permissive_local_dir"] = "permissive_local_dir"
     is_dir: bool = True
     src: Path
+    # Cap on total seeded bytes. None → OMNI_MAX_SEED_BYTES / default; <=0 →
+    # unlimited. Enforced early during the walk so a giant folder aborts
+    # before the in-memory tar is built.
+    max_bytes: int | None = None
 
     def model_post_init(self, context: object, /) -> None:
         _ = context
@@ -133,7 +172,10 @@ class PermissiveLocalDir(BaseEntry):
         if isinstance(session, UnixLocalSandboxSession):
             return []
 
-        archive_bytes = await asyncio.to_thread(_build_dir_tar, src_resolved)
+        max_bytes = _resolve_max_seed_bytes(self.max_bytes)
+        archive_bytes = await asyncio.to_thread(
+            _build_dir_tar, src_resolved, max_bytes
+        )
 
         await session.mkdir(dest, parents=True)
         staging_path = dest / _STAGING_TAR_NAME
@@ -159,7 +201,7 @@ class PermissiveLocalDir(BaseEntry):
         return []
 
 
-def _build_dir_tar(src: Path) -> bytes:
+def _build_dir_tar(src: Path, max_bytes: int | None = None) -> bytes:
     """Walk *src*, respect any ``.gitignore`` encountered, silently
     skip symlinks, stream regular files into an in-memory tarball.
 
@@ -167,13 +209,19 @@ def _build_dir_tar(src: Path) -> bytes:
     to paths under ``a/b/`` only. We carry a stack of ``(anchor_rel,
     PathSpec)`` down the walk and check each candidate against every
     spec in scope.
+
+    When *max_bytes* is set, the cumulative size of included (post-gitignore)
+    regular files is checked as the walk proceeds and the build aborts —
+    before reading the offending file or finishing the tar — once it is
+    exceeded, raising :class:`PermissiveLocalDirError`.
     """
     buf = io.BytesIO()
+    total = [0]  # mutable running byte total, shared across the recursion
     with tarfile.open(fileobj=buf, mode="w") as tar:
         # Stack entries: (anchor_rel_posix, PathSpec). Empty anchor =
         # the source root itself.
         spec_stack: list[tuple[str, pathspec.PathSpec]] = []
-        _walk(src, Path("."), tar, spec_stack)
+        _walk(src, Path("."), tar, spec_stack, max_bytes=max_bytes, total=total)
     return buf.getvalue()
 
 
@@ -182,6 +230,9 @@ def _walk(
     rel_dir: Path,
     tar: tarfile.TarFile,
     spec_stack: list[tuple[str, pathspec.PathSpec]],
+    *,
+    max_bytes: int | None,
+    total: list[int],
 ) -> None:
     abs_dir = src_root / rel_dir
     try:
@@ -226,10 +277,32 @@ def _walk(
             if is_dir:
                 # Emit a directory entry for tar legibility, then recurse.
                 tar.addfile(_dir_tarinfo(rel_posix))
-                _walk(src_root, rel_path, tar, spec_stack)
+                _walk(
+                    src_root,
+                    rel_path,
+                    tar,
+                    spec_stack,
+                    max_bytes=max_bytes,
+                    total=total,
+                )
                 continue
 
             if stat.S_ISREG(st.st_mode):
+                # Enforce the seed-size cap early: count this file before
+                # reading it so a giant directory aborts mid-walk instead of
+                # building the whole in-memory tar (and OOM-ing the heredoc
+                # upload on remote backends).
+                total[0] += st.st_size
+                if max_bytes is not None and total[0] > max_bytes:
+                    raise PermissiveLocalDirError(
+                        f"permissive_local_dir: source exceeds the "
+                        f"{_human_bytes(max_bytes)} seed limit "
+                        f"(reached {_human_bytes(total[0])} at {rel_posix!r}). "
+                        f"Add a .gitignore to exclude large files, use the "
+                        f"folder as a git repo so only tracked files are seeded, "
+                        f"or raise OMNI_MAX_SEED_BYTES (set <=0 to disable).",
+                        src=src_root,
+                    )
                 try:
                     with open(entry.path, "rb") as f:
                         info = tarfile.TarInfo(name=rel_posix)

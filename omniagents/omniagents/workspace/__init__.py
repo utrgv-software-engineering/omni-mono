@@ -36,7 +36,15 @@ from typing import Dict, List, Literal, Optional
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Sequence
 
-from ._runtime import current_workspace, reset_workspace, set_workspace
+from ._runtime import (
+    clamp_within,
+    current_workspace,
+    get_requested_cwd,
+    reset_workspace,
+    set_default_workspace,
+    set_requested_cwd,
+    set_workspace,
+)
 from .base import CommandLike, ProcessHandle, Workspace
 from .host import HostWorkspace
 from .sandbox import SandboxWorkspace
@@ -98,6 +106,10 @@ __all__ = [
     "use_pyodide_workspace",
     "current_workspace",
     "set_workspace",
+    "set_default_workspace",
+    "set_requested_cwd",
+    "get_requested_cwd",
+    "clamp_within",
     "reset_workspace",
 ]
 

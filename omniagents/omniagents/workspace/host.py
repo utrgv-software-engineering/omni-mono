@@ -38,6 +38,7 @@ class HostWorkspace(Workspace):
         root: Optional[str] = None,
         *,
         scratch_root: Optional[str] = None,
+        confine: bool = True,
     ) -> None:
         # Default to cwd. Resolved once at construction so later os.chdir
         # calls don't silently change behavior; callers wanting a specific
@@ -48,6 +49,13 @@ class HostWorkspace(Workspace):
             # But the path must be absolute and parent-traversable.
             resolved.mkdir(parents=True, exist_ok=True)
         self.root = str(resolved)
+
+        # When False, ``resolve`` still anchors relative paths at ``root``
+        # (so cwd ergonomics are unchanged) but does NOT reject absolute
+        # paths outside it. This is the "no sandbox" host target: the agent
+        # may read/write anywhere the process can. Default True keeps the
+        # workspace-root boundary every existing caller relies on.
+        self.confine = confine
 
         # Scratch directory — deliberately outside ``root`` so tool-internal
         # state (worker worktrees, spawn logs, etc.) never mixes with the
@@ -62,6 +70,14 @@ class HostWorkspace(Workspace):
 
     # ----------------------------- helpers ----------------------------- #
 
+    def _display_path(self, p: Path) -> str:
+        """Path shown in discovery results: relative to root when inside it,
+        else the absolute posix path (possible only when unconfined)."""
+        try:
+            return p.relative_to(self.root).as_posix()
+        except ValueError:
+            return p.as_posix()
+
     def resolve(self, path: str) -> str:
         if not path or path == ".":
             return self.root
@@ -73,13 +89,15 @@ class HostWorkspace(Workspace):
             full = candidate.resolve()
         else:
             full = (Path(self.root) / candidate).resolve()
-        # Defense in depth — make sure we're still inside root
-        try:
-            full.relative_to(self.root)
-        except ValueError:
-            raise WorkspaceEscapeError(
-                f"Path {path!r} resolves to {full!r}, outside workspace root {self.root!r}"
-            ) from None
+        # Defense in depth — make sure we're still inside root. Skipped when
+        # the workspace is unconfined (the "host" no-sandbox target).
+        if self.confine:
+            try:
+                full.relative_to(self.root)
+            except ValueError:
+                raise WorkspaceEscapeError(
+                    f"Path {path!r} resolves to {full!r}, outside workspace root {self.root!r}"
+                ) from None
         return str(full)
 
     # ----------------------------- file I/O ---------------------------- #
@@ -206,7 +224,7 @@ class HostWorkspace(Workspace):
                     stat = entry.stat()
                 except OSError:
                     continue
-                rel = entry.relative_to(self.root).as_posix()
+                rel = self._display_path(entry)
                 out.append(
                     FileEntry(
                         name=entry.name,
@@ -244,10 +262,10 @@ class HostWorkspace(Workspace):
             results: List[str] = []
             for p in iterator:
                 if not include_hidden and any(
-                    part.startswith(".") for part in p.relative_to(self.root).parts
+                    part.startswith(".") for part in p.relative_to(absolute).parts
                 ):
                     continue
-                results.append(p.relative_to(self.root).as_posix())
+                results.append(self._display_path(p))
             results.sort()
             return results
 
@@ -282,7 +300,7 @@ class HostWorkspace(Workspace):
                     continue
                 if not fnmatch(path.name, file_pattern):
                     continue
-                rel = path.relative_to(self.root).as_posix()
+                rel = self._display_path(path)
                 try:
                     text = path.read_text(encoding="utf-8", errors="replace")
                 except OSError:
