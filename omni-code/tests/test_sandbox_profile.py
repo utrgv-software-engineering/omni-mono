@@ -51,7 +51,7 @@ def workspace(tmp_path):
 
 def test_default_only_when_no_user_or_project(config_dir, workspace):
     profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
-    assert profile.raw["client"]["type"] == "unix_local"
+    assert profile.raw["client"]["type"] == "host"
     assert profile.raw["manifest"]["root"] == str(workspace.resolve())
     assert profile.services == []
     assert len(profile.sources) == 1
@@ -69,7 +69,7 @@ def test_user_default_layer_merges_over_builtin(config_dir, workspace):
     )
     profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
     # Default stays
-    assert profile.raw["client"]["type"] == "unix_local"
+    assert profile.raw["client"]["type"] == "host"
     # User-default adds env
     assert profile.raw["manifest"]["environment"]["FROM_USER"] == "v"
     # Both layers appear in sources
@@ -402,12 +402,12 @@ def test_missing_client_type_rejected(config_dir, workspace, tmp_path):
     )
     # Need to clobber the default's `client.type` to trigger validation.
     # Explicit-path mode still merges the default first, and the default
-    # supplies `client.type: unix_local` — so this profile actually validates.
+    # supplies `client.type: host` — so this profile actually validates.
     # Verify that's the behavior so we don't accidentally drift.
     profile = sandbox_profile.resolve_profile(
         workspace_dir=workspace, explicit_path=profile_path
     )
-    assert profile.raw["client"]["type"] == "unix_local"
+    assert profile.raw["client"]["type"] == "host"
 
 
 def test_non_mapping_profile_rejected(config_dir, workspace, tmp_path):

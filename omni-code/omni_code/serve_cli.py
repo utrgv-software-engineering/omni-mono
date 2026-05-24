@@ -28,7 +28,7 @@ import tarfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 from omni_code.sandbox_profile import (
     ResolvedProfile,
@@ -998,31 +998,73 @@ async def _serve(args: argparse.Namespace) -> int:
     # readiness payload so the launcher can capture + persist it for next time.
     session_id = args.session_id or str(uuid.uuid4())
 
-    # --- Bring the session up (shared verbatim with perform_switch) ---
-    # ``resume_tier``: "reused" (warm reattach), "rehydrated" (snapshot restored
-    # into a fresh container), "fresh" (manifest seed only), or None (first
-    # launch). ``bring_up_session`` also publishes the manifest-root, sources,
-    # and live-session slots, and tears the partial session down if init fails.
-    try:
-        brought = await bring_up_session(
-            profile=profile,
-            sources_parsed=sources_parsed,
-            session_id=session_id,
-            snapshot_dir=args.snapshot_dir,
-            prior_container_id=args.container_id,
+    # --- Bring the execution target up ---
+    # ``host`` target: no sandbox session at all. Run the agent as a plain
+    # Agent against the host filesystem; bind a HostWorkspace as the
+    # process-wide default so every run (including workers, which copy the
+    # context) routes through it. ``confine`` gates the workspace-root
+    # boundary (false = true no-sandbox).
+    #
+    # Sandbox targets: ``resume_tier`` is "reused"/"rehydrated"/"fresh"/None;
+    # ``bring_up_session`` also publishes manifest-root, sources, and the
+    # live-session slots, and tears the partial session down if init fails.
+    is_host = _is_host_profile(profile.raw)
+    if is_host:
+        from omniagents.workspace import HostWorkspace, set_default_workspace
+
+        from omni_code.agent_workspace_state import set_manifest_root, set_sources
+
+        session = None
+        resume_tier = None
+        started_services = []
+        service_urls: Dict[str, Any] = {}
+        client_type = "host"
+        # The host target's workspace root IS the host dir. Publish it as the
+        # manifest root so the authoritative workspace_root override (passed to
+        # build_app below) reports it uniformly with the sandbox path.
+        set_manifest_root(args.workspace)
+        # Publish the sources too (bring_up_session does this for sandboxes) so
+        # fs_get_sources works under host — the launcher reads it to show the
+        # local workspace folder in its pill.
+        set_sources(sources_parsed)
+        set_default_workspace(
+            HostWorkspace(
+                root=args.workspace,
+                confine=bool(profile.raw.get("confine", True)),
+            )
         )
-    except ValueError as e:
-        print(json.dumps({"error": f"source: {e}"}), file=sys.stderr)
-        return 1
-    session = brought.session
-    resume_tier = brought.resume_tier
-    started_services = brought.started_services
-    service_urls = brought.service_urls
+    else:
+        from omniagents.core.sandbox.permissive_local_dir import (
+            PermissiveLocalDirError,
+        )
+
+        try:
+            brought = await bring_up_session(
+                profile=profile,
+                sources_parsed=sources_parsed,
+                session_id=session_id,
+                snapshot_dir=args.snapshot_dir,
+                prior_container_id=args.container_id,
+            )
+        except (ValueError, PermissiveLocalDirError) as e:
+            # Bad source descriptor (ValueError) or a workspace that failed to
+            # seed — e.g. exceeding the seed-size cap. Emit a structured error
+            # the launcher surfaces cleanly instead of crashing with a traceback.
+            print(json.dumps({"error": f"source: {e}"}), file=sys.stderr)
+            return 1
+        session = brought.session
+        resume_tier = brought.resume_tier
+        started_services = brought.started_services
+        service_urls = brought.service_urls
+        client_type = brought.client_type
 
     # --- Agent spec + session injection ---
     agent_project_path = _resolve_agent_project_path(args.agent_project)
     spec = _load_spec(agent_project_path, args.agent)
-    _attach_session_to_spec(spec, session, profile.raw)
+    if not is_host:
+        # Flip the spec to a SandboxAgent bound to the live session. The host
+        # target leaves the spec as a plain Agent (no session, no binding).
+        _attach_session_to_spec(spec, session, profile.raw)
 
     # Publish the now-sandbox-attached orchestrator spec so the worker spec
     # loader can forward sandbox_use_sandbox_agent / sandbox_run_as /
@@ -1036,19 +1078,42 @@ async def _serve(args: argparse.Namespace) -> int:
     from omniagents.backends.server.app import build_app
     import uvicorn
 
+    from omniagents.workspace import clamp_within
+
+    from omni_code.agent_workspace_state import get_manifest_root, get_sandbox_session
+
+    def _resolve_workspace_root(requested: Optional[str]) -> Optional[str]:
+        """Map a requested cwd to the effective one, per the live target.
+
+        Host target (no live sandbox session): the cwd may be any host dir —
+        return it, or default to the workspace root. Sandbox target: clamp the
+        cwd to within the manifest root, so it can navigate among container
+        subdirectories but a host path can never root a sandbox run. Reads the
+        live state each call, so it stays correct across runtime switches.
+        """
+        root = get_manifest_root()
+        if get_sandbox_session() is None:
+            if isinstance(requested, str) and requested.strip():
+                return requested
+            return root or args.workspace
+        return clamp_within(requested, root) if root else requested
+
     app = build_app(
         config_path=str(agent_project_path),
         spec=spec,
         auth_token=args.auth_token,
+        workspace_root_resolver=_resolve_workspace_root,
     )
 
-    # Install a session-backed TerminalManager so the launcher's Terminal
-    # app routes through the SandboxSession (uniform with the agent's
-    # bash tool — same user, manifest root, network policy). Falls back
-    # silently when the session backend doesn't support streaming;
-    # ``terminal.create`` then uses the cached HostPtyBackend manager and
-    # the launcher surfaces a "backend doesn't support terminals" toast.
-    _install_session_terminal_manager(app, session, profile.terminal)
+    # Install the TerminalManager matching the execution target. Host →
+    # HostPtyBackend (a host shell, by design). Sandbox → SessionPtyBackend
+    # so the Terminal runs inside the sandbox (same user/root/network as the
+    # agent's bash tool); a sandbox backend that can't stream a PTY gets a
+    # backend that errors loudly — never a silent host shell.
+    if is_host:
+        _install_host_terminal_manager(app, profile.terminal, default_cwd=args.workspace)
+    else:
+        _install_session_terminal_manager(app, session, profile.terminal)
 
     # Idle auto-recap: a watcher that fires a session recap once a
     # conversation has gone quiet (>=3min since the last completed turn,
@@ -1078,7 +1143,10 @@ async def _serve(args: argparse.Namespace) -> int:
     # Pull container_id from session.state when present (docker backends
     # expose it; unix_local / e2b / etc. don't). The launcher uses this
     # for ``docker exec``-based operations like PR diff extraction.
-    container_id = getattr(session.state, "container_id", None)
+    container_id = None if session is None else getattr(session.state, "container_id", None)
+    manifest_root = (
+        args.workspace if session is None else getattr(session.state.manifest, "root", None)
+    )
     payload = {
         "sandbox_url": base_url,
         "ws_url": ws_url,
@@ -1089,12 +1157,18 @@ async def _serve(args: argparse.Namespace) -> int:
         "resume": resume_tier,
         "_debug": {
             "client": (profile.raw.get("client") or {}).get("type"),
-            "manifest_root": getattr(session.state.manifest, "root", None),
+            "manifest_root": manifest_root,
             "profile_sources": [str(s) for s in profile.sources],
         },
     }
     if args.output == "json":
-        print(json.dumps(payload), flush=True)
+        # ``default=str`` coerces any stray non-JSON value (e.g. a PosixPath —
+        # manifest.root can arrive as one via pydantic ``model_copy(update=)``,
+        # which skips the ``str`` field coercion) to its string form. The
+        # readiness payload is the launcher's handshake; it must never fail to
+        # serialize and crash serve. str(PosixPath("/workspace")) == "/workspace",
+        # so the launcher still receives the value it expects.
+        print(json.dumps(payload, default=str), flush=True)
     else:
         backend = (profile.raw.get("client") or {}).get("type", "?")
         print(f"Omni Code: {base_url}  (profile backend={backend})", flush=True)
@@ -1118,7 +1192,7 @@ async def _serve(args: argparse.Namespace) -> int:
         auth_token=args.auth_token,
         current_profile_path=str(args.profile) if args.profile else None,
         current_profile_name=_profile_display_name(args.profile, profile),
-        backend=brought.client_type,
+        backend=client_type,
         container_id=container_id,
         service_urls=service_urls,
         started_services=started_services,
@@ -1178,6 +1252,51 @@ async def _serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _is_host_profile(profile_raw: Dict[str, Any]) -> bool:
+    """True when the profile selects the ``host`` execution target — no
+    sandbox session: plain Agent on a HostWorkspace, host PTY terminal."""
+    return ((profile_raw.get("client") or {}).get("type")) == "host"
+
+
+class _UnsupportedPtyBackend:
+    """A ``PtyBackend`` that refuses to start.
+
+    Installed for sandbox backends that can't stream a PTY (e.g. ACI). It makes
+    ``terminal.create`` fail loudly with a clear message instead of silently
+    falling back to a host shell, which would run outside the sandbox.
+    """
+
+    def __init__(self, backend_label: str) -> None:
+        self._label = backend_label
+
+    async def start(self, **_: Any) -> Any:
+        from omniagents.rpc.terminal_backends import PtyOpenError
+
+        raise PtyOpenError(
+            f"Interactive terminals are not supported on the {self._label} "
+            "sandbox backend."
+        )
+
+    async def write(self, handle: Any, data: bytes) -> None:
+        return None
+
+    async def resize(self, handle: Any, cols: int, rows: int) -> None:
+        return None
+
+    def stream(self, handle: Any) -> AsyncIterator[bytes]:
+        async def _empty() -> AsyncIterator[bytes]:
+            return
+            yield b""  # pragma: no cover - never reached
+
+        return _empty()
+
+    async def close(self, handle: Any) -> None:
+        return None
+
+    async def exit_code(self, handle: Any) -> Optional[int]:
+        return None
+
+
 def _install_session_terminal_manager(app: Any, session: Any, terminal: TerminalSpec) -> None:
     """Attach a session-backed :class:`TerminalManager` to the AgentService.
 
@@ -1203,8 +1322,44 @@ def _install_session_terminal_manager(app: Any, session: Any, terminal: Terminal
     except Exception:
         return
 
+    service = getattr(app.state, "agent_service", None)
+    if service is None:
+        return
+
     inner = coerce_pty_streaming(session)
-    if inner is None:
+    if inner is not None:
+        backend: Any = SessionPtyBackend(inner)
+    else:
+        # Sandbox backend can't stream a PTY (e.g. ACI). Install a backend
+        # that errors loudly on create rather than letting ``terminal.create``
+        # fall back to a HOST shell — that would break the isolation model by
+        # handing the user a shell on the omni serve host instead of inside
+        # the sandbox.
+        label = type(getattr(session, "_inner", session)).__name__
+        backend = _UnsupportedPtyBackend(label)
+
+    service.terminal_manager = TerminalManager(
+        backend=backend,
+        default_shell=terminal.command,
+        default_cwd=terminal.cwd,
+        default_user=terminal.user,
+    )
+
+
+def _install_host_terminal_manager(
+    app: Any, terminal: TerminalSpec, *, default_cwd: Optional[str]
+) -> None:
+    """Attach a host-PTY TerminalManager for the ``host`` execution target.
+
+    The shell runs as a child of the omni serve process (HostPtyBackend) —
+    intended here, since the host target has no sandbox to run inside. On
+    platforms without a host PTY (Windows), ``HostPtyBackend.start`` raises
+    a clear error at create time.
+    """
+    try:
+        from omniagents.rpc.terminal import TerminalManager
+        from omniagents.rpc.terminal_backends import HostPtyBackend
+    except Exception:
         return
 
     service = getattr(app.state, "agent_service", None)
@@ -1212,9 +1367,9 @@ def _install_session_terminal_manager(app: Any, session: Any, terminal: Terminal
         return
 
     service.terminal_manager = TerminalManager(
-        backend=SessionPtyBackend(inner),
+        backend=HostPtyBackend(),
         default_shell=terminal.command,
-        default_cwd=terminal.cwd,
+        default_cwd=terminal.cwd or default_cwd,
         default_user=terminal.user,
     )
 
@@ -1226,8 +1381,11 @@ async def teardown_session(
 
     Does NOT clear the published ``set_sandbox_session`` handle — the caller
     owns that: ``_serve`` nulls it on process exit; ``perform_switch`` replaces
-    it with the new session. Safe to call on a partially-started session.
+    it with the new session. Safe to call on a partially-started session, or
+    on ``None`` (the host target has no session to tear down).
     """
+    if session is None:
+        return
     # pty_terminate_all is broad but appropriate — every PTY in this session
     # was started by us.
     if started_services:

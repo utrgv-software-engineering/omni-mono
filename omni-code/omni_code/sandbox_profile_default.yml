@@ -2,26 +2,36 @@ version: 1
 
 # Built-in default sandbox profile shipped with omni-code.
 #
+# This is the "host" execution target — NO sandbox. omni-code runs the agent
+# as a plain Agent against the host filesystem and shell directly. It is the
+# only target that works on every platform (Windows included); unix_local,
+# docker, etc. are sandboxed targets the user/launcher selects explicitly.
+#
+# `confine: false` lifts the workspace-root boundary so the agent's file tools
+# may read/write anywhere the process can — i.e. truly no sandbox. A confined
+# host (file tools fenced to ${workspace_dir}) is available by setting
+# `confine: true`; the launcher ships such a profile for its desktop default.
+#
 # Resolution: this is the lowest layer. The launcher overrides it via
 # ~/.config/omni_code/sandbox/default.yml (user-default) and
 # ~/.config/omni_code/projects/<projectId>/sandbox.yml (per-project).
 # CLI `--profile <path>` is an explicit override above all of those.
+# Sandboxing is the launcher's concern; standalone omni-code is unsandboxed.
 
 client:
-  type: unix_local
+  type: host
+
+# No workspace-root boundary on file tools (true no-sandbox).
+confine: false
 
 manifest:
-  # ${workspace_dir} is replaced with `omni serve --workspace <dir>` before
-  # the profile is handed to the SDK. unix_local treats this as the sandbox
-  # root in-place, so the agent edits the user's files directly.
+  # ${workspace_dir} is replaced with `omni serve --workspace <dir>`. Under the
+  # host target this is the agent's working directory (relative paths resolve
+  # here); it is not a security boundary when `confine: false`.
   root: ${workspace_dir}
 
-# No services and no exposed ports by default — pure agent + workspace.
-# Dev environments (code-server, VNC, etc.) are the launcher's concern.
-
-# Defaults for the launcher's Terminal app. Under unix_local the
-# SessionPtyBackend invokes this command on the host (the SDK's
-# pty_exec_start spawns a child process of `omni serve`), so this is
-# effectively a host shell — equivalent to the legacy node-pty path.
+# Defaults for the launcher's Terminal app. Under the host target the shell
+# runs as a child of `omni serve` on the host (HostPtyBackend) — a plain host
+# shell, same as the agent's bash tool.
 terminal:
   command: "bash -i"

@@ -95,8 +95,71 @@ async def fs_get_sources() -> dict:
         return {"sources": []}
 
 
+async def _fs_list_dir_in_sandbox(
+    session: object,
+    path: Optional[str],
+    include_files: bool,
+    ignore_hidden: bool,
+) -> dict:
+    """List a directory INSIDE the sandbox container, for the picker.
+
+    The picker browses the filesystem the agent's tools actually see — the
+    container — not omni serve's host. Defaults to the manifest root. Paths
+    are absolute container paths so the picker can navigate by them.
+    """
+    from pathlib import PurePosixPath
+
+    from omniagents.workspace import clamp_within
+    from omniagents.workspace.sandbox import SandboxWorkspace
+
+    from omni_code.agent_workspace_state import get_manifest_root
+
+    manifest_root = get_manifest_root() or "/workspace"
+    # Clamp the requested path into the manifest root. A stray absolute/host
+    # path (e.g. the launcher's local project dir leaking through) would not
+    # exist in the container and the SDK would reject it; clamping lists the
+    # manifest root instead — the same boundary the agent's tools enforce.
+    base = clamp_within(path, manifest_root)
+    base = str(PurePosixPath(base))
+    ws = SandboxWorkspace(session, root=base)
+    try:
+        file_entries = await ws.list_dir(".", include_hidden=not ignore_hidden)
+    except Exception as e:
+        raise ValueError(f"Cannot list {base!r} in sandbox: {e}")
+    entries: List[Dict] = []
+    for fe in file_entries:
+        if not include_files and not fe.is_dir:
+            continue
+        entries.append(
+            {
+                "name": fe.name,
+                "path": str(PurePosixPath(base) / fe.name),
+                "is_dir": fe.is_dir,
+                "size": fe.size,
+                "modified": fe.mtime.isoformat() if fe.mtime else None,
+            }
+        )
+    entries.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
+    parent = str(PurePosixPath(base).parent)
+    # Only expose "up" while it stays within the manifest root — the picker
+    # can't navigate above the workspace boundary.
+    up = parent if (parent != base and clamp_within(parent, manifest_root) == parent) else None
+    return {"path": base, "parent": up, "entries": entries}
+
+
 @server_function(description="List a directory for picker UIs", strict=True)
 async def fs_list_dir(path: Optional[str] = None, include_files: Optional[bool] = False, ignore_hidden: Optional[bool] = True) -> dict:
+    # When a sandbox session is live, browse the CONTAINER filesystem (what
+    # the agent's tools see). With no session (the host target) fall through
+    # to the host filesystem below.
+    from omni_code.agent_workspace_state import get_sandbox_session
+
+    session = get_sandbox_session()
+    if session is not None:
+        return await _fs_list_dir_in_sandbox(
+            session, path, bool(include_files), bool(ignore_hidden)
+        )
+
     base = path or os.getcwd()
     base = os.path.abspath(base)
     if not os.path.exists(base):

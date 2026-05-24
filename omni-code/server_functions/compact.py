@@ -432,7 +432,13 @@ async def _run_compaction_agent(
             if isinstance(wr, str) and wr.strip():
                 workspace_root = wr
     if not workspace_root:
-        workspace_root = os.getcwd()
+        # Prefer the sandbox manifest root over omni serve's host cwd — they
+        # differ for container backends, and this run bypasses the AgentService
+        # resolver (direct Runner.run), so a host path here would not be
+        # clamped. Matches fs_get_workspace_root's fallback chain.
+        from omni_code.agent_workspace_state import get_manifest_root
+
+        workspace_root = get_manifest_root() or os.getcwd()
 
     with _temporary_environ(env_overrides):
         result = await Runner.run(
