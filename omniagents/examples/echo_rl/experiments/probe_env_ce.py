@@ -105,7 +105,8 @@ def build_pool(args) -> None:
                         fn = c.get("function", {})
                         a = fn.get("arguments")
                         a = json.loads(a) if isinstance(a, str) else (a or {})
-                        res = env.bash(**a) if fn.get("name") == "bash" else f"unknown tool {fn.get('name')}"
+                        res = (env._run(env._abash(str(a.get("command", "")), int(a.get("timeout", 30) or 30)))
+                               if fn.get("name") == "bash" else f"unknown tool {fn.get('name')}")
                         messages.append({"role": "tool", "name": fn.get("name"), "content": str(res)})
                 full_ids, env_mask = _env_mask_for(tok, messages, [env.bash])
                 if sum(env_mask) > 0:

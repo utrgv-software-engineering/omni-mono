@@ -1,0 +1,54 @@
+# Attempt Qwen3-8B on a small GPU via QLoRA (4-bit) + no vLLM.
+#
+# MEASURED on an 8GB RTX 3060 Ti: this does NOT fit for TRAINING. The 4-bit
+# weights alone occupy ~6.1GB, leaving ~1GB -- far too little for training
+# activations + LoRA gradients + the multi-turn generation KV cache. It OOMs /
+# offloads. 8B RL training needs ~>=24GB (QLoRA) to ~80GB (full + vLLM).
+# On 8GB, the largest practical RL model is ~Qwen3-4B (4-bit ~3GB -> usable
+# headroom) or Qwen3-1.7B; see config.laptop_lora.yaml. Use this config only on
+# a bigger GPU; for >=24GB prefer config.publishable.yaml (vLLM, n=8).
+#
+#   python examples/echo_rl/training/train.py --config training/config.qwen3_8b_8gb.yaml
+
+model: Qwen/Qwen3-8B
+default_image: python:3.11-slim
+
+dataset:
+  source: builtin
+  split: train
+  limit: 2                         # tiny smoke; bump once it fits
+
+grpo:
+  num_train_epochs: 1
+  per_device_batch_size: 1         # minimal — 8B activations are large
+  gradient_accumulation_steps: 1
+  num_generations: 2               # GRPO minimum
+  max_completion_length: 256       # short, to bound the KV cache
+  temperature: 0.8
+  learning_rate: 1.0e-5
+  max_grad_norm: 0.3
+  max_tool_calling_iterations: 3
+
+lora:
+  use_lora: true
+  r: 8
+  alpha: 16
+  dropout: 0.05
+  load_in_4bit: true               # QLoRA — required to fit 8B in 8GB
+  gradient_checkpointing: true     # trade compute for memory
+
+# No vllm block: HF generation only (vLLM colocate won't fit a 2nd 8B copy in 8GB).
+
+echo:
+  world_model_coeff: 0.05
+  world_loss_normalization: selected_tokens
+
+runtime:
+  exec_timeout: 30.0
+  verifier_timeout: 60.0
+
+seed: 0
+output_dir: results/qwen3_8b
+report_to: none
+logging_steps: 1
+save_model: false

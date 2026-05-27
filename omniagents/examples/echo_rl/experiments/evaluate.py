@@ -76,7 +76,9 @@ def rollout(model, tok, env, task, instructions, *, max_turns, max_new_tokens, t
             fn = call.get("function", {})
             args = _parse_args_dict(fn.get("arguments"))
             if fn.get("name") == "bash":
-                result = env.bash(**args)
+                # bash is async (TRL gathers it during training); drive it
+                # synchronously here via the pool loop for this eval rollout.
+                result = env._run(env._abash(str(args.get("command", "")), int(args.get("timeout", 30) or 30)))
             else:
                 result = {"error": f"unknown tool {fn.get('name')!r}"}
             messages.append({"role": "tool", "name": fn.get("name"), "content": str(result)})

@@ -50,10 +50,17 @@ sandbox + workspace binding + verifier) and `EchoGRPOTrainer` (the ECHO loss).
 ## Requirements
 
 ```bash
-pip install -e ".[training]"     # transformers>=5, trl 0.28-0.29, torch, datasets, ...
+# Training without vLLM (HF generation; LoRA/QLoRA ok):
+pip install -e ".[training]"     # transformers>=5, trl 0.28-0.29, torch, peft, ...
+
+# Reproducible, vLLM-capable stack (exact pins; tightly coupled — see comments):
+pip install "vllm==0.21.0"
+pip install -r examples/echo_rl/requirements.txt
 ```
 A running **Docker** daemon (rollouts run in containers; the bundled corpus uses
-`python:3.11-slim`).
+`python:3.11-slim`). The `[training]` extra's ranges are deliberately loose; the
+**`requirements.txt`** pins the exact `torch/transformers/trl/vllm` combo
+that's verified to run together (the vLLM path needs that precise set).
 
 ## Quickstart (laptop, bundled tasks)
 
@@ -160,6 +167,44 @@ metrics in the logs (TRL's vLLM correction).
 For fully custom rollouts, `train_grpo(..., rollout_func=...)` is also wired
 (TRL's `rollout_func` hook); the colocate path above is the recommended fast
 path since TRL handles vLLM generation + weight sync for you.
+
+## Where the time goes (profiled) & the warm-container pool
+
+GRPO is rollout-bound: the gradient step is <0.5% of wall-clock. Profiling one
+step (`experiments/profile_rollout.py`, 0.5B, this 8GB GPU) showed the two real
+costs and how to attack each:
+
+| phase | naive | + warm pool | + warm pool & vLLM |
+|---|---|---|---|
+| container create+setup | 67.6s | 5.5s | 5.8s |
+| LLM generation | 26.0s | 26.8s | 3.7s |
+| backward/optim | 0.4s | 0.4s | 0.3s |
+| **train_runtime** | **95s** | **34s** | **11s** |
+
+- **Container churn was the #1 cost** (recreating a fresh container per rollout,
+  ~8s each). `SandboxTrainingEnvironment` now keeps a shared **warm pool** of
+  *pre-created, never-reused* containers, refilled concurrently on worker threads
+  off the critical path (`pool_size`, `max_concurrent_builds` knobs). Each rollout
+  still gets a **pristine** container — we do **not** reuse dirty containers (that
+  would leak filesystem/processes/installed packages across tasks and silently
+  corrupt the verifier reward). The pool just hides the *create* latency.
+- **Generation** is then the dominant cost — that's what **vLLM** attacks (≈7×).
+
+Together: ~8.6× faster here. Re-run `profile_rollout.py --compare` on your stack.
+
+**Two more wins built in:**
+- **Prefix caching** — vLLM 0.21's engine enables it by default, so the shared
+  prompt prefix (system + task + prior turns) and the `num_generations` sibling
+  rollouts reuse KV across turns automatically. (No knob; it's on.)
+- **Concurrent environment work** — the `bash` tool is async and the verifier
+  reward runs all rollouts' verifiers at once, so a step's container exec /
+  verifier work happens **in parallel across rollouts** (the shared pool loop
+  offloads each to its thread executor) instead of serially. Negligible on the
+  toy tasks (bash ~0.1s, verifier ~0.6s) but a large win for real tasks with
+  slow commands or `pytest` verifiers. (Full *generation↔environment* pipelining
+  — keeping the GPU busy *during* container waits — needs the custom
+  `rollout_func` loop; the colocate path here overlaps env-with-env, not
+  env-with-gen.)
 
 ## How it maps to the paper
 
