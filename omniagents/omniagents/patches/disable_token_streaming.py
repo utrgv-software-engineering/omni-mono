@@ -39,6 +39,10 @@ logger = logging.getLogger(__name__)
 def _install_patch() -> None:
     from agents.models.openai_responses import OpenAIResponsesModel
 
+    # Keep the SDK's real streaming implementation so we can delegate to it for
+    # backends that mandate server-sent streaming (see below).
+    _original_stream_response = OpenAIResponsesModel.stream_response
+
     async def patched_stream_response(
         self: Any,
         system_instructions: str | None,
@@ -52,6 +56,29 @@ def _install_patch() -> None:
         conversation_id: str | None = None,
         prompt: Any | None = None,
     ) -> AsyncIterator[ResponseStreamEvent]:
+        # The ChatGPT Codex backend rejects `stream=false` ("Stream must be set
+        # to true"), so the non-streaming override below can't be used there —
+        # fall back to the SDK's genuine streaming path for it. Detected by the
+        # client base URL so no other backend is affected.
+        client = getattr(self, "_client", None)
+        base_url = str(getattr(client, "base_url", "") or "")
+        if "backend-api/codex" in base_url:
+            async for event in _original_stream_response(
+                self,
+                system_instructions,
+                input,
+                model_settings,
+                tools,
+                output_schema,
+                handoffs,
+                tracing,
+                previous_response_id=previous_response_id,
+                conversation_id=conversation_id,
+                prompt=prompt,
+            ):
+                yield event
+            return
+
         with response_span(disabled=tracing.is_disabled()) as span_response:
             try:
                 response: Response = await self._fetch_response(

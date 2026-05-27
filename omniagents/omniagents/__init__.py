@@ -62,3 +62,13 @@ try:
     from .patches import disable_token_streaming as _no_token_stream_patch  # noqa: F401
 except Exception:
     pass
+
+# Register the `openai-oauth` (Codex / ChatGPT) model-provider builder so any
+# agent can use `model_provider: { type: openai-oauth }` after signing in with
+# `omniagents auth codex login`. A no-op until tokens exist.
+try:
+    from .core.providers.codex import register_codex_provider as _register_codex
+
+    _register_codex()
+except Exception:
+    pass

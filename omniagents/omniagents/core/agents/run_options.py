@@ -148,6 +148,26 @@ def _expand_env(value: Any) -> Any:
     return value
 
 
+# Custom provider-type builders, registered by downstream packages that need a
+# provider type omniagents can't construct itself (e.g. an OAuth-authenticated
+# client whose token store/refresh lives outside this layer). Keyed by the
+# lowercased ``model_provider.type``; the builder receives the config dict and
+# returns an SDK ``ModelProvider`` (or ``None`` to fall through).
+_CUSTOM_PROVIDER_BUILDERS: Dict[str, Callable[[Dict[str, Any]], Optional[Any]]] = {}
+
+
+def register_model_provider_builder(
+    provider_type: str, builder: Callable[[Dict[str, Any]], Optional[Any]]
+) -> None:
+    """Register a builder for a non-built-in ``model_provider.type``.
+
+    Lets a dependent package (which may import SDK/provider modules omniagents
+    doesn't) supply a provider without omniagents taking a dependency on it.
+    Idempotent per type — the latest registration wins.
+    """
+    _CUSTOM_PROVIDER_BUILDERS[provider_type.lower().strip()] = builder
+
+
 def build_model_provider(config: Optional[Dict[str, Any]]) -> Optional[Any]:
     """Construct an SDK ``ModelProvider`` from a config dict.
 
@@ -285,6 +305,11 @@ def build_model_provider(config: Optional[Dict[str, Any]]) -> Optional[Any]:
             if websocket_options is not None:
                 kwargs["responses_websocket_options"] = websocket_options
             provider = OpenAIProvider(**kwargs) if kwargs else None
+    elif provider_type in _CUSTOM_PROVIDER_BUILDERS:
+        provider = _CUSTOM_PROVIDER_BUILDERS[provider_type](config)
+        if provider is None:
+            logger.warning(f"Registered builder for {provider_type!r} returned no provider")
+            return None
     else:
         logger.warning(f"Unknown model_provider.type {provider_type!r}")
         return None

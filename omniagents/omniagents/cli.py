@@ -94,6 +94,37 @@ def _resolve_studio_project_value(
     return project_value, manifest_path, derived
 
 
+def _run_auth_command(args) -> None:
+    """Handle ``omniagents auth codex {login,logout,status}``."""
+    import sys
+
+    if getattr(args, "auth_command", None) != "codex":
+        print("usage: omniagents auth codex {login,logout,status}", file=sys.stderr)
+        sys.exit(1)
+
+    from omniagents.core.providers import codex
+
+    command = getattr(args, "codex_command", "login")
+    if command == "login":
+        try:
+            tokens = codex.device_login()
+        except Exception as e:
+            print(f"Codex login failed: {e}", file=sys.stderr)
+            sys.exit(1)
+        acct = tokens.get("account_id")
+        print("Signed in to ChatGPT (Codex)." + (f" Account: {acct}" if acct else ""))
+    elif command == "logout":
+        codex.clear_tokens()
+        print("Signed out of ChatGPT (Codex).")
+    elif command == "status":
+        tokens = codex.load_tokens()
+        if not tokens:
+            print("Codex: not signed in\n\nRun: omniagents auth codex login")
+            return
+        acct = tokens.get("account_id") or "(unknown)"
+        print(f"Codex: signed in\nAccount: {acct}")
+
+
 def main():
     """Entry point for the omniagents CLI."""
     # Parse args first to get config path if available
@@ -1171,7 +1202,23 @@ def main():
     )
     judge_opt.set_defaults(apply=False)
 
+    # Auth: ChatGPT (Codex) sign-in for the openai-oauth provider.
+    auth_parser = subparsers.add_parser("auth", help="Authentication utilities")
+    auth_sub = auth_parser.add_subparsers(dest="auth_command")
+    codex_parser = auth_sub.add_parser("codex", help="ChatGPT (Codex) sign-in")
+    codex_parser.add_argument(
+        "codex_command",
+        nargs="?",
+        default="login",
+        choices=["login", "logout", "status"],
+        help="login (device flow) | logout | status",
+    )
+
     args = parser.parse_args()
+
+    if args.command == "auth":
+        _run_auth_command(args)
+        return
 
     if args.command == "new":
         try:

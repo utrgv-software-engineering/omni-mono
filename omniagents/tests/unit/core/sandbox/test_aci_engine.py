@@ -123,6 +123,23 @@ def test_build_group_no_ports_has_no_ip():
     assert grp.subnet_ids is None
 
 
+def test_build_group_mounts_workspace_share():
+    from omniagents.core.sandbox.aci_engine import AciFileShare
+
+    grp = _manager()._build_group(
+        AciContainerSpec(
+            name="g",
+            image="img",
+            file_share=AciFileShare(account_name="a", account_key="k", share_name="ws", mount_path="/workspace"),
+        )
+    )
+    container = grp.containers[0]
+    mounts = {vm.name: vm.mount_path for vm in container.volume_mounts}
+    assert mounts == {"workspace": "/workspace"}
+    shares = {v.name: v.azure_file.share_name for v in grp.volumes}
+    assert shares == {"workspace": "ws"}
+
+
 def test_build_group_public_ip_when_no_subnet():
     grp = _manager()._build_group(
         AciContainerSpec(name="g", image="img", exposed_ports=(8080, 6080))

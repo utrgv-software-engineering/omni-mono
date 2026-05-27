@@ -23,10 +23,12 @@ from .factory import (
 # Importing these entry classes registers them with BaseEntry's
 # subclass registry so manifests using their ``type`` strings resolve
 # correctly. Must happen before any manifest is parsed.
+from .authenticated_git_repo import AuthenticatedGitRepo
 from .local_git_archive import LocalGitArchive, LocalGitArchiveError
 from .permissive_local_dir import PermissiveLocalDir, PermissiveLocalDirError
 
 __all__ = [
+    "AuthenticatedGitRepo",
     "LocalGitArchive",
     "LocalGitArchiveError",
     "PermissiveLocalDir",
