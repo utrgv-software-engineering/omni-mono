@@ -64,7 +64,8 @@ def _build_parser() -> argparse.ArgumentParser:
             "``kind`` (local|local-git|git-remote), ``mountName`` (slug used "
             "as the subdir name). Kind-specific keys: "
             "local/local-git → ``path`` (host dir); "
-            "git-remote → ``repoUrl``, optional ``ref``."
+            "git-remote → ``repoUrl``, optional ``ref``, optional ``auth`` "
+            "({tokenEnv, username}) for private repos."
         ),
     )
     p.add_argument(
@@ -270,7 +271,14 @@ def _build_seed_entry(src: Dict[str, Any]) -> Any:
 
     * ``{"kind": "local",       "path": str,    "mountName": str}``
     * ``{"kind": "local-git",   "path": str,    "mountName": str}``
-    * ``{"kind": "git-remote",  "repoUrl": str, "mountName": str, "ref"?: str}``
+    * ``{"kind": "git-remote",  "repoUrl": str, "mountName": str, "ref"?: str,
+         "auth"?: {"tokenEnv": str, "username": str}}``
+
+    A ``git-remote`` source carrying ``auth`` is a *private* repo: ``tokenEnv``
+    names the environment variable (injected by the launcher into this process)
+    holding the token, and the entry becomes an ``AuthenticatedGitRepo`` that
+    configures an in-container git credential helper. Without ``auth`` it's a
+    plain public-repo ``GitRepo`` clone.
 
     Returns ``None`` for unrecognised kinds (the dispatch in
     :func:`_build_sandbox` raises before reaching here for
@@ -278,7 +286,11 @@ def _build_seed_entry(src: Dict[str, Any]) -> Any:
     in normal flow).
     """
     from agents.sandbox.entries import GitRepo
-    from omniagents.core.sandbox import LocalGitArchive, PermissiveLocalDir
+    from omniagents.core.sandbox import (
+        AuthenticatedGitRepo,
+        LocalGitArchive,
+        PermissiveLocalDir,
+    )
 
     kind = src.get("kind")
     if kind == "local-git":
@@ -297,6 +309,15 @@ def _build_seed_entry(src: Dict[str, Any]) -> Any:
             raise ValueError(f"--source kind=git-remote requires 'repoUrl': {src!r}")
         ref = src.get("ref") or "HEAD"
         host, repo = _parse_git_remote_url(url)
+        auth = src.get("auth")
+        if isinstance(auth, dict) and auth.get("tokenEnv"):
+            return AuthenticatedGitRepo(
+                host=host,
+                repo=repo,
+                ref=ref,
+                username=auth.get("username") or "x-access-token",
+                token_env=auth["tokenEnv"],
+            )
         return GitRepo(host=host, repo=repo, ref=ref)
     raise ValueError(f"unknown --source kind: {kind!r}")
 
@@ -963,6 +984,16 @@ async def perform_switch(profile_path: str, *, session: Any = None) -> Dict[str,
         return {"ok": True, **_changed_payload(ctx)}
 
 
+def _register_codex_provider() -> None:
+    """Register the openai-oauth model provider builder. Never blocks serve."""
+    try:
+        from omni_code.codex_auth import register_codex_provider
+
+        register_codex_provider()
+    except Exception as e:
+        print(json.dumps({"warning": f"codex provider registration skipped: {e}"}), file=sys.stderr)
+
+
 async def _serve(args: argparse.Namespace) -> int:
     # --- Profile resolution ---
     try:
@@ -974,6 +1005,14 @@ async def _serve(args: argparse.Namespace) -> int:
     except (FileNotFoundError, ValueError) as e:
         print(json.dumps({"error": f"profile: {e}"}), file=sys.stderr)
         return 1
+
+    # --- Codex (ChatGPT OAuth) provider ---
+    # Register the openai-oauth provider builder so the main agent can use a
+    # Codex model whenever one is selected (default or switched mid-session) —
+    # not only when it's the startup default. Aux agents (compact, recap,
+    # summarizer) build their own via _build_model_provider's openai-oauth
+    # branch. Safe + idempotent regardless of sign-in state.
+    _register_codex_provider()
 
     # --- Sandbox session ---
     # Parse the repeated --source JSON descriptors. Empty list = no

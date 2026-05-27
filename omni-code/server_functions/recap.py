@@ -83,13 +83,18 @@ async def _run_recap_agent(
         workspace_root = get_manifest_root() or os.getcwd()
 
     with _temporary_environ(env_overrides):
-        result = await Runner.run(
+        # Use the streaming runner: the Codex backend requires stream=true, and
+        # for every other model run_streamed routes through the same
+        # (non-streaming) per-turn path via the disable_token_streaming patch.
+        result = Runner.run_streamed(
             agent,
             prompt,
             context={"workspace_root": workspace_root},
             max_turns=1,
             run_config=run_config,
         )
+        async for _ in result.stream_events():
+            pass
         return result.final_output_as(str)
 
 

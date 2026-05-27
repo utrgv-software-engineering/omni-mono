@@ -191,7 +191,43 @@ def get_merged_providers() -> Dict[str, Dict[str, Any]]:
     1. Project defaults (default_models.py)
     2. Platform-governed providers (from management plane policy)
     3. User config (models.json) — only if allow_user_models is true
+
+    OAuth providers (``type: openai-oauth``) have their model list discovered
+    live from the provider when signed in (see ``_apply_oauth_discovery``); the
+    static seed is the offline fallback.
     """
+    return _apply_oauth_discovery(_merge_providers_config())
+
+
+def _apply_oauth_discovery(merged: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Replace each ``openai-oauth`` provider's models with a live fetch.
+
+    Best-effort: when not signed in or the fetch fails, the provider keeps its
+    statically-seeded models. Discovered models merge over the seed so a user's
+    per-model overrides in models.json (label, reasoning, …) still apply.
+    """
+    for provider_config in merged.values():
+        if not isinstance(provider_config, dict):
+            continue
+        if (provider_config.get("type") or "").strip().lower() != "openai-oauth":
+            continue
+        try:
+            from omni_code.codex_auth import list_codex_models
+
+            discovered = list_codex_models()
+        except Exception:
+            discovered = None
+        if not discovered:
+            continue
+        seed = provider_config.get("models") if isinstance(provider_config.get("models"), dict) else {}
+        provider_config["models"] = {
+            slug: {**entry, **(seed.get(slug) or {})} for slug, entry in discovered.items()
+        }
+    return merged
+
+
+def _merge_providers_config() -> Dict[str, Dict[str, Any]]:
+    """Static provider merge (defaults → platform governance → user config)."""
     merged = get_default_providers()
 
     # Layer 2: platform governance (only when authenticated)

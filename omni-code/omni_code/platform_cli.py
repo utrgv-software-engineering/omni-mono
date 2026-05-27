@@ -4,6 +4,7 @@ Usage:
     omni auth login [url]     Authenticate with the management plane
     omni auth logout          Clear stored credentials
     omni auth status          Show current authentication status
+    omni auth codex <cmd>     Manage ChatGPT (Codex) sign-in: login|logout|status
 """
 
 import sys
@@ -17,6 +18,7 @@ def main(args: list[str]) -> None:
             "  login [url]    Authenticate with the management plane\n"
             "  logout         Clear stored credentials\n"
             "  status         Show current authentication status\n"
+            "  codex <cmd>    ChatGPT (Codex) sign-in: login|logout|status\n"
         )
         return
 
@@ -28,8 +30,38 @@ def main(args: list[str]) -> None:
         _logout()
     elif command == "status":
         _status()
+    elif command == "codex":
+        _codex(args[1:])
     else:
         print(f"Unknown auth command: {command}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _codex(args: list[str]) -> None:
+    from omni_code import codex_auth
+
+    command = args[0] if args else "login"
+
+    if command == "login":
+        try:
+            tokens = codex_auth.device_login()
+        except Exception as e:
+            print(f"Codex login failed: {e}", file=sys.stderr)
+            sys.exit(1)
+        acct = tokens.get("account_id")
+        print("Signed in to ChatGPT (Codex)." + (f" Account: {acct}" if acct else ""))
+    elif command == "logout":
+        codex_auth.clear_tokens()
+        print("Signed out of ChatGPT (Codex).")
+    elif command == "status":
+        tokens = codex_auth.load_tokens()
+        if not tokens:
+            print("Codex:     not signed in\n\nRun: omni auth codex login")
+            return
+        acct = tokens.get("account_id") or "(unknown)"
+        print(f"Codex:     signed in\nAccount:   {acct}")
+    else:
+        print(f"Unknown codex command: {command}", file=sys.stderr)
         sys.exit(1)
 
 

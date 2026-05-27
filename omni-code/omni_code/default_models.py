@@ -49,7 +49,24 @@ DEFAULT_PROVIDERS: Dict[str, Dict[str, Any]] = {
                 "realtime": True,
             },
         },
-    }
+    },
+    # ChatGPT subscription via the Codex backend (OAuth). No API key — auth is
+    # a ChatGPT login managed by omni_code.codex_auth. Talks the Responses API
+    # to chatgpt.com/backend-api/codex. When signed in, the model list is
+    # discovered live from the backend (see models._apply_oauth_discovery); the
+    # entries below are only the offline fallback.
+    "codex": {
+        "type": "openai-oauth",
+        "models": {
+            "gpt-5.2": {
+                "model": "gpt-5.2",
+                "label": "GPT-5.2 (ChatGPT)",
+                "max_input_tokens": 272000,
+                "max_output_tokens": 128000,
+                "model_settings": _REASONING_MODEL_SETTINGS,
+            },
+        },
+    },
 }
 
 # Default model to use if user hasn't set one

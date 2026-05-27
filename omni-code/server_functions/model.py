@@ -3,7 +3,7 @@
 Provides runtime commands:
 - /models - List available models and current state
 - /model <name> - Switch to a different model for this session
-- /reasoning <low|medium|high> - Set reasoning effort level
+- /reasoning <low|medium|high|xhigh> - Set reasoning effort level
 """
 
 from omniagents import server_function
@@ -67,6 +67,13 @@ async def list_models(session: Session) -> dict:
     # Mark current model
     for m in models:
         m["is_current"] = m["name"] == current
+
+    # Fall back to the current model's own default reasoning when the session
+    # has no explicit override, so we report what the agent actually runs.
+    if not reasoning_effort:
+        current_model = next((m for m in models if m["is_current"]), None)
+        if current_model:
+            reasoning_effort = current_model.get("reasoning")
 
     # Build response message
     if not models:
@@ -156,13 +163,16 @@ async def switch_model(session: Session, text: str) -> dict:
                     else "?"
                 )
                 tokens = f" [{input_t}/{output_t}]"
+            # Show the effective reasoning effort: the session override if set,
+            # otherwise the model's own default (what the agent actually runs).
+            effective_reasoning = reasoning or model_config.get("reasoning")
             return {
                 "model": active,
                 "label": model_config.get("label", active),
                 "provider": model_config.get("provider"),
                 "max_input_tokens": model_config.get("max_input_tokens"),
                 "max_output_tokens": model_config.get("max_output_tokens"),
-                "reasoning_effort": reasoning,
+                "reasoning_effort": effective_reasoning,
                 "message": f"Current model: **{model_config.get('label', active)}** [{model_config.get('provider')}]{tokens}",
             }
         else:
@@ -245,25 +255,29 @@ async def switch_model(session: Session, text: str) -> dict:
 async def set_reasoning(session: Session, text: str) -> dict:
     """Set reasoning effort level for this session.
 
-    Usage: /reasoning <low|medium|high>
+    Usage: /reasoning <low|medium|high|xhigh>
     """
     level = text.lower().strip()
 
     # No argument = show current
     if not level:
-        current = getattr(session, "reasoning_effort", "low")
+        # Session override if set, else the active model's default, else low.
+        current = getattr(session, "reasoning_effort", None)
+        if not current:
+            model_config = getattr(session, "model_config", None)
+            current = (model_config or {}).get("reasoning") or "low"
         return {
             "reasoning_effort": current,
             "message": f"Current reasoning effort: **{current}**",
         }
 
     # Validate level
-    valid_levels = ("low", "medium", "high")
+    valid_levels = ("low", "medium", "high", "xhigh")
     if level not in valid_levels:
         return {
             "error": f"Invalid level `{level}`",
             "valid": list(valid_levels),
-            "message": f"Invalid level `{level}`. Use: low, medium, or high",
+            "message": f"Invalid level `{level}`. Use: low, medium, high, or xhigh",
         }
 
     # Update session state

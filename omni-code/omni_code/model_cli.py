@@ -242,6 +242,18 @@ def cmd_list(args):
     default_name = get_default_model_name()
     voice_default = get_voice_default_model_name()
 
+    # Machine-readable list (used by the launcher to populate model pickers with
+    # the live set, including OAuth-discovered models). Always valid JSON.
+    if getattr(args, "json", False):
+        import json
+
+        print(json.dumps({
+            "models": models,
+            "default": default_name,
+            "voice_default": voice_default,
+        }))
+        return
+
     if not models:
         print("No models available.")
         return
@@ -575,7 +587,10 @@ def main(argv=None):
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
     subparsers.add_parser("setup", help="Interactive setup wizard")
-    subparsers.add_parser("list", help="List configured models")
+    list_parser = subparsers.add_parser("list", help="List configured models")
+    list_parser.add_argument(
+        "--json", action="store_true", help="Emit the model list as JSON"
+    )
     subparsers.add_parser("check", help="Check if models are configured (exit 0=yes, 1=no)")
 
     add_parser = subparsers.add_parser("add", help="Add a model to an existing provider")

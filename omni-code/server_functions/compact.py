@@ -313,6 +313,15 @@ def _build_model_provider(
     api_key = runtime.get("api_key")
     base_url = runtime.get("base_url")
 
+    if provider == "openai-oauth":
+        from agents.models.openai_provider import OpenAIProvider
+        from omni_code.codex_auth import build_codex_openai_client
+
+        client = build_codex_openai_client()
+        if client is None:
+            return None, {}
+        return OpenAIProvider(openai_client=client), {}
+
     if provider == "litellm":
         from agents.extensions.models.litellm_provider import LitellmProvider
 
@@ -441,13 +450,18 @@ async def _run_compaction_agent(
         workspace_root = get_manifest_root() or os.getcwd()
 
     with _temporary_environ(env_overrides):
-        result = await Runner.run(
+        # Use the streaming runner: the Codex backend requires stream=true, and
+        # for every other model run_streamed routes through the same
+        # (non-streaming) per-turn path via the disable_token_streaming patch.
+        result = Runner.run_streamed(
             agent,
             prompt,
             context={"workspace_root": workspace_root},
             max_turns=1,
             run_config=run_config,
         )
+        async for _ in result.stream_events():
+            pass
         return result.final_output_as(str)
 
 
