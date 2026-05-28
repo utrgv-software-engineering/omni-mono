@@ -957,4 +957,9 @@ def has_models_configured() -> bool:
     if provider == "openai-compatible":
         return bool(resolved.get("model")) and bool(resolved.get("base_url"))
 
+    if provider == "openai-oauth":
+        from omni_code.codex_auth import is_authenticated
+
+        return is_authenticated()
+
     return bool(resolved.get("api_key"))
