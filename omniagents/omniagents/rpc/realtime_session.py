@@ -16,9 +16,12 @@ from contextlib import asynccontextmanager
 from contextlib import AsyncExitStack
 
 from omniagents.core.agents.specs import AgentSpec
-from omniagents.core.session.audio_storage import AudioStorage
+from omniagents.core.session.audio_storage import (
+    AudioStorage,
+    AudioStorageBackend,
+    build_audio_storage,
+)
 from omniagents.core.session import history_db
-from omniagents.core.paths import get_audio_storage_path
 from omniagents.rpc.realtime_events import (
     RealtimeEventBase,
     map_realtime_session_event_to_rpc,
@@ -268,7 +271,7 @@ class RealtimeSession:
         spec: AgentSpec,
         settings: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None,
-        audio_storage: Optional[AudioStorage] = None,
+        audio_storage: Optional[AudioStorageBackend] = None,
     ):
         """Initialize a realtime session.
 
@@ -289,12 +292,15 @@ class RealtimeSession:
         self._project_slug = getattr(spec, "project_slug", None)
         self._agent_slug = getattr(spec, "agent_slug", None)
 
-        # Initialize audio storage
+        # Initialize audio storage — backend chosen by env
+        # (OMNIAGENTS_AUDIO_BACKEND=blob|fs). Local FS is the default and
+        # matches the pre-refactor behaviour.
         if audio_storage:
             self.audio_storage = audio_storage
         else:
-            audio_path = get_audio_storage_path(self._project_slug, self._agent_slug)
-            self.audio_storage = AudioStorage(base_path=audio_path)
+            self.audio_storage = build_audio_storage(
+                self._project_slug, self._agent_slug
+            )
 
         # Session state
         self._agent = None

@@ -64,6 +64,13 @@ session-mongodb = [
 session-encrypted = [
     "openai-agents[encrypt]>=0.16.0,<0.17",
 ]
+session-postgres = [
+    "psycopg[binary]>=3.2",
+    "psycopg_pool>=3.2",
+]
+audio-blob = [
+    "azure-storage-blob>=12.20",
+]
 sandbox-docker = [
     "openai-agents[docker]>=0.16.0,<0.17",
 ]
@@ -103,7 +110,7 @@ platform = [
 ]
 enterprise = ["omniagents[oidc,presidio,platform]"]
 all = [
-    "omniagents[server,web,studio,studio-server,voice,litellm,oidc,presidio,platform,session-sqlalchemy,session-redis,session-mongodb,session-encrypted,sandbox-docker,sandbox-e2b,sandbox-modal,sandbox-runloop,sandbox-daytona,sandbox-blaxel,sandbox-vercel,sandbox-cloudflare,sandbox-aci]",
+    "omniagents[server,web,studio,studio-server,voice,litellm,oidc,presidio,platform,session-sqlalchemy,session-redis,session-mongodb,session-encrypted,session-postgres,audio-blob,sandbox-docker,sandbox-e2b,sandbox-modal,sandbox-runloop,sandbox-daytona,sandbox-blaxel,sandbox-vercel,sandbox-cloudflare,sandbox-aci]",
 ]
 training = [
     # GRPO/SFT agent fine-tuning (omniagents.training).

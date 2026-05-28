@@ -210,6 +210,45 @@ async def _refresh_async(refresh_token: str) -> Dict[str, Any]:
     return _normalize_token_response(resp.json())
 
 
+async def _persist_refresh_to_launcher(tokens: Dict[str, Any]) -> None:
+    """Mirror the just-refreshed bundle to the launcher's durable store.
+
+    The cloud launcher's container filesystem is ephemeral, so the runtime's
+    ``save_tokens(...)`` only survives the lifetime of the spawn. Without this
+    callback, the launcher's PgSecretStore would keep the original (now
+    possibly rotated-invalid) refresh token, and the *next* spawn would
+    pre-materialize a dead token and silently log the user out.
+
+    Activated when both ``OMNI_CODEX_REFRESH_URL`` and ``OMNI_RUNTIME_TOKEN``
+    are set (cloud spawn). Local/Electron leave them unset → no-op. Failures
+    are logged and swallowed: the local save above still happened, so the
+    current spawn keeps working.
+    """
+    url = os.getenv("OMNI_CODEX_REFRESH_URL")
+    runtime_token = os.getenv("OMNI_RUNTIME_TOKEN")
+    if not url or not runtime_token:
+        return
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {runtime_token}",
+                    "Content-Type": "application/json",
+                },
+                json=tokens,
+            )
+        if resp.status_code >= 400:
+            print(
+                f"[codex] launcher persist callback returned {resp.status_code}; "
+                "next spawn may see stale refresh token"
+            )
+    except Exception as e:  # network blip, launcher down, etc.
+        print(f"[codex] launcher persist callback failed: {e}")
+
+
 def _ensure_fresh_sync() -> Optional[Dict[str, Any]]:
     """Return current tokens, refreshing (synchronously) if expired.
 
@@ -415,6 +454,7 @@ class _CodexTokenManager:
                 # Best-effort persistence; an ephemeral config dir (sandbox)
                 # just means we refresh again next restart.
                 pass
+            await _persist_refresh_to_launcher(refreshed)
             return self._tokens["access"]
 
 
