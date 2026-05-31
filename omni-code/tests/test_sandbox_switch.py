@@ -6,6 +6,7 @@ which is the part that doesn't need a real docker/aci environment.
 
 import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -27,6 +28,9 @@ class FakeProfile:
 class FakeSession:
     def __init__(self, name):
         self.name = name
+
+    async def resolve_exposed_port(self, port):
+        return SimpleNamespace(host="127.0.0.1", port=port)
 
 
 class FakeBrought:
@@ -55,7 +59,9 @@ class FakeService:
         self._session_manager = FakeSessionManager()
         self.events = []  # (function, args)
 
-    async def request_client_function(self, function, args=None, *, session=None, expect_result=False, **kw):
+    async def request_client_function(
+        self, function, args=None, *, session=None, expect_result=False, **kw
+    ):
         self.events.append((function, args))
         return None
 
@@ -83,11 +89,34 @@ def _make_ctx(current_path="/profiles/host.yml", current_name="host"):
     return ctx
 
 
+@pytest.mark.asyncio
+async def test_resolve_service_urls_points_vnc_at_novnc_client():
+    urls = await serve_cli._resolve_service_urls(
+        FakeSession("s1"),
+        [
+            (
+                serve_cli.ServiceSpec(
+                    name="code_server", command="code-server", port=8080
+                ),
+                1,
+            ),
+            (serve_cli.ServiceSpec(name="vnc", command="start-vnc", port=6080), 2),
+        ],
+    )
+
+    assert urls == {
+        "code_server": "http://127.0.0.1:8080",
+        "vnc": "http://127.0.0.1:6080/vnc.html?autoconnect=true&resize=scale",
+    }
+
+
 @pytest.fixture
 def wired(monkeypatch):
     """Install a fake service + record re-wire calls; restore globals after."""
     service = FakeService()
-    monkeypatch.setattr("omniagents.core.agents.service.current_service", lambda: service)
+    monkeypatch.setattr(
+        "omniagents.core.agents.service.current_service", lambda: service
+    )
 
     calls = {"teardown": [], "attach": [], "terminal": [], "orchestrator": []}
 
@@ -96,15 +125,18 @@ def wired(monkeypatch):
 
     monkeypatch.setattr(serve_cli, "teardown_session", fake_teardown)
     monkeypatch.setattr(
-        serve_cli, "resolve_profile",
+        serve_cli,
+        "resolve_profile",
         lambda **kw: FakeProfile(backend="docker"),
     )
     monkeypatch.setattr(
-        serve_cli, "_attach_session_to_spec",
+        serve_cli,
+        "_attach_session_to_spec",
         lambda spec, session, raw: calls["attach"].append(session),
     )
     monkeypatch.setattr(
-        serve_cli, "_install_session_terminal_manager",
+        serve_cli,
+        "_install_session_terminal_manager",
         lambda app, session, terminal: calls["terminal"].append(session),
     )
     monkeypatch.setattr(
@@ -164,7 +196,9 @@ async def test_switch_happy_path_rewires_and_broadcasts(wired, monkeypatch):
 async def test_switch_noop_when_same_profile(wired, monkeypatch):
     service, calls = wired
     aws.set_sandbox_session(FakeSession("old"))
-    aws.set_switch_context(_make_ctx(current_path="/profiles/devbox.yml", current_name="devbox"))
+    aws.set_switch_context(
+        _make_ctx(current_path="/profiles/devbox.yml", current_name="devbox")
+    )
     monkeypatch.setattr(serve_cli, "bring_up_session", None)  # must not be called
 
     res = await serve_cli.perform_switch("/profiles/devbox.yml")
@@ -179,7 +213,11 @@ async def test_switch_quiesces_active_run(wired, monkeypatch):
     service._session_manager._task_map["run-42"] = object()
     aws.set_sandbox_session(FakeSession("old"))
     aws.set_switch_context(_make_ctx())
-    monkeypatch.setattr(serve_cli, "bring_up_session", lambda **kw: _coro(FakeBrought(FakeSession("new"), "docker", "c")))
+    monkeypatch.setattr(
+        serve_cli,
+        "bring_up_session",
+        lambda **kw: _coro(FakeBrought(FakeSession("new"), "docker", "c")),
+    )
 
     await serve_cli.perform_switch("/profiles/devbox.yml")
     assert service._session_manager.cancelled == ["run-42"]
@@ -191,7 +229,9 @@ async def test_switch_rolls_back_on_bringup_failure(wired, monkeypatch):
     old = FakeSession("old")
     rolled = FakeSession("rolled")
     aws.set_sandbox_session(old)
-    aws.set_switch_context(_make_ctx(current_path="/profiles/host.yml", current_name="host"))
+    aws.set_switch_context(
+        _make_ctx(current_path="/profiles/host.yml", current_name="host")
+    )
 
     state = {"n": 0}
 
@@ -212,7 +252,10 @@ async def test_switch_rolls_back_on_bringup_failure(wired, monkeypatch):
     assert ctx.ready_event.is_set() and ctx.switching is False
     assert ctx.last_error == "docker daemon down"
     fns = [e[0] for e in service.events]
-    assert fns == ["ui.sandbox.switching", "ui.sandbox.changed"]  # changed = rolled-back state
+    assert fns == [
+        "ui.sandbox.switching",
+        "ui.sandbox.changed",
+    ]  # changed = rolled-back state
 
 
 @pytest.mark.asyncio
@@ -283,4 +326,5 @@ async def test_wait_until_ready_blocks_then_resolves():
 def _coro(value):
     async def _c():
         return value
+
     return _c()

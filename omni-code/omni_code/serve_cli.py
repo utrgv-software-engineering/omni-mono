@@ -446,9 +446,7 @@ async def _create_or_resume_session(
         # runs (cache invalidation, fingerprint resets). Used to distinguish
         # rehydrate from fresh below.
         try:
-            snapshot_restorable = await snapshot_instance.restorable(
-                dependencies=None
-            )
+            snapshot_restorable = await snapshot_instance.restorable(dependencies=None)
         except Exception:
             snapshot_restorable = False
 
@@ -595,7 +593,9 @@ def _load_spec(project_path: Path, agent_key: Optional[str]) -> Any:
     return build_spec_from_project(proj, agent_key=agent_key)
 
 
-def _attach_session_to_spec(spec: Any, session: Any, profile_raw: Dict[str, Any]) -> None:
+def _attach_session_to_spec(
+    spec: Any, session: Any, profile_raw: Dict[str, Any]
+) -> None:
     """Wire the long-lived SandboxSession into the spec so every Runner.run
     reuses it, and flip ``use_sandbox_agent`` so the builder constructs a
     SandboxAgent with ``WorkspaceBindingCapability`` prepended.
@@ -669,9 +669,7 @@ async def _start_services(
         # shape ``omniagents.workspace.SandboxWorkspace.exec`` uses internally.
         cmd = svc.command
         if svc.env:
-            prefix = " ".join(
-                f"{k}={_shell_quote(v)}" for k, v in svc.env.items()
-            )
+            prefix = " ".join(f"{k}={_shell_quote(v)}" for k, v in svc.env.items())
             cmd = f"{prefix} {cmd}"
 
         update = await session.pty_exec_start(
@@ -713,7 +711,10 @@ async def _resolve_service_urls(
         endpoint = await session.resolve_exposed_port(svc.port)
         # ExposedPortEndpoint has .host and .port; build an http URL.
         # Future: let services declare scheme=ws|https if needed.
-        out[svc.name] = f"http://{endpoint.host}:{endpoint.port}"
+        url = f"http://{endpoint.host}:{endpoint.port}"
+        if svc.name == "vnc":
+            url = f"{url}/vnc.html?autoconnect=true&resize=scale"
+        out[svc.name] = url
     return out
 
 
@@ -809,7 +810,9 @@ async def bring_up_session(
     )
 
 
-def _profile_display_name(explicit_path: Optional[Any], profile: ResolvedProfile) -> str:
+def _profile_display_name(
+    explicit_path: Optional[Any], profile: ResolvedProfile
+) -> str:
     """Short label for a profile: the file stem when selected by path
     (``devbox.yml`` → ``devbox``), else the client backend type, else 'default'."""
     if explicit_path:
@@ -835,7 +838,9 @@ async def _broadcast_sandbox_event(
     if service is None:
         return
     try:
-        await service.request_client_function(method, payload, session=session, expect_result=False)
+        await service.request_client_function(
+            method, payload, session=session, expect_result=False
+        )
     except Exception as e:  # noqa: BLE001
         print(f"[sandbox-switch] broadcast {method} failed: {e}", file=sys.stderr)
 
@@ -861,7 +866,10 @@ async def _attempt_rollback(ctx: Any, prev_profile_path: Optional[str]) -> bool:
     """Bring the previous profile back up from the (intact) snapshot and re-wire
     it. Returns True on success. The workspace tar the failed switch's teardown
     persisted is keyed by session_id, so the rollback rehydrates the same files."""
-    from omni_code.agent_workspace_state import set_orchestrator_spec, set_sandbox_session
+    from omni_code.agent_workspace_state import (
+        set_orchestrator_spec,
+        set_sandbox_session,
+    )
 
     if not prev_profile_path:
         return False
@@ -933,7 +941,10 @@ async def perform_switch(profile_path: str, *, session: Any = None) -> Dict[str,
 
     ctx = get_switch_context()
     if ctx is None:
-        return {"ok": False, "reason": "no live sandbox server (not running under omni serve)"}
+        return {
+            "ok": False,
+            "reason": "no live sandbox server (not running under omni serve)",
+        }
 
     try:
         from omniagents.core.agents.service import current_service
@@ -952,7 +963,9 @@ async def perform_switch(profile_path: str, *, session: Any = None) -> Dict[str,
         except (FileNotFoundError, ValueError) as e:
             return {"ok": False, "reason": f"profile: {e}"}
 
-        if ctx.current_profile_path and Path(profile_path) == Path(ctx.current_profile_path):
+        if ctx.current_profile_path and Path(profile_path) == Path(
+            ctx.current_profile_path
+        ):
             return {"ok": True, **_changed_payload(ctx)}
 
         target_name = _profile_display_name(profile_path, target)
@@ -964,7 +977,9 @@ async def perform_switch(profile_path: str, *, session: Any = None) -> Dict[str,
         ctx.switching = True
         ctx.last_error = None
         ctx.ready_event.clear()
-        await _broadcast_sandbox_event(service, "ui.sandbox.switching", {"profile": target_name}, session=session)
+        await _broadcast_sandbox_event(
+            service, "ui.sandbox.switching", {"profile": target_name}, session=session
+        )
 
         old_session = get_sandbox_session()
         # Carry the workspace across the switch when the OLD backend uses a noop
@@ -988,7 +1003,9 @@ async def perform_switch(profile_path: str, *, session: Any = None) -> Dict[str,
                 )
             except Exception as e:  # noqa: BLE001
                 print(
-                    json.dumps({"warning": f"workspace carry failed during switch: {e}"}),
+                    json.dumps(
+                        {"warning": f"workspace carry failed during switch: {e}"}
+                    ),
                     file=sys.stderr,
                 )
         try:
@@ -1007,12 +1024,27 @@ async def perform_switch(profile_path: str, *, session: Any = None) -> Dict[str,
             ctx.switching = False
             ctx.ready_event.set()
             if rolled:
-                await _broadcast_sandbox_event(service, "ui.sandbox.changed", _changed_payload(ctx), session=session)
+                await _broadcast_sandbox_event(
+                    service,
+                    "ui.sandbox.changed",
+                    _changed_payload(ctx),
+                    session=session,
+                )
                 # Old sandbox restored and live — the caller should NOT relaunch.
-                return {"ok": False, "recovered": "rolled_back", "reason": f"switch failed, rolled back: {e}"}
-            await _broadcast_sandbox_event(service, "ui.sandbox.lost", {"reason": str(e)}, session=session)
+                return {
+                    "ok": False,
+                    "recovered": "rolled_back",
+                    "reason": f"switch failed, rolled back: {e}",
+                }
+            await _broadcast_sandbox_event(
+                service, "ui.sandbox.lost", {"reason": str(e)}, session=session
+            )
             # Sandbox is gone — the caller must cold-relaunch to recover.
-            return {"ok": False, "recovered": "lost", "reason": f"switch failed and rollback failed: {e}"}
+            return {
+                "ok": False,
+                "recovered": "lost",
+                "reason": f"switch failed and rollback failed: {e}",
+            }
 
         # Re-wire the new session into the live agent.
         set_sandbox_session(brought.session)
@@ -1029,7 +1061,9 @@ async def perform_switch(profile_path: str, *, session: Any = None) -> Dict[str,
         ctx.switching = False
         ctx.ready_event.set()
 
-        await _broadcast_sandbox_event(service, "ui.sandbox.changed", _changed_payload(ctx), session=session)
+        await _broadcast_sandbox_event(
+            service, "ui.sandbox.changed", _changed_payload(ctx), session=session
+        )
         return {"ok": True, **_changed_payload(ctx)}
 
 
@@ -1040,7 +1074,10 @@ def _register_codex_provider() -> None:
 
         register_codex_provider()
     except Exception as e:
-        print(json.dumps({"warning": f"codex provider registration skipped: {e}"}), file=sys.stderr)
+        print(
+            json.dumps({"warning": f"codex provider registration skipped: {e}"}),
+            file=sys.stderr,
+        )
 
 
 async def _serve(args: argparse.Namespace) -> int:
@@ -1199,7 +1236,9 @@ async def _serve(args: argparse.Namespace) -> int:
     # agent's bash tool); a sandbox backend that can't stream a PTY gets a
     # backend that errors loudly — never a silent host shell.
     if is_host:
-        _install_host_terminal_manager(app, profile.terminal, default_cwd=args.workspace)
+        _install_host_terminal_manager(
+            app, profile.terminal, default_cwd=args.workspace
+        )
     else:
         _install_session_terminal_manager(app, session, profile.terminal)
 
@@ -1231,9 +1270,13 @@ async def _serve(args: argparse.Namespace) -> int:
     # Pull container_id from session.state when present (docker backends
     # expose it; unix_local / e2b / etc. don't). The launcher uses this
     # for ``docker exec``-based operations like PR diff extraction.
-    container_id = None if session is None else getattr(session.state, "container_id", None)
+    container_id = (
+        None if session is None else getattr(session.state, "container_id", None)
+    )
     manifest_root = (
-        args.workspace if session is None else getattr(session.state.manifest, "root", None)
+        args.workspace
+        if session is None
+        else getattr(session.state.manifest, "root", None)
     )
     payload = {
         "sandbox_url": base_url,
@@ -1313,7 +1356,9 @@ async def _serve(args: argparse.Namespace) -> int:
         # down the LIVE ones, not the first-launch locals.
         live_ctx = get_switch_context()
         live_session = get_sandbox_session() or session
-        live_services = live_ctx.started_services if live_ctx is not None else started_services
+        live_services = (
+            live_ctx.started_services if live_ctx is not None else started_services
+        )
 
         # Stop the auto-recap watcher (cancels its task + detaches listeners).
         recap_scheduler_to_stop = getattr(app.state, "recap_scheduler", None)
@@ -1385,7 +1430,9 @@ class _UnsupportedPtyBackend:
         return None
 
 
-def _install_session_terminal_manager(app: Any, session: Any, terminal: TerminalSpec) -> None:
+def _install_session_terminal_manager(
+    app: Any, session: Any, terminal: TerminalSpec
+) -> None:
     """Attach a session-backed :class:`TerminalManager` to the AgentService.
 
     Explicit binding, parallel to how
