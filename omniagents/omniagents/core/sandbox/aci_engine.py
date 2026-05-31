@@ -121,6 +121,18 @@ class AciManager:
             )
             mounts.append(m.VolumeMount(name="workspace", mount_path=fs.mount_path))
 
+        # A VNet-integrated container group REQUIRES a Private ip_address with
+        # >=1 port to be schedulable — without it Azure can't assign a NIC and
+        # the deployment hangs in ContainerGroupDeploymentNotReady forever. A
+        # no-service sandbox (no exposed_ports) still needs one, so fall back to
+        # a placeholder port 80 in a VNet. The port must appear on BOTH the
+        # container AND the group ipAddress, else ACI rejects the deployment with
+        # UnreferencedIpAddressPorts. The agent drives the container via the ARM
+        # exec channel, not this port.
+        effective_ports: tuple[int, ...] = tuple(spec.exposed_ports) or (
+            (80,) if spec.subnet_id else ()
+        )
+
         container = m.Container(
             name=spec.name,
             image=spec.image,
@@ -130,7 +142,7 @@ class AciManager:
                 requests=m.ResourceRequests(cpu=spec.cpu, memory_in_gb=spec.memory_gb)
             ),
             volume_mounts=mounts or None,
-            ports=[m.ContainerPort(port=p) for p in spec.exposed_ports] or None,
+            ports=[m.ContainerPort(port=p) for p in effective_ports] or None,
         )
 
         registries = None
@@ -169,8 +181,8 @@ class AciManager:
         # when ports are exposed: Private (in-VNet) or Public (no subnet).
         subnet_ids = [m.ContainerGroupSubnetId(id=spec.subnet_id)] if spec.subnet_id else None
         ip_address = None
-        if spec.exposed_ports:
-            ports = [m.Port(port=p, protocol="TCP") for p in spec.exposed_ports]
+        if effective_ports:
+            ports = [m.Port(port=p, protocol="TCP") for p in effective_ports]
             ip_type = (
                 m.ContainerGroupIpAddressType.PRIVATE
                 if spec.subnet_id
@@ -178,6 +190,22 @@ class AciManager:
             )
             ip_address = m.IpAddress(type=ip_type, ports=ports)
 
+        # Tags are the orphan-cleanup signal. An out-of-band sweeper (e.g. an
+        # Azure Function in the same deployment) filters by ``omni-launcher``
+        # to identify groups belonging to a given launcher deployment, and
+        # uses ``omni-created-at`` to decide what's stale.
+        #
+        # ``omni-launcher`` defaults to the resource group name (a fine proxy
+        # for "this deployment"), with OMNI_LAUNCHER_TAG overriding if a
+        # deployment wants to tag multiple distinct fleets in the same RG.
+        from datetime import datetime, timezone
+        import os
+        launcher_tag = os.getenv("OMNI_LAUNCHER_TAG", self._config.resource_group)
+        tags = {
+            "omni-launcher": launcher_tag,
+            "omni-session-id": spec.name,
+            "omni-created-at": datetime.now(timezone.utc).isoformat(),
+        }
         return m.ContainerGroup(
             location=self._config.location,
             containers=[container],
@@ -188,6 +216,7 @@ class AciManager:
             volumes=volumes or None,
             ip_address=ip_address,
             subnet_ids=subnet_ids,
+            tags=tags,
         )
 
     async def create(self, spec: AciContainerSpec) -> None:

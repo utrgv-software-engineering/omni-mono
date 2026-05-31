@@ -281,6 +281,21 @@ def _build_aci_options(options: Dict[str, Any]) -> Any:
     return AciSandboxClientOptions(**options)
 
 
+def _build_host_bridge_client(client_kwargs: Dict[str, Any]) -> Any:
+    # Computer-as-sandbox: the agent stays put; this client forwards the sandbox
+    # surface to a remote host running `omni sandbox-host`. No pip extra — pure
+    # stdlib + websockets (already a core dep).
+    from omniagents.core.sandbox.host_bridge import HostBridgeSandboxClient
+
+    return HostBridgeSandboxClient(**client_kwargs)
+
+
+def _build_host_bridge_options(options: Dict[str, Any]) -> Any:
+    from omniagents.core.sandbox.host_bridge import HostBridgeSandboxClientOptions
+
+    return HostBridgeSandboxClientOptions(**options)
+
+
 # Each entry: (client_factory, options_factory_or_None)
 _CLIENT_BUILDERS: Dict[
     str,
@@ -296,6 +311,7 @@ _CLIENT_BUILDERS: Dict[
     "vercel": (_build_vercel_client, _build_vercel_options),
     "cloudflare": (_build_cloudflare_client, _build_cloudflare_options),
     "aci": (_build_aci_client, _build_aci_options),
+    "host_bridge": (_build_host_bridge_client, _build_host_bridge_options),
 }
 
 
