@@ -1,0 +1,86 @@
+# Enterprise project.yml overlay — used when omni-code runs inside a
+# platform-managed container. The management plane injects env vars:
+#
+#   OMNI_PLATFORM_URL    — base URL of the management plane
+#   OMNI_SESSION_ID      — session ID from compute/start
+#   OMNI_RUNTIME_TOKEN   — short-lived RS256 JWT for API auth
+#
+# To use: copy this to project.yml inside the container image, or
+# merge these keys into the existing project.yml at build time.
+
+name: omni_code
+allow_user_mcp_servers: false    # governed by platform entitlements
+allow_user_models: true
+paths:
+  agents: omni_agents
+  tools: tools
+  server_functions: server_functions
+  evaluations: evaluations
+  target: target
+agents:
+  entrypoint: omni
+  voice_entrypoint: voice_agent
+
+settings:
+  - key: model_name
+    label: Model Name
+    group: OpenAI API
+    default: gpt-5.2
+    hint: "Model to use (e.g., gpt-5.2, gpt-4o)"
+
+tracing:
+  provider: studio
+  project: omni_code
+  name: omni_code
+  settings:
+    resume: never
+
+# ── Enterprise security section ─────────────────────────────────────
+security:
+  safety_mode: enforced           # PHI boundary → force SafeAgent wrapping
+  mcp_require_allowlist: true     # only MCP servers from platform policy
+  mcp_allowed_servers: []         # populated at runtime by policy hook
+
+  audit:
+    enabled: true
+    backend: remote               # ship to management plane, not local file
+    platform_url: "${OMNI_PLATFORM_URL}"
+    session_id: "${OMNI_SESSION_ID}"
+    runtime_token: "${OMNI_RUNTIME_TOKEN}"
+    flush_interval: 5             # seconds between batch flushes
+    flush_batch_size: 50
+    fallback_path: "~/.omniagents/audit/fallback.jsonl"
+
+  sessions:
+    retention_days: 30
+
+  providers:
+    auth:
+      type: platform
+      platform_url: "${OMNI_PLATFORM_URL}"
+      # JWKS, issuer, audience use defaults (omni-platform, omni-agents)
+
+    secrets:
+      type: env
+
+    content_scanner:
+      type: regex                 # baseline PII/PHI scanning
+      # "presidio" for full PHI detection if presidio is installed
+
+    session_encryption:
+      type: none                  # container is ephemeral, encryption optional
+
+    notification:
+      type: webhook
+      url: "${OMNI_PLATFORM_URL}/api/v1/audit/ingest"
+      headers:
+        Authorization: "Bearer ${OMNI_RUNTIME_TOKEN}"
+      notify_on:
+        - incident
+        - guardrail_triggered
+
+    policy:
+      type: platform
+      platform_url: "${OMNI_PLATFORM_URL}"
+      session_id: "${OMNI_SESSION_ID}"
+      runtime_token: "${OMNI_RUNTIME_TOKEN}"
