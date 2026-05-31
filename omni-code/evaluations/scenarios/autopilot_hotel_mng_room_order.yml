@@ -104,8 +104,8 @@ scenarios:
         For source code, configuration, AGENTS.md, skill markdown
         under `.omni_code/skills/`, and anything else in the
         workspace, use the filesystem tools (`read_file`,
-        `list_directory`, `glob_files`, `grep_files`, `apply_patch`,
-        `write_file`, `execute_bash`). The two families have
+        `apply_patch`, `write_file`) and the shell (`execute_bash`
+        with `rg`/`ls` for search and listing). The two families have
         similar-sounding names but distinct domains: `read_page`
         takes a `pg_*` ID and reads a project doc page; `read_file`
         takes a workspace path and reads a file. Reaching for
