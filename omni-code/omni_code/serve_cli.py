@@ -375,7 +375,11 @@ def _build_snapshot(
     """
     if snapshot_dir is None:
         return None
-    if client_type == "unix_local":
+    if client_type in ("unix_local", "host_bridge"):
+        # host_bridge: the workspace is a durable directory on the *remote host*
+        # (the user's laptop), reachable only via the exec channel. Tarring it
+        # back to the cloud omni-serve disk would both defeat the privacy intent
+        # and be pure overhead — same reasoning as unix_local's host directory.
         return None
     from agents.sandbox.snapshot import LocalSnapshot
 

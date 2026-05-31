@@ -95,6 +95,11 @@ def cli_main(argv=None) -> None:
 
         return serve_main(args[1:])
 
+    if not force_prompt_mode and args and args[0] == "sandbox-host":
+        from omni_code.sandbox_host_cli import main as sandbox_host_main
+
+        return sandbox_host_main(args[1:])
+
     if not force_prompt_mode and args and args[0] == "sessions":
         from omni_code.sessions_cli import main as sessions_main
 
