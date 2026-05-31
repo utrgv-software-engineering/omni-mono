@@ -891,6 +891,27 @@ async def _attempt_rollback(ctx: Any, prev_profile_path: Optional[str]) -> bool:
     return True
 
 
+async def _carry_workspace_snapshot(
+    *, session: Any, session_id: str, snapshot_dir: Any
+) -> None:
+    """Tar *session*'s workspace into ``<snapshot_dir>/<session_id>.tar`` so the
+    next ``bring_up_session`` rehydrates it into the new backend.
+
+    Needed only when switching AWAY from a backend whose lifecycle snapshot is a
+    noop — ``host_bridge`` (laptop sandbox) and ``unix_local`` (see
+    :func:`_build_snapshot`). Those write no tar on ``session.stop()``, so without
+    this the new backend seeds fresh and silently drops all uncommitted work.
+    Real-snapshot backends (docker/aci) already persist on teardown, so callers
+    skip this for them to avoid tarring the workspace twice. The tar format
+    (``persist_workspace`` → ``hydrate_workspace``) is shared across backends, so
+    a host_bridge-produced tar restores cleanly under aci.
+    """
+    from agents.sandbox.snapshot import LocalSnapshot
+
+    data = await session.persist_workspace()
+    await LocalSnapshot(id=session_id, base_path=snapshot_dir).persist(data)
+
+
 async def perform_switch(profile_path: str, *, session: Any = None) -> Dict[str, Any]:
     """Switch the running server's sandbox to the profile at *profile_path*, in
     place — no process restart. Snapshots the current workspace, brings up the
@@ -946,6 +967,30 @@ async def perform_switch(profile_path: str, *, session: Any = None) -> Dict[str,
         await _broadcast_sandbox_event(service, "ui.sandbox.switching", {"profile": target_name}, session=session)
 
         old_session = get_sandbox_session()
+        # Carry the workspace across the switch when the OLD backend uses a noop
+        # lifecycle snapshot (host_bridge laptop sandbox / unix_local):
+        # teardown_session → session.stop() persists nothing for those, so tar
+        # the workspace into the snapshot dir NOW; bring_up_session below then
+        # rehydrates it into the new backend. Without this, switching off a
+        # laptop sandbox silently drops all uncommitted work. Best-effort: a
+        # flaky carry must not block the switch (the new backend just seeds
+        # fresh, same as today).
+        if (
+            old_session is not None
+            and ctx.snapshot_dir is not None
+            and ctx.backend in ("unix_local", "host_bridge")
+        ):
+            try:
+                await _carry_workspace_snapshot(
+                    session=old_session,
+                    session_id=ctx.session_id,
+                    snapshot_dir=ctx.snapshot_dir,
+                )
+            except Exception as e:  # noqa: BLE001
+                print(
+                    json.dumps({"warning": f"workspace carry failed during switch: {e}"}),
+                    file=sys.stderr,
+                )
         try:
             if old_session is not None:
                 await teardown_session(old_session, ctx.started_services)
