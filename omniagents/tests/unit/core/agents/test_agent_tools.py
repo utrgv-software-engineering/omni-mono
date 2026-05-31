@@ -62,8 +62,37 @@ async def test_build_agent_tools_inline(monkeypatch):
     assert len(out) == 1
     assert captured["tool_name"] == "ask_sub"
     assert captured["tool_description"] == "Consult the sub-agent"
+    assert callable(captured["on_stream"])
     assert captured["is_enabled"] is True
     assert captured["max_turns"] == 5
+
+
+@pytest.mark.asyncio
+async def test_build_agent_tools_passes_session_to_subagent(monkeypatch):
+    captured = {}
+    session = object()
+
+    class _StubAgent:
+        name = "stub"
+
+        def as_tool(self, **kwargs):
+            return ("FAKE_TOOL", kwargs)
+
+    async def fake_default_build_agent(*args, **kwargs):
+        captured.update(kwargs)
+        return _StubAgent()
+
+    monkeypatch.setattr(
+        "omniagents.core.agents.builder._default_build_agent",
+        fake_default_build_agent,
+    )
+
+    cfg = AgentToolConfig(inline_spec=make_spec(name="Sub"), tool_name="ask_sub")
+
+    out = await _build_agent_tools_from_configs([cfg], settings={}, session=session)
+
+    assert len(out) == 1
+    assert captured["session"] is session
 
 
 @pytest.mark.asyncio

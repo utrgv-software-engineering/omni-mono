@@ -100,6 +100,31 @@ def _resolve_context_window(model: str) -> Optional[int]:
     return info.context_window if info is not None else None
 
 
+def _extract_openai_client(provider: Any) -> Optional[Any]:
+    """Pull the ``AsyncOpenAI`` client out of a built SDK ``ModelProvider``.
+
+    Compaction must talk to the *same* endpoint as the parent session —
+    including the ``openai-oauth`` (Codex) case, where the client carries a
+    per-request token-refresh hook and there is no static ``api_key`` /
+    ``base_url`` to rebuild from. The SDK's ``OpenAIProvider`` exposes its
+    client via ``_get_client()``; the reasoning-content-replay wrapper
+    delegates attribute access to its inner provider, so the same lookup
+    works through it. Returns ``None`` for providers with no single OpenAI
+    client (LiteLLM / any-llm), where ``responses.compact`` doesn't apply.
+    """
+    if provider is None:
+        return None
+    getter = getattr(provider, "_get_client", None)
+    if callable(getter):
+        try:
+            client = getter()
+            if client is not None:
+                return client
+        except Exception:
+            pass
+    return getattr(provider, "_client", None)
+
+
 def _build_should_trigger_compaction(
     *,
     model: str,
@@ -107,6 +132,7 @@ def _build_should_trigger_compaction(
     threshold_tokens: Optional[int],
     threshold_items: Optional[int],
     interruption_safe: bool,
+    context_window_override: Optional[int] = None,
 ) -> Callable[[Dict[str, Any]], bool]:
     """Build the predicate passed to ``OpenAIResponsesCompactionSession``.
 
@@ -122,7 +148,12 @@ def _build_should_trigger_compaction(
     Responses ``compact`` API rejects that state with HTTP 400 and the
     resulting non-retryable error otherwise tanks the run.
     """
-    context_window = _resolve_context_window(model)
+    # Prefer the parent model's configured ``max_input_tokens`` (the real
+    # serving-model window) over the SDK's static lookup, which won't know
+    # operator-named models like ``gpt-5.5``. This is what keeps the trigger
+    # honest: compaction fires at a fraction of the window the request will
+    # actually be measured against, not a generous guess.
+    context_window = context_window_override or _resolve_context_window(model)
     if threshold_tokens is None:
         if context_window is not None:
             threshold_tokens = int(context_window * threshold_fraction)
@@ -156,6 +187,9 @@ def wrap_with_compaction(
     config: Optional[Dict[str, Any]],
     *,
     model_config: Optional[Dict[str, Any]] = None,
+    model_provider: Optional[Any] = None,
+    parent_model: Optional[str] = None,
+    max_input_tokens: Optional[int] = None,
 ) -> Any:
     """Wrap *session* with ``OpenAIResponsesCompactionSession`` if enabled.
 
@@ -164,20 +198,30 @@ def wrap_with_compaction(
         session:
           compaction:
             enabled: true
-            model: gpt-4.1
             compaction_mode: auto
+            # model: optional — omit to inherit the parent session's model
 
-    All keys other than ``enabled`` are forwarded as kwargs to
+    All keys other than the local knobs are forwarded as kwargs to
     :class:`OpenAIResponsesCompactionSession`.
 
-    *model_config* is the resolved per-model transport (provider, base_url,
-    api_key) from the agent's model resolver. When supplied with an
-    ``api_key``, a dedicated ``AsyncOpenAI`` client is built and passed as
-    ``client=`` so the wrap does not depend on ambient ``OPENAI_API_KEY`` /
-    ``OPENAI_BASE_URL`` env vars. Endpoint-compatibility (whether the
-    provider actually serves ``responses.compact``) is the operator's
-    responsibility — flip ``enabled: false`` per-agent if you point at a
-    proxy that doesn't implement it.
+    Compaction is run against the **parent session's own model and provider
+    transport** so its ``responses.compact`` calls hit the same endpoint with
+    the same credentials. Resolution order:
+
+    * **model** — ``config["model"]`` if pinned, else *parent_model*.
+    * **client** — extracted from *model_provider* (the already-built SDK
+      ``ModelProvider``), which covers the ``openai-oauth``/Codex case where
+      the client carries a per-request token-refresh hook and there is no
+      static ``api_key`` to rebuild from. Falls back to building a client
+      from *model_config*'s ``api_key`` / ``base_url`` only when the provider
+      exposes no reusable client.
+    * **trigger window** — *max_input_tokens* (the serving model's real
+      context window) when supplied, else the SDK's static lookup.
+
+    Endpoint-compatibility (whether the provider actually serves
+    ``responses.compact``) is the operator's responsibility — flip
+    ``enabled: false`` per-agent if you point at a backend that doesn't
+    implement it.
 
     Returns the original session unchanged when compaction is disabled or
     when wrapping fails.
@@ -198,6 +242,15 @@ def wrap_with_compaction(
         return session
 
     kwargs: Dict[str, Any] = {k: v for k, v in config.items() if k not in _LOCAL_KNOBS}
+
+    # Compaction follows the parent session's model unless the operator
+    # pinned one explicitly in YAML. ``responses.compact`` is issued against
+    # the parent's own endpoint (see client reuse below), so the model name
+    # must match that endpoint — a hardcoded name from a different provider
+    # makes every compact call fail (and the failure is swallowed, so the
+    # session grows unbounded until the next turn overflows the window).
+    if not kwargs.get("model") and parent_model:
+        kwargs["model"] = parent_model
 
     # Build a sensible ``should_trigger_compaction`` predicate unless the
     # operator passed one explicitly. The SDK default fires at 10 non-user
@@ -232,16 +285,31 @@ def wrap_with_compaction(
         interruption_safe = bool(config.get("interruption_safe", True))
         # The session-wrap model knob is what the SDK uses for the
         # responses.compact call itself; reuse it to look up the context
-        # window for the trigger threshold.
-        model_for_window = str(kwargs.get("model", "gpt-4.1"))
+        # window for the trigger threshold. ``max_input_tokens`` (the parent
+        # model's configured window) takes precedence when supplied.
+        model_for_window = str(kwargs.get("model") or parent_model or "gpt-4.1")
         kwargs["should_trigger_compaction"] = _build_should_trigger_compaction(
             model=model_for_window,
             threshold_fraction=threshold_fraction,
             threshold_tokens=threshold_tokens,
             threshold_items=threshold_items,
             interruption_safe=interruption_safe,
+            context_window_override=max_input_tokens,
         )
 
+    # Preferred path: reuse the parent session's already-built provider
+    # client so compaction talks to the exact same endpoint with the same
+    # credentials — critically including ``openai-oauth`` (Codex), whose
+    # client injects a refreshing bearer token per request and exposes no
+    # static ``api_key`` / ``base_url`` to rebuild from.
+    if "client" not in kwargs:
+        provider_client = _extract_openai_client(model_provider)
+        if provider_client is not None:
+            kwargs["client"] = provider_client
+
+    # Fallback: rebuild a client from explicit creds in ``model_config``.
+    # Only reached when the provider exposed no reusable client (e.g. an
+    # openai-compatible model resolved without a built provider object).
     if model_config and "client" not in kwargs:
         api_key = model_config.get("api_key")
         base_url = model_config.get("base_url")

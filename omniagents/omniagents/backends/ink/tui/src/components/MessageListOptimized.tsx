@@ -64,10 +64,11 @@ export const MessageListOptimized = React.memo(() => {
     return null;
   }
 
-  // Virtualized path: only when a Scrollable above us reports a real
-  // viewport. The Box gap={1} that the legacy renderer used is preserved
-  // here by adding a 1-row spacer to each item's measured height
-  // implicitly via `flexDirection="column"` on VirtualizedList items.
+  // Inter-message spacing is owned by MessageItem itself (paddingBottom={1}),
+  // not by either render path's container. This keeps the virtualized and
+  // fallback paths in lockstep and — crucially — keeps the spacing inside the
+  // border-box that ink's ResizeObserver measures (getComputedHeight), so the
+  // virtualized path's offsets and head/tail spacers stay accurate.
   if (viewport && viewport.innerHeight > 0) {
     return (
       <VirtualizedList<Message>
@@ -84,8 +85,9 @@ export const MessageListOptimized = React.memo(() => {
   }
 
   // Fallback: render everything, with per-item StaticRender for frozen items.
+  // No container gap — each MessageItem carries its own trailing spacing.
   return (
-    <Box flexDirection="column" gap={1}>
+    <Box flexDirection="column">
       {messages.map((message, index) => {
         const key = messageKey(message, index);
         const canFreeze = isStaticItem(message, index);
@@ -116,25 +118,39 @@ export const MessageListOptimized = React.memo(() => {
 // Individual message memoized with deep equality check
 const MessageItem = React.memo<{ message: Message }>(
   ({ message }) => {
-    switch (message.role) {
-      case "user":
-        return <UserMessage message={message} />;
-      case "assistant":
-        return <AssistantMessage message={message} />;
-      case "tool_call":
-        // Tools can opt out of the conversation log by setting
-        // ui_metadata.hidden = true (e.g. task_* tools rendered by
-        // the docked Tasks panel instead).
-        if (message.toolCall?.metadata?.hidden === true) {
+    const body = (() => {
+      switch (message.role) {
+        case "user":
+          return <UserMessage message={message} />;
+        case "assistant":
+          return <AssistantMessage message={message} />;
+        case "tool_call":
+          // Tools can opt out of the conversation log by setting
+          // ui_metadata.hidden = true (e.g. task_* tools rendered by
+          // the docked Tasks panel instead).
+          if (message.toolCall?.metadata?.hidden === true) {
+            return null;
+          }
+          return <ToolCallMessage message={message} />;
+        case "approval_request":
+          // Approval requests shown in ApprovalDialog, not in message history
           return null;
-        }
-        return <ToolCallMessage message={message} />;
-      case "approval_request":
-        // Approval requests shown in ApprovalDialog, not in message history
-        return null;
-      default:
-        return null;
+        default:
+          return null;
+      }
+    })();
+
+    // Hidden / non-rendered messages contribute no spacing — the gap lives
+    // here (not in the list container) so both render paths space identically
+    // and the trailing row is part of this item's measured height.
+    if (body === null) {
+      return null;
     }
+    return (
+      <Box flexDirection="column" paddingBottom={1}>
+        {body}
+      </Box>
+    );
   },
   (prev, next) => {
     // Deep equality check - only re-render if content actually changed

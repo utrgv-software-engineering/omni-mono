@@ -2590,6 +2590,23 @@ class AgentService(RpcMethodsBase):
                             sess,
                             _compaction_cfg,
                             model_config=session_model_config,
+                            # Compaction inherits the parent session's model
+                            # + provider transport (built above) so its
+                            # ``responses.compact`` calls hit the same
+                            # endpoint/credentials — incl. openai-oauth/Codex
+                            # — and its trigger threshold uses the serving
+                            # model's real context window.
+                            model_provider=model_provider,
+                            parent_model=(
+                                session_model_config.get("model")
+                                if session_model_config
+                                else None
+                            ),
+                            max_input_tokens=(
+                                session_model_config.get("max_input_tokens")
+                                if session_model_config
+                                else None
+                            ),
                         )
                         # ``wrap_with_compaction`` returns ``sess`` itself
                         # when wrapping is disabled or fails; only memoise

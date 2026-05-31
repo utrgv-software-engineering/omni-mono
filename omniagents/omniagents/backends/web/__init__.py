@@ -115,6 +115,9 @@ class WebBackend:
         # session.ensure variables (App.tsx). Production server deploys
         # (omni --mode server) leave this unset so missing values raise
         # rather than silently anchor to the server's cwd.
+        from omniagents.workspace import HostWorkspace, set_default_workspace
+
+        set_default_workspace(HostWorkspace(root=os.getcwd(), confine=False))
         app = build_app(
             config_path=config_path,
             spec=spec,
@@ -255,6 +258,7 @@ class WebBackend:
         output_format = getattr(args, "output", "text") if args else "text"
         if output_format == "json":
             import json
+
             print(json.dumps({"url": open_url, "port": port}), flush=True)
         elif auto_open:
             try:

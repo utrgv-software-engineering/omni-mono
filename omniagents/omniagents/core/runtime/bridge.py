@@ -250,9 +250,14 @@ async def stream_agent(
         is_sandbox_run = sandbox_run_config is not None
         if ws_root and not is_sandbox_run:
             from omniagents.workspace import HostWorkspace as _HostWorkspace
+            from omniagents.workspace import current_workspace as _current_workspace
             from omniagents.workspace import set_workspace as _set_workspace
 
-            workspace_token = _set_workspace(_HostWorkspace(root=ws_root))
+            active_workspace = _current_workspace()
+            host_confine = getattr(active_workspace, "confine", True)
+            workspace_token = _set_workspace(
+                _HostWorkspace(root=ws_root, confine=host_confine)
+            )
     except Exception:
         # Workspace setup is best-effort; fall back to default lazy
         # HostWorkspace(cwd) if anything goes wrong here.

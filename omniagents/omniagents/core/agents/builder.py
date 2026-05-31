@@ -228,6 +228,7 @@ async def _build_agent_tools_from_configs(
     approval_callback: Optional[Any] = None,
     _loading_stack: Optional[Set[Path]] = None,
     parent_spec: Optional["AgentSpec"] = None,
+    session: Optional[Any] = None,
 ) -> List[Any]:
     """Build agent-as-tool FunctionTool objects via Agent.as_tool().
 
@@ -288,6 +289,7 @@ async def _build_agent_tools_from_configs(
                 spec=sub_spec,
                 approval_callback=approval_callback,
                 _loading_stack=new_loading_stack,
+                session=session,
             )
 
             # Build kwargs for as_tool(); only pass keys we have to keep
@@ -299,9 +301,14 @@ async def _build_agent_tools_from_configs(
             resolved_tool_description = at_cfg.tool_description or getattr(
                 sub_spec, "tool_description", None
             )
+
+            async def _ignore_agent_tool_stream_event(_event: Any) -> None:
+                return None
+
             as_tool_kwargs: Dict[str, Any] = {
                 "tool_name": at_cfg.tool_name,
                 "tool_description": resolved_tool_description,
+                "on_stream": _ignore_agent_tool_stream_event,
             }
             if at_cfg.is_enabled is not None:
                 as_tool_kwargs["is_enabled"] = at_cfg.is_enabled
@@ -504,6 +511,7 @@ async def _default_build_agent(
                 approval_callback=approval_callback,
                 _loading_stack=_loading_stack,
                 parent_spec=spec,
+                session=session,
             )
             if agent_tools_built:
                 # Don't mutate the caller's list — concatenate into a new one.
@@ -529,8 +537,8 @@ async def _default_build_agent(
     if resolved_caps and not use_sandbox_agent:
         cap_tools: List[Any] = []
         for cap in resolved_caps:
-            cap_label = (
-                getattr(cap, "capability_name", None) or getattr(cap, "type", "?")
+            cap_label = getattr(cap, "capability_name", None) or getattr(
+                cap, "type", "?"
             )
             try:
                 this_caps_tools = list(cap.tools())

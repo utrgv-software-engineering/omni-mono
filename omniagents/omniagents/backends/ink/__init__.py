@@ -87,6 +87,9 @@ class InkBackend:
         # client having to populate workspace_root explicitly. Production
         # server deployments (omni --mode server) leave this unset and
         # require clients to populate it.
+        from omniagents.workspace import HostWorkspace, set_default_workspace
+
+        set_default_workspace(HostWorkspace(root=os.getcwd(), confine=False))
         app = build_app(
             config_path=config_path,
             spec=spec,

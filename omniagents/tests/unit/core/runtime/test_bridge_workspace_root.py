@@ -153,3 +153,63 @@ async def test_stream_agent_without_workspace_root_leaves_contextvar_untouched(
     )
 
     assert captured_root["root"] == expected_root
+
+
+@pytest.mark.asyncio
+async def test_stream_agent_preserves_unconfined_host_workspace(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge.Debug, "enabled", classmethod(lambda cls: False))
+    monkeypatch.setattr(
+        bridge,
+        "ItemHelpers",
+        types.SimpleNamespace(text_message_output=lambda item: ""),
+    )
+
+    captured = {}
+
+    class FakeRunResult:
+        async def stream_events(self):
+            active = ws.current_workspace()
+            captured["root"] = ws.workspace_root()
+            captured["confine"] = getattr(active, "confine", None)
+            captured["sibling"] = active.resolve(str(tmp_path.parent))
+            if False:
+                yield None
+
+    class FakeRunner:
+        @classmethod
+        def run_streamed(cls, *args, **kwargs):
+            return FakeRunResult()
+
+    class FakeRunConfig:
+        def __init__(self, **kwargs):
+            pass
+
+    monkeypatch.setattr("agents.Runner", FakeRunner)
+    monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
+    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
+
+    agent = types.SimpleNamespace(
+        name="Agent",
+        instructions="",
+        tools=[],
+        model="model-x",
+        model_settings=types.SimpleNamespace(max_tokens=None, truncation=None),
+    )
+
+    workspace = ws.HostWorkspace(root=str(tmp_path), confine=False)
+    token = ws.set_workspace(workspace)
+    try:
+        await bridge.stream_agent(
+            agent,
+            "prompt",
+            DummySession(),
+            rpc_channel=DummyChannel(),
+            max_turns=1,
+            context={"workspace_root": str(tmp_path)},
+        )
+    finally:
+        ws.reset_workspace(token)
+
+    assert captured["root"] == str(tmp_path)
+    assert captured["confine"] is False
+    assert captured["sibling"] == str(tmp_path.parent)
