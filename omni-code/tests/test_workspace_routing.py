@@ -17,8 +17,8 @@ Covered tools:
 - ``read_job_log`` (used by ``bash_logs`` and ``bash_jobs.tail``):
   ``workspace.read_bytes``
 
-The Popen-driven background-mode spawn and the in-memory job registry
-are intentionally host-only — they don't translate to sandbox sessions.
+Background-mode log setup and spawn route through the workspace; the
+in-memory job registry remains process-local.
 """
 
 from __future__ import annotations
@@ -119,6 +119,25 @@ class _RecordingWorkspace(Workspace):
         raise NotImplementedError
 
 
+class _FakeProcessHandle:
+    pid = 12345
+
+    async def wait(self, timeout: float | None = None) -> ExecResult:
+        return ExecResult(stdout="", stderr="", exit_code=0, wall_time_seconds=0.001)
+
+    async def status(self) -> str:
+        return "exited"
+
+    async def terminate(self, *, force_after: float | None = None) -> None:
+        return None
+
+
+class _SpawningWorkspace(_RecordingWorkspace):
+    async def spawn(self, command: Any, **kwargs: Any):
+        self._record("spawn", command, **kwargs)
+        return _FakeProcessHandle()
+
+
 def _invoke(tool, **params):
     """Invoke a tool against whatever workspace contextvar is currently
     installed (let the caller manage it via set_workspace)."""
@@ -153,6 +172,62 @@ def test_execute_bash_routes_through_workspace():
     assert exec_call[2]["shell"] is True
     assert result.ui_metadata["metadata"]["success"] is True
     assert result.ui_metadata["metadata"]["background"] is False
+
+
+def test_log_path_for_does_not_create_host_directory(monkeypatch):
+    def fail_makedirs(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("log_path_for must not create host directories")
+
+    monkeypatch.setattr(_bash_jobs.os, "makedirs", fail_makedirs)
+
+    assert (
+        _bash_jobs.log_path_for("/workspace", "bash-test")
+        == "/workspace/.omni-code/jobs/bash-test.log"
+    )
+
+
+def test_background_execute_bash_prepares_log_via_workspace_before_spawn(monkeypatch):
+    async def noop_watch_job(job: _bash_jobs.Job) -> None:
+        return None
+
+    registry = _bash_jobs.get_registry()
+    registry._jobs.clear()  # type: ignore[attr-defined]
+    monkeypatch.setattr(bash_tool, "_watch_job", noop_watch_job)
+
+    fake = _SpawningWorkspace()
+    token = set_workspace(fake)
+    try:
+        result = _invoke(
+            bash_tool.execute_bash,
+            command="echo background",
+            background=True,
+        )
+    finally:
+        reset_workspace(token)
+        registry._jobs.clear()  # type: ignore[attr-defined]
+
+    metadata = result.ui_metadata["metadata"]
+    assert metadata["background"] is True
+    assert metadata["pid"] == 12345
+    assert metadata["log_path"].startswith("/fake/.omni-code/jobs/bash-")
+
+    names = [call[0] for call in fake.calls]
+    assert names.index("exec") < names.index("spawn")
+
+    exec_call = next(call for call in fake.calls if call[0] == "exec")
+    setup_command = exec_call[1][0]
+    assert (
+        f"mkdir -p /fake/.omni-code/jobs && : > {metadata['log_path']}"
+        == setup_command
+    )
+    assert exec_call[2]["shell"] is True
+    assert exec_call[2]["timeout"] == 5.0
+
+    spawn_call = next(call for call in fake.calls if call[0] == "spawn")
+    assert f">> {metadata['log_path']}" in spawn_call[1][0]
+    assert spawn_call[2]["cwd"] == "/fake"
+    assert spawn_call[2]["shell"] is True
+    assert spawn_call[2]["pty"] is False
 
 
 # -- notebook tools ----------------------------------------------------
