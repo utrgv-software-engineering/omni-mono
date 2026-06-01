@@ -185,27 +185,44 @@ def _substitute(value: Any, mapping: Mapping[str, str]) -> Any:
     return value
 
 
+def _manifest_env_values(profile: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Return the mutable ``{KEY: value}`` map the SDK reads as the container
+    environment, creating the nesting if absent.
+
+    The SDK's ``Manifest.environment`` is an ``Environment`` model whose only
+    field is ``value`` — i.e. the wire shape is ``environment: {value: {KEY:
+    val}}``, NOT a flat ``environment: {KEY: val}`` (a flat dict is silently
+    dropped to ``Environment(value={})``, so the container gets no env). Both
+    injectors below must write into the inner ``value`` map. Returns ``None``
+    when ``manifest`` / ``environment`` / ``value`` isn't a mapping.
+    """
+    manifest = profile.setdefault("manifest", {})
+    if not isinstance(manifest, dict):
+        return None
+    environment = manifest.setdefault("environment", {})
+    if not isinstance(environment, dict):
+        return None
+    values = environment.setdefault("value", {})
+    return values if isinstance(values, dict) else None
+
+
 def _inject_network_allowlist(profile: Dict[str, Any]) -> None:
     """Merge the user's ``network.json`` allowlist into manifest env.
 
     Read ``<config>/network.json``; when ``enabled: true`` and the
-    allowlist is non-empty, set ``manifest.environment.<env>`` to a
+    allowlist is non-empty, set ``manifest.environment.value.<env>`` to a
     comma-joined hosts string so the in-container init step can apply
     iptables egress rules. Profiles that set the env explicitly win
     (including to empty string — that's how a user opts out of
     auto-discovery).
     """
-    manifest = profile.setdefault("manifest", {})
-    if not isinstance(manifest, dict):
-        return
-    environment = manifest.setdefault("environment", {})
-    if not isinstance(environment, dict):
-        return
-    if _NETWORK_ALLOWLIST_ENV in environment:
-        return  # Explicit profile value wins, including "".
     allowlist = _load_network_allowlist(get_config_dir())
-    if allowlist:
-        environment[_NETWORK_ALLOWLIST_ENV] = allowlist
+    if not allowlist:
+        return  # nothing to inject — don't materialize the env nesting
+    values = _manifest_env_values(profile)
+    if values is None or _NETWORK_ALLOWLIST_ENV in values:
+        return  # bad shape, or explicit profile value wins (including "")
+    values[_NETWORK_ALLOWLIST_ENV] = allowlist
 
 
 def _inject_user_env(profile: Dict[str, Any]) -> None:
@@ -216,21 +233,20 @@ def _inject_user_env(profile: Dict[str, Any]) -> None:
 
     Reads ``<config>/.env`` (same ``get_config_dir()`` the network allowlist
     keys on; the launcher writes the merged ``.env`` there in every mode). Each
-    key is set on ``manifest.environment`` only when the profile (or an earlier
-    injector) hasn't already set it — explicit profile values win, and we never
-    override the network-allowlist env. Parse/IO errors fall open (no env added)
-    rather than break sandbox bring-up.
+    key is set on ``manifest.environment.value`` only when the profile (or an
+    earlier injector) hasn't already set it — explicit profile values win, and we
+    never override the network-allowlist env. Parse/IO errors fall open (no env
+    added) rather than break sandbox bring-up.
     """
-    manifest = profile.setdefault("manifest", {})
-    if not isinstance(manifest, dict):
+    env_file = _load_env_file(get_config_dir())
+    if not env_file:
+        return  # no user .env — don't materialize the env nesting
+    values = _manifest_env_values(profile)
+    if values is None:
         return
-    environment = manifest.setdefault("environment", {})
-    if not isinstance(environment, dict):
-        return
-    for key, value in _load_env_file(get_config_dir()).items():
-        if key in environment:
-            continue  # explicit profile / allowlist value wins
-        environment[key] = value
+    for key, value in env_file.items():
+        if key not in values:  # explicit profile / allowlist value wins
+            values[key] = value
 
 
 def _load_env_file(config_dir: Path) -> Dict[str, str]:

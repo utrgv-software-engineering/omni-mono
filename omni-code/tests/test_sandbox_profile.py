@@ -508,32 +508,34 @@ def _write_network_json(config_dir, *, enabled: bool, allowlist: list[str]) -> N
     )
 
 
+def _env_values(profile) -> dict:
+    """The container env map — manifest.environment.value (the SDK Environment
+    model's nested shape), or {} when unset."""
+    return profile.raw.get("manifest", {}).get("environment", {}).get("value", {})
+
+
 def test_network_json_injects_env_when_enabled(config_dir, workspace):
     _write_network_json(config_dir, enabled=True, allowlist=["api.openai.com", "github.com"])
     profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
-    env = profile.raw.get("manifest", {}).get("environment", {})
-    assert env.get("OMNI_SANDBOX_NETWORK_ALLOWLIST") == "api.openai.com,github.com"
+    assert _env_values(profile).get("OMNI_SANDBOX_NETWORK_ALLOWLIST") == "api.openai.com,github.com"
 
 
 def test_network_json_disabled_does_not_inject(config_dir, workspace):
     _write_network_json(config_dir, enabled=False, allowlist=["api.openai.com"])
     profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
-    env = profile.raw.get("manifest", {}).get("environment", {})
-    assert "OMNI_SANDBOX_NETWORK_ALLOWLIST" not in env
+    assert "OMNI_SANDBOX_NETWORK_ALLOWLIST" not in _env_values(profile)
 
 
 def test_network_json_empty_allowlist_does_not_inject(config_dir, workspace):
     _write_network_json(config_dir, enabled=True, allowlist=[])
     profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
-    env = profile.raw.get("manifest", {}).get("environment", {})
-    assert "OMNI_SANDBOX_NETWORK_ALLOWLIST" not in env
+    assert "OMNI_SANDBOX_NETWORK_ALLOWLIST" not in _env_values(profile)
 
 
 def test_network_json_missing_is_silent(config_dir, workspace):
     # No network.json file at all.
     profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
-    env = profile.raw.get("manifest", {}).get("environment", {})
-    assert "OMNI_SANDBOX_NETWORK_ALLOWLIST" not in env
+    assert "OMNI_SANDBOX_NETWORK_ALLOWLIST" not in _env_values(profile)
 
 
 def test_explicit_profile_env_wins_over_network_json(config_dir, workspace, tmp_path):
@@ -546,14 +548,14 @@ def test_explicit_profile_env_wins_over_network_json(config_dir, workspace, tmp_
         manifest:
           root: ${workspace_dir}
           environment:
-            OMNI_SANDBOX_NETWORK_ALLOWLIST: "from-profile.com"
+            value:
+              OMNI_SANDBOX_NETWORK_ALLOWLIST: "from-profile.com"
         """,
     )
     profile = sandbox_profile.resolve_profile(
         workspace_dir=workspace, explicit_path=profile_path
     )
-    env = profile.raw["manifest"]["environment"]
-    assert env["OMNI_SANDBOX_NETWORK_ALLOWLIST"] == "from-profile.com"
+    assert _env_values(profile)["OMNI_SANDBOX_NETWORK_ALLOWLIST"] == "from-profile.com"
 
 
 def test_explicit_empty_string_opts_out_of_auto_discovery(config_dir, workspace, tmp_path):
@@ -567,22 +569,21 @@ def test_explicit_empty_string_opts_out_of_auto_discovery(config_dir, workspace,
         manifest:
           root: ${workspace_dir}
           environment:
-            OMNI_SANDBOX_NETWORK_ALLOWLIST: ""
+            value:
+              OMNI_SANDBOX_NETWORK_ALLOWLIST: ""
         """,
     )
     profile = sandbox_profile.resolve_profile(
         workspace_dir=workspace, explicit_path=profile_path
     )
-    env = profile.raw["manifest"]["environment"]
-    assert env["OMNI_SANDBOX_NETWORK_ALLOWLIST"] == ""
+    assert _env_values(profile)["OMNI_SANDBOX_NETWORK_ALLOWLIST"] == ""
 
 
 def test_malformed_network_json_falls_open(config_dir, workspace):
     config_dir.mkdir(parents=True, exist_ok=True)
     (config_dir / "network.json").write_text("{not valid json")
     profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
-    env = profile.raw.get("manifest", {}).get("environment", {})
-    assert "OMNI_SANDBOX_NETWORK_ALLOWLIST" not in env
+    assert "OMNI_SANDBOX_NETWORK_ALLOWLIST" not in _env_values(profile)
 
 
 def test_init_empty_string_rejected(config_dir, workspace, tmp_path):
@@ -700,11 +701,13 @@ def test_terminal_non_mapping_rejected(config_dir, workspace, tmp_path):
 
 def test_user_env_file_injected_into_manifest_environment(config_dir, workspace):
     # Settings → Environment writes <config>/.env; it must reach the container.
+    # The SDK's Environment model is {value: {KEY: val}} — a flat dict is dropped,
+    # so the vars MUST land under manifest.environment.value (regression guard).
     _write(config_dir / ".env", 'FOO=bar\n# a comment\nQUOTED="hello world"\n\nEMPTY_OK=\n')
     profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
-    env = profile.raw["manifest"]["environment"]
-    assert env["FOO"] == "bar"
-    assert env["QUOTED"] == "hello world"  # dotenv strips the quotes
+    values = profile.raw["manifest"]["environment"]["value"]
+    assert values["FOO"] == "bar"
+    assert values["QUOTED"] == "hello world"  # dotenv strips the quotes
 
 
 def test_profile_environment_wins_over_user_env(config_dir, workspace):
@@ -713,14 +716,15 @@ def test_profile_environment_wins_over_user_env(config_dir, workspace):
         """
         manifest:
           environment:
-            SHARED: from-profile
+            value:
+              SHARED: from-profile
         """,
     )
     _write(config_dir / ".env", "SHARED=from-env\nONLY_ENV=v\n")
     profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
-    env = profile.raw["manifest"]["environment"]
-    assert env["SHARED"] == "from-profile"  # explicit profile value is not clobbered
-    assert env["ONLY_ENV"] == "v"
+    values = profile.raw["manifest"]["environment"]["value"]
+    assert values["SHARED"] == "from-profile"  # explicit profile value is not clobbered
+    assert values["ONLY_ENV"] == "v"
 
 
 def test_missing_env_file_is_noop(config_dir, workspace):
