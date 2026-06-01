@@ -1,10 +1,12 @@
-import subprocess
+import base64
+import mimetypes
 import os
 from typing import Any, Optional
 
 from agents.run_context import RunContextWrapper
-from omniagents.core.tools.artifacts import OfficeConversionError, emit_artifact, resolve_file_content
+from omniagents.core.tools.artifacts import emit_artifact
 from omniagents.core.tools.discovery import function_tool
+from omniagents import workspace as _workspace
 
 
 def _workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> Optional[str]:
@@ -25,8 +27,38 @@ def _workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> Optional[str
     return None
 
 
+async def _resolve_workspace_file_content(path: str, mode: str) -> str:
+    if mode in ("docx", "pptx"):
+        raise ValueError(
+            "display_artifact(path=...) cannot convert office documents through "
+            "the active workspace yet; convert the file to PDF first and render "
+            "it with mode='pdf'."
+        )
+
+    if not await _workspace.is_file(path):
+        raise FileNotFoundError(path)
+
+    if mode == "image":
+        mime, _ = mimetypes.guess_type(path)
+        mime = mime or "application/octet-stream"
+        encoded = base64.b64encode(await _workspace.read_bytes(path)).decode()
+        return f"data:{mime};base64,{encoded}"
+
+    if mode == "pdf":
+        encoded = base64.b64encode(await _workspace.read_bytes(path)).decode()
+        return f"data:application/pdf;base64,{encoded}"
+
+    if mode in ("html", "markdown"):
+        return await _workspace.read_text(path, encoding="utf-8")
+
+    try:
+        return await _workspace.read_text(path, encoding="utf-8")
+    except (UnicodeDecodeError, OSError):
+        raise
+
+
 @function_tool
-def display_artifact(
+async def display_artifact(
     ctx: RunContextWrapper[Any],
     title: str,
     *,
@@ -51,8 +83,8 @@ def display_artifact(
         title: Display label shown in the artifact UI.
         content: Raw string content to display.
         path: Filesystem path to a file to display.
-        mode: Content type — one of "markdown", "html", "image", "pdf", "docx", or "pptx".
-              Defaults to "markdown". "docx" and "pptx" are emitted as "pdf".
+        mode: Content type — one of "markdown", "html", "image", or "pdf".
+              Defaults to "markdown". "docx" and "pptx" require prior PDF conversion.
         artifact_id: Optional identifier. Pass an existing ID to update an artifact in place;
                      omit to create a new one.
     """
@@ -67,26 +99,21 @@ def display_artifact(
         return {"success": True, "emitted_mode": mode}
 
     expanded_path = os.path.expanduser((path or "").strip())
-    if expanded_path and not os.path.isabs(expanded_path):
-        wr = _workspace_root_from_ctx(ctx)
-        if wr:
-            expanded_path = os.path.abspath(os.path.join(wr, expanded_path))
-    if not expanded_path or not os.path.isfile(expanded_path):
-        return {"success": False, "error": f"File not found: {expanded_path}"}
+    ctx_workspace_root = _workspace_root_from_ctx(ctx)
+    if expanded_path and not os.path.isabs(expanded_path) and ctx_workspace_root:
+        expanded_path = os.path.abspath(os.path.join(ctx_workspace_root, expanded_path))
 
     try:
-        resolved = resolve_file_content(expanded_path, mode)
+        resolved = await _resolve_workspace_file_content(expanded_path, mode)
     except UnicodeDecodeError:
-        return {"success": False, "error": f"Unable to decode file as UTF-8: {expanded_path}"}
-    except OfficeConversionError as e:
-        return {"success": False, "error": str(e)}
-    except subprocess.TimeoutExpired:
-        return {"success": False, "error": "LibreOffice conversion timed out"}
-    except FileNotFoundError:
         return {
             "success": False,
-            "error": "LibreOffice is not installed — cannot convert office documents to PDF",
+            "error": f"Unable to decode file as UTF-8: {expanded_path}",
         }
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    except FileNotFoundError:
+        return {"success": False, "error": f"File not found: {expanded_path}"}
 
     emitted_mode = "pdf" if mode in ("docx", "pptx") else mode
     emit_artifact(title, resolved, emitted_mode, artifact_id)
