@@ -244,9 +244,17 @@ async def write_git_credential_helper(
         f"{{ grep -vF {shlex.quote(f'@{host}')} \"$f\" 2>/dev/null || true; "
         f"printf '%s\\n' {shlex.quote(cred_line)}; }} > \"$t\" && mv \"$t\" \"$f\" || exit 13"
     )
+    # Lock under $HOME, not a shared /tmp path: clone-time runs as root and the
+    # boot pass as the run_as user (uid 1000), so a single /tmp lock created by
+    # root is mode-0600/root-owned and unopenable by uid 1000 ("cannot create
+    # ... Permission denied"). A per-$HOME lock is always writable by the running
+    # uid, and still serializes the concurrent same-uid clone-time writers
+    # (which is where the git-config race actually happens). flock stays
+    # best-effort: if it can't be taken, the unique mktemp temp still prevents
+    # the credentials-file race.
     script = (
-        'L="${TMPDIR:-/tmp}/.omni-git-cred.lock"; '
-        f'if command -v flock >/dev/null 2>&1; then exec 9>"$L" 2>/dev/null && flock 9; fi; {body}'
+        'L="$HOME/.omni-git-cred.lock"; '
+        f'if command -v flock >/dev/null 2>&1; then exec 9>"$L" 2>/dev/null && flock 9 2>/dev/null; fi; {body}'
     )
     res = await _exec_as(session, script, user=user)
     if not res.ok():
