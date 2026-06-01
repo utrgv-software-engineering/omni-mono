@@ -691,3 +691,39 @@ def test_terminal_non_mapping_rejected(config_dir, workspace, tmp_path):
         sandbox_profile.resolve_profile(
             workspace_dir=workspace, explicit_path=profile_path
         )
+
+
+# ---------------------------------------------------------------------------
+# User .env → sandbox container (manifest.environment)
+# ---------------------------------------------------------------------------
+
+
+def test_user_env_file_injected_into_manifest_environment(config_dir, workspace):
+    # Settings → Environment writes <config>/.env; it must reach the container.
+    _write(config_dir / ".env", 'FOO=bar\n# a comment\nQUOTED="hello world"\n\nEMPTY_OK=\n')
+    profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
+    env = profile.raw["manifest"]["environment"]
+    assert env["FOO"] == "bar"
+    assert env["QUOTED"] == "hello world"  # dotenv strips the quotes
+
+
+def test_profile_environment_wins_over_user_env(config_dir, workspace):
+    _write(
+        config_dir / "sandbox" / "default.yml",
+        """
+        manifest:
+          environment:
+            SHARED: from-profile
+        """,
+    )
+    _write(config_dir / ".env", "SHARED=from-env\nONLY_ENV=v\n")
+    profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
+    env = profile.raw["manifest"]["environment"]
+    assert env["SHARED"] == "from-profile"  # explicit profile value is not clobbered
+    assert env["ONLY_ENV"] == "v"
+
+
+def test_missing_env_file_is_noop(config_dir, workspace):
+    profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
+    # No <config>/.env → no crash, default profile resolves normally.
+    assert profile.raw["client"]["type"] == "host"

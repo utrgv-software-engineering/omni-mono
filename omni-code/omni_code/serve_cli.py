@@ -873,6 +873,14 @@ async def bring_up_session(
         if isinstance(raw_idle, dict) and "pause_after_seconds" in raw_idle:
             inner.set_idle_threshold(_parse_idle_threshold(raw_idle))
 
+    # Scrub the snapshot tar BEFORE start() hydrates it. The teardown scrub only
+    # runs on a clean stop; a snapshot left dirty by a crashed/killed prior
+    # session (or one persisted before this scrub existed) would otherwise make
+    # `start()` throw WorkspaceArchiveWriteError on an unsafe symlink (e.g. a
+    # committed `.fvm/flutter_sdk -> /Users/...` absolute symlink in a cloned
+    # repo) and the session would never come up. Best-effort + idempotent.
+    _scrub_session_snapshot(session)
+
     await session.start()
     # Publish so ``sandbox.*`` server functions can reach the inner backend.
     set_sandbox_session(session)

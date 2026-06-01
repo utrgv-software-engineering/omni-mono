@@ -45,7 +45,6 @@ container shape.
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
@@ -152,6 +151,7 @@ def resolve_profile(
 
     merged = _substitute(merged, {"workspace_dir": str(workspace_dir.resolve())})
     _inject_network_allowlist(merged)
+    _inject_user_env(merged)
     init = _parse_init(merged.get("init"))
     services = _parse_services(merged.get("services") or {})
     terminal = _parse_terminal(merged.get("terminal"), run_as=merged.get("run_as"))
@@ -206,6 +206,59 @@ def _inject_network_allowlist(profile: Dict[str, Any]) -> None:
     allowlist = _load_network_allowlist(get_config_dir())
     if allowlist:
         environment[_NETWORK_ALLOWLIST_ENV] = allowlist
+
+
+def _inject_user_env(profile: Dict[str, Any]) -> None:
+    """Merge the launcher's user ``.env`` (Settings → Environment) into the
+    manifest environment, so the variables reach the *sandbox container* — the
+    agent's bash/exec tools and the Terminal — not just the ``omni serve``
+    process.
+
+    Reads ``<config>/.env`` (same ``get_config_dir()`` the network allowlist
+    keys on; the launcher writes the merged ``.env`` there in every mode). Each
+    key is set on ``manifest.environment`` only when the profile (or an earlier
+    injector) hasn't already set it — explicit profile values win, and we never
+    override the network-allowlist env. Parse/IO errors fall open (no env added)
+    rather than break sandbox bring-up.
+    """
+    manifest = profile.setdefault("manifest", {})
+    if not isinstance(manifest, dict):
+        return
+    environment = manifest.setdefault("environment", {})
+    if not isinstance(environment, dict):
+        return
+    for key, value in _load_env_file(get_config_dir()).items():
+        if key in environment:
+            continue  # explicit profile / allowlist value wins
+        environment[key] = value
+
+
+def _load_env_file(config_dir: Path) -> Dict[str, str]:
+    """Parse ``<config>/.env`` into a ``{KEY: value}`` map. Uses ``python-dotenv``
+    when available (handles quoting/escapes the way the Settings editor writes),
+    falling back to a minimal ``KEY=value`` parser. Missing file / parse errors
+    return ``{}``."""
+    path = config_dir / ".env"
+    if not path.is_file():
+        return {}
+    try:
+        try:
+            from dotenv import dotenv_values  # type: ignore
+
+            return {k: v for k, v in (dotenv_values(str(path)) or {}).items() if k and v is not None}
+        except ImportError:
+            out: Dict[str, str] = {}
+            for raw in path.read_text(encoding="utf-8").splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                key = key.strip()
+                if key:
+                    out[key] = val.strip().strip('"').strip("'")
+            return out
+    except OSError:
+        return {}
 
 
 def _load_network_allowlist(config_dir: Path) -> Optional[str]:
