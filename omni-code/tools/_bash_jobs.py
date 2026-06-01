@@ -226,9 +226,7 @@ def new_job_id() -> str:
 
 
 def jobs_dir(workspace_root: str) -> str:
-    path = os.path.join(workspace_root, _JOBS_DIRNAME)
-    os.makedirs(path, exist_ok=True)
-    return path
+    return os.path.join(workspace_root, _JOBS_DIRNAME)
 
 
 def log_path_for(workspace_root: str, job_id: str) -> str:
