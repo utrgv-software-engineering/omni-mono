@@ -124,6 +124,9 @@ class SwitchContext:
     session_id: str
     snapshot_dir: Optional[Any]  # pathlib.Path | None
     sources_parsed: List[Dict[str, Any]]
+    # Boot-time git/CLI credential descriptors ({url, username, tokenEnv}); reused
+    # on every profile switch so the rebuilt sandbox re-authenticates identically.
+    credentials_parsed: List[Dict[str, Any]]
     workspace_dir: Any  # pathlib.Path
     project_id: Optional[str]
     host: str

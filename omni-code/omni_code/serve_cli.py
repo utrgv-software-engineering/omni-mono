@@ -69,6 +69,20 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument(
+        "--credential",
+        dest="credentials",
+        action="append",
+        default=[],
+        help=(
+            "Per-credential JSON descriptor; repeatable. Configures git + the "
+            "host's CLI (gh / az devops) inside the sandbox at boot, for every "
+            "linked host the project uses (not just cloned remotes). Keys: "
+            "``url`` (a remote URL on the host, used to derive host + org), "
+            "``username`` (HTTPS basic-auth user), ``tokenEnv`` (name of the "
+            "env var holding the token — value read host-side, never on argv)."
+        ),
+    )
+    p.add_argument(
         "--workspace",
         required=True,
         type=Path,
@@ -625,6 +639,78 @@ def _attach_session_to_spec(
 # ---------------------------------------------------------------------------
 
 
+def _run_as_exec_user(profile_raw: Dict[str, Any]) -> Optional[str]:
+    """The profile's ``run_as`` identity, used so credentials are written as the
+    user the agent/terminal actually run as (a devbox runs tools as uid 1000;
+    creds written as root would be invisible to ``gh``/``git`` at runtime).
+
+    Passed verbatim to ``session.exec(user=...)``, which for the docker backend
+    becomes ``docker exec --user`` — that accepts ``uid``/``uid:gid``/``name``
+    forms (``"1000:1000"``), NOT the ``#uid`` sudo form. Missing/blank → ``None``
+    (write as the session default)."""
+    run_as = profile_raw.get("run_as")
+    if not isinstance(run_as, str) or not run_as.strip():
+        return None
+    return run_as.strip()
+
+
+async def _configure_credentials(
+    session: Any, credentials: List[Dict[str, Any]], *, run_as_user: Optional[str]
+) -> None:
+    """Configure git + CLI auth (``gh`` / ``az devops``) inside the sandbox for
+    each linked host the project uses, as ``run_as_user``.
+
+    Token values never travel on argv: the descriptor carries only the env-var
+    *name* (``tokenEnv``), read host-side here from the omni serve process env
+    (where the launcher injected it). A credential whose token env is unset, or
+    whose ``url`` can't be parsed, is skipped — best-effort, never fatal.
+
+    Deduped so each host is configured once (git + ``gh`` are host-wide) while
+    Azure DevOps still logs in per organization (``az devops login`` keys on org,
+    and one PAT can span orgs).
+    """
+    if not credentials:
+        return
+    from omniagents.core.sandbox import configure_host_credentials
+
+    seen: set[Any] = set()
+    for cred in credentials:
+        token_env = cred.get("tokenEnv")
+        token = os.environ.get(token_env) if token_env else None
+        if not token:
+            continue
+        url = cred.get("url")
+        if not isinstance(url, str) or not url:
+            continue
+        try:
+            host, repo = _parse_git_remote_url(url)
+        except ValueError:
+            # Unparseable remote (e.g. an SSH form we don't rewrite) — the git
+            # credential helper keys on https hosts anyway, so skip.
+            continue
+        # Dedup key: per-org for dev.azure.com (one PAT, many orgs), else per-host
+        # (github/gh and the git helper are host-wide; the visualstudio.com org is
+        # in the hostname so host alone suffices).
+        key = (host, repo.split("/", 1)[0]) if host == "dev.azure.com" else host
+        if key in seen:
+            continue
+        seen.add(key)
+        # Best-effort and isolated: credential setup must never block the sandbox
+        # from coming up. A transport error / bad exec for one host is logged and
+        # skipped so the agent still starts (just without that host's CLI auth).
+        try:
+            await configure_host_credentials(
+                session,
+                host=host,
+                repo=repo,
+                username=cred.get("username") or "x-access-token",
+                token=token,
+                user=run_as_user,
+            )
+        except Exception as e:  # noqa: BLE001 — never let cred setup fail boot
+            print(f"[credentials] configuring {host} failed: {e}", file=sys.stderr)
+
+
 async def _run_init(session: Any, commands: List[str]) -> None:
     """Run each init command synchronously via ``session.exec`` as root.
 
@@ -744,6 +830,7 @@ async def bring_up_session(
     session_id: str,
     snapshot_dir: Optional[Path],
     prior_container_id: Optional[str],
+    credentials_parsed: Optional[List[Dict[str, Any]]] = None,
 ) -> BroughtUpSession:
     """Build the sandbox client from *profile*, create-or-resume the session,
     start it, run init + services, and publish the manifest/sources/live-session
@@ -792,6 +879,13 @@ async def bring_up_session(
 
     started_services: List[Tuple[ServiceSpec, int]] = []
     try:
+        # Configure git + CLI auth before init/services and before the agent
+        # runs, so private clones already done during create() are joined by
+        # working `gh` / `az devops` for the agent's own commands. Written as the
+        # profile's run_as identity so creds land in the HOME the agent uses.
+        await _configure_credentials(
+            session, credentials_parsed or [], run_as_user=_run_as_exec_user(profile.raw)
+        )
         await _run_init(session, profile.init)
         started_services = await _start_services(session, profile.services)
         service_urls = await _resolve_service_urls(session, started_services)
@@ -882,6 +976,7 @@ async def _attempt_rollback(ctx: Any, prev_profile_path: Optional[str]) -> bool:
         brought = await bring_up_session(
             profile=prev,
             sources_parsed=ctx.sources_parsed,
+            credentials_parsed=ctx.credentials_parsed,
             session_id=ctx.session_id,
             snapshot_dir=ctx.snapshot_dir,
             prior_container_id=None,
@@ -1014,6 +1109,7 @@ async def perform_switch(profile_path: str, *, session: Any = None) -> Dict[str,
             brought = await bring_up_session(
                 profile=target,
                 sources_parsed=ctx.sources_parsed,
+                credentials_parsed=ctx.credentials_parsed,
                 session_id=ctx.session_id,
                 snapshot_dir=ctx.snapshot_dir,
                 prior_container_id=None,
@@ -1117,6 +1213,21 @@ async def _serve(args: argparse.Namespace) -> int:
         print(json.dumps({"error": f"source: {e}"}), file=sys.stderr)
         return 1
 
+    # Parse the repeated --credential JSON descriptors (boot-time git/CLI auth).
+    try:
+        credentials_parsed: List[Dict[str, Any]] = []
+        for raw in args.credentials:
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"--credential value is not valid JSON: {raw!r}") from e
+            if not isinstance(parsed, dict):
+                raise ValueError(f"--credential must be a JSON object, got {parsed!r}")
+            credentials_parsed.append(parsed)
+    except ValueError as e:
+        print(json.dumps({"error": f"credential: {e}"}), file=sys.stderr)
+        return 1
+
     # --- Session id ---
     # The stable identifier for this resumable workspace. Caller-supplied via
     # --session-id (resume) or auto-generated (first start). Emitted in the
@@ -1170,6 +1281,7 @@ async def _serve(args: argparse.Namespace) -> int:
                 session_id=session_id,
                 snapshot_dir=args.snapshot_dir,
                 prior_container_id=args.container_id,
+                credentials_parsed=credentials_parsed,
             )
         except (ValueError, PermissiveLocalDirError) as e:
             # Bad source descriptor (ValueError) or a workspace that failed to
@@ -1316,6 +1428,7 @@ async def _serve(args: argparse.Namespace) -> int:
         session_id=session_id,
         snapshot_dir=args.snapshot_dir,
         sources_parsed=sources_parsed,
+        credentials_parsed=credentials_parsed,
         workspace_dir=args.workspace,
         project_id=args.project,
         host=args.host,
