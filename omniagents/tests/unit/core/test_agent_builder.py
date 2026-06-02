@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import json
 import os
 import sys
 import types
@@ -40,6 +42,61 @@ async def test_default_build_agent_processes_jinja_instructions():
     ctx = types.SimpleNamespace(context={"user": "Sam"})
     rendered = await agent.instructions(ctx, agent)
     assert rendered == "Hello Sam"
+
+
+@pytest.mark.asyncio
+async def test_default_build_agent_sets_openai_prompt_cache_key():
+    spec = make_spec(
+        name="CacheAgent",
+        get_agent_instructions=lambda: "Stable instructions",
+        model_name="gpt-4o",
+    )
+
+    agent = await _default_build_agent({}, None, spec, None)
+
+    expected = hashlib.sha256(
+        json.dumps(
+            {
+                "agent": "CacheAgent",
+                "project": "",
+                "model": "gpt-4o",
+                "instructions": "Stable instructions",
+                "tools": [],
+                "capabilities": [],
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()[:32]
+    assert (
+        agent.model_settings.extra_args["prompt_cache_key"] == f"omniagents:{expected}"
+    )
+    assert agent.model_settings.prompt_cache_retention == "24h"
+
+
+@pytest.mark.asyncio
+async def test_default_build_agent_skips_prompt_cache_for_litellm_model():
+    spec = make_spec(
+        get_agent_instructions=lambda: "Stable instructions",
+        model_name="litellm/anthropic/claude-sonnet-4-5",
+    )
+
+    agent = await _default_build_agent({}, None, spec, None)
+
+    assert getattr(agent.model_settings, "prompt_cache_key", None) is None
+
+
+@pytest.mark.asyncio
+async def test_default_build_agent_preserves_explicit_prompt_cache_key():
+    spec = make_spec(
+        get_agent_instructions=lambda: "Stable instructions",
+        model_name="gpt-4o",
+        model_settings={"prompt_cache_key": "custom-key"},
+    )
+
+    agent = await _default_build_agent({}, None, spec, None)
+
+    assert agent.model_settings.extra_args["prompt_cache_key"] == "custom-key"
+    assert getattr(agent.model_settings, "prompt_cache_retention", None) is None
 
 
 @pytest.mark.asyncio

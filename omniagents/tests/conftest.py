@@ -165,7 +165,8 @@ except ModuleNotFoundError:
 
     class ModelSettings:
         def __init__(self, **kwargs):
-            pass
+            for key, value in kwargs.items():
+                setattr(self, key, value)
 
     model_settings_mod = types.ModuleType("agents.model_settings")
     model_settings_mod.ModelSettings = ModelSettings
