@@ -11,13 +11,19 @@ production path (the SDK calls it from ``create``).
 from __future__ import annotations
 
 import asyncio
+import uuid
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
 from agents.sandbox.manifest import Manifest
-from omniagents.core.sandbox.docker_extended import BindSpec, ExtendedDockerSandboxClient
+from agents.sandbox.sandboxes.docker import DockerSandboxSessionState
+from agents.sandbox.snapshot import resolve_snapshot
+from omniagents.core.sandbox.docker_extended import (
+    BindSpec,
+    ExtendedDockerSandboxClient,
+)
 
 
 class _StubContainers:
@@ -170,17 +176,23 @@ def test_no_binds_when_none_requested():
 def test_binds_append_to_parent_mounts():
     """When a manifest contributes volume mounts (e.g. for a Mount entry),
     our binds are appended, not replaced."""
-    client, docker = _make_client(
-        binds=[BindSpec(source="/host", target="/extra")]
-    )
+    client, docker = _make_client(binds=[BindSpec(source="/host", target="/extra")])
     from docker.types import Mount as DockerSDKMount
-    pre_existing = DockerSDKMount(target="/from-manifest", source="some-volume", type="volume")
+
+    pre_existing = DockerSDKMount(
+        target="/from-manifest", source="some-volume", type="volume"
+    )
     _create(client, exposed_ports=())
     # Above _create call didn't add a manifest mount; instead simulate one
     # by re-running with a pre-populated kwargs path. Simpler: verify
     # behavior via direct call.
     docker.containers.create_calls.clear()
-    docker.containers.create(image="alpine", entrypoint=["tail"], command=["-f", "/dev/null"], mounts=[pre_existing])
+    docker.containers.create(
+        image="alpine",
+        entrypoint=["tail"],
+        command=["-f", "/dev/null"],
+        mounts=[pre_existing],
+    )
     # The wrapped _create_container was already called once above; the
     # important assertion is that when we DO call _create_container, the
     # bind appears alongside any parent mounts. Direct create() call
@@ -213,3 +225,50 @@ def test_exposed_ports_passed_through():
     # Parent maps each container port to a random host port on 127.0.0.1
     assert any("8080" in str(k) for k in ports.keys())
     assert any("6080" in str(k) for k in ports.keys())
+
+
+def test_session_labels_added_when_session_id_present():
+    client, docker = _make_client()
+    session_id = uuid.uuid4()
+    _create(client, session_id=session_id)
+    assert docker.containers.create_calls[0]["labels"] == {
+        "com.omni.omni-code": "true",
+        "com.omni.session-id": str(session_id),
+    }
+
+
+def test_no_session_labels_without_session_id():
+    client, docker = _make_client()
+    _create(client)
+    assert "labels" not in docker.containers.create_calls[0]
+
+
+def test_resume_ignores_container_with_different_session_label(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    client, _docker = _make_client()
+    desired_session_id = uuid.uuid4()
+    state = DockerSandboxSessionState(
+        session_id=desired_session_id,
+        manifest=Manifest(),
+        image="alpine:3",
+        snapshot=resolve_snapshot(None, str(desired_session_id)),
+        container_id="old-container",
+        exposed_ports=(),
+    )
+    old_container = MagicMock()
+    old_container.labels = {"com.omni.session-id": str(uuid.uuid4())}
+    new_container = MagicMock()
+    new_container.id = "new-container"
+    created: list[uuid.UUID] = []
+
+    async def fake_create_container(*_args: Any, **kwargs: Any) -> Any:
+        created.append(kwargs["session_id"])
+        return new_container
+
+    monkeypatch.setattr(client, "get_container", lambda _container_id: old_container)
+    monkeypatch.setattr(client, "_create_container", fake_create_container)
+    asyncio.run(client.resume(state))
+
+    assert created == [desired_session_id]
+    assert state.container_id == "new-container"

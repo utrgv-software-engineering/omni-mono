@@ -69,6 +69,9 @@ if TYPE_CHECKING:
 
 __all__ = ["BindSpec", "ExtendedDockerSandboxClient", "ExtendedDockerSandboxSession"]
 
+_OMNI_CONTAINER_LABEL = "com.omni.omni-code"
+_OMNI_SESSION_LABEL = "com.omni.session-id"
+
 
 # Per-consumer queue size: 1024 chunks at ~4 KB = ~4 MB soft cap before
 # overflow drops new chunks (mirrors unix_local_extended).
@@ -395,7 +398,9 @@ class ExtendedDockerSandboxSession(DockerSandboxSession, PtyStreamingSession):
         entry = self._pty_processes.get(process_id)
         if entry is None:
             raise ValueError(f"unknown pty process_id {process_id}")
-        q: asyncio.Queue[Optional[bytes]] = asyncio.Queue(maxsize=_STREAM_QUEUE_MAX_CHUNKS)
+        q: asyncio.Queue[Optional[bytes]] = asyncio.Queue(
+            maxsize=_STREAM_QUEUE_MAX_CHUNKS
+        )
 
         async with entry.output_lock:
             while entry.output_chunks:
@@ -648,6 +653,11 @@ class ExtendedDockerSandboxClient(DockerSandboxClient):
             "command": ["-f", "/dev/null"],
             "environment": environment,
         }
+        if session_id is not None:
+            create_kwargs["labels"] = {
+                _OMNI_CONTAINER_LABEL: "true",
+                _OMNI_SESSION_LABEL: str(session_id),
+            }
         if manifest is not None:
             docker_mounts = _build_docker_volume_mounts(manifest, session_id=session_id)
             if docker_mounts:
@@ -762,6 +772,10 @@ class ExtendedDockerSandboxClient(DockerSandboxClient):
                 "ExtendedDockerSandboxClient.resume expects a DockerSandboxSessionState"
             )
         container = self.get_container(state.container_id)
+        if container is not None:
+            labels = getattr(container, "labels", {}) or {}
+            if labels.get(_OMNI_SESSION_LABEL) != str(state.session_id):
+                container = None
         reused_existing_container = container is not None
         if container is None:
             container = await self._create_container(
