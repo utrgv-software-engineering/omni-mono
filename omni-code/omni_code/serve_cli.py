@@ -743,12 +743,55 @@ async def _run_init(session: Any, commands: List[str]) -> None:
             )
 
 
+# Sentinel process_id for a service we adopted from a warm/reused container
+# rather than launching ourselves. We have no PTY pid for it; ``teardown_session``
+# only checks ``started_services`` truthiness (never the pids) and
+# ``_resolve_service_urls`` keys off ``svc.port``, so this is inert downstream.
+_ADOPTED_SERVICE_PID = -1
+
+
+async def _port_is_listening(session: Any, port: int) -> bool:
+    """Best-effort check whether *port* already accepts TCP connections inside
+    the container. Uses bash's ``/dev/tcp`` (always present in the devbox image)
+    so we don't depend on ``ss``/``netstat`` being installed. Any error returns
+    False — a failed probe just means we fall through and launch the service.
+    """
+    probe = f"exec 3<>/dev/tcp/127.0.0.1/{int(port)}"
+    try:
+        result = await session.exec(
+            f"bash -c {_shell_quote(probe)} 2>/dev/null", shell=True, user="root"
+        )
+        return result.exit_code == 0
+    except Exception:
+        return False
+
+
 async def _start_services(
     session: Any, services: List[ServiceSpec]
 ) -> List[Tuple[ServiceSpec, int]]:
-    """Launch each service via ``pty_exec_start``. Hard-fail on immediate exit."""
+    """Launch each service via ``pty_exec_start``. Hard-fail on immediate exit.
+
+    Reuse-aware: when the session is brought up on a warm/reused container
+    (resumed from idle pause or re-attached), a service from the previous boot
+    may still be running and holding its port. Relaunching it would just bind-
+    clash (e.g. code-server exits 1 with ``EADDRINUSE``), so for a service that
+    declares a port we first probe whether that port is already listening and,
+    if so, adopt the existing instance instead of starting a duplicate. On a
+    cold container nothing is listening, so the probe is a cheap no-op and the
+    launch proceeds normally.
+    """
     started: List[Tuple[ServiceSpec, int]] = []
     for svc in services:
+        # Adopt an already-running instance on a reused container.
+        if svc.port is not None and await _port_is_listening(session, svc.port):
+            print(
+                f"[services] {svc.name!r} already listening on port {svc.port}; "
+                "adopting existing instance (reused container)",
+                file=sys.stderr,
+            )
+            started.append((svc, _ADOPTED_SERVICE_PID))
+            continue
+
         # Per-service env is materialized as a `KEY=val` prefix on the shell
         # command. ``session.pty_exec_start`` doesn't have a separate env=
         # parameter (env vars are a manifest concern), so we use the same
@@ -766,9 +809,13 @@ async def _start_services(
             yield_time_s=0.0,
         )
         if update.exit_code is not None:
+            # Surface the service's own output — without it a bare "exited with
+            # code 1" hides the real cause (EADDRINUSE, missing binary, etc.).
+            output = update.output.decode("utf-8", errors="replace").strip()
             raise RuntimeError(
                 f"service {svc.name!r} exited immediately with code "
-                f"{update.exit_code}; command: {cmd}"
+                f"{update.exit_code}; command: {cmd}\n"
+                f"output: {output or '(empty)'}"
             )
         if update.process_id is None:
             raise RuntimeError(
