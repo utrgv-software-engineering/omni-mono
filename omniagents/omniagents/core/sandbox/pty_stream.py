@@ -10,7 +10,7 @@ holding a shell open over a WebSocket) we need two more capabilities:
 
 These primitives live on omniagents subclasses of the SDK sessions
 (:class:`ExtendedUnixLocalSandboxSession`,
-:class:`ExtendedDockerSandboxSession`). Backends without an implementation
+:class:`ExtendedDockerSandboxSession`, ACI, and host_bridge). Backends without an implementation
 raise :class:`PtyStreamingUnavailable` from
 :func:`coerce_pty_streaming`, which the terminal manager surfaces as a
 clear "this sandbox backend doesn't support terminals yet" error.
