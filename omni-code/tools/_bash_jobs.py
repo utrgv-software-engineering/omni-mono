@@ -25,6 +25,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Tuple
 
 from omniagents.workspace import ProcessHandle
@@ -458,17 +459,22 @@ async def read_job_log(
 
     Returns ``(body, total_lines, log_size_bytes)``. ``body`` is the joined
     selected lines (no truncation applied — callers can shape further).
-    Raises ``OSError`` (or workspace error) if the file is unreadable.
+    Raises ``OSError`` if the file is unreadable.
 
     Background-mode spawn itself is host-only, but the log file lives at
     ``workspace_root/.omni-code/jobs/<id>.log`` which is inside the
     workspace. Routing the read through ``workspace.read_bytes`` keeps the
     abstraction consistent and makes the read work for any backend that
-    can see that path.
+    can see that path. If the active workspace context is rooted elsewhere,
+    fall back to a direct local read only for the registered job log path.
     """
     from omniagents import workspace as _ws
+    from omniagents.workspace import WorkspaceError
 
-    raw = await _ws.read_bytes(job.log_path)
+    try:
+        raw = await _ws.read_bytes(job.log_path)
+    except (OSError, WorkspaceError) as exc:
+        raw = await _read_local_registered_job_log(job, exc)
     text = raw.decode("utf-8", errors="replace")
     all_lines = text.splitlines()
     total = len(all_lines)
@@ -477,3 +483,45 @@ async def read_job_log(
     else:
         selected = all_lines[-max(lines, 0) :] if lines > 0 else []
     return "\n".join(selected), total, len(raw)
+
+
+def _is_registered_job_log_path(job: Job) -> bool:
+    job_id = getattr(job, "job_id", None)
+    if not job_id:
+        return False
+    normalized = os.path.normpath(os.fspath(job.log_path))
+    parts = normalized.split(os.sep)
+    return (
+        len(parts) >= 3
+        and parts[-3] == ".omni-code"
+        and parts[-2] == "jobs"
+        and parts[-1] == f"{job_id}.log"
+    )
+
+
+async def _read_local_registered_job_log(job: Job, workspace_error: Exception) -> bytes:
+    if not _is_registered_job_log_path(job):
+        if isinstance(workspace_error, OSError):
+            raise workspace_error
+        raise OSError(
+            f"Workspace could not read non-job log path {job.log_path}: {workspace_error}"
+        ) from workspace_error
+
+    log_path = os.fspath(job.log_path)
+    try:
+        return await asyncio.to_thread(Path(log_path).read_bytes)
+    except FileNotFoundError as local_error:
+        raise FileNotFoundError(
+            f"Log file is missing on local filesystem: {log_path} "
+            f"(workspace read failed: {workspace_error})"
+        ) from local_error
+    except PermissionError as local_error:
+        raise PermissionError(
+            f"Log file is not readable on local filesystem: {log_path} "
+            f"(workspace read failed: {workspace_error})"
+        ) from local_error
+    except OSError as local_error:
+        raise OSError(
+            f"Log file is inaccessible on local filesystem: {log_path}: {local_error} "
+            f"(workspace read failed: {workspace_error})"
+        ) from local_error

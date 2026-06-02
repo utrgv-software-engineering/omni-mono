@@ -39,6 +39,7 @@ from tools import _bash_jobs
 from omniagents.workspace import (
     ExecResult,
     Workspace,
+    WorkspaceEscapeError,
     reset_workspace,
     set_workspace,
 )
@@ -136,6 +137,12 @@ class _SpawningWorkspace(_RecordingWorkspace):
     async def spawn(self, command: Any, **kwargs: Any):
         self._record("spawn", command, **kwargs)
         return _FakeProcessHandle()
+
+
+class _RootMismatchWorkspace(_RecordingWorkspace):
+    async def read_bytes(self, path: str) -> bytes:
+        self._record("read_bytes", path)
+        raise WorkspaceEscapeError(f"outside workspace root: {path}")
 
 
 def _invoke(tool, **params):
@@ -418,3 +425,63 @@ def test_read_job_log_routes_through_workspace():
     # Tail of 2 lines from a 3-line file.
     assert body.splitlines() == ["line two", "line three"]
     assert total == 3
+    assert size == len(log_text.encode("utf-8"))
+
+
+def test_read_job_log_falls_back_to_local_registered_job_log_on_root_mismatch(tmp_path):
+    job_id = "bash-local"
+    log_dir = tmp_path / ".omni-code" / "jobs"
+    log_dir.mkdir(parents=True)
+    log_path = log_dir / f"{job_id}.log"
+    log_text = "local one\nlocal two\n"
+    log_path.write_text(log_text, encoding="utf-8")
+
+    fake = _RootMismatchWorkspace(root="/other-root")
+    job = type(
+        "_FakeJob",
+        (),
+        {
+            "job_id": job_id,
+            "log_path": str(log_path),
+            "poll_returncode": lambda self: 0,
+            "wall_time_ms": lambda self: 5,
+        },
+    )()
+
+    token = set_workspace(fake)
+    try:
+        body, total, size = asyncio.run(_bash_jobs.read_job_log(job, lines=1))
+    finally:
+        reset_workspace(token)
+
+    assert [call[0] for call in fake.calls] == ["read_bytes"]
+    assert body == "local two"
+    assert total == 2
+    assert size == len(log_text.encode("utf-8"))
+
+
+def test_read_job_log_reports_missing_local_registered_job_log_after_root_mismatch(tmp_path):
+    job_id = "bash-missing"
+    log_path = tmp_path / ".omni-code" / "jobs" / f"{job_id}.log"
+    fake = _RootMismatchWorkspace(root="/other-root")
+    job = type(
+        "_FakeJob",
+        (),
+        {
+            "job_id": job_id,
+            "log_path": str(log_path),
+            "poll_returncode": lambda self: 0,
+            "wall_time_ms": lambda self: 5,
+        },
+    )()
+
+    token = set_workspace(fake)
+    try:
+        with pytest.raises(FileNotFoundError) as excinfo:
+            asyncio.run(_bash_jobs.read_job_log(job))
+    finally:
+        reset_workspace(token)
+
+    message = str(excinfo.value)
+    assert "missing on local filesystem" in message
+    assert "workspace read failed" in message
