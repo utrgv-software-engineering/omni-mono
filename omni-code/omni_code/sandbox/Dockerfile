@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y \
     python3-venv \
     pipx \
     ripgrep \
+    tmux \
     fd-find \
     jq \
     sqlite3 \
