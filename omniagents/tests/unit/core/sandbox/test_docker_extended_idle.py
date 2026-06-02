@@ -57,6 +57,11 @@ def _make_session() -> ExtendedDockerSandboxSession:
     session._test_stream_calls = 0
     session._test_pty_start_calls = 0
     session._test_pty_write_calls = 0
+    session._test_ensure_started_calls = 0
+    # Controls what the stubbed ``paused()`` reports (the real one reloads
+    # the container and reads docker status). Tests flip this to model a
+    # frozen container.
+    session._test_paused_returns = False
 
     async def _stub_pause():
         session._test_pause_calls += 1
@@ -64,10 +69,14 @@ def _make_session() -> ExtendedDockerSandboxSession:
     async def _stub_unpause():
         session._test_unpause_calls += 1
 
-    # Override pause/unpause on the instance — these talk to docker in
-    # real life; tests just count them.
+    async def _stub_paused():
+        return session._test_paused_returns
+
+    # Override pause/unpause/paused on the instance — these talk to docker in
+    # real life; tests just count / control them.
     session.pause = _stub_pause  # type: ignore[method-assign]
     session.unpause = _stub_unpause  # type: ignore[method-assign]
+    session.paused = _stub_paused  # type: ignore[method-assign]
 
     # Stub the parent implementations of every wrapped method so
     # ``super().<method>(...)`` resolves to a counter. We can't patch
@@ -89,12 +98,16 @@ def _make_session() -> ExtendedDockerSandboxSession:
         session._test_pty_write_calls += 1
         return "pty_wrote"
 
+    async def _stub_ensure_started(*_args, **_kwargs):
+        session._test_ensure_started_calls += 1
+
     # Monkey-patch the parent (SDK) class methods so super() resolves
     # to our stubs for this test run. We restore in the fixture teardown.
     DockerSandboxSession._exec_run = _stub_exec_run  # type: ignore[assignment]
     DockerSandboxSession._stream_into_exec = _stub_stream  # type: ignore[assignment]
     DockerSandboxSession.pty_exec_start = _stub_pty_start  # type: ignore[assignment]
     DockerSandboxSession.pty_write_stdin = _stub_pty_write  # type: ignore[assignment]
+    DockerSandboxSession._ensure_backend_started = _stub_ensure_started  # type: ignore[assignment]
 
     return session
 
@@ -107,7 +120,13 @@ def session():
     # test suite in a process that loaded these patches, but resetting
     # avoids cross-test bleed if any other test imports
     # ``DockerSandboxSession`` directly.
-    for attr in ("_exec_run", "_stream_into_exec", "pty_exec_start", "pty_write_stdin"):
+    for attr in (
+        "_exec_run",
+        "_stream_into_exec",
+        "pty_exec_start",
+        "pty_write_stdin",
+        "_ensure_backend_started",
+    ):
         if hasattr(DockerSandboxSession, attr):
             try:
                 delattr(DockerSandboxSession, attr)
@@ -379,3 +398,59 @@ async def test_stop_idle_watcher_idempotent(session):
     await session.stop_idle_watcher()
     # No exceptions, no spurious unpauses.
     assert session._test_unpause_calls == 0
+
+
+# ---------------------------------------------------------------------------
+# _ensure_backend_started: bring-up thaws a frozen container
+#
+# Regression for the 409 "cannot start a paused container, try unpause
+# instead": the idle watcher freezes the container, the next turn re-ensures
+# the session, and the SDK base reads a paused container as "not running" and
+# calls container.start(). Our override must unpause before delegating.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ensure_backend_started_unpauses_watcher_paused(session):
+    """Watcher-paused (in-memory flag set): ``_touch_activity`` thaws it via
+    the idle state machine, then the base start runs against a live
+    container. No 409."""
+    session._idle_paused = True
+    session._idle_paused_at = time.monotonic() - 5
+    # After _touch_activity unpauses, docker is no longer paused.
+    session._test_paused_returns = False
+
+    await session._ensure_backend_started()
+
+    assert session._test_unpause_calls == 1  # via _touch_activity
+    assert session._idle_paused is False
+    assert session._test_ensure_started_calls == 1  # base start still ran
+
+
+@pytest.mark.asyncio
+async def test_ensure_backend_started_unpauses_out_of_band_pause(session):
+    """Container frozen out-of-band (manual ``docker pause`` / desynced
+    flag): ``_touch_activity`` no-ops because the flag is clear, but the
+    defensive ``paused()`` re-check still thaws it before the base start."""
+    session._idle_paused = False
+    session._test_paused_returns = True
+
+    await session._ensure_backend_started()
+
+    assert session._test_unpause_calls == 1  # via the defensive paused() check
+    assert session._test_ensure_started_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_ensure_backend_started_no_unpause_when_running(session):
+    """Healthy / stopped container (not paused): no spurious unpause, timer
+    reset, base start runs."""
+    session._idle_last_activity_at = 0.0
+    session._idle_paused = False
+    session._test_paused_returns = False
+
+    await session._ensure_backend_started()
+
+    assert session._test_unpause_calls == 0
+    assert session._test_ensure_started_calls == 1
+    assert session._idle_last_activity_at > 0.0  # bring-up counts as activity
