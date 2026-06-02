@@ -749,6 +749,8 @@ def load_agent_spec_from_yaml(
         "extra_body": dict,  # Additional body fields
         "extra_headers": dict,  # Additional headers
         "extra_args": dict,  # Arbitrary keyword arguments
+        "prompt_cache_key": str,
+        "prompt_cache_retention": str,
         # OmniAgents-specific (consumed by run_options.build_model_provider).
         # Not passed to ModelSettings; extracted before construction.
         "reasoning_content_replay": dict,

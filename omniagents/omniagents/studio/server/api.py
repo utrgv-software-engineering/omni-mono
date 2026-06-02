@@ -554,6 +554,13 @@ MODEL_SETTING_SCHEMA: List[Dict[str, Any]] = [
     },
     {"key": "store", "label": "Store Responses", "type": "boolean"},
     {"key": "include_usage", "label": "Include Usage", "type": "boolean"},
+    {"key": "prompt_cache_key", "label": "Prompt Cache Key", "type": "string"},
+    {
+        "key": "prompt_cache_retention",
+        "label": "Prompt Cache Retention",
+        "type": "enum",
+        "options": ["in-memory", "24h"],
+    },
 ]
 
 STRUCTURED_OUTPUT_TYPE_MAP: Dict[str, Any] = {

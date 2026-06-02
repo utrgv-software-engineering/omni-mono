@@ -1,6 +1,8 @@
 """Core agent building functionality."""
 
 import asyncio
+import hashlib
+import inspect
 import json as _json
 import os
 from typing import Dict, Any, Optional, TYPE_CHECKING, List, Set
@@ -20,6 +22,111 @@ if TYPE_CHECKING:
     from agents.handoffs import Handoff
 
 logger = get_logger(__name__)
+
+
+def _model_supports_openai_prompt_cache_key(model_name: Any) -> bool:
+    if not isinstance(model_name, str) or not model_name.strip():
+        return False
+    model = model_name.strip().lower()
+    if "/" in model and not model.startswith("openai/"):
+        return False
+    if model.startswith("openai/"):
+        model = model.split("/", 1)[1]
+    return model.startswith(("gpt-4.1", "gpt-4o", "gpt-5", "o1", "o3", "o4"))
+
+
+def _tool_cache_identity(tool: Any) -> str:
+    name = getattr(tool, "name", None) or getattr(tool, "__name__", None) or ""
+    description = getattr(tool, "description", None) or ""
+    params = getattr(tool, "params_json_schema", None) or getattr(
+        tool, "parameters", None
+    )
+    try:
+        params_text = _json.dumps(params, sort_keys=True, default=str)
+    except Exception:
+        params_text = repr(params)
+    return f"{name}\n{description}\n{params_text}"
+
+
+def _build_prompt_cache_key(
+    *, spec: "AgentSpec", model_name: Any, instructions: str, tools: List[Any]
+) -> str | None:
+    if not _model_supports_openai_prompt_cache_key(model_name):
+        return None
+    if not isinstance(instructions, str) or not instructions.strip():
+        return None
+    stable_parts = {
+        "agent": getattr(spec, "name", "") or "",
+        "project": getattr(spec, "project_slug", "") or "",
+        "model": model_name,
+        "instructions": instructions,
+        "tools": [_tool_cache_identity(tool) for tool in tools],
+        "capabilities": [
+            getattr(cap, "capability_name", None) or getattr(cap, "type", "")
+            for cap in getattr(spec, "resolved_capabilities", []) or []
+        ],
+    }
+    digest = hashlib.sha256(
+        _json.dumps(stable_parts, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:32]
+    return f"omniagents:{digest}"
+
+
+def _apply_default_prompt_cache_settings(
+    model_settings_kwargs: Dict[str, Any],
+    *,
+    spec: "AgentSpec",
+    model_name: Any,
+    instructions: str,
+    tools: List[Any],
+) -> None:
+    if os.getenv("OMNI_DISABLE_PROMPT_CACHE", "").lower() in {"1", "true", "yes"}:
+        return
+    if "prompt_cache_key" in model_settings_kwargs:
+        return
+    cache_key = _build_prompt_cache_key(
+        spec=spec, model_name=model_name, instructions=instructions, tools=tools
+    )
+    if cache_key is None:
+        return
+    model_settings_kwargs["prompt_cache_key"] = cache_key
+    model_settings_kwargs.setdefault("prompt_cache_retention", "24h")
+
+
+def _normalize_prompt_cache_settings(model_settings_kwargs: Dict[str, Any]) -> None:
+    cache_key = model_settings_kwargs.pop("prompt_cache_key", None)
+    if not cache_key:
+        return
+    extra_args = model_settings_kwargs.get("extra_args")
+    if not isinstance(extra_args, dict):
+        extra_args = {}
+    extra_args.setdefault("prompt_cache_key", cache_key)
+    model_settings_kwargs["extra_args"] = extra_args
+
+
+def _cacheable_instructions_text(instructions: Any) -> str | None:
+    if isinstance(instructions, str):
+        return instructions
+    if not callable(instructions):
+        return None
+    try:
+        signature = inspect.signature(instructions)
+    except (TypeError, ValueError):
+        return None
+    required_params = [
+        param
+        for param in signature.parameters.values()
+        if param.default is inspect.Parameter.empty
+        and param.kind
+        in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    if required_params:
+        return None
+    try:
+        value = instructions()
+    except Exception:
+        return None
+    return value if isinstance(value, str) else None
 
 
 def _resolve_capability_approval_policy(policy: Any) -> Any:
@@ -680,6 +787,15 @@ async def _default_build_agent(
             else:
                 model_settings_kwargs[key] = value
 
+    _apply_default_prompt_cache_settings(
+        model_settings_kwargs,
+        spec=spec,
+        model_name=model_name,
+        instructions=_cacheable_instructions_text(raw_instructions) or "",
+        tools=tools,
+    )
+    _normalize_prompt_cache_settings(model_settings_kwargs)
+
     # If tools are available and tool_choice not explicitly set, default to "auto"
     if tools and "tool_choice" not in model_settings_kwargs:
         model_settings_kwargs["tool_choice"] = "auto"
@@ -738,6 +854,9 @@ async def _default_build_agent(
                 "extra_body",
                 "extra_headers",
                 "extra_query",
+                "extra_args",
+                "prompt_cache_key",
+                "prompt_cache_retention",
             ]:
                 val = getattr(model_settings, field, None)
                 if val is not None:
