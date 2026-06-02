@@ -119,6 +119,25 @@ class ExtendedDockerSandboxSession(DockerSandboxSession, PtyStreamingSession):
     def should_provision_manifest_accounts_on_resume(self) -> bool:
         return False
 
+    async def _ensure_backend_started(self) -> None:
+        # Bringing the session back up is activity, and it's the one start
+        # path the activity wrappers below miss. The idle watcher freezes the
+        # container via the cgroup freezer; when the next turn re-ensures the
+        # session, the SDK base reads a paused container as "not running" and
+        # calls ``container.start()``, which docker rejects with a 409
+        # ("cannot start a paused container, try unpause instead"). Route
+        # through ``_touch_activity`` so the idle state machine (flag,
+        # timestamp, lock) stays consistent and the timer resets; the
+        # ``paused()`` re-check is belt-and-suspenders for a container paused
+        # out-of-band (manual ``docker pause`` or a desynced ``_idle_paused``
+        # flag), where ``_touch_activity`` would no-op. ``unpause()`` is
+        # idempotent, so the healthy / stopped cases fall straight through to
+        # the base start.
+        await self._touch_activity()
+        if await self.paused():
+            await self.unpause()
+        await super()._ensure_backend_started()
+
     async def _after_start(self) -> None:
         # Inherit the parent's bookkeeping (workspace_root_ready flag,
         # resume-probe clear) then arm the idle watcher.
