@@ -331,3 +331,37 @@ async def test_clone_keeps_git_suffix_for_github():
     )
     await entry._clone_named_ref(session=session, url="https://github.com/owner/name.git", tmp_dir="/tmp/x")
     assert "https://github.com/owner/name.git" in _https_args(session)
+
+
+@pytest.mark.parametrize("blank_ref", ["HEAD", ""])
+@pytest.mark.asyncio
+async def test_clone_omits_branch_for_blank_ref(blank_ref):
+    # A source added with a blank branch in the UI arrives here as the "HEAD"
+    # sentinel (serve_cli's ``src.get("ref") or "HEAD"``). "HEAD" is not a real
+    # branch, so ``git clone --branch HEAD`` fails — we must do a plain clone
+    # that checks out the remote's default branch instead.
+    session = _session()
+    entry = AuthenticatedGitRepo(
+        host="github.com", repo="owner/name", ref=blank_ref, username="x-access-token", token_env="X"
+    )
+    await entry._clone_named_ref(session=session, url="https://github.com/owner/name.git", tmp_dir="/tmp/x")
+    calls = _exec_calls(session)
+    assert len(calls) == 1
+    args = calls[0]
+    assert "clone" in args
+    assert "--branch" not in args  # the whole point: no --branch HEAD
+    assert "HEAD" not in args
+    assert "https://github.com/owner/name.git" in args
+
+
+@pytest.mark.asyncio
+async def test_clone_uses_branch_for_explicit_ref():
+    # A real branch name still goes through the SDK's --branch path unchanged.
+    session = _session()
+    entry = AuthenticatedGitRepo(
+        host="github.com", repo="owner/name", ref="dev", username="x-access-token", token_env="X"
+    )
+    await entry._clone_named_ref(session=session, url="https://github.com/owner/name.git", tmp_dir="/tmp/x")
+    args = _exec_calls(session)[0]
+    assert "--branch" in args
+    assert "dev" in args

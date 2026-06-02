@@ -171,7 +171,19 @@ class AuthenticatedGitRepo(GitRepo):
     async def _clone_named_ref(
         self, *, session: "BaseSandboxSession", url: str, tmp_dir: str
     ) -> "ExecResult":
-        return await super()._clone_named_ref(session=session, url=_normalize_clone_url(url), tmp_dir=tmp_dir)
+        url = _normalize_clone_url(url)
+        # A source added without a branch in the UI means "use the repo's
+        # default branch". That empty ref arrives here as the "HEAD" sentinel
+        # (``serve_cli`` does ``src.get("ref") or "HEAD"``). "HEAD" is not a
+        # real branch/tag name, so the SDK's ``git clone --branch HEAD`` fails
+        # with "Remote branch HEAD not found". Do a plain clone (no --branch),
+        # which checks out whatever the remote's default branch is — exactly
+        # what the empty branch field is meant to express.
+        if self.ref in ("HEAD", "", None):
+            return await session.exec(
+                "git", "clone", "--depth", "1", "--no-tags", url, tmp_dir, shell=False
+            )
+        return await super()._clone_named_ref(session=session, url=url, tmp_dir=tmp_dir)
 
     async def _fetch_commit_ref(
         self, *, session: "BaseSandboxSession", url: str, tmp_dir: str
