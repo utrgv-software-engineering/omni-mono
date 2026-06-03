@@ -28,14 +28,17 @@ import asyncio
 import base64
 import io
 import json
-from typing import Any, Optional
+from typing import Any, AsyncIterator, Optional
 
 import websockets
 
 from agents.sandbox.manifest import Manifest
 from agents.sandbox.session.base_sandbox_session import BaseSandboxSession
 from agents.sandbox.session.pty_types import PtyExecUpdate
-from agents.sandbox.session.sandbox_client import BaseSandboxClient, BaseSandboxClientOptions
+from agents.sandbox.session.sandbox_client import (
+    BaseSandboxClient,
+    BaseSandboxClientOptions,
+)
 from agents.sandbox.session.sandbox_session import SandboxSession
 from agents.sandbox.session.sandbox_session_state import SandboxSessionState
 from agents.sandbox.snapshot import SnapshotBase, SnapshotSpec, resolve_snapshot
@@ -67,6 +70,7 @@ class HostBridgeChannel:
         self._ws = ws
         self._next_id = 0
         self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
+        self._pty_stream_queues: dict[int, list[asyncio.Queue[Optional[bytes]]]] = {}
         self._reader: Optional[asyncio.Task[None]] = None
         self._closed = False
 
@@ -85,6 +89,18 @@ class HostBridgeChannel:
                 except Exception:
                     continue
                 rid = msg.get("id")
+                if msg.get("event") == "pty_output":
+                    pid = msg.get("session_id")
+                    if isinstance(pid, int):
+                        payload = (
+                            None if msg.get("closed") else _b64d(msg.get("data_b64"))
+                        )
+                        for q in self._pty_stream_queues.get(pid, []):
+                            try:
+                                q.put_nowait(payload)
+                            except asyncio.QueueFull:
+                                pass
+                    continue
                 if not isinstance(rid, int):
                     continue
                 fut = self._pending.pop(rid, None)
@@ -126,6 +142,29 @@ class HostBridgeChannel:
             await self._ws.close()
         except Exception:
             pass
+
+    async def open_pty_stream(self, process_id: int) -> asyncio.Queue[Optional[bytes]]:
+        q: asyncio.Queue[Optional[bytes]] = asyncio.Queue(maxsize=1024)
+        self._pty_stream_queues.setdefault(process_id, []).append(q)
+        try:
+            await self.call("pty_stream_start", session_id=process_id)
+        except Exception:
+            self._pty_stream_queues.get(process_id, []).remove(q)
+            raise
+        return q
+
+    def close_pty_stream(
+        self, process_id: int, q: asyncio.Queue[Optional[bytes]]
+    ) -> None:
+        queues = self._pty_stream_queues.get(process_id)
+        if not queues:
+            return
+        try:
+            queues.remove(q)
+        except ValueError:
+            pass
+        if not queues:
+            self._pty_stream_queues.pop(process_id, None)
 
 
 def _b64e(data: bytes) -> str:
@@ -256,7 +295,9 @@ class HostBridgeSandboxSession(BaseSandboxSession):
         res = await chan.call("read", path=str(path), user=_user_name(user))
         return io.BytesIO(_b64d(res.get("data_b64")))
 
-    async def write(self, path, data: io.IOBase, *, user: str | User | None = None) -> None:
+    async def write(
+        self, path, data: io.IOBase, *, user: str | User | None = None
+    ) -> None:
         raw = data.read()
         if isinstance(raw, str):
             raw = raw.encode("utf-8")
@@ -316,6 +357,25 @@ class HostBridgeSandboxSession(BaseSandboxSession):
             await self._chan.call("pty_terminate")
         except Exception:
             pass
+
+    def pty_stream_output(self, process_id: int) -> AsyncIterator[bytes]:
+        return self._pty_stream_output(process_id)
+
+    async def _pty_stream_output(self, process_id: int) -> AsyncIterator[bytes]:
+        chan = await self._ensure_chan()
+        q = await chan.open_pty_stream(process_id)
+        try:
+            while True:
+                chunk = await q.get()
+                if chunk is None:
+                    return
+                yield chunk
+        finally:
+            chan.close_pty_stream(process_id, q)
+
+    async def pty_resize(self, process_id: int, *, cols: int, rows: int) -> None:
+        chan = await self._ensure_chan()
+        await chan.call("pty_resize", session_id=process_id, cols=cols, rows=rows)
 
     # -- workspace tar (only used by promote-to-cloud; noop snapshot otherwise) #
 
@@ -390,7 +450,9 @@ class HostBridgeSandboxClient(BaseSandboxClient):
 
     backend_id = "host_bridge"
 
-    def __init__(self, *, endpoint: str, instrumentation: Optional[object] = None) -> None:
+    def __init__(
+        self, *, endpoint: str, instrumentation: Optional[object] = None
+    ) -> None:
         self._endpoint = endpoint
         self._instrumentation = instrumentation
 
@@ -425,14 +487,18 @@ class HostBridgeSandboxClient(BaseSandboxClient):
 
     async def resume(self, state: SandboxSessionState) -> SandboxSession:
         if not isinstance(state, HostBridgeSandboxSessionState):
-            raise TypeError("HostBridgeSandboxClient.resume expects a HostBridgeSandboxSessionState")
+            raise TypeError(
+                "HostBridgeSandboxClient.resume expects a HostBridgeSandboxSessionState"
+            )
         inner = HostBridgeSandboxSession(state.endpoint or self._endpoint, state)
         # The host workspace persists on disk; treat the workspace as preserved
         # so resume skips a redundant manifest re-apply.
         inner._set_start_state_preserved(True)
         return self._wrap_session(inner, instrumentation=self._instrumentation)
 
-    def deserialize_session_state(self, payload: dict[str, object]) -> SandboxSessionState:
+    def deserialize_session_state(
+        self, payload: dict[str, object]
+    ) -> SandboxSessionState:
         return HostBridgeSandboxSessionState.model_validate(payload)
 
 
@@ -458,6 +524,7 @@ async def serve_host_connection(ws: Any, *, workspace_root: str | None = None) -
     real local project path here and we root the session there.
     """
     session: Any = None
+    stream_tasks: dict[int, asyncio.Task[None]] = {}
     try:
         async for raw in ws:
             try:
@@ -466,13 +533,19 @@ async def serve_host_connection(ws: Any, *, workspace_root: str | None = None) -
                 continue
             rid = msg.get("id")
             try:
-                session, result = await _host_dispatch(session, msg, workspace_root)
+                session, result = await _host_dispatch(
+                    session, msg, workspace_root, ws, stream_tasks
+                )
                 await ws.send(json.dumps({"id": rid, "ok": True, "result": result}))
             except Exception as e:  # noqa: BLE001
                 await ws.send(
-                    json.dumps({"id": rid, "ok": False, "error": f"{type(e).__name__}: {e}"})
+                    json.dumps(
+                        {"id": rid, "ok": False, "error": f"{type(e).__name__}: {e}"}
+                    )
                 )
     finally:
+        for task in stream_tasks.values():
+            task.cancel()
         if session is not None:
             try:
                 await session.aclose()
@@ -481,7 +554,11 @@ async def serve_host_connection(ws: Any, *, workspace_root: str | None = None) -
 
 
 async def _host_dispatch(
-    session: Any, msg: dict[str, Any], workspace_root: str | None = None
+    session: Any,
+    msg: dict[str, Any],
+    workspace_root: str | None = None,
+    ws: Any = None,
+    stream_tasks: Optional[dict[int, asyncio.Task[None]]] = None,
 ) -> tuple[Any, dict[str, Any]]:
     op = msg.get("op")
     if op == "create":
@@ -492,7 +569,9 @@ async def _host_dispatch(
         raise RuntimeError("session not created (send 'create' first)")
     if op == "exec":
         argv = [str(a) for a in (msg.get("argv") or [])]
-        res = await session.exec(*argv, shell=False, user=None, timeout=msg.get("timeout"))
+        res = await session.exec(
+            *argv, shell=False, user=None, timeout=msg.get("timeout")
+        )
         return session, {
             "stdout_b64": _b64e(res.stdout),
             "stderr_b64": _b64e(res.stderr),
@@ -528,12 +607,64 @@ async def _host_dispatch(
             max_output_tokens=msg.get("max_output_tokens"),
         )
         return session, _pty_payload(update)
+    if op == "pty_drain":
+        update = await session.pty_write_stdin(
+            session_id=int(msg["session_id"]),
+            chars="",
+            yield_time_s=msg.get("yield_time_s"),
+            max_output_tokens=msg.get("max_output_tokens"),
+        )
+        return session, _pty_payload(update)
+    if op == "pty_stream_start":
+        pid = int(msg["session_id"])
+        if stream_tasks is not None and pid in stream_tasks:
+            return session, {}
+
+        async def _stream() -> None:
+            try:
+                inner = getattr(session, "_inner", session)
+                async for chunk in inner.pty_stream_output(pid):
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "event": "pty_output",
+                                "session_id": pid,
+                                "data_b64": _b64e(chunk),
+                            }
+                        )
+                    )
+            finally:
+                try:
+                    await ws.send(
+                        json.dumps(
+                            {"event": "pty_output", "session_id": pid, "closed": True}
+                        )
+                    )
+                except Exception:
+                    pass
+
+        if stream_tasks is not None:
+            stream_tasks[pid] = asyncio.create_task(_stream())
+        return session, {}
+    if op == "pty_resize":
+        resize = getattr(session, "pty_resize", None)
+        if resize is not None:
+            await resize(
+                int(msg["session_id"]),
+                cols=int(msg.get("cols") or 80),
+                rows=int(msg.get("rows") or 24),
+            )
+        return session, {}
     if op == "pty_terminate":
         await session.pty_terminate_all()
         return session, {}
     if op == "resolve_port":
         endpoint = await session.resolve_exposed_port(int(msg["port"]))
-        return session, {"host": endpoint.host, "port": endpoint.port, "tls": endpoint.tls}
+        return session, {
+            "host": endpoint.host,
+            "port": endpoint.port,
+            "tls": endpoint.tls,
+        }
     if op == "running":
         return session, {"running": bool(await session.running())}
     if op == "shutdown":
@@ -546,7 +677,9 @@ async def _host_dispatch(
 async def _host_create(msg: dict[str, Any], workspace_root: str | None = None) -> Any:
     from agents.sandbox.sandboxes import UnixLocalSandboxClientOptions
 
-    from omniagents.core.sandbox.unix_local_extended import ExtendedUnixLocalSandboxClient
+    from omniagents.core.sandbox.unix_local_extended import (
+        ExtendedUnixLocalSandboxClient,
+    )
 
     manifest = Manifest.model_validate(msg.get("manifest") or {})
     # The cloud doesn't know this host's paths — root the session at the

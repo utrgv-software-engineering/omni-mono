@@ -22,10 +22,13 @@ from omniagents.core.sandbox.host_bridge import (
     HostBridgeSandboxClientOptions,
     serve_host_connection,
 )
+from omniagents.core.sandbox.pty_stream import coerce_pty_streaming
 
 
 async def _start_host_server() -> tuple[object, int]:
-    server = await websockets.serve(serve_host_connection, "127.0.0.1", 0, max_size=None)
+    server = await websockets.serve(
+        serve_host_connection, "127.0.0.1", 0, max_size=None
+    )
     port = next(iter(server.sockets)).getsockname()[1]
     return server, port
 
@@ -46,7 +49,9 @@ async def test_host_bridge_exec_fileio_pty_ports(tmp_path) -> None:
     endpoint = f"ws://127.0.0.1:{port}"
     try:
         client = HostBridgeSandboxClient(endpoint=endpoint)
-        options = HostBridgeSandboxClientOptions(endpoint=endpoint, exposed_ports=(8080,))
+        options = HostBridgeSandboxClientOptions(
+            endpoint=endpoint, exposed_ports=(8080,)
+        )
         manifest = Manifest.model_validate({"root": str(tmp_path)})
         session = await client.create(manifest=manifest, options=options)
         await session.start()
@@ -68,6 +73,30 @@ async def test_host_bridge_exec_fileio_pty_ports(tmp_path) -> None:
         # PTY
         update = await session.pty_exec_start("printf", "pty-out", yield_time_s=1.0)
         assert b"pty-out" in update.output
+
+        streaming = coerce_pty_streaming(session)
+        assert streaming is not None
+        update = await streaming.pty_exec_start("cat", tty=True, yield_time_s=0.0)
+        assert update.process_id is not None
+        chunks: list[bytes] = []
+
+        async def collect() -> None:
+            async for chunk in streaming.pty_stream_output(update.process_id):
+                chunks.append(chunk)
+                if b"bridge-stream" in b"".join(chunks):
+                    return
+
+        task = asyncio.create_task(collect())
+        await asyncio.sleep(0.1)
+        await streaming.pty_write_stdin(
+            session_id=update.process_id,
+            chars="bridge-stream\n",
+            yield_time_s=0.0,
+        )
+        await asyncio.wait_for(task, timeout=3)
+        assert b"bridge-stream" in b"".join(chunks)
+        await streaming.pty_resize(update.process_id, cols=100, rows=30)
+        await streaming.pty_terminate_all()
 
         # exposed port resolves (configured via options.exposed_ports)
         endpoint_info = await session.resolve_exposed_port(8080)

@@ -25,7 +25,7 @@ import io
 import shlex
 import time
 import uuid
-from typing import Deque, Optional
+from typing import AsyncIterator, Deque, Optional
 
 from agents.sandbox.manifest import Manifest
 from agents.sandbox.session.base_sandbox_session import BaseSandboxSession
@@ -36,7 +36,10 @@ from agents.sandbox.session.pty_types import (
     resolve_pty_write_yield_time_ms,
     truncate_text_by_tokens,
 )
-from agents.sandbox.session.sandbox_client import BaseSandboxClient, BaseSandboxClientOptions
+from agents.sandbox.session.sandbox_client import (
+    BaseSandboxClient,
+    BaseSandboxClientOptions,
+)
 from agents.sandbox.session.sandbox_session import SandboxSession
 from agents.sandbox.session.sandbox_session_state import SandboxSessionState
 from agents.sandbox.snapshot import SnapshotBase, SnapshotSpec, resolve_snapshot
@@ -81,6 +84,7 @@ class _AciPtyEntry:
         self.notify = asyncio.Event()
         self.closed = asyncio.Event()
         self.exit_code: Optional[int] = None
+        self.stream_consumers: list[asyncio.Queue[Optional[bytes]]] = []
         self.last_used = time.monotonic()
         self.reader = asyncio.create_task(self._read())
 
@@ -89,12 +93,23 @@ class _AciPtyEntry:
             async for frame in self.chan.iter_output():
                 async with self.lock:
                     self.output.append(frame)
+                    for q in self.stream_consumers:
+                        try:
+                            q.put_nowait(frame)
+                        except asyncio.QueueFull:
+                            pass
                 self.notify.set()
         except Exception:
             pass
         finally:
             if self.exit_code is None:
                 self.exit_code = 0  # ws closed → command ended (ACI gives no code)
+            async with self.lock:
+                for q in self.stream_consumers:
+                    try:
+                        q.put_nowait(None)
+                    except asyncio.QueueFull:
+                        pass
             self.closed.set()
             self.notify.set()
 
@@ -154,7 +169,9 @@ class AciSandboxSession(BaseSandboxSession):
         # When the workspace is an Azure Files mount, the launcher writes/reads
         # it directly over the Files API (fast, no PTY) for paths under the
         # mount; off-mount paths fall back to the exec channel.
-        self._files: Optional[AciFilesChannel] = AciFilesChannel(file_share) if file_share else None
+        self._files: Optional[AciFilesChannel] = (
+            AciFilesChannel(file_share) if file_share else None
+        )
 
     # -- lifecycle hooks ---------------------------------------------------- #
 
@@ -162,7 +179,9 @@ class AciSandboxSession(BaseSandboxSession):
         if self._chan is None:
             async with self._chan_lock:
                 if self._chan is None:
-                    self._chan = await AciExecChannel.open(self._manager, self._name, self._name)
+                    self._chan = await AciExecChannel.open(
+                        self._manager, self._name, self._name
+                    )
         return self._chan
 
     async def _ensure_backend_started(self) -> None:
@@ -232,7 +251,9 @@ class AciSandboxSession(BaseSandboxSession):
         yield_time_ms = 250 if yield_time_s is None else int(yield_time_s * 1000)
         output, tokens = await self._collect_pty_output(
             entry,
-            resolve_pty_write_yield_time_ms(yield_time_ms=yield_time_ms, input_empty=chars == ""),
+            resolve_pty_write_yield_time_ms(
+                yield_time_ms=yield_time_ms, input_empty=chars == ""
+            ),
             max_output_tokens,
         )
         entry.last_used = time.monotonic()
@@ -245,6 +266,45 @@ class AciSandboxSession(BaseSandboxSession):
             self._reserved_pty_process_ids.clear()
         for entry in entries:
             await entry.terminate()
+
+    def pty_stream_output(self, process_id: int) -> AsyncIterator[bytes]:
+        return self._pty_stream_output(process_id)
+
+    async def _pty_stream_output(self, process_id: int) -> AsyncIterator[bytes]:
+        async with self._pty_lock:
+            entry = self._pty_processes.get(process_id)
+        if entry is None:
+            raise ValueError(f"unknown pty process_id {process_id}")
+        q: asyncio.Queue[Optional[bytes]] = asyncio.Queue(maxsize=1024)
+        async with entry.lock:
+            while entry.output:
+                try:
+                    q.put_nowait(entry.output.popleft())
+                except asyncio.QueueFull:
+                    break
+            entry.stream_consumers.append(q)
+            already_closed = entry.closed.is_set()
+        if already_closed:
+            try:
+                q.put_nowait(None)
+            except asyncio.QueueFull:
+                pass
+        try:
+            while True:
+                chunk = await q.get()
+                if chunk is None:
+                    return
+                yield chunk
+        finally:
+            async with entry.lock:
+                try:
+                    entry.stream_consumers.remove(q)
+                except ValueError:
+                    pass
+
+    async def pty_resize(self, process_id: int, *, cols: int, rows: int) -> None:
+        _ = (process_id, cols, rows)
+        return None
 
     async def _collect_pty_output(
         self, entry: _AciPtyEntry, yield_time_ms: int, max_output_tokens: int | None
@@ -288,7 +348,10 @@ class AciSandboxSession(BaseSandboxSession):
                 await removed.terminate()
             live_process_id = None
         return PtyExecUpdate(
-            process_id=live_process_id, output=output, exit_code=exit_code, original_token_count=tokens
+            process_id=live_process_id,
+            output=output,
+            exit_code=exit_code,
+            original_token_count=tokens,
         )
 
     async def running(self) -> bool:
@@ -313,11 +376,15 @@ class AciSandboxSession(BaseSandboxSession):
 
     # -- the one true primitive: everything else rides on this -------------- #
 
-    async def _exec_internal(self, *command: str | object, timeout: float | None = None) -> ExecResult:
+    async def _exec_internal(
+        self, *command: str | object, timeout: float | None = None
+    ) -> ExecResult:
         chan = await self._ensure_chan()
         joined = shlex.join(str(c) for c in command)
         outcome = await chan.run(joined, timeout=timeout or 120.0)
-        return ExecResult(stdout=outcome.stdout, stderr=outcome.stderr, exit_code=outcome.exit_code)
+        return ExecResult(
+            stdout=outcome.stdout, stderr=outcome.stderr, exit_code=outcome.exit_code
+        )
 
     # -- file IO ------------------------------------------------------------ #
     #
@@ -340,10 +407,14 @@ class AciSandboxSession(BaseSandboxSession):
                 raise FileNotFoundError(f"{wp}: {e}") from e
         res = await self.exec("cat", "--", str(wp), shell=False, user=user)
         if not res.ok():
-            raise FileNotFoundError(f"{wp}: {res.stderr.decode('utf-8', 'replace').strip()}")
+            raise FileNotFoundError(
+                f"{wp}: {res.stderr.decode('utf-8', 'replace').strip()}"
+            )
         return io.BytesIO(res.stdout)
 
-    async def write(self, path, data: io.IOBase, *, user: str | User | None = None) -> None:
+    async def write(
+        self, path, data: io.IOBase, *, user: str | User | None = None
+    ) -> None:
         wp = await self._validate_path_access(path, for_write=True)
         raw = data.read()
         if isinstance(raw, str):
@@ -372,7 +443,9 @@ class AciSandboxSession(BaseSandboxSession):
         )
         outcome = await chan.run(cmd, timeout=120.0)
         if outcome.exit_code != 0:
-            raise OSError(f"write {wp} failed: {outcome.stderr.decode('utf-8', 'replace').strip()}")
+            raise OSError(
+                f"write {wp} failed: {outcome.stderr.decode('utf-8', 'replace').strip()}"
+            )
         # Ownership follows the exec user (root) by default; honor an explicit
         # ``user`` with a follow-up chown (a small command, no payload).
         if user is not None:
@@ -387,7 +460,9 @@ class AciSandboxSession(BaseSandboxSession):
         root = str(self.state.manifest.root)
         res = await self.exec(f"tar -czf - -C {shlex.quote(root)} .")
         if not res.ok():
-            raise OSError(f"persist_workspace failed: {res.stderr.decode('utf-8', 'replace').strip()}")
+            raise OSError(
+                f"persist_workspace failed: {res.stderr.decode('utf-8', 'replace').strip()}"
+            )
         return io.BytesIO(res.stdout)
 
     async def hydrate_workspace(self, data: io.IOBase) -> None:
@@ -407,7 +482,9 @@ class AciSandboxSession(BaseSandboxSession):
         # decode|extract — same PTY-line-limit reasoning as ``write``.
         mk = await self.exec("mkdir", "-p", "--", root, shell=False)
         if not mk.ok():
-            raise OSError(f"hydrate_workspace mkdir failed: {mk.stderr.decode('utf-8', 'replace').strip()}")
+            raise OSError(
+                f"hydrate_workspace mkdir failed: {mk.stderr.decode('utf-8', 'replace').strip()}"
+            )
         chan = await self._ensure_chan()
         marker = _B64_HEREDOC_MARKER
         cmd = (
@@ -416,7 +493,9 @@ class AciSandboxSession(BaseSandboxSession):
         )
         outcome = await chan.run(cmd, timeout=120.0)
         if outcome.exit_code != 0:
-            raise OSError(f"hydrate_workspace failed: {outcome.stderr.decode('utf-8', 'replace').strip()}")
+            raise OSError(
+                f"hydrate_workspace failed: {outcome.stderr.decode('utf-8', 'replace').strip()}"
+            )
 
 
 # --------------------------------------------------------------------------- #
@@ -441,13 +520,17 @@ class AciSandboxClient(BaseSandboxClient):
         credential: Optional[object] = None,
         instrumentation: Optional[object] = None,
     ) -> None:
-        self._manager = AciManager(AciConfig(subscription_id, resource_group, location), credential)
+        self._manager = AciManager(
+            AciConfig(subscription_id, resource_group, location), credential
+        )
         self._file_share = _coerce_file_share(file_share)
         self._registry = _coerce_registry(registry)
         self._subnet_id = subnet_id or None
         self._instrumentation = instrumentation
 
-    async def _build_spec(self, name: str, options: AciSandboxClientOptions, manifest: Manifest) -> AciContainerSpec:
+    async def _build_spec(
+        self, name: str, options: AciSandboxClientOptions, manifest: Manifest
+    ) -> AciContainerSpec:
         env = await manifest.environment.resolve() if manifest is not None else {}
         return AciContainerSpec(
             name=name,
@@ -484,7 +567,9 @@ class AciSandboxClient(BaseSandboxClient):
             cpu=options.cpu,
             memory_gb=options.memory_gb,
         )
-        inner = AciSandboxSession(self._manager, name, state, file_share=self._file_share)
+        inner = AciSandboxSession(
+            self._manager, name, state, file_share=self._file_share
+        )
         return self._wrap_session(inner, instrumentation=self._instrumentation)
 
     async def delete(self, session: SandboxSession) -> SandboxSession:
@@ -516,12 +601,16 @@ class AciSandboxClient(BaseSandboxClient):
             )
             await self._manager.wait_running(name)
             state.workspace_root_ready = False
-        inner = AciSandboxSession(self._manager, name, state, file_share=self._file_share)
+        inner = AciSandboxSession(
+            self._manager, name, state, file_share=self._file_share
+        )
         if alive:
             inner._set_start_state_preserved(True)
         return self._wrap_session(inner, instrumentation=self._instrumentation)
 
-    def deserialize_session_state(self, payload: dict[str, object]) -> SandboxSessionState:
+    def deserialize_session_state(
+        self, payload: dict[str, object]
+    ) -> SandboxSessionState:
         return AciSandboxSessionState.model_validate(payload)
 
 

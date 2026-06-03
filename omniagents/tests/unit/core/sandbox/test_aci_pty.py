@@ -13,7 +13,12 @@ import asyncio
 from agents.sandbox.manifest import Manifest
 from agents.sandbox.snapshot import resolve_snapshot
 
-from omniagents.core.sandbox.aci import AciSandboxSession, AciSandboxSessionState, _AciPtyEntry
+from omniagents.core.sandbox.aci import (
+    AciSandboxSession,
+    AciSandboxSessionState,
+    _AciPtyEntry,
+)
+from omniagents.core.sandbox.pty_stream import coerce_pty_streaming
 
 
 class FakePtyChan:
@@ -39,7 +44,10 @@ class FakePtyChan:
 
 def _session() -> AciSandboxSession:
     state = AciSandboxSessionState(
-        type="aci", snapshot=resolve_snapshot(None, "x"), manifest=Manifest(), container_name="c"
+        type="aci",
+        snapshot=resolve_snapshot(None, "x"),
+        manifest=Manifest(),
+        container_name="c",
     )
     return AciSandboxSession(manager=None, name="c", state=state)  # type: ignore[arg-type]
 
@@ -87,3 +95,30 @@ def test_token_truncation_passthrough():
     out, tokens = asyncio.run(go())
     assert isinstance(out, bytes)
     assert tokens is not None and tokens > 0  # original token count reported
+
+
+def test_aci_session_exposes_streaming_protocol():
+    sess = _session()
+    assert coerce_pty_streaming(sess) is sess
+
+
+def test_stream_output_drains_existing_and_live_chunks():
+    async def go():
+        sess = _session()
+        entry = _AciPtyEntry(FakePtyChan([b"first\n", b"second\n"]))
+        sess._pty_processes[99] = entry
+        sess._reserved_pty_process_ids.add(99)
+        chunks: list[bytes] = []
+        async for chunk in sess.pty_stream_output(99):
+            chunks.append(chunk)
+        return b"".join(chunks)
+
+    assert asyncio.run(go()) == b"first\nsecond\n"
+
+
+def test_pty_resize_is_supported_noop():
+    async def go():
+        sess = _session()
+        await sess.pty_resize(123, cols=132, rows=43)
+
+    asyncio.run(go())
