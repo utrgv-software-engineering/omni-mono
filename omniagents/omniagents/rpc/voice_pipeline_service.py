@@ -340,6 +340,39 @@ class VoicePipelineService(RpcMethodsBase):
 
     async def capabilities(self) -> Dict[str, Any]:
         """Probe voice availability without opening a session (and thus without creating a trace)."""
+        try:
+            from agents.voice import StreamedAudioInput, VoicePipeline  # noqa: F401
+        except Exception as exc:
+            return {
+                "enabled": False,
+                "kind": "pipeline",
+                "agent_name": getattr(self.spec, "name", None),
+                "reason": f"Voice pipeline dependencies unavailable: {exc}",
+            }
+
+        effective_settings = self.settings
+        if callable(self.settings_resolver):
+            try:
+                resolved = self.settings_resolver()
+                if isinstance(resolved, dict):
+                    effective_settings = resolved
+            except Exception as exc:
+                return {
+                    "enabled": False,
+                    "kind": "pipeline",
+                    "agent_name": getattr(self.spec, "name", None),
+                    "reason": f"Voice settings unavailable: {exc}",
+                }
+
+        api_key = (effective_settings or {}).get("openai_api_key") or (effective_settings or {}).get("api_key")
+        if not api_key:
+            return {
+                "enabled": False,
+                "kind": "pipeline",
+                "agent_name": getattr(self.spec, "name", None),
+                "reason": "No voice API key configured",
+            }
+
         return {
             "enabled": True,
             "kind": "pipeline",
