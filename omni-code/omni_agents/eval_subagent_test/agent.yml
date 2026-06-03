@@ -35,6 +35,7 @@ tools:
 agent_tools:
   - yaml: ../explorer/agent.yml
     tool_name: explore
+    max_turns: 50
     # tool_description falls back to explorer's spec — keeps the LLM
     # contract identical to production omni.
 

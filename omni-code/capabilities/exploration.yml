@@ -2,6 +2,7 @@ name: exploration
 agent_tools:
   - agent: explorer
     tool_name: explore
+    max_turns: 50
     needs_approval: false
 instructions: |
   For broad codebase questions ("how is X implemented?", "find all Y") use
