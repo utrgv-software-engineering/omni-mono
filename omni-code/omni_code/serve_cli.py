@@ -1633,7 +1633,7 @@ def _install_session_terminal_manager(
     if inner is not None:
         backend: Any = SessionPtyBackend(inner)
     else:
-        # Sandbox backend can't stream a PTY (e.g. ACI). Install a backend
+        # Sandbox backend can't stream a PTY. Install a backend
         # that errors loudly on create rather than letting ``terminal.create``
         # fall back to a HOST shell — that would break the isolation model by
         # handing the user a shell on the omni serve host instead of inside
