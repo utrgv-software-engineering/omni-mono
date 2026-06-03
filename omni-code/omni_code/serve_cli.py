@@ -1650,7 +1650,7 @@ def _install_session_terminal_manager(
 
 
 def _install_host_terminal_manager(
-    app: Any, terminal: TerminalSpec, *, default_cwd: Optional[str]
+    app: Any, terminal: TerminalSpec, *, default_cwd: Optional[Path | str]
 ) -> None:
     """Attach a host-PTY TerminalManager for the ``host`` execution target.
 
@@ -1669,10 +1669,12 @@ def _install_host_terminal_manager(
     if service is None:
         return
 
+    resolved_cwd = terminal.cwd or (str(default_cwd) if default_cwd is not None else None)
+
     service.terminal_manager = TerminalManager(
         backend=HostPtyBackend(),
         default_shell=terminal.command,
-        default_cwd=terminal.cwd or default_cwd,
+        default_cwd=resolved_cwd,
         default_user=terminal.user,
     )
 

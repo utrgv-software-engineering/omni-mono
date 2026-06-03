@@ -85,6 +85,13 @@ def test_host_terminal_manager_uses_host_backend(tmp_path: Path):
     assert isinstance(mgr.backend, HostPtyBackend)
 
 
+def test_host_terminal_manager_coerces_path_default_cwd(tmp_path: Path):
+    app = _FakeApp()
+    serve_cli._install_host_terminal_manager(app, _TERMINAL, default_cwd=tmp_path)
+    mgr = app.state.agent_service.terminal_manager
+    assert mgr._default_cwd == str(tmp_path)
+
+
 def test_session_terminal_manager_streaming_uses_session_backend():
     app = _FakeApp()
     serve_cli._install_session_terminal_manager(app, _StreamingSession(), _TERMINAL)
