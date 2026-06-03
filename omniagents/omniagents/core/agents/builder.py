@@ -421,8 +421,11 @@ async def _build_agent_tools_from_configs(
                 as_tool_kwargs["is_enabled"] = at_cfg.is_enabled
             if at_cfg.needs_approval is not None:
                 as_tool_kwargs["needs_approval"] = at_cfg.needs_approval
-            if at_cfg.max_turns is not None:
-                as_tool_kwargs["max_turns"] = at_cfg.max_turns
+            resolved_max_turns = at_cfg.max_turns
+            if resolved_max_turns is None:
+                resolved_max_turns = sub_spec.max_turns
+            if resolved_max_turns is not None:
+                as_tool_kwargs["max_turns"] = resolved_max_turns
 
             # `as_tool` is defined on the SDK Agent. SafeAgent wraps Agent so
             # the method is inherited; if a custom builder produced something

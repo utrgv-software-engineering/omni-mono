@@ -68,6 +68,34 @@ async def test_build_agent_tools_inline(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_build_agent_tools_inherits_subagent_max_turns(monkeypatch):
+    captured = {}
+
+    class _StubAgent:
+        name = "stub"
+
+        def as_tool(self, **kwargs):
+            captured.update(kwargs)
+            return ("FAKE_TOOL", kwargs)
+
+    async def fake_default_build_agent(*args, **kwargs):
+        return _StubAgent()
+
+    monkeypatch.setattr(
+        "omniagents.core.agents.builder._default_build_agent",
+        fake_default_build_agent,
+    )
+
+    sub_spec = make_spec(name="SubAgent", max_turns=50)
+    cfg = AgentToolConfig(inline_spec=sub_spec, tool_name="ask_sub")
+
+    out = await _build_agent_tools_from_configs([cfg], settings={})
+
+    assert len(out) == 1
+    assert captured["max_turns"] == 50
+
+
+@pytest.mark.asyncio
 async def test_build_agent_tools_passes_session_to_subagent(monkeypatch):
     captured = {}
     session = object()
