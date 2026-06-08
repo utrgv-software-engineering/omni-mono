@@ -13,6 +13,8 @@ build:
 	python -m build
 
 publish: clean build
+	@test -n "$(FURY_TOKEN)" || { echo "Error: FURY_TOKEN not set (check .env)"; exit 1; }
+	@test -n "$(FURY_USER)" || { echo "Error: FURY_USER not set (check .env)"; exit 1; }
 	@echo "Uploading distributions to Fury.io..."
 	@set -e; \
 	for file in dist/*; do \
