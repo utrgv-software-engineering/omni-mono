@@ -34,15 +34,18 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 py-modules = ["main"]
 include-package-data = true
-packages = [
-    "tools",
-    "server_functions",
-    "capabilities",
-    "omni_code",
-    "omni_agents",
-    "omni_agents.omni",
-    "omni_agents.voice_agent",
-    "omni_agents.init_agent",
+
+[tool.setuptools.packages.find]
+include = [
+    "tools*",
+    "server_functions*",
+    "capabilities*",
+    "omni_code*",
+    "omni_agents*",
+]
+exclude = [
+    "tests*",
+    "evaluations*",
 ]
 
 [tool.setuptools.package-data]
