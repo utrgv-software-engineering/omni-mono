@@ -29,6 +29,17 @@ def _manifest_root() -> Optional[Path]:
     return Path(root).expanduser()
 
 
+def _has_live_sandbox_session() -> bool:
+    try:
+        from omni_code.agent_workspace_state import get_sandbox_session
+    except Exception:
+        return False
+    try:
+        return get_sandbox_session() is not None
+    except Exception:
+        return False
+
+
 def _source_local_path(source: Dict[str, Any]) -> Optional[Path]:
     if source.get("kind") not in ("local", "local-git"):
         return None
@@ -55,6 +66,7 @@ def _inferred_manifest_root(workspace_root: str | None) -> Optional[Path]:
 def source_skill_roots(workspace_root: str | None = None) -> List[Path]:
     roots: List[Path] = []
     manifest_root = _manifest_root() or _inferred_manifest_root(workspace_root)
+    sandbox_session_active = _has_live_sandbox_session()
     for source in _published_sources():
         mount_name = source.get("mountName")
         if (
@@ -63,6 +75,8 @@ def source_skill_roots(workspace_root: str | None = None) -> List[Path]:
             and mount_name.strip()
         ):
             roots.append(manifest_root / mount_name / "skills")
+            if sandbox_session_active:
+                continue
         local_path = _source_local_path(source)
         if local_path is not None:
             roots.append(local_path / "skills")
