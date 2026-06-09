@@ -23,6 +23,8 @@ from agents.run_context import RunContextWrapper
 from omniagents.core.tools import rich_function_tool, RichToolOutput
 from omniagents.builtin.tools._workspace import workspace_root_from_ctx
 
+from omni_code.skill_sources import source_skill_roots
+
 
 def _global_skills_dir() -> Path:
     """Mirror omni-code's global skills location."""
@@ -42,6 +44,9 @@ def _resolve_skill_path(name: str, workspace_root: str | None) -> Path | None:
         ws = Path(workspace_root)
         candidates.append(ws / ".omni_code" / "skills" / name / "SKILL.md")
         candidates.append(ws / ".omni_code" / "skills" / name / "skill.md")
+    for root in source_skill_roots(workspace_root):
+        candidates.append(root / name / "SKILL.md")
+        candidates.append(root / name / "skill.md")
     candidates.append(_global_skills_dir() / name / "SKILL.md")
     candidates.append(_global_skills_dir() / name / "skill.md")
     for p in candidates:
@@ -79,10 +84,11 @@ async def load_skill(
             searched.append(
                 str(Path(workspace) / ".omni_code" / "skills" / name / "SKILL.md")
             )
+        for root in source_skill_roots(workspace):
+            searched.append(str(root / name / "SKILL.md"))
         searched.append(str(_global_skills_dir() / name / "SKILL.md"))
-        llm_output = (
-            f"Skill {name!r} not found. Searched:\n"
-            + "\n".join(f"  - {p}" for p in searched)
+        llm_output = f"Skill {name!r} not found. Searched:\n" + "\n".join(
+            f"  - {p}" for p in searched
         )
         return RichToolOutput(
             llm_output,
