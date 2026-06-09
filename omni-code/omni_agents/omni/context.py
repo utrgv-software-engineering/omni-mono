@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from omniagents import context_factory, model_config_resolver
+from omni_code.skill_sources import source_skill_roots
 
 
 def _resolve_invocation_dir() -> Path:
@@ -35,8 +36,10 @@ def _default_skill_roots(variables: Dict[str, Any]) -> List[Path]:
     roots: List[Path] = []
     if isinstance(workspace_root, str) and workspace_root.strip():
         roots.append(Path(workspace_root).expanduser() / ".omni_code" / "skills")
+        roots.extend(source_skill_roots(workspace_root))
     else:
         roots.append(_resolve_invocation_dir() / ".omni_code" / "skills")
+        roots.extend(source_skill_roots(str(_resolve_invocation_dir())))
 
     seen: set[str] = set()
     unique: List[Path] = []

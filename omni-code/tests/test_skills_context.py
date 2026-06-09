@@ -1,4 +1,5 @@
 from omni_agents.omni.context import build_coding_context
+from omni_code import agent_workspace_state as aws
 
 
 def test_build_coding_context_includes_available_skills(monkeypatch, tmp_path):
@@ -41,3 +42,38 @@ def test_build_coding_context_prefers_pwd_for_skill_discovery(monkeypatch, tmp_p
     block = context["available_skills_block"]
 
     assert "pdf-reader" in block
+
+
+def test_build_coding_context_includes_skills_from_sibling_source_mount(tmp_path):
+    workspace = tmp_path / "workspace"
+    primary = workspace / "omni-desktop"
+    plugins = workspace / "omni-plugins-official"
+    primary.mkdir(parents=True)
+    skill_dir = plugins / "skills" / "software-tickets"
+    skill_dir.mkdir(parents=True)
+    skill_md = skill_dir / "SKILL.md"
+    skill_md.write_text(
+        "---\nname: software-tickets\ndescription: Ticket workflow\n---\n\nBody\n",
+        encoding="utf-8",
+    )
+    aws.set_sources(
+        [
+            {"kind": "local-git", "mountName": "omni-desktop", "path": str(primary)},
+            {
+                "kind": "local-git",
+                "mountName": "omni-plugins-official",
+                "path": str(plugins),
+            },
+        ]
+    )
+    aws.set_manifest_root(str(workspace))
+    try:
+        context = build_coding_context({"workspace_root": str(primary)})
+    finally:
+        aws.set_sources([])
+        aws.set_manifest_root(None)
+
+    block = context["available_skills_block"]
+    assert "software-tickets" in block
+    assert "Ticket workflow" in block
+    assert str(skill_md.resolve()) in block
