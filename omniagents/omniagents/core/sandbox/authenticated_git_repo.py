@@ -2,10 +2,12 @@
 workspace, authenticating with a token the launcher injected into the agent
 process environment.
 
-Relationship to the SDK's ``GitRepo``:
+Relationship to :class:`PartialCloneGitRepo` (and the SDK's ``GitRepo``):
 
-* ``GitRepo`` clones ``https://<host>/<repo>.git`` with no credentials — fine
-  for public repos, useless for private ones.
+* ``PartialCloneGitRepo`` clones ``https://<host>/<repo>`` blobless with no
+  credentials — fine for public repos, useless for private ones. (It in turn
+  replaces the SDK ``GitRepo``'s shallow single-branch clone; see its module
+  docstring.)
 * ``AuthenticatedGitRepo`` subclasses it and, before delegating to the same
   clone, configures a git **credential helper** inside the container so the
   token covers clone *and* the agent's later ``git fetch`` / ``git push`` — not
@@ -55,7 +57,7 @@ import shlex
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import quote
 
-from agents.sandbox.entries import GitRepo
+from .partial_clone_git_repo import PartialCloneGitRepo
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -100,22 +102,11 @@ def _azure_devops_org_url(host: str, repo: str) -> str | None:
     return f"https://{host}/{org}" if org else None
 
 
-def _normalize_clone_url(url: str) -> str:
-    """The SDK's ``GitRepo`` appends ``.git`` to every clone URL. Azure DevOps
-    repo URLs are ``https://dev.azure.com/{org}/{project}/_git/{repo}`` and
-    reject the ``.git`` suffix, so strip it for ADO-style URLs (identified by
-    the ``/_git/`` path segment). GitHub/GitLab URLs are left untouched.
-    """
-    if "/_git/" in url and url.endswith(".git"):
-        return url[: -len(".git")]
-    return url
+class AuthenticatedGitRepo(PartialCloneGitRepo):
+    """A :class:`PartialCloneGitRepo` that authenticates a private remote via a
+    token read from the agent process environment.
 
-
-class AuthenticatedGitRepo(GitRepo):
-    """A ``GitRepo`` that authenticates a private remote via a token read from
-    the agent process environment.
-
-    Extra fields beyond ``GitRepo``:
+    Extra fields beyond ``PartialCloneGitRepo``:
 
     * ``username`` — HTTPS basic-auth username paired with the token
       (``x-access-token`` for GitHub PATs, ``oauth2`` for GitLab, …).
@@ -164,31 +155,6 @@ class AuthenticatedGitRepo(GitRepo):
             await self._configure_credentials(session, token)
 
         return await super().apply(session, dest, base_dir)
-
-    # The SDK builds clone/fetch URLs as `https://{host}/{repo}.git`. Override
-    # both entry points to strip the `.git` for Azure DevOps `_git/` URLs, which
-    # 404 with it. (Keyword-only args mirror the base signatures.)
-    async def _clone_named_ref(
-        self, *, session: "BaseSandboxSession", url: str, tmp_dir: str
-    ) -> "ExecResult":
-        url = _normalize_clone_url(url)
-        # A source added without a branch in the UI means "use the repo's
-        # default branch". That empty ref arrives here as the "HEAD" sentinel
-        # (``serve_cli`` does ``src.get("ref") or "HEAD"``). "HEAD" is not a
-        # real branch/tag name, so the SDK's ``git clone --branch HEAD`` fails
-        # with "Remote branch HEAD not found". Do a plain clone (no --branch),
-        # which checks out whatever the remote's default branch is — exactly
-        # what the empty branch field is meant to express.
-        if self.ref in ("HEAD", "", None):
-            return await session.exec(
-                "git", "clone", "--depth", "1", "--no-tags", url, tmp_dir, shell=False
-            )
-        return await super()._clone_named_ref(session=session, url=url, tmp_dir=tmp_dir)
-
-    async def _fetch_commit_ref(
-        self, *, session: "BaseSandboxSession", url: str, tmp_dir: str
-    ) -> "ExecResult":
-        return await super()._fetch_commit_ref(session=session, url=_normalize_clone_url(url), tmp_dir=tmp_dir)
 
     async def _configure_credentials(
         self, session: "BaseSandboxSession", token: str

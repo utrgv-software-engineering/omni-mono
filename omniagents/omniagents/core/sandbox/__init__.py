@@ -25,6 +25,7 @@ from .factory import (
 # correctly. Must happen before any manifest is parsed.
 from .authenticated_git_repo import AuthenticatedGitRepo, configure_host_credentials
 from .local_git_archive import LocalGitArchive, LocalGitArchiveError
+from .partial_clone_git_repo import PartialCloneGitRepo
 from .permissive_local_dir import PermissiveLocalDir, PermissiveLocalDirError
 
 __all__ = [
@@ -32,6 +33,7 @@ __all__ = [
     "configure_host_credentials",
     "LocalGitArchive",
     "LocalGitArchiveError",
+    "PartialCloneGitRepo",
     "PermissiveLocalDir",
     "PermissiveLocalDirError",
     "build_manifest",

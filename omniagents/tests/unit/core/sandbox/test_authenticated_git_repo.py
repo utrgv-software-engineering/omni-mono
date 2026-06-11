@@ -21,10 +21,8 @@ import pytest
 from agents.sandbox.entries import GitRepo
 from agents.sandbox.sandboxes.unix_local import UnixLocalSandboxSession
 from omniagents.core.sandbox import AuthenticatedGitRepo, configure_host_credentials
-from omniagents.core.sandbox.authenticated_git_repo import (
-    _azure_devops_org_url,
-    _normalize_clone_url,
-)
+from omniagents.core.sandbox.authenticated_git_repo import _azure_devops_org_url
+from omniagents.core.sandbox.partial_clone_git_repo import _normalize_clone_url
 
 
 @pytest.fixture(autouse=True)
@@ -356,7 +354,7 @@ async def test_clone_omits_branch_for_blank_ref(blank_ref):
 
 @pytest.mark.asyncio
 async def test_clone_uses_branch_for_explicit_ref():
-    # A real branch name still goes through the SDK's --branch path unchanged.
+    # A real branch name clones with --branch, but NOT single-branch/shallow.
     session = _session()
     entry = AuthenticatedGitRepo(
         host="github.com", repo="owner/name", ref="dev", username="x-access-token", token_env="X"
@@ -365,3 +363,40 @@ async def test_clone_uses_branch_for_explicit_ref():
     args = _exec_calls(session)[0]
     assert "--branch" in args
     assert "dev" in args
+
+
+@pytest.mark.parametrize("ref", ["HEAD", "main"])
+@pytest.mark.asyncio
+async def test_clone_is_blobless_never_shallow(ref):
+    # Shallow (--depth) implies --single-branch, which narrows the fetch
+    # refspec so `git fetch` in the workspace never sees other remote branches,
+    # and --no-tags persists as tagOpt. The seed must be a blobless partial
+    # clone instead: full history, all refs, normal refspec.
+    session = _session()
+    entry = AuthenticatedGitRepo(
+        host="github.com", repo="owner/name", ref=ref, username="x-access-token", token_env="X"
+    )
+    await entry._clone_named_ref(session=session, url="https://github.com/owner/name.git", tmp_dir="/tmp/x")
+    args = _exec_calls(session)[0]
+    assert "--filter=blob:none" in args
+    assert "--depth" not in args
+    assert "--single-branch" not in args
+    assert "--no-tags" not in args
+
+
+@pytest.mark.asyncio
+async def test_fetch_commit_ref_is_blobless_never_shallow():
+    session = _session()
+    entry = AuthenticatedGitRepo(
+        host="github.com",
+        repo="owner/name",
+        ref="a" * 40,
+        username="x-access-token",
+        token_env="X",
+    )
+    await entry._fetch_commit_ref(session=session, url="https://github.com/owner/name.git", tmp_dir="/tmp/x")
+    fetch_calls = [c for c in _exec_calls(session) if "fetch" in c]
+    assert len(fetch_calls) == 1
+    assert "--filter=blob:none" in fetch_calls[0]
+    assert "--depth" not in fetch_calls[0]
+    assert "--no-tags" not in fetch_calls[0]
