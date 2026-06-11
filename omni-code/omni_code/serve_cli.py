@@ -292,17 +292,19 @@ def _build_seed_entry(src: Dict[str, Any]) -> Any:
     names the environment variable (injected by the launcher into this process)
     holding the token, and the entry becomes an ``AuthenticatedGitRepo`` that
     configures an in-container git credential helper. Without ``auth`` it's a
-    plain public-repo ``GitRepo`` clone.
+    public-repo ``PartialCloneGitRepo`` clone. Both clone blobless
+    (``--filter=blob:none``) rather than shallow, so the workspace repo has
+    full history, all remote refs, and a normal wildcard fetch refspec.
 
     Returns ``None`` for unrecognised kinds (the dispatch in
     :func:`_build_sandbox` raises before reaching here for
     duplicates / missing mountNames, so callers don't see ``None``
     in normal flow).
     """
-    from agents.sandbox.entries import GitRepo
     from omniagents.core.sandbox import (
         AuthenticatedGitRepo,
         LocalGitArchive,
+        PartialCloneGitRepo,
         PermissiveLocalDir,
     )
 
@@ -332,7 +334,7 @@ def _build_seed_entry(src: Dict[str, Any]) -> Any:
                 username=auth.get("username") or "x-access-token",
                 token_env=auth["tokenEnv"],
             )
-        return GitRepo(host=host, repo=repo, ref=ref)
+        return PartialCloneGitRepo(host=host, repo=repo, ref=ref)
     raise ValueError(f"unknown --source kind: {kind!r}")
 
 
