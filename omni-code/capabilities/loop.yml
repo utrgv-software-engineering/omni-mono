@@ -1,0 +1,13 @@
+name: loop
+tools:
+  - loop_continue
+instructions: |
+  Dynamic /loop tasks may wake you with instructions to call `loop_continue`.
+
+  - Use `loop_continue(task_id, delay_seconds, reason)` only when a dynamic
+    `/loop` iteration should run again later.
+  - `delay_seconds` must be between 60 and 3600 seconds.
+  - If the loop's underlying task is complete, do not call `loop_continue`;
+    summarize the result and let the dynamic loop stop.
+  - Fixed-interval loops do not need `loop_continue`; they keep firing until
+    `/loop.stop <id>`, `/loop.clear`, or expiry.

@@ -24,6 +24,7 @@ capabilities:
   - exploration   # explorer subagent exposed as `explore`
   - goal          # goal_complete (signals /goal autopilot stop)
   - wakeup        # schedule_wakeup / cancel_wakeup (self-scheduled recurring notifications)
+  - loop          # loop_continue (dynamic /loop continuation scheduling)
   - human         # notify / escalate (UI-implemented client tools)
   - sandbox       # sandbox_get_state / sandbox_wait_until_ready (read-only; switching is operator-only)
 
@@ -65,6 +66,7 @@ safe_agent_options:
     - goal_complete
     - schedule_wakeup
     - cancel_wakeup
+    - loop_continue
     - notify
     - escalate
     - sandbox_get_state
@@ -103,6 +105,13 @@ server_functions:
   - goal.status
   - wakeup.stop
   - wakeup.status
+  - loop
+  - loop.status
+  - loop.stop
+  - loop.clear
+  - cron.create
+  - cron.list
+  - cron.delete
   - sandbox.pause
   - sandbox.unpause
   - sandbox.notify_activity
