@@ -43,6 +43,14 @@ class _FakeSession:
         self.always_allow_patterns: set[str] = set()
 
 
+class _FakeCapability:
+    def __init__(self, *tools: FunctionTool):
+        self._tools = list(tools)
+
+    def tools(self):
+        return list(self._tools)
+
+
 @pytest.mark.asyncio
 async def test_predicate_requires_approval_by_default():
     tool = _make_tool("delete_file")
@@ -151,3 +159,33 @@ async def test_predicate_propagates_to_handoff_agents():
     assert callable(main_tool.needs_approval)
     assert callable(sub_tool.needs_approval)
     assert (await sub_tool.needs_approval(None, {}, "c1")) is True
+
+
+@pytest.mark.asyncio
+async def test_predicate_propagates_to_sandbox_capability_tools():
+    tool = _make_tool("execute_bash")
+    agent = Agent(name="A", instructions="", tools=[], model="m")
+    agent.capabilities = [_FakeCapability(tool)]
+
+    session = _FakeSession()
+    configure_tool_approval(agent, session=session)
+
+    [configured_tool] = agent.capabilities[0].tools()
+    assert configured_tool is tool
+    assert callable(tool.needs_approval)
+    assert (await tool.needs_approval(None, {}, "c1")) is True
+
+
+@pytest.mark.asyncio
+async def test_sandbox_capability_tools_honor_safe_overrides():
+    safe = _make_tool("read_file")
+    risky = _make_tool("execute_bash")
+    agent = Agent(name="A", instructions="", tools=[], model="m")
+    agent.capabilities = [_FakeCapability(safe, risky)]
+
+    session = _FakeSession()
+    configure_tool_approval(agent, session=session, safe_tool_names=["read_file"])
+
+    agent.capabilities[0].tools()
+    assert (await safe.needs_approval(None, {}, "c1")) is False
+    assert (await risky.needs_approval(None, {}, "c2")) is True

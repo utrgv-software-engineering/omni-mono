@@ -111,7 +111,9 @@ def configure_tool_approval(
     overrides remain authoritative.
 
     Also wraps ``Agent.get_all_tools`` so MCP-fetched tools (resolved
-    lazily at run time) are configured as well.
+    lazily at run time) are configured as well. For ``SandboxAgent`` runs,
+    wraps each capability's ``tools()`` method too, because sandbox runtime
+    appends those tools after the normal agent build/configuration pass.
     """
 
     spec_names: set[str] = set(safe_tool_names or [])
@@ -129,6 +131,29 @@ def configure_tool_approval(
     for sub_agent in _walk_agents(agent):
         for tool in getattr(sub_agent, "tools", None) or []:
             _attach(tool)
+
+        for capability in getattr(sub_agent, "capabilities", None) or []:
+            original_tools = getattr(capability, "tools", None)
+            if original_tools is None or not callable(original_tools):
+                continue
+            if getattr(capability, "_omni_approval_patched", False):
+                continue
+
+            def _patched_capability_tools(*args, _orig=original_tools, **kwargs):  # type: ignore[no-untyped-def]
+                tools = list(_orig(*args, **kwargs))
+                for t in tools:
+                    _attach(t)
+                return tools
+
+            try:
+                setattr(capability, "tools", _patched_capability_tools)
+                setattr(capability, "_omni_approval_patched", True)
+            except Exception:
+                try:
+                    object.__setattr__(capability, "tools", _patched_capability_tools)
+                    object.__setattr__(capability, "_omni_approval_patched", True)
+                except Exception:
+                    pass
 
         original = getattr(sub_agent, "get_all_tools", None)
         if original is None or getattr(sub_agent, "_omni_approval_patched", False):
