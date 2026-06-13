@@ -134,8 +134,9 @@ _WORKERS: dict[str, object] = {}
 
 # Worktree metadata for workers spawned with isolation="worktree".
 # Maps worker_id -> {"worktree_path": str, "worktree_branch": str,
-#                     "worktree_name": str, "parent_workspace": str}
-_WORKER_WORKTREES: dict[str, dict[str, str]] = {}
+#                     "worktree_name": str, "parent_workspace": str,
+#                     "sources": list[dict]}
+_WORKER_WORKTREES: dict[str, dict[str, Any]] = {}
 
 # Display metadata for the workers panel — populated at spawn time so the
 # UI can show the task description and a wall-time alongside the
@@ -465,6 +466,49 @@ async def _is_git_dirty(workspace_root: str) -> bool:
         return False
 
 
+def _published_sources() -> list[dict[str, Any]]:
+    try:
+        from omni_code.agent_workspace_state import get_sources
+
+        return get_sources()
+    except Exception:
+        return []
+
+
+def _source_git_paths(workspace_root: str) -> list[str]:
+    sources = _published_sources()
+    if not sources:
+        return [workspace_root]
+    try:
+        from omni_code.agent_workspace_state import get_manifest_root
+
+        manifest_root = get_manifest_root() or workspace_root
+    except Exception:
+        manifest_root = workspace_root
+    paths: list[str] = []
+    for source in sources:
+        if source.get("kind") not in ("local-git", "git-remote"):
+            continue
+        path = _source_workspace_path(source, manifest_root)
+        if path:
+            paths.append(path)
+    return paths
+
+
+async def _is_worker_worktree_ready(workspace_root: str) -> bool:
+    for path in _source_git_paths(workspace_root):
+        if not await _is_git_repo(path):
+            return False
+    return bool(_source_git_paths(workspace_root))
+
+
+async def _is_worker_worktree_dirty(workspace_root: str) -> bool:
+    for path in _source_git_paths(workspace_root):
+        if await _is_git_dirty(path):
+            return True
+    return False
+
+
 async def _create_worker_worktree(
     workspace_root: str, worker_id: str
 ) -> dict[str, str]:
@@ -536,6 +580,158 @@ async def _create_worker_worktree(
     }
 
 
+def _source_workspace_path(source: dict[str, Any], manifest_root: str | None) -> str | None:
+    kind = source.get("kind")
+    if kind in ("local", "local-git"):
+        path = source.get("path")
+        if isinstance(path, str) and path.strip():
+            return path
+    mount_name = source.get("mountName")
+    if isinstance(mount_name, str) and mount_name.strip() and manifest_root:
+        return os.path.join(manifest_root, mount_name)
+    return None
+
+
+async def _create_worker_worktree_for_sources(
+    workspace_root: str, worker_id: str
+) -> dict[str, Any]:
+    from omniagents import workspace as _ws
+    from omni_code.agent_workspace_state import get_manifest_root, get_sources
+
+    sources = get_sources()
+    if not sources:
+        return await _create_worker_worktree(workspace_root, worker_id)
+
+    manifest_root = get_manifest_root() or workspace_root
+    parent_name = Path(workspace_root).name or "workspace"
+    worker_root_name = f"{parent_name}-worker-{worker_id}"
+    worker_root = os.path.join(_worktrees_dir(), worker_root_name)
+
+    async def _scratch_exists(path: str) -> bool:
+        probe = await _ws.exec(f"test -e {shlex.quote(path)}", shell=True, timeout=5.0)
+        return probe.exit_code == 0
+
+    if await _scratch_exists(worker_root):
+        n = 2
+        while await _scratch_exists(f"{worker_root}-{n}"):
+            n += 1
+        worker_root_name = f"{worker_root_name}-{n}"
+        worker_root = os.path.join(_worktrees_dir(), worker_root_name)
+
+    mkdir_result = await _ws.exec(
+        f"mkdir -p {shlex.quote(worker_root)}", shell=True, timeout=10.0
+    )
+    if mkdir_result.exit_code != 0:
+        raise OSError(
+            f"Failed to create worker workspace {worker_root!r}: "
+            f"{mkdir_result.stderr or mkdir_result.stdout}"
+        )
+
+    source_infos: list[dict[str, str]] = []
+    created_branches: list[tuple[str, str]] = []
+    try:
+        for source in sources:
+            mount_name = source.get("mountName")
+            if not isinstance(mount_name, str) or not mount_name.strip():
+                continue
+            source_path = _source_workspace_path(source, manifest_root)
+            if not source_path:
+                continue
+            target_path = os.path.join(worker_root, mount_name)
+            kind = source.get("kind")
+            if kind in ("local-git", "git-remote"):
+                branch = f"worker/{worker_root_name}/{mount_name}"
+                result = await _ws.exec(
+                    f"git -C {shlex.quote(source_path)} worktree add "
+                    f"-b {shlex.quote(branch)} {shlex.quote(target_path)} HEAD",
+                    timeout=30.0,
+                    shell=True,
+                )
+                if result.exit_code != 0:
+                    raise subprocess.CalledProcessError(
+                        result.exit_code,
+                        ["git", "worktree", "add"],
+                        output=(result.stdout or "").encode("utf-8"),
+                        stderr=(result.stderr or "").encode("utf-8"),
+                    )
+                created_branches.append((source_path, branch))
+                source_infos.append(
+                    {
+                        "mountName": mount_name,
+                        "kind": str(kind),
+                        "source_path": source_path,
+                        "worktree_path": target_path,
+                        "worktree_branch": branch,
+                    }
+                )
+            elif kind == "local":
+                result = await _ws.exec(
+                    f"cp -a {shlex.quote(source_path)} {shlex.quote(target_path)}",
+                    timeout=30.0,
+                    shell=True,
+                )
+                if result.exit_code != 0:
+                    raise subprocess.CalledProcessError(
+                        result.exit_code,
+                        ["cp", "-a"],
+                        output=(result.stdout or "").encode("utf-8"),
+                        stderr=(result.stderr or "").encode("utf-8"),
+                    )
+                source_infos.append(
+                    {
+                        "mountName": mount_name,
+                        "kind": "local",
+                        "source_path": source_path,
+                        "worktree_path": target_path,
+                    }
+                )
+    except Exception:
+        for info in source_infos:
+            path = info.get("worktree_path")
+            if path:
+                try:
+                    await _ws.exec(
+                        f"git -C {shlex.quote(info.get('source_path', workspace_root))} "
+                        f"worktree remove --force {shlex.quote(path)}",
+                        timeout=10.0,
+                        shell=True,
+                    )
+                except Exception:
+                    pass
+        for source_path, branch in created_branches:
+            try:
+                await _ws.exec(
+                    f"git -C {shlex.quote(source_path)} branch -D {shlex.quote(branch)}",
+                    timeout=5.0,
+                    shell=True,
+                )
+            except Exception:
+                pass
+        try:
+            await _ws.exec(
+                f"rm -rf {shlex.quote(worker_root)}", shell=True, timeout=10.0
+            )
+        except Exception:
+            pass
+        raise
+
+    if not source_infos:
+        await _ws.exec(f"rm -rf {shlex.quote(worker_root)}", shell=True, timeout=10.0)
+        raise OSError("No project sources could be isolated for worker worktree.")
+
+    primary_branch = next(
+        (info["worktree_branch"] for info in source_infos if "worktree_branch" in info),
+        "",
+    )
+    return {
+        "worktree_path": worker_root,
+        "worktree_branch": primary_branch,
+        "worktree_name": worker_root_name,
+        "parent_workspace": workspace_root,
+        "sources": source_infos,
+    }
+
+
 async def _remove_worker_worktree(worker_id: str) -> bool:
     """Remove a worker's worktree and branch. Returns True if cleanup succeeded."""
     info = _WORKER_WORKTREES.get(worker_id)
@@ -544,28 +740,58 @@ async def _remove_worker_worktree(worker_id: str) -> bool:
 
     parent = info["parent_workspace"]
     wt_path = info["worktree_path"]
-    wt_name = info["worktree_name"]
-    branch = info["worktree_branch"]
+    branch = info.get("worktree_branch", "")
 
     from omniagents import workspace as _ws
 
-    try:
-        await _ws.exec(
-            f"git -C {shlex.quote(parent)} worktree remove --force {shlex.quote(wt_path)}",
-            timeout=10.0,
-            shell=True,
-        )
-    except Exception:
-        pass
+    source_infos = info.get("sources")
+    if isinstance(source_infos, list):
+        for source_info in source_infos:
+            source_path = source_info.get("source_path")
+            source_wt = source_info.get("worktree_path")
+            source_branch = source_info.get("worktree_branch")
+            if source_path and source_wt and source_branch:
+                try:
+                    await _ws.exec(
+                        f"git -C {shlex.quote(source_path)} worktree remove --force "
+                        f"{shlex.quote(source_wt)}",
+                        timeout=10.0,
+                        shell=True,
+                    )
+                except Exception:
+                    pass
+                try:
+                    await _ws.exec(
+                        f"git -C {shlex.quote(source_path)} branch -D "
+                        f"{shlex.quote(source_branch)}",
+                        timeout=5.0,
+                        shell=True,
+                    )
+                except Exception:
+                    pass
+        try:
+            await _ws.exec(f"rm -rf {shlex.quote(wt_path)}", shell=True, timeout=10.0)
+        except Exception:
+            pass
+    else:
+        try:
+            await _ws.exec(
+                f"git -C {shlex.quote(parent)} worktree remove --force {shlex.quote(wt_path)}",
+                timeout=10.0,
+                shell=True,
+            )
+        except Exception:
+            pass
 
-    try:
-        await _ws.exec(
-            f"git -C {shlex.quote(parent)} branch -D {shlex.quote(branch)}",
-            timeout=5.0,
-            shell=True,
-        )
-    except Exception:
-        pass
+        if branch:
+            try:
+                await _ws.exec(
+                    f"git -C {shlex.quote(parent)} branch -D {shlex.quote(branch)}",
+                    timeout=5.0,
+                    shell=True,
+                )
+            except Exception:
+                pass
 
     _WORKER_WORKTREES.pop(worker_id, None)
     return True
@@ -626,12 +852,12 @@ async def spawn_worker(
     worker_workspace = workspace_root
 
     if isolation == "worktree":
-        if not await _is_git_repo(workspace_root):
+        if not await _is_worker_worktree_ready(workspace_root):
             llm_output = json.dumps(
                 {
                     "worker_id": worker_id,
                     "status": "error",
-                    "error": "Cannot create worktree: workspace is not a git repository.",
+                    "error": "Cannot create worktree: no git-backed workspace sources are available.",
                 }
             )
             return RichToolOutput(
@@ -639,14 +865,16 @@ async def spawn_worker(
                 {
                     "display_type": "error",
                     "summary": "Worktree isolation failed",
-                    "preview": "Workspace is not a git repository.",
+                    "preview": "No git-backed workspace sources are available.",
                     "truncated": False,
                     "metadata": {"success": False, "worker_id": worker_id},
                 },
             )
 
         try:
-            worktree_info = await _create_worker_worktree(workspace_root, worker_id)
+            worktree_info = await _create_worker_worktree_for_sources(
+                workspace_root, worker_id
+            )
         except subprocess.CalledProcessError as e:
             stderr = e.stderr.decode() if isinstance(e.stderr, bytes) else str(e.stderr)
             llm_output = json.dumps(
@@ -672,15 +900,16 @@ async def spawn_worker(
 
         # Prepend worktree context to the task so the worker knows to commit.
         task = (
-            f"[You are working in an isolated git worktree at {worker_workspace} "
-            f"on branch {worktree_info['worktree_branch']}. "
-            f"Commit your changes to this branch when done so they can be merged.]\n\n"
+            f"[You are working in an isolated worker workspace at {worker_workspace}. "
+            f"Project sources are mounted under this root by mountName. "
+            f"Git-backed sources each have their own worker branch; commit changes "
+            f"inside each modified source when done so they can be merged.]\n\n"
             f"{task}"
         )
 
         # The worker's worktree is checked out from HEAD and will not contain
         # any uncommitted changes. Fail unless the LLM opts in with allow_dirty.
-        if not allow_dirty and await _is_git_dirty(workspace_root):
+        if not allow_dirty and await _is_worker_worktree_dirty(workspace_root):
             # Roll back the worktree we just created.
             await _remove_worker_worktree(worker_id)
             llm_output = json.dumps(
@@ -750,12 +979,13 @@ async def spawn_worker(
     if worktree_info:
         response["worktree_path"] = worktree_info["worktree_path"]
         response["worktree_branch"] = worktree_info["worktree_branch"]
+        if worktree_info.get("sources"):
+            response["sources"] = worktree_info["sources"]
         response["hint"] = (
             f"Worker is running asynchronously in worktree "
-            f"{worktree_info['worktree_path']} on branch "
-            f"{worktree_info['worktree_branch']}. A completion notification "
+            f"{worktree_info['worktree_path']}. A completion notification "
             f"will arrive automatically — end this turn after spawning, then "
-            f"in the turn that wakes you, merge the branch and call "
+            f"in the turn that wakes you, merge the source branches and call "
             f"cleanup_worker_worktree({worker_id})."
         )
 
@@ -821,6 +1051,8 @@ async def wait_for_workers(
                 "worktree_path": wt["worktree_path"],
                 "worktree_branch": wt["worktree_branch"],
             }
+            if wt.get("sources"):
+                worktrees[wid]["sources"] = wt["sources"]
     if worktrees:
         result_data["worktrees"] = worktrees
 
@@ -910,6 +1142,8 @@ async def get_worker_status(
     if wt:
         result_data["worktree_path"] = wt["worktree_path"]
         result_data["worktree_branch"] = wt["worktree_branch"]
+        if wt.get("sources"):
+            result_data["sources"] = wt["sources"]
 
     llm_output = json.dumps(result_data)
 
@@ -1076,6 +1310,8 @@ async def close_worker(worker_id: str) -> RichToolOutput:
     if wt:
         response["worktree_path"] = wt["worktree_path"]
         response["worktree_branch"] = wt["worktree_branch"]
+        if wt.get("sources"):
+            response["sources"] = wt["sources"]
 
     llm_output = json.dumps(response)
     return RichToolOutput(
@@ -1180,6 +1416,8 @@ async def resume_worker(
     if wt:
         response["worktree_path"] = wt["worktree_path"]
         response["worktree_branch"] = wt["worktree_branch"]
+        if wt.get("sources"):
+            response["sources"] = wt["sources"]
 
     llm_output = json.dumps(response)
     msg_summary = message[:60] + "..." if len(message) > 60 else message
@@ -1235,6 +1473,7 @@ async def cleanup_worker_worktree(worker_id: str) -> RichToolOutput:
             "status": "cleaned_up",
             "removed_path": worktree_path,
             "removed_branch": worktree_branch,
+            "removed_sources": wt.get("sources") or [],
         }
     )
     return RichToolOutput(

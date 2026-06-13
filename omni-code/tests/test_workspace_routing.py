@@ -385,6 +385,121 @@ def test_is_git_dirty_routes_through_workspace():
     assert "status --porcelain" in cmd
 
 
+def test_worker_worktree_ready_checks_git_sources_not_manifest_root(monkeypatch):
+    fake = _RecordingWorkspace(root="/workspace")
+    monkeypatch.setattr(
+        "omni_code.agent_workspace_state.get_manifest_root", lambda: "/workspace"
+    )
+    monkeypatch.setattr(
+        "omni_code.agent_workspace_state.get_sources",
+        lambda: [
+            {"kind": "local-git", "mountName": "api", "path": "/host/api"},
+            {"kind": "git-remote", "mountName": "web", "repoUrl": "https://example.com/web.git"},
+        ],
+    )
+
+    token = set_workspace(fake)
+    try:
+        ready = asyncio.run(worker_tools._is_worker_worktree_ready("/workspace"))
+    finally:
+        reset_workspace(token)
+
+    assert ready is True
+    commands = [call[1][0] for call in fake.calls if call[0] == "exec"]
+    assert any("git -C /host/api rev-parse" in c for c in commands)
+    assert any("git -C /workspace/web rev-parse" in c for c in commands)
+    assert not any("git -C /workspace rev-parse" in c for c in commands)
+
+
+def test_create_worker_worktree_for_sources_preserves_mount_layout(monkeypatch):
+    fake = _RecordingWorkspace(root="/workspace")
+
+    async def exec_with_missing_scratch(command: Any, **kwargs: Any) -> ExecResult:
+        fake._record("exec", command, **kwargs)
+        if isinstance(command, str) and command.startswith("test -e "):
+            return ExecResult(stdout="", stderr="", exit_code=1, wall_time_seconds=0.001)
+        return ExecResult(stdout="", stderr="", exit_code=0, wall_time_seconds=0.001)
+
+    fake.exec = exec_with_missing_scratch  # type: ignore[method-assign]
+
+    monkeypatch.setattr(worker_tools, "_worktrees_dir", lambda: "/scratch/worktrees")
+    monkeypatch.setattr(
+        "omni_code.agent_workspace_state.get_manifest_root", lambda: "/workspace"
+    )
+    monkeypatch.setattr(
+        "omni_code.agent_workspace_state.get_sources",
+        lambda: [
+            {"kind": "local-git", "mountName": "api", "path": "/host/api"},
+            {
+                "kind": "git-remote",
+                "mountName": "web",
+                "repoUrl": "https://example.com/web.git",
+            },
+            {"kind": "local", "mountName": "notes", "path": "/host/notes"},
+        ],
+    )
+
+    token = set_workspace(fake)
+    try:
+        info = asyncio.run(
+            worker_tools._create_worker_worktree_for_sources("/workspace", "pip")
+        )
+    finally:
+        reset_workspace(token)
+
+    assert info["worktree_path"] == "/scratch/worktrees/workspace-worker-pip"
+    assert [s["mountName"] for s in info["sources"]] == ["api", "web", "notes"]
+    assert info["sources"][0]["worktree_path"].endswith("/api")
+    assert info["sources"][1]["source_path"] == "/workspace/web"
+    assert info["sources"][1]["worktree_branch"] == "worker/workspace-worker-pip/web"
+    assert info["sources"][2]["worktree_path"].endswith("/notes")
+
+    commands = [call[1][0] for call in fake.calls if call[0] == "exec"]
+    assert any("mkdir -p /scratch/worktrees/workspace-worker-pip" in c for c in commands)
+    assert any("git -C /host/api worktree add" in c for c in commands)
+    assert any("git -C /workspace/web worktree add" in c for c in commands)
+    assert any("cp -a /host/notes" in c for c in commands)
+
+
+def test_remove_worker_worktree_removes_each_source_worktree():
+    fake = _RecordingWorkspace(root="/workspace")
+    worker_tools._WORKER_WORKTREES["pip"] = {
+        "worktree_path": "/scratch/worktrees/workspace-worker-pip",
+        "worktree_branch": "worker/workspace-worker-pip/api",
+        "worktree_name": "workspace-worker-pip",
+        "parent_workspace": "/workspace",
+        "sources": [
+            {
+                "mountName": "api",
+                "kind": "local-git",
+                "source_path": "/host/api",
+                "worktree_path": "/scratch/worktrees/workspace-worker-pip/api",
+                "worktree_branch": "worker/workspace-worker-pip/api",
+            },
+            {
+                "mountName": "notes",
+                "kind": "local",
+                "source_path": "/host/notes",
+                "worktree_path": "/scratch/worktrees/workspace-worker-pip/notes",
+            },
+        ],
+    }
+
+    token = set_workspace(fake)
+    try:
+        removed = asyncio.run(worker_tools._remove_worker_worktree("pip"))
+    finally:
+        reset_workspace(token)
+        worker_tools._WORKER_WORKTREES.pop("pip", None)
+
+    assert removed is True
+    assert "pip" not in worker_tools._WORKER_WORKTREES
+    commands = [call[1][0] for call in fake.calls if call[0] == "exec"]
+    assert any("git -C /host/api worktree remove --force" in c for c in commands)
+    assert any("git -C /host/api branch -D worker/workspace-worker-pip/api" in c for c in commands)
+    assert any("rm -rf /scratch/worktrees/workspace-worker-pip" in c for c in commands)
+
+
 # -- read_job_log ------------------------------------------------------
 
 
