@@ -9,6 +9,7 @@ import { EscalationBanner, type EscalationInfo } from './components/EscalationBa
 import { QueuedMessages } from './components/QueuedMessages'
 import { GoalPanel, type GoalSnapshot } from './components/GoalPanel'
 import { WakeupPanel, type WakeupSnapshot } from './components/WakeupPanel'
+import { LoopPanel, type LoopTaskSnapshot } from './components/LoopPanel'
 import { WorkersPanel, type WorkerSummary, type WorkersKillResult } from './components/WorkersPanel'
 import {
   BashJobs,
@@ -52,6 +53,7 @@ export function App() {
   const [bashJobs, setBashJobs] = useState<BashJobSummary[]>([])
   const [goalSnapshot, setGoalSnapshot] = useState<GoalSnapshot | null>(null)
   const [wakeupSnapshot, setWakeupSnapshot] = useState<WakeupSnapshot | null>(null)
+  const [loopTasks, setLoopTasks] = useState<LoopTaskSnapshot[]>([])
   const [workers, setWorkers] = useState<WorkerSummary[]>([])
   // Dismissed IDs for each docked panel. Snapshotted on user submit so
   // the next run starts with a clean dock — items currently in a
@@ -487,6 +489,25 @@ export function App() {
           setWakeupSnapshot(null)
         } else if (typeof snap === 'object') {
           setWakeupSnapshot(snap as WakeupSnapshot)
+        }
+        if (request_id) {
+          client.clientResponse(request_id, true, { ack: true }).catch(() => {})
+        }
+        return
+      }
+      if (fn === 'ui.loop.update') {
+        const request_id = String(p?.request_id ?? '')
+        const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
+        if (eventSessionId && sessionIdRef.current && sessionIdRef.current !== eventSessionId) {
+          if (request_id) {
+            client.clientResponse(request_id, true, { ack: true }).catch(() => {})
+          }
+          return
+        }
+        const args = p?.args || {}
+        const snap = args?.snapshot
+        if (Array.isArray(snap)) {
+          setLoopTasks(snap as LoopTaskSnapshot[])
         }
         if (request_id) {
           client.clientResponse(request_id, true, { ack: true }).catch(() => {})
@@ -1123,6 +1144,13 @@ export function App() {
         } catch {
           setWakeupSnapshot(null)
         }
+        try {
+          const res = await client.serverCall('loop.status', {}, id) as { snapshot?: unknown } | undefined
+          const snap = res?.snapshot
+          setLoopTasks(Array.isArray(snap) ? snap as LoopTaskSnapshot[] : [])
+        } catch {
+          setLoopTasks([])
+        }
         // Seed the workers panel. Same rationale — picks up workers that
         // were already running before we bound to this session.
         try {
@@ -1139,6 +1167,7 @@ export function App() {
       setBashJobs([])
       setGoalSnapshot(null)
       setWakeupSnapshot(null)
+      setLoopTasks([])
       setWorkers([])
     }
     // Reset dock dismissal sets on session change so the fresh session
@@ -1285,6 +1314,7 @@ export function App() {
             />
             <GoalPanel snapshot={goalSnapshot} />
             <WakeupPanel snapshot={wakeupSnapshot} />
+            <LoopPanel tasks={loopTasks} />
             <WorkersPanel
               workers={(() => {
                 const live = workers.filter(w => !(w.status !== 'running' && dismissedWorkerIds.has(w.worker_id)))

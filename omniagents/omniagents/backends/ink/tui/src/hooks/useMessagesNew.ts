@@ -257,7 +257,10 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       // Belt-and-suspenders: skip on both name (no tool_call message to
       // update) and metadata.display_type === "hidden" (catches tools
       // that aren't in HIDDEN_TOOLS yet but still asked to be silent).
-      if (isHiddenTool(params.tool) || params.metadata?.display_type === "hidden") {
+      if (
+        isHiddenTool(params.tool) ||
+        params.metadata?.display_type === "hidden"
+      ) {
         return;
       }
       batcher.add(() => {
@@ -321,10 +324,13 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
         // params.prompt unless the last user message already matches
         // (idempotency for the direct-submit case where handleSubmit
         // already optimistic-added it).
-        const promptFromEvent = typeof params.prompt === "string" ? params.prompt : "";
+        const promptFromEvent =
+          typeof params.prompt === "string" ? params.prompt : "";
         if (promptFromEvent) {
           const messages = useAppStore.getState().messages;
-          const lastUser = [...messages].reverse().find((m) => m.role === "user");
+          const lastUser = [...messages]
+            .reverse()
+            .find((m) => m.role === "user");
           if (!lastUser || lastUser.content !== promptFromEvent) {
             actions.addMessage({
               role: "user",
@@ -346,11 +352,17 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       // stale broadcast from a session we just switched away from doesn't
       // poison the "Up next" dock.
       const liveSessionId = useAppStore.getState().sessionId;
-      if (params.session_id && liveSessionId && params.session_id !== liveSessionId) {
+      if (
+        params.session_id &&
+        liveSessionId &&
+        params.session_id !== liveSessionId
+      ) {
         return;
       }
       batcher.add(() => {
-        actions.setQueuedMessages(Array.isArray(params.items) ? params.items : []);
+        actions.setQueuedMessages(
+          Array.isArray(params.items) ? params.items : [],
+        );
       });
     };
 
@@ -637,6 +649,14 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       return { ack: true };
     };
 
+    const handleLoopUpdate = async (args: Record<string, unknown>) => {
+      const snap = (args as { snapshot?: unknown }).snapshot;
+      if (Array.isArray(snap)) {
+        actions.setLoops(snap as any);
+      }
+      return { ack: true };
+    };
+
     // Agent called the ``notify`` builtin (fire-and-forget heads-up).
     // The tool itself is hidden from the transcript (see isHiddenTool);
     // we push the message into the docked notifications panel. The
@@ -715,6 +735,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     client.registerClientFunction("ui.workers.update", handleWorkersUpdate);
     client.registerClientFunction("ui.goal.update", handleGoalUpdate);
     client.registerClientFunction("ui.wakeup.update", handleWakeupUpdate);
+    client.registerClientFunction("ui.loop.update", handleLoopUpdate);
     client.registerClientFunction("notify", handleNotify);
     client.registerClientFunction("ui.recap", handleRecap);
     client.registerClientFunction("escalate", handleEscalate);
@@ -741,6 +762,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       client.unregisterClientFunction("ui.workers.update");
       client.unregisterClientFunction("ui.goal.update");
       client.unregisterClientFunction("ui.wakeup.update");
+      client.unregisterClientFunction("ui.loop.update");
       client.unregisterClientFunction("notify");
       client.unregisterClientFunction("ui.recap");
       client.unregisterClientFunction("escalate");
@@ -762,9 +784,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     const currentTool = useAppStore.getState().approval?.tool;
     let siblings: ApprovalInfo[] = [];
     if (approved && alwaysApprove && currentTool) {
-      siblings = approvalQueueRef.current.filter(
-        (a) => a.tool === currentTool,
-      );
+      siblings = approvalQueueRef.current.filter((a) => a.tool === currentTool);
       approvalQueueRef.current = approvalQueueRef.current.filter(
         (a) => a.tool !== currentTool,
       );

@@ -50,6 +50,7 @@ import { BashJobs } from "./BashJobs.js";
 import { QueuedMessages } from "./QueuedMessages.js";
 import { Goal } from "./Goal.js";
 import { Wakeup } from "./Wakeup.js";
+import { Loop } from "./Loop.js";
 import { Recap } from "./Recap.js";
 import { EscalationBanner } from "./EscalationBanner.js";
 import { Notifications } from "./Notifications.js";
@@ -189,10 +190,7 @@ const ScrollableMessageList: React.FC<{
         </Box>
 
         {approval && (
-          <ApprovalDialogWrapper
-            approval={approval}
-            onApprove={onApprove}
-          />
+          <ApprovalDialogWrapper approval={approval} onApprove={onApprove} />
         )}
 
         {mcpApproval && (
@@ -323,7 +321,8 @@ export const App: React.FC<AppProps> = ({
   // Notifications panel focus: Ctrl+N toggles the panel and lets the
   // user dismiss individual / all queued notifications. Mirrors the
   // Ctrl+B bash-jobs chord.
-  const [notificationsPanelFocused, setNotificationsPanelFocused] = useState(false);
+  const [notificationsPanelFocused, setNotificationsPanelFocused] =
+    useState(false);
 
   // Bash-jobs panel focus: Ctrl+B toggles a "panel mode" that hijacks
   // arrow keys / x / l for navigation + kill + log preview. Esc inside the
@@ -398,6 +397,24 @@ export const App: React.FC<AppProps> = ({
       })
       .catch(() => {
         wakeupSeedRef.current = null;
+      });
+  }, [client, connected, sessionId, actions]);
+
+  const loopSeedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!client || !connected || !sessionId) return;
+    if (loopSeedRef.current === sessionId) return;
+    loopSeedRef.current = sessionId;
+    client
+      .serverCall("loop.status", {}, sessionId)
+      .then((res) => {
+        const snap = (res as { snapshot?: unknown } | undefined)?.snapshot;
+        if (Array.isArray(snap)) {
+          actions.setLoops(snap as any);
+        }
+      })
+      .catch(() => {
+        loopSeedRef.current = null;
       });
   }, [client, connected, sessionId, actions]);
 
@@ -676,10 +693,9 @@ export const App: React.FC<AppProps> = ({
         let sid: string | undefined = sessionId || undefined;
         if (!sid) {
           try {
-            const ensured = (await client!.serverCall(
-              "session.ensure",
-              {},
-            )) as { session_id?: unknown } | undefined;
+            const ensured = (await client!.serverCall("session.ensure", {})) as
+              | { session_id?: unknown }
+              | undefined;
             const ensuredId =
               typeof ensured?.session_id === "string"
                 ? ensured.session_id
@@ -1095,6 +1111,7 @@ export const App: React.FC<AppProps> = ({
             >
               <Goal />
               <Wakeup />
+              <Loop />
               <Recap />
               <Tasks />
               <Workers />

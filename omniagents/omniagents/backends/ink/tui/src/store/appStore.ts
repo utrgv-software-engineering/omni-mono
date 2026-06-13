@@ -167,11 +167,28 @@ export interface WakeupSnapshot {
   message: string;
   interval_seconds: number;
   recurring: boolean;
-  end_at: number | null;       // unix timestamp (exclusive bound)
-  end_after: number | null;    // remaining fire count
+  end_at: number | null; // unix timestamp (exclusive bound)
+  end_after: number | null; // remaining fire count
   fires: number;
   started_at: number;
   status: "active" | "cancelled";
+}
+
+export interface LoopTaskSnapshot {
+  id: string;
+  prompt: string;
+  mode: "dynamic" | "fixed_interval" | "fixed_cron";
+  cron: string | null;
+  interval_seconds: number | null;
+  recurring: boolean;
+  created_at: number;
+  expires_at: number | null;
+  next_fire_at: number | null;
+  fires: number;
+  status: "active" | "cancelled" | "expired" | "completed";
+  last_fire_at: number | null;
+  last_reason: string | null;
+  jitter_seconds: number;
 }
 
 // Session recap (from /recap or the idle auto-recap). Single-slot, prose
@@ -213,6 +230,7 @@ interface AppState {
   queuedMessages: QueuedMessage[];
   goal: GoalSnapshot | null;
   wakeup: WakeupSnapshot | null;
+  loops: LoopTaskSnapshot[];
   recap: RecapInfo | null;
   // IDs of dock items the user has "moved past" — snapshotted from
   // currently-terminal items each time the user submits, so the next
@@ -272,6 +290,7 @@ interface AppState {
     setQueuedMessages: (items: QueuedMessage[]) => void;
     setGoal: (goal: GoalSnapshot | null) => void;
     setWakeup: (wakeup: WakeupSnapshot | null) => void;
+    setLoops: (loops: LoopTaskSnapshot[]) => void;
     setRecap: (recap: RecapInfo | null) => void;
     // Add every currently-terminal dock item (exited workers / bash
     // jobs, completed tasks) to its dismissed set. Call this at the
@@ -311,6 +330,7 @@ export const useAppStore = create<AppState>()(
     queuedMessages: [],
     goal: null,
     wakeup: null,
+    loops: [],
     recap: null,
 
     actions: {
@@ -591,6 +611,11 @@ export const useAppStore = create<AppState>()(
           state.wakeup = wakeup;
         }),
 
+      setLoops: (loops) =>
+        set((state) => {
+          state.loops = loops;
+        }),
+
       dismissDockTerminals: () =>
         set((state) => {
           // Only auto-dismiss unambiguous successes. Failures
@@ -598,10 +623,12 @@ export const useAppStore = create<AppState>()(
           // until the user dismisses them so a quietly-failed background
           // task isn't lost behind the next prompt.
           for (const w of state.workers) {
-            if (w.status === "completed") state.dismissedWorkerIds.add(w.worker_id);
+            if (w.status === "completed")
+              state.dismissedWorkerIds.add(w.worker_id);
           }
           for (const j of state.bashJobs) {
-            if (!j.running && j.exit_code === 0) state.dismissedJobIds.add(j.job_id);
+            if (!j.running && j.exit_code === 0)
+              state.dismissedJobIds.add(j.job_id);
           }
           for (const t of state.tasks) {
             if (t.status === "completed") state.dismissedTaskIds.add(t.id);
@@ -646,10 +673,10 @@ export const useWorkers = () => useAppStore((s) => s.workers);
 export const useDismissedWorkerIds = () =>
   useAppStore((s) => s.dismissedWorkerIds);
 export const useDismissedJobIds = () => useAppStore((s) => s.dismissedJobIds);
-export const useDismissedTaskIds = () =>
-  useAppStore((s) => s.dismissedTaskIds);
+export const useDismissedTaskIds = () => useAppStore((s) => s.dismissedTaskIds);
 export const useQueuedMessages = () => useAppStore((s) => s.queuedMessages);
 export const useGoal = () => useAppStore((s) => s.goal);
 export const useWakeup = () => useAppStore((s) => s.wakeup);
+export const useLoops = () => useAppStore((s) => s.loops);
 export const useRecap = () => useAppStore((s) => s.recap);
 export const useActions = () => useAppStore((s) => s.actions);
