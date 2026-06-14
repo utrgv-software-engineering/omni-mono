@@ -145,6 +145,122 @@ async def test_request_tool_approval_queues_and_adds_safe():
 
 
 @pytest.mark.asyncio
+async def test_start_run_applies_safe_mcp_tool_overrides(monkeypatch):
+    service = AgentService(make_spec(), default_workspace_root="/tmp")
+
+    async def fail_build(*args, **kwargs):
+        raise RuntimeError("stop before worker")
+
+    monkeypatch.setattr(service, "_build_agent_for_session", fail_build)
+
+    with pytest.raises(RuntimeError, match="stop before worker"):
+        await service.start_run(
+            "hello",
+            session_id="sess_mcp_safe",
+            safe_tool_overrides={
+                "safe_tool_names": ["read_file"],
+                "safe_tool_patterns": ["^get_"],
+                "safe_mcp_tools": [
+                    {"server_label": "github", "tool_name": "search_issues"},
+                    {"server_label": "github", "tool_name": ""},
+                    {"tool_name": "missing_server"},
+                    "invalid",
+                ],
+            },
+        )
+
+    session = service._session_manager.get_or_create("sess_mcp_safe")
+    assert "read_file" in session.always_allow_tools
+    assert "^get_" in session.always_allow_patterns
+    assert session.always_allow_mcp_tools == {("github", "search_issues")}
+
+
+@pytest.mark.asyncio
+async def test_request_mcp_approval_auto_approves_allowlisted_tool():
+    service = AgentService(make_spec())
+    session = service._session_manager.get_or_create()
+    session.always_allow_mcp_tools.add(("github", "search_issues"))
+
+    class Recorder:
+        def __init__(self):
+            self.calls = []
+
+        async def async_call(self, method, args):
+            self.calls.append((method, args))
+            return True
+
+    recorder = Recorder()
+    session.channels.append(recorder)
+
+    response = await service.request_mcp_approval(
+        session=session,
+        request_id="mcp_req_allowed",
+        server_label="github",
+        tool_name="search_issues",
+        arguments="{}",
+        run_id="run1",
+    )
+
+    assert response == {"decision": "approve", "rejection_message": None}
+    assert recorder.calls == []
+    assert "mcp_req_allowed" not in service._pending_mcp_approvals
+    assert "mcp_req_allowed" not in session.pending_mcp_approvals
+
+
+@pytest.mark.asyncio
+async def test_request_mcp_approval_still_broadcasts_for_non_allowlisted_tool():
+    service = AgentService(make_spec())
+    session = service._session_manager.get_or_create()
+    session.always_allow_mcp_tools.add(("github", "search_issues"))
+
+    class Recorder:
+        def __init__(self):
+            self.calls = []
+
+        async def async_call(self, method, args):
+            self.calls.append((method, args))
+            return True
+
+    recorder = Recorder()
+    session.channels.append(recorder)
+
+    approval_task = asyncio.create_task(
+        service.request_mcp_approval(
+            session=session,
+            request_id="mcp_req_pending",
+            server_label="github",
+            tool_name="create_issue",
+            arguments='{"title":"Bug"}',
+            run_id="run1",
+        )
+    )
+
+    async def wait_for_broadcast():
+        while not recorder.calls:
+            await asyncio.sleep(0)
+
+    await asyncio.wait_for(wait_for_broadcast(), timeout=1)
+
+    method, payload = recorder.calls[0]
+    assert method == "mcp_approval_requested"
+    assert payload["request_id"] == "mcp_req_pending"
+    assert payload["server_label"] == "github"
+    assert payload["tool_name"] == "create_issue"
+    assert "mcp_req_pending" in session.pending_mcp_approvals
+
+    assert await service.mcp_approval_response("mcp_req_pending", "approve") is True
+    response = await approval_task
+
+    assert response["decision"] == "approve"
+    assert "mcp_req_pending" not in service._pending_mcp_approvals
+    assert "mcp_req_pending" not in session.pending_mcp_approvals
+    assert [method for method, _ in recorder.calls] == [
+        "mcp_approval_requested",
+        "mcp_approval_resolved",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_get_session_history_replays_live_state():
     service = AgentService(make_spec())
     session = service._session_manager.get_or_create()

@@ -59,7 +59,6 @@ from omniagents.core.agents.mcp import (
 )
 from omniagents.core.debug import Debug
 
-
 # Setup logging
 logger = logging.getLogger("omniagents.service")
 
@@ -226,8 +225,8 @@ def _build_guardrail_error_info(
 #
 # Mirrors the same pattern used by ``omniagents.rpc.base._current_channel``
 # and ``omniagents.workspace._runtime._workspace_var``.
-_current_service: contextvars.ContextVar["AgentService | None"] = contextvars.ContextVar(
-    "omniagents_current_service", default=None
+_current_service: contextvars.ContextVar["AgentService | None"] = (
+    contextvars.ContextVar("omniagents_current_service", default=None)
 )
 
 
@@ -950,6 +949,57 @@ class AgentService(RpcMethodsBase):
         except Exception:
             pass
 
+    @staticmethod
+    def _mcp_allow_key(server_label: Any, tool_name: Any) -> tuple[str, str] | None:
+        server = str(server_label or "").strip()
+        tool = str(tool_name or "").strip()
+        if not server or not tool:
+            return None
+        return (server, tool)
+
+    @classmethod
+    def _session_mcp_allowlist(cls, session: Session) -> set[tuple[str, str]]:
+        allow_set = getattr(session, "always_allow_mcp_tools", None)
+        if allow_set is None:
+            allow_set = set()
+            setattr(session, "always_allow_mcp_tools", allow_set)
+        return allow_set
+
+    @classmethod
+    def _apply_safe_tool_overrides(
+        cls, session: Session, safe_tool_overrides: dict | None
+    ) -> None:
+        if safe_tool_overrides is None:
+            return
+
+        override_names = safe_tool_overrides.get("safe_tool_names", [])
+        override_patterns = safe_tool_overrides.get("safe_tool_patterns", [])
+        if override_names:
+            session.always_allow_tools.update(override_names)
+        if override_patterns:
+            session.always_allow_patterns.update(override_patterns)
+
+        mcp_entries = safe_tool_overrides.get("safe_mcp_tools", [])
+        if not isinstance(mcp_entries, list):
+            return
+
+        allow_set = cls._session_mcp_allowlist(session)
+        for entry in mcp_entries:
+            if not isinstance(entry, dict):
+                continue
+            key = cls._mcp_allow_key(entry.get("server_label"), entry.get("tool_name"))
+            if key is not None:
+                allow_set.add(key)
+
+    @classmethod
+    def _is_mcp_tool_always_allowed(
+        cls, session: Session, server_label: Any, tool_name: Any
+    ) -> bool:
+        key = cls._mcp_allow_key(server_label, tool_name)
+        if key is None:
+            return False
+        return key in cls._session_mcp_allowlist(session)
+
     # ------------------------------------------------------------------
     #  Server Functions registry APIs (programmatic registration)
     # ------------------------------------------------------------------
@@ -1410,9 +1460,7 @@ class AgentService(RpcMethodsBase):
         if server is None:
             raise ValueError(f"Unknown or inactive MCP server: {server_name}")
         if not hasattr(server, "list_tools"):
-            raise ValueError(
-                f"MCP server '{server_name}' does not support list_tools"
-            )
+            raise ValueError(f"MCP server '{server_name}' does not support list_tools")
 
         # ``list_tools`` on the agents SDK MCPServer subclasses takes an
         # optional ``run_context``/``agent`` kwargs depending on SDK version.
@@ -1480,9 +1528,7 @@ class AgentService(RpcMethodsBase):
         if server is None:
             raise ValueError(f"Unknown or inactive MCP server: {server_name}")
         if not hasattr(server, "call_tool"):
-            raise ValueError(
-                f"MCP server '{server_name}' does not support call_tool"
-            )
+            raise ValueError(f"MCP server '{server_name}' does not support call_tool")
 
         result = await server.call_tool(tool_name, arguments)
         result_dict: dict[str, Any]
@@ -1601,9 +1647,7 @@ class AgentService(RpcMethodsBase):
     #  autopilot keeps running even when the user closed the TUI.
     # ------------------------------------------------------------------
 
-    def add_run_end_listener(
-        self, session_id: str, cb
-    ) -> None:
+    def add_run_end_listener(self, session_id: str, cb) -> None:
         """Register an async callback fired once per ``run_end`` event for
         the session. Callback receives the run_end payload dict."""
         self._run_end_listeners.setdefault(session_id, []).append(cb)
@@ -2088,17 +2132,24 @@ class AgentService(RpcMethodsBase):
         """Emit an ``mcp_approval_requested`` event and await the response.
 
         Returns a dict with ``decision`` (``"approve"`` | ``"reject"``) and
-        optional ``rejection_message`` (str | None). Always-approve is not
-        currently propagated through hosted-MCP approvals because the SDK's
-        approval status cache is keyed by ``(server_label, tool_name)`` and
-        we have no equivalent of the per-session function-tool always-allow
-        set on the MCP path.
+        optional ``rejection_message`` (str | None). Requests matching the
+        session's hosted-MCP always-allow list are approved immediately
+        without emitting an approval prompt.
         """
 
         if session is None:
             raise RuntimeError(
                 "MCP approval requests require an explicit session context"
             )
+
+        if self._is_mcp_tool_always_allowed(session, server_label, tool_name):
+            if Debug.enabled():
+                logger.debug(
+                    f"  ✓ mcp_approval auto-approved request_id={request_id}"
+                    f" server={server_label} tool={tool_name}"
+                    f" session={session.id} run_id={run_id}"
+                )
+            return {"decision": "approve", "rejection_message": None}
 
         payload: dict[str, Any] = {
             "kind": "mcp",
@@ -2308,14 +2359,7 @@ class AgentService(RpcMethodsBase):
             workspace_root=workspace_root,
         )
 
-        # Apply per-session safe tool overrides
-        if safe_tool_overrides is not None:
-            override_names = safe_tool_overrides.get("safe_tool_names", [])
-            override_patterns = safe_tool_overrides.get("safe_tool_patterns", [])
-            if override_names:
-                sess.always_allow_tools.update(override_names)
-            if override_patterns:
-                sess.always_allow_patterns.update(override_patterns)
+        self._apply_safe_tool_overrides(sess, safe_tool_overrides)
 
         # Store workflow_name and group_id for tracing
         if workflow_name is not None:
@@ -3250,10 +3294,7 @@ class AgentService(RpcMethodsBase):
         }
 
     def _ensure_notification_flusher(self, sess: Session) -> None:
-        if (
-            sess.notification_flusher_task
-            and not sess.notification_flusher_task.done()
-        ):
+        if sess.notification_flusher_task and not sess.notification_flusher_task.done():
             return
         sess.notification_flusher_task = asyncio.create_task(
             self._notification_flusher(sess),
@@ -3366,9 +3407,7 @@ class AgentService(RpcMethodsBase):
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception(
-                "notification flusher failed", extra={"session": sess.id}
-            )
+            logger.exception("notification flusher failed", extra={"session": sess.id})
 
     async def archive_session(self, session_id: str) -> bool:  # noqa: D401
         """Archive *session_id* so clients can hide it."""

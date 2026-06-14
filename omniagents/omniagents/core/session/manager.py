@@ -463,6 +463,7 @@ class Session:  # noqa: D101
         )
         self.always_allow_tools: set[str] = set()
         self.always_allow_patterns: set[str] = set()
+        self.always_allow_mcp_tools: set[tuple[str, str]] = set()
         self.context: Any | None = None
         self.variables: Any | None = None
         self.active_run_id: str | None = None
@@ -634,10 +635,7 @@ class Session:  # noqa: D101
                     continue
                 # Dedup: don't pile up identical ticks while the flusher
                 # hasn't fired yet.
-                if any(
-                    n.get("source") == source
-                    for n in self.pending_notifications
-                ):
+                if any(n.get("source") == source for n in self.pending_notifications):
                     continue
                 svc = current_service()
                 if svc is None:
@@ -649,9 +647,7 @@ class Session:  # noqa: D101
                         source=source,
                     )
                 except Exception:
-                    Debug.log(
-                        f"[session] tick enqueue failed session={self.id}"
-                    )
+                    Debug.log(f"[session] tick enqueue failed session={self.id}")
         except asyncio.CancelledError:
             return
 
@@ -681,6 +677,7 @@ class Session:  # noqa: D101
         if persist:
             try:
                 from .history_db import update_session_metadata
+
                 update_session_metadata(
                     self.id,
                     variables=current,
@@ -688,9 +685,7 @@ class Session:  # noqa: D101
                     agent_slug=self._agent_slug,
                 )
             except Exception:
-                Debug.log(
-                    f"[session] persist variables failed session={self.id}"
-                )
+                Debug.log(f"[session] persist variables failed session={self.id}")
         return current
 
     # --- openai-agents SDK Session protocol ---
