@@ -773,6 +773,9 @@ class AgentService(RpcMethodsBase):
         tools: list = []
         service_ref = self
 
+        async def _never_needs_approval(ctx, args: dict, call_id: str) -> bool:
+            return False
+
         for defn in defs:
             tool_name = defn.get("name")
             description = defn.get("description", "")
@@ -814,6 +817,9 @@ class AgentService(RpcMethodsBase):
                     params_json_schema=parameters,
                     on_invoke_tool=_make_invoker(tool_name),
                     strict_json_schema=False,
+                    needs_approval=(
+                        _never_needs_approval if defn.get("safe") is True else False
+                    ),
                 )
             )
 

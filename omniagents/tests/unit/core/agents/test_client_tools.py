@@ -106,7 +106,9 @@ class TestSessionEnsureClientTools:
         service = AgentService(make_spec())
         session = service._session_manager.get_or_create()
 
-        service._sf_session_ensure(session, {"variables": {"client_tools": "not a list"}})
+        service._sf_session_ensure(
+            session, {"variables": {"client_tools": "not a list"}}
+        )
 
         assert not hasattr(session, "_client_tools") or not session._client_tools
 
@@ -170,7 +172,11 @@ class TestBuildClientTools:
         session = service._session_manager.get_or_create()
         session._client_tools = [
             {"description": "no name"},
-            {"name": "valid", "description": "has name", "parameters": {"type": "object", "properties": {}}},
+            {
+                "name": "valid",
+                "description": "has name",
+                "parameters": {"type": "object", "properties": {}},
+            },
         ]
 
         tools = service._build_client_tools(session)
@@ -185,6 +191,24 @@ class TestBuildClientTools:
         tools = service._build_client_tools(session)
         for t in tools:
             assert t.strict_json_schema is False
+
+    @pytest.mark.asyncio
+    async def test_safe_client_tool_declares_no_approval_predicate(self):
+        service = AgentService(make_spec())
+        session = service._session_manager.get_or_create()
+        session._client_tools = [
+            {
+                "name": "speak",
+                "description": "Speak aloud.",
+                "parameters": {"type": "object", "properties": {}},
+                "safe": True,
+            }
+        ]
+
+        [tool] = service._build_client_tools(session)
+
+        assert callable(tool.needs_approval)
+        assert await tool.needs_approval(None, {}, "call_1") is False
 
 
 # ---------------------------------------------------------------------------
@@ -210,9 +234,11 @@ class TestClientToolInvoker:
                 asyncio.get_event_loop().call_soon(
                     lambda: asyncio.ensure_future(
                         service.client_response(
-                            request_id=args["args"]["request_id"]
-                            if "request_id" in args.get("args", {})
-                            else args["request_id"],
+                            request_id=(
+                                args["args"]["request_id"]
+                                if "request_id" in args.get("args", {})
+                                else args["request_id"]
+                            ),
                             ok=True,
                             result={"id": "ticket-1", "title": "Test Ticket"},
                             error=None,
@@ -452,6 +478,7 @@ class TestBuildAgentInjectsClientTools:
 
         async def custom_build(settings, primary_server, app):
             from agents import Agent
+
             return Agent(name="custom", tools=[existing_tool])
 
         service = AgentService(make_spec(build_agent=custom_build))
