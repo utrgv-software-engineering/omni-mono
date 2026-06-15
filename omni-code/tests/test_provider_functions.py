@@ -120,6 +120,29 @@ def test_get_provider_nonexistent(tmp_models_config):
     assert models.get_provider("nonexistent") is None
 
 
+def test_resolve_model_for_runtime_includes_provider_api_mode(tmp_models_config):
+    _write_config(tmp_models_config, {
+        "version": models.MODELS_CONFIG_VERSION,
+        "default": "chat/gpt-test",
+        "voice_default": None,
+        "providers": {
+            "chat": {
+                "type": "openai-compatible",
+                "api_key": "sk-test",
+                "base_url": "https://example.test/v1",
+                "use_responses": False,
+                "use_responses_websocket": False,
+                "models": {"gpt-test": {"model": "gpt-test", "label": "GPT Test"}},
+            },
+        },
+    })
+
+    runtime = models.resolve_model_for_runtime("chat/gpt-test")
+
+    assert runtime["use_responses"] is False
+    assert runtime["use_responses_websocket"] is False
+
+
 # --- add_provider ---
 
 def test_add_provider_creates_new(tmp_models_config):

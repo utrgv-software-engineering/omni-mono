@@ -19,6 +19,20 @@ def _seed_session(*, project: str, agent: str, session_id: str, messages: list[d
         history_db.set_archived(session_id, True, project_slug=project, agent_slug=agent)
 
 
+def test_build_model_provider_uses_chat_completions_when_configured():
+    provider, env = sessions_cli._build_model_provider({
+        "provider": "openai-compatible",
+        "model": "gpt-test",
+        "api_key": "sk-test",
+        "base_url": "https://example.test/v1",
+        "use_responses": False,
+    })
+
+    assert env == {}
+    assert provider is not None
+    assert provider._use_responses is False
+
+
 def test_sessions_list_json_excludes_archived_by_default(monkeypatch, tmp_path, capsys):
     _reset_history_db(monkeypatch)
     monkeypatch.setenv("OMNIAGENTS_HOME", str(tmp_path / "home"))

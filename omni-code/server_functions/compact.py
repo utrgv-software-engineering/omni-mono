@@ -312,6 +312,14 @@ def _build_model_provider(
     model = runtime.get("model")
     api_key = runtime.get("api_key")
     base_url = runtime.get("base_url")
+    use_responses = runtime.get("use_responses")
+    use_responses_websocket = runtime.get("use_responses_websocket")
+
+    provider_kwargs: dict[str, Any] = {}
+    if use_responses is not None:
+        provider_kwargs["use_responses"] = bool(use_responses)
+    if use_responses_websocket is not None:
+        provider_kwargs["use_responses_websocket"] = bool(use_responses_websocket)
 
     if provider == "openai-oauth":
         from agents.models.openai_provider import OpenAIProvider
@@ -320,7 +328,7 @@ def _build_model_provider(
         client = build_codex_openai_client()
         if client is None:
             return None, {}
-        return OpenAIProvider(openai_client=client), {}
+        return OpenAIProvider(openai_client=client, **provider_kwargs), {}
 
     if provider == "litellm":
         from agents.extensions.models.litellm_provider import LitellmProvider
@@ -352,7 +360,7 @@ def _build_model_provider(
                 base_url=resolved_base_url,
                 default_headers={"api-key": resolved_api_key},
             )
-            return OpenAIProvider(openai_client=client), {}
+            return OpenAIProvider(openai_client=client, **provider_kwargs), {}
 
         if not resolved_api_key and resolved_base_url != "https://api.openai.com/v1":
             resolved_api_key = "dummy"
@@ -364,7 +372,7 @@ def _build_model_provider(
             api_key=resolved_api_key,
             base_url=resolved_base_url,
         )
-        return OpenAIProvider(openai_client=client), {}
+        return OpenAIProvider(openai_client=client, **provider_kwargs), {}
 
     return None, {}
 
@@ -395,6 +403,8 @@ def _resolve_compaction_runtime(
             "api_key": model_config.get("api_key"),
             "base_url": model_config.get("base_url"),
             "api_version": model_config.get("api_version"),
+            "use_responses": model_config.get("use_responses"),
+            "use_responses_websocket": model_config.get("use_responses_websocket"),
         }
         return candidates[0] if candidates else None, runtime
 

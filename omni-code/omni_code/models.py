@@ -337,6 +337,8 @@ def get_model_config(ref: str) -> Optional[Dict[str, Any]]:
         "max_input_tokens",
         "max_output_tokens",
         "model_settings",
+        "use_responses",
+        "use_responses_websocket",
     ]:
         if key in provider_config:
             merged[key] = provider_config.get(key)
@@ -724,6 +726,11 @@ def resolve_model_for_runtime(
         "max_output_tokens": merged.get("max_output_tokens"),
     }
 
+    if "use_responses" in merged:
+        result["use_responses"] = merged["use_responses"]
+    if "use_responses_websocket" in merged:
+        result["use_responses_websocket"] = merged["use_responses_websocket"]
+
     if merged.get("model_settings"):
         result["model_settings"] = merged["model_settings"]
 
@@ -910,7 +917,7 @@ def update_provider(name: str, **kwargs: Any) -> bool:
     if not isinstance(provider_obj, dict):
         return False
 
-    allowed_keys = {"type", "api_key", "base_url", "api_version", "realtime_url", "realtime_base_url"}
+    allowed_keys = {"type", "api_key", "base_url", "api_version", "realtime_url", "realtime_base_url", "use_responses", "use_responses_websocket"}
     for key, value in kwargs.items():
         if key in allowed_keys and value is not None:
             provider_obj[key] = value
