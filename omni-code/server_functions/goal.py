@@ -36,7 +36,6 @@ from omni_code.goal_prompts import (
     build_goal_tick_prompt,
 )
 
-
 _log = logging.getLogger(__name__)
 
 
@@ -55,6 +54,7 @@ class GoalState:
     goal: str
     max_turns: int = DEFAULT_MAX_TURNS
     tick_interval: float = DEFAULT_TICK_INTERVAL_S
+    safe_tool_overrides: Optional[dict[str, Any]] = None
     turn: int = 0
     cancelled: bool = False
     completed: bool = False
@@ -84,6 +84,7 @@ def _serialize(state: GoalState) -> dict:
         "goal": state.goal,
         "max_turns": state.max_turns,
         "tick_interval": state.tick_interval,
+        "safe_tool_overrides": state.safe_tool_overrides,
         "turn": state.turn,
         "cancelled": state.cancelled,
         "completed": state.completed,
@@ -100,6 +101,11 @@ def _deserialize(data: dict) -> GoalState:
         goal=str(data.get("goal") or ""),
         max_turns=int(data.get("max_turns") or DEFAULT_MAX_TURNS),
         tick_interval=float(data.get("tick_interval") or DEFAULT_TICK_INTERVAL_S),
+        safe_tool_overrides=(
+            data.get("safe_tool_overrides")
+            if isinstance(data.get("safe_tool_overrides"), dict)
+            else None
+        ),
         turn=int(data.get("turn") or 0),
         cancelled=bool(data.get("cancelled", False)),
         completed=bool(data.get("completed", False)),
@@ -201,7 +207,9 @@ async def _sync_variables(service, session, state: GoalState | None) -> None:
         return
     try:
         await service.update_session_variables(
-            session.id, _mirror_variables(state), silent=True,
+            session.id,
+            _mirror_variables(state),
+            silent=True,
         )
     except Exception as e:
         _log.warning("goal variable sync failed: %s", e)
@@ -231,7 +239,11 @@ async def _on_run_end(service, session, payload: dict) -> None:
             sid,
             state.turn,
             state.completion_reason,
-            (state.evidence[:120] + "…") if state.evidence and len(state.evidence) > 120 else state.evidence,
+            (
+                (state.evidence[:120] + "…")
+                if state.evidence and len(state.evidence) > 120
+                else state.evidence
+            ),
         )
         return
 
@@ -275,8 +287,7 @@ def _drop_pending_tick_notifications(session) -> None:
     between teardown (stop) and pause."""
     try:
         session.pending_notifications = [
-            n for n in session.pending_notifications
-            if n.get("source") != "goal.tick"
+            n for n in session.pending_notifications if n.get("source") != "goal.tick"
         ]
     except Exception:
         pass
@@ -285,10 +296,15 @@ def _drop_pending_tick_notifications(session) -> None:
 def _install_tick(session, state: GoalState) -> None:
     """Install the periodic tick that wakes the agent each interval.
     Shared between start, resume, and rehydrate."""
+    tick_kwargs = {
+        "source": "goal.tick",
+    }
+    if state.safe_tool_overrides is not None:
+        tick_kwargs["safe_tool_overrides"] = state.safe_tool_overrides
     session.set_tick(
         state.tick_interval,
         build_goal_tick_prompt(goal=state.goal, max_turns=state.max_turns),
-        source="goal.tick",
+        **tick_kwargs,
     )
 
 
@@ -380,7 +396,10 @@ async def maybe_rehydrate(service, session) -> Optional[GoalState]:
             _log.warning("goal rehydrate: install_tick failed: %s", e)
     _log.info(
         "goal rehydrated session=%s turn=%d/%d paused=%s",
-        sid, state.turn, state.max_turns, state.paused,
+        sid,
+        state.turn,
+        state.max_turns,
+        state.paused,
     )
     return state
 
@@ -413,10 +432,14 @@ async def _goal_start_on_invoke(service, session, args=None):
 
     max_turns = int(args.get("max_turns") or DEFAULT_MAX_TURNS)
     tick_interval = float(args.get("tick_interval") or DEFAULT_TICK_INTERVAL_S)
+    safe_tool_overrides = args.get("safe_tool_overrides")
+    if not isinstance(safe_tool_overrides, dict):
+        safe_tool_overrides = None
     state = GoalState(
         goal=goal_text,
         max_turns=max_turns,
         tick_interval=tick_interval,
+        safe_tool_overrides=safe_tool_overrides,
     )
     _goals[sid] = state
 
@@ -453,6 +476,7 @@ async def _goal_start_on_invoke(service, session, args=None):
             role="user",
             trigger_run=True,
             source="goal.start",
+            safe_tool_overrides=safe_tool_overrides,
         )
     except Exception as e:
         try:
@@ -505,9 +529,7 @@ async def _goal_stop_on_invoke(service, session, args=None):
     await _stop_goal(service, session, state)
     return {
         "ok": True,
-        "message": (
-            f"Goal cancelled. Reached turn {state.turn}/{state.max_turns}."
-        ),
+        "message": (f"Goal cancelled. Reached turn {state.turn}/{state.max_turns}."),
         "turn": state.turn,
         "max_turns": state.max_turns,
     }
@@ -633,9 +655,7 @@ async def _goal_resume_on_invoke(service, session, args=None):
     await _resume_goal(service, session, state)
     return {
         "ok": True,
-        "message": (
-            f"Goal resumed at turn {state.turn}/{state.max_turns}."
-        ),
+        "message": (f"Goal resumed at turn {state.turn}/{state.max_turns}."),
         "turn": state.turn,
         "max_turns": state.max_turns,
     }
@@ -665,7 +685,14 @@ async def goal_alias(
 async def _goal_alias_on_invoke(service, session, args=None):
     args = args or {}
     return await _goal_start_on_invoke(
-        service, session, {"goal": args.get("text") or args.get("goal")}
+        service,
+        session,
+        {
+            "goal": args.get("text") or args.get("goal"),
+            "max_turns": args.get("max_turns"),
+            "tick_interval": args.get("tick_interval"),
+            "safe_tool_overrides": args.get("safe_tool_overrides"),
+        },
     )
 
 
