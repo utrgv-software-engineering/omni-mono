@@ -45,7 +45,7 @@ class SandboxWorkspace(Workspace):
         session: Any,
         *,
         root: str = "/workspace",
-        scratch_root: str = "/var/lib/omniagents/scratch",
+        scratch_root: str = "/tmp/omniagents/scratch",
         default_user: Optional[str] = None,
     ) -> None:
         self._session = session
@@ -151,21 +151,33 @@ class SandboxWorkspace(Workspace):
     async def exists(self, path: str) -> bool:
         absolute = self.resolve(path)
         result = await self._session.exec(
-            "sh", "-lc", f"test -e {shlex.quote(absolute)}", shell=False, user=self._default_user
+            "sh",
+            "-lc",
+            f"test -e {shlex.quote(absolute)}",
+            shell=False,
+            user=self._default_user,
         )
         return result.exit_code == 0
 
     async def is_file(self, path: str) -> bool:
         absolute = self.resolve(path)
         result = await self._session.exec(
-            "sh", "-lc", f"test -f {shlex.quote(absolute)}", shell=False, user=self._default_user
+            "sh",
+            "-lc",
+            f"test -f {shlex.quote(absolute)}",
+            shell=False,
+            user=self._default_user,
         )
         return result.exit_code == 0
 
     async def is_dir(self, path: str) -> bool:
         absolute = self.resolve(path)
         result = await self._session.exec(
-            "sh", "-lc", f"test -d {shlex.quote(absolute)}", shell=False, user=self._default_user
+            "sh",
+            "-lc",
+            f"test -d {shlex.quote(absolute)}",
+            shell=False,
+            user=self._default_user,
         )
         return result.exit_code == 0
 
@@ -207,7 +219,9 @@ class SandboxWorkspace(Workspace):
         # session.ls returns its own FileEntry shape; we translate to ours.
         _ = respect_gitignore
         absolute = self.resolve(path)
-        sdk_entries = await self._session.ls(PurePosixPath(absolute), user=self._default_user)
+        sdk_entries = await self._session.ls(
+            PurePosixPath(absolute), user=self._default_user
+        )
         out: List[FileEntry] = []
         for sdk_entry in sdk_entries:
             name = getattr(sdk_entry, "name", None) or getattr(sdk_entry, "path", "")

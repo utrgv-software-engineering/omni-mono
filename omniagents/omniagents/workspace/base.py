@@ -80,8 +80,8 @@ class Workspace(abc.ABC):
 
     * Host: typically ``~/.omniagents/scratch`` (or
       ``$OMNIAGENTS_SCRATCH``).
-    * Sandbox: a fixed container path outside the manifest mount (e.g.
-      ``/var/lib/omniagents/scratch``). The path is reachable via
+    * Sandbox: a writable container path outside the manifest mount (e.g.
+      ``/tmp/omniagents/scratch``). The path is reachable via
       :meth:`exec`; tool code that only needs to ``mkdir``/``rm``/run
       commands there works without further setup.
 

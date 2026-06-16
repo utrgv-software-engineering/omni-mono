@@ -336,6 +336,16 @@ def test_host_workspace_scratch_root_is_outside_workspace_root(tmp_path, monkeyp
 # -- SandboxWorkspace.spawn(pty=False) -------------------------------------
 
 
+def test_sandbox_workspace_scratch_root_default_is_writable_location():
+    from omniagents.workspace.sandbox import SandboxWorkspace
+
+    class _FakeSession:
+        pass
+
+    ws = SandboxWorkspace(session=_FakeSession())
+    assert ws.scratch_root == "/tmp/omniagents/scratch"
+
+
 @pytest.mark.asyncio
 async def test_sandbox_workspace_spawn_without_pty():
     """SandboxWorkspace.spawn(pty=False) goes through pty_exec_start with
