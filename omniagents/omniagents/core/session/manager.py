@@ -508,6 +508,7 @@ class Session:  # noqa: D101
         self._tick_interval: Optional[float] = None
         self._tick_content: Optional[str] = None
         self._tick_source: str = "tick"
+        self._tick_safe_tool_overrides: Optional[Dict[str, Any]] = None
         # Model configuration for runtime switching
         self.active_model: str | None = None
         self.model_config: Dict[str, Any] | None = None
@@ -576,6 +577,7 @@ class Session:  # noqa: D101
         content: str,
         *,
         source: str = "tick",
+        safe_tool_overrides: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Schedule a periodic notification. Cancels any prior tick first.
 
@@ -589,6 +591,7 @@ class Session:  # noqa: D101
         self._tick_interval = float(interval_seconds)
         self._tick_content = content
         self._tick_source = source or "tick"
+        self._tick_safe_tool_overrides = safe_tool_overrides
         try:
             self._tick_task = asyncio.create_task(
                 self._tick_loop(),
@@ -600,6 +603,7 @@ class Session:  # noqa: D101
             self._tick_task = None
             self._tick_interval = None
             self._tick_content = None
+            self._tick_safe_tool_overrides = None
             raise
 
     def cancel_tick(self) -> None:
@@ -608,6 +612,7 @@ class Session:  # noqa: D101
         self._tick_task = None
         self._tick_interval = None
         self._tick_content = None
+        self._tick_safe_tool_overrides = None
         if task is not None and not task.done():
             task.cancel()
 
@@ -625,6 +630,7 @@ class Session:  # noqa: D101
         interval = self._tick_interval or 0.0
         content = self._tick_content or ""
         source = self._tick_source or "tick"
+        safe_tool_overrides = self._tick_safe_tool_overrides
         try:
             while True:
                 await asyncio.sleep(interval)
@@ -645,6 +651,7 @@ class Session:  # noqa: D101
                         session_id=self.id,
                         content=content,
                         source=source,
+                        safe_tool_overrides=safe_tool_overrides,
                     )
                 except Exception:
                     Debug.log(f"[session] tick enqueue failed session={self.id}")

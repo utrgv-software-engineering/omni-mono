@@ -181,6 +181,49 @@ async def test_enqueue_trigger_run_calls_start_run_with_prompt(monkeypatch):
     assert user_msgs[0]["content"] == "go"
 
 
+@pytest.mark.asyncio
+async def test_flush_notifications_preserves_safe_tool_overrides(monkeypatch):
+    service = make_service(monkeypatch)
+    sess_id = "sess-notify-safe"
+    sess = service._session_manager.get_or_create(sess_id)
+    captured = []
+
+    async def fake_start_run(
+        prompt,
+        session_id=None,
+        variables=None,
+        safe_tool_overrides=None,
+        prompt_role="user",
+        **_,
+    ):
+        captured.append(
+            {
+                "prompt": prompt,
+                "session_id": session_id,
+                "variables": variables,
+                "safe_tool_overrides": safe_tool_overrides,
+                "prompt_role": prompt_role,
+            }
+        )
+        return {"run_id": "r1", "session_id": session_id}
+
+    service.start_run = fake_start_run  # type: ignore[assignment]
+    sess.pending_notifications.append(
+        {
+            "content": "tick",
+            "source": "goal.tick",
+            "safe_tool_overrides": {"safe_tool_patterns": [".*"]},
+        }
+    )
+
+    await service._flush_notifications(sess)
+    await asyncio.wait_for(sess.drainer_task, timeout=1)
+
+    assert captured[0]["prompt"] == "tick"
+    assert captured[0]["prompt_role"] == "assistant"
+    assert captured[0]["safe_tool_overrides"] == {"safe_tool_patterns": [".*"]}
+
+
 # ---------------------------------------------------------------------------
 # Serialization — two queued runs never overlap
 # ---------------------------------------------------------------------------

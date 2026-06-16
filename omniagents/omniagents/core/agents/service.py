@@ -3282,6 +3282,7 @@ class AgentService(RpcMethodsBase):
         session_id: str,
         content: str,
         source: str,
+        safe_tool_overrides: dict | None = None,
     ) -> dict:  # noqa: D401
         """Buffer a background notification for batched delivery.
 
@@ -3298,6 +3299,7 @@ class AgentService(RpcMethodsBase):
             {
                 "content": content,
                 "source": source,
+                "safe_tool_overrides": safe_tool_overrides,
                 "enqueued_at": time.time(),
             }
         )
@@ -3332,13 +3334,41 @@ class AgentService(RpcMethodsBase):
         items = sess.pending_notifications[:]
         sess.pending_notifications.clear()
         combined = self._format_notification_batch(items)
+        safe_tool_overrides = self._merge_notification_safe_tool_overrides(items)
         await self.enqueue_message(
             session_id=sess.id,
             content=combined,
             role="assistant",
             trigger_run=True,
             source="notifications:batch",
+            safe_tool_overrides=safe_tool_overrides,
         )
+
+    def _merge_notification_safe_tool_overrides(self, items: list[dict]) -> dict | None:
+        names: list[Any] = []
+        patterns: list[Any] = []
+        mcp_tools: list[Any] = []
+        for item in items:
+            overrides = item.get("safe_tool_overrides")
+            if not isinstance(overrides, dict):
+                continue
+            override_names = overrides.get("safe_tool_names")
+            if isinstance(override_names, list):
+                names.extend(override_names)
+            override_patterns = overrides.get("safe_tool_patterns")
+            if isinstance(override_patterns, list):
+                patterns.extend(override_patterns)
+            override_mcp_tools = overrides.get("safe_mcp_tools")
+            if isinstance(override_mcp_tools, list):
+                mcp_tools.extend(override_mcp_tools)
+        merged = {}
+        if names:
+            merged["safe_tool_names"] = list(dict.fromkeys(names))
+        if patterns:
+            merged["safe_tool_patterns"] = list(dict.fromkeys(patterns))
+        if mcp_tools:
+            merged["safe_mcp_tools"] = mcp_tools
+        return merged or None
 
     def _format_notification_batch(self, items: list[dict]) -> str:
         """Combine buffered notifications into a single message body,
