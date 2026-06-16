@@ -15,7 +15,6 @@ from agents.run_context import RunContextWrapper
 from omniagents.core.tools import rich_function_tool, RichToolOutput, approval_metadata
 from omniagents.rpc.agents import WorkerManager
 
-
 _WORKER_AGENT_YAML = (
     Path(__file__).resolve().parent.parent / "omni_agents" / "worker" / "agent.yml"
 )
@@ -26,7 +25,7 @@ def _worktrees_dir() -> str:
 
     Lives under the workspace abstraction's framework-owned scratch root
     so it stays outside the user's project files (host: ``~/.omniagents/
-    scratch/worktrees``; sandbox: ``/var/lib/omniagents/scratch/worktrees``).
+    scratch/worktrees``; sandbox: ``/tmp/omniagents/scratch/worktrees``).
     Tools that previously read ``_WORKTREES_DIR`` should call this instead.
     """
     from omniagents import workspace as _ws
@@ -203,9 +202,7 @@ def workers_snapshot(parent_session_id: Optional[str] = None) -> list[dict]:
     return out
 
 
-async def broadcast_workers_snapshot(
-    service, parent_session_id: Optional[str]
-) -> None:
+async def broadcast_workers_snapshot(service, parent_session_id: Optional[str]) -> None:
     """Push the per-session workers snapshot to every connected client of
     ``parent_session_id`` via ``ui.workers.update``. Best-effort: silently
     drops on broadcast failure (the next state change will catch it up).
@@ -580,7 +577,9 @@ async def _create_worker_worktree(
     }
 
 
-def _source_workspace_path(source: dict[str, Any], manifest_root: str | None) -> str | None:
+def _source_workspace_path(
+    source: dict[str, Any], manifest_root: str | None
+) -> str | None:
     kind = source.get("kind")
     if kind in ("local", "local-git"):
         path = source.get("path")
@@ -938,6 +937,7 @@ async def spawn_worker(
     # land in the right session. Reuses bash_tool's canonical accessor
     # for parity with how Job.session_id is captured.
     from tools.bash_tool import _session_id_from_ctx
+
     parent_sid = _session_id_from_ctx(ctx)
 
     await _MANAGER.spawn(
