@@ -232,6 +232,20 @@ def wrap_with_compaction(
     if not config.get("enabled", False):
         return session
 
+    # ``responses.compact`` is a Responses-API-only operation. When the parent
+    # session is explicitly pinned to Chat Completions (``use_responses: false``,
+    # e.g. Fireworks/other compatible backends that don't implement the
+    # Responses API) the wrap would raise "Unsupported model for OpenAI
+    # responses compaction" and fall back anyway — skip it quietly instead of
+    # emitting a warning on every session boot.
+    if model_config and model_config.get("use_responses") is False:
+        logger.debug(
+            "Skipping Responses compaction: model %r uses Chat Completions "
+            "(use_responses=false).",
+            model_config.get("model") or parent_model,
+        )
+        return session
+
     try:
         from agents.memory import OpenAIResponsesCompactionSession
     except Exception as exc:  # pragma: no cover - SDK should always be present

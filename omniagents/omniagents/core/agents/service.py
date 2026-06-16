@@ -2591,12 +2591,22 @@ class AgentService(RpcMethodsBase):
 
                 # Map session_model_config (legacy "provider" key) onto the
                 # build_model_provider shape (keys: type, base_url, api_key).
+                # Carry the transport-shaping keys too — without use_responses
+                # a provider that only speaks Chat Completions (e.g. Fireworks)
+                # would default to the Responses API and POST to a 404 path.
+                # build_model_provider ignores None values, so this is safe for
+                # every provider type.
                 provider_cfg: Optional[Dict[str, Any]] = None
                 if session_model_config and session_model_config.get("provider"):
                     provider_cfg = {
                         "type": session_model_config.get("provider"),
                         "base_url": session_model_config.get("base_url"),
                         "api_key": session_model_config.get("api_key"),
+                        "api_version": session_model_config.get("api_version"),
+                        "use_responses": session_model_config.get("use_responses"),
+                        "use_responses_websocket": session_model_config.get(
+                            "use_responses_websocket"
+                        ),
                     }
                 elif getattr(self.spec, "model_provider_config", None):
                     provider_cfg = self.spec.model_provider_config
