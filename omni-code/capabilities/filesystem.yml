@@ -13,12 +13,12 @@ tools:
   - edit_file
   - apply_patch
 instructions: |
-  Filesystem operations are available:
-  - `read_file` to inspect a file; `read_image` to load a local image into the
-    conversation.
-  - `apply_patch` is preferred for edits to existing files; `write_file` for
-    creating new files; `edit_file` for line-based edits.
-  - For file and text DISCOVERY use the shell, not a file tool: `rg <pattern>`
-    to search contents, `rg --files` (optionally piped to `rg <pattern>`) to
-    find files by name, `ls` to list a directory. These are far faster than any
-    built-in search tool and compose with pipes.
+  Use filesystem tools for targeted file inspection and edits.
+  - Use `read_file` to inspect known files and `read_image` to view images.
+  - Use `apply_patch` for focused edits to existing files, `write_file` for new
+    files, and `edit_file` for line-based edits. Use `apply_patch` exactly;
+    do not try similarly named commands such as `applypatch` or `apply-patch`.
+  - After a file edit tool succeeds, do not re-read the file just to confirm the
+    edit; the tool reports failure if it did not apply.
+  - Use shell discovery commands such as `rg <pattern>`, `rg --files`, and `ls`
+    to find relevant files before reading or editing them.

@@ -2,7 +2,7 @@ name: markdown
 tools:
   - convert_to_markdown
 instructions: |
-  `convert_to_markdown` converts a wide range of file formats (PDF, DOCX,
-  PPTX, XLSX, HTML, ePub, audio with transcription, etc.) into Markdown
-  text. Use after `download_file` to inspect remote documents, or to
-  prepare local artifacts for inline analysis.
+  Use `convert_to_markdown` to inspect rich-format files as Markdown, including
+  PDFs, Word documents, slide decks, spreadsheets, HTML, ePub, and audio with
+  transcription. Use it after `download_file` when you need to read a remote
+  document.

@@ -1,12 +1,6 @@
 name: filesystem_readonly
 tools:
   - read_file
-  - list_directory
-  - glob_files
-  - grep_files
 instructions: |
-  Read-only filesystem inspection. Use `glob_files` to discover files by
-  pattern and `grep_files` to search contents. Prefer `rg`-style queries
-  for text discovery. No write, edit, or patch surface here — agents that
-  need to mutate files should pull in the full `filesystem` capability
-  instead.
+  Use `read_file` to inspect specific files after you have identified relevant
+  paths. Do not modify files.

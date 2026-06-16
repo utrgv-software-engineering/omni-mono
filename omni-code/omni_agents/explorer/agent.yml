@@ -21,8 +21,10 @@ tool_description: |
 
 # Read-only exploration surface. `filesystem_readonly` is intentionally
 # narrower than the full `filesystem` cap — no write/edit/apply_patch.
+# `shell_readonly` gives the explorer fast read-only discovery via rg/git/ls.
 capabilities:
   - filesystem_readonly
+  - shell_readonly
   - notebook_readonly
 
 model_settings:
