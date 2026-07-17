@@ -83,6 +83,7 @@ def _resolve_backend() -> SessionStorageBackend:
                     "OMNIAGENTS_HISTORY_URL to be set."
                 )
             from .storage.postgres import PgSessionStorage
+
             _backend = PgSessionStorage(dsn)
         elif kind == "sqlite":
             _backend = SqliteSessionStorage()
@@ -261,9 +262,14 @@ def list_sessions(
     *,
     project_slug: str | None = None,
     agent_slug: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
 ) -> list[dict]:
     return _resolve_backend().list_sessions(
-        project_slug=project_slug, agent_slug=agent_slug
+        project_slug=project_slug,
+        agent_slug=agent_slug,
+        limit=limit,
+        offset=offset,
     )
 
 

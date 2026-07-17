@@ -46,8 +46,10 @@ class UnifiedAgent(Protocol):
         """
         ...
 
-    async def list_sessions(self) -> List[Dict[str, Any]]:
-        """List available sessions."""
+    async def list_sessions(
+        self, limit: Optional[int] = None, offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """List available sessions, newest-first; ``limit=None`` = all."""
         ...
 
     async def archive_session(self, session_id: str) -> None:

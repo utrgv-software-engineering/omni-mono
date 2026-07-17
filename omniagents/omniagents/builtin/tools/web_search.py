@@ -6,7 +6,7 @@ from omniagents.core.tools import rich_function_tool, RichToolOutput
 from agents.run_context import RunContextWrapper
 
 
-@rich_function_tool(client_status="Searching the web...")
+@rich_function_tool(running_summary="Searching the web...")
 def web_search(
     ctx: RunContextWrapper[Any],
     query: str,

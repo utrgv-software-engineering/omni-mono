@@ -9,6 +9,8 @@ from agents import RunConfig, ItemHelpers
 from agents.run_state import RunState
 from openai.types.responses import ResponseCompletedEvent
 from omniagents.core.agents import mcp_ui
+from omniagents.core.agents.approval import session_allows_mcp_tool, session_allows_tool
+from omniagents.core.agents.mcp_identity import lookup_identity
 from omniagents.core.debug import Debug
 from omniagents.core.tools.artifacts import (
     reset_artifact_callback,
@@ -87,7 +89,22 @@ async def _broadcast(session, method: str, payload: dict) -> bool:  # noqa: D401
 # Event mapping helper ----------------------------------------------------
 
 
-def _stream_event_payload(item, run_id: str, *, session_id: str):
+def _mcp_label_fields(session, public_name) -> dict:
+    """Structured (server, tool) identity fields for MCP-derived tools.
+
+    ``tool`` stays the flat wire name (the call-correlation key); these
+    extra fields let clients display the original tool name and server
+    without parsing the ``mcp_<server>__`` prefix.
+    """
+    if session is None or not isinstance(public_name, str):
+        return {}
+    identity = lookup_identity(session, public_name)
+    if identity is None:
+        return {}
+    return {"server_label": identity[0], "tool_label": identity[1]}
+
+
+def _stream_event_payload(item, run_id: str, *, session_id: str, session=None):
     """Map agent stream *item* into a notification name + payload.
 
     Returns (method_name, payload) or (None, None) if the item shouldn't
@@ -108,6 +125,7 @@ def _stream_event_payload(item, run_id: str, *, session_id: str):
             "tool": name,
             "input": inp.get("arguments", ""),
             **({"call_id": call_id} if call_id else {}),
+            **_mcp_label_fields(session, name),
         }
     elif item.type == "tool_call_output_item":
         # Extract call_id if present on the underlying raw_item / input item
@@ -142,8 +160,12 @@ def _stream_event_payload(item, run_id: str, *, session_id: str):
         # MCP Apps: if the underlying MCP server returned a UI resource we
         # stashed via ``mcp_ui.record`` (see ``core/agents/mcp.py``), attach
         # it here so the host can render the inline UI alongside the
-        # tool result.
-        mcp_ui_payload = mcp_ui.pop(tool_name)
+        # tool result. ``mcp_ui`` records under the *original* MCP tool
+        # name (the call_tool wrapper sees originals), while the stream
+        # carries the prefixed public name — translate via the identity
+        # map before the lookup.
+        label_fields = _mcp_label_fields(session, tool_name)
+        mcp_ui_payload = mcp_ui.pop(label_fields.get("tool_label", tool_name))
         if mcp_ui_payload is not None:
             ui_metadata["display_type"] = "mcp_ui"
             ui_metadata["mcp_ui"] = mcp_ui_payload
@@ -154,6 +176,7 @@ def _stream_event_payload(item, run_id: str, *, session_id: str):
             "tool": tool_name,
             "output": str(output),  # This calls __str__ for RichToolOutput
             **({"call_id": call_id} if call_id else {}),
+            **label_fields,
         }
 
         # Only include metadata if it's not empty
@@ -374,8 +397,6 @@ async def stream_agent(
 
     # Track pending tool calls that need results
     pending_tool_calls = {}
-    # Track tool call statuses we set so we can clear them on completion
-    _status_calls: dict[str, str] = {}
     # Buffer of items streamed in the *current* SDK run iteration.  The SDK
     # persists items to the session via ``save_result_to_session`` at turn
     # boundaries; if the run is cancelled mid-turn (or otherwise raises
@@ -622,6 +643,7 @@ async def stream_agent(
                     item,
                     run_id=asyncio.current_task().get_name(),
                     session_id=session.id,
+                    session=session,
                 )
 
                 # Track tool calls that need results
@@ -629,54 +651,28 @@ async def stream_agent(
                     call_id = payload["call_id"]
                     tool_name = payload.get("tool", "unknown")
                     pending_tool_calls[call_id] = tool_name
-                    # If the tool has a client-status override, emit it as a client_request
+                    # If the tool declares a running summary, attach it to the
+                    # ``tool_called`` payload so clients can title the in-flight
+                    # tool card with human phrasing. The ``tool_result`` metadata
+                    # supersedes it wholesale on completion. (This rides the
+                    # event it describes — per-call, so parallel tool calls
+                    # don't clobber each other the way the old global
+                    # ``ui.set_status`` side-channel did.)
                     try:
                         # Attempt to find a matching tool object on the agent
                         for t in getattr(agent, "tools", []) or []:
                             name = getattr(t, "name", None)
-                            if name == tool_name and hasattr(t, "_client_status_text"):
-                                text = str(getattr(t, "_client_status_text"))
+                            if name == tool_name and hasattr(t, "_running_summary"):
+                                text = str(getattr(t, "_running_summary"))
                                 if text:
-                                    status_payload = {
-                                        "request_id": f"status_{call_id}",
-                                        "function": "ui.set_status",
-                                        "args": {"text": text, "show_spinner": True},
-                                        "run_id": asyncio.current_task().get_name(),
-                                        "session_id": session.id,
-                                    }
-                                    await _broadcast(
-                                        session,
-                                        "client_request",
-                                        status_payload,
-                                    )
-                                    _status_calls[call_id] = text
+                                    payload["metadata"] = {"summary": text}
                                 break
                     except Exception:
                         # Best-effort; ignore if lookup fails
                         pass
                 elif method == "tool_result" and payload.get("call_id"):
                     # Tool got a result, remove from pending
-                    call_id = payload["call_id"]
-                    pending_tool_calls.pop(call_id, None)
-                    # Clear any status override we set for this call
-                    if call_id in _status_calls:
-                        try:
-                            clear_payload = {
-                                "request_id": f"status_clear_{call_id}",
-                                "function": "ui.set_status",
-                                "args": {"text": "", "show_spinner": False},
-                                "run_id": asyncio.current_task().get_name(),
-                                "session_id": session.id,
-                            }
-                            await _broadcast(
-                                session,
-                                "client_request",
-                                clear_payload,
-                            )
-                        except Exception:
-                            pass
-                        finally:
-                            _status_calls.pop(call_id, None)
+                    pending_tool_calls.pop(payload["call_id"], None)
 
                 if method:
                     delivered = await _broadcast(session, method, payload)
@@ -851,6 +847,21 @@ async def stream_agent(
                     )
                     continue
                 tool_name = item.tool_name or getattr(raw, "name", None) or "tool"
+                # The SDK evaluated ``needs_approval`` for every parallel
+                # call in this batch before the first prompt was answered.
+                # An "Always" on an earlier item lands in the session's
+                # allow-set mid-batch — re-check here so the remaining
+                # same-tool interruptions approve without prompting. MCP
+                # grants are tuple-keyed by (server, tool); everything
+                # else keys on the flat name.
+                mcp_identity = lookup_identity(session, tool_name)
+                if (
+                    session_allows_mcp_tool(session, *mcp_identity)
+                    if mcp_identity is not None
+                    else session_allows_tool(session, tool_name)
+                ):
+                    state.approve(item, always_approve=False)
+                    continue
                 arguments = getattr(raw, "arguments", None)
                 response = await service.request_tool_approval(
                     session=session,

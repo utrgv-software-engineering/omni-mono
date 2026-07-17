@@ -11,7 +11,7 @@ from omniagents.builtin.tools._workspace import require_workspace_root
 from omniagents.core.tools import RichToolOutput, approval_metadata, rich_function_tool
 
 
-@rich_function_tool(client_status="Downloading file...")
+@rich_function_tool(running_summary="Downloading file...")
 async def download_file(
     ctx: RunContextWrapper[Any],
     url: str,

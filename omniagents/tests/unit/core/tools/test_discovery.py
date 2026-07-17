@@ -28,23 +28,23 @@ def reset_approval_registry():
 
 
 def test_function_tool_marks_sync_function():
-    tool = discovery.function_tool(client_status="Running")(lambda name: f"hi {name}")
+    tool = discovery.function_tool(running_summary="Running")(lambda name: f"hi {name}")
     assert getattr(tool, "_is_omniagents_core_tool", False) is True
-    assert getattr(tool, "_client_status_text", None) == "Running"
+    assert getattr(tool, "_running_summary", None) == "Running"
     # SDK 0.16+ handles sync->async natively via asyncio.to_thread; the
     # original function is captured for direct invocation (used by training).
     assert getattr(tool, "_original_func", None) is not None
     assert tool._original_func("Ada") == "hi Ada"
 
 
-def test_function_tool_client_status_str_error():
+def test_function_tool_running_summary_str_error():
     class FailingStr:
         def __str__(self):
             raise RuntimeError("no string")
 
-    tool = discovery.function_tool(client_status=FailingStr())(lambda: "ok")
+    tool = discovery.function_tool(running_summary=FailingStr())(lambda: "ok")
     assert getattr(tool, "_is_omniagents_core_tool", False) is True
-    assert not hasattr(tool, "_client_status_text")
+    assert not hasattr(tool, "_running_summary")
 
 
 def test_rich_function_tool_sets_rich_marker():

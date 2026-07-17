@@ -85,6 +85,24 @@ def test_list_sessions_includes_timestamped_messages():
     assert isinstance(last["timestamp"], str)
 
 
+def test_list_sessions_limit_and_offset_page_newest_first():
+    manager = make_manager()
+    for i in range(3):
+        session = manager.get_or_create()
+        session.append_message({"role": "user", "content": f"m{i}"})
+
+    everything = manager.list_sessions()
+    assert len(everything) == 3
+
+    page1 = manager.list_sessions(limit=2)
+    page2 = manager.list_sessions(limit=2, offset=2)
+    assert [e["id"] for e in page1] == [e["id"] for e in everything[:2]]
+    assert [e["id"] for e in page2] == [e["id"] for e in everything[2:]]
+
+    # Paging past the end is empty, not an error.
+    assert manager.list_sessions(limit=2, offset=10) == []
+
+
 def test_get_user_messages_filters_archived_sessions():
     manager = make_manager()
     archived = manager.get_or_create()
@@ -196,25 +214,58 @@ def test_filter_history_for_api_handles_parallel_function_calls_after_reasoning(
 
     result = filter_history_for_api(history)
 
-    # Expected order: user, reasoning, message, fc_1, fc_2, fc_3, output1, output2, output3
+    # Calls come DIRECTLY after their reasoning; the message trails the
+    # group (live API probe 2026-07-07: msg-between-rs-and-calls is 400'd).
+    # Expected: user, reasoning, fc_1, fc_2, fc_3, out1, out2, out3, message
     assert len(result) == 9
     assert result[0]["role"] == "user"
     assert result[1]["type"] == "reasoning"
     assert result[1]["id"] == "rs_123"
-    assert result[2]["type"] == "message"
-    assert result[2]["id"] == "msg_1"
+    assert result[2]["type"] == "function_call"
+    assert result[2]["id"] == "fc_1"
     assert result[3]["type"] == "function_call"
-    assert result[3]["id"] == "fc_1"
+    assert result[3]["id"] == "fc_2"
     assert result[4]["type"] == "function_call"
-    assert result[4]["id"] == "fc_2"
-    assert result[5]["type"] == "function_call"
-    assert result[5]["id"] == "fc_3"
+    assert result[4]["id"] == "fc_3"
+    assert result[5]["type"] == "function_call_output"
+    assert result[5]["call_id"] == "fc_1"
     assert result[6]["type"] == "function_call_output"
-    assert result[6]["call_id"] == "fc_1"
+    assert result[6]["call_id"] == "fc_2"
     assert result[7]["type"] == "function_call_output"
-    assert result[7]["call_id"] == "fc_2"
-    assert result[8]["type"] == "function_call_output"
-    assert result[8]["call_id"] == "fc_3"
+    assert result[7]["call_id"] == "fc_3"
+    assert result[8]["type"] == "message"
+    assert result[8]["id"] == "msg_1"
+
+
+def test_filter_history_for_api_never_pairs_injected_assistant_with_reasoning():
+    """An id-less assistant item (a notification/wakeup appended by
+    ``start_run(prompt_role="assistant")``) that follows a tool-call turn
+    with NO model message must not be reordered into the reasoning group:
+    that moved it between the reasoning and its function_call and the API
+    rejected the call ("function_call ... without its required 'reasoning'
+    item"). The group is treated as orphaned instead (reasoning dropped,
+    synthetic call ids) and the injected item stays in place."""
+    injected = {
+        "type": "message",
+        "role": "assistant",
+        "content": "[wakeup] It is 08:30. Your watering is done.",
+    }
+    history = [
+        {"role": "user", "content": "start the day"},
+        {"type": "reasoning", "id": "rs_1", "summary": []},
+        {"type": "function_call", "id": "fc_1", "call_id": "c_1", "name": "harvest"},
+        {"type": "function_call_output", "call_id": "c_1", "output": "done"},
+        injected,
+    ]
+
+    result = filter_history_for_api(history)
+
+    types = [item.get("type", "message") for item in result]
+    assert "reasoning" not in types  # orphaned group: reasoning dropped
+    fc = next(item for item in result if item.get("type") == "function_call")
+    assert fc["id"].startswith("fc_synth_")  # no dangling rs linkage
+    # the injected item was not consumed into the group and keeps its place
+    assert result[-1] == injected
 
 
 def test_filter_history_for_api_handles_reasoning_with_single_function_call():
@@ -229,9 +280,9 @@ def test_filter_history_for_api_handles_reasoning_with_single_function_call():
 
     assert len(result) == 4
     assert result[0]["type"] == "reasoning"
-    assert result[1]["type"] == "message"
-    assert result[2]["type"] == "function_call"
-    assert result[3]["type"] == "function_call_output"
+    assert result[1]["type"] == "function_call"
+    assert result[2]["type"] == "function_call_output"
+    assert result[3]["type"] == "message"
 
 
 def test_filter_history_for_api_handles_reasoning_without_function_calls():
@@ -272,12 +323,13 @@ def test_filter_history_for_api_handles_multiple_reasoning_groups():
 
     result = filter_history_for_api(history)
 
-    # rs_1 paired with msg_1; rs_2 orphaned (no message) -> synthesised.
+    # rs_1 paired with msg_1 (message trails the calls); rs_2 orphaned
+    # (no message) -> synthesised.
     assert len(result) == 6
     assert result[0]["id"] == "rs_1"
-    assert result[1]["id"] == "msg_1"
-    assert result[2]["id"] == "fc_1"
-    assert result[3]["call_id"] == "call_1"
+    assert result[1]["id"] == "fc_1"
+    assert result[2]["call_id"] == "call_1"
+    assert result[3]["id"] == "msg_1"
     assert result[4]["type"] == "function_call"
     assert result[4]["id"].startswith("fc_synth_")
     assert result[4]["name"] == "tool2"
@@ -351,18 +403,27 @@ def test_filter_history_for_api_interleaved_calls_and_outputs():
 
     result = filter_history_for_api(history)
 
+    # msg_1 belongs to rs_2 (every API response opens with its own
+    # reasoning item). It must NOT be stolen backwards into rs_1's group:
+    # doing so detaches it from rs_2 and wedges it between rs_1 and the
+    # calls — the API rejects that with "function_call ... without its
+    # required 'reasoning' item". rs_1's group has no message of its own,
+    # so it takes the orphan path: reasoning dropped, synthetic call ids.
     fc_items = [r for r in result if r.get("type") == "function_call"]
     assert len(fc_items) == 3
+    assert all(fc["id"].startswith("fc_synth_") for fc in fc_items)
 
     out_items = [r for r in result if r.get("type") == "function_call_output"]
     assert len(out_items) == 3
+    assert {o["call_id"] for o in out_items} == {fc["call_id"] for fc in fc_items}
 
-    msg_idx = next(i for i, r in enumerate(result) if r.get("type") == "message")
-    first_fc_idx = next(
+    rs2_idx = next(i for i, r in enumerate(result) if r.get("id") == "rs_2")
+    msg_idx = next(i for i, r in enumerate(result) if r.get("id") == "msg_1")
+    assert msg_idx == rs2_idx + 1  # rs_2 keeps ITS message adjacent
+    last_fc_idx = max(
         i for i, r in enumerate(result) if r.get("type") == "function_call"
     )
-    assert msg_idx < first_fc_idx
-    assert result[-1].get("type") != "message"
+    assert last_fc_idx < rs2_idx
 
 
 def test_filter_history_for_api_interleaved_single_reasoning_group():
@@ -389,16 +450,16 @@ def test_filter_history_for_api_interleaved_single_reasoning_group():
 
     assert len(result) == 6
     assert result[0]["type"] == "reasoning"
-    assert result[1]["type"] == "message"
-    assert result[1]["id"] == "msg_1"
+    assert result[1]["type"] == "function_call"
+    assert result[1]["call_id"] == "call_1"
     assert result[2]["type"] == "function_call"
-    assert result[2]["call_id"] == "call_1"
-    assert result[3]["type"] == "function_call"
-    assert result[3]["call_id"] == "call_2"
+    assert result[2]["call_id"] == "call_2"
+    assert result[3]["type"] == "function_call_output"
+    assert result[3]["call_id"] == "call_1"
     assert result[4]["type"] == "function_call_output"
-    assert result[4]["call_id"] == "call_1"
-    assert result[5]["type"] == "function_call_output"
-    assert result[5]["call_id"] == "call_2"
+    assert result[4]["call_id"] == "call_2"
+    assert result[5]["type"] == "message"
+    assert result[5]["id"] == "msg_1"
 
 
 def test_filter_history_for_api_interleaved_multi_turn():
@@ -456,16 +517,29 @@ def test_filter_history_for_api_interleaved_multi_turn():
 
     result = filter_history_for_api(history)
 
-    msg_preamble_idx = next(
-        i for i, r in enumerate(result) if r.get("id") == "msg_preamble"
-    )
-    spawn_indices = [
-        i
+    # msg_preamble belongs to rs_2, not to rs_1's spawn group — the group's
+    # message search stops at the next reasoning item. The spawn calls lose
+    # their (never-messaged) reasoning group and become synthetic; rs_2
+    # keeps its preamble adjacent; rs_3's same-turn group stays intact.
+    spawns = [
+        (i, r)
         for i, r in enumerate(result)
         if r.get("type") == "function_call" and r.get("name") == "spawn_worker"
     ]
-    assert all(msg_preamble_idx < si for si in spawn_indices)
-    assert len(spawn_indices) == 3
+    assert len(spawns) == 3
+    assert all(r["id"].startswith("fc_synth_") for _, r in spawns)
+
+    rs2_idx = next(i for i, r in enumerate(result) if r.get("id") == "rs_2")
+    preamble_idx = next(
+        i for i, r in enumerate(result) if r.get("id") == "msg_preamble"
+    )
+    assert preamble_idx == rs2_idx + 1
+    assert all(i < rs2_idx for i, _ in spawns)
+
+    rs3_idx = next(i for i, r in enumerate(result) if r.get("id") == "rs_3")
+    assert result[rs3_idx + 1].get("id") == "fc_4"  # calls right after reasoning
+    assert result[rs3_idx + 2].get("call_id") == "call_4"
+    assert result[rs3_idx + 3].get("id") == "msg_final"  # message trails
 
 
 def test_filter_history_for_api_mixed_interleaved_and_grouped():
@@ -492,16 +566,16 @@ def test_filter_history_for_api_mixed_interleaved_and_grouped():
 
     assert len(result) == 6
     assert result[0]["type"] == "reasoning"
-    assert result[1]["type"] == "message"
-    assert result[1]["id"] == "msg_1"
+    assert result[1]["type"] == "function_call"
+    assert result[1]["call_id"] == "call_1"
     assert result[2]["type"] == "function_call"
-    assert result[2]["call_id"] == "call_1"
-    assert result[3]["type"] == "function_call"
-    assert result[3]["call_id"] == "call_2"
+    assert result[2]["call_id"] == "call_2"
+    assert result[3]["type"] == "function_call_output"
+    assert result[3]["call_id"] == "call_1"
     assert result[4]["type"] == "function_call_output"
-    assert result[4]["call_id"] == "call_1"
-    assert result[5]["type"] == "function_call_output"
-    assert result[5]["call_id"] == "call_2"
+    assert result[4]["call_id"] == "call_2"
+    assert result[5]["type"] == "message"
+    assert result[5]["id"] == "msg_1"
 
 
 def test_filter_history_for_api_interleaved_orphaned_no_message():
@@ -567,10 +641,10 @@ def test_filter_history_for_api_interleaved_stale_output_not_consumed():
     assert "call_stale" in out_call_ids
 
     msg_idx = next(i for i, r in enumerate(result) if r.get("type") == "message")
-    first_fc_idx = next(
+    last_fc_idx = max(
         i for i, r in enumerate(result) if r.get("type") == "function_call"
     )
-    assert msg_idx < first_fc_idx
+    assert msg_idx > last_fc_idx  # message trails its group's calls
 
 
 def test_filter_history_for_api_trailing_reasoning_without_message():
@@ -612,9 +686,9 @@ def test_filter_history_for_api_single_interleaved_call():
 
     assert len(result) == 4
     assert result[0]["type"] == "reasoning"
-    assert result[1]["type"] == "message"
-    assert result[2]["type"] == "function_call"
-    assert result[3]["type"] == "function_call_output"
+    assert result[1]["type"] == "function_call"
+    assert result[2]["type"] == "function_call_output"
+    assert result[3]["type"] == "message"
 
 
 def test_filter_history_for_api_reasoning_message_before_function_call():
@@ -640,14 +714,56 @@ def test_filter_history_for_api_reasoning_message_before_function_call():
 
     result = filter_history_for_api(history)
 
+    # Even when the message was PERSISTED before the calls, replay must put
+    # the calls directly after the reasoning (live API probe: a message
+    # between rs and fc is rejected).
     assert len(result) == 6
     assert result[0]["role"] == "user"
     assert result[1]["type"] == "reasoning"
-    assert result[2]["type"] == "message"
-    assert result[3]["type"] == "function_call"
-    assert result[3]["id"] == "fc_abc"
-    assert result[4]["type"] == "function_call_output"
+    assert result[2]["type"] == "function_call"
+    assert result[2]["id"] == "fc_abc"
+    assert result[3]["type"] == "function_call_output"
+    assert result[4]["type"] == "message"
     assert result[5]["role"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_add_items_normalizes_assistant_input_text_parts_in_place():
+    """Write-side twin of the strip normalization: the SDK compaction
+    wrapper caches the very dicts passed to add_items as compaction
+    candidates, so the fix must mutate them in place or responses.compact
+    still receives input_text parts on assistant messages."""
+    from omniagents.core.session.manager import Session
+
+    sess = Session(project_slug=None, agent_slug=None)
+    item = {
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "input_text", "text": "wakeup"}],
+    }
+    await sess.add_items([item])
+    assert item["content"][0]["type"] == "output_text"  # caller's dict fixed
+    assert sess.history[-1]["content"][0]["type"] == "output_text"
+
+
+def test_strip_internal_keys_for_api_normalizes_assistant_input_text_parts():
+    """An assistant message re-persisted in converted input form (string
+    content expanded to input_text parts after a cancelled run re-flushed
+    its buffer) must replay as output_text — the API rejects input_text
+    parts on assistant messages."""
+    items = [
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "input_text", "text": "## TIME\nDay 1"}],
+        }
+    ]
+
+    result = strip_internal_keys_for_api(items)
+    part = result[0]["content"][0]
+    assert part["type"] == "output_text"
+    assert part["annotations"] == []
+    assert part["text"] == "## TIME\nDay 1"
 
 
 def test_strip_internal_keys_for_api_drops_phase_and_omniagents():
@@ -711,7 +827,8 @@ async def test_session_get_items_applies_filter_and_strip(monkeypatch):
     sess = Session(project_slug=None, agent_slug=None)
     sess.history = [
         {"role": "user", "content": "hi"},
-        # Wrong order from streaming; filter must move msg before fc.
+        # Streaming order persisted mid-group; filter keeps calls directly
+        # after the reasoning and trails the message after the outputs.
         {"type": "reasoning", "id": "rs_1", "summary": [], "status": "completed"},
         {
             "type": "function_call",
@@ -742,11 +859,11 @@ async def test_session_get_items_applies_filter_and_strip(monkeypatch):
     assert types_in_order == [
         "user",
         "reasoning",
-        "message",
         "function_call",
         "function_call_output",
+        "message",
     ]
-    msg = items[2]
+    msg = items[4]
     assert "phase" not in msg
     assert "omniagents" not in msg
     assert "status" not in msg

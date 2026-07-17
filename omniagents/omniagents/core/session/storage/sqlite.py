@@ -120,8 +120,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         "ON history(session_id, id)"
     )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_sessions_created_at "
-        "ON sessions(created_at)"
+        "CREATE INDEX IF NOT EXISTS idx_sessions_created_at " "ON sessions(created_at)"
     )
     conn.commit()
 
@@ -447,9 +446,7 @@ class SqliteSessionStorage(SessionStorageBackend):
                 raise ValueError(
                     f"Session {session_id} is under legal hold and cannot be deleted"
                 )
-            conn.execute(
-                "DELETE FROM audio_metadata WHERE session_id=?", (session_id,)
-            )
+            conn.execute("DELETE FROM audio_metadata WHERE session_id=?", (session_id,))
             conn.execute("DELETE FROM history WHERE session_id=?", (session_id,))
             conn.execute("DELETE FROM sessions WHERE session_id=?", (session_id,))
             conn.commit()
@@ -464,6 +461,8 @@ class SqliteSessionStorage(SessionStorageBackend):
         *,
         project_slug: str | None = None,
         agent_slug: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[dict]:
         t0 = time.perf_counter()
         conn, lock = self._get_store(project_slug, agent_slug)
@@ -488,10 +487,16 @@ class SqliteSessionStorage(SessionStorageBackend):
             LEFT JOIN bounds b ON b.session_id = s.session_id
             LEFT JOIN history fh ON fh.id = b.first_id
             LEFT JOIN history lh ON lh.id = b.last_id
-            ORDER BY s.created_at DESC
+            ORDER BY s.created_at DESC, s.session_id DESC
         """
+        params: list = []
+        if limit is not None:
+            # created_at is second-precision here — the session_id tiebreaker
+            # keeps the ordering total so pages never overlap or skip.
+            query += " LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
         with lock:
-            rows = conn.execute(query).fetchall()
+            rows = conn.execute(query, params).fetchall()
 
         result: list[dict] = []
         for (

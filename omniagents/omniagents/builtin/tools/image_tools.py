@@ -7,7 +7,7 @@ from agents.run_context import RunContextWrapper
 from agents.tool import ToolOutputText, ToolOutputImage
 
 
-@function_tool(client_status="Loading image...")
+@function_tool(running_summary="Loading image...")
 async def read_image(
     ctx: RunContextWrapper[Any],
     image_path: str,

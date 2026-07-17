@@ -75,6 +75,41 @@ class QueuedItem:
 # ---------------------------------------------------------------------
 
 
+def _normalize_assistant_message_parts_inplace(item: dict) -> None:
+    """Assistant messages must carry output parts, never ``input_text``.
+
+    The SDK persists a run's converted INPUT items after cancelled runs
+    (string content expanded to ``input_text`` parts); both ``responses``
+    and ``responses.compact`` reject that shape on assistant messages with
+    "Invalid value: 'input_text'. Supported values are: 'output_text' and
+    'refusal'." Mutates *item* so callers holding the same dict (e.g. the
+    SDK compaction wrapper's candidate cache) see the legal form too.
+    """
+    if not isinstance(item, dict) or item.get("role") != "assistant":
+        return
+    content = item.get("content")
+    if not isinstance(content, list):
+        return
+    for part in content:
+        if isinstance(part, dict) and part.get("type") == "input_text":
+            part["type"] = "output_text"
+            part.setdefault("annotations", [])
+
+
+def _is_model_output_message(item: dict) -> bool:
+    """Only messages the MODEL produced may pair with a reasoning item.
+
+    Model output messages carry a ``msg_*`` id from the Responses API.
+    Injected assistant items (notification batches, wakeups — appended by
+    ``start_run(prompt_role="assistant")`` with no id) must never be
+    reordered into a reasoning group: moving one between a reasoning item
+    and its function_call breaks the id linkage and the API rejects the
+    call with "function_call ... without its required 'reasoning' item".
+    """
+    msg_id = item.get("id")
+    return isinstance(msg_id, str) and msg_id.startswith("msg_")
+
+
 def filter_history_for_api(history: list[dict]) -> list[dict]:
     """Reorder history items to match OpenAI API requirements.
 
@@ -131,22 +166,22 @@ def filter_history_for_api(history: list[dict]) -> list[dict]:
                 else:
                     break
 
-            # A second reasoning may sit between the last output and the
-            # message (the model emitted reasoning before the preamble text).
-            # Skip over it so we can still find the paired message.
-            trailing_reasoning = None
+            # Find the message that pairs with this reasoning — it must be
+            # model output (msg_* id), not an injected assistant item that
+            # merely happens to come next in history. The search never
+            # crosses a subsequent reasoning item: every API response opens
+            # with its own reasoning, so a message beyond the next rs_*
+            # belongs to THAT turn. Stealing it (the old "trailing
+            # reasoning" skip) detached the stolen message from its own
+            # reasoning and wedged it between this group's reasoning and
+            # function_calls — the API then rejects the calls with
+            # "function_call ... without its required 'reasoning' item".
+            message = None
             if (
                 j < len(history)
-                and history[j].get("type") == "reasoning"
-                and j + 1 < len(history)
-                and history[j + 1].get("type") == "message"
+                and history[j].get("type") == "message"
+                and _is_model_output_message(history[j])
             ):
-                trailing_reasoning = history[j]
-                j += 1
-
-            # Find the message that pairs with this reasoning
-            message = None
-            if j < len(history) and history[j].get("type") == "message":
                 message = history[j]
                 j += 1
 
@@ -213,11 +248,17 @@ def filter_history_for_api(history: list[dict]) -> list[dict]:
             reordered.extend(unmatched_interleaved)
 
             if message:
-                # Valid reasoning group: reorder to reasoning → message → function_calls → outputs
+                # Valid reasoning group. The Responses API requires the
+                # function_calls DIRECTLY after their reasoning item; the
+                # message comes after the group (probed live 2026-07-07:
+                # ``rs, fc, out, msg`` is accepted, ``rs, msg, fc, out`` is
+                # rejected with "function_call ... without its required
+                # 'reasoning' item" — the old msg-before-calls order this
+                # helper used to produce).
                 reordered.append(reasoning)
-                reordered.append(message)
                 reordered.extend(function_calls)
                 reordered.extend(outputs)
+                reordered.append(message)
             elif function_calls:
                 # Orphaned reasoning (no message): drop reasoning but preserve tool calls
                 # Azure rejects reasoning without messages AND rejects synthetic messages,
@@ -309,7 +350,57 @@ def filter_history_for_api(history: list[dict]) -> list[dict]:
             reordered.append(item)
             i += 1
 
-    return reordered
+    return _synthesize_unanchored_calls(reordered)
+
+
+def _synthesize_unanchored_calls(items: list[dict]) -> list[dict]:
+    """Rewrite real-id function_calls that lost their reasoning anchor.
+
+    The Responses API rejects an ``fc_*`` input item whose reasoning item
+    is not adjacent ("function_call ... without its required 'reasoning'
+    item"). History can legitimately contain such calls — the reasoning
+    was never persisted (interrupted run, legacy rows) or the group was
+    reshaped above. Give them synthetic ids (and re-point their outputs)
+    so the replay is self-contained, matching the orphaned-reasoning
+    treatment in the group handler."""
+    out: list[dict] = []
+    remap: dict[str, str] = {}
+    for n, item in enumerate(items):
+        item_type = item.get("type")
+        if item_type == "function_call":
+            fc_id = str(item.get("id", ""))
+            if fc_id.startswith("fc_") and not fc_id.startswith("fc_synth_"):
+                # Anchored = the call block directly follows its reasoning
+                # item (outputs may interleave between parallel calls). A
+                # message between reasoning and calls is NOT valid — the
+                # API rejects it (probed live; see the group emit above).
+                k = n
+                while k > 0 and items[k - 1].get("type") in (
+                    "function_call",
+                    "function_call_output",
+                ):
+                    k -= 1
+                prev = items[k - 1] if k > 0 else {}
+                anchored = prev.get("type") == "reasoning"
+                if not anchored:
+                    frag = fc_id[3:]
+                    synth = dict(item)
+                    synth["id"] = f"fc_synth_{frag}"
+                    call_id = item.get("call_id")
+                    if call_id:
+                        remap[call_id] = f"call_synth_{frag}"
+                        synth["call_id"] = remap[call_id]
+                    out.append(synth)
+                    continue
+        elif item_type and str(item_type).endswith("_call_output"):
+            call_id = item.get("call_id")
+            if call_id in remap:
+                repointed = dict(item)
+                repointed["call_id"] = remap[call_id]
+                out.append(repointed)
+                continue
+        out.append(item)
+    return out
 
 
 _STATUS_STRIP_TYPES = frozenset(
@@ -369,6 +460,45 @@ def strip_internal_keys_for_api(items: list[dict]) -> list[dict]:
             # Ensure summary exists (API needs at least an empty list)
             if "summary" not in copied:
                 copied["summary"] = []
+        # Assistant messages must carry output parts. A message the SDK
+        # re-persisted in converted INPUT form (string content expanded to
+        # ``input_text`` parts — seen after cancelled runs re-flushed their
+        # input buffer) is rejected on replay with "Invalid value:
+        # 'input_text'. Supported values are: 'output_text' and 'refusal'."
+        if copied.get("role") == "assistant" and isinstance(
+            copied.get("content"), list
+        ):
+            fixed_parts = []
+            changed = False
+            for part in copied["content"]:
+                if isinstance(part, dict) and part.get("type") == "input_text":
+                    part = {**part, "type": "output_text"}
+                    part.setdefault("annotations", [])
+                    changed = True
+                fixed_parts.append(part)
+            if changed:
+                copied["content"] = fixed_parts
+        # Same rejection, one step earlier: an injected assistant item
+        # stored with bare STRING content (notification/wakeup appends
+        # before start_run switched to typed parts) gets coerced to
+        # input_text parts by the SDK's input conversion before
+        # ``responses.compact`` sees it. Convert to explicit output parts
+        # here so the SDK passes it through untouched. Model messages are
+        # already parts-form; user strings stay strings (input_text is
+        # correct for them).
+        elif (
+            copied.get("role") == "assistant"
+            and copied.get("type") == "message"
+            and not copied.get("id")
+            and isinstance(copied.get("content"), str)
+        ):
+            copied["content"] = [
+                {
+                    "type": "output_text",
+                    "text": copied["content"],
+                    "annotations": [],
+                }
+            ]
         # Strip id from orphaned message items whose reasoning was lost.
         # This happens when history was saved before the reasoning-strip
         # fix: the reasoning item was dropped but the message kept its id,
@@ -729,6 +859,12 @@ class Session:  # noqa: D101
     async def add_items(self, items: list[dict]) -> None:
         """SDK Session protocol: append items to the conversation."""
         for item in items:
+            # Normalize IN PLACE (not on a copy): callers such as the SDK's
+            # compaction wrapper keep references to these very dicts in
+            # their candidate cache, and ``responses.compact`` rejects
+            # assistant messages with ``input_text`` parts — the converted
+            # input form the bridge re-flushes after a cancelled run.
+            _normalize_assistant_message_parts_inplace(item)
             # Reuse the sync append_message so existing persistence + repair
             # logic stays the single source of truth.
             self.append_message(item)
@@ -985,10 +1121,15 @@ class SessionManager:  # noqa: D101
         )
         return True
 
-    def list_sessions(self) -> list[dict]:  # noqa: D401
-        """Return metadata for all known sessions."""
+    def list_sessions(
+        self, *, limit: int | None = None, offset: int = 0
+    ) -> list[dict]:  # noqa: D401
+        """Return session metadata, newest-first; ``limit=None`` = all."""
         return db_list_sessions(
-            project_slug=self._project_slug, agent_slug=self._agent_slug
+            project_slug=self._project_slug,
+            agent_slug=self._agent_slug,
+            limit=limit,
+            offset=offset,
         )
 
     def persist_metadata(

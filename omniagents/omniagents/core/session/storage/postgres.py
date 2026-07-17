@@ -219,9 +219,7 @@ class PgSessionStorage(SessionStorageBackend):
             ) from e
 
         self._dsn = dsn
-        self._tenant_id = tenant_id or os.getenv(
-            "OMNIAGENTS_TENANT_ID", DEFAULT_TENANT
-        )
+        self._tenant_id = tenant_id or os.getenv("OMNIAGENTS_TENANT_ID", DEFAULT_TENANT)
         self._pool = ConnectionPool(
             conninfo=dsn,
             min_size=min_size,
@@ -605,43 +603,52 @@ class PgSessionStorage(SessionStorageBackend):
         *,
         project_slug: str | None = None,
         agent_slug: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[dict]:
         t0 = time.perf_counter()
         ps, ags = _slugs(project_slug, agent_slug)
         # Same CTE shape as SQLite — single query, first/last message join.
+        query = """
+            WITH bounds AS (
+                SELECT session_id,
+                       MIN(id) AS first_id,
+                       MAX(id) AS last_id,
+                       COUNT(*) AS message_count
+                FROM history
+                WHERE tenant_id = %s AND project_slug = %s AND agent_slug = %s
+                GROUP BY session_id
+            )
+            SELECT s.session_id,
+                   s.archived,
+                   s.created_at,
+                   COALESCE(b.message_count, 0) AS message_count,
+                   fh.msg AS first_msg,
+                   fh.created_at AS first_at,
+                   lh.msg AS last_msg,
+                   lh.created_at AS last_at
+            FROM sessions s
+            LEFT JOIN bounds b ON b.session_id = s.session_id
+            LEFT JOIN history fh ON fh.id = b.first_id
+            LEFT JOIN history lh ON lh.id = b.last_id
+            WHERE s.tenant_id = %s AND s.project_slug = %s AND s.agent_slug = %s
+            ORDER BY s.created_at DESC, s.session_id DESC
+        """
+        if limit is not None:
+            query += " LIMIT %s OFFSET %s"
         with self._conn() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    WITH bounds AS (
-                        SELECT session_id,
-                               MIN(id) AS first_id,
-                               MAX(id) AS last_id,
-                               COUNT(*) AS message_count
-                        FROM history
-                        WHERE tenant_id = %s AND project_slug = %s AND agent_slug = %s
-                        GROUP BY session_id
-                    )
-                    SELECT s.session_id,
-                           s.archived,
-                           s.created_at,
-                           COALESCE(b.message_count, 0) AS message_count,
-                           fh.msg AS first_msg,
-                           fh.created_at AS first_at,
-                           lh.msg AS last_msg,
-                           lh.created_at AS last_at
-                    FROM sessions s
-                    LEFT JOIN bounds b ON b.session_id = s.session_id
-                    LEFT JOIN history fh ON fh.id = b.first_id
-                    LEFT JOIN history lh ON lh.id = b.last_id
-                    WHERE s.tenant_id = %s AND s.project_slug = %s AND s.agent_slug = %s
-                    ORDER BY s.created_at DESC
-                    """,
-                    (
-                        conn.tenant_id, ps, ags,
-                        conn.tenant_id, ps, ags,
-                    ),
+                params: tuple = (
+                    conn.tenant_id,
+                    ps,
+                    ags,
+                    conn.tenant_id,
+                    ps,
+                    ags,
                 )
+                if limit is not None:
+                    params += (limit, offset)
+                cur.execute(query, params)
                 rows = cur.fetchall()
 
         result: list[dict] = []
@@ -824,9 +831,16 @@ class PgSessionStorage(SessionStorageBackend):
                     RETURNING id
                     """,
                     (
-                        conn.tenant_id, ps, ags, session_id,
-                        message_id, item_id, content_index, file_path,
-                        audio_format, duration_ms,
+                        conn.tenant_id,
+                        ps,
+                        ags,
+                        session_id,
+                        message_id,
+                        item_id,
+                        content_index,
+                        file_path,
+                        audio_format,
+                        duration_ms,
                     ),
                 )
                 row_id = cur.fetchone()[0]

@@ -145,7 +145,7 @@ def test_stream_event_payload_handles_input_error(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_stream_agent_emits_usage_and_status_overrides(monkeypatch):
+async def test_stream_agent_emits_usage_and_running_summary(monkeypatch):
     monkeypatch.setattr(bridge.Debug, "enabled", classmethod(lambda cls: False))
     monkeypatch.setattr(
         bridge,
@@ -254,7 +254,7 @@ async def test_stream_agent_emits_usage_and_status_overrides(monkeypatch):
     class DummyTool:
         def __init__(self):
             self.name = "alpha"
-            self._client_status_text = "Running"
+            self._running_summary = "Running"
 
     class DummyAgent:
         def __init__(self):
@@ -284,11 +284,13 @@ async def test_stream_agent_emits_usage_and_status_overrides(monkeypatch):
     assert live.calls[0][0] == "token"
     run_id = live.calls[0][1]["run_id"]
     assert run_id
-    assert any(call[0] == "client_request" for call in live.calls)
-    assert live.calls[2][0] == "tool_called"
-    assert live.calls[3][1]["request_id"] == "status_clear_call-1"
-    assert live.calls[4][0] == "tool_result"
-    assert live.calls[5][0] == "message_output"
+    # Running summary rides the tool_called payload — no ui.set_status
+    # side-channel broadcasts for tool statuses anymore.
+    assert not any(call[0] == "client_request" for call in live.calls)
+    assert live.calls[1][0] == "tool_called"
+    assert live.calls[1][1]["metadata"] == {"summary": "Running"}
+    assert live.calls[2][0] == "tool_result"
+    assert live.calls[3][0] == "message_output"
     assert result["usage"]["input_tokens"] == 10
     assert result["model"] == "model-x"
     assert result["max_output_tokens"] == 50
@@ -591,90 +593,6 @@ async def test_stream_agent_ignores_tool_lookup_errors(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_stream_agent_handles_status_clear_failure(monkeypatch):
-    monkeypatch.setattr(bridge.Debug, "enabled", classmethod(lambda cls: False))
-    monkeypatch.setattr(
-        bridge,
-        "ItemHelpers",
-        types.SimpleNamespace(text_message_output=lambda item: ""),
-    )
-
-    class FakeRunConfig:
-        def __init__(self, **kwargs):
-            pass
-
-    monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
-
-    tool_call_item = types.SimpleNamespace(
-        type="tool_call_item",
-        to_input_item=lambda: {
-            "name": "alpha",
-            "arguments": "{}",
-            "call_id": "call-clear",
-        },
-    )
-
-    tool_result_item = types.SimpleNamespace(
-        type="tool_call_output_item",
-        name="alpha",
-        output="done",
-        to_input_item=lambda: {"call_id": "call-clear"},
-    )
-
-    events = [
-        types.SimpleNamespace(type="run_item_stream_event", item=tool_call_item),
-        types.SimpleNamespace(type="run_item_stream_event", item=tool_result_item),
-    ]
-
-    class FakeRunResult:
-        def __init__(self, events):
-            self._events = events
-
-        async def stream_events(self):
-            for event in self._events:
-                yield event
-
-    class FakeRunner:
-        @classmethod
-        def run_streamed(cls, *args, **kwargs):
-            return FakeRunResult(events)
-
-    monkeypatch.setattr("agents.Runner", FakeRunner)
-
-    calls = []
-
-    async def flaky_broadcast(session_arg, method, payload):
-        calls.append((method, payload))
-        if method == "client_request" and payload.get("request_id", "").startswith(
-            "status_clear"
-        ):
-            raise RuntimeError("fail")
-        return True
-
-    monkeypatch.setattr(bridge, "_broadcast", flaky_broadcast)
-
-    class DummyAgent:
-        def __init__(self):
-            self.name = "Agent"
-            self.instructions = "inst"
-            self.tools = [
-                types.SimpleNamespace(name="alpha", _client_status_text="Busy")
-            ]
-            self.model = None
-            self.model_settings = None
-
-    agent = DummyAgent()
-    session = DummySession(channels=[DummyChannel()], session_id="status")
-
-    result = await bridge.stream_agent(agent, "prompt", session, rpc_channel=None)
-
-    assert calls[0][0] == "client_request"
-    assert calls[-1][0] == "tool_result"
-    assert result["usage"]["total_tokens"] == 0
-
-
-@pytest.mark.asyncio
 async def test_buffering_orders_message_before_tool_calls(monkeypatch):
     monkeypatch.setattr(bridge.Debug, "enabled", classmethod(lambda cls: False))
     monkeypatch.setattr(
@@ -751,7 +669,7 @@ async def test_buffering_orders_message_before_tool_calls(monkeypatch):
     class DummyTool:
         def __init__(self):
             self.name = "alpha"
-            self._client_status_text = "Running"
+            self._running_summary = "Running"
 
     class DummyAgent:
         def __init__(self):
@@ -765,8 +683,8 @@ async def test_buffering_orders_message_before_tool_calls(monkeypatch):
 
     await bridge.stream_agent(agent, "ask", session, rpc_channel=None)
 
-    assert broadcasts[0][0] == "client_request"
-    assert broadcasts[1][0] == "tool_called"
+    assert broadcasts[0][0] == "tool_called"
+    assert broadcasts[0][1]["metadata"] == {"summary": "Running"}
     assert any(m == "message_output" for m, _ in broadcasts)
 
 
@@ -1047,7 +965,7 @@ async def test_no_buffering_without_reasoning(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_buffers_client_status_events_until_preamble(monkeypatch):
+async def test_running_summary_rides_tool_called_through_buffering(monkeypatch):
     monkeypatch.setattr(bridge.Debug, "enabled", classmethod(lambda cls: False))
     monkeypatch.setattr(
         bridge,
@@ -1123,7 +1041,7 @@ async def test_buffers_client_status_events_until_preamble(monkeypatch):
     class DummyTool:
         def __init__(self):
             self.name = "alpha"
-            self._client_status_text = "Busy"
+            self._running_summary = "Busy"
 
     class DummyAgent:
         def __init__(self):
@@ -1137,9 +1055,309 @@ async def test_buffers_client_status_events_until_preamble(monkeypatch):
 
     await bridge.stream_agent(agent, "ask", session, rpc_channel=None)
 
-    assert calls[0][0] == "client_request"
+    assert not any(m == "client_request" for m, _ in calls)
+    tool_payloads = [p for m, p in calls if m == "tool_called"]
+    assert tool_payloads and tool_payloads[0]["metadata"] == {"summary": "Busy"}
     assert any(m == "message_output" for m, _ in calls)
-    assert any(
-        m == "client_request" and p.get("request_id", "").startswith("status_")
-        for m, p in calls
+
+
+@pytest.mark.asyncio
+async def test_always_approve_covers_parallel_interruptions(monkeypatch):
+    """An "Always" on the first of N parallel same-tool approvals must
+    silently approve the remaining N-1 interruptions in the batch instead
+    of prompting for each one."""
+    monkeypatch.setattr(bridge.Debug, "enabled", classmethod(lambda cls: False))
+    monkeypatch.setattr(
+        bridge,
+        "ItemHelpers",
+        types.SimpleNamespace(text_message_output=lambda item: ""),
     )
+
+    class FakeRunConfig:
+        def __init__(self, **kwargs):
+            pass
+
+    monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
+    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
+
+    def make_interruption(call_id):
+        return types.SimpleNamespace(
+            tool_name="execute_bash",
+            raw_item=types.SimpleNamespace(
+                call_id=call_id, name="execute_bash", arguments="{}"
+            ),
+        )
+
+    class FakeState:
+        def __init__(self):
+            self.approved = []
+            self.rejected = []
+
+        def approve(self, item, always_approve=False):
+            self.approved.append(item.raw_item.call_id)
+
+        def reject(self, item, rejection_message=None):
+            self.rejected.append(item.raw_item.call_id)
+
+    state = FakeState()
+
+    class FirstRunResult:
+        interruptions = [make_interruption(f"c{i}") for i in range(1, 5)]
+
+        async def stream_events(self):
+            return
+            yield
+
+        def to_state(self):
+            return state
+
+    class SecondRunResult:
+        interruptions = []
+
+        async def stream_events(self):
+            return
+            yield
+
+    results = [FirstRunResult(), SecondRunResult()]
+
+    class FakeRunner:
+        @classmethod
+        def run_streamed(cls, *args, **kwargs):
+            return results.pop(0)
+
+    monkeypatch.setattr("agents.Runner", FakeRunner)
+
+    session = DummySession(channels=[], session_id="par-approve")
+
+    prompts = []
+
+    async def fake_request_tool_approval(
+        *, session, call_id, tool_name, arguments, run_id=None
+    ):
+        prompts.append(call_id)
+        # Mimic the user clicking "Always": tool_approval_response adds the
+        # tool to the session's allow-set before resolving the future.
+        session.always_allow_tools = {"execute_bash"}
+        return {
+            "decision": "approve",
+            "always_approve": True,
+            "rejection_message": None,
+        }
+
+    service = types.SimpleNamespace(request_tool_approval=fake_request_tool_approval)
+
+    class DummyAgent:
+        def __init__(self):
+            self.name = "Agent"
+            self.instructions = "inst"
+            self.tools = []
+            self.model = None
+            self.model_settings = None
+
+    await bridge.stream_agent(
+        DummyAgent(), "run 4 commands", session, rpc_channel=None, service=service
+    )
+
+    # Only the first parallel call prompted; the "Always" covered the rest.
+    assert prompts == ["c1"]
+    assert state.approved == ["c1", "c2", "c3", "c4"]
+    assert state.rejected == []
+
+
+def test_stream_event_payload_mcp_identity_labels(monkeypatch):
+    """MCP-derived calls carry server_label/tool_label; plain tools don't."""
+    monkeypatch.setattr(
+        bridge,
+        "ItemHelpers",
+        types.SimpleNamespace(text_message_output=lambda item: ""),
+    )
+    session = types.SimpleNamespace(
+        mcp_tool_identities={"mcp_srv__hello": ("srv", "hello")}
+    )
+
+    mcp_call = types.SimpleNamespace(
+        type="tool_call_item",
+        to_input_item=lambda: {"name": "mcp_srv__hello", "arguments": "{}", "call_id": "c1"},
+    )
+    method, payload = bridge._stream_event_payload(
+        mcp_call, "run-1", session_id="s1", session=session
+    )
+    assert method == "tool_called"
+    assert payload["tool"] == "mcp_srv__hello"
+    assert payload["server_label"] == "srv"
+    assert payload["tool_label"] == "hello"
+
+    plain_call = types.SimpleNamespace(
+        type="tool_call_item",
+        to_input_item=lambda: {"name": "read_file", "arguments": "{}", "call_id": "c2"},
+    )
+    _, plain_payload = bridge._stream_event_payload(
+        plain_call, "run-1", session_id="s1", session=session
+    )
+    assert "server_label" not in plain_payload
+    assert "tool_label" not in plain_payload
+
+    mcp_result = types.SimpleNamespace(
+        type="tool_call_output_item",
+        name="mcp_srv__hello",
+        output="done",
+        to_input_item=lambda: {"call_id": "c1"},
+    )
+    method2, result_payload = bridge._stream_event_payload(
+        mcp_result, "run-1", session_id="s1", session=session
+    )
+    assert method2 == "tool_result"
+    assert result_payload["server_label"] == "srv"
+    assert result_payload["tool_label"] == "hello"
+
+
+def test_stream_event_payload_translates_mcp_ui_key(monkeypatch):
+    """mcp_ui records under the ORIGINAL tool name; the bridge must pop it
+    even though the stream carries the prefixed public name."""
+    from omniagents.core.agents import mcp_ui
+
+    monkeypatch.setattr(
+        bridge,
+        "ItemHelpers",
+        types.SimpleNamespace(text_message_output=lambda item: ""),
+    )
+    mcp_ui.reset()
+    try:
+        mcp_ui.record(
+            "srv",
+            "hello",
+            {"type": "resource", "resource": {"uri": "ui://x", "text": "<div/>"}},
+        )
+        session = types.SimpleNamespace(
+            mcp_tool_identities={"mcp_srv__hello": ("srv", "hello")}
+        )
+        item = types.SimpleNamespace(
+            type="tool_call_output_item",
+            name="mcp_srv__hello",
+            output="ok",
+            to_input_item=lambda: {"call_id": "c1"},
+        )
+        _, payload = bridge._stream_event_payload(
+            item, "run-1", session_id="s1", session=session
+        )
+        assert payload["metadata"]["display_type"] == "mcp_ui"
+        assert payload["metadata"]["mcp_ui"]["server_name"] == "srv"
+    finally:
+        mcp_ui.reset()
+
+
+@pytest.mark.asyncio
+async def test_always_approve_mcp_batch_is_tuple_scoped(monkeypatch):
+    """Always on the first of N parallel MCP interruptions covers the rest of
+    the SAME (server, tool); a same-named tool on another server still asks."""
+    monkeypatch.setattr(bridge.Debug, "enabled", classmethod(lambda cls: False))
+    monkeypatch.setattr(
+        bridge,
+        "ItemHelpers",
+        types.SimpleNamespace(text_message_output=lambda item: ""),
+    )
+
+    class FakeRunConfig:
+        def __init__(self, **kwargs):
+            pass
+
+    monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
+    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
+
+    def make_interruption(call_id, public_name):
+        return types.SimpleNamespace(
+            tool_name=public_name,
+            raw_item=types.SimpleNamespace(
+                call_id=call_id, name=public_name, arguments="{}"
+            ),
+        )
+
+    class FakeState:
+        def __init__(self):
+            self.approved = []
+            self.rejected = []
+
+        def approve(self, item, always_approve=False):
+            self.approved.append(item.raw_item.call_id)
+
+        def reject(self, item, rejection_message=None):
+            self.rejected.append(item.raw_item.call_id)
+
+    state = FakeState()
+
+    class FirstRunResult:
+        interruptions = [
+            make_interruption("c1", "mcp_alpha__do_thing"),
+            make_interruption("c2", "mcp_alpha__do_thing"),
+            make_interruption("c3", "mcp_alpha__do_thing"),
+            make_interruption("c4", "mcp_beta__do_thing"),
+        ]
+
+        async def stream_events(self):
+            return
+            yield
+
+        def to_state(self):
+            return state
+
+    class SecondRunResult:
+        interruptions = []
+
+        async def stream_events(self):
+            return
+            yield
+
+    results = [FirstRunResult(), SecondRunResult()]
+
+    class FakeRunner:
+        @classmethod
+        def run_streamed(cls, *args, **kwargs):
+            return results.pop(0)
+
+    monkeypatch.setattr("agents.Runner", FakeRunner)
+
+    session = DummySession(channels=[], session_id="mcp-batch")
+    session.mcp_tool_identities = {
+        "mcp_alpha__do_thing": ("alpha", "do_thing"),
+        "mcp_beta__do_thing": ("beta", "do_thing"),
+    }
+
+    prompts = []
+
+    async def fake_request_tool_approval(
+        *, session, call_id, tool_name, arguments, run_id=None
+    ):
+        prompts.append(tool_name)
+        # Mimic "Always": the response handler adds the (server, tool)
+        # tuple resolved from the identity map to the tuple set.
+        identity = session.mcp_tool_identities[tool_name]
+        allow = getattr(session, "always_allow_mcp_tools", None)
+        if allow is None:
+            allow = set()
+            session.always_allow_mcp_tools = allow
+        allow.add(identity)
+        return {
+            "decision": "approve",
+            "always_approve": True,
+            "rejection_message": None,
+        }
+
+    service = types.SimpleNamespace(request_tool_approval=fake_request_tool_approval)
+
+    class DummyAgent:
+        def __init__(self):
+            self.name = "Agent"
+            self.instructions = "inst"
+            self.tools = []
+            self.model = None
+            self.model_settings = None
+
+    await bridge.stream_agent(
+        DummyAgent(), "run things", session, rpc_channel=None, service=service
+    )
+
+    # alpha prompted once (covering c2/c3); beta's same-named tool prompted
+    # separately — the grant is tuple-scoped, not name-scoped.
+    assert prompts == ["mcp_alpha__do_thing", "mcp_beta__do_thing"]
+    assert state.approved == ["c1", "c2", "c3", "c4"]
+    assert state.rejected == []

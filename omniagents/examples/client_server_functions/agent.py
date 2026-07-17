@@ -30,7 +30,7 @@ def get_current_time() -> str:
 
 
 # Demonstrates Client Functions: override the TUI status line while this tool runs
-@function_tool(client_status="Flipping coin...")
+@function_tool(running_summary="Flipping coin...")
 def flip_coin() -> str:
     """Return the result of a coin flip (after a short delay)."""
     # Simulate work so you can see the status override in the Bubble Tea UI

@@ -82,7 +82,7 @@ def _truncate_long_lines(
     return "\n".join(result_lines), truncated_count
 
 
-@rich_function_tool(client_status="Running shell command...")
+@rich_function_tool(running_summary="Running shell command...")
 async def execute_bash(
     ctx: RunContextWrapper[Any],
     command: str,

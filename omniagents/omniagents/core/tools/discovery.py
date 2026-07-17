@@ -59,17 +59,19 @@ def function_tool(func: Callable = None, **kwargs) -> FunctionTool:
     """
 
     def decorator(f):
-        client_status = kwargs.pop("client_status", None)
+        running_summary = kwargs.pop("running_summary", None)
         tool = original_function_tool(f, **kwargs)
 
         # Add our marker attribute
         setattr(tool, "_is_omniagents_core_tool", True)
         # Store original function for direct invocation (used by TRL/GRPO training)
         setattr(tool, "_original_func", f)
-        # Attach optional client status text for UIs that support it
-        if client_status:
+        # Optional human phrasing for the in-flight tool call — emitted as
+        # ``metadata.summary`` on the ``tool_called`` event so UIs can title
+        # the running card (the result's own summary supersedes it).
+        if running_summary:
             try:
-                setattr(tool, "_client_status_text", str(client_status))
+                setattr(tool, "_running_summary", str(running_summary))
             except Exception:
                 pass
         return tool
@@ -99,16 +101,16 @@ def rich_function_tool(func: Callable = None, **kwargs) -> FunctionTool:
     """
 
     def decorator(f):
-        client_status = kwargs.pop("client_status", None)
+        running_summary = kwargs.pop("running_summary", None)
         tool = original_function_tool(f, **kwargs)
 
         setattr(tool, "_is_omniagents_core_tool", True)
         setattr(tool, "_is_rich_tool", True)
         # Store original function for direct invocation (used by TRL/GRPO training)
         setattr(tool, "_original_func", f)
-        if client_status:
+        if running_summary:
             try:
-                setattr(tool, "_client_status_text", str(client_status))
+                setattr(tool, "_running_summary", str(running_summary))
             except Exception:
                 pass
         return tool

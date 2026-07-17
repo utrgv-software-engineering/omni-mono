@@ -79,8 +79,7 @@ class SessionStorageBackend(ABC):
         *,
         project_slug: str | None = None,
         agent_slug: str | None = None,
-    ) -> bool:
-        ...
+    ) -> bool: ...
 
     # ------------------------------------------------------------------
     # Conversation history
@@ -104,8 +103,7 @@ class SessionStorageBackend(ABC):
         *,
         project_slug: str | None = None,
         agent_slug: str | None = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     # ------------------------------------------------------------------
     # Session lifecycle + metadata
@@ -152,8 +150,7 @@ class SessionStorageBackend(ABC):
         *,
         project_slug: str | None = None,
         agent_slug: str | None = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     @abstractmethod
     def get_archived(
@@ -162,8 +159,7 @@ class SessionStorageBackend(ABC):
         *,
         project_slug: str | None = None,
         agent_slug: str | None = None,
-    ) -> bool:
-        ...
+    ) -> bool: ...
 
     @abstractmethod
     def delete_session(
@@ -187,8 +183,14 @@ class SessionStorageBackend(ABC):
         *,
         project_slug: str | None = None,
         agent_slug: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[dict]:
-        """Return all sessions with a trimmed first/last-message preview."""
+        """Sessions (newest-first) with a trimmed first/last-message preview.
+
+        ``limit``/``offset`` page the newest-first ordering; ``limit=None``
+        returns everything (the historical behavior).
+        """
 
     @abstractmethod
     def get_user_messages(
@@ -213,8 +215,7 @@ class SessionStorageBackend(ABC):
         *,
         project_slug: str | None = None,
         agent_slug: str | None = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     @abstractmethod
     def list_sessions_for_user(
@@ -223,8 +224,7 @@ class SessionStorageBackend(ABC):
         *,
         project_slug: str | None = None,
         agent_slug: str | None = None,
-    ) -> list[dict]:
-        ...
+    ) -> list[dict]: ...
 
     # ------------------------------------------------------------------
     # Audio metadata (voice/realtime agents)
@@ -253,8 +253,7 @@ class SessionStorageBackend(ABC):
         *,
         project_slug: str | None = None,
         agent_slug: str | None = None,
-    ) -> list[dict]:
-        ...
+    ) -> list[dict]: ...
 
     @abstractmethod
     def get_audio_metadata_by_item(
@@ -264,8 +263,7 @@ class SessionStorageBackend(ABC):
         *,
         project_slug: str | None = None,
         agent_slug: str | None = None,
-    ) -> Optional[dict]:
-        ...
+    ) -> Optional[dict]: ...
 
     @abstractmethod
     def delete_audio_metadata(
@@ -274,5 +272,4 @@ class SessionStorageBackend(ABC):
         *,
         project_slug: str | None = None,
         agent_slug: str | None = None,
-    ) -> int:
-        ...
+    ) -> int: ...

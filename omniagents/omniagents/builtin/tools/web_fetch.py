@@ -11,7 +11,7 @@ _WEB_FETCH_DEFAULT_TIMEOUT = 10
 _WEB_FETCH_MAX_LINKS = 100
 
 
-@rich_function_tool(client_status="Fetching URL...")
+@rich_function_tool(running_summary="Fetching URL...")
 def web_fetch(
     ctx: RunContextWrapper[Any],
     url: str,

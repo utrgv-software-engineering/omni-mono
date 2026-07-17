@@ -8,7 +8,7 @@ swaps when a ``SandboxAgent`` run starts. Non-sandbox runs default to
 
     from omniagents.workspace import read_text, write_text, exec
 
-    @rich_function_tool(client_status="Reading file...")
+    @rich_function_tool(running_summary="Reading file...")
     async def read_file(path: str) -> str:
         return await read_text(path)
 

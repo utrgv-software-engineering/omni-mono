@@ -158,10 +158,19 @@ class RemoteAgent(UnifiedAgentBase):
         """
         return self._last_run_end
 
-    async def list_sessions(self) -> List[Dict[str, Any]]:
-        """Fetch list of session metadata from the server."""
+    async def list_sessions(
+        self, limit: Optional[int] = None, offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """Fetch session metadata (newest-first) from the server.
+
+        ``limit=None`` fetches everything and omits the params entirely, so
+        the call stays compatible with servers that predate pagination.
+        """
         await self._ensure_client()
-        resp = await self._client.other.list_sessions()
+        if limit is None:
+            resp = await self._client.other.list_sessions()
+        else:
+            resp = await self._client.other.list_sessions(limit=limit, offset=offset)
         return getattr(resp, "result", resp)
 
     async def archive_session(self, session_id: str) -> None:

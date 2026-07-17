@@ -148,6 +148,24 @@ class ExtendedDockerSandboxSession(DockerSandboxSession, PtyStreamingSession):
         if self._idle_threshold_s and self._idle_threshold_s > 0:
             self.start_idle_watcher(self._idle_threshold_s)
 
+    async def _shutdown_backend(self) -> None:
+        # The SDK's version calls ``container.stop()`` with docker's default
+        # 10s SIGTERM grace — but PID 1 is ``tail -f /dev/null`` (see the
+        # client's ``_create_container``), which as PID 1 ignores SIGTERM, so
+        # every shutdown burns the full grace before the SIGKILL. By the time
+        # this runs the container is disposable (the workspace snapshot is
+        # already persisted), so use a 1s grace and let docker kill it.
+        try:
+            self._container.reload()
+        except Exception:
+            pass
+        try:
+            if await self.running():
+                self._container.stop(timeout=1)
+        except Exception:
+            # Already gone/stopped — same tolerance as the SDK base.
+            pass
+
     async def notify_activity(self) -> None:
         """External presence ping. Resets the idle timer (and auto-unpauses
         if paused) without going through a wrapped method. Used by clients
@@ -280,6 +298,17 @@ class ExtendedDockerSandboxSession(DockerSandboxSession, PtyStreamingSession):
             raise
 
     async def _do_pause(self, *, idle_for: float) -> None:
+        # Checkpoint the workspace snapshot BEFORE freezing — exec hangs on a
+        # paused container, and idle is the natural quiet point to tar. This
+        # makes graceful teardown no longer the *only* persistence point: an
+        # ungraceful death afterwards (SIGKILL, crash, power loss) loses at
+        # most the work since this checkpoint. Noop-snapshot configurations
+        # return immediately. Best-effort — a failed checkpoint must not
+        # block the pause.
+        try:
+            await self._persist_snapshot()
+        except Exception as exc:
+            _idle_log.warning("[idle] checkpoint snapshot failed: %s", exc)
         await self.pause()
         self._idle_paused = True
         self._idle_paused_at = time.monotonic()

@@ -6,7 +6,7 @@ from omniagents.core.tools import rich_function_tool, RichToolOutput
 from agents.run_context import RunContextWrapper
 
 
-@rich_function_tool(client_status="Searching YouTube...")
+@rich_function_tool(running_summary="Searching YouTube...")
 def youtube_search(
     ctx: RunContextWrapper[Any],
     query: str,

@@ -42,7 +42,7 @@ def client_function_tool(
     name: str | None = None,
     expect_result: bool = False,
     timeout_seconds: float | None = None,
-    client_status: str | None = None,
+    running_summary: str | None = None,
 ):
     """Decorate a tool declaration to dispatch via ``request_client_function``.
 
@@ -63,8 +63,9 @@ def client_function_tool(
         timeout_seconds: Wall-clock timeout for ``expect_result=True``.
             None means wait forever (until the client responds or the run
             is cancelled).
-        client_status: Optional UI status string shown while the tool is
-            in flight (proxied through ``function_tool``).
+        running_summary: Optional human phrasing for the in-flight tool
+            call, shown as the tool card's title while it runs (proxied
+            through ``function_tool``).
     """
 
     def decorator(f: Callable):
@@ -140,8 +141,8 @@ def client_function_tool(
         _wrapper.__signature__ = sig  # type: ignore[attr-defined]
 
         ft_kwargs: dict = {}
-        if client_status:
-            ft_kwargs["client_status"] = client_status
+        if running_summary:
+            ft_kwargs["running_summary"] = running_summary
         tool = function_tool(_wrapper, **ft_kwargs)
         try:
             setattr(tool, "_is_client_function_tool", True)

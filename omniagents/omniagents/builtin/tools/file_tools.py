@@ -185,7 +185,7 @@ async def _ws_is_binary_file(path: str) -> bool:
         return False
 
 
-@rich_function_tool(client_status="Finding matching files...")
+@rich_function_tool(running_summary="Finding matching files...")
 async def glob_files(
     ctx: RunContextWrapper[Any],
     pattern: str,
@@ -411,7 +411,7 @@ _GREP_MAX_FILE_LIMIT = 2000
 _GREP_DEFAULT_TIMEOUT = 30
 
 
-@rich_function_tool(client_status="Searching file contents...")
+@rich_function_tool(running_summary="Searching file contents...")
 async def grep_files(
     ctx: RunContextWrapper[Any],
     pattern: str,
@@ -836,7 +836,7 @@ async def _collect_entries_with_depth(
     return entries
 
 
-@rich_function_tool(client_status="Listing directory...")
+@rich_function_tool(running_summary="Listing directory...")
 async def list_directory(
     ctx: RunContextWrapper[Any],
     path: str,
@@ -1194,7 +1194,7 @@ def _read_file_indentation_mode(
     return [(idx + 1, all_lines[idx]) for idx in result_indices], truncated
 
 
-@rich_function_tool(client_status="Reading file...")
+@rich_function_tool(running_summary="Reading file...")
 async def read_file(
     ctx: RunContextWrapper[Any],
     file_path: str,
@@ -1466,7 +1466,7 @@ async def read_file(
         return RichToolOutput(llm_output, ui_metadata)
 
 
-@rich_function_tool(client_status="Applying edits...")
+@rich_function_tool(running_summary="Applying edits...")
 async def edit_file(
     ctx: RunContextWrapper[Any],
     file_path: str,
@@ -1714,7 +1714,7 @@ async def edit_file(
         return RichToolOutput(llm_output, ui_metadata)
 
 
-@rich_function_tool(client_status="Writing file...")
+@rich_function_tool(running_summary="Writing file...")
 async def write_file(
     ctx: RunContextWrapper[Any], file_path: str, content: str, append: Optional[bool]
 ) -> RichToolOutput:
@@ -2599,7 +2599,7 @@ def apply_patch_approval(
         }
 
 
-@rich_function_tool(client_status="Applying patch...")
+@rich_function_tool(running_summary="Applying patch...")
 async def apply_patch(
     ctx: RunContextWrapper[Any],
     patch: str,

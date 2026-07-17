@@ -457,3 +457,30 @@ async def test_session_ensure_sets_workspace_root_and_persists():
     restored = new_service._session_manager.get_or_create(session_id)
     assert restored.context["workspace_root"] == "/workspace"
     assert restored.variables["workspace_root"] == "/workspace"
+
+
+@pytest.mark.asyncio
+async def test_tool_approval_always_routes_mcp_tuple_to_mcp_allowlist():
+    """Always-approving an MCP-derived call lands the (server, tool) tuple in
+    ``always_allow_mcp_tools``; plain tools keep landing in the flat set."""
+    service = build_service()
+    sess = types.SimpleNamespace(id="s1", channels=[])
+
+    # MCP-derived call: tracker holds the identity tuple.
+    fut = asyncio.get_event_loop().create_future()
+    sess._pending_approval_tool_names = {"call-mcp": ("omni-projects", "create_ticket")}
+    service._pending_tool_approvals["call-mcp"] = (fut, sess)
+    ok = await service.tool_approval_response("call-mcp", "approve", always_approve=True)
+    assert ok is True
+    assert ("omni-projects", "create_ticket") in sess.always_allow_mcp_tools
+    assert not getattr(sess, "always_allow_tools", None)
+    assert (await fut)["decision"] == "approve"
+
+    # Plain function tool: tracker holds the bare name.
+    fut2 = asyncio.get_event_loop().create_future()
+    sess._pending_approval_tool_names["call-fn"] = "execute_bash"
+    service._pending_tool_approvals["call-fn"] = (fut2, sess)
+    ok2 = await service.tool_approval_response("call-fn", "approve", always_approve=True)
+    assert ok2 is True
+    assert "execute_bash" in sess.always_allow_tools
+    assert ("omni-projects", "create_ticket") in sess.always_allow_mcp_tools

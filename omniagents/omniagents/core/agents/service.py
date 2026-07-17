@@ -1760,13 +1760,19 @@ class AgentService(RpcMethodsBase):
         fut, sess = entry
 
         if decision == "approve" and always_approve:
-            allow_set = getattr(sess, "always_allow_tools", None)
-            if allow_set is None:
-                allow_set = set()
-                setattr(sess, "always_allow_tools", allow_set)
-            tool_name = getattr(sess, "_pending_approval_tool_names", {}).get(call_id)
-            if tool_name:
-                allow_set.add(tool_name)
+            tool_ref = getattr(sess, "_pending_approval_tool_names", {}).get(call_id)
+            if isinstance(tool_ref, tuple):
+                # MCP-derived tool: grant is keyed by (server, tool) so a
+                # same-named tool on a different server still prompts.
+                self._session_mcp_allowlist(sess).add(
+                    (str(tool_ref[0]).strip(), str(tool_ref[1]).strip())
+                )
+            elif tool_ref:
+                allow_set = getattr(sess, "always_allow_tools", None)
+                if allow_set is None:
+                    allow_set = set()
+                    setattr(sess, "always_allow_tools", allow_set)
+                allow_set.add(tool_ref)
 
         if not fut.done():
             fut.set_result(
@@ -2037,20 +2043,30 @@ class AgentService(RpcMethodsBase):
         if metadata:
             payload["metadata"] = metadata
 
+        # (server, tool) identity: MCP-derived tools carry structured
+        # identity alongside the flat wire name so clients can display
+        # the original name + server without parsing the prefix.
+        from omniagents.core.agents.mcp_identity import lookup_identity
+
+        mcp_identity = lookup_identity(session, tool_name)
+        if mcp_identity is not None:
+            payload["server_label"], payload["tool_label"] = mcp_identity
+
         if Debug.enabled():
             logger.debug(
                 f"  → tool_approval_requested call_id={call_id}"
                 f" tool={tool_name} session={session.id} run_id={run_id}"
             )
 
-        # Track the tool name so the response handler can update the
-        # always-allow set without re-deriving it.
+        # Track the tool identity so the response handler can update the
+        # right always-allow set without re-deriving it: the (server, tool)
+        # tuple for MCP-derived tools, the bare name for everything else.
         try:
             tracker = getattr(session, "_pending_approval_tool_names", None)
             if tracker is None:
                 tracker = {}
                 setattr(session, "_pending_approval_tool_names", tracker)
-            tracker[call_id] = tool_name
+            tracker[call_id] = mcp_identity if mcp_identity is not None else tool_name
         except Exception:
             pass
 
@@ -2442,8 +2458,17 @@ class AgentService(RpcMethodsBase):
         # triggering a run.
         _resume_from_history = prompt_role != "user"
         if _resume_from_history:
+            # Store assistant-role items with EXPLICIT output parts. Bare
+            # string content gets coerced to ``input_text`` parts by the
+            # SDK's input conversion, and ``responses.compact`` rejects
+            # assistant items with input_text ("Invalid value: 'input_text'.
+            # Supported values are: 'output_text' and 'refusal'." — probed
+            # live 2026-07-07). Already-typed parts pass through untouched.
+            content: Any = prompt
+            if prompt_role == "assistant":
+                content = [{"type": "output_text", "text": prompt, "annotations": []}]
             sess.append_message(
-                {"role": prompt_role, "content": prompt, "type": "message"}
+                {"role": prompt_role, "content": content, "type": "message"}
             )
 
         async def _worker():
@@ -3015,10 +3040,19 @@ class AgentService(RpcMethodsBase):
             pass
         return {"session_id": sess.id, "new_session_id": new_sess.id}
 
-    async def list_sessions(self) -> list[dict]:  # noqa: D401
-        """Return metadata for all sessions."""
-        result = self._session_manager.list_sessions()
-        _debug_rpc("list_sessions", {"result": result})
+    async def list_sessions(
+        self, limit: int | None = None, offset: int = 0
+    ) -> list[dict]:  # noqa: D401
+        """Return session metadata, newest-first.
+
+        ``limit``/``offset`` page the listing; omitting them returns
+        everything (the historical behavior, kept for old clients).
+        """
+        result = self._session_manager.list_sessions(limit=limit, offset=offset)
+        _debug_rpc(
+            "list_sessions",
+            {"limit": limit, "offset": offset, "count": len(result)},
+        )
         return result
 
     async def get_agent_info(self) -> dict:  # noqa: D401

@@ -216,7 +216,7 @@ def _apply_tool_timeouts(tools: List[Any], timeouts: Dict[str, Any]) -> List[Any
         for attr in (
             "_is_omniagents_core_tool",
             "_original_func",
-            "_client_status_text",
+            "_running_summary",
         ):
             if hasattr(tool, attr):
                 setattr(timed_tool, attr, getattr(tool, attr))
@@ -591,7 +591,13 @@ async def _default_build_agent(
     output_guardrails = spec.output_guardrails
 
     # MCP config - merge spec config with any defaults
-    mcp_config = spec.mcp_config if spec.mcp_config else {}
+    mcp_config = dict(spec.mcp_config) if spec.mcp_config else {}
+    # (server, tool) identity: MCP tools get deterministic prefixed public
+    # names (``mcp_<server>__<tool>``) so flat names never collide across
+    # servers and the wire name is a pure serialization of the tuple. Specs
+    # may opt out explicitly.
+    if mcp_servers_list and "include_server_in_tool_names" not in mcp_config:
+        mcp_config["include_server_in_tool_names"] = True
 
     # Handle output_type with AgentOutputSchema if needed
     if output_type is not None:
