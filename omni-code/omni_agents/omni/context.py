@@ -111,6 +111,13 @@ set_loop_prompt_builders(
 set_loop_default_prompt_resolver(resolve_default_loop_prompt)
 _install_workers_runtime()
 
+# Slash commands executed by the builtin `dispatch` tool (slash pack).
+from omniagents.core.tools import register_slash_command  # noqa: E402
+
+from omni_code.init_command import run_init_agent  # noqa: E402
+
+register_slash_command("init", lambda _arg=None: run_init_agent())
+
 
 def _discover_skill_dirs(skill_roots: List[Path]) -> List[Path]:
     try:

@@ -88,30 +88,16 @@ server_functions:
   - reasoning
   - terminal.create
   - terminal.close
-  - bash_jobs.list
-  - bash_jobs.kill
-  - bash_jobs.tail
-  - bj-list
-  - bj-kill
-  - bj-logs
   - fs_get_cwd
   - fs_get_workspace_root
   - fs_get_sources
   - fs_get_home
   - fs_list_dir
   - session_ensure
-  - goal
-  - goal.stop
-  - goal.status
-  - wakeup.stop
-  - wakeup.status
-  - loop
-  - loop.status
-  - loop.stop
-  - loop.clear
-  - cron.create
-  - cron.list
-  - cron.delete
+  # The goal/loop/cron/wakeup/bash-jobs server functions are NOT listed
+  # here: they are carried by the builtin capability packs this agent
+  # already activates (goal, loop, wakeup, shell) and register through
+  # the capability-gated path.
   - sandbox.pause
   - sandbox.unpause
   - sandbox.notify_activity

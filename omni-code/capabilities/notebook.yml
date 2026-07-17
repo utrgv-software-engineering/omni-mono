@@ -1,9 +1,0 @@
-name: notebook
-tools:
-  - read_notebook
-  - edit_notebook
-instructions: |
-  Jupyter notebook (.ipynb) operations:
-  - `read_notebook` returns all cells with outputs.
-  - `edit_notebook` applies cell-level edits (insert, delete, replace, or
-    update source / outputs of an existing cell).

@@ -1413,13 +1413,23 @@ async def _serve(args: argparse.Namespace) -> int:
     else:
         _install_session_terminal_manager(app, session, profile.terminal)
 
-    # Idle auto-recap: a watcher that fires a session recap once a
-    # conversation has gone quiet (>=3min since the last completed turn,
-    # >=3 turns deep, never twice without fresh activity in between).
-    # Stashed on app.state for teardown + future inspection.
-    from omni_code.recap_scheduler import RecapScheduler
+    # Idle auto-recap: fire a session recap once a conversation has gone
+    # quiet (>=3min since the last completed turn, >=3 turns deep, never
+    # twice without fresh activity in between). The idle-watcher machinery
+    # is the framework's; the recap action is omni-code's. Stashed on
+    # app.state for teardown + future inspection.
+    from omniagents.core.autonomy import IdleTrigger, IdleTriggerScheduler
+    from server_functions.recap import generate_and_broadcast_recap
 
-    recap_scheduler = RecapScheduler(app.state.agent_service)
+    recap_scheduler = IdleTriggerScheduler(app.state.agent_service)
+    recap_scheduler.register(
+        IdleTrigger(
+            name="recap",
+            action=generate_and_broadcast_recap,
+            idle_seconds=180.0,
+            min_turns=3,
+        )
+    )
     app.state.recap_scheduler = recap_scheduler
     await recap_scheduler.start()
 

@@ -31,21 +31,16 @@ from omniagents.core.runtime import run_agent_once
 from omni_code.utility_runs import _build_model_provider
 from omniagents.core.paths import get_sessions_db_path
 from omniagents.core.session import list_sessions, load_history
+from omniagents.core.session.cli import (
+    coerce_limit as _coerce_limit,
+    dump_json as _dump_json,
+    handle_sessions_command,
+)
 from omniagents.core.session.query import (
-    count_sessions as oa_count_sessions,
-    ensure_sessions_schema as oa_ensure_sessions_schema,
-    parse_datetime_arg as oa_parse_datetime_arg,
     populate_session_stats as oa_populate_session_stats,
-    query_sessions as oa_query_sessions,
-    search_session_messages as oa_search_session_messages,
+    ensure_sessions_schema as oa_ensure_sessions_schema,
 )
 from openai import APIStatusError, BadRequestError
-
-
-def _dump_json(value: Any, *, pretty: bool) -> str:
-    if pretty:
-        return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
 def _default_project() -> str:
@@ -56,113 +51,43 @@ def _default_agent() -> str:
     return "omni"
 
 
-def _coerce_limit(value: int | None) -> int | None:
-    if value is None:
-        return None
-    try:
-        out = int(value)
-    except (TypeError, ValueError):
-        return None
-    if out <= 0:
-        return None
-    return out
+def _delegate(sessions_cmd: str, args: argparse.Namespace, **fields: Any) -> None:
+    """Run a framework sessions subcommand pinned to the omni_code project.
 
-
-def _coerce_nonnegative_int(value: int | None) -> int:
-    if value is None:
-        return 0
-    try:
-        out = int(value)
-    except (TypeError, ValueError):
-        return 0
-    if out < 0:
-        return 0
-    return out
+    The db-path/list/search/export command bodies live in
+    ``omniagents.core.session.cli.handle_sessions_command``; this shim only
+    maps omni-code's arg surface (project always ``omni_code``, ``--agent``
+    defaulted) onto the framework namespace.
+    """
+    ns = argparse.Namespace(
+        sessions_cmd=sessions_cmd,
+        project=_default_project(),
+        agent=args.agent,
+        **fields,
+    )
+    rc = handle_sessions_command(ns)
+    if rc:
+        raise SystemExit(rc)
 
 
 def cmd_db_path(args: argparse.Namespace) -> None:
-    db_path = get_sessions_db_path(_default_project(), args.agent)
-    print(str(db_path))
+    _delegate("db-path", args)
 
 
 def cmd_list(args: argparse.Namespace) -> None:
-    project = _default_project()
-    oa_ensure_sessions_schema(project=project, agent=args.agent)
-
-    after = oa_parse_datetime_arg(args.after)
-    if args.after and after is None:
-        print(
-            "Invalid --after datetime. Use ISO-8601 like 2026-02-18 or 2026-02-18T15:04:05Z"
-        )
-        raise SystemExit(1)
-    before = oa_parse_datetime_arg(args.before)
-    if args.before and before is None:
-        print(
-            "Invalid --before datetime. Use ISO-8601 like 2026-02-18 or 2026-02-18T15:04:05Z"
-        )
-        raise SystemExit(1)
-
-    limit = None if args.all else _coerce_limit(args.limit)
-    offset = _coerce_nonnegative_int(args.offset)
-
-    sessions = oa_query_sessions(
-        project=project,
-        agent=args.agent,
+    _delegate(
+        "list",
+        args,
         include_archived=args.include_archived,
-        after=after,
-        before=before,
-        limit=limit,
-        offset=offset,
+        after=args.after,
+        before=args.before,
+        offset=args.offset,
+        limit=args.limit,
+        all=args.all,
+        stats=args.stats,
+        text=args.text,
+        pretty=args.pretty,
     )
-
-    if args.stats:
-        oa_populate_session_stats(project=project, agent=args.agent, sessions=sessions)
-
-    total = oa_count_sessions(
-        project=project,
-        agent=args.agent,
-        include_archived=args.include_archived,
-        after=after,
-        before=before,
-    )
-
-    if args.text:
-        if not sessions:
-            print("No sessions.")
-            return
-        print(f"  {'Session ID':<36} {'Created':<20} {'Msgs':>5} {'Arch'}")
-        print(f"  {'-'*36} {'-'*20} {'-'*5} {'-'*4}")
-        for s in sessions:
-            created = str(s.get("created_at") or "")[:19]
-            msg_count = s.get("message_count")
-            msg_n = (
-                str(msg_count)
-                if isinstance(msg_count, int)
-                else ("?" if args.stats else "-")
-            )
-            arch = "yes" if s.get("archived") else "-"
-            print(f"  {s.get('id',''):<36} {created:<20} {msg_n:>5} {arch}")
-
-        shown = len(sessions)
-        if args.all:
-            print(f"Showing {shown} of {total} sessions.", file=sys.stderr)
-        else:
-            print(
-                f"Showing {shown} of {total} sessions (offset {offset}, limit {limit or 0}).",
-                file=sys.stderr,
-            )
-        return
-
-    print(_dump_json(sessions, pretty=args.pretty))
-
-    shown = len(sessions)
-    if args.all:
-        print(f"Showing {shown} of {total} sessions.", file=sys.stderr)
-    else:
-        print(
-            f"Showing {shown} of {total} sessions (offset {offset}, limit {limit or 0}).",
-            file=sys.stderr,
-        )
 
 
 def cmd_search(args: argparse.Namespace) -> None:
@@ -176,58 +101,19 @@ def cmd_search(args: argparse.Namespace) -> None:
         print("Invalid role. Use: any, user, assistant")
         raise SystemExit(1)
 
-    project = _default_project()
-    oa_ensure_sessions_schema(project=project, agent=args.agent)
-    db_path = get_sessions_db_path(project, args.agent)
-    if not db_path.exists():
-        if args.text:
-            print("No matches.")
-        else:
-            print("[]")
-        return
-
-    after = oa_parse_datetime_arg(args.after)
-    if args.after and after is None:
-        print(
-            "Invalid --after datetime. Use ISO-8601 like 2026-02-18 or 2026-02-18T15:04:05Z"
-        )
-        raise SystemExit(1)
-    before = oa_parse_datetime_arg(args.before)
-    if args.before and before is None:
-        print(
-            "Invalid --before datetime. Use ISO-8601 like 2026-02-18 or 2026-02-18T15:04:05Z"
-        )
-        raise SystemExit(1)
-
-    max_results = _coerce_limit(args.limit) or 50
-    desired_offset = _coerce_nonnegative_int(args.offset)
-    results = oa_search_session_messages(
-        project=project,
-        agent=args.agent,
+    _delegate(
+        "search",
+        args,
         query=query,
         role=role,
         include_archived=args.include_archived,
-        after=after,
-        before=before,
-        limit=max_results,
-        offset=desired_offset,
+        after=args.after,
+        before=args.before,
+        offset=args.offset,
+        limit=args.limit,
+        text=args.text,
+        pretty=args.pretty,
     )
-
-    if args.text:
-        if not results:
-            print("No matches.")
-            return
-        for r in results:
-            ts = r.get("timestamp") or ""
-            sid = r.get("session_id")
-            rrole = r.get("role")
-            content = (r.get("content") or "").strip().replace("\n", " ")
-            if len(content) > 160:
-                content = content[:157] + "..."
-            print(f"{ts} {sid} [{rrole}] {content}")
-        return
-
-    print(_dump_json(results, pretty=args.pretty))
 
 
 def cmd_export(args: argparse.Namespace) -> None:
@@ -236,34 +122,12 @@ def cmd_export(args: argparse.Namespace) -> None:
         print("session_id is required")
         raise SystemExit(1)
 
-    project = _default_project()
-    oa_ensure_sessions_schema(project=project, agent=args.agent)
-    db_path = get_sessions_db_path(project, args.agent)
-    if not db_path.exists():
-        print(f"Session not found: {session_id}")
-        raise SystemExit(1)
-    conn = sqlite3.connect(str(db_path))
-    try:
-        cur = conn.execute("SELECT 1 FROM sessions WHERE session_id=?", (session_id,))
-        exists = cur.fetchone() is not None
-    finally:
-        conn.close()
-    if not exists:
-        print(f"Session not found: {session_id}")
-        raise SystemExit(1)
-
-    history = load_history(session_id, project_slug=project, agent_slug=args.agent)
     fmt = (args.format or "jsonl").strip().lower()
     if fmt not in {"json", "jsonl"}:
         print("Invalid format. Use: json, jsonl")
         raise SystemExit(1)
 
-    if fmt == "json":
-        print(_dump_json(history, pretty=args.pretty))
-        return
-
-    for item in history:
-        print(_dump_json(item, pretty=False))
+    _delegate("export", args, session_id=session_id, format=fmt, pretty=args.pretty)
 
 
 def _is_context_length_exceeded(err: Exception) -> bool:

@@ -8,27 +8,10 @@ from typing import Any, Optional
 from agents.run_context import RunContextWrapper
 from markitdown import MarkItDown
 
+from omniagents.builtin.tools._workspace import workspace_root_from_ctx
 from omniagents.core.tools import RichToolOutput, rich_function_tool
 
 md_converter = MarkItDown(enable_plugins=True)  # Enable plugins with all features
-
-
-def _workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> Optional[str]:
-    try:
-        if ctx is None:
-            return None
-        c = getattr(ctx, "context", None)
-        if c is None:
-            return None
-        if isinstance(c, dict):
-            wr = c.get("workspace_root")
-        else:
-            wr = getattr(c, "workspace_root", None)
-        if isinstance(wr, str) and wr.strip():
-            return os.path.abspath(wr)
-    except Exception:
-        pass
-    return None
 
 
 # Define tools
@@ -90,7 +73,7 @@ async def convert_to_markdown(
     try:
         # Anchor relative local paths to workspace_root (URLs pass through).
         if not is_url:
-            wr = _workspace_root_from_ctx(ctx)
+            wr = workspace_root_from_ctx(ctx)
             if wr and not os.path.isabs(file_path):
                 file_path = os.path.abspath(os.path.join(wr, file_path))
 

@@ -32,7 +32,7 @@ from agents.tool import ToolContext
 from agents.usage import Usage
 
 import omniagents.builtin.tools.bash_tool as bash_tool
-import tools.notebook_tools as notebook_tools
+import omniagents.builtin.tools.notebook_tools as notebook_tools
 import tools.conversion_tools as conversion_tools
 import omni_code.workers_runtime as worker_tools
 from omniagents.builtin.tools import _bash_jobs

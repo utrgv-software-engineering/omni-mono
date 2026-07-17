@@ -5,7 +5,7 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_run_init_agent_uses_model_provider_and_restores_env(monkeypatch, tmp_path):
-    import tools.slash_command as slash
+    import omni_code.init_command as slash
     import omni_code.models as models
     import omniagents.core.config.loader as loader
     import omniagents.core.agents.builder as builder
@@ -88,7 +88,7 @@ async def test_run_init_agent_passes_workspace_root_via_run_context(
     WorkspaceRootRequiredError. This test pins the contract: the
     slash-command flow must pass workspace_root via Runner.run's
     context= kwarg, sourced from $PWD (or cwd as fallback)."""
-    import tools.slash_command as slash
+    import omni_code.init_command as slash
     import omni_code.models as models
     import omniagents.core.config.loader as loader
     import omniagents.core.agents.builder as builder
@@ -159,7 +159,7 @@ async def test_run_init_agent_falls_back_to_cwd_when_pwd_missing(
     to Path.cwd() rather than passing None (which would raise
     WorkspaceRootRequiredError downstream when init_agent's apply_patch
     tries to write AGENTS.md)."""
-    import tools.slash_command as slash
+    import omni_code.init_command as slash
     import omni_code.models as models
     import omniagents.core.config.loader as loader
     import omniagents.core.agents.builder as builder

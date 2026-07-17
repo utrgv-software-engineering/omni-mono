@@ -51,70 +51,60 @@ def _litellm_env_overrides(
 def _build_model_provider(
     runtime: dict[str, Any],
 ) -> tuple[Any | None, dict[str, str | None]]:
+    """Turn a resolved model-runtime dict into an SDK model provider.
+
+    Construction is delegated to the framework's
+    ``run_options.build_model_provider`` (which also owns the registered
+    ``openai-oauth`` codex builder). What stays here is product policy:
+    the runtime-dict key shape (``provider`` vs the framework's ``type``),
+    litellm env overrides, and credential resolution — including the
+    "no credential → no provider" and dummy-key-for-local-endpoints
+    fallbacks the framework builder does not apply.
+    """
     provider = (runtime.get("provider") or "").strip().lower()
+    if not provider:
+        return None, {}
+
     model = runtime.get("model")
     api_key = runtime.get("api_key")
     base_url = runtime.get("base_url")
-    use_responses = runtime.get("use_responses")
-    use_responses_websocket = runtime.get("use_responses_websocket")
 
-    provider_kwargs: dict[str, Any] = {}
-    if use_responses is not None:
-        provider_kwargs["use_responses"] = bool(use_responses)
-    if use_responses_websocket is not None:
-        provider_kwargs["use_responses_websocket"] = bool(use_responses_websocket)
+    env_overrides: dict[str, str | None] = {}
+    if provider == "litellm":
+        env_overrides = _litellm_env_overrides(model=model, api_key=api_key)
 
     if provider == "openai-oauth":
-        from agents.models.openai_provider import OpenAIProvider
-        from omni_code.codex_auth import build_codex_openai_client
-
-        client = build_codex_openai_client()
-        if client is None:
-            return None, {}
-        return OpenAIProvider(openai_client=client, **provider_kwargs), {}
-
-    if provider == "litellm":
-        from agents.extensions.models.litellm_provider import LitellmProvider
-
-        return LitellmProvider(), _litellm_env_overrides(model=model, api_key=api_key)
+        # Bind the codex token store to omni-code's config dir before the
+        # framework builder constructs the refreshing client.
+        import omni_code.codex_auth  # noqa: F401
 
     if provider in {"openai", "openai-compatible", "azure"}:
-        from openai import AsyncOpenAI
-        from agents.models.openai_provider import OpenAIProvider
-
-        resolved_base_url = base_url or "https://api.openai.com/v1"
-        resolved_api_key = api_key
-        if not resolved_api_key:
+        base_url = base_url or "https://api.openai.com/v1"
+        if not api_key:
             if provider == "azure":
-                resolved_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+                api_key = os.getenv("AZURE_OPENAI_API_KEY")
             else:
-                resolved_api_key = os.getenv("OPENAI_API_KEY")
-
-        is_azure = resolved_base_url and (
-            "openai.azure.com" in resolved_base_url
-            or "services.ai.azure.com" in resolved_base_url
-        )
-
-        if is_azure:
-            if not resolved_api_key:
-                return None, {}
-            client = AsyncOpenAI(
-                api_key="dummy",
-                base_url=resolved_base_url,
-                default_headers={"api-key": resolved_api_key},
+                api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            is_azure = (
+                "openai.azure.com" in base_url or "services.ai.azure.com" in base_url
             )
-            return OpenAIProvider(openai_client=client, **provider_kwargs), {}
+            if is_azure or base_url == "https://api.openai.com/v1":
+                # No usable credential — run without an explicit provider.
+                return None, {}
+            # Local / openai-compatible endpoints don't check keys.
+            api_key = "dummy"
 
-        if not resolved_api_key and resolved_base_url != "https://api.openai.com/v1":
-            resolved_api_key = "dummy"
+    config: dict[str, Any] = {"type": provider}
+    if api_key is not None:
+        config["api_key"] = api_key
+    if base_url is not None:
+        config["base_url"] = base_url
+    for key in ("use_responses", "use_responses_websocket"):
+        if runtime.get(key) is not None:
+            config[key] = bool(runtime[key])
 
-        if not resolved_api_key:
-            return None, {}
+    from omniagents.core.agents.run_options import build_model_provider
 
-        client = AsyncOpenAI(
-            api_key=resolved_api_key,
-            base_url=resolved_base_url,
-        )
-        return OpenAIProvider(openai_client=client, **provider_kwargs), {}
-
-    return None, {}
+    provider_obj = build_model_provider(config)
+    return provider_obj, (env_overrides if provider_obj is not None else {})
