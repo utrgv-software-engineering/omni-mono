@@ -208,11 +208,12 @@ def test_discover_functions_in_dir_isolates_same_named_dirs(tmp_path):
     assert "host_only_tool" not in discovered
 
 
-def test_discover_functions_in_dir_cleans_sys_modules(tmp_path):
-    pkg_name = f"tmp_pkg_{uuid.uuid4().hex}"
-    pkg = tmp_path / pkg_name
+def test_discover_functions_in_dir_cleans_synthetic_modules(tmp_path):
+    """Synthetic-prefix modules (dir is not a real package) are removed
+    from sys.modules after discovery — their names are discovery-internal
+    and holding them would only leak."""
+    pkg = tmp_path / "no_init_dir"
     pkg.mkdir()
-    (pkg / "__init__.py").write_text("")
     (pkg / "tool_a.py").write_text(
         textwrap.dedent(
             """
@@ -227,16 +228,64 @@ def test_discover_functions_in_dir_cleans_sys_modules(tmp_path):
     )
     original_modules = set(sys.modules)
     try:
-        discovery.discover_functions_in_dir(str(pkg))
+        discovered = discovery.discover_functions_in_dir(str(pkg))
+        assert "tool_a" in discovered
         leaked = [
             m
             for m in sys.modules
-            if m not in original_modules and m.startswith(pkg_name)
+            if m not in original_modules and m.startswith("_omniagents_disco_")
         ]
         assert not leaked
     finally:
         for mod in list(sys.modules):
-            if mod.startswith(pkg_name):
+            if mod.startswith("_omniagents_disco_"):
+                sys.modules.pop(mod, None)
+
+
+def test_discover_functions_in_dir_preserves_canonical_singletons(tmp_path):
+    """Canonically-named modules persist in sys.modules after discovery,
+    so module-level state is a process singleton: a later import of the
+    same module must see mutations made through the discovered tool.
+    Regression for host apps that kept job registries alive by stashing
+    them on sys.modules['sys'] because discovery evicted their module."""
+    pkg_name = f"singleton_pkg_{uuid.uuid4().hex}"
+    pkg = tmp_path / pkg_name
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "_state.py").write_text("REGISTRY = {}\n")
+    (pkg / "reg_tool.py").write_text(
+        textwrap.dedent(
+            """
+            from omniagents.core.tools.discovery import function_tool
+
+            from ._state import REGISTRY
+
+
+            @function_tool
+            def add_item():
+                REGISTRY["k"] = "v"
+                return "ok"
+            """
+        )
+    )
+    sys.path.insert(0, str(tmp_path))
+    try:
+        discovered = discovery.discover_functions_in_dir(str(pkg))
+        assert "add_item" in discovered
+        # Mutate module-level state through the discovered tool...
+        discovered["add_item"]._original_func()
+        # ...then import the state module the ordinary way. Before the
+        # fix this re-executed _state.py (discovery had evicted it) and
+        # the mutation was lost.
+        state = importlib.import_module(f"{pkg_name}._state")
+        assert state.REGISTRY == {"k": "v"}
+    finally:
+        try:
+            sys.path.remove(str(tmp_path))
+        except ValueError:
+            pass
+        for mod in list(sys.modules):
+            if mod == pkg_name or mod.startswith(f"{pkg_name}."):
                 sys.modules.pop(mod, None)
 
 

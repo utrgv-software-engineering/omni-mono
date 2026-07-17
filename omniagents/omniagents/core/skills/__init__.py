@@ -7,6 +7,7 @@ from .errors import ParseError, SkillError, ValidationError
 from .models import SkillProperties
 from .parser import find_skill_md, parse_frontmatter, read_properties
 from .prompt import to_prompt
+from .roots import set_skill_roots_provider, skill_roots
 from .validator import validate, validate_metadata
 
 __all__ = [
@@ -23,4 +24,6 @@ __all__ = [
     "discover_skill_dirs",
     "merge_skill_dirs",
     "build_available_skills_block",
+    "set_skill_roots_provider",
+    "skill_roots",
 ]

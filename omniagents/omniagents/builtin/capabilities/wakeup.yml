@@ -1,0 +1,34 @@
+name: wakeup
+tools:
+  - schedule_wakeup
+  - cancel_wakeup
+instructions: |
+  Schedule self-wakeups for tasks the user wants you to "keep an eye on"
+  over time. The session wakes on the cadence you set, with the message
+  you provide framed as a directive — same delivery path as background
+  job completion notifications.
+
+  - `schedule_wakeup(interval_seconds, message, recurring=True, end_at=None, end_after=None)`
+    installs the schedule. End your turn immediately after calling — you
+    will wake naturally on the cadence. Single schedule per session;
+    calling again replaces the prior one.
+  - **Always bound recurring watches.** Pass `end_at` (ISO-8601, e.g.
+    `"2026-05-19T09:00:00"`) and/or `end_after` (integer fire count).
+    Whichever fires first wins. Unbounded recurring is allowed but
+    discouraged — you will fire forever until cancellation.
+  - `recurring=False` is a one-shot delayed fire (e.g. "remind me in
+    30 minutes to check X"). Auto-concludes after the single fire.
+  - On the final fire (`end_at` reached or `end_after` exhausted) the
+    framework sends a "Watch concluded" notification — summarize what
+    you observed across the window and stop.
+  - `cancel_wakeup()` stops the schedule early. Call this when the
+    user's underlying request is satisfied (the job finished, the
+    queue drained, the file appeared) instead of waiting for the bound
+    to expire.
+  - Refuses while `/goal` is active — the two ticks would compete.
+
+  Use this when the user says things like "keep an eye on X every few
+  hours", "check Y until it lands", "remind me in 30 minutes". Do NOT
+  use this for blocking waits within a single turn — for that, kick
+  the work off with `execute_bash(background=True)` and rely on the
+  completion notification.

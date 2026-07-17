@@ -1001,6 +1001,24 @@ class SessionManager:  # noqa: D101
         self._by_id[sess.id] = sess
         return sess
 
+    def get(self, session_id: str | None) -> Optional[Session]:  # noqa: D401
+        """Look up a live session by id without creating one."""
+        if not session_id:
+            return None
+        return self._by_id.get(session_id)
+
+    def iter_active(self) -> list[Session]:  # noqa: D401
+        """Snapshot of all live sessions in this process."""
+        return list(self._by_id.values())
+
+    def drop(self, session_id: str) -> None:  # noqa: D401
+        """Forget a live session (in-memory only; storage is untouched)."""
+        self._by_id.pop(session_id, None)
+
+    def active_run_ids(self) -> list[str]:  # noqa: D401
+        """Run ids of all currently tracked runs."""
+        return list(self._task_map.keys())
+
     def fork_session(
         self,
         source_session: Session,

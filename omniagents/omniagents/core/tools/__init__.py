@@ -9,6 +9,12 @@ from .discovery import (
     get_approval_metadata,
 )
 from .client_function import client_function_tool
+from .run_context import (
+    DEFAULT_TASK_SCOPE,
+    ctx_value,
+    session_id_from_ctx,
+    task_scope_from_ctx,
+)
 from .slash_commands import SlashCommandRegistry
 
 __all__ = [
@@ -20,4 +26,8 @@ __all__ = [
     "get_approval_metadata",
     "client_function_tool",
     "SlashCommandRegistry",
+    "DEFAULT_TASK_SCOPE",
+    "ctx_value",
+    "session_id_from_ctx",
+    "task_scope_from_ctx",
 ]

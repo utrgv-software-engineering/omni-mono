@@ -1,0 +1,28 @@
+name: workers
+tools:
+  - spawn_worker
+  - wait_for_workers
+  - get_worker_status
+  - send_worker_message
+  - close_worker
+  - resume_worker
+  - cleanup_worker_worktree
+instructions: |
+  Worker sub-agents execute self-contained subtasks in the background,
+  concurrently with you and each other.
+
+  - `spawn_worker(task=...)` starts one. Write the task as a brief for
+    someone with no access to this conversation: scope, inputs, boundaries,
+    and acceptance criteria. When the worker finishes, a completion
+    notification with its result arrives automatically — end your turn
+    after spawning; you don't need to poll or wait.
+  - Pass `isolation="<strategy>"` to give the worker its own isolated
+    workspace so parallel workers can't trample each other's changes.
+    After the completion notification, integrate the worker's changes
+    into your workspace and call `cleanup_worker_worktree`.
+  - `send_worker_message` steers a running worker; `get_worker_status`
+    peeks without blocking; `close_worker` cancels; `resume_worker`
+    restarts a finished worker with follow-up instructions, keeping its
+    history.
+  - `wait_for_workers` blocks within the current turn — use it only when
+    one response must combine results from several workers.

@@ -272,6 +272,13 @@ def discover_functions_in_dir(
     is already bound to a different path, fall back to a unique synthetic
     prefix so discovery still works.
 
+    Canonically-named modules stay in ``sys.modules`` after discovery —
+    normal import semantics — so module-level state (job registries,
+    tick state) remains a process singleton shared with any later
+    ``import`` of the same module. Only synthetic-prefix modules are
+    removed on the way out; their names are meaningless outside this
+    function and holding them would only leak.
+
     Args:
         base_dir: The directory path (relative or absolute) to scan for .py files.
         debug: Deprecated parameter, uses Debug.enabled() instead.
@@ -340,7 +347,6 @@ def discover_functions_in_dir(
 
     preexisting_modules = set(sys.modules.keys())
     loaded_modules: set[str] = set()
-    loaded_packages: set[str] = set()
     try:
         for filepath in base_path.rglob("*.py"):
             if filepath.name == "__init__.py":
@@ -379,11 +385,6 @@ def discover_functions_in_dir(
                         spec.loader.exec_module(module)
                 else:
                     module = importlib.import_module(module_path)
-                    if module.__name__ not in preexisting_modules:
-                        loaded_modules.add(module.__name__)
-                    package_root = module.__name__.split(".", 1)[0]
-                    if package_root not in preexisting_modules:
-                        loaded_packages.add(package_root)
                 for name, obj in inspect.getmembers(module):
                     # --- Check for the marker attribute set by our wrapper decorator --- #
                     if hasattr(obj, "_is_omniagents_core_tool"):
@@ -419,26 +420,20 @@ def discover_functions_in_dir(
 
     finally:
         sys.path = original_sys_path
-        for module_name in loaded_modules:
-            try:
-                if (
-                    module_name in sys.modules
-                    and module_name not in preexisting_modules
-                ):
-                    del sys.modules[module_name]
-            except Exception:
-                pass
-        for package_name in loaded_packages:
-            try:
-                if (
-                    package_name in sys.modules
-                    and package_name not in preexisting_modules
-                ):
-                    del sys.modules[package_name]
-            except Exception:
-                pass
-        if synth_pkg_registered and synth_pkg in sys.modules:
-            sys.modules.pop(synth_pkg, None)
+        # Canonical modules persist (see docstring); synthetic ones are
+        # discovery-internal names and are always removed.
+        if use_synthetic:
+            for module_name in loaded_modules:
+                try:
+                    if (
+                        module_name in sys.modules
+                        and module_name not in preexisting_modules
+                    ):
+                        del sys.modules[module_name]
+                except Exception:
+                    pass
+            if synth_pkg_registered and synth_pkg in sys.modules:
+                sys.modules.pop(synth_pkg, None)
 
     Debug.log(
         f"Completed tool discovery: Found {len(discovered_functions)} marked tools in '{base_dir}'."

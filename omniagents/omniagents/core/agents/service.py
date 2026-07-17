@@ -3055,6 +3055,26 @@ class AgentService(RpcMethodsBase):
         )
         return result
 
+    # -- Python-facing session access (not RPC; returns Session objects) --
+    # Tools and host apps previously reached into ``_session_manager._by_id``
+    # for these; use this API instead.
+
+    def get_session(self, session_id: str | None) -> Optional[Session]:
+        """Look up a live session by id without creating one."""
+        return self._session_manager.get(session_id)
+
+    def get_or_create_session(self, session_id: str | None = None) -> Session:
+        """Return the live session for ``session_id``, creating it if needed."""
+        return self._session_manager.get_or_create(session_id)
+
+    def active_sessions(self) -> list[Session]:
+        """Snapshot of all live sessions in this process."""
+        return self._session_manager.iter_active()
+
+    def active_run_ids(self) -> list[str]:
+        """Run ids of all currently tracked runs (cancel via stop_run)."""
+        return self._session_manager.active_run_ids()
+
     async def get_agent_info(self) -> dict:  # noqa: D401
         info = {}
         spec = self.spec
@@ -3494,7 +3514,7 @@ class AgentService(RpcMethodsBase):
         _debug_rpc("archive_session", {"session_id": session_id})
         ok = self._session_manager.archive_session(session_id)
         if ok:
-            sess = getattr(self._session_manager, "_by_id", {}).get(session_id)
+            sess = self.get_session(session_id)
             if sess is not None:
                 # Signal MCP lifecycle task to shutdown
                 shutdown_event = getattr(sess, "_mcp_shutdown", None)
@@ -3546,7 +3566,7 @@ class AgentService(RpcMethodsBase):
         _debug_rpc("delete_session", {"session_id": session_id})
 
         # First, cleanup any active resources (similar to archive)
-        sess = getattr(self._session_manager, "_by_id", {}).get(session_id)
+        sess = self.get_session(session_id)
         if sess is not None:
             # Signal MCP lifecycle task to shutdown
             shutdown_event = getattr(sess, "_mcp_shutdown", None)
@@ -3583,8 +3603,8 @@ class AgentService(RpcMethodsBase):
         )
 
         # Remove from in-memory session manager
-        if sess is not None and hasattr(self._session_manager, "_by_id"):
-            self._session_manager._by_id.pop(session_id, None)
+        if sess is not None:
+            self._session_manager.drop(session_id)
 
         return deleted
 

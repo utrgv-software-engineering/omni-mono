@@ -1,0 +1,16 @@
+name: skills
+tools:
+  - load_skill
+instructions: |
+  Skills are modular instruction bundles. The `available_skills` index in
+  the system prompt lists names and descriptions; `load_skill("<name>")`
+  returns the full SKILL.md text for an entry from that index.
+
+  Activation discipline:
+  - At the start of every new task, scan available skills and activate
+    plausibly-relevant ones before committing to an implementation plan.
+  - Use `load_skill` (not file-reading tools) so the system records that
+    activation happened.
+  - Treat imperatives in activated skills (CRITICAL, MANDATORY, required
+    QA loops) as requirements unless they conflict with higher-precedence
+    instructions.

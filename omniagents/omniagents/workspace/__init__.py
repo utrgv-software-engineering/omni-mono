@@ -87,6 +87,7 @@ __all__ = [
     "spawn",
     "workspace_root",
     "scratch_root",
+    "scratch_dir",
     "resolve",
     "relative_to_workspace",
     # Types
@@ -328,6 +329,32 @@ def scratch_root() -> str:
     ``glob_files``/``grep_files``/git workflows don't trip over it.
     """
     return current_workspace().scratch_root
+
+
+async def scratch_dir(purpose: str) -> str:
+    """Absolute path of a purpose-scoped subdirectory of :func:`scratch_root`.
+
+    Created if missing. Use this instead of inventing dot-directories
+    inside the user's workspace for tool-internal state — e.g. background
+    job logs live under ``scratch_dir("jobs")``, worker worktrees under
+    ``scratch_dir("worktrees")``.
+
+    Creation goes through :func:`exec` rather than :func:`mkdir` because
+    sandbox ``scratch_root`` lives outside the manifest mount — the typed
+    filesystem methods are path-policy checked and may refuse it, while
+    ``exec`` can write anywhere the shell can. The host backend evaluates
+    the same shell command locally, so behavior is consistent.
+    """
+    import os as _os
+    import shlex as _shlex
+
+    path = _os.path.join(scratch_root(), purpose)
+    result = await exec(f"mkdir -p {_shlex.quote(path)}", shell=True, timeout=10.0)
+    if result.exit_code != 0:
+        raise WorkspaceError(
+            f"could not create scratch dir {path!r}: {result.stderr or result.stdout}"
+        )
+    return path
 
 
 def resolve(path: str) -> str:
