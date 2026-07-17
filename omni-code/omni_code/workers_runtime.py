@@ -32,6 +32,9 @@ from omniagents.core.workers import (
     IsolationError,
     WorkerDefaults,
     WorkerWorkspace,
+    WorktreeIsolation as FrameworkWorktreeIsolation,
+    is_git_dirty,
+    is_git_repo,
     register_isolation_strategy,
     set_worker_defaults,
 )
@@ -154,42 +157,6 @@ def _load_and_configure_spec(model: Optional[str] = None):
 # ---------------------------------------------------------------------------
 
 
-async def _is_git_repo(workspace_root: str) -> bool:
-    """Check if workspace_root is inside a git repository.
-
-    Routed through ``workspace.exec`` so the same body works against a
-    SandboxWorkspace (where the git binary lives inside the sandbox).
-    """
-    from omniagents import workspace as _ws
-
-    try:
-        result = await _ws.exec(
-            f"git -C {shlex.quote(workspace_root)} rev-parse --is-inside-work-tree",
-            timeout=5.0,
-            shell=True,
-        )
-        return result.exit_code == 0
-    except Exception:
-        return False
-
-
-async def _is_git_dirty(workspace_root: str) -> bool:
-    """Check if the workspace has uncommitted changes."""
-    from omniagents import workspace as _ws
-
-    try:
-        result = await _ws.exec(
-            f"git -C {shlex.quote(workspace_root)} status --porcelain",
-            timeout=5.0,
-            shell=True,
-        )
-        if result.exit_code != 0:
-            return False
-        return bool((result.stdout or "").strip())
-    except Exception:
-        return False
-
-
 def _published_sources() -> list[dict[str, Any]]:
     try:
         from omni_code.agent_workspace_state import get_sources
@@ -221,14 +188,14 @@ def _source_git_paths(workspace_root: str) -> list[str]:
 
 async def _is_worker_worktree_ready(workspace_root: str) -> bool:
     for path in _source_git_paths(workspace_root):
-        if not await _is_git_repo(path):
+        if not await is_git_repo(path):
             return False
     return bool(_source_git_paths(workspace_root))
 
 
 async def _is_worker_worktree_dirty(workspace_root: str) -> bool:
     for path in _source_git_paths(workspace_root):
-        if await _is_git_dirty(path):
+        if await is_git_dirty(path):
             return True
     return False
 
@@ -247,87 +214,17 @@ def _source_workspace_path(
     return None
 
 
-async def _create_worker_worktree(
-    workspace_root: str, worker_id: str
-) -> dict[str, str]:
-    """Create a git worktree for an isolated worker.
-
-    Works whether the supervisor is in a regular repo or an existing worktree —
-    ``git worktree add`` operates on the shared repository in both cases.
-
-    Returns dict with worktree_path, worktree_branch, worktree_name, parent_workspace.
-    """
-    from omniagents import workspace as _ws
-
-    # Derive a worktree name from the workspace directory name + worker id.
-    # e.g. supervisor in /workspace/bold-hawk → "bold-hawk-worker-pip"
-    # e.g. supervisor in ~/projects/my-app    → "my-app-worker-pip"
-    parent_name = Path(workspace_root).name
-    worktree_name = f"{parent_name}-worker-{worker_id}"
-    worktree_branch = f"worker/{worktree_name}"
-    worktrees_dir = _worktrees_dir()
-    worktree_path = os.path.join(worktrees_dir, worktree_name)
-
-    # Existence check + mkdir via exec rather than the workspace's typed
-    # methods. Reason: sandbox ``scratch_root`` lives outside the manifest
-    # mount, so ``session.mkdir`` / ``session.exists`` may be blocked by
-    # path policy. ``session.exec`` (which workspace.exec routes through)
-    # is not path-policy checked and can read/write anywhere the shell
-    # has permission. Host backend evaluates the same shell commands
-    # locally, so behavior is consistent.
-    async def _scratch_exists(p: str) -> bool:
-        probe = await _ws.exec(f"test -e {shlex.quote(p)}", shell=True, timeout=5.0)
-        return probe.exit_code == 0
-
-    if await _scratch_exists(worktree_path):
-        n = 2
-        while await _scratch_exists(f"{worktree_path}-{n}"):
-            n += 1
-        worktree_name = f"{worktree_name}-{n}"
-        worktree_branch = f"worker/{worktree_name}"
-        worktree_path = os.path.join(worktrees_dir, worktree_name)
-
-    mkdir_result = await _ws.exec(
-        f"mkdir -p {shlex.quote(worktrees_dir)}", shell=True, timeout=10.0
-    )
-    if mkdir_result.exit_code != 0:
-        raise OSError(
-            f"Failed to create worktrees scratch dir {worktrees_dir!r}: "
-            f"{mkdir_result.stderr or mkdir_result.stdout}"
-        )
-
-    result = await _ws.exec(
-        f"git -C {shlex.quote(workspace_root)} worktree add "
-        f"-b {shlex.quote(worktree_branch)} {shlex.quote(worktree_path)} HEAD",
-        timeout=30.0,
-        shell=True,
-    )
-    if result.exit_code != 0:
-        raise subprocess.CalledProcessError(
-            result.exit_code,
-            ["git", "worktree", "add"],
-            output=(result.stdout or "").encode("utf-8"),
-            stderr=(result.stderr or "").encode("utf-8"),
-        )
-
-    return {
-        "worktree_path": worktree_path,
-        "worktree_branch": worktree_branch,
-        "worktree_name": worktree_name,
-        "parent_workspace": workspace_root,
-    }
-
-
 async def _create_worker_worktree_for_sources(
     workspace_root: str, worker_id: str
 ) -> dict[str, Any]:
+    """Create the multi-source worker workspace: one git worktree (or
+    plain copy) per published workspace source, mounted by mountName
+    under a shared worker root. Callers guarantee sources are published
+    (the single-repo case is the framework strategy's job)."""
     from omniagents import workspace as _ws
     from omni_code.agent_workspace_state import get_manifest_root, get_sources
 
     sources = get_sources()
-    if not sources:
-        return await _create_worker_worktree(workspace_root, worker_id)
-
     manifest_root = get_manifest_root() or workspace_root
     parent_name = Path(workspace_root).name or "workspace"
     worker_root_name = f"{parent_name}-worker-{worker_id}"
@@ -458,85 +355,54 @@ async def _create_worker_worktree_for_sources(
     }
 
 
-# Worktree metadata for workers spawned with isolation="worktree".
-# Maps worker_id -> {"worktree_path": str, "worktree_branch": str,
-#                     "worktree_name": str, "parent_workspace": str,
-#                     "sources": list[dict]}
-_WORKER_WORKTREES: dict[str, dict[str, Any]] = {}
-
-
-async def _remove_worker_worktree(worker_id: str) -> bool:
-    """Remove a worker's worktree and branch. Returns True if cleanup succeeded."""
-    info = _WORKER_WORKTREES.get(worker_id)
-    if info is None:
-        return False
-
-    parent = info["parent_workspace"]
-    wt_path = info["worktree_path"]
-    branch = info.get("worktree_branch", "")
-
+async def _remove_sources_worker_workspace(workspace: WorkerWorkspace) -> bool:
+    """Remove a multi-source worker workspace: each source worktree +
+    branch, then the shared worker root. Everything needed is carried in
+    the workspace metadata produced by ``prepare``."""
     from omniagents import workspace as _ws
 
-    source_infos = info.get("sources")
-    if isinstance(source_infos, list):
-        for source_info in source_infos:
-            source_path = source_info.get("source_path")
-            source_wt = source_info.get("worktree_path")
-            source_branch = source_info.get("worktree_branch")
-            if source_path and source_wt and source_branch:
-                try:
-                    await _ws.exec(
-                        f"git -C {shlex.quote(source_path)} worktree remove --force "
-                        f"{shlex.quote(source_wt)}",
-                        timeout=10.0,
-                        shell=True,
-                    )
-                except Exception:
-                    pass
-                try:
-                    await _ws.exec(
-                        f"git -C {shlex.quote(source_path)} branch -D "
-                        f"{shlex.quote(source_branch)}",
-                        timeout=5.0,
-                        shell=True,
-                    )
-                except Exception:
-                    pass
-        try:
-            await _ws.exec(f"rm -rf {shlex.quote(wt_path)}", shell=True, timeout=10.0)
-        except Exception:
-            pass
-    else:
-        try:
-            await _ws.exec(
-                f"git -C {shlex.quote(parent)} worktree remove --force {shlex.quote(wt_path)}",
-                timeout=10.0,
-                shell=True,
-            )
-        except Exception:
-            pass
+    meta = workspace.metadata or {}
+    wt_path = meta.get("worktree_path") or workspace.root
+    source_infos = meta.get("sources") or []
 
-        if branch:
+    for source_info in source_infos:
+        source_path = source_info.get("source_path")
+        source_wt = source_info.get("worktree_path")
+        source_branch = source_info.get("worktree_branch")
+        if source_path and source_wt and source_branch:
             try:
                 await _ws.exec(
-                    f"git -C {shlex.quote(parent)} branch -D {shlex.quote(branch)}",
+                    f"git -C {shlex.quote(source_path)} worktree remove --force "
+                    f"{shlex.quote(source_wt)}",
+                    timeout=10.0,
+                    shell=True,
+                )
+            except Exception:
+                pass
+            try:
+                await _ws.exec(
+                    f"git -C {shlex.quote(source_path)} branch -D "
+                    f"{shlex.quote(source_branch)}",
                     timeout=5.0,
                     shell=True,
                 )
             except Exception:
                 pass
-
-    _WORKER_WORKTREES.pop(worker_id, None)
+    try:
+        await _ws.exec(f"rm -rf {shlex.quote(wt_path)}", shell=True, timeout=10.0)
+    except Exception:
+        pass
     return True
 
 
-class WorktreeIsolation:
-    """Git-worktree isolation: one worktree per git-backed workspace
-    source (or a single worktree in the plain single-repo case), each on
-    its own ``worker/<parent>-worker-<id>`` branch checked out from HEAD.
+class WorktreeIsolation(FrameworkWorktreeIsolation):
+    """omni-code's worktree strategy: extends the framework's single-repo
+    ``worktree`` isolation with the multi-source serve case — one worktree
+    (or plain copy) per published workspace source, each git source on its
+    own ``worker/<parent>-worker-<id>/<mount>`` branch. With no published
+    sources it behaves exactly like the framework strategy.
     """
 
-    name = "worktree"
     unavailable_message = (
         "Cannot create worktree: no git-backed workspace sources are available."
     )
@@ -547,6 +413,10 @@ class WorktreeIsolation:
     async def prepare(
         self, *, worker_id: str, parent_workspace_root: str
     ) -> WorkerWorkspace:
+        if not _published_sources():
+            return await super().prepare(
+                worker_id=worker_id, parent_workspace_root=parent_workspace_root
+            )
         try:
             info = await _create_worker_worktree_for_sources(
                 parent_workspace_root, worker_id
@@ -558,22 +428,26 @@ class WorktreeIsolation:
             ) from e
         except OSError as e:
             raise IsolationError(str(e)) from e
-        _WORKER_WORKTREES[worker_id] = info
         metadata: dict[str, Any] = {
             "worktree_path": info["worktree_path"],
             "worktree_branch": info["worktree_branch"],
+            "worktree_name": info["worktree_name"],
+            "parent_workspace": info["parent_workspace"],
+            "sources": info["sources"],
         }
-        if info.get("sources"):
-            metadata["sources"] = info["sources"]
         return WorkerWorkspace(root=info["worktree_path"], metadata=metadata)
 
     async def is_parent_dirty(self, parent_workspace_root: str) -> bool:
         return await _is_worker_worktree_dirty(parent_workspace_root)
 
     async def cleanup(self, worker_id: str, workspace: WorkerWorkspace) -> bool:
-        return await _remove_worker_worktree(worker_id)
+        if (workspace.metadata or {}).get("sources"):
+            return await _remove_sources_worker_workspace(workspace)
+        return await super().cleanup(worker_id, workspace)
 
     def task_preamble(self, workspace: WorkerWorkspace) -> Optional[str]:
+        if not (workspace.metadata or {}).get("sources"):
+            return super().task_preamble(workspace)
         return (
             f"[You are working in an isolated worker workspace at {workspace.root}. "
             f"Project sources are mounted under this root by mountName. "

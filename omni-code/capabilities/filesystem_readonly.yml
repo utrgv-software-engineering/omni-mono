@@ -1,15 +1,11 @@
 name: filesystem_readonly
-# Subsets the omniagents builtin `filesystem_readonly` pack the same way our
-# `filesystem` override does: drop the discovery tools — they're a pure-Python
-# walk through the async workspace binding (an RPC per dir/file on sandboxed
-# backends) — and `read_image` (the explorer is a text-research subagent).
-# Discovery goes through `rg`/`ls` in shell_readonly instead.
+# Extends the omniagents builtin `filesystem_readonly` pack. Drops only
+# `read_image` — the explorer is a text-research subagent. Discovery
+# tools stay: the builtins ripgrep-accelerate themselves when `rg` is
+# available in the workspace.
 extends: filesystem_readonly
 exclude_tools:
   - read_image
-  - list_directory
-  - glob_files
-  - grep_files
-instructions: |
+instructions_append: |
   Use `read_file` to inspect specific files after you have identified relevant
   paths. Do not modify files.

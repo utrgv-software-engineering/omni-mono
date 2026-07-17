@@ -31,6 +31,9 @@ safe_agent_options:
   halt_on_rejection: true
   safe_tool_names:
     - read_file
+    - list_directory
+    - glob_files
+    - grep_files
     - dispatch
     - web_fetch
     - web_search

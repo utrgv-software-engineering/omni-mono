@@ -31,10 +31,19 @@ import pytest
 from agents.tool import ToolContext
 from agents.usage import Usage
 
+import importlib
+
 import omniagents.builtin.tools.bash_tool as bash_tool
+
+# import_module: the package re-exports the tool object under the same
+# name as its module, so a plain ``import ... as`` would bind the
+# FunctionTool instead of the module.
+conversion_tools = importlib.import_module(
+    "omniagents.builtin.tools.convert_to_markdown"
+)
 import omniagents.builtin.tools.notebook_tools as notebook_tools
-import tools.conversion_tools as conversion_tools
 import omni_code.workers_runtime as worker_tools
+import omniagents.core.workers.isolation as worker_isolation
 from omniagents.builtin.tools import _bash_jobs
 from omniagents.workspace import (
     ExecResult,
@@ -323,8 +332,8 @@ def test_convert_to_markdown_routes_through_workspace(monkeypatch):
 
     monkeypatch.setattr(
         conversion_tools,
-        "md_converter",
-        type("M", (), {"convert": staticmethod(fake_convert)}),
+        "_converter",
+        lambda: type("M", (), {"convert": staticmethod(fake_convert)}),
     )
 
     token = set_workspace(fake)
@@ -353,7 +362,7 @@ def test_is_git_repo_routes_through_workspace():
     fake = _RecordingWorkspace()
     token = set_workspace(fake)
     try:
-        result = asyncio.run(worker_tools._is_git_repo("/fake"))
+        result = asyncio.run(worker_isolation.is_git_repo("/fake"))
     finally:
         reset_workspace(token)
 
@@ -374,7 +383,7 @@ def test_is_git_dirty_routes_through_workspace():
     fake = _RecordingWorkspace()
     token = set_workspace(fake)
     try:
-        result = asyncio.run(worker_tools._is_git_dirty("/fake"))
+        result = asyncio.run(worker_isolation.is_git_dirty("/fake"))
     finally:
         reset_workspace(token)
 
@@ -462,38 +471,43 @@ def test_create_worker_worktree_for_sources_preserves_mount_layout(monkeypatch):
 
 
 def test_remove_worker_worktree_removes_each_source_worktree():
+    from omniagents.core.workers import WorkerWorkspace
+
     fake = _RecordingWorkspace(root="/workspace")
-    worker_tools._WORKER_WORKTREES["pip"] = {
-        "worktree_path": "/scratch/worktrees/workspace-worker-pip",
-        "worktree_branch": "worker/workspace-worker-pip/api",
-        "worktree_name": "workspace-worker-pip",
-        "parent_workspace": "/workspace",
-        "sources": [
-            {
-                "mountName": "api",
-                "kind": "local-git",
-                "source_path": "/host/api",
-                "worktree_path": "/scratch/worktrees/workspace-worker-pip/api",
-                "worktree_branch": "worker/workspace-worker-pip/api",
-            },
-            {
-                "mountName": "notes",
-                "kind": "local",
-                "source_path": "/host/notes",
-                "worktree_path": "/scratch/worktrees/workspace-worker-pip/notes",
-            },
-        ],
-    }
+    workspace = WorkerWorkspace(
+        root="/scratch/worktrees/workspace-worker-pip",
+        metadata={
+            "worktree_path": "/scratch/worktrees/workspace-worker-pip",
+            "worktree_branch": "worker/workspace-worker-pip/api",
+            "worktree_name": "workspace-worker-pip",
+            "parent_workspace": "/workspace",
+            "sources": [
+                {
+                    "mountName": "api",
+                    "kind": "local-git",
+                    "source_path": "/host/api",
+                    "worktree_path": "/scratch/worktrees/workspace-worker-pip/api",
+                    "worktree_branch": "worker/workspace-worker-pip/api",
+                },
+                {
+                    "mountName": "notes",
+                    "kind": "local",
+                    "source_path": "/host/notes",
+                    "worktree_path": "/scratch/worktrees/workspace-worker-pip/notes",
+                },
+            ],
+        },
+    )
 
     token = set_workspace(fake)
     try:
-        removed = asyncio.run(worker_tools._remove_worker_worktree("pip"))
+        removed = asyncio.run(
+            worker_tools.WorktreeIsolation().cleanup("pip", workspace)
+        )
     finally:
         reset_workspace(token)
-        worker_tools._WORKER_WORKTREES.pop("pip", None)
 
     assert removed is True
-    assert "pip" not in worker_tools._WORKER_WORKTREES
     commands = [call[1][0] for call in fake.calls if call[0] == "exec"]
     assert any("git -C /host/api worktree remove --force" in c for c in commands)
     assert any("git -C /host/api branch -D worker/workspace-worker-pip/api" in c for c in commands)

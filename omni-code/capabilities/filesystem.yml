@@ -1,22 +1,15 @@
 name: filesystem
-# Subsets the omniagents builtin `filesystem` pack. We DROP the builtin's
-# discovery tools — `list_directory`, `glob_files`, `grep_files` — because
-# they're a pure-Python walk through the async workspace binding (an RPC per
-# dir/file on sandboxed backends) and are an order of magnitude slower than
-# ripgrep, with no piping/chaining. The agent does file/text discovery through
-# the shell (`rg`, `rg --files`, `ls`) instead.
+# Extends the omniagents builtin `filesystem` pack with coding-flavored
+# guidance. The builtin discovery tools (`list_directory`, `glob_files`,
+# `grep_files`) ripgrep-accelerate themselves when `rg` is available in
+# the workspace, so no tools are excluded — the instructions just steer
+# habitual discovery toward the shell where piping/chaining helps.
 extends: filesystem
-exclude_tools:
-  - list_directory
-  - glob_files
-  - grep_files
-instructions: |
-  Use filesystem tools for targeted file inspection and edits.
-  - Use `read_file` to inspect known files and `read_image` to view images.
-  - Use `apply_patch` for focused edits to existing files, `write_file` for new
-    files, and `edit_file` for line-based edits. Use `apply_patch` exactly;
-    do not try similarly named commands such as `applypatch` or `apply-patch`.
-  - After a file edit tool succeeds, do not re-read the file just to confirm the
-    edit; the tool reports failure if it did not apply.
-  - Use shell discovery commands such as `rg <pattern>`, `rg --files`, and `ls`
-    to find relevant files before reading or editing them.
+instructions_append: |
+  - Use `apply_patch` exactly; do not try similarly named commands such as
+    `applypatch` or `apply-patch`.
+  - After a file edit tool succeeds, do not re-read the file just to confirm
+    the edit; the tool reports failure if it did not apply.
+  - Prefer shell discovery — `rg <pattern>`, `rg --files`, `ls` — over the
+    filesystem discovery tools when `rg` is available: it pipes and chains
+    (`| head`, `| xargs`), which the tools cannot.

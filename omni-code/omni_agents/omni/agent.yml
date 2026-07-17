@@ -42,6 +42,9 @@ safe_agent_options:
   safe_tool_names:
     - read_image
     - read_file
+    - list_directory
+    - glob_files
+    - grep_files
     - display_artifact
     - dispatch
     - bash_status

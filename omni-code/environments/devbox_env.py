@@ -278,49 +278,28 @@ class DevboxEvalEnvironment(WorkspaceEvalEnvironment):
             _decode(getattr(res, "stderr", b"")),
         )
 
-    async def verify(self, context: Any, expected: Dict[str, Any]) -> Dict[str, Any]:
+    # The verify() matching logic is the framework base's; only the two
+    # file primitives differ — files live inside the container, reached
+    # via the live SandboxSession. Host-only scenarios (no session) fall
+    # through to the base's host-filesystem primitives.
+
+    async def _path_exists(self, context: Any, rel_path: str) -> bool:
         record = self._sessions.get(context.session_id) if context else None
         if not record:
-            return await super().verify(context, expected)  # host scenario
-        session = record["session"]
-        root = self.CONTAINER_WORKSPACE_ROOT
-        results: Dict[str, Any] = {}
-        success = True
-        for rel, exp in expected.items():
-            path = f"{root}/{rel}"
-            qpath = shlex.quote(path)
-            expect_exists = exp.get("exists", True)
-            r = await session.exec(f"test -e {qpath}")
-            exists = getattr(r, "exit_code", 1) == 0
-            if not expect_exists:
-                results[rel] = (
-                    {"matched": True}
-                    if not exists
-                    else {"matched": False, "reason": "file should not exist"}
-                )
-                success = success and not exists
-                continue
-            if not exists:
-                results[rel] = {"matched": False, "reason": "file not found"}
-                success = False
-                continue
-            content = ""
-            if exp.get("contains") or exp.get("not_contains"):
-                cr = await session.exec(f"cat {qpath}")
-                content = _decode(getattr(cr, "stdout", b""))
-            reason = None
-            for pat in exp.get("contains", []):
-                if pat not in content:
-                    reason = f"missing pattern: {pat!r}"
-                    break
-            if reason is None:
-                for pat in exp.get("not_contains", []):
-                    if pat in content:
-                        reason = f"forbidden pattern: {pat!r}"
-                        break
-            results[rel] = {"matched": True} if reason is None else {"matched": False, "reason": reason}
-            success = success and reason is None
-        return {"success": success, "results": results}
+            return await super()._path_exists(context, rel_path)
+        qpath = shlex.quote(f"{self.CONTAINER_WORKSPACE_ROOT}/{rel_path}")
+        r = await record["session"].exec(f"test -e {qpath}")
+        return getattr(r, "exit_code", 1) == 0
+
+    async def _read_file(self, context: Any, rel_path: str) -> Optional[str]:
+        record = self._sessions.get(context.session_id) if context else None
+        if not record:
+            return await super()._read_file(context, rel_path)
+        qpath = shlex.quote(f"{self.CONTAINER_WORKSPACE_ROOT}/{rel_path}")
+        cr = await record["session"].exec(f"cat {qpath}")
+        if getattr(cr, "exit_code", 1) != 0:
+            return None
+        return _decode(getattr(cr, "stdout", b""))
 
     async def teardown(self, context: Any) -> None:
         record = self._sessions.pop(context.session_id, None) if context else None

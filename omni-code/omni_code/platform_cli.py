@@ -38,31 +38,15 @@ def main(args: list[str]) -> None:
 
 
 def _codex(args: list[str]) -> None:
-    from omni_code import codex_auth
+    # Importing codex_auth binds the framework's codex token store to
+    # omni-code's config dir before the shared CLI flow runs.
+    from omni_code import codex_auth  # noqa: F401
 
-    command = args[0] if args else "login"
+    from omniagents.cli import run_codex_auth_command
 
-    if command == "login":
-        try:
-            tokens = codex_auth.device_login()
-        except Exception as e:
-            print(f"Codex login failed: {e}", file=sys.stderr)
-            sys.exit(1)
-        acct = tokens.get("account_id")
-        print("Signed in to ChatGPT (Codex)." + (f" Account: {acct}" if acct else ""))
-    elif command == "logout":
-        codex_auth.clear_tokens()
-        print("Signed out of ChatGPT (Codex).")
-    elif command == "status":
-        tokens = codex_auth.load_tokens()
-        if not tokens:
-            print("Codex:     not signed in\n\nRun: omni auth codex login")
-            return
-        acct = tokens.get("account_id") or "(unknown)"
-        print(f"Codex:     signed in\nAccount:   {acct}")
-    else:
-        print(f"Unknown codex command: {command}", file=sys.stderr)
-        sys.exit(1)
+    status = run_codex_auth_command(args[0] if args else "login", prog="omni")
+    if status:
+        sys.exit(status)
 
 
 def _login(args: list[str]) -> None:
