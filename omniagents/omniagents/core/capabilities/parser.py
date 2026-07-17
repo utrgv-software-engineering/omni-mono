@@ -132,6 +132,7 @@ def parse_capability_spec(
     tool_registry: Optional[Dict[str, Any]] = None,
     agents_map: Optional[Dict[str, Any]] = None,
     server_functions_registry: Optional[Dict[str, Any]] = None,
+    capability_registry: Optional[Dict[str, Any]] = None,
     source: str = "<inline>",
 ) -> Any:
     """Parse a single capability YAML dict into a Capability instance.
@@ -139,6 +140,23 @@ def parse_capability_spec(
     *spec* is the raw dict from YAML (as it appears in ``project.yml``'s
     ``capabilities:`` list, or the body of a file under ``paths.capabilities/``).
     *source* is a human-readable origin used in error messages.
+
+    Subsetting: ``extends: <name>`` starts from an already-registered
+    pure-YAML capability (typically the builtin being overridden) instead
+    of a blank slate — the usual reason to override a builtin pack is to
+    tweak one field, not to re-declare all of them. Merge semantics:
+
+    - ``exclude_tools:`` / ``exclude_server_functions:`` remove entries
+      inherited from the base (unknown names error — typo protection).
+    - ``tools:`` / ``agent_tools:`` / ``server_functions:`` in the child
+      are APPENDED to what remains inherited (deduped by name).
+    - ``instructions:`` replaces the base's when present, else inherited.
+    - ``approvals:`` and ``sampling_params:`` merge child-over-base by key.
+
+    Only pure-YAML capabilities can be extended, and ``extends`` cannot be
+    combined with ``type:``. Bases resolve against *capability_registry*
+    (the packs known when this spec is parsed — builtins when parsing
+    project packs).
 
     Returns a Capability instance. Raises ``ValueError`` for missing/invalid
     fields so the caller can decide whether to abort discovery or skip.
@@ -158,13 +176,54 @@ def parse_capability_spec(
     agent_tools_list = spec.get("agent_tools") or []
     server_functions_list = spec.get("server_functions") or []
     cap_type = spec.get("type")
+
+    extends_name = spec.get("extends")
+    base_cap: Optional[_YamlCapability] = None
+    if extends_name is not None:
+        if not isinstance(extends_name, str) or not extends_name.strip():
+            raise ValueError(
+                f"Capability {name!r} 'extends' must be a non-empty string"
+            )
+        if cap_type is not None:
+            raise ValueError(
+                f"Capability {name!r} at {source} cannot combine 'extends' "
+                "with 'type:' — a Python-class capability owns its own surface"
+            )
+        if capability_registry is None:
+            raise ValueError(
+                f"Cannot resolve extends {extends_name!r} for capability "
+                f"{name!r}: no capability_registry was provided to the parser"
+            )
+        base_cap = capability_registry.get(extends_name)
+        if base_cap is None:
+            available = sorted(capability_registry.keys())
+            raise ValueError(
+                f"Capability {name!r} extends unknown capability "
+                f"{extends_name!r}. Known at this point: {available}"
+            )
+        if not isinstance(base_cap, _YamlCapability):
+            raise ValueError(
+                f"Capability {name!r} extends {extends_name!r}, which is a "
+                "Python-class capability — only pure-YAML capabilities can "
+                "be extended"
+            )
+    else:
+        for key in ("exclude_tools", "exclude_server_functions"):
+            if spec.get(key):
+                raise ValueError(
+                    f"Capability {name!r} uses {key!r} without 'extends:' — "
+                    "there is nothing to exclude from"
+                )
+
     # Pure-YAML capabilities must declare their surface explicitly.
     # Python-class capabilities (`type: <name>`) are exempt — the class owns
     # its tool construction (e.g. SDK Filesystem brings apply_patch/view_image
     # via its own tools() implementation, no YAML list needed). A commands-only
-    # pack (server_functions without tools) is legal.
+    # pack (server_functions without tools) is legal, as is an extends-only
+    # pack (it inherits the base's surface).
     if (
         cap_type is None
+        and base_cap is None
         and not tools_list
         and not agent_tools_list
         and not server_functions_list
@@ -173,7 +232,7 @@ def parse_capability_spec(
             f"Capability {name!r} at {source} must declare at least one of "
             "'tools', 'agent_tools', or 'server_functions' (or use 'type:' to "
             "reference a registered Capability class that owns its tool "
-            "construction)"
+            "construction, or 'extends:' to subset an existing capability)"
         )
     if not isinstance(tools_list, list):
         raise ValueError(
@@ -292,6 +351,62 @@ def parse_capability_spec(
             object.__setattr__(instance, field_name, value)
         return instance
 
+    # Merge over the extends base, when present (see docstring for rules).
+    if base_cap is not None:
+        exclude_tools = set(spec.get("exclude_tools") or [])
+        exclude_sfs = set(spec.get("exclude_server_functions") or [])
+
+        base_tool_names = {
+            getattr(t, "name", None) for t in base_cap.resolved_tools
+        }
+        unknown_tools = exclude_tools - base_tool_names
+        if unknown_tools:
+            raise ValueError(
+                f"Capability {name!r} exclude_tools references tools not in "
+                f"{extends_name!r}: {sorted(unknown_tools)} "
+                f"(base has: {sorted(n for n in base_tool_names if n)})"
+            )
+        base_sf_names = {m.get("name") for m in base_cap.server_function_specs}
+        unknown_sfs = exclude_sfs - base_sf_names
+        if unknown_sfs:
+            raise ValueError(
+                f"Capability {name!r} exclude_server_functions references "
+                f"entries not in {extends_name!r}: {sorted(unknown_sfs)} "
+                f"(base has: {sorted(n for n in base_sf_names if n)})"
+            )
+
+        inherited_tools = [
+            t
+            for t in base_cap.resolved_tools
+            if getattr(t, "name", None) not in exclude_tools
+        ]
+        inherited_names = {getattr(t, "name", None) for t in inherited_tools}
+        resolved_tools = inherited_tools + [
+            t for t in resolved_tools if getattr(t, "name", None) not in inherited_names
+        ]
+
+        inherited_sfs = [
+            m
+            for m in base_cap.server_function_specs
+            if m.get("name") not in exclude_sfs
+        ]
+        inherited_sf_names = {m.get("name") for m in inherited_sfs}
+        resolved_server_functions = inherited_sfs + [
+            m
+            for m in resolved_server_functions
+            if m.get("name") not in inherited_sf_names
+        ]
+
+        resolved_agent_tools = list(base_cap.agent_tool_configs) + resolved_agent_tools
+
+        if instructions_text is None:
+            instructions_text = base_cap.instructions_text
+        approvals_spec = {**base_cap.approvals_spec, **approvals_spec}
+        sampling_params_override = {
+            **base_cap.sampling_params_override,
+            **sampling_params_override,
+        }
+
     # Pure-YAML capability: synthesize a _YamlCapability instance.
     return _YamlCapability(
         capability_name=name,
@@ -310,9 +425,16 @@ def discover_capabilities_in_dir(
     tool_registry: Optional[Dict[str, Any]] = None,
     agents_map: Optional[Dict[str, Any]] = None,
     server_functions_registry: Optional[Dict[str, Any]] = None,
+    capability_registry: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Walk *base_dir* for ``*.yml`` / ``*.yaml`` files; parse each as a
     capability spec. Returns a name → Capability instance map.
+
+    *capability_registry* seeds ``extends:`` resolution (e.g. builtins when
+    discovering a project's packs). Packs parsed earlier in this directory
+    are also visible to later files (files parse in sorted-name order, so
+    same-dir extends is ordering-sensitive — prefer extending across
+    layers, not within one directory).
 
     Errors during a single file's parse are logged and the file is skipped
     so one broken capability doesn't disable the whole project. Duplicate
@@ -339,6 +461,7 @@ def discover_capabilities_in_dir(
                 tool_registry=tool_registry,
                 agents_map=agents_map,
                 server_functions_registry=server_functions_registry,
+                capability_registry={**(capability_registry or {}), **out},
                 source=str(yaml_file),
             )
         except ValueError as e:

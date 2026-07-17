@@ -327,6 +327,7 @@ def load_project(project_path: str) -> ProjectContext:
                     tool_registry=tool_registry,
                     agents_map=agents_map,
                     server_functions_registry=server_functions_registry,
+                    capability_registry=capability_registry,
                 )
                 capability_registry.update(builtin_caps)
             except Exception as e:
@@ -346,6 +347,7 @@ def load_project(project_path: str) -> ProjectContext:
                     tool_registry=tool_registry,
                     agents_map=agents_map,
                     server_functions_registry=server_functions_registry,
+                    capability_registry=capability_registry,
                 )
                 for cap_name, cap in discovered.items():
                     if cap_name in project_cap_names:
@@ -368,6 +370,7 @@ def load_project(project_path: str) -> ProjectContext:
                         tool_registry=tool_registry,
                         agents_map=agents_map,
                         server_functions_registry=server_functions_registry,
+                        capability_registry=capability_registry,
                         source="project.yml",
                     )
                     cap_name = getattr(cap, "capability_name", None) or cap_spec.get("name")
