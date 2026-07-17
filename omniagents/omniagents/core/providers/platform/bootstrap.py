@@ -6,46 +6,52 @@ so that auth, audit, and policy providers activate automatically.
 
 Detection order:
 1. OMNI_PLATFORM_URL + OMNI_RUNTIME_TOKEN env vars (container injection)
-2. ~/.config/omni_code/platform.json (CLI login)
+2. Product-stored credentials, via the loader installed with
+   ``set_platform_credentials_loader`` (e.g. the product CLI's login
+   flow writing ``platform.json`` under its own config dir)
 
-If neither is present, this is a no-op — open-source mode.
+If neither is present, this is a no-op — open-source mode. The framework
+deliberately knows no product config paths; products own their credential
+store and install a loader for it.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger("omniagents.platform.bootstrap")
 
+# Product-installed loader for stored platform credentials. Returns the
+# stored credential dict (must carry platform_url + access_token to count)
+# or None. Installed at import time from the product's context/install
+# module, which precedes AgentService construction in every process shape.
+_stored_credentials_loader: Optional[Callable[[], Optional[Dict[str, Any]]]] = None
+
+
+def set_platform_credentials_loader(
+    loader: Optional[Callable[[], Optional[Dict[str, Any]]]],
+) -> None:
+    """Install the product's stored-credentials loader.
+
+    Without one, platform detection is env-var-only.
+    """
+    global _stored_credentials_loader
+    _stored_credentials_loader = loader
+
 
 def _find_stored_credentials() -> Optional[Dict[str, Any]]:
-    """Look for stored platform credentials from the omni CLI."""
-    # Standard config locations (matching omni_code.config.get_config_dir)
-    candidates = []
-
-    xdg = os.getenv("XDG_CONFIG_HOME")
-    if xdg:
-        candidates.append(Path(xdg) / "omni_code" / "platform.json")
-
-    candidates.append(Path.home() / ".config" / "omni_code" / "platform.json")
-
-    if os.name == "nt":
-        appdata = os.getenv("APPDATA")
-        if appdata:
-            candidates.append(Path(appdata) / "OmniCode" / "platform.json")
-
-    for path in candidates:
-        if path.exists():
-            try:
-                data = json.loads(path.read_text())
-                if isinstance(data, dict) and data.get("access_token"):
-                    return data
-            except (json.JSONDecodeError, OSError):
-                continue
+    """Load stored platform credentials via the product-installed loader."""
+    if _stored_credentials_loader is None:
+        return None
+    try:
+        data = _stored_credentials_loader()
+    except Exception as exc:
+        logger.warning("Platform credentials loader failed: %s", exc)
+        return None
+    if isinstance(data, dict) and data.get("access_token"):
+        return data
     return None
 
 
