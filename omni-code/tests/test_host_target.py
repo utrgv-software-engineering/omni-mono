@@ -129,7 +129,7 @@ async def test_non_streaming_sandbox_errors_loudly_not_host_shell():
 def test_instruction_workspace_reflects_given_workspace_root():
     """The [Workspace] line shows the workspace_root it is handed — which, for
     a sandbox run, is the container manifest root forced by the server."""
-    from omni_agents.omni.context import format_agents_md_block
+    from omni_code.agents.omni.context import format_agents_md_block
 
     block = format_agents_md_block({"workspace_root": "/workspace/myproject"})
     assert "[Workspace]\n/workspace/myproject" in block
@@ -148,7 +148,7 @@ async def test_fs_list_dir_browses_container_when_sandboxed():
     """With a live sandbox session, fs_list_dir lists the CONTAINER (via the
     session), defaulting to the manifest root and returning absolute container
     paths — so the picker navigates the filesystem the agent's tools see."""
-    import server_functions.filesystem as fsmod
+    import omni_code.server_functions.filesystem as fsmod
     from omni_code import agent_workspace_state as aws
 
     class _SdkEntry:

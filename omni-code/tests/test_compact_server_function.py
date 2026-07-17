@@ -1,7 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 
-import server_functions.compact as compact_mod
+import omni_code.server_functions.compact as compact_mod
 
 
 class FakeService:

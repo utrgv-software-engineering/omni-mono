@@ -1,6 +1,6 @@
 import pytest
 
-from server_functions import terminal as terminal_mod
+from omni_code.server_functions import terminal as terminal_mod
 
 
 class FakeTerminalManager:

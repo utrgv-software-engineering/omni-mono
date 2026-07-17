@@ -11,7 +11,7 @@ from typing import Any, Dict
 
 from omniagents import context_factory
 
-from omni_agents.omni.context import build_coding_context as _build_coding_context
+from omni_code.agents.omni.context import build_coding_context as _build_coding_context
 
 
 @context_factory

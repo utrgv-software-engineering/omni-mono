@@ -13,7 +13,7 @@ from omniagents import context_factory
 from omniagents import model_config_resolver
 from omniagents import realtime_settings_resolver
 
-from omni_agents.omni.context import build_coding_context
+from omni_code.agents.omni.context import build_coding_context
 
 
 @context_factory
@@ -32,6 +32,6 @@ def resolve_voice_realtime_settings() -> Dict[str, Any]:
 
 @model_config_resolver
 def resolve_default_model() -> Dict[str, Any] | None:
-    from omni_agents.omni.context import resolve_default_model as resolve
+    from omni_code.agents.omni.context import resolve_default_model as resolve
 
     return resolve()

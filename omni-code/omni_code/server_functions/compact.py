@@ -4,7 +4,7 @@ The orchestration (window since last checkpoint, shrink-on-context-error
 retry, resume-protocol summary item, `context_summary` marker) is the
 framework's ``run_checkpoint_compaction``. What lives here is omni-code's
 part: resolving which model/provider the compactor agent runs on, and the
-compactor agent itself (``omni_agents/compactor``).
+compactor agent itself (``omni_code/agents/compactor``).
 """
 
 from __future__ import annotations

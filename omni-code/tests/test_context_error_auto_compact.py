@@ -3,7 +3,7 @@ import asyncio
 import agents
 
 from omniagents.core.runtime.bridge import stream_agent
-from omni_agents.omni.runtime_hooks.error import on_error
+from omni_code.agents.omni.runtime_hooks.error import on_error
 
 
 class FakeRpcChannel:

@@ -1,9 +1,9 @@
 """The `/init` slash command: generate or update the workspace AGENTS.md.
 
-Runs the product's `init_agent` (omni_agents/init_agent) through the
+Runs the product's `init_agent` (omni_code/agents/init_agent) through the
 framework's ephemeral-run harness (`run_agent_once`) — a multi-turn agent
 run with real tools, outside the session lifecycle. Registered on the
-framework's default slash registry from `omni_agents/omni/context.py`, so
+framework's default slash registry from `omni_code/agents/omni/context.py`, so
 the builtin `dispatch` tool can execute it.
 """
 
@@ -16,7 +16,7 @@ from omni_code.utility_runs import _build_model_provider
 
 
 async def run_init_agent(max_turns: int = 1000) -> str:
-    """Run the init_agent from the omni_agents project structure."""
+    """Run the init_agent from the packaged agents tree."""
     from omniagents.core.config.loader import load_agent_spec_from_yaml
     from omniagents.core.runtime import run_agent_once
 
@@ -26,10 +26,7 @@ async def run_init_agent(max_turns: int = 1000) -> str:
     model_runtime = resolve_model_for_runtime()
 
     agent_yaml = (
-        Path(__file__).resolve().parent.parent
-        / "omni_agents"
-        / "init_agent"
-        / "agent.yml"
+        Path(__file__).resolve().parent / "agents" / "init_agent" / "agent.yml"
     )
     spec = load_agent_spec_from_yaml(str(agent_yaml))
 

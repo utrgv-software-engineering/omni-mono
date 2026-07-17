@@ -37,11 +37,7 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 include = [
-    "tools*",
-    "server_functions*",
-    "capabilities*",
     "omni_code*",
-    "omni_agents*",
 ]
 exclude = [
     "tests*",
@@ -49,15 +45,18 @@ exclude = [
 ]
 
 [tool.setuptools.package-data]
+# Everything ships inside the omni_code package: the project manifest,
+# agent specs/instructions, capability YAMLs, overlays, and the sandbox
+# assets + default profile.
 "omni_code" = [
     "project.yml",
+    "sandbox_profile_default.yml",
     "sandbox/*",
+    "agents/*/*.yml",
+    "agents/*/*.md",
+    "capabilities/*.yml",
+    "overlays/*.yml",
 ]
-# Capability definitions are data-only YAML; ship them at the package root
-# (site-packages/capabilities/) so the packaged project.yml's
-# `paths.capabilities: ../capabilities` resolves in a wheel install.
-"capabilities" = ["*.yml"]
-"omni_agents" = ["*/*.yml", "*/*.md"]
 "omni_agents.omni" = ["*.yml", "*.md"]
 "omni_agents.voice_agent" = ["*.yml", "*.md"]
 "omni_agents.init_agent" = ["*.yml", "*.md"]

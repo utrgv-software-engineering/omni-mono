@@ -199,12 +199,9 @@ def _pick_port(host: str, requested: int) -> int:
 def _resolve_agent_project_path(explicit: Optional[Path]) -> Path:
     if explicit is not None:
         return explicit.resolve()
-    pkg_dir = Path(__file__).resolve().parent
-    common_root = pkg_dir.parent
-    repo_root_project = common_root / "project.yml"
-    pkg_project = pkg_dir / "project.yml"
-    if repo_root_project.is_file():
-        return repo_root_project
+    # The manifest lives inside the package — same path for editable and
+    # wheel installs.
+    pkg_project = Path(__file__).resolve().parent / "project.yml"
     if pkg_project.is_file():
         return pkg_project
     raise FileNotFoundError(

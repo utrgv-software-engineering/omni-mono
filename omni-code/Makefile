@@ -5,11 +5,6 @@ clean:
 	rm -rf dist/ build/ *.egg-info
 
 build:
-	# Generate the PACKAGED project.yml from the canonical repo-root one, but
-	# rewrite paths to ../<dir>: in a wheel this file lands in omni_code/, while
-	# agents/tools/capabilities install as top-level packages one level up. The
-	# repo-root project.yml keeps bare paths for editable/dev installs.
-	python scripts/gen_packaged_project.py project.yml omni_code/project.yml
 	python -m build
 
 publish: clean build

@@ -81,7 +81,7 @@ def _resolve_project_context() -> Any:
     if _FALLBACK_PROJECT_CONTEXT is None:
         from omniagents.core.project.runtime import load_project
 
-        project_yml = Path(__file__).resolve().parent.parent / "project.yml"
+        project_yml = Path(__file__).resolve().parent / "project.yml"
         _FALLBACK_PROJECT_CONTEXT = load_project(str(project_yml))
     return _FALLBACK_PROJECT_CONTEXT
 

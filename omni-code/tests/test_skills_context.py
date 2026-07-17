@@ -1,4 +1,4 @@
-from omni_agents.omni.context import build_coding_context
+from omni_code.agents.omni.context import build_coding_context
 from omni_code import agent_workspace_state as aws
 
 

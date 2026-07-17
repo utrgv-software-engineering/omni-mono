@@ -1,6 +1,6 @@
 import asyncio
 
-from omni_agents.omni.runtime_hooks.token import on_token
+from omni_code.agents.omni.runtime_hooks.token import on_token
 
 
 class FakeService:

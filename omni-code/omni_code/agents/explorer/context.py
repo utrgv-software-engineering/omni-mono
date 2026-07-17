@@ -10,6 +10,6 @@ hand-rolled tools/explore_tool.py used to provide.
 
 from __future__ import annotations
 
-from omni_agents.omni.context import resolve_default_model
+from omni_code.agents.omni.context import resolve_default_model
 
 __all__ = ["resolve_default_model"]

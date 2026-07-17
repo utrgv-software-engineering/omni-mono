@@ -7,7 +7,7 @@ from omni_code.skill_sources import source_skill_roots
 # Importing the context module installs omni-code's skill-roots provider
 # (workspace .omni_code/skills + source mounts + global config dir) —
 # the same wiring the running agent gets.
-from omni_agents.omni.context import _skill_roots_for_workspace
+from omni_code.agents.omni.context import _skill_roots_for_workspace
 
 
 def _write_skill(skill_dir, name, description):

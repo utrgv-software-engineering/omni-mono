@@ -3,4 +3,4 @@ agent uses the same credentials as the production `omni` agent."""
 
 from __future__ import annotations
 
-from omni_agents.omni.context import resolve_default_model  # noqa: F401
+from omni_code.agents.omni.context import resolve_default_model  # noqa: F401

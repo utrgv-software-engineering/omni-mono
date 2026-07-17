@@ -6,16 +6,18 @@ on:
     paths:
       - "evaluations/**"
       - "environments/**"
-      - "agents/**"
-      - "tools/**"
-      - "server_functions/**"
+      - "omni_code/agents/**"
+      - "omni_code/tools/**"
+      - "omni_code/capabilities/**"
+      - "omni_code/server_functions/**"
   pull_request:
     paths:
       - "evaluations/**"
       - "environments/**"
-      - "agents/**"
-      - "tools/**"
-      - "server_functions/**"
+      - "omni_code/agents/**"
+      - "omni_code/tools/**"
+      - "omni_code/capabilities/**"
+      - "omni_code/server_functions/**"
   schedule:
     # Weekly on Monday 6am UTC
     - cron: "0 6 * * 1"

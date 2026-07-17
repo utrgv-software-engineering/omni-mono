@@ -1,11 +1,15 @@
 name: omni_code
 allow_user_mcp_servers: true
 allow_user_models: true
+# Paths are relative to this file. Code/data siblings live inside the
+# omni_code package (identical layout for editable and wheel installs);
+# evaluations and target are repo-only and absent from wheels (the
+# loader tolerates missing dirs).
 paths:
-  agents: ../omni_agents
-  tools: ../tools
-  server_functions: ../server_functions
-  capabilities: ../capabilities
+  agents: agents
+  tools: tools
+  server_functions: server_functions
+  capabilities: capabilities
   evaluations: ../evaluations
   target: ../target
 agents:

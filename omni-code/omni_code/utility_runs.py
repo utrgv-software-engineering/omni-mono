@@ -93,14 +93,14 @@ async def run_utility_agent(
     session: Any = None,
     workspace_root: Optional[str] = None,
 ) -> str:
-    """Run one of omni-code's headless utility agents (``omni_agents/<name>``)
+    """Run one of omni-code's headless utility agents (``omni_code/agents/<name>``)
     through the framework's ephemeral-run harness."""
     from pathlib import Path
 
     from omniagents.core.runtime import run_agent_once
 
     agent_yaml = (
-        Path(__file__).resolve().parent.parent / "omni_agents" / agent_name / "agent.yml"
+        Path(__file__).resolve().parent / "agents" / agent_name / "agent.yml"
     )
     model_provider, env_overrides = _build_model_provider(runtime or {})
     return await run_agent_once(

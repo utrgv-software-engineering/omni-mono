@@ -1,39 +1,24 @@
-# Enterprise project.yml overlay — used when omni-code runs inside a
-# platform-managed container. The management plane injects env vars:
+# Enterprise project.yml overlay — applied when omni-code runs inside a
+# platform-managed container. Only the keys that CHANGE relative to the
+# packaged base project.yml live here; the framework deep-merges this
+# over the base (dicts merge, lists/scalars replace — the same semantics
+# as sandbox profiles).
+#
+# To activate, the container image sets:
+#
+#   OMNIAGENTS_PROJECT_OVERLAYS=<site-packages>/omni_code/overlays/platform.yml
+#
+# (os.pathsep-separated for multiple overlays). Operators can also drop
+# overlays into <config>/omni_code/project.d/*.yml — those apply first,
+# env-selected overlays last.
+#
+# The management plane injects env vars the providers below read:
 #
 #   OMNI_PLATFORM_URL    — base URL of the management plane
 #   OMNI_SESSION_ID      — session ID from compute/start
 #   OMNI_RUNTIME_TOKEN   — short-lived RS256 JWT for API auth
-#
-# To use: copy this to project.yml inside the container image, or
-# merge these keys into the existing project.yml at build time.
 
-name: omni_code
 allow_user_mcp_servers: false    # governed by platform entitlements
-allow_user_models: true
-paths:
-  agents: omni_agents
-  tools: tools
-  server_functions: server_functions
-  evaluations: evaluations
-  target: target
-agents:
-  entrypoint: omni
-  voice_entrypoint: voice_agent
-
-settings:
-  - key: model_name
-    label: Model Name
-    group: OpenAI API
-    default: gpt-5.2
-    hint: "Model to use (e.g., gpt-5.2, gpt-4o)"
-
-tracing:
-  provider: studio
-  project: omni_code
-  name: omni_code
-  settings:
-    resume: never
 
 # ── Enterprise security section ─────────────────────────────────────
 security:
