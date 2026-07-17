@@ -94,23 +94,25 @@ def _resolve_studio_project_value(
     return project_value, manifest_path, derived
 
 
-def _run_auth_command(args) -> None:
-    """Handle ``omniagents auth codex {login,logout,status}``."""
-    import sys
+def run_codex_auth_command(command: str = "login", *, prog: str = "omniagents") -> int:
+    """Run a ``<prog> auth codex {login,logout,status}`` command.
 
-    if getattr(args, "auth_command", None) != "codex":
-        print("usage: omniagents auth codex {login,logout,status}", file=sys.stderr)
-        sys.exit(1)
+    Public so products wrapping the framework CLI can reuse the exact
+    same flow under their own program name (pass ``prog``) instead of
+    copying the three branches. Products that bind the token store to a
+    custom directory must perform that binding before calling (e.g. by
+    importing their codex-auth module). Returns a process exit status.
+    """
+    import sys
 
     from omniagents.core.providers import codex
 
-    command = getattr(args, "codex_command", "login")
     if command == "login":
         try:
             tokens = codex.device_login()
         except Exception as e:
             print(f"Codex login failed: {e}", file=sys.stderr)
-            sys.exit(1)
+            return 1
         acct = tokens.get("account_id")
         print("Signed in to ChatGPT (Codex)." + (f" Account: {acct}" if acct else ""))
     elif command == "logout":
@@ -119,10 +121,27 @@ def _run_auth_command(args) -> None:
     elif command == "status":
         tokens = codex.load_tokens()
         if not tokens:
-            print("Codex: not signed in\n\nRun: omniagents auth codex login")
-            return
+            print(f"Codex: not signed in\n\nRun: {prog} auth codex login")
+            return 0
         acct = tokens.get("account_id") or "(unknown)"
         print(f"Codex: signed in\nAccount: {acct}")
+    else:
+        print(f"Unknown codex command: {command}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _run_auth_command(args) -> None:
+    """Handle ``omniagents auth codex {login,logout,status}``."""
+    import sys
+
+    if getattr(args, "auth_command", None) != "codex":
+        print("usage: omniagents auth codex {login,logout,status}", file=sys.stderr)
+        sys.exit(1)
+
+    status = run_codex_auth_command(getattr(args, "codex_command", "login"))
+    if status:
+        sys.exit(status)
 
 
 def main():

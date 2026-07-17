@@ -1288,3 +1288,56 @@ def test_generate_optimizer(monkeypatch, tmp_path, capsys):
 
     captured = capsys.readouterr().out
     assert "demo_optimizer" in captured
+
+
+# ---------------------------------------------------------------------------
+# run_codex_auth_command — shared product-facing codex auth flow
+# ---------------------------------------------------------------------------
+
+
+def test_run_codex_auth_status_not_signed_in_uses_prog(monkeypatch, capsys):
+    from omniagents.cli import run_codex_auth_command
+
+    monkeypatch.setattr(
+        "omniagents.core.providers.codex.load_tokens", lambda: None
+    )
+
+    status = run_codex_auth_command("status", prog="omni")
+
+    assert status == 0
+    assert "Run: omni auth codex login" in capsys.readouterr().out
+
+
+def test_run_codex_auth_login_success(monkeypatch, capsys):
+    from omniagents.cli import run_codex_auth_command
+
+    monkeypatch.setattr(
+        "omniagents.core.providers.codex.device_login",
+        lambda: {"account_id": "acct-1"},
+    )
+
+    status = run_codex_auth_command("login")
+
+    assert status == 0
+    out = capsys.readouterr().out
+    assert "Signed in to ChatGPT (Codex)." in out
+    assert "acct-1" in out
+
+
+def test_run_codex_auth_login_failure_returns_1(monkeypatch, capsys):
+    from omniagents.cli import run_codex_auth_command
+
+    def boom():
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr("omniagents.core.providers.codex.device_login", boom)
+
+    assert run_codex_auth_command("login") == 1
+    assert "Codex login failed" in capsys.readouterr().err
+
+
+def test_run_codex_auth_unknown_command_returns_1(capsys):
+    from omniagents.cli import run_codex_auth_command
+
+    assert run_codex_auth_command("frobnicate") == 1
+    assert "Unknown codex command" in capsys.readouterr().err

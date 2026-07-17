@@ -3,6 +3,7 @@ import glob
 import re
 import fnmatch
 import difflib
+import shlex
 from typing import List, Optional, Dict, Tuple, Union, Any
 from omniagents.core.tools import rich_function_tool, RichToolOutput, approval_metadata
 from functools import lru_cache
@@ -105,6 +106,105 @@ def _should_skip(
     if respect_gitignore and _is_ignored(candidate_path, repo_root):
         return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# ripgrep fast path for discovery tools
+#
+# The pure-Python tree walks below issue one workspace call per directory
+# (and one read per file for binary detection / content search) — on
+# sandboxed backends that's an RPC per file and an order of magnitude
+# slower than ripgrep. When `rg` is available in the active workspace,
+# glob_files/grep_files enumerate (or search) with a single exec and feed
+# the same downstream formatting; on any failure they fall back to the
+# walk, so environments without ripgrep behave exactly as before.
+# ---------------------------------------------------------------------------
+
+_RG_PROBE_CACHE: Dict[int, bool] = {}
+
+
+async def _rg_available() -> bool:
+    from omniagents import workspace as _ws
+
+    ws = _ws.current_workspace()
+    key = id(ws)
+    cached = _RG_PROBE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        probe = await _ws.exec("rg --version", shell=True, timeout=10.0)
+        ok = probe.exit_code == 0
+    except Exception:
+        ok = False
+    _RG_PROBE_CACHE[key] = ok
+    return ok
+
+
+def _rg_base_flags(respect_gitignore: bool) -> str:
+    flags = f"--hidden -g {shlex.quote('!.git')}"
+    if not respect_gitignore:
+        flags += " --no-ignore"
+    return flags
+
+
+async def _rg_list_files(
+    base: str, respect_gitignore: bool, timeout: float = 60.0
+) -> Optional[List[str]]:
+    """Enumerate files under *base* with one ``rg --files`` exec.
+
+    Returns None when ripgrep is unavailable or errored (callers fall
+    back to the workspace walk).
+    """
+    from omniagents import workspace as _ws
+
+    if not await _rg_available():
+        return None
+    cmd = f"rg --files {_rg_base_flags(respect_gitignore)} -- {shlex.quote(base)}"
+    try:
+        result = await _ws.exec(cmd, shell=True, timeout=timeout)
+    except Exception:
+        return None
+    if result.exit_code not in (0, 1):
+        return None
+    return [ln for ln in (result.stdout or "").splitlines() if ln.strip()]
+
+
+async def _rg_count_matches(
+    pattern: str,
+    target: str,
+    include: Optional[str],
+    respect_gitignore: bool,
+    timeout: float,
+) -> Optional[List[Tuple[str, int]]]:
+    """Per-file match counts via one ``rg -c`` exec, as (path, count).
+
+    Returns None when ripgrep is unavailable or rejected the pattern
+    (e.g. lookarounds) — callers fall back to the Python walk.
+    """
+    from omniagents import workspace as _ws
+
+    if not await _rg_available():
+        return None
+    cmd = f"rg -c -H {_rg_base_flags(respect_gitignore)}"
+    if include:
+        cmd += f" -g {shlex.quote(include)}"
+    cmd += f" -e {shlex.quote(pattern)} -- {shlex.quote(target)}"
+    try:
+        result = await _ws.exec(cmd, shell=True, timeout=timeout)
+    except Exception:
+        return None
+    if result.exit_code not in (0, 1):
+        return None
+    out: List[Tuple[str, int]] = []
+    for ln in (result.stdout or "").splitlines():
+        path_part, sep, count_part = ln.rpartition(":")
+        if not sep:
+            continue
+        try:
+            out.append((path_part, int(count_part)))
+        except ValueError:
+            continue
+    return out
 
 
 from omniagents.builtin.tools._workspace import (
@@ -298,39 +398,63 @@ async def glob_files(
                     if match_segments(pat_segs, segs):
                         matches.append(resolved_path)
         else:
-            # Recursive workspace walk. Apply gitignore pruning, binary
-            # filtering, and segment matching as paths are produced.
-            stack = [resolved_path]
-            visited: set = set()
-            while stack:
-                current = stack.pop()
-                if current in visited:
-                    continue
-                visited.add(current)
-                try:
-                    entries = await _ws.list_dir(
-                        current,
-                        include_hidden=True,
-                        respect_gitignore=False,
-                    )
-                except Exception:
-                    continue
-                for entry in entries:
-                    full = _ws.resolve(entry.path)
-                    if _should_skip(full, repo_root, respect_gitignore):
-                        continue
-                    if entry.is_dir and not entry.is_symlink:
-                        stack.append(full)
-                        segs = rel_segments(relative_base, full)
-                        if match_segments(pat_segs, segs):
-                            matches.append(full)
-                    else:
+            # Fast path: one `rg --files` exec enumerates the whole tree
+            # (gitignore-aware). Directories are derived from the file
+            # paths; binary detection runs only on pattern matches.
+            fast_files = await _rg_list_files(resolved_path, respect_gitignore)
+            if fast_files is not None:
+                seen_dirs: set = set()
+                for full in fast_files:
+                    # Match ancestor directories (the walk matched dirs too).
+                    rel = os.path.relpath(full, relative_base)
+                    parts = rel.replace("\\", "/").split("/")
+                    for i in range(1, len(parts)):
+                        dir_path = os.path.join(relative_base, *parts[:i])
+                        if dir_path in seen_dirs:
+                            continue
+                        seen_dirs.add(dir_path)
+                        if match_segments(pat_segs, parts[:i]):
+                            matches.append(dir_path)
+                    segs = rel_segments(relative_base, full)
+                    if match_segments(pat_segs, segs):
                         if await _ws_is_binary_file(full):
                             skipped_binary += 1
-                            continue
-                        segs = rel_segments(relative_base, full)
-                        if match_segments(pat_segs, segs):
+                        else:
                             matches.append(full)
+            else:
+                # Recursive workspace walk. Apply gitignore pruning, binary
+                # filtering, and segment matching as paths are produced.
+                stack = [resolved_path]
+                visited: set = set()
+                while stack:
+                    current = stack.pop()
+                    if current in visited:
+                        continue
+                    visited.add(current)
+                    try:
+                        entries = await _ws.list_dir(
+                            current,
+                            include_hidden=True,
+                            respect_gitignore=False,
+                        )
+                    except Exception:
+                        continue
+                    for entry in entries:
+                        full = _ws.resolve(entry.path)
+                        if _should_skip(full, repo_root, respect_gitignore):
+                            continue
+                        if entry.is_dir and not entry.is_symlink:
+                            stack.append(full)
+                            segs = rel_segments(relative_base, full)
+                            if match_segments(pat_segs, segs):
+                                matches.append(full)
+                        else:
+                            if await _ws_is_binary_file(full):
+                                skipped_binary += 1
+                                continue
+                            segs = rel_segments(relative_base, full)
+                            if match_segments(pat_segs, segs):
+                                matches.append(full)
 
         # Sort matches by modification time (newest first)
         matches.sort(
@@ -529,7 +653,23 @@ async def grep_files(
             real_to_index[real_path] = len(files_to_search)
             files_to_search.append(candidate)
 
-        if base_is_file:
+        # Fast path: one `rg -c` exec does the enumeration, gitignore and
+        # binary filtering, include-glob, and per-file counting in a
+        # single workspace call. On None (rg unavailable, or the pattern
+        # uses Python-only regex features), fall back to the walk below.
+        rg_counts = await _rg_count_matches(
+            pattern, resolved_path, include, respect_gitignore, float(timeout)
+        )
+        if rg_counts is not None:
+            rg_counts.sort(
+                key=lambda t: os.path.getmtime(t[0]) if os.path.exists(t[0]) else 0,
+                reverse=True,
+            )
+            for rg_file, rg_count in rg_counts[:limit]:
+                files_searched += 1
+                files_with_matches += 1
+                results.append({"file": rg_file, "match_count": rg_count})
+        elif base_is_file:
             await record_file(resolved_path)
         else:
             # Recursive workspace walk with gitignore-aware pruning.
@@ -610,7 +750,10 @@ async def grep_files(
                 continue
 
         # Check if there might be more files we didn't search
-        more_files_possible = len(files_to_search) > files_searched
+        if rg_counts is not None:
+            more_files_possible = len(rg_counts) > len(results)
+        else:
+            more_files_possible = len(files_to_search) > files_searched
 
         elapsed_ms = int((time_module.monotonic() - start_time) * 1000)
 

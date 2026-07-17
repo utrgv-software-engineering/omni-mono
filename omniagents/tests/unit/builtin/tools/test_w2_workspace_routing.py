@@ -158,6 +158,11 @@ class _RecordingWorkspace(Workspace):
 
     async def exec(self, command: Any, **kwargs: Any) -> ExecResult:
         self._record("exec", command, **kwargs)
+        for prefix, out in getattr(self, "exec_outputs", {}).items():
+            if str(command).startswith(prefix):
+                return ExecResult(
+                    stdout=out, stderr="", exit_code=0, wall_time_seconds=0
+                )
         return ExecResult(stdout="", stderr="", exit_code=0, wall_time_seconds=0)
 
     async def spawn(self, command: Any, **kwargs: Any):
@@ -195,7 +200,16 @@ async def test_read_file_routes_through_workspace(fake_ws):
 
 
 @pytest.mark.asyncio
-async def test_glob_files_routes_through_workspace(fake_ws):
+async def test_glob_files_routes_through_workspace(fake_ws, monkeypatch):
+    # Force the walk path — the ripgrep fast path is exercised separately;
+    # here we pin that the fallback stays workspace-routed.
+    import omniagents.builtin.tools.file_tools as ft
+
+    async def _no_rg():
+        return False
+
+    monkeypatch.setattr(ft, "_rg_available", _no_rg)
+
     ctx = types.SimpleNamespace(context={"workspace_root": "/fake"})
     result = await unwrap(glob_files)(ctx, "**/*.py")
 
@@ -209,7 +223,16 @@ async def test_glob_files_routes_through_workspace(fake_ws):
 
 
 @pytest.mark.asyncio
-async def test_grep_files_routes_through_workspace(fake_ws):
+async def test_grep_files_routes_through_workspace(fake_ws, monkeypatch):
+    # Force the walk path — the ripgrep fast path is exercised separately;
+    # here we pin that the fallback stays workspace-routed.
+    import omniagents.builtin.tools.file_tools as ft
+
+    async def _no_rg():
+        return False
+
+    monkeypatch.setattr(ft, "_rg_available", _no_rg)
+
     ctx = types.SimpleNamespace(context={"workspace_root": "/fake"})
     result = await unwrap(grep_files)(ctx, "hello")
 
@@ -220,6 +243,37 @@ async def test_grep_files_routes_through_workspace(fake_ws):
     assert "read_text" in names
     files_with_match = [m["file"] for m in result.ui_metadata["value"]]
     assert any(f.endswith("main.py") for f in files_with_match)
+
+
+@pytest.mark.asyncio
+async def test_glob_and_grep_fast_paths_route_through_workspace_exec(fake_ws):
+    """With ripgrep available, discovery goes through workspace.exec —
+    a single call instead of a per-directory/per-file walk."""
+    import omniagents.builtin.tools.file_tools as ft
+
+    ft._RG_PROBE_CACHE.clear()
+    fake_ws.exec_outputs = {
+        "rg --version": "ripgrep 14.0.0\n",
+        "rg --files": "/fake/src/main.py\n",
+        "rg -c": "/fake/src/main.py:2\n",
+    }
+
+    ctx = types.SimpleNamespace(context={"workspace_root": "/fake"})
+    result = await unwrap(glob_files)(ctx, "**/*.py")
+    exec_cmds = [c[1][0] for c in fake_ws.calls if c[0] == "exec"]
+    assert any("rg --files" in c for c in exec_cmds)
+    assert "list_dir" not in [c[0] for c in fake_ws.calls]
+    assert any(p.endswith("main.py") for p in result.ui_metadata["value"])
+
+    fake_ws.calls.clear()
+    ft._RG_PROBE_CACHE.clear()
+    result = await unwrap(grep_files)(ctx, "hello")
+    exec_cmds = [c[1][0] for c in fake_ws.calls if c[0] == "exec"]
+    assert any(c.startswith("rg -c") for c in exec_cmds)
+    assert "read_text" not in [c[0] for c in fake_ws.calls]
+    matches = result.ui_metadata["value"]
+    assert matches and matches[0]["file"] == "/fake/src/main.py"
+    assert matches[0]["match_count"] == 2
 
 
 # -- list_directory -------------------------------------------------------

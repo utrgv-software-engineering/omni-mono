@@ -1,5 +1,6 @@
 from .artifacts import display_artifact
 from .bash_tool import bash_kill, bash_logs, bash_status, execute_bash
+from .convert_to_markdown import convert_to_markdown
 from .download_file import download_file
 from .file_tools import (
     glob_files,
@@ -39,6 +40,7 @@ __all__ = [
     "bash_status",
     "bash_logs",
     "bash_kill",
+    "convert_to_markdown",
     "download_file",
     "glob_files",
     "grep_files",

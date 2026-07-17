@@ -14,7 +14,10 @@ from .isolation import (
     IsolationStrategy,
     NoneIsolation,
     WorkerWorkspace,
+    WorktreeIsolation,
     get_isolation_strategy,
+    is_git_dirty,
+    is_git_repo,
     isolation_strategy_names,
     register_isolation_strategy,
 )
@@ -29,7 +32,10 @@ __all__ = [
     "WorkerWorkspace",
     "NoneIsolation",
     "CopyIsolation",
+    "WorktreeIsolation",
     "get_isolation_strategy",
+    "is_git_dirty",
+    "is_git_repo",
     "isolation_strategy_names",
     "register_isolation_strategy",
 ]

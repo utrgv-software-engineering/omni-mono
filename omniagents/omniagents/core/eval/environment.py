@@ -87,22 +87,144 @@ class EvalEnvironment(ABC):
         """
         pass
 
+    async def _path_exists(self, context: EnvironmentContext, rel_path: str) -> bool:
+        """Whether *rel_path* (relative to the workspace root) exists.
+
+        Default: host filesystem under ``context.data["workspace_root"]``.
+        Environments whose files live elsewhere (e.g. inside a container)
+        override this and :meth:`_read_file`; the ``verify`` matching
+        logic is shared.
+        """
+        import os
+
+        root = context.get("workspace_root", "")
+        return bool(root) and os.path.exists(os.path.join(root, rel_path))
+
+    async def _read_file(
+        self, context: EnvironmentContext, rel_path: str
+    ) -> Optional[str]:
+        """Content of *rel_path* relative to the workspace root, or None.
+
+        Default: host filesystem read. See :meth:`_path_exists`.
+        """
+        import os
+
+        root = context.get("workspace_root", "")
+        path = os.path.join(root, rel_path)
+        try:
+            with open(path, errors="replace") as f:
+                return f.read()
+        except OSError:
+            return None
+
     async def verify(
         self, context: EnvironmentContext, expected: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Verify expected state against actual state.
+        """Verify expected filesystem state against the workspace.
 
-        Override this to provide database/API verification for measures.
+        ``expected`` maps workspace-relative paths to expectation dicts::
 
-        Args:
-            context: The context returned by setup().
-            expected: Expected state specification from scenario.
+            {
+                "src/main.py": {
+                    "exists": True,
+                    "contains": ["def hello"],
+                    "not_contains": ["import os"],
+                },
+                "secrets.txt": {"exists": False},
+            }
+
+        The matching logic is shared; environments that keep files
+        somewhere other than the host workspace override just
+        :meth:`_path_exists` / :meth:`_read_file`. Environments with no
+        ``workspace_root`` in their context keep the historical no-op
+        result. Override wholesale for non-filesystem verification
+        (databases, APIs).
 
         Returns:
-            Dict with verification results, typically:
-            {"success": bool, "results": {...details...}}
+            Dict with verification results:
+            {"success": bool, "results": {rel_path: {"matched": bool, ...}}}
         """
-        return {"success": True, "results": {}}
+        if not context or not context.get("workspace_root"):
+            return {"success": True, "results": {}}
+
+        results: Dict[str, Any] = {}
+        success = True
+
+        for rel_path, expectations in (expected or {}).items():
+            expect_exists = expectations.get("exists", True)
+            exists = await self._path_exists(context, rel_path)
+
+            if not expect_exists:
+                if exists:
+                    results[rel_path] = {
+                        "matched": False,
+                        "reason": "file should not exist",
+                    }
+                    success = False
+                else:
+                    results[rel_path] = {"matched": True}
+                continue
+
+            if not exists:
+                results[rel_path] = {"matched": False, "reason": "file not found"}
+                success = False
+                continue
+
+            content: Optional[str] = None
+            if expectations.get("contains") or expectations.get("not_contains"):
+                content = await self._read_file(context, rel_path)
+            content = content or ""
+
+            reason: Optional[str] = None
+            for pattern in expectations.get("contains", []):
+                if pattern not in content:
+                    reason = f"missing pattern: {pattern!r}"
+                    break
+            if reason is None:
+                for pattern in expectations.get("not_contains", []):
+                    if pattern in content:
+                        reason = f"forbidden pattern found: {pattern!r}"
+                        break
+
+            if reason is None:
+                results[rel_path] = {"matched": True}
+            else:
+                results[rel_path] = {"matched": False, "reason": reason}
+                success = False
+
+        return {"success": success, "results": results}
+
+    def run_command(
+        self,
+        context: EnvironmentContext,
+        command: str,
+        timeout: int = 120,
+    ) -> tuple:
+        """Run a shell command in the scenario's workspace.
+
+        Returns ``(exit_code, stdout, stderr)``. The default runs the
+        command as a host subprocess in ``context.data["workspace_root"]``;
+        environments that execute elsewhere (e.g. inside a container)
+        override this, so measures stay environment-agnostic — they just
+        ask the environment to run a command and read the result.
+        """
+        import subprocess
+
+        workspace = context.get("workspace_root") if context else None
+        if not workspace:
+            return (127, "", "no workspace_root in environment context")
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return (124, "", f"command timed out after {timeout}s")
+        return (result.returncode, result.stdout or "", result.stderr or "")
 
     def get_tool_context(self, context: EnvironmentContext) -> Dict[str, Any]:
         """Get context values to inject into tool calls.

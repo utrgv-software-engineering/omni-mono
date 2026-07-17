@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Builtin `convert_to_markdown` tool + `markdown` capability pack (MarkItDown-backed rich-format → Markdown extraction, sandbox-aware host-bridge), lifted from omni-code. MarkItDown is an optional extra: `omniagents[markdown]` (included in `[all]`).
+- Ripgrep fast path for the builtin discovery tools: `glob_files` and `grep_files` enumerate/search with a single `rg` exec when ripgrep is available in the active workspace (one workspace call instead of an RPC per directory/file on sandboxed backends), falling back to the pure walk otherwise. Products no longer need to exclude these tools for performance.
+- `WorktreeIsolation` ships as the third builtin worker isolation strategy (`worktree`): a git worktree on a `worker/<parent>-worker-<id>` branch under the framework scratch area, stateless (cleanup driven by WorkerWorkspace metadata), lifted from omni-code. `is_git_repo` / `is_git_dirty` helpers exported from `omniagents.core.workers`.
+- `make_auto_compact_token_hook` — the proactive half of `make_auto_compact_error_hook`: a `token` runtime hook that checkpoint-compacts when input-token utilization crosses a threshold (default 0.9), with the same state-key flags and opt-outs.
+- `EvalEnvironment.run_command` (host-subprocess default) and a concrete filesystem `verify` (exists/contains/not_contains) parameterized by overridable `_path_exists`/`_read_file` primitives — container environments override just the primitives; measures stay environment-agnostic.
+- New assertion primitives in `omniagents.core.evaluation`: `assert_tool_arg_matches` (pattern/regex/predicate scan over tool-call arguments, with `negate` for forbidden-action measures) and `assert_sql_rows` / `assert_sql_no_rows` (read-only sqlite checks against the environment-staged `db_path`).
+- `run_codex_auth_command(command, prog=...)` — public codex auth CLI flow, parameterized by program name so products reuse it instead of copying the login/logout/status branches.
 - Builtin `notebook` / `notebook_readonly` capability packs with `read_notebook` and `edit_notebook` tools (cell-level Jupyter editing with diff-based approval metadata), lifted from omni-code.
 - Builtin `filesystem_readonly` and `shell_readonly` capability packs — read-only surfaces for research/explorer subagents.
 - Builtin `slash` capability pack with a `dispatch` tool that executes commands from the new process-wide default `SlashCommandRegistry` (`register_slash_command` / `default_slash_registry` in `omniagents.core.tools`).

@@ -44,6 +44,7 @@ from omniagents.core.runtime.compaction import (
     DEFAULT_CHECKPOINT_ENVELOPE,
     history_since_last_checkpoint,
     make_auto_compact_error_hook,
+    make_auto_compact_token_hook,
     run_checkpoint_compaction,
     summarize_with_window_shrink,
 )
@@ -272,3 +273,82 @@ def test_auto_compact_hook_custom_command():
     session = _FakeSession([])
     _run_hook(hook, service, session)
     assert service.calls[0]["command"] == "my.compact"
+
+
+def _run_token_hook(hook, service, session, *, total=95, max_input=100):
+    return asyncio.run(
+        hook(
+            service=service,
+            session=session,
+            run_id="run-1",
+            params={
+                "max_input_tokens": max_input,
+                "delta": {"total_tokens": total},
+            },
+            event="token",
+        )
+    )
+
+
+def test_auto_compact_token_hook_compacts_above_threshold():
+    hook = make_auto_compact_token_hook(state_key="prod")
+    service = _FakeService()
+    session = _FakeSession([])
+
+    _run_token_hook(hook, service, session, total=95, max_input=100)
+
+    assert service.calls == [
+        {"command": "compact", "args": {}, "session_id": "sess-1"}
+    ]
+    state = session.variables["prod"]
+    assert state["needs_context_compression"] is True
+    assert state["context_utilization"] == 0.95
+    assert state["context_utilization_run_id"] == "run-1"
+    assert state["auto_compact_in_progress"] is False
+
+
+def test_auto_compact_token_hook_ignores_below_threshold():
+    hook = make_auto_compact_token_hook(state_key="prod")
+    service = _FakeService()
+    session = _FakeSession([])
+    _run_token_hook(hook, service, session, total=50, max_input=100)
+    assert service.calls == []
+    assert session.variables == {}
+
+
+def test_auto_compact_token_hook_ignores_missing_max_input():
+    hook = make_auto_compact_token_hook(state_key="prod")
+    service = _FakeService()
+    session = _FakeSession([])
+    _run_token_hook(hook, service, session, total=95, max_input=None)
+    assert service.calls == []
+
+
+def test_auto_compact_token_hook_honors_opt_out():
+    hook = make_auto_compact_token_hook(state_key="prod")
+    service = _FakeService()
+    session = _FakeSession([])
+    session.variables["prod"] = {"auto_compact": False}
+
+    _run_token_hook(hook, service, session)
+
+    assert service.calls == []
+    # Pressure flags are still recorded.
+    assert session.variables["prod"]["needs_context_compression"] is True
+
+
+def test_auto_compact_token_hook_reentry_guard():
+    hook = make_auto_compact_token_hook(state_key="prod")
+    service = _FakeService()
+    session = _FakeSession([])
+    session.variables["prod"] = {"auto_compact_in_progress": True}
+    _run_token_hook(hook, service, session)
+    assert service.calls == []
+
+
+def test_auto_compact_token_hook_custom_threshold():
+    hook = make_auto_compact_token_hook(state_key="prod", threshold=0.5)
+    service = _FakeService()
+    session = _FakeSession([])
+    _run_token_hook(hook, service, session, total=60, max_input=100)
+    assert service.calls[0]["command"] == "compact"

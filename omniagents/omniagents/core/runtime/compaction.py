@@ -525,3 +525,71 @@ def make_auto_compact_error_hook(*, state_key: str, command: str = "compact"):
         return {"retry": True}
 
     return on_error
+
+
+def make_auto_compact_token_hook(
+    *, state_key: str, command: str = "compact", threshold: float = 0.9
+):
+    """Build a proactive-compaction ``token`` runtime hook.
+
+    The proactive half of :func:`make_auto_compact_error_hook`: when a
+    run's reported input-token utilization crosses *threshold*, record
+    the pressure flags under ``session.variables[state_key]`` and run
+    the *command* server function (the product's checkpoint-compaction
+    command) before the context actually overflows. Products register
+    the result with ``@runtime_hook("token")`` (or assign it to a
+    decorated name).
+
+    Opt-outs honored via ``session.variables[state_key]``:
+    ``auto_compact: False`` disables the compaction (flags are still
+    recorded); ``auto_compact_in_progress`` guards re-entry.
+    """
+
+    async def on_token(
+        *,
+        service: Any,
+        session: Any,
+        run_id: str,
+        params: dict,
+        event: str,
+    ) -> None:
+        max_input_tokens = params.get("max_input_tokens")
+        delta = params.get("delta") or {}
+        total_tokens = delta.get("total_tokens") or 0
+        if not max_input_tokens:
+            return
+
+        utilization = float(total_tokens) / float(max_input_tokens)
+        if utilization < threshold:
+            return
+
+        vars_obj = getattr(session, "variables", None)
+        if not isinstance(vars_obj, dict):
+            vars_obj = {}
+            try:
+                session.variables = vars_obj
+            except Exception:
+                return
+
+        state = vars_obj.get(state_key)
+        if not isinstance(state, dict):
+            state = {}
+            vars_obj[state_key] = state
+
+        state["needs_context_compression"] = True
+        state["context_utilization"] = utilization
+        state["context_utilization_run_id"] = run_id
+
+        if state.get("auto_compact") is False:
+            return
+
+        if state.get("auto_compact_in_progress"):
+            return
+
+        state["auto_compact_in_progress"] = True
+        try:
+            await service.server_call(command, args={}, session_id=session.id)
+        finally:
+            state["auto_compact_in_progress"] = False
+
+    return on_token

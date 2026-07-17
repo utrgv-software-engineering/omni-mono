@@ -51,6 +51,10 @@ studio-server = [
 docs = [
     "mkdocs-material>=9.5.0",
 ]
+markdown = [
+    # convert_to_markdown builtin tool (rich-format → Markdown extraction).
+    "markitdown[all,docx,pdf]>=0.1.1",
+]
 oidc = [
     "PyJWT[crypto]>=2.8.0",
 ]
@@ -115,7 +119,7 @@ platform = [
 ]
 enterprise = ["omniagents[oidc,presidio,platform]"]
 all = [
-    "omniagents[server,web,studio,studio-server,voice,litellm,oidc,presidio,platform,session-sqlalchemy,session-redis,session-mongodb,session-encrypted,session-postgres,audio-blob,sandbox-docker,sandbox-e2b,sandbox-modal,sandbox-runloop,sandbox-daytona,sandbox-blaxel,sandbox-vercel,sandbox-cloudflare,sandbox-aci]",
+    "omniagents[server,web,studio,studio-server,voice,litellm,markdown,oidc,presidio,platform,session-sqlalchemy,session-redis,session-mongodb,session-encrypted,session-postgres,audio-blob,sandbox-docker,sandbox-e2b,sandbox-modal,sandbox-runloop,sandbox-daytona,sandbox-blaxel,sandbox-vercel,sandbox-cloudflare,sandbox-aci]",
 ]
 training = [
     # GRPO/SFT agent fine-tuning (omniagents.training).

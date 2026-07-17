@@ -325,3 +325,125 @@ def assert_assistant_contains(
             if str(w).lower() in low:
                 return False, {"reason": "forbidden", "forbidden": w, "text": text}
     return True, {"text": text}
+
+
+def assert_tool_arg_matches(
+    history: List[Dict[str, Any]],
+    tool_names: List[str] | str,
+    *,
+    arg: Optional[str] = None,
+    pattern: Optional[str] = None,
+    regex: bool = False,
+    predicate: Optional[Callable[[str], bool]] = None,
+    negate: bool = False,
+) -> Tuple[bool, Dict[str, Any]]:
+    """Assert that some call to *tool_names* has an argument matching a
+    pattern/predicate — or, with ``negate=True``, that none does.
+
+    This is the primitive behind "the agent never ran a forbidden
+    command" / "no PHI left in an outbound request" style measures:
+    scan the named tools' calls, extract the argument value (a specific
+    key via ``arg``, or the whole args dict serialized when ``arg`` is
+    None), and test it.
+
+    Args:
+        history: Transcript history items.
+        tool_names: One tool name or a list of them to scan.
+        arg: Argument key to test. When None, the entire args payload is
+            serialized to a string and tested.
+        pattern: Substring to look for (case-insensitive), or a regular
+            expression when ``regex=True``.
+        regex: Treat *pattern* as a regex (``re.search``, IGNORECASE).
+        predicate: Custom test taking the extracted string value. May be
+            combined with *pattern*; a call matches if either does.
+        negate: When True the assertion passes only if NO call matches
+            (and the info dict carries the offending matches on failure).
+
+    Returns:
+        (ok, info) — info["matches"] holds the matching calls, each as
+        {"name", "index", "value"}.
+    """
+    import re as _re
+
+    names = [tool_names] if isinstance(tool_names, str) else list(tool_names)
+    matches: List[Dict[str, Any]] = []
+    scanned = 0
+    for call in parse_tool_calls(history):
+        if call.get("name") not in names:
+            continue
+        scanned += 1
+        args = call.get("args")
+        if arg is not None:
+            if not isinstance(args, dict) or arg not in args:
+                continue
+            value = args.get(arg)
+            value_str = value if isinstance(value, str) else json.dumps(value)
+        else:
+            value_str = (
+                json.dumps(args) if isinstance(args, (dict, list)) else str(args or "")
+            )
+
+        matched = False
+        if pattern is not None:
+            if regex:
+                matched = bool(_re.search(pattern, value_str, _re.IGNORECASE))
+            else:
+                matched = pattern.lower() in value_str.lower()
+        if not matched and predicate is not None:
+            try:
+                matched = bool(predicate(value_str))
+            except Exception:
+                matched = False
+        if matched:
+            matches.append(
+                {
+                    "name": call.get("name"),
+                    "index": call.get("index"),
+                    "value": value_str,
+                }
+            )
+
+    info = {"matches": matches, "scanned": scanned}
+    if negate:
+        return (len(matches) == 0), info
+    return (len(matches) > 0), info
+
+
+def assert_sql_rows(
+    db_path: str,
+    query: str,
+    params: Tuple[Any, ...] = (),
+    *,
+    min_rows: int = 1,
+) -> Tuple[bool, Dict[str, Any]]:
+    """Assert a sqlite query against *db_path* returns at least
+    *min_rows* rows.
+
+    The conventional *db_path* is the environment-staged database the
+    framework already blesses via ``context.data["db_path"]`` (the same
+    key ``until_sql`` reads). Returns (ok, info) with the fetched rows.
+    """
+    import sqlite3
+
+    try:
+        # Read-only URI mode: verification must never mutate the staged db.
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+        try:
+            rows = conn.execute(query, params).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        return False, {"reason": f"query failed: {e}", "rows": []}
+    return (len(rows) >= min_rows), {"rows": rows, "count": len(rows)}
+
+
+def assert_sql_no_rows(
+    db_path: str,
+    query: str,
+    params: Tuple[Any, ...] = (),
+) -> Tuple[bool, Dict[str, Any]]:
+    """Assert a sqlite query against *db_path* returns zero rows."""
+    ok, info = assert_sql_rows(db_path, query, params, min_rows=1)
+    if "reason" in info:
+        return False, info
+    return (not ok), info

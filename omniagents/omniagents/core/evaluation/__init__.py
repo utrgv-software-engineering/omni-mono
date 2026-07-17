@@ -32,6 +32,9 @@ from .assertions import (
     assert_args_subset,
     assert_coords_propagated,
     assert_assistant_contains,
+    assert_tool_arg_matches,
+    assert_sql_rows,
+    assert_sql_no_rows,
 )
 
 __all__ = [
@@ -64,6 +67,9 @@ __all__ = [
     "assert_args_subset",
     "assert_coords_propagated",
     "assert_assistant_contains",
+    "assert_tool_arg_matches",
+    "assert_sql_rows",
+    "assert_sql_no_rows",
 ]
 
 # Register built-in measures
