@@ -1,6 +1,8 @@
 name: slash
 tools:
   - dispatch
+server_functions:
+  - help
 instructions: |
   When the user's message begins with `/`, call `dispatch("<name>", args:
   "<rest>")` to execute the named slash command. Only call `dispatch` in
