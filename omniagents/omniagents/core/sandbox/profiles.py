@@ -54,6 +54,8 @@ from typing import Any, Dict, List, Mapping, Optional
 
 import yaml
 
+from omniagents.core.utils.merge import deep_merge as _deep_merge
+
 # Env var the in-container `apply-network-isolation.sh` reads. Set on the
 # manifest environment so the entrypoint init step can apply iptables
 # allowlist rules. Auto-populated from ``<config>/network.json`` unless
@@ -403,17 +405,8 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _deep_merge(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
-    """Deep-merge dicts; lists replace; scalars replace."""
-    if not over:
-        return dict(base)
-    result: Dict[str, Any] = dict(base)
-    for k, v in over.items():
-        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
-            result[k] = _deep_merge(result[k], v)
-        else:
-            result[k] = v
-    return result
+# _deep_merge lives in omniagents.core.utils.merge — one merge semantics
+# for every layered config (sandbox profiles, project overlays).
 
 
 # ---------------------------------------------------------------------------

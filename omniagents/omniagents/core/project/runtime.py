@@ -96,7 +96,67 @@ def _validate_agent_name(expected_key: str, yaml_name: Any, path: Path) -> str:
     return yaml_name
 
 
-def load_project(project_path: str) -> ProjectContext:
+def _project_overlay_paths(project_name: Any) -> List[Path]:
+    """Overlay files layered over the base project.yml, in merge order.
+
+    Two sources, mirroring the sandbox-profile chain:
+
+    1. Config-dir convention: ``<product-config>/project.d/*.yml``
+       (lexical order) — the user/operator layer for an installed
+       product whose packaged base project.yml is read-only.
+    2. ``OMNIAGENTS_PROJECT_OVERLAYS`` — ``os.pathsep``-separated
+       explicit paths (e.g. a container image selecting its enterprise
+       security overlay); applied last, so explicit wins.
+    """
+    import os
+
+    out: List[Path] = []
+    if isinstance(project_name, str) and project_name.strip():
+        try:
+            from omniagents.core.config.dirs import product_config_dir
+
+            overlay_dir = product_config_dir(project_name.strip()) / "project.d"
+            if overlay_dir.is_dir():
+                out.extend(sorted(overlay_dir.glob("*.yml")))
+        except Exception:
+            pass
+
+    env_overlays = os.environ.get("OMNIAGENTS_PROJECT_OVERLAYS", "")
+    for chunk in env_overlays.split(os.pathsep):
+        chunk = chunk.strip()
+        if chunk:
+            out.append(Path(chunk).expanduser())
+    return out
+
+
+def _apply_project_overlays(
+    proj: Dict[str, Any], overlays: Optional[List[Path]] = None
+) -> Tuple[Dict[str, Any], List[Path]]:
+    """Merge overlay documents over the base project dict.
+
+    Merge semantics are the framework's one layered-config rule (dicts
+    merge recursively, lists and scalars replace) — identical to sandbox
+    profiles. Returns the merged dict plus the overlay paths applied.
+    """
+    from omniagents.core.utils.merge import deep_merge
+
+    applied: List[Path] = []
+    candidates = list(_project_overlay_paths(proj.get("name")))
+    candidates.extend(overlays or [])
+    for overlay_path in candidates:
+        if not overlay_path.is_file():
+            continue
+        overlay = _read_yaml(overlay_path)
+        if not isinstance(overlay, dict) or not overlay:
+            continue
+        proj = deep_merge(proj, overlay)
+        applied.append(overlay_path)
+    return proj, applied
+
+
+def load_project(
+    project_path: str, *, overlays: Optional[List[Path]] = None
+) -> ProjectContext:
     p = Path(project_path).resolve()
     if p.is_file() and p.name != "project.yml":
         raise FileNotFoundError(
@@ -110,6 +170,7 @@ def load_project(project_path: str) -> ProjectContext:
                 f"Could not find project.yml in directory: {base_dir}"
             )
     proj = _read_yaml(p if p.is_file() else (base_dir / "project.yml"))
+    proj, _applied_overlays = _apply_project_overlays(proj, overlays)
 
     paths_cfg = proj.get("paths") or {}
 
