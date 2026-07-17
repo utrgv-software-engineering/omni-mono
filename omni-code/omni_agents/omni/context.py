@@ -118,6 +118,16 @@ from omni_code.init_command import run_init_agent  # noqa: E402
 
 register_slash_command("init", lambda _arg=None: run_init_agent())
 
+# Platform detection: the framework knows no product config paths; point
+# its stored-credentials lookup at omni-code's `omni auth login` store.
+from omniagents.core.providers.platform.bootstrap import (  # noqa: E402
+    set_platform_credentials_loader,
+)
+
+from omni_code.platform import load_credentials as _load_platform_credentials  # noqa: E402
+
+set_platform_credentials_loader(_load_platform_credentials)
+
 
 def _discover_skill_dirs(skill_roots: List[Path]) -> List[Path]:
     try:
