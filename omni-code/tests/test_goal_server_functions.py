@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from server_functions import goal as goal_mod
+from omniagents.builtin.server_functions import goal as goal_mod
 
 
 class FakeSession:

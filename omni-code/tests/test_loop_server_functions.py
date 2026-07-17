@@ -4,7 +4,7 @@ import time
 import pytest
 
 from omniagents.core.autonomy import next_cron_fire, split_loop_interval_and_prompt
-from server_functions import loop as loop_mod
+from omniagents.builtin.server_functions import loop as loop_mod
 
 
 class FakeSession:

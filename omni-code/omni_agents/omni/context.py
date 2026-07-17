@@ -72,6 +72,46 @@ from omniagents.core.skills import set_skill_roots_provider  # noqa: E402
 set_skill_roots_provider(_skill_roots_for_workspace)
 
 
+# ---------------------------------------------------------------------------
+# Product wiring for the builtin autonomy + worker server functions.
+#
+# The /goal, /loop, wakeup, workers, and bash-jobs server functions ship
+# with the framework (builtin capability packs); the coding-specific
+# prompts and the worktree isolation strategy are omni-code's. This
+# module is the product's install point: it is imported (as the omni
+# agent's context factory) when the agent spec loads, which precedes any
+# run — and therefore any goal start, loop fire, or worker spawn — in
+# every process shape (serve, TUI, evals, tests that build the spec).
+# ---------------------------------------------------------------------------
+from omniagents.core.autonomy import (  # noqa: E402
+    set_goal_prompt_builders,
+    set_loop_default_prompt_resolver,
+    set_loop_prompt_builders,
+)
+
+from omni_code.goal_prompts import (  # noqa: E402
+    build_goal_initial_prompt,
+    build_goal_tick_prompt,
+)
+from omni_code.loop_prompts import (  # noqa: E402
+    build_loop_concluded_prompt,
+    build_loop_tick_prompt,
+    resolve_default_loop_prompt,
+)
+from omni_code.workers_runtime import install as _install_workers_runtime  # noqa: E402
+
+set_goal_prompt_builders(
+    initial=build_goal_initial_prompt,
+    tick=build_goal_tick_prompt,
+)
+set_loop_prompt_builders(
+    tick=build_loop_tick_prompt,
+    concluded=build_loop_concluded_prompt,
+)
+set_loop_default_prompt_resolver(resolve_default_loop_prompt)
+_install_workers_runtime()
+
+
 def _discover_skill_dirs(skill_roots: List[Path]) -> List[Path]:
     try:
         from omniagents.core.skills import discover_skill_dirs

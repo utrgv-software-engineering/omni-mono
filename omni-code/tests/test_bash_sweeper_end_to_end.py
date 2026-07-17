@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 
 import omniagents.builtin.tools.bash_tool as bash_tool
-from server_functions import bash_jobs as bj
+from omniagents.builtin.server_functions import bash_jobs as bj
 from omniagents.builtin.tools._bash_jobs import get_registry, Job, log_path_for, new_job_id
 
 
@@ -198,6 +198,7 @@ def test_registry_unified_under_real_discovery_flow():
     so both bindings of ``get_registry`` resolve to the same module
     global no matter which import path reaches it.
     """
+    import omniagents.builtin.server_functions as _builtin_sfs
     import omniagents.builtin.tools as _builtin_tools
     from pathlib import Path as _Path
 
@@ -208,11 +209,15 @@ def test_registry_unified_under_real_discovery_flow():
 
     repo_root = _Path(__file__).resolve().parents[1]
     builtin_tools_dir = _Path(_builtin_tools.__file__).parent
+    builtin_sf_dir = _Path(_builtin_sfs.__file__).parent
 
-    # Loader runs builtins first, then project tools — match that order.
+    # Loader runs builtins first, then project dirs — match that order.
+    # bash_jobs.* now ships as a builtin server function (capability-gated
+    # via the shell pack); the project dir holds only product functions.
     builtin_map = discover_functions_in_dir(str(builtin_tools_dir))
     discover_functions_in_dir(str(repo_root / "tools"))
-    sfs_map = discover_server_functions_in_dir(str(repo_root / "server_functions"))
+    sfs_map = discover_server_functions_in_dir(str(builtin_sf_dir))
+    discover_server_functions_in_dir(str(repo_root / "server_functions"))
 
     execute_bash = builtin_map["execute_bash"]
     bash_jobs_list = sfs_map["bash_jobs.list"]["func"]

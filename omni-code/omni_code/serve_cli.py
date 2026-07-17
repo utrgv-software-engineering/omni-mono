@@ -987,7 +987,7 @@ async def _broadcast_sandbox_event(
     service: Any, method: str, payload: Dict[str, Any], session: Any = None
 ) -> None:
     """Best-effort push of a ``ui.sandbox.*`` event to the session's channels.
-    Mirrors ``server_functions.bash_jobs._broadcast_snapshot``."""
+    Mirrors ``omniagents.builtin.server_functions.bash_jobs._broadcast_snapshot``."""
     if service is None:
         return
     try:

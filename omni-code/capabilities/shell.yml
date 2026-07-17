@@ -4,6 +4,13 @@ tools:
   - bash_status
   - bash_logs
   - bash_kill
+server_functions:
+  - bash_jobs.list
+  - bash_jobs.kill
+  - bash_jobs.tail
+  - bj-list
+  - bj-kill
+  - bj-logs
 instructions: |
   Shell execution with background-job support:
   - `execute_bash` runs a command. For long-running work (dev servers, soak

@@ -2,6 +2,9 @@ name: wakeup
 tools:
   - schedule_wakeup
   - cancel_wakeup
+server_functions:
+  - wakeup.stop
+  - wakeup.status
 instructions: |
   Schedule self-wakeups for tasks the user wants you to "keep an eye on"
   over time. The session wakes on the cadence you set, with the message

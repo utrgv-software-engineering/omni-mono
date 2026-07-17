@@ -7,6 +7,9 @@ tools:
   - close_worker
   - resume_worker
   - cleanup_worker_worktree
+server_functions:
+  - workers.list
+  - workers.kill
 instructions: |
   Spawn autonomous worker subagents for parallel coding subtasks. Each
   worker has its own conversation, full read/write access, and runs
