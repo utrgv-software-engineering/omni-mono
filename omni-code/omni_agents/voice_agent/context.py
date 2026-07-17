@@ -7,43 +7,20 @@ Jinja2 instruction templates.
 
 from __future__ import annotations
 
-import os
-from datetime import datetime
 from typing import Any, Dict
 
 from omniagents import context_factory
 from omniagents import model_config_resolver
 from omniagents import realtime_settings_resolver
 
-# Import shared utilities from omni agent
-from omni_agents.omni.context import build_available_skills_block, format_agents_md_block
+from omni_agents.omni.context import build_coding_context
 
 
 @context_factory
 def build_voice_context(variables: Dict[str, Any] = None) -> Dict[str, Any]:
-    """
-    Build the instruction context for the voice agent.
-
-    Args:
-        variables: Dict with input variables from agent.yml.
-
-    Returns:
-        Dict with current_date, current_time, agents_md_block, etc.
-    """
-    variables = variables or {}
-
-    now = datetime.now().astimezone()
-    context: Dict[str, Any] = {
-        "current_date": now.strftime("%Y-%m-%d"),
-        "current_time": now.strftime("%H:%M %Z"),
-        "agents_md_block": format_agents_md_block(),
-        "available_skills_block": build_available_skills_block(variables),
-    }
-
-    # Merge any input variables into context
-    context.update(variables)
-
-    return context
+    """The voice agent shares the coding agent's context (date/time,
+    AGENTS.md discovery, available skills) — same factory, no drift."""
+    return build_coding_context(variables)
 
 
 @realtime_settings_resolver

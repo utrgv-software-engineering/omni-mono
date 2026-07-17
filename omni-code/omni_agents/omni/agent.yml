@@ -27,6 +27,7 @@ capabilities:
   - loop          # loop_continue (dynamic /loop continuation scheduling)
   - human         # notify / escalate (UI-implemented client tools)
   - feedback      # /good /bad /note /notes (builtin, control-plane only)
+  - recap         # /recap catch-up panel (builtin; summarizer installed in omni/context.py)
   - model_picker  # /models /model /reasoning /voice-model* (builtin, control-plane only)
   - sandbox       # sandbox_get_state / sandbox_wait_until_ready (read-only; switching is operator-only)
 
@@ -84,7 +85,6 @@ safe_agent_options:
 server_functions:
   - help
   - compact
-  - recap
   - terminal.create
   - terminal.close
   - fs_get_cwd

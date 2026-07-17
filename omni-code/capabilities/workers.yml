@@ -1,27 +1,18 @@
 name: workers
-# Subsets the omniagents builtin `workers` pack: same tools and server
-# functions, coding-specific instructions (worktree merge workflow).
+# Extends the omniagents builtin `workers` pack (same tools, server
+# functions, and base instructions) with the coding-specific delta:
+# worktree isolation + merge workflow and file-scoped task briefs.
 extends: workers
-instructions: |
-  Spawn autonomous worker subagents for parallel coding subtasks. Each
-  worker has its own conversation, full read/write access, and runs
-  concurrently with the orchestrator and other workers.
-
-  - `spawn_worker(task)` returns a worker id; each task description must
-    include goal, file scope, context, conventions, boundaries, and
-    acceptance criteria.
-  - **When a worker completes, an automatic notification with its status
-    and result is delivered to this session and wakes the next turn. End
-    your current turn after spawning; do not `sleep`, do not poll, do not
-    call `wait_for_workers` to "wait". Spawn multiple workers in one turn
-    and their completions batch into a single wakeup.**
-  - `get_worker_status(id, tail=N)` is for peeking at progress mid-turn or
-    for fetching a deeper history tail after the completion notification.
-  - `wait_for_workers([ids])` is for the narrow case where a single
-    response must include results from multiple workers and ending the
-    turn early would split that response — prefer ending the turn.
-  - `send_worker_message(id, msg)` injects a user message mid-run to
-    course-correct.
-  - `close_worker` cancels; `resume_worker` restarts a finished one with
-    a follow-up. Clean up worktrees with `cleanup_worker_worktree` in the
-    turn that wakes from the completion notification.
+instructions_append: |
+  Coding specifics:
+  - Include concrete file scope in every task brief — which files the
+    worker owns — plus the conventions to follow; never give two
+    concurrent workers overlapping files.
+  - Prefer `isolation="worktree"`: each worker gets a git worktree on its
+    own `worker/...` branch. Workers commit their changes; after the
+    completion notification, merge each worker branch back and call
+    `cleanup_worker_worktree` in that same turn.
+  - Do not `sleep` or poll between spawns: spawn all workers for the
+    phase in one turn and end the turn — their completion notifications
+    batch into a single wakeup. `get_worker_status(id, tail=N)` is for
+    peeking mid-turn, not for waiting.

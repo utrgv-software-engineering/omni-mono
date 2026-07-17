@@ -103,6 +103,27 @@ set_goal_prompt_builders(
 set_loop_default_prompt_resolver(resolve_default_loop_prompt)
 _install_workers_runtime()
 
+# Recap: the framework owns the /recap orchestration and broadcast; the
+# summarizer (recapper agent + model resolution) is omni-code's.
+from omniagents.core.runtime.recap import set_recap_summarizer  # noqa: E402
+
+
+async def _recap_summarizer(prompt, *, service, session):
+    from omni_code.utility_runs import (
+        normalize_model_name,
+        resolve_service_model_runtime,
+        run_utility_agent,
+    )
+
+    model_ref, runtime = resolve_service_model_runtime(service, session)
+    model_name = normalize_model_name(model_ref, runtime)
+    return await run_utility_agent(
+        "recapper", prompt, model=model_name, runtime=runtime, session=session
+    )
+
+
+set_recap_summarizer(_recap_summarizer)
+
 # Slash commands executed by the builtin `dispatch` tool (slash pack).
 from omniagents.core.tools import register_slash_command  # noqa: E402
 

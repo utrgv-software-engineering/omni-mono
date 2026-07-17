@@ -22,7 +22,6 @@ import json
 import os
 import signal
 import socket
-import subprocess
 import sys
 import tarfile
 import uuid
@@ -1419,7 +1418,7 @@ async def _serve(args: argparse.Namespace) -> int:
     # is the framework's; the recap action is omni-code's. Stashed on
     # app.state for teardown + future inspection.
     from omniagents.core.autonomy import IdleTrigger, IdleTriggerScheduler
-    from server_functions.recap import generate_and_broadcast_recap
+    from omniagents.core.runtime.recap import generate_and_broadcast_recap
 
     recap_scheduler = IdleTriggerScheduler(app.state.agent_service)
     recap_scheduler.register(
