@@ -126,6 +126,39 @@ def test_two_project_capabilities_same_name_errors(tmp_path):
         load_project(str(tmp_path))
 
 
+def test_notebook_readonly_and_slash_builtins(tmp_path):
+    """The notebook, read-only, and slash packs ship as builtins with the
+    expected tool surfaces."""
+    _make_min_project(tmp_path)
+
+    proj = load_project(str(tmp_path))
+
+    nb_tools = {t.name for t in proj.capability_registry["notebook"].tools()}
+    assert nb_tools == {"read_notebook", "edit_notebook"}
+    nb_ro_tools = {
+        t.name for t in proj.capability_registry["notebook_readonly"].tools()
+    }
+    assert nb_ro_tools == {"read_notebook"}
+
+    fs_ro_tools = {
+        t.name for t in proj.capability_registry["filesystem_readonly"].tools()
+    }
+    assert fs_ro_tools == {
+        "read_file",
+        "read_image",
+        "list_directory",
+        "glob_files",
+        "grep_files",
+    }
+    sh_ro_tools = {
+        t.name for t in proj.capability_registry["shell_readonly"].tools()
+    }
+    assert sh_ro_tools == {"execute_bash"}
+
+    slash_tools = {t.name for t in proj.capability_registry["slash"].tools()}
+    assert slash_tools == {"dispatch"}
+
+
 def test_agent_uses_builtin_capability(tmp_path):
     """Agent referencing a builtin capability resolves through the project
     registry into the spec's resolved_capabilities."""

@@ -15,7 +15,11 @@ from .run_context import (
     session_id_from_ctx,
     task_scope_from_ctx,
 )
-from .slash_commands import SlashCommandRegistry
+from .slash_commands import (
+    SlashCommandRegistry,
+    default_slash_registry,
+    register_slash_command,
+)
 
 __all__ = [
     "function_tool",
@@ -26,6 +30,8 @@ __all__ = [
     "get_approval_metadata",
     "client_function_tool",
     "SlashCommandRegistry",
+    "default_slash_registry",
+    "register_slash_command",
     "DEFAULT_TASK_SCOPE",
     "ctx_value",
     "session_id_from_ctx",

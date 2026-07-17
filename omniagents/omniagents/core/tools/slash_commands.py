@@ -69,3 +69,30 @@ class SlashCommandRegistry:
     @staticmethod
     def _normalize(name: str) -> str:
         return (name or "").strip().lower().lstrip("/")
+
+
+# ---------------------------------------------------------------------------
+# Process-wide default registry
+#
+# The builtin `dispatch` tool (slash capability pack) executes commands from
+# this registry. Products register their commands at import time — typically
+# from the module that installs their other process-wide seams (prompt
+# builders, skill roots) — so registration precedes any agent run.
+# ---------------------------------------------------------------------------
+
+_default_registry = SlashCommandRegistry()
+
+
+def default_slash_registry() -> SlashCommandRegistry:
+    """The registry the builtin ``dispatch`` tool executes against."""
+    return _default_registry
+
+
+def register_slash_command(name: str, handler: Callable[..., Any]) -> None:
+    """Register *handler* as ``/<name>`` on the default registry.
+
+    The handler may be sync or async and may take an optional ``arg``
+    string (the text after the command name). Re-registering a name
+    replaces the previous handler.
+    """
+    _default_registry.register(name, handler)

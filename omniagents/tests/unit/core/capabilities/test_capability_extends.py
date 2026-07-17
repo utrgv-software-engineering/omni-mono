@@ -148,3 +148,41 @@ def test_sampling_and_approvals_merge_child_over_base(base_registry):
         "grep": {"mode": "always"},
     }
     assert child.sampling_params_override == {"temperature": 0.7}
+
+
+def test_instructions_append_composes_base_text(base_registry):
+    registry, tools, sfs = base_registry
+    child = parse_capability_spec(
+        {"name": "pack", "extends": "pack", "instructions_append": "extra line\n"},
+        tool_registry=tools,
+        server_functions_registry=sfs,
+        capability_registry=registry,
+    )
+    assert child.instructions_text == "base instructions\nextra line\n"
+    # Surface still fully inherited.
+    assert [t.name for t in child.tools()] == ["read", "grep", "walk"]
+
+
+def test_instructions_append_without_extends_fails_fast():
+    tools = _tool_registry("read")
+    with pytest.raises(ValueError, match="instructions_append"):
+        parse_capability_spec(
+            {"name": "solo", "tools": ["read"], "instructions_append": "x"},
+            tool_registry=tools,
+        )
+
+
+def test_instructions_append_with_instructions_fails_fast(base_registry):
+    registry, tools, sfs = base_registry
+    with pytest.raises(ValueError, match="cannot combine"):
+        parse_capability_spec(
+            {
+                "name": "pack",
+                "extends": "pack",
+                "instructions": "replace",
+                "instructions_append": "and append",
+            },
+            tool_registry=tools,
+            server_functions_registry=sfs,
+            capability_registry=registry,
+        )

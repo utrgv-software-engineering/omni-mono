@@ -1,0 +1,12 @@
+name: filesystem_readonly
+tools:
+  - read_file
+  - read_image
+  - list_directory
+  - glob_files
+  - grep_files
+instructions: |
+  Read-only filesystem access:
+  - `read_file`, `list_directory`, `glob_files`, `grep_files` for inspection.
+  - `read_image` to load a local image file into the conversation.
+  Do not modify files — no write, edit, or patch tools are available.

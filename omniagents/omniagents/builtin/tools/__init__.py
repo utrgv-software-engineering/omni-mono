@@ -14,8 +14,10 @@ from .goal_tools import goal_complete
 from .human import notify, escalate
 from .image_tools import read_image
 from .loop_tools import loop_continue
+from .notebook_tools import edit_notebook, read_notebook
 from .scholar_search import scholar_search
 from .skill_tool import load_skill
+from .slash_tool import dispatch
 from .task_list_tools import task_create, task_get, task_list, task_update
 from .wakeup_tools import cancel_wakeup, schedule_wakeup
 from .web_fetch import web_fetch
@@ -47,6 +49,9 @@ __all__ = [
     "apply_patch",
     "goal_complete",
     "loop_continue",
+    "read_notebook",
+    "edit_notebook",
+    "dispatch",
     "schedule_wakeup",
     "cancel_wakeup",
     "notify",

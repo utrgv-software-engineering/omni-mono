@@ -1,0 +1,6 @@
+name: notebook_readonly
+tools:
+  - read_notebook
+instructions: |
+  Use `read_notebook` to inspect all cells and outputs of a Jupyter notebook
+  (`.ipynb`). Do not modify notebooks.

@@ -151,6 +151,9 @@ def parse_capability_spec(
     - ``tools:`` / ``agent_tools:`` / ``server_functions:`` in the child
       are APPENDED to what remains inherited (deduped by name).
     - ``instructions:`` replaces the base's when present, else inherited.
+    - ``instructions_append:`` appends to the base's instructions instead
+      of replacing them (mutually exclusive with ``instructions:``) — for
+      overrides that only add guidance, so the base text can't drift.
     - ``approvals:`` and ``sampling_params:`` merge child-over-base by key.
 
     Only pure-YAML capabilities can be extended, and ``extends`` cannot be
@@ -295,6 +298,24 @@ def parse_capability_spec(
             f"got {type(instructions_text).__name__}"
         )
 
+    instructions_append = spec.get("instructions_append")
+    if instructions_append is not None and not isinstance(instructions_append, str):
+        raise ValueError(
+            f"Capability {name!r} 'instructions_append' must be a string, "
+            f"got {type(instructions_append).__name__}"
+        )
+    if instructions_append is not None and instructions_text is not None:
+        raise ValueError(
+            f"Capability {name!r} at {source} cannot combine 'instructions' "
+            "with 'instructions_append' — replace the base text or append "
+            "to it, not both"
+        )
+    if instructions_append is not None and base_cap is None:
+        raise ValueError(
+            f"Capability {name!r} uses 'instructions_append' without "
+            "'extends:' — there is no base text to append to"
+        )
+
     approvals_spec = spec.get("approvals") or {}
     if not isinstance(approvals_spec, dict):
         raise ValueError(
@@ -399,7 +420,11 @@ def parse_capability_spec(
 
         resolved_agent_tools = list(base_cap.agent_tool_configs) + resolved_agent_tools
 
-        if instructions_text is None:
+        if instructions_append is not None:
+            base_text = (base_cap.instructions_text or "").rstrip("\n")
+            extra = instructions_append.strip("\n")
+            instructions_text = f"{base_text}\n{extra}\n" if base_text else f"{extra}\n"
+        elif instructions_text is None:
             instructions_text = base_cap.instructions_text
         approvals_spec = {**base_cap.approvals_spec, **approvals_spec}
         sampling_params_override = {
