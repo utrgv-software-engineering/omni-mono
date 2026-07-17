@@ -1,0 +1,10 @@
+name: model_picker
+# Control-plane only: session-scoped model/reasoning selection over the
+# process-wide model store (omniagents.core.models.set_model_store). No
+# model-visible tools or instructions.
+server_functions:
+  - models
+  - model
+  - reasoning
+  - voice-models
+  - voice-model

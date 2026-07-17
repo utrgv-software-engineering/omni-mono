@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 
 async def ensure_server_session(service: Any, session: Any | None) -> Any | None:
@@ -78,3 +78,49 @@ async def invoke_artifact_bridge(
         expect_result=False,
     )
     return {"ok": True}
+
+
+def session_workspace_root(session: Any) -> Optional[str]:
+    """The workspace_root stored on a session, or ``None``.
+
+    Single source of the "check ``session.context`` (dict or attr), then
+    ``session.variables``" read that server functions need —
+    ``workspace_root_from_ctx`` covers the RunContextWrapper shape; this
+    covers the Session shape.
+    """
+    ctx = getattr(session, "context", None)
+    if isinstance(ctx, dict):
+        value = ctx.get("workspace_root")
+        if isinstance(value, str) and value.strip():
+            return value
+    elif ctx is not None:
+        value = getattr(ctx, "workspace_root", None)
+        if isinstance(value, str) and value.strip():
+            return value
+    variables = getattr(session, "variables", None)
+    if isinstance(variables, dict):
+        value = variables.get("workspace_root")
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+async def ensure_session_with_workspace(service: Any, session: Any) -> Any:
+    """Ensure a live session and persist its workspace root.
+
+    Resolves the session through :func:`ensure_server_session`, then
+    proxies the session's workspace root to the builtin ``session.ensure``
+    RPC so it survives restarts. Returns the ensured session (or None).
+    """
+    ensured = await ensure_server_session(service, session)
+    if ensured is None:
+        return None
+
+    workspace_root = session_workspace_root(ensured)
+    call_args = {"workspace_root": workspace_root} if workspace_root else None
+    await service.server_call(
+        "session.ensure",
+        call_args,
+        session_id=getattr(ensured, "id", None),
+    )
+    return ensured
