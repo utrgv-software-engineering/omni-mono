@@ -5,10 +5,9 @@ from omniagents.core.session import Session
 
 
 async def _ensure_session(service, session: Session | None) -> Session | None:
-    manager = getattr(service, "_session_manager", None)
     ensured = session
-    if manager is not None and (ensured is None or not getattr(ensured, "id", None)):
-        ensured = manager.get_or_create(None)
+    if service is not None and (ensured is None or not getattr(ensured, "id", None)):
+        ensured = service.get_or_create_session(None)
 
     if ensured is None:
         return None

@@ -11,13 +11,12 @@ job.
 
 This was the missing integration test — the sweeper unit tests cover
 the polling loop, the registry tests cover the spawn/exit round-trip,
-but nothing exercised the discovery-load order. The original
-"unify the registry import" attempt passed direct-import tests yet
-silently regressed under real discovery, because
-``discover_functions_in_dir`` deletes ``tools._bash_jobs`` from
-sys.modules afterward and the later ``from tools._bash_jobs import …``
-in server_functions/bash_jobs.py created a SECOND ``_JobRegistry``. The
-singleton now lives on ``sys`` to survive that eviction.
+but nothing exercised the discovery-load order. Historically discovery
+evicted tool modules from sys.modules after loading, so the later
+``from …._bash_jobs import`` in server_functions/bash_jobs.py created a
+SECOND ``_JobRegistry``. Discovery now keeps canonically-named modules
+cached (normal import semantics), so the module-global registry is a
+true process singleton — this test pins that.
 """
 
 from __future__ import annotations
@@ -29,9 +28,9 @@ from pathlib import Path
 
 import pytest
 
-import tools.bash_tool as bash_tool
+import omniagents.builtin.tools.bash_tool as bash_tool
 from server_functions import bash_jobs as bj
-from tools._bash_jobs import get_registry, Job, log_path_for, new_job_id
+from omniagents.builtin.tools._bash_jobs import get_registry, Job, log_path_for, new_job_id
 
 
 @pytest.fixture(autouse=True)
@@ -143,7 +142,7 @@ async def _spawn_quick_job_async(tmp_path: Path, session_id: str | None) -> str:
     from omniagents import workspace as _ws
     import asyncio as _asyncio
     import shlex as _shlex
-    from tools._bash_jobs import _watch_job
+    from omniagents.builtin.tools._bash_jobs import _watch_job
 
     job_id = new_job_id()
     log_path = log_path_for(str(tmp_path), job_id)
@@ -188,32 +187,34 @@ def test_registry_unified_under_real_discovery_flow():
     Repro of the original "panel stuck on running" bug:
       1. ``discover_functions_in_dir`` loads tools/*.py (binds
          execute_bash to its module's get_registry).
-      2. Cleanup deletes tools._bash_jobs from sys.modules.
+      2. Cleanup deletes omniagents.builtin.tools._bash_jobs from sys.modules.
       3. ``discover_server_functions_in_dir`` loads
          server_functions/bash_jobs.py which does
-         ``from tools._bash_jobs import …`` — Python re-creates
-         tools._bash_jobs with a fresh ``_registry``.
+         ``from omniagents.builtin.tools._bash_jobs import …`` — Python re-creates
+         omniagents.builtin.tools._bash_jobs with a fresh ``_registry``.
       4. Result: agent uses registry A, sweeper polls registry B.
 
-    The fix stashes ``_JobRegistry`` on ``sys`` so both bindings of
-    ``get_registry`` resolve through the same singleton regardless of
-    how many times the module is reloaded.
+    The fix: discovery keeps canonically-named modules in sys.modules,
+    so both bindings of ``get_registry`` resolve to the same module
+    global no matter which import path reaches it.
     """
+    import omniagents.builtin.tools as _builtin_tools
+    from pathlib import Path as _Path
+
     from omniagents.core.tools.discovery import discover_functions_in_dir
     from omniagents.core.server_functions.discovery import (
         discover_server_functions_in_dir,
     )
 
-    # Loader runs builtins first, then project tools — match that order.
-    discover_functions_in_dir(
-        "/home/emm/Omni/Workspace/omniagents/omniagents/builtin/tools"
-    )
-    tools_map = discover_functions_in_dir("/home/emm/Omni/Workspace/omni-code/tools")
-    sfs_map = discover_server_functions_in_dir(
-        "/home/emm/Omni/Workspace/omni-code/server_functions"
-    )
+    repo_root = _Path(__file__).resolve().parents[1]
+    builtin_tools_dir = _Path(_builtin_tools.__file__).parent
 
-    execute_bash = tools_map["execute_bash"]
+    # Loader runs builtins first, then project tools — match that order.
+    builtin_map = discover_functions_in_dir(str(builtin_tools_dir))
+    discover_functions_in_dir(str(repo_root / "tools"))
+    sfs_map = discover_server_functions_in_dir(str(repo_root / "server_functions"))
+
+    execute_bash = builtin_map["execute_bash"]
     bash_jobs_list = sfs_map["bash_jobs.list"]["func"]
 
     # The agent runtime invokes these callables directly; the registry

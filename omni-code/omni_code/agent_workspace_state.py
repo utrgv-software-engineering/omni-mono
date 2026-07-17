@@ -15,7 +15,7 @@ to see the running session's wiring.
   host-mode (``unix_local``) where sources are NOT relocated onto the
   primary workspace and would otherwise be invisible to the agent.
 * ``project_context`` — the resolved ``ProjectContext`` from
-  ``load_project``. Used by ``tools/worker_tools._load_and_configure_spec``
+  ``load_project``. Used by ``omni_code/workers_runtime._load_and_configure_spec``
   to build the worker spec through the same code path as the orchestrator
   (``build_spec_from_project``), so the worker inherits the full
   capability/tool/guardrail registries instead of loading its YAML in

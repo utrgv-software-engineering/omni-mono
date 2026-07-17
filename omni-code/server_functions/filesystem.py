@@ -206,10 +206,9 @@ async def session_ensure(
 
 
 async def _session_ensure_on_invoke(service, session, args=None):
-    manager = getattr(service, "_session_manager", None)
     sess = session
-    if manager is not None and (sess is None or not getattr(sess, "id", None)):
-        sess = manager.get_or_create(None)
+    if service is not None and (sess is None or not getattr(sess, "id", None)):
+        sess = service.get_or_create_session(None)
 
     call_args = {}
     payload = args or {}

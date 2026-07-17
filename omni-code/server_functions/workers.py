@@ -23,9 +23,18 @@ from typing import Optional
 
 from omniagents import server_function
 
-from tools.worker_tools import (  # noqa: E402
-    _MANAGER,
+# Install omni-code's worker wiring (spec loader, history loader, the
+# "worktree" isolation strategy) before the framework worker tools are
+# first used. Server-function discovery imports this module in every
+# omni-code server process, so this provably precedes the first spawn —
+# same pattern as the autonomy prompt builders.
+from omni_code.workers_runtime import install as _install_workers_runtime
+
+_install_workers_runtime()
+
+from omniagents.builtin.tools.worker_tools import (  # noqa: E402
     broadcast_workers_snapshot,
+    manager,
     worker_state_dict,
     workers_snapshot,
 )
@@ -77,7 +86,7 @@ setattr(workers_list, "_server_function_on_invoke", _workers_list_on_invoke)
 async def workers_kill(
     worker_id: str, _session_id: Optional[str] = None
 ) -> dict:
-    handle = _MANAGER.workers.get(worker_id)
+    handle = manager().workers.get(worker_id)
     if handle is None:
         return {
             "ok": False,
@@ -98,7 +107,7 @@ async def workers_kill(
         }
 
     try:
-        status = await _MANAGER.close(worker_id)
+        status = await manager().close(worker_id)
     except Exception as e:
         return {
             "ok": False,
@@ -123,7 +132,7 @@ async def _workers_kill_on_invoke(service, session, args=None):
     result = await workers_kill(
         worker_id=args.get("worker_id"), _session_id=sid
     )
-    # ``_MANAGER.close`` waits for the worker's terminal state, which
+    # ``manager().close`` waits for the worker's terminal state, which
     # triggers ``_on_worker_complete`` and that callback already
     # broadcasts. The extra broadcast here is a belt-and-braces refresh
     # for the case where close() returned via the "already done" branch

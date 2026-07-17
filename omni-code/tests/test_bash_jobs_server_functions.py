@@ -14,9 +14,9 @@ import time
 
 import pytest
 
-import tools.bash_tool as bash_tool
+import omniagents.builtin.tools.bash_tool as bash_tool
 from server_functions import bash_jobs as bj
-from tools._bash_jobs import get_registry
+from omniagents.builtin.tools._bash_jobs import get_registry
 
 
 # ---------------------------------------------------------------------------

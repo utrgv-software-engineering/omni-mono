@@ -601,7 +601,7 @@ def _load_spec(project_path: Path, agent_key: Optional[str]) -> Any:
 
     proj = load_project(str(project_path))
     # Publish the resolved ProjectContext so worker spec loading
-    # (tools/worker_tools._load_and_configure_spec) can route the worker
+    # (omni_code/workers_runtime._load_and_configure_spec) can route the worker
     # through build_spec_from_project with the same capability/tool/
     # guardrail registries. Without this, the worker would load its
     # agent.yml in isolation with capability_registry=None and silently
@@ -1004,13 +1004,13 @@ async def _cancel_active_runs(service: Any) -> None:
     session). Best-effort across every tracked run."""
     if service is None:
         return
-    sm = getattr(service, "_session_manager", None)
-    task_map = getattr(sm, "_task_map", None) if sm is not None else None
-    if not isinstance(task_map, dict):
+    try:
+        run_ids = service.active_run_ids()
+    except Exception:  # noqa: BLE001
         return
-    for run_id in list(task_map.keys()):
+    for run_id in run_ids:
         try:
-            await sm.cancel(run_id)
+            await service.stop_run(run_id)
         except Exception:  # noqa: BLE001
             pass
 

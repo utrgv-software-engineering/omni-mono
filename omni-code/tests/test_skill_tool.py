@@ -1,6 +1,13 @@
-from tools.skill_tool import _resolve_skill_path
+from omniagents.builtin.tools.skill_tool import _resolve_skill_path
+from omniagents.core.skills import set_skill_roots_provider
+
 from omni_code import agent_workspace_state as aws
 from omni_code.skill_sources import source_skill_roots
+
+# Importing the context module installs omni-code's skill-roots provider
+# (workspace .omni_code/skills + source mounts + global config dir) —
+# the same wiring the running agent gets.
+from omni_agents.omni.context import _skill_roots_for_workspace
 
 
 def _write_skill(skill_dir, name, description):
@@ -34,9 +41,11 @@ def test_resolve_skill_path_finds_skill_in_sibling_source_mount(tmp_path):
         ]
     )
     aws.set_manifest_root(str(workspace))
+    set_skill_roots_provider(_skill_roots_for_workspace)
     try:
         assert _resolve_skill_path("software-tickets", str(primary)) == skill_md
     finally:
+        set_skill_roots_provider(_skill_roots_for_workspace)
         aws.set_sources([])
         aws.set_manifest_root(None)
         aws.set_sandbox_session(None)

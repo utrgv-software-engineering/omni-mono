@@ -237,7 +237,7 @@ scenarios:
         #    (Gemfile.lock from bundle install; tmp/log/storage = runtime noise).
         - |
           git add -A >/dev/null 2>&1
-          bad=$(git status --porcelain | awk '{print $2}' | grep -vE '^(app/controllers/public/availability_controller\.rb|test/|Gemfile\.lock|storage/|acceptance/|artifacts/|tmp/|log/|\.playwright-cli/|\.omni-code/)' || true)
+          bad=$(git status --porcelain | awk '{print $2}' | grep -vE '^(app/controllers/public/availability_controller\.rb|test/|Gemfile\.lock|storage/|acceptance/|artifacts/|tmp/|log/|\.playwright-cli/|\.omni-code/|\.omniagents/)' || true)
           [ -z "$bad" ] || { echo "out-of-scope changes:"; echo "$bad"; exit 1; }
     # World-state checks are scenario-owned shell run in the sandbox via
     # command_in_workspace_succeeds; SQL checks stay host-side (MCP DB).

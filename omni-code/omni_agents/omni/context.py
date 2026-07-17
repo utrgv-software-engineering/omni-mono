@@ -55,6 +55,23 @@ def _default_skill_roots(variables: Dict[str, Any]) -> List[Path]:
     return unique
 
 
+def _skill_roots_for_workspace(workspace_root: Optional[str]) -> List[Path]:
+    """Adapter for the framework's skill-roots provider: same roots the
+    available-skills prompt block is built from, keyed by workspace."""
+    variables: Dict[str, Any] = (
+        {"workspace_root": workspace_root} if workspace_root else {}
+    )
+    return _default_skill_roots(variables)
+
+
+# Install omni-code's skill layout as the process-wide provider so the
+# builtin ``load_skill`` tool resolves the same roots this module renders
+# into the system prompt.
+from omniagents.core.skills import set_skill_roots_provider  # noqa: E402
+
+set_skill_roots_provider(_skill_roots_for_workspace)
+
+
 def _discover_skill_dirs(skill_roots: List[Path]) -> List[Path]:
     try:
         from omniagents.core.skills import discover_skill_dirs

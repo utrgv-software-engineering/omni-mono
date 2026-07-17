@@ -26,12 +26,6 @@ def container_runtime_available() -> bool:
 
 
 def get_config_dir() -> Path:
-    if os.name == "nt":
-        base = os.getenv("APPDATA")
-        if not base:
-            base = str(Path.home() / "AppData" / "Roaming")
-        return Path(base) / PROJECT_NAME_WINDOWS
-    override = os.getenv("XDG_CONFIG_HOME")
-    if override:
-        return Path(override) / PROJECT_NAME
-    return Path.home() / ".config" / PROJECT_NAME
+    from omniagents.core.config import product_config_dir
+
+    return product_config_dir(PROJECT_NAME, windows_name=PROJECT_NAME_WINDOWS)

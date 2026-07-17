@@ -27,14 +27,10 @@ from typing import Optional
 
 from omniagents import server_function
 
-# Share the registry with ``tools.bash_tool`` via a normal package import.
-# We previously loaded this module by file path under a private name to
-# avoid an old ``tools`` sys.modules collision during omniagents builtin
-# discovery, but that workaround created a SECOND ``_JobRegistry`` here
-# while ``execute_bash`` (in tools.bash_tool) was registering jobs in the
-# first one — the sweeper polled the empty second registry and the UI
-# panel stayed on "running" forever after a background job exited.
-from tools._bash_jobs import (  # noqa: E402
+# The background-job machinery lives in the omniagents builtin tools;
+# importing the same module the ``execute_bash`` tool uses guarantees the
+# UI panel and the agent share one job registry.
+from omniagents.builtin.tools._bash_jobs import (  # noqa: E402
     JobSweeper,
     get_registry,
     job_state_dict,
@@ -103,18 +99,12 @@ _sweeper: Optional[JobSweeper] = None
 def _all_sessions(service) -> list:
     """Best-effort enumeration of live sessions on the running service.
 
-    Reaches through the private SessionManager since omniagents doesn't
-    expose a public iterator. Falls back to ``[None]`` so a broadcast at
-    least targets the current channel if the manager is unavailable.
+    Falls back to ``[None]`` so a broadcast at least targets the current
+    channel if the service is unavailable.
     """
     try:
-        manager = getattr(service, "_session_manager", None)
-        if manager is None:
-            return [None]
-        by_id = getattr(manager, "_by_id", None)
-        if not by_id:
-            return [None]
-        return list(by_id.values())
+        sessions = service.active_sessions()
+        return sessions if sessions else [None]
     except Exception:
         return [None]
 

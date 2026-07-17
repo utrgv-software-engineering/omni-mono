@@ -91,9 +91,10 @@ class RecapScheduler:
     # ---- Internals ----
 
     def _sessions(self) -> dict[str, Any]:
-        sm = getattr(self._service, "_session_manager", None)
-        by_id = getattr(sm, "_by_id", None)
-        return by_id if isinstance(by_id, dict) else {}
+        try:
+            return {s.id: s for s in self._service.active_sessions()}
+        except Exception:
+            return {}
 
     def _instrument(self, session_id: str) -> None:
         """Install a run_end listener that records turn count + timestamp and

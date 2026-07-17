@@ -8,8 +8,14 @@ async def test_session_ensure_proxies_to_builtin():
     handler = getattr(filesystem.session_ensure, "_server_function_on_invoke")
     captured = {}
 
+    class FakeSession:
+        id = "sess-ensured"
+        context = {}
+        variables = {}
+
     class FakeService:
-        _session_manager = None
+        def get_or_create_session(self, _=None):
+            return FakeSession()
 
         async def server_call(self, function, args=None, session_id=None):
             captured["function"] = function
@@ -44,17 +50,12 @@ async def test_session_ensure_fallback_sets_metadata():
             self.context = {}
             self.variables = {}
 
-    class FakeManager:
-        def __init__(self, session):
-            self._session = session
-
-        def get_or_create(self, _):
-            return self._session
-
     class FailingService:
         def __init__(self):
             self._session = FakeSession()
-            self._session_manager = FakeManager(self._session)
+
+        def get_or_create_session(self, _=None):
+            return self._session
 
         async def server_call(self, *_, **__):
             raise ValueError("missing built-in")

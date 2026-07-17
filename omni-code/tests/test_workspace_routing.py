@@ -31,11 +31,11 @@ import pytest
 from agents.tool import ToolContext
 from agents.usage import Usage
 
-import tools.bash_tool as bash_tool
+import omniagents.builtin.tools.bash_tool as bash_tool
 import tools.notebook_tools as notebook_tools
 import tools.conversion_tools as conversion_tools
-import tools.worker_tools as worker_tools
-from tools import _bash_jobs
+import omni_code.workers_runtime as worker_tools
+from omniagents.builtin.tools import _bash_jobs
 from omniagents.workspace import (
     ExecResult,
     Workspace,
@@ -189,7 +189,7 @@ def test_log_path_for_does_not_create_host_directory(monkeypatch):
 
     assert (
         _bash_jobs.log_path_for("/workspace", "bash-test")
-        == "/workspace/.omni-code/jobs/bash-test.log"
+        == "/workspace/.omniagents/jobs/bash-test.log"
     )
 
 
@@ -216,7 +216,7 @@ def test_background_execute_bash_prepares_log_via_workspace_before_spawn(monkeyp
     metadata = result.ui_metadata["metadata"]
     assert metadata["background"] is True
     assert metadata["pid"] == 12345
-    assert metadata["log_path"].startswith("/fake/.omni-code/jobs/bash-")
+    assert metadata["log_path"].startswith("/fake/.omniagents/jobs/bash-")
 
     names = [call[0] for call in fake.calls]
     assert names.index("exec") < names.index("spawn")
@@ -224,7 +224,7 @@ def test_background_execute_bash_prepares_log_via_workspace_before_spawn(monkeyp
     exec_call = next(call for call in fake.calls if call[0] == "exec")
     setup_command = exec_call[1][0]
     assert (
-        f"mkdir -p /fake/.omni-code/jobs && : > {metadata['log_path']}"
+        f"mkdir -p /fake/.omniagents/jobs && : > {metadata['log_path']}"
         == setup_command
     )
     assert exec_call[2]["shell"] is True
@@ -511,7 +511,7 @@ def test_read_job_log_routes_through_workspace():
     consistent and makes the read work for any backend that can see
     the path.
     """
-    log_path = "/fake/.omni-code/jobs/bash-test.log"
+    log_path = "/fake/.omniagents/jobs/bash-test.log"
     log_text = "line one\nline two\nline three\n"
     fake = _RecordingWorkspace()
     # Stash bytes directly under the recording fake. The fake's read_bytes
@@ -545,7 +545,7 @@ def test_read_job_log_routes_through_workspace():
 
 def test_read_job_log_falls_back_to_local_registered_job_log_on_root_mismatch(tmp_path):
     job_id = "bash-local"
-    log_dir = tmp_path / ".omni-code" / "jobs"
+    log_dir = tmp_path / ".omniagents" / "jobs"
     log_dir.mkdir(parents=True)
     log_path = log_dir / f"{job_id}.log"
     log_text = "local one\nlocal two\n"
@@ -577,7 +577,7 @@ def test_read_job_log_falls_back_to_local_registered_job_log_on_root_mismatch(tm
 
 def test_read_job_log_reports_missing_local_registered_job_log_after_root_mismatch(tmp_path):
     job_id = "bash-missing"
-    log_path = tmp_path / ".omni-code" / "jobs" / f"{job_id}.log"
+    log_path = tmp_path / ".omniagents" / "jobs" / f"{job_id}.log"
     fake = _RootMismatchWorkspace(root="/other-root")
     job = type(
         "_FakeJob",

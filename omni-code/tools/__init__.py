@@ -1,15 +1,10 @@
-# Intentionally empty.
+# Intentionally empty — package marker only.
 #
-# Re-exports were removed because they triggered a sys.modules collision
-# during omniagents eval discovery: when this __init__.py loaded, its
-# cascade of `from .bash_tool import ...` imports bound `sys.modules['tools']`
-# to this directory, which then prevented `omniagents.core.tools.discovery`
-# from importing the builtin tools at `omniagents/builtin/tools/` (it tries
-# `importlib.import_module('tools.file_tools')` and Python locks onto the
-# already-cached `tools` package). The result was that the agent ran without
-# `read_file`, `list_directory`, `apply_patch`, `write_file`, and the other
-# builtin tools — and reached for `read_page` (omni-projects MCP) as the
-# closest-named substitute.
-#
-# Nothing in this repo imports symbols directly from `tools` — all callers
-# use `from tools.<module> import X`. Removing the re-exports is safe.
+# Keep this file free of re-exports. Historically a cascade of
+# `from .bash_tool import ...` re-exports here bound sys.modules['tools']
+# in a way that collided with omniagents' builtin tool discovery (both
+# used the bare `tools` module prefix). omniagents ≥0.7.19 resolves
+# canonical dotted module names during discovery, so the collision itself
+# is fixed framework-side — but nothing in this repo imports symbols from
+# `tools` directly (callers use `from tools.<module> import X`), so
+# re-exports would be dead weight anyway.

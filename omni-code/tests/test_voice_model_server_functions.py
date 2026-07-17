@@ -16,17 +16,12 @@ async def test_voice_models_ensure_session(monkeypatch):
         def __init__(self):
             self.id = "sess-1"
 
-    class FakeManager:
-        def __init__(self, session):
-            self._session = session
-
-        def get_or_create(self, _):
-            return self._session
-
     class FakeService:
         def __init__(self):
             self._session = FakeSession()
-            self._session_manager = FakeManager(self._session)
+
+        def get_or_create_session(self, _=None):
+            return self._session
 
         async def server_call(self, function, args=None, session_id=None):
             captured.append((function, args, session_id))
@@ -59,13 +54,6 @@ async def test_voice_model_switch_sets_voice_default(monkeypatch):
             self.context = {}
             self.variables = {}
 
-    class FakeManager:
-        def __init__(self, session):
-            self._session = session
-
-        def get_or_create(self, _):
-            return self._session
-
     class FakeChannel:
         async def async_call(self, *_, **__):
             return None
@@ -73,8 +61,10 @@ async def test_voice_model_switch_sets_voice_default(monkeypatch):
     class FakeService:
         def __init__(self):
             self._session = FakeSession()
-            self._session_manager = FakeManager(self._session)
             self.channel = FakeChannel()
+
+        def get_or_create_session(self, _=None):
+            return self._session
 
         async def server_call(self, function, args=None, session_id=None):
             return {"session_id": session_id}

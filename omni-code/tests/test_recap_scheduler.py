@@ -38,6 +38,9 @@ class _FakeService:
         self._session_manager = _FakeSessionManager()
         self._listeners = {}
 
+    def active_sessions(self):
+        return list(self._session_manager._by_id.values())
+
     def add_run_end_listener(self, session_id, cb):
         self._listeners.setdefault(session_id, []).append(cb)
 
