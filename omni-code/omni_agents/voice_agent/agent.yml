@@ -20,6 +20,8 @@ capabilities:
   - serpapi
   - markdown
   - slash
+  - feedback      # /good /bad /note /notes (builtin, control-plane only)
+  - model_picker  # /models /model /voice-model* /reasoning (builtin, control-plane only)
 
 model_settings:
   reasoning:
@@ -43,15 +45,6 @@ safe_agent_options:
 
 server_functions:
   - help
-  - good
-  - bad
-  - note
-  - notes
-  - models
-  - model
-  - voice-models
-  - voice-model
-  - reasoning
 
 context: build_voice_context
 model_config_resolver: resolve_default_model

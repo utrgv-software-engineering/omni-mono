@@ -26,6 +26,8 @@ capabilities:
   - wakeup        # schedule_wakeup / cancel_wakeup (self-scheduled recurring notifications)
   - loop          # loop_continue (dynamic /loop continuation scheduling)
   - human         # notify / escalate (UI-implemented client tools)
+  - feedback      # /good /bad /note /notes (builtin, control-plane only)
+  - model_picker  # /models /model /reasoning /voice-model* (builtin, control-plane only)
   - sandbox       # sandbox_get_state / sandbox_wait_until_ready (read-only; switching is operator-only)
 
 model_settings:
@@ -75,20 +77,14 @@ safe_agent_options:
     - sandbox_get_state
     - sandbox_wait_until_ready
 
+# The feedback / model-picker / artifact server functions are NOT listed
+# here: they are carried by the builtin capability packs this agent
+# activates (feedback, model_picker, artifacts) and register through the
+# capability-gated path.
 server_functions:
   - help
-  - artifact
-  - good
-  - bad
-  - note
-  - notes
   - compact
   - recap
-  - models
-  - model
-  - voice-models
-  - voice-model
-  - reasoning
   - terminal.create
   - terminal.close
   - fs_get_cwd

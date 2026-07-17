@@ -15,29 +15,12 @@ import os
 from typing import Any, Optional
 
 
-def session_workspace_root(session: Any) -> Optional[str]:
-    """The workspace_root stored on a session, or ``None``.
-
-    Single source of the "check ``session.context`` (dict or attr), then
-    ``session.variables``" read that server functions need — the framework's
-    ``workspace_root_from_ctx`` covers the RunContextWrapper shape, not the
-    Session shape.
-    """
-    ctx = getattr(session, "context", None)
-    if isinstance(ctx, dict):
-        value = ctx.get("workspace_root")
-        if isinstance(value, str) and value.strip():
-            return value
-    elif ctx is not None:
-        value = getattr(ctx, "workspace_root", None)
-        if isinstance(value, str) and value.strip():
-            return value
-    variables = getattr(session, "variables", None)
-    if isinstance(variables, dict):
-        value = variables.get("workspace_root")
-        if isinstance(value, str) and value.strip():
-            return value
-    return None
+# Session-shape workspace-root reading and the ensure+persist dance are
+# framework helpers now; re-exported here for omni-code's server functions.
+from omniagents.core.server_functions.helpers import (  # noqa: E402,F401
+    ensure_session_with_workspace,
+    session_workspace_root,
+)
 
 
 def resolve_service_model_runtime(
@@ -129,30 +112,6 @@ async def run_utility_agent(
         session=session,
         workspace_root=workspace_root or ephemeral_workspace_root(session),
     )
-
-
-async def ensure_session_with_workspace(service: Any, session: Any) -> Any:
-    """Ensure a live session and persist its workspace root via ``session.ensure``.
-
-    Shared by the model/voice-model server functions: resolves the session
-    through the framework's ``ensure_server_session``, then proxies the
-    session's workspace root to the builtin ``session.ensure`` RPC so it
-    survives restarts. Returns the ensured session (or ``None``).
-    """
-    from omniagents.core.server_functions.helpers import ensure_server_session
-
-    ensured = await ensure_server_session(service, session)
-    if ensured is None:
-        return None
-
-    workspace_root = session_workspace_root(ensured)
-    call_args = {"workspace_root": workspace_root} if workspace_root else None
-    await service.server_call(
-        "session.ensure",
-        call_args,
-        session_id=getattr(ensured, "id", None),
-    )
-    return ensured
 
 
 def ephemeral_workspace_root(session: Any = None) -> str:

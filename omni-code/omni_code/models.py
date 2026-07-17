@@ -91,6 +91,14 @@ _STORE = ModelConfigStore(
     default_provider_name=DEFAULT_PROVIDER_NAME,
 )
 
+# Install as the process-wide registry the builtin model-picker server
+# functions (/models, /model, /reasoning, /voice-model*) read.
+from omniagents.core.models import set_model_store  # noqa: E402
+
+set_model_store(
+    _STORE, setup_hint="No model configured. Run `omni model setup` to add one."
+)
+
 # The historical module-level function API, bound to the singleton store.
 get_models_config_path = _STORE.config_path
 load_models_config = _STORE.load_config
