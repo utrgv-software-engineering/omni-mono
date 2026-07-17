@@ -7,33 +7,10 @@ Provides runtime commands:
 """
 
 from omniagents import server_function
-from omniagents.core.server_functions.helpers import (
-    ensure_server_session,
-    notify_session_state,
-)
+from omniagents.core.server_functions.helpers import notify_session_state
 from omniagents.core.session import Session
 
-
-async def _ensure_session(service, session: Session | None) -> Session | None:
-    ensured = await ensure_server_session(service, session)
-
-    if ensured is None:
-        return None
-
-    from omni_code.utility_runs import session_workspace_root
-
-    workspace_root = session_workspace_root(ensured)
-    call_args = {"workspace_root": workspace_root} if workspace_root else None
-
-    try:
-        await service.server_call(
-            "session.ensure",
-            call_args,
-            session_id=getattr(ensured, "id", None),
-        )
-    except ValueError:
-        pass
-    return ensured
+from omni_code.utility_runs import ensure_session_with_workspace as _ensure_session
 
 
 @server_function(

@@ -41,33 +41,21 @@ async def test_session_ensure_proxies_to_builtin():
 
 
 @pytest.mark.asyncio
-async def test_session_ensure_fallback_sets_metadata():
+async def test_session_ensure_uses_existing_session_id():
     handler = getattr(filesystem.session_ensure, "_server_function_on_invoke")
+    captured = {}
 
     class FakeSession:
-        def __init__(self):
-            self.id = "sess-local"
-            self.context = {}
-            self.variables = {}
+        id = "sess-existing"
+        context = {}
+        variables = {}
 
-    class FailingService:
-        def __init__(self):
-            self._session = FakeSession()
+    class FakeService:
+        async def server_call(self, function, args=None, session_id=None):
+            captured["session_id"] = session_id
+            return {"session_id": session_id}
 
-        def get_or_create_session(self, _=None):
-            return self._session
+    result = await handler(FakeService(), FakeSession(), None)
 
-        async def server_call(self, *_, **__):
-            raise ValueError("missing built-in")
-
-    svc = FailingService()
-    result = await handler(
-        svc,
-        None,
-        {"workspace_root": "/tmp/project"},
-    )
-
-    assert result["session_id"] == "sess-local"
-    assert result["workspace_root"] == "/tmp/project"
-    assert svc._session.context["workspace_root"] == "/tmp/project"
-    assert svc._session.variables["workspace_root"] == "/tmp/project"
+    assert captured["session_id"] == "sess-existing"
+    assert result == {"session_id": "sess-existing"}

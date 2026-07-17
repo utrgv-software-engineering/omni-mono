@@ -149,26 +149,6 @@ def _load_and_configure_spec(model: Optional[str] = None):
     return spec, model_runtime
 
 
-async def _history_loader(entry, tail: int) -> list[dict]:
-    from omniagents.core.session.history_db import load_history
-
-    if tail <= 0 or not entry.session_id:
-        return []
-    spec = getattr(entry.agent, "spec", None)
-    project = getattr(spec, "project_slug", None) or "omni_code"
-    agent = getattr(spec, "agent_slug", None) or getattr(spec, "name", None) or "worker"
-    all_history = [
-        item
-        for item in load_history(
-            entry.session_id,
-            project_slug=project,
-            agent_slug=agent,
-        )
-        if item.get("type") != "reasoning"
-    ]
-    return all_history[-tail:] if len(all_history) > tail else all_history
-
-
 # ---------------------------------------------------------------------------
 # Worktree helpers
 # ---------------------------------------------------------------------------
@@ -619,7 +599,6 @@ def install() -> None:
     set_worker_defaults(
         WorkerDefaults(
             spec_loader=_load_and_configure_spec,
-            history_loader=_history_loader,
             default_isolation="none",
         )
     )

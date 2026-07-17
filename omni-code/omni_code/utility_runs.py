@@ -40,6 +40,121 @@ def session_workspace_root(session: Any) -> Optional[str]:
     return None
 
 
+def resolve_service_model_runtime(
+    service: Any, session: Any
+) -> tuple[Optional[str], dict[str, Any]]:
+    """Resolve the model runtime a utility agent should run on.
+
+    Preference order: the session's active model, then the service spec's
+    model, resolved through omni-code's model store; as a last resort the
+    session's raw ``model_config`` is adapted into a runtime dict.
+    """
+    candidates: list[str] = []
+    active_model = getattr(session, "active_model", None)
+    if isinstance(active_model, str) and active_model.strip():
+        candidates.append(active_model.strip())
+    spec_model = getattr(getattr(service, "spec", None), "model_name", None)
+    if isinstance(spec_model, str) and spec_model.strip():
+        candidates.append(spec_model.strip())
+
+    from omni_code.models import resolve_model_for_runtime
+
+    for ref in candidates:
+        runtime = resolve_model_for_runtime(ref)
+        if runtime:
+            return ref, runtime
+
+    model_config = getattr(session, "model_config", None)
+    if isinstance(model_config, dict) and model_config.get("model"):
+        runtime = {
+            "provider": (model_config.get("provider") or "").strip().lower(),
+            "model": model_config.get("model"),
+            "api_key": model_config.get("api_key"),
+            "base_url": model_config.get("base_url"),
+            "api_version": model_config.get("api_version"),
+            "use_responses": model_config.get("use_responses"),
+            "use_responses_websocket": model_config.get("use_responses_websocket"),
+        }
+        return candidates[0] if candidates else None, runtime
+
+    return candidates[0] if candidates else None, {}
+
+
+def normalize_model_name(
+    model_ref: Optional[str], runtime: dict[str, Any]
+) -> Optional[str]:
+    """Strip a non-openai/litellm provider prefix so the bare model id
+    reaches the provider."""
+    model_name = runtime.get("model") if isinstance(runtime, dict) else None
+    if (not isinstance(model_name, str) or not model_name.strip()) and isinstance(
+        model_ref, str
+    ):
+        model_name = model_ref.strip()
+    if (
+        isinstance(model_name, str)
+        and "/" in model_name
+        and runtime.get("provider") != "litellm"
+    ):
+        prefix = model_name.split("/", 1)[0]
+        if prefix not in {"openai", "litellm"}:
+            model_name = model_name.split("/", 1)[1]
+    return model_name
+
+
+async def run_utility_agent(
+    agent_name: str,
+    prompt: str,
+    *,
+    model: Optional[str] = None,
+    runtime: Optional[dict[str, Any]] = None,
+    session: Any = None,
+    workspace_root: Optional[str] = None,
+) -> str:
+    """Run one of omni-code's headless utility agents (``omni_agents/<name>``)
+    through the framework's ephemeral-run harness."""
+    from pathlib import Path
+
+    from omniagents.core.runtime import run_agent_once
+
+    agent_yaml = (
+        Path(__file__).resolve().parent.parent / "omni_agents" / agent_name / "agent.yml"
+    )
+    model_provider, env_overrides = _build_model_provider(runtime or {})
+    return await run_agent_once(
+        agent_yaml,
+        prompt,
+        model=model,
+        model_provider=model_provider,
+        env_overrides=env_overrides,
+        session=session,
+        workspace_root=workspace_root or ephemeral_workspace_root(session),
+    )
+
+
+async def ensure_session_with_workspace(service: Any, session: Any) -> Any:
+    """Ensure a live session and persist its workspace root via ``session.ensure``.
+
+    Shared by the model/voice-model server functions: resolves the session
+    through the framework's ``ensure_server_session``, then proxies the
+    session's workspace root to the builtin ``session.ensure`` RPC so it
+    survives restarts. Returns the ensured session (or ``None``).
+    """
+    from omniagents.core.server_functions.helpers import ensure_server_session
+
+    ensured = await ensure_server_session(service, session)
+    if ensured is None:
+        return None
+
+    workspace_root = session_workspace_root(ensured)
+    call_args = {"workspace_root": workspace_root} if workspace_root else None
+    await service.server_call(
+        "session.ensure",
+        call_args,
+        session_id=getattr(ensured, "id", None),
+    )
+    return ensured
+
+
 def ephemeral_workspace_root(session: Any = None) -> str:
     """workspace_root for a run that bypasses the AgentService resolver.
 

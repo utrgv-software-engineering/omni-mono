@@ -1,12 +1,11 @@
 """Environment-in-container evaluation environment.
 
-The legacy ``SandboxEvalEnvironment`` runs the *whole* agent server inside a
-Docker container (``docker run … omni --mode server``) and drives it over a
-WebSocket — "agent in container". This environment inverts that: the agent
-runs **on the host** in the standard in-process eval pipeline (exactly like
-``WorkspaceEvalEnvironment``), and only the *environment* — filesystem and
-shell — lives in a container, reached through a live ``SandboxSession``.
-That's "environment in container" (the launcher's v22 "devbox" shape).
+The agent runs **on the host** in the standard in-process eval pipeline
+(exactly like ``WorkspaceEvalEnvironment``), and only the *environment* —
+filesystem and shell — lives in a container, reached through a live
+``SandboxSession``. That's "environment in container" (the launcher's v22
+"devbox" shape). It replaced a legacy agent-in-container model that ran the
+whole agent server inside Docker and drove it over a WebSocket.
 
 Mechanically it's the SDK ``SandboxAgent`` path: ``prepare_spec`` flips
 ``spec.sandbox_use_sandbox_agent`` and attaches the session to

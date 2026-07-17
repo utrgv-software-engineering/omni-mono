@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from omniagents import context_factory, model_config_resolver
 from omni_code.skill_sources import source_skill_roots
@@ -86,28 +86,20 @@ set_skill_roots_provider(_skill_roots_for_workspace)
 from omniagents.core.autonomy import (  # noqa: E402
     set_goal_prompt_builders,
     set_loop_default_prompt_resolver,
-    set_loop_prompt_builders,
 )
 
 from omni_code.goal_prompts import (  # noqa: E402
     build_goal_initial_prompt,
     build_goal_tick_prompt,
 )
-from omni_code.loop_prompts import (  # noqa: E402
-    build_loop_concluded_prompt,
-    build_loop_tick_prompt,
-    resolve_default_loop_prompt,
-)
+from omni_code.loop_prompts import resolve_default_loop_prompt  # noqa: E402
 from omni_code.workers_runtime import install as _install_workers_runtime  # noqa: E402
 
 set_goal_prompt_builders(
     initial=build_goal_initial_prompt,
     tick=build_goal_tick_prompt,
 )
-set_loop_prompt_builders(
-    tick=build_loop_tick_prompt,
-    concluded=build_loop_concluded_prompt,
-)
+# Loop tick/concluded prompts: the framework defaults are used as-is.
 set_loop_default_prompt_resolver(resolve_default_loop_prompt)
 _install_workers_runtime()
 
@@ -129,41 +121,16 @@ from omni_code.platform import load_credentials as _load_platform_credentials  #
 set_platform_credentials_loader(_load_platform_credentials)
 
 
-def _discover_skill_dirs(skill_roots: List[Path]) -> List[Path]:
-    try:
-        from omniagents.core.skills import discover_skill_dirs
-    except Exception:
-        return []
-
-    return discover_skill_dirs(skill_roots)
-
-
 def build_available_skills_block(variables: Dict[str, Any]) -> str:
-    try:
-        from omniagents.core.skills import merge_skill_dirs, to_prompt, validate
-    except Exception:
-        return "<available_skills>\n</available_skills>"
+    """Render the available-skills prompt block for omni-code's skill roots.
 
-    skill_dirs = _discover_skill_dirs(_default_skill_roots(variables))
+    ``_default_skill_roots`` orders workspace-local roots before the global
+    config root, and the framework's merge is first-wins by skill name, so
+    local skills shadow global ones without any re-sorting here.
+    """
+    from omniagents.core.skills import build_available_skills_block as _fw_block
 
-    valid_skill_dirs: List[Path] = []
-    for skill_dir in skill_dirs:
-        try:
-            errors = validate(skill_dir)
-        except Exception:
-            continue
-        if errors:
-            continue
-        valid_skill_dirs.append(skill_dir)
-
-    local_dirs = [d for d in valid_skill_dirs if ".omni_code" in str(d)]
-    global_dirs = [d for d in valid_skill_dirs if d not in local_dirs]
-    merged = merge_skill_dirs(local_dirs + global_dirs)
-
-    try:
-        return to_prompt(merged)
-    except Exception:
-        return to_prompt([])
+    return _fw_block(_default_skill_roots(variables))
 
 
 _SKIP_DIRS = frozenset({

@@ -46,18 +46,22 @@ async def test_run_init_agent_uses_model_provider_and_restores_env(monkeypatch, 
     prior = os.environ.get("OPENAI_API_KEY")
     os.environ["OPENAI_API_KEY"] = "sk-original"
 
-    async def fake_run(_agent, _input, *, max_turns=10, run_config=None, **_kwargs):
+    def fake_run_streamed(_agent, _input, *, context=None, max_turns=10, run_config=None, **_kwargs):
         assert run_config is not None
         assert run_config.model_provider is dummy_provider
         assert os.environ.get("OPENAI_API_KEY") == "sk-temp"
 
         class FakeResult:
+            async def stream_events(self):
+                return
+                yield  # pragma: no cover — makes this an async generator
+
             def final_output_as(self, _type):
                 return "Created AGENTS.md"
 
         return FakeResult()
 
-    monkeypatch.setattr(Runner, "run", fake_run)
+    monkeypatch.setattr(Runner, "run_streamed", fake_run_streamed)
 
     try:
         agents_path = tmp_path / "AGENTS.md"
@@ -86,7 +90,7 @@ async def test_run_init_agent_passes_workspace_root_via_run_context(
     resolve relative paths against ctx.context["workspace_root"]. Under
     strict mode (omniagents v0.6.48+) a missing value raises
     WorkspaceRootRequiredError. This test pins the contract: the
-    slash-command flow must pass workspace_root via Runner.run's
+    slash-command flow must pass workspace_root via the runner's
     context= kwarg, sourced from $PWD (or cwd as fallback)."""
     import omni_code.init_command as slash
     import omni_code.models as models
@@ -122,16 +126,20 @@ async def test_run_init_agent_passes_workspace_root_via_run_context(
 
     captured: dict = {}
 
-    async def fake_run(_agent, _input, *, context=None, max_turns=10, run_config=None, **_kwargs):
+    def fake_run_streamed(_agent, _input, *, context=None, max_turns=10, run_config=None, **_kwargs):
         captured["context"] = context
 
         class FakeResult:
+            async def stream_events(self):
+                return
+                yield  # pragma: no cover — makes this an async generator
+
             def final_output_as(self, _type):
                 return "Created AGENTS.md"
 
         return FakeResult()
 
-    monkeypatch.setattr(Runner, "run", fake_run)
+    monkeypatch.setattr(Runner, "run_streamed", fake_run_streamed)
 
     # Asymmetric: PWD points at tmp_path, NOT the test runner cwd. If the
     # slash command silently picked up some other path (e.g. the server
@@ -194,16 +202,20 @@ async def test_run_init_agent_falls_back_to_cwd_when_pwd_missing(
 
     captured: dict = {}
 
-    async def fake_run(_agent, _input, *, context=None, max_turns=10, run_config=None, **_kwargs):
+    def fake_run_streamed(_agent, _input, *, context=None, max_turns=10, run_config=None, **_kwargs):
         captured["context"] = context
 
         class FakeResult:
+            async def stream_events(self):
+                return
+                yield  # pragma: no cover — makes this an async generator
+
             def final_output_as(self, _type):
                 return "Created AGENTS.md"
 
         return FakeResult()
 
-    monkeypatch.setattr(Runner, "run", fake_run)
+    monkeypatch.setattr(Runner, "run_streamed", fake_run_streamed)
 
     monkeypatch.delenv("PWD", raising=False)
 

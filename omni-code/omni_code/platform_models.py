@@ -107,39 +107,25 @@ def get_platform_policy_cache() -> Optional[Dict[str, Any]]:
 
 def fetch_and_cache_policy() -> Optional[Dict[str, Any]]:
     """Fetch policy from management plane and cache it."""
-    from omni_code.platform import get_platform_url, get_access_token, load_credentials, save_credentials
+    from omni_code.platform import (
+        fetch_policy,
+        get_access_token,
+        get_platform_url,
+        load_credentials,
+        save_credentials,
+    )
 
-    url = get_platform_url()
-    token = get_access_token()
-    if not url or not token:
+    policy = fetch_policy()
+    if policy is None:
         return None
 
-    import requests
-
-    try:
-        # Use the policy endpoint with project slug
-        resp = requests.get(
-            f"{url}/api/v1/policy/omni_code",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10,
-        )
-        if resp.ok:
-            policy = resp.json()
-            # Cache in credentials file
-            creds = load_credentials() or {}
-            creds["cached_policy"] = policy
-            creds["platform_url"] = url
-            creds["access_token"] = token
-            save_credentials(creds)
-            return policy
-        elif resp.status_code == 401:
-            logger.warning("Platform token expired — run: omni auth login")
-        elif resp.status_code == 403:
-            logger.warning("Not entitled to omni_code project — contact your admin")
-    except Exception as e:
-        logger.debug("Policy fetch failed: %s", e)
-
-    return None
+    # Cache in credentials file
+    creds = load_credentials() or {}
+    creds["cached_policy"] = policy
+    creds["platform_url"] = get_platform_url()
+    creds["access_token"] = get_access_token()
+    save_credentials(creds)
+    return policy
 
 
 def apply_platform_model_governance() -> None:
@@ -172,7 +158,6 @@ def apply_platform_model_governance() -> None:
         if isinstance(provider_config, dict):
             provider_config["_governed"] = True
 
-    from omni_code.models import load_models_config, get_models_config_path
 
     if not allow_user_models:
         # Platform providers replace user config entirely

@@ -16,15 +16,63 @@ Credential file format:
 """
 
 import json
+import logging
 import os
 import time
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 from omni_code.config import get_config_dir
 
 
+logger = logging.getLogger(__name__)
+
 PLATFORM_CRED_FILE = "platform.json"
+
+# The management plane scopes policy to a project slug.
+POLICY_PROJECT_SLUG = "omni_code"
+
+
+def fetch_policy(*, refresh_on_401: bool = True) -> Optional[Dict[str, Any]]:
+    """Fetch this product's policy from the management plane. No caching.
+
+    The single policy client — governance (fail-closed sandbox decisions)
+    and model governance both call this instead of carrying their own
+    copies of the HTTP dance. On 401 the token is refreshed once before
+    giving up.
+    """
+    try:
+        import requests
+
+        url = get_platform_url()
+        token = get_access_token()
+        if not url or not token:
+            return None
+
+        def _get(tok: str):
+            return requests.get(
+                f"{url}/api/v1/policy/{POLICY_PROJECT_SLUG}",
+                headers={"Authorization": f"Bearer {tok}"},
+                timeout=10,
+            )
+
+        resp = _get(token)
+        if resp.status_code == 401 and refresh_on_401:
+            new_token = refresh_access_token()
+            if new_token:
+                resp = _get(new_token)
+        if resp.ok:
+            return resp.json()
+        if resp.status_code == 401:
+            logger.warning("Platform token expired — run: omni auth login")
+        elif resp.status_code == 403:
+            logger.warning(
+                "Not entitled to the %s project — contact your admin",
+                POLICY_PROJECT_SLUG,
+            )
+        return None
+    except Exception as e:
+        logger.debug("Policy fetch failed: %s", e)
+        return None
 
 
 def get_platform_url() -> Optional[str]:

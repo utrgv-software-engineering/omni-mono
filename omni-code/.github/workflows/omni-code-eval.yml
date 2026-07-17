@@ -20,11 +20,6 @@ on:
     # Weekly on Monday 6am UTC
     - cron: "0 6 * * 1"
   workflow_dispatch:
-    inputs:
-      run_sandbox:
-        description: "Run sandbox (Docker) evaluations"
-        type: boolean
-        default: false
 
 jobs:
   # ── Lightweight evals: run in-process, no Docker ──────────────────
@@ -63,47 +58,3 @@ jobs:
         with:
           name: eval-results-lightweight
           path: target/eval_results.json
-
-  # ── Sandbox evals: Docker container, weekly or on-demand ──────────
-  eval-sandbox:
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    if: >-
-      github.event_name == 'schedule'
-      || github.event_name == 'workflow_dispatch' && inputs.run_sandbox
-      || contains(github.event.head_commit.message, '[run-sandbox-evals]')
-    env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      MODEL_NAME: ${{ vars.EVAL_MODEL_NAME || 'gpt-5.2' }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
-
-      - name: Build sandbox image
-        run: |
-          docker build \
-            -t omni-code-sandbox:latest \
-            -f omni_code/sandbox/Dockerfile \
-            omni_code/sandbox/
-
-      - name: Run sandbox evaluations
-        run: |
-          pytest tests/eval_sandbox/ \
-            -v \
-            --timeout=300 \
-            --tb=short \
-            -x
-
-      - name: Upload results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: eval-results-sandbox
-          path: target/

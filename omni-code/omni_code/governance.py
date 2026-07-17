@@ -14,7 +14,6 @@ Security model:
 - No fallbacks to hardcoded defaults — the platform is the sole source of truth
 """
 
-import json
 import os
 import shutil
 import subprocess
@@ -144,42 +143,11 @@ def maybe_enforce_sandbox() -> None:
 
 
 def _fetch_fresh_policy() -> Optional[dict]:
-    """Fetch policy directly from the platform. Does NOT use local cache.
+    """Fetch policy directly from the platform. Does NOT use local cache —
+    the cache can be tampered with, so sandbox decisions use a fresh read."""
+    from omni_code.platform import fetch_policy
 
-    On 401, attempts a token refresh before giving up.
-    """
-    try:
-        import requests
-        from omni_code.platform import get_platform_url, get_access_token, refresh_access_token
-
-        url = get_platform_url()
-        token = get_access_token()
-        if not url or not token:
-            return None
-
-        resp = requests.get(
-            f"{url}/api/v1/policy/omni_code",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10,
-        )
-        if resp.ok:
-            return resp.json()
-
-        # Token may be expired — try refreshing once
-        if resp.status_code == 401:
-            new_token = refresh_access_token()
-            if new_token:
-                resp = requests.get(
-                    f"{url}/api/v1/policy/omni_code",
-                    headers={"Authorization": f"Bearer {new_token}"},
-                    timeout=10,
-                )
-                if resp.ok:
-                    return resp.json()
-
-        return None
-    except Exception:
-        return None
+    return fetch_policy()
 
 
 def _resolve_sandbox_requirements(policy: dict) -> Optional[dict]:

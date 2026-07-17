@@ -210,39 +210,13 @@ async def _session_ensure_on_invoke(service, session, args=None):
     else:
         sess_id = getattr(sess, "id", None)
 
-    try:
-        # Proxy to the built-in omniagents session.ensure if present so persisted
-        # metadata (workspace root, context, variables) survives restarts.
-        return await service.server_call(
-            "session.ensure",
-            call_args or None,
-            session_id=sess_id,
-        )
-    except ValueError:
-        # Older omniagents builds don't register session.ensure. Fall back to
-        # the legacy behavior (best-effort, in-memory only).
-        result = {"session_id": sess_id}
-        if sess is None:
-            return result
-
-        if "workspace_root" in call_args:
-            wr_value = call_args["workspace_root"]
-            ctx = sess.context if isinstance(getattr(sess, "context", None), dict) else {}
-            ctx["workspace_root"] = wr_value
-            sess.context = ctx
-            vars_dict = sess.variables if isinstance(getattr(sess, "variables", None), dict) else {}
-            vars_dict["workspace_root"] = wr_value
-            sess.variables = vars_dict
-            result["workspace_root"] = wr_value
-
-        if "context" in call_args:
-            sess.context = call_args["context"]
-        if "variables" in call_args:
-            sess.variables = call_args["variables"]
-
-        result["context"] = getattr(sess, "context", None)
-        result["variables"] = getattr(sess, "variables", None)
-        return result
+    # Proxy to the builtin omniagents session.ensure so persisted metadata
+    # (workspace root, context, variables) survives restarts.
+    return await service.server_call(
+        "session.ensure",
+        call_args or None,
+        session_id=sess_id,
+    )
 
 
 setattr(session_ensure, "_server_function_on_invoke", _session_ensure_on_invoke)

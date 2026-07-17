@@ -31,26 +31,13 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from omni_code.config import PROJECT_NAME, PROJECT_NAME_WINDOWS
+from omni_code.config import get_config_dir
 
 from omni_code.default_models import get_default_model_name_fallback, get_default_providers
 
 
 MODELS_CONFIG_VERSION = 3
 DEFAULT_PROVIDER_NAME = "openai"
-
-
-def get_config_dir() -> Path:
-    """Get the config directory for omni_code."""
-    if os.name == "nt":
-        base = os.getenv("APPDATA")
-        if not base:
-            base = str(Path.home() / "AppData" / "Roaming")
-        return Path(base) / PROJECT_NAME_WINDOWS
-    override = os.getenv("XDG_CONFIG_HOME")
-    if override:
-        return Path(override) / PROJECT_NAME
-    return Path.home() / ".config" / PROJECT_NAME
 
 
 def get_models_config_path() -> Path:

@@ -23,15 +23,13 @@ import json
 import os
 import sqlite3
 import sys
-from pathlib import Path
 from typing import Any
-
-from omniagents.core.runtime import run_agent_once
 
 from omni_code.utility_runs import _build_model_provider
 from omniagents.core.paths import get_sessions_db_path
 from omniagents.core.session import list_sessions, load_history
 from omniagents.core.session.cli import (
+    add_sessions_subparser,
     coerce_limit as _coerce_limit,
     dump_json as _dump_json,
     handle_sessions_command,
@@ -49,85 +47,6 @@ def _default_project() -> str:
 
 def _default_agent() -> str:
     return "omni"
-
-
-def _delegate(sessions_cmd: str, args: argparse.Namespace, **fields: Any) -> None:
-    """Run a framework sessions subcommand pinned to the omni_code project.
-
-    The db-path/list/search/export command bodies live in
-    ``omniagents.core.session.cli.handle_sessions_command``; this shim only
-    maps omni-code's arg surface (project always ``omni_code``, ``--agent``
-    defaulted) onto the framework namespace.
-    """
-    ns = argparse.Namespace(
-        sessions_cmd=sessions_cmd,
-        project=_default_project(),
-        agent=args.agent,
-        **fields,
-    )
-    rc = handle_sessions_command(ns)
-    if rc:
-        raise SystemExit(rc)
-
-
-def cmd_db_path(args: argparse.Namespace) -> None:
-    _delegate("db-path", args)
-
-
-def cmd_list(args: argparse.Namespace) -> None:
-    _delegate(
-        "list",
-        args,
-        include_archived=args.include_archived,
-        after=args.after,
-        before=args.before,
-        offset=args.offset,
-        limit=args.limit,
-        all=args.all,
-        stats=args.stats,
-        text=args.text,
-        pretty=args.pretty,
-    )
-
-
-def cmd_search(args: argparse.Namespace) -> None:
-    query = (args.query or "").strip()
-    if not query:
-        print("Query is required.")
-        raise SystemExit(1)
-
-    role = (args.role or "any").strip().lower()
-    if role not in {"any", "user", "assistant"}:
-        print("Invalid role. Use: any, user, assistant")
-        raise SystemExit(1)
-
-    _delegate(
-        "search",
-        args,
-        query=query,
-        role=role,
-        include_archived=args.include_archived,
-        after=args.after,
-        before=args.before,
-        offset=args.offset,
-        limit=args.limit,
-        text=args.text,
-        pretty=args.pretty,
-    )
-
-
-def cmd_export(args: argparse.Namespace) -> None:
-    session_id = (args.session_id or "").strip()
-    if not session_id:
-        print("session_id is required")
-        raise SystemExit(1)
-
-    fmt = (args.format or "jsonl").strip().lower()
-    if fmt not in {"json", "jsonl"}:
-        print("Invalid format. Use: json, jsonl")
-        raise SystemExit(1)
-
-    _delegate("export", args, session_id=session_id, format=fmt, pretty=args.pretty)
 
 
 def _trim_history_tail(items: list[dict], *, tail: int | None) -> list[dict]:
@@ -154,24 +73,17 @@ def _extract_transcript(history: list[dict]) -> str:
 async def _run_session_summarizer_agent(
     *, model: str | None, runtime: dict[str, Any], prompt: str
 ) -> str:
-    
-    agent_yaml = (
-        Path(__file__).resolve().parent.parent
-        / "omni_agents"
-        / "session_summarizer"
-        / "agent.yml"
-    )
-    model_provider, env_overrides = _build_model_provider(runtime or {})
     # CLI invocation — anchor to the user's current working directory.
     # The session_summarizer agent has tools=[] today so this is unused,
     # but passing it keeps the call forward-compatible and consistent
     # with the framework's strict workspace_root convention.
-    return await run_agent_once(
-        agent_yaml,
+    from omni_code.utility_runs import run_utility_agent
+
+    return await run_utility_agent(
+        "session_summarizer",
         prompt,
         model=model,
-        model_provider=model_provider,
-        env_overrides=env_overrides,
+        runtime=runtime,
         workspace_root=os.getcwd(),
     )
 
@@ -195,16 +107,9 @@ def cmd_summarize(args: argparse.Namespace) -> None:
         print("No usable model credentials found. Run: omni model setup")
         raise SystemExit(1)
 
-    model_name = runtime.get("model")
-    runtime_provider = runtime.get("provider")
-    if (
-        isinstance(model_name, str)
-        and "/" in model_name
-        and runtime_provider != "litellm"
-    ):
-        prefix = model_name.split("/", 1)[0]
-        if prefix not in {"openai", "litellm"}:
-            model_name = model_name.split("/", 1)[1]
+    from omni_code.utility_runs import normalize_model_name
+
+    model_name = normalize_model_name(args.model, runtime)
 
     project = _default_project()
     list_sessions(project_slug=project, agent_slug=args.agent)
@@ -282,71 +187,45 @@ def cmd_summarize(args: argparse.Namespace) -> None:
     print(_dump_json(out, pretty=args.pretty))
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="omni sessions", add_help=True)
-    parser.add_argument("--agent", default=_default_agent())
-
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    p_db = sub.add_parser("db-path", help="Print sessions.db path")
-    p_db.set_defaults(func=cmd_db_path)
-
-    p_list = sub.add_parser("list", help="List sessions")
-    p_list.add_argument("--include-archived", action="store_true")
-    p_list.add_argument(
-        "--after", help="Only sessions created at/after this time (ISO-8601)"
+def _build_summarize_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="omni sessions summarize",
+        description="Summarize a prior session using an LLM",
     )
-    p_list.add_argument(
-        "--before", help="Only sessions created before this time (ISO-8601)"
-    )
-    p_list.add_argument("--offset", type=int, default=0)
-    p_list.add_argument("--limit", type=int, default=50)
-    p_list.add_argument(
-        "--all", action="store_true", help="Return all sessions (ignores --limit)"
-    )
-    p_list.add_argument(
-        "--stats",
-        action="store_true",
-        help="Include message_count and first/last message previews (slower)",
-    )
-    p_list.add_argument("--pretty", action="store_true")
-    p_list.add_argument("--text", action="store_true")
-    p_list.set_defaults(func=cmd_list)
-
-    p_export = sub.add_parser("export", help="Export a session's history")
-    p_export.add_argument("session_id")
-    p_export.add_argument("--format", default="jsonl")
-    p_export.add_argument("--pretty", action="store_true")
-    p_export.set_defaults(func=cmd_export)
-
-    p_search = sub.add_parser("search", help="Search messages across sessions")
-    p_search.add_argument("query")
-    p_search.add_argument("--role", default="any")
-    p_search.add_argument("--include-archived", action="store_true")
-    p_search.add_argument("--after", help="Only messages at/after this time (ISO-8601)")
-    p_search.add_argument("--before", help="Only messages before this time (ISO-8601)")
-    p_search.add_argument("--offset", type=int, default=0)
-    p_search.add_argument("--limit", type=int, default=50)
-    p_search.add_argument("--pretty", action="store_true")
-    p_search.add_argument("--text", action="store_true")
-    p_search.set_defaults(func=cmd_search)
-
-    p_sum = sub.add_parser("summarize", help="Summarize a prior session using an LLM")
-    p_sum.add_argument("session_id")
-    p_sum.add_argument(
+    parser.add_argument("session_id")
+    parser.add_argument(
         "--model", help="Model reference (e.g., gpt-5.1 or local/gpt-4.1)"
     )
-    p_sum.add_argument("--tail", type=int, default=200)
-    p_sum.add_argument("--pretty", action="store_true")
-    p_sum.set_defaults(func=cmd_summarize)
-
+    parser.add_argument("--tail", type=int, default=200)
+    parser.add_argument("--pretty", action="store_true")
     return parser
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    args.func(args)
+    argv = list(sys.argv[1:] if argv is None else argv)
+
+    # Product surface: a leading `--agent` flag (defaulted to the omni
+    # agent) ahead of the subcommand; project is always pinned to
+    # `omni_code`. Everything else is the framework's sessions CLI.
+    top = argparse.ArgumentParser(prog="omni sessions", add_help=False)
+    top.add_argument("--agent", default=_default_agent())
+    ns, rest = top.parse_known_args(argv)
+
+    if rest and rest[0] == "summarize":
+        args = _build_summarize_parser().parse_args(rest[1:])
+        args.agent = ns.agent
+        cmd_summarize(args)
+        return
+
+    framework = argparse.ArgumentParser(prog="omni")
+    add_sessions_subparser(framework.add_subparsers(dest="command"))
+    args = framework.parse_args(["sessions", *rest])
+    args.project = _default_project()
+    if not getattr(args, "agent", None):
+        args.agent = ns.agent
+    rc = handle_sessions_command(args)
+    if rc:
+        raise SystemExit(rc)
 
 
 def setup_entrypoint() -> None:

@@ -89,9 +89,13 @@ def test_run_compaction_agent_passes_model_provider_to_ephemeral_run(monkeypatch
 
     sentinel_provider = object()
 
-    monkeypatch.setattr(compact_mod, "run_agent_once", fake_run_agent_once)
+    import omniagents.core.runtime as runtime_mod
+
+    from omni_code import utility_runs
+
+    monkeypatch.setattr(runtime_mod, "run_agent_once", fake_run_agent_once)
     monkeypatch.setattr(
-        compact_mod,
+        utility_runs,
         "_build_model_provider",
         lambda runtime: (sentinel_provider, {"K": "v"}),
     )
