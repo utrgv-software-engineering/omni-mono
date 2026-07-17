@@ -4,12 +4,14 @@ import copy
 import json
 from typing import Any
 
-# Note: ``history_since_last_summary`` was removed when SDK-native compaction
-# (``OpenAIResponsesCompactionSession``) took over context-window management.
-# ``is_context_length_exceeded`` was restored because the SDK has no
-# equivalent classifier and the bridge still needs one to drive the
-# hook-driven retry primitive (LiteLLM and other non-Responses providers
-# have no SDK-side compaction recovery path).
+# Two compaction layers coexist deliberately:
+# - SDK-native (``core/session/compaction.py``): server-side trimming on
+#   Responses-capable backends; opaque, per-turn, no history artifact.
+# - Checkpoint compaction (this module, below): explicit model-visible
+#   summary + resume protocol appended with the ``context_summary``
+#   marker; backend-agnostic, and the recovery step the reactive
+#   (on-context-error) hook drives — LiteLLM and other non-Responses
+#   providers have no SDK-side compaction path.
 
 
 def is_context_length_exceeded(err: Exception) -> bool:
@@ -306,3 +308,220 @@ def build_resume_protocol_block(*, history: list[dict], tool_events: list[dict])
         "2) Review the last 5 tool events and reproduce any failing command if applicable.\n"
         "3) Continue with the pending tasks / next steps from the summary.\n"
     )
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint compaction
+#
+# The SDK-native path (``core/session/compaction.py``) trims context
+# server-side on Responses-capable backends and leaves no artifact. This
+# path is its complement: an explicit, model-visible checkpoint — an
+# agent-written summary + resume protocol appended to session history
+# with the ``context_summary`` marker — that works on any backend and is
+# the recovery step reactive (on-context-error) compaction relies on.
+# Products supply the summarizer (their compactor agent + model
+# resolution); the orchestration below is generic.
+# ---------------------------------------------------------------------------
+
+CHECKPOINT_KIND = "context_summary"
+
+DEFAULT_CHECKPOINT_ENVELOPE = (
+    "Another language model started to solve this problem and produced a "
+    "summary of its thinking process. This message is a checkpoint to help "
+    "you continue the work without duplicating effort. "
+)
+
+
+def is_checkpoint_item(item: Any) -> bool:
+    """True when *item* is a checkpoint summary marker in session history."""
+    return (
+        isinstance(item, dict)
+        and item.get("role") == "assistant"
+        and isinstance(item.get("omniagents"), dict)
+        and item["omniagents"].get("kind") == CHECKPOINT_KIND
+    )
+
+
+def history_since_last_checkpoint(
+    history: list[dict], *, include_checkpoint: bool = False
+) -> list[dict]:
+    """Return history items after the most recent checkpoint marker.
+
+    With ``include_checkpoint=True`` the checkpoint item itself is kept
+    (the run path wants the model to still see the summary); without it,
+    the window starts just after (the summarizer must not re-summarize
+    the previous summary).
+    """
+    if not history:
+        return []
+    last_idx: int | None = None
+    for idx in range(len(history) - 1, -1, -1):
+        if is_checkpoint_item(history[idx]):
+            last_idx = idx
+            break
+    if last_idx is None:
+        return list(history)
+    start = last_idx if include_checkpoint else last_idx + 1
+    return list(history[start:])
+
+
+async def summarize_with_window_shrink(
+    window: list[dict],
+    *,
+    build_prompt: Any,
+    summarize: Any,
+) -> str:
+    """Run ``summarize(build_prompt(window))``, shrinking on context errors.
+
+    When the summarization call itself exceeds the model's context window,
+    drop the oldest window item and retry — the standard recovery loop for
+    checkpoint compaction, session summarization, and similar
+    transcript-sized prompts. Non-context errors propagate; an empty
+    window propagates the last error too.
+    """
+    working = list(window)
+    while True:
+        prompt = build_prompt(working)
+        try:
+            return await summarize(prompt)
+        except Exception as err:
+            if is_context_length_exceeded(err) and working:
+                working.pop(0)
+                continue
+            raise
+
+
+def build_checkpoint_prompt(full_history: list[dict], window: list[dict]) -> str:
+    """The summarizer input: all user messages + the window transcript."""
+    user_messages_block = format_user_messages_block(
+        extract_user_messages(full_history)
+    )
+    transcript = extract_transcript(window)
+    return (
+        "All user messages (verbatim; last is highlighted):\n"
+        f"{user_messages_block}\n\n"
+        "Conversation transcript since last checkpoint (raw items; includes tool calls/outputs):\n"
+        f"{transcript}"
+    )
+
+
+def build_checkpoint_summary_text(
+    *,
+    history: list[dict],
+    summary_body: str,
+    envelope: str | None = None,
+) -> str:
+    """Assemble the checkpoint item content: envelope + resume protocol +
+    verbatim user messages + recent tool events + the agent summary."""
+    user_messages_block = format_user_messages_block(extract_user_messages(history))
+    tool_events = extract_tool_events(history)
+    tool_events_block = format_tool_events_block(tool_events, max_items=5)
+    resume_protocol = build_resume_protocol_block(
+        history=history, tool_events=tool_events
+    )
+    return (
+        f"{envelope if envelope is not None else DEFAULT_CHECKPOINT_ENVELOPE}"
+        f"{resume_protocol}\n"
+        "Here are all user messages (verbatim; last is highlighted):\n"
+        f"{user_messages_block}\n\n"
+        "Here are the last 5 tool call/result events (verbatim):\n"
+        f"{tool_events_block}\n\n"
+        "Here is the summary produced by the other language model:\n\n"
+        f"{summary_body}"
+    )
+
+
+async def run_checkpoint_compaction(
+    session: Any,
+    summarize: Any,
+    *,
+    envelope: str | None = None,
+) -> dict:
+    """Compact *session* by appending a checkpoint summary marker.
+
+    ``summarize`` is an async callable ``(prompt: str) -> str`` — typically
+    a product's compactor agent run via ``run_agent_once`` with its own
+    model resolution. Returns the appended history item.
+    """
+    full_history = list(getattr(session, "history", []) or [])
+    window = history_since_last_checkpoint(full_history)
+
+    summary_body = await summarize_with_window_shrink(
+        window,
+        build_prompt=lambda w: build_checkpoint_prompt(full_history, w),
+        summarize=summarize,
+    )
+    summary_body = summary_body or "(no summary produced)"
+
+    summary_item = {
+        "role": "assistant",
+        "content": build_checkpoint_summary_text(
+            history=full_history, summary_body=summary_body, envelope=envelope
+        ),
+        "omniagents": {"kind": CHECKPOINT_KIND, "version": 1},
+    }
+    session.append_message(summary_item)
+    return summary_item
+
+
+def make_auto_compact_error_hook(*, state_key: str, command: str = "compact"):
+    """Build a reactive-compaction ``error`` runtime hook.
+
+    On a context-length-exceeded run error: record the pressure flags
+    under ``session.variables[state_key]``, run the *command* server
+    function (the product's checkpoint-compaction command), and ask the
+    bridge to retry the run. Products register the result with
+    ``@runtime_hook("error")`` (or assign it to a decorated name).
+
+    Opt-outs honored via ``session.variables[state_key]``:
+    ``auto_compact: False`` disables the compaction+retry (flags are
+    still recorded); ``auto_compact_in_progress`` guards re-entry.
+    """
+
+    async def on_error(
+        *,
+        service: Any,
+        session: Any,
+        run_id: str,
+        params: dict,
+        event: str,
+    ) -> dict | None:
+        err = params.get("error")
+        if err is None:
+            return None
+
+        if params.get("is_context_length_exceeded") is not True:
+            return None
+
+        vars_obj = getattr(session, "variables", None)
+        if not isinstance(vars_obj, dict):
+            vars_obj = {}
+            try:
+                session.variables = vars_obj
+            except Exception:
+                return None
+
+        state = vars_obj.get(state_key)
+        if not isinstance(state, dict):
+            state = {}
+            vars_obj[state_key] = state
+
+        state["needs_context_compression"] = True
+        state["context_error_run_id"] = run_id
+        state["context_error"] = "context_length_exceeded"
+
+        if state.get("auto_compact") is False:
+            return None
+
+        if state.get("auto_compact_in_progress"):
+            return None
+
+        state["auto_compact_in_progress"] = True
+        try:
+            await service.server_call(command, args={}, session_id=session.id)
+        finally:
+            state["auto_compact_in_progress"] = False
+
+        return {"retry": True}
+
+    return on_error

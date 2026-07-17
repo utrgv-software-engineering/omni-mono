@@ -515,31 +515,18 @@ def strip_internal_keys_for_api(items: list[dict]) -> list[dict]:
 
 
 def _apply_legacy_compaction_window(history: list[dict]) -> list[dict]:
-    """Trim history to items after the most recent legacy summary marker.
+    """Trim history to items from the most recent checkpoint marker on.
 
-    Honors the ``"kind": "context_summary"`` marker on assistant messages
-    that older sessions persisted before SDK-native compaction took over.
-    Newly created sessions never write this marker, but the helper keeps
-    pre-existing data usable.  When no marker is present this is an
+    Honors the ``"kind": "context_summary"`` marker written by checkpoint
+    compaction (``core/runtime/compaction.run_checkpoint_compaction`` —
+    manual ``/compact``-style commands and reactive on-context-error
+    compaction). The checkpoint item itself is included so the model
+    still sees the summary. When no marker is present this is an
     identity transform.
     """
-    if not history:
-        return []
-    last_summary_idx: int | None = None
-    for idx in range(len(history) - 1, -1, -1):
-        item = history[idx]
-        if (
-            isinstance(item, dict)
-            and item.get("role") == "assistant"
-            and isinstance(item.get("omniagents"), dict)
-            and item["omniagents"].get("kind") == "context_summary"
-        ):
-            last_summary_idx = idx
-            break
-    if last_summary_idx is None:
-        return list(history)
-    # Include the summary itself so the model still sees it.
-    return list(history[last_summary_idx:])
+    from omniagents.core.runtime.compaction import history_since_last_checkpoint
+
+    return history_since_last_checkpoint(history, include_checkpoint=True)
 
 
 class Session:  # noqa: D101
