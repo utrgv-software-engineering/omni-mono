@@ -47,7 +47,7 @@ def _state_dict() -> dict:
     }
 
 
-@function_tool(client_status="Checking sandbox status...")
+@function_tool(running_summary="Checking sandbox status...")
 async def sandbox_get_state(ctx: RunContextWrapper[Any]) -> str:  # noqa: ARG001
     """Report the current sandbox you're running in.
 
@@ -62,7 +62,7 @@ async def sandbox_get_state(ctx: RunContextWrapper[Any]) -> str:  # noqa: ARG001
     return json.dumps(_state_dict())
 
 
-@function_tool(client_status="Waiting for sandbox...")
+@function_tool(running_summary="Waiting for sandbox...")
 async def sandbox_wait_until_ready(
     ctx: RunContextWrapper[Any],  # noqa: ARG001
     timeout_seconds: float = 120.0,

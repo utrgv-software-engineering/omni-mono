@@ -801,7 +801,7 @@ async def _remove_worker_worktree(worker_id: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-@rich_function_tool(client_status="Spawning worker...")
+@rich_function_tool(running_summary="Spawning worker...")
 async def spawn_worker(
     ctx: RunContextWrapper[Any],
     task: str,
@@ -1008,7 +1008,7 @@ async def spawn_worker(
     )
 
 
-@rich_function_tool(client_status="Waiting for workers...")
+@rich_function_tool(running_summary="Waiting for workers...")
 async def wait_for_workers(
     worker_ids: list[str],
     timeout_seconds: Optional[float] = None,
@@ -1096,7 +1096,7 @@ async def wait_for_workers(
     )
 
 
-@rich_function_tool(client_status="Checking worker status...")
+@rich_function_tool(running_summary="Checking worker status...")
 async def get_worker_status(
     worker_id: str,
     tail: int = 5,
@@ -1170,7 +1170,7 @@ async def get_worker_status(
     )
 
 
-@rich_function_tool(client_status="Sending message to worker...")
+@rich_function_tool(running_summary="Sending message to worker...")
 async def send_worker_message(worker_id: str, message: str) -> RichToolOutput:
     """Send a message to a running worker, injecting new instructions mid-task.
 
@@ -1261,7 +1261,7 @@ async def send_worker_message(worker_id: str, message: str) -> RichToolOutput:
     )
 
 
-@rich_function_tool(client_status="Closing worker...")
+@rich_function_tool(running_summary="Closing worker...")
 async def close_worker(worker_id: str) -> RichToolOutput:
     """Cancel a running worker and clean up its resources.
 
@@ -1326,7 +1326,7 @@ async def close_worker(worker_id: str) -> RichToolOutput:
     )
 
 
-@rich_function_tool(client_status="Resuming worker...")
+@rich_function_tool(running_summary="Resuming worker...")
 async def resume_worker(
     ctx: RunContextWrapper[Any], worker_id: str, message: str
 ) -> RichToolOutput:
@@ -1433,7 +1433,7 @@ async def resume_worker(
     )
 
 
-@rich_function_tool(client_status="Cleaning up worker worktree...")
+@rich_function_tool(running_summary="Cleaning up worker worktree...")
 async def cleanup_worker_worktree(worker_id: str) -> RichToolOutput:
     """Remove a worker's git worktree and branch after merging its changes.
 

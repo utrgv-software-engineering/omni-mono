@@ -511,7 +511,7 @@ def _safe_symlink_target(rel_path: str, target: str) -> bool:
 
 
 def _scrub_session_snapshot(session: Any) -> None:
-    """Drop unsafe symlinks from the just-persisted snapshot tar.
+    """Drop unsafe symlinks from the persisted snapshot tar.
 
     The SDK's ``unix_local.persist_workspace`` does an unfiltered
     ``tar.add`` of the host workspace directory — so stale absolute
@@ -523,8 +523,10 @@ def _scrub_session_snapshot(session: Any) -> None:
 
     The seed path's ``LocalGitArchive`` already filters at write time
     in the opposite direction. This is the symmetric scrub on the
-    persist side: same predicate, applied to the tar on disk before
-    the next start has a chance to trip on it.
+    hydrate side: same predicate, applied once by ``bring_up_session``
+    to the tar on disk before ``start()`` has a chance to trip on it.
+    (It used to also run on teardown; that was a redundant full
+    read+rewrite of the tar, since every hydrate scrubs anyway.)
 
     Best-effort: silently no-ops if the snapshot path can't be
     determined or the tar can't be read. Any unsafe content the
@@ -922,12 +924,12 @@ async def bring_up_session(
         if isinstance(raw_idle, dict) and "pause_after_seconds" in raw_idle:
             inner.set_idle_threshold(_parse_idle_threshold(raw_idle))
 
-    # Scrub the snapshot tar BEFORE start() hydrates it. The teardown scrub only
-    # runs on a clean stop; a snapshot left dirty by a crashed/killed prior
-    # session (or one persisted before this scrub existed) would otherwise make
-    # `start()` throw WorkspaceArchiveWriteError on an unsafe symlink (e.g. a
+    # Scrub the snapshot tar BEFORE start() hydrates it — this is the ONLY
+    # scrub site (teardown deliberately doesn't scrub; see teardown_session).
+    # Without it, a persisted tar containing an unsafe symlink (e.g. a
     # committed `.fvm/flutter_sdk -> /Users/...` absolute symlink in a cloned
-    # repo) and the session would never come up. Best-effort + idempotent.
+    # repo) would make `start()` throw WorkspaceArchiveWriteError and the
+    # session would never come up. Best-effort + idempotent.
     _scrub_session_snapshot(session)
 
     await session.start()
@@ -1501,16 +1503,38 @@ async def _serve(args: argparse.Namespace) -> int:
     switch_ctx.ready_event.set()
     set_switch_context(switch_ctx)
 
-    # --- Run server + clean SIGTERM ---
+    # --- Run server + fast signal shutdown ---
+    # Any exit signal skips uvicorn's graceful drain (``force_exit``): the
+    # drain waits on open WS connections — all ours (launcher, terminals) —
+    # and on the in-flight turn, which reads as a hang. Users follow a "hung"
+    # Ctrl+C with a terminal close (SIGHUP) or SIGKILL, which skips the
+    # teardown below and loses the workspace snapshot. The thing that
+    # actually preserves work is that teardown — get to it immediately.
     def _request_stop(*_: object) -> None:
         server.should_exit = True
+        server.force_exit = True
 
     loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
+    _handled_signals = [signal.SIGTERM, signal.SIGINT]
+    # A closed terminal window delivers SIGHUP; unhandled it kills the
+    # process instantly and the snapshot is never persisted. Absent on
+    # Windows.
+    if hasattr(signal, "SIGHUP"):
+        _handled_signals.append(signal.SIGHUP)
+    for sig in _handled_signals:
         try:
             loop.add_signal_handler(sig, _request_stop)
         except NotImplementedError:
             signal.signal(sig, lambda *_a: _request_stop())
+
+    # uvicorn's ``serve()`` re-captures SIGINT/SIGTERM with its own handler
+    # (``capture_signals`` → ``handle_exit``) whose first signal starts the
+    # graceful drain we just opted out of. Override the hook on the instance
+    # so every signal routes through ``_request_stop`` during serve too.
+    def _handle_exit(sig: int, frame: object) -> None:  # noqa: ARG001
+        _request_stop()
+
+    server.handle_exit = _handle_exit  # type: ignore[method-assign]
 
     try:
         await server.serve()
@@ -1521,6 +1545,17 @@ async def _serve(args: argparse.Namespace) -> int:
             set_sandbox_session,
             set_switch_context,
         )
+
+        # Quiesce before teardown: with the drain skipped (force_exit), an
+        # in-flight run would otherwise keep mutating the workspace while
+        # teardown tars it. Bounded — a hung run must not block the snapshot.
+        try:
+            await asyncio.wait_for(
+                _cancel_active_runs(getattr(app.state, "agent_service", None)),
+                timeout=5,
+            )
+        except Exception:
+            pass
 
         # A switch may have replaced the session/services since startup — tear
         # down the LIVE ones, not the first-launch locals.
@@ -1546,7 +1581,13 @@ async def _serve(args: argparse.Namespace) -> int:
                 await inner_for_idle_stop.stop_idle_watcher()
             except Exception:
                 pass
-        await teardown_session(live_session, live_services)
+        from omni_code.agent_workspace_state import get_discard_snapshot_on_exit
+
+        await teardown_session(
+            live_session,
+            live_services,
+            discard_snapshot=get_discard_snapshot_on_exit(),
+        )
         # Clear the published process-global slots on exit (teardown_session
         # deliberately leaves the handle alone so switches can replace it).
         set_sandbox_session(None)
@@ -1682,7 +1723,10 @@ def _install_host_terminal_manager(
 
 
 async def teardown_session(
-    session: Any, started_services: List[Tuple[ServiceSpec, int]]
+    session: Any,
+    started_services: List[Tuple[ServiceSpec, int]],
+    *,
+    discard_snapshot: bool = False,
 ) -> None:
     """Stop services + persist the workspace snapshot + close the session.
 
@@ -1690,6 +1734,12 @@ async def teardown_session(
     owns that: ``_serve`` nulls it on process exit; ``perform_switch`` replaces
     it with the new session. Safe to call on a partially-started session, or
     on ``None`` (the host target has no session to tear down).
+
+    ``discard_snapshot=True`` skips the workspace snapshot persist entirely
+    (fingerprint pass + full tar export). Only for terminal shutdowns — the
+    launcher deletes the tar right after this process exits
+    (``sandbox.discard_snapshot``). Never set it on a switch: the switch
+    rehydrates the new backend from the snapshot this persist writes.
     """
     if session is None:
         return
@@ -1716,11 +1766,23 @@ async def teardown_session(
     # a separate public ``persist_snapshot`` method on the session.
     # Snapshot is best-effort: log any failure so the launcher can
     # surface it, but don't block shutdown.
+    if discard_snapshot:
+        # ``persist_snapshot`` early-returns on a NoopSnapshot, so swapping
+        # one in is the supported way to skip the persist without forking
+        # the SDK's stop path.
+        try:
+            from agents.sandbox.snapshot import NoopSnapshot
+
+            session.state.snapshot = NoopSnapshot(id=session.state.snapshot.id)
+        except Exception as e:
+            print(f"[teardown] snapshot discard failed: {e}", file=sys.stderr)
+    # No scrub here: every consumer of the tar (``bring_up_session`` on boot,
+    # switch, and rollback) scrubs before hydrating, so a teardown-side scrub
+    # would just be a second full read+rewrite of the tar on every stop.
     try:
         await session.stop()
     except Exception as e:
         print(f"[teardown] session stop failed: {e}", file=sys.stderr)
-    _scrub_session_snapshot(session)
     try:
         await session.aclose()
     except Exception:

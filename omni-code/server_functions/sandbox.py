@@ -154,6 +154,32 @@ async def sandbox_notify_activity(service: Any) -> dict:  # noqa: ARG001
     return {"ok": True}
 
 
+@server_function(
+    name_override="sandbox.discard_snapshot",
+    description=(
+        "Flag this session's shutdown as terminal: skip persisting the "
+        "workspace snapshot during teardown. Called by the launcher right "
+        "before SIGTERM when the user closes a session for good — the "
+        "launcher deletes the snapshot tar afterwards, so the persist "
+        "(fingerprint + full workspace tar export) would be wasted work. "
+        "Operator command, NOT an agent tool."
+    ),
+    params_schema=_PAUSE_SCHEMA,
+    result_schema={
+        "type": "object",
+        "properties": {"ok": {"type": "boolean"}},
+        "required": ["ok"],
+        "additionalProperties": False,
+    },
+    strict=True,
+)
+async def sandbox_discard_snapshot(service: Any) -> dict:  # noqa: ARG001
+    from omni_code.agent_workspace_state import set_discard_snapshot_on_exit
+
+    set_discard_snapshot_on_exit(True)
+    return {"ok": True}
+
+
 _SWITCH_SCHEMA = {
     "type": "object",
     "properties": {
@@ -213,5 +239,6 @@ SANDBOX_SERVER_FUNCTIONS = [
     sandbox_pause,
     sandbox_unpause,
     sandbox_notify_activity,
+    sandbox_discard_snapshot,
     sandbox_switch,
 ]

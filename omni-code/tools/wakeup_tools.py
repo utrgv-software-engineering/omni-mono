@@ -77,7 +77,7 @@ def _get_session(service, session_id: str):
         return None
 
 
-@rich_function_tool(client_status="Scheduling wakeup...")
+@rich_function_tool(running_summary="Scheduling wakeup...")
 async def schedule_wakeup(
     ctx: RunContextWrapper[Any],
     interval_seconds: float,
@@ -161,7 +161,7 @@ async def schedule_wakeup(
     return _ack(result)
 
 
-@rich_function_tool(client_status="Cancelling wakeup...")
+@rich_function_tool(running_summary="Cancelling wakeup...")
 async def cancel_wakeup(
     ctx: RunContextWrapper[Any],
 ) -> RichToolOutput:

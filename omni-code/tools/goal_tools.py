@@ -29,7 +29,7 @@ from tools.bash_tool import _session_id_from_ctx
 _log = logging.getLogger(__name__)
 
 
-@rich_function_tool(client_status="Marking goal complete...")
+@rich_function_tool(running_summary="Marking goal complete...")
 async def goal_complete(
     ctx: RunContextWrapper[Any],
     reason: str = "achieved",

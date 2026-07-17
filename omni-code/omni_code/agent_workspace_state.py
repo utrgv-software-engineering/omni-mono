@@ -105,6 +105,23 @@ def get_sandbox_session() -> Optional[Any]:
     return _sandbox_session
 
 
+_discard_snapshot_on_exit: bool = False
+
+
+def set_discard_snapshot_on_exit(value: bool) -> None:
+    """Flag a terminal shutdown: the launcher is closing this session for
+    good and deletes the snapshot tar right after the process exits, so
+    ``teardown_session`` should skip the workspace snapshot persist
+    (fingerprint pass + full tar export + scrub rewrite). Set by the
+    ``sandbox.discard_snapshot`` server function just before SIGTERM."""
+    global _discard_snapshot_on_exit
+    _discard_snapshot_on_exit = value
+
+
+def get_discard_snapshot_on_exit() -> bool:
+    return _discard_snapshot_on_exit
+
+
 @dataclass
 class SwitchContext:
     """Everything ``sandbox.switch`` needs to rebuild the SandboxSession for a

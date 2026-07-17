@@ -160,7 +160,7 @@ class _BashTimeoutMarker(Exception):
         self.wall_time_ms = wall_time_ms
 
 
-@rich_function_tool(client_status="Running shell command...")
+@rich_function_tool(running_summary="Running shell command...")
 async def execute_bash(
     ctx: RunContextWrapper[Any],
     command: str,
@@ -526,7 +526,7 @@ async def _execute_bash_background(
 _job_state_dict = job_state_dict
 
 
-@rich_function_tool(client_status="Checking background job status...")
+@rich_function_tool(running_summary="Checking background job status...")
 async def bash_status(
     ctx: RunContextWrapper[Any],
     job_id: Optional[str] = None,
@@ -646,7 +646,7 @@ async def bash_status(
 # ---------------------------------------------------------------------------
 
 
-@rich_function_tool(client_status="Reading background job logs...")
+@rich_function_tool(running_summary="Reading background job logs...")
 async def bash_logs(
     ctx: RunContextWrapper[Any],
     job_id: str,
@@ -776,7 +776,7 @@ async def bash_logs(
 # ---------------------------------------------------------------------------
 
 
-@rich_function_tool(client_status="Terminating background job...")
+@rich_function_tool(running_summary="Terminating background job...")
 async def bash_kill(
     ctx: RunContextWrapper[Any],
     job_id: str,

@@ -89,7 +89,7 @@ def _snapshot(scope: str) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-@rich_function_tool(client_status="Creating task...")
+@rich_function_tool(running_summary="Creating task...")
 async def task_create(
     ctx: RunContextWrapper[Any],
     subject: str,
@@ -144,7 +144,7 @@ async def task_create(
     )
 
 
-@rich_function_tool(client_status="Listing tasks...")
+@rich_function_tool(running_summary="Listing tasks...")
 async def task_list(ctx: RunContextWrapper[Any]) -> RichToolOutput:
     """List your tasks with status and open blockers.
 
@@ -185,7 +185,7 @@ async def task_list(ctx: RunContextWrapper[Any]) -> RichToolOutput:
     )
 
 
-@rich_function_tool(client_status="Reading task...")
+@rich_function_tool(running_summary="Reading task...")
 async def task_get(ctx: RunContextWrapper[Any], task_id: str) -> RichToolOutput:
     """Get the full record for one of your tasks by id.
 
@@ -233,7 +233,7 @@ async def task_get(ctx: RunContextWrapper[Any], task_id: str) -> RichToolOutput:
     )
 
 
-@rich_function_tool(client_status="Updating task...")
+@rich_function_tool(running_summary="Updating task...")
 async def task_update(
     ctx: RunContextWrapper[Any],
     task_id: str,

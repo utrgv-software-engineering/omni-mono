@@ -55,7 +55,7 @@ def _resolve_skill_path(name: str, workspace_root: str | None) -> Path | None:
     return None
 
 
-@rich_function_tool(client_status="Loading skill...")
+@rich_function_tool(running_summary="Loading skill...")
 async def load_skill(
     ctx: RunContextWrapper[Any],
     name: str,

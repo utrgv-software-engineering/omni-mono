@@ -186,7 +186,7 @@ _REGISTRY = SlashCommandRegistry()
 _REGISTRY.register("init", lambda _arg=None: run_init_agent())
 
 
-@rich_function_tool(client_status="Running command...")
+@rich_function_tool(running_summary="Running command...")
 async def dispatch(command: str, arg: Optional[str] = None) -> RichToolOutput:
     """Invoke a slash command with optional args.
 

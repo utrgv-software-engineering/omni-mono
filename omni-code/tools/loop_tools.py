@@ -31,7 +31,7 @@ def _get_session(service, session_id: str):
         return None
 
 
-@rich_function_tool(client_status="Continuing loop...")
+@rich_function_tool(running_summary="Continuing loop...")
 async def loop_continue(
     ctx: RunContextWrapper[Any],
     task_id: str,
