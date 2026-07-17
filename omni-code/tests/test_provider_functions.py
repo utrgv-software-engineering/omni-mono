@@ -13,7 +13,7 @@ from omni_code import models
 def tmp_models_config(tmp_path, monkeypatch):
     """Redirect models.json to a temp file and return its path."""
     config_path = tmp_path / "models.json"
-    monkeypatch.setattr(models, "get_models_config_path", lambda: config_path)
+    monkeypatch.setattr(models._STORE, "config_path", lambda: config_path)
     return config_path
 
 
