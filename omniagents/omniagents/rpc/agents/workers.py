@@ -7,6 +7,39 @@ from typing import Any, Awaitable, Callable
 from .local import LocalAgent
 
 
+def _default_worker_safety(spec: Any) -> None:
+    """Default a spawned worker's spec to skip approval prompts.
+
+    Workers have no human reviewer by construction — the monitor loop
+    auto-approves every ``tool_approval_requested`` it sees — so leaving
+    approvals on merely detours every tool call through the approval
+    machinery (request → queue → auto-approve → resume), which reads as
+    a hang. Skipping at the source is outcome-identical and removes the
+    round-trips. The YAML loader defaults ``use_safe_agent`` to True with
+    an empty safe list when a headless agent's YAML doesn't mention it,
+    which is how workers historically ended up on this path; product
+    YAMLs no longer need the ``use_safe_agent: false`` workaround.
+
+    Deployments with ``safety_mode: enforced`` are unaffected: the
+    service layer re-forces ``skip_approvals=False`` after this, and the
+    monitor's auto-approve remains as the answering party.
+    """
+    try:
+        if not getattr(spec, "use_safe_agent", False):
+            return
+        opts = getattr(spec, "safe_agent_options", None)
+        if opts is None:
+            from omniagents.core.agents.specs import SafeAgentOptions
+
+            spec.safe_agent_options = SafeAgentOptions(skip_approvals=True)
+        elif not getattr(opts, "skip_approvals", False):
+            opts.skip_approvals = True
+    except Exception:
+        # Defaulting must never block a spawn; worst case the monitor's
+        # auto-approve still answers every prompt as before.
+        pass
+
+
 @dataclass
 class WorkerHandle:
     agent: Any
@@ -165,6 +198,7 @@ class WorkerManager:
         parent_session_id: str | None = None,
     ) -> WorkerHandle:
         spec, _runtime = self._spec_loader(model)
+        _default_worker_safety(spec)
         variables = getattr(spec, "variables", None)
         if variables is None:
             spec.variables = {}
