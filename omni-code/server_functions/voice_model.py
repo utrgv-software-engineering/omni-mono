@@ -12,18 +12,10 @@ async def _ensure_session(service, session: Session | None) -> Session | None:
     if ensured is None:
         return None
 
-    call_args = None
-    ctx = getattr(ensured, "context", None)
-    if isinstance(ctx, dict):
-        workspace_root = ctx.get("workspace_root")
-        if isinstance(workspace_root, str) and workspace_root.strip():
-            call_args = {"workspace_root": workspace_root}
-    if call_args is None:
-        variables = getattr(ensured, "variables", None)
-        if isinstance(variables, dict):
-            workspace_root = variables.get("workspace_root")
-            if isinstance(workspace_root, str) and workspace_root.strip():
-                call_args = {"workspace_root": workspace_root}
+    from omni_code.utility_runs import session_workspace_root
+
+    workspace_root = session_workspace_root(ensured)
+    call_args = {"workspace_root": workspace_root} if workspace_root else None
 
     try:
         await service.server_call(

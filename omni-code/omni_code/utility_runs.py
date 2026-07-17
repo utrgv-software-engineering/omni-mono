@@ -12,7 +12,32 @@ for runs that bypass the AgentService resolver.
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, Optional
+
+
+def session_workspace_root(session: Any) -> Optional[str]:
+    """The workspace_root stored on a session, or ``None``.
+
+    Single source of the "check ``session.context`` (dict or attr), then
+    ``session.variables``" read that server functions need — the framework's
+    ``workspace_root_from_ctx`` covers the RunContextWrapper shape, not the
+    Session shape.
+    """
+    ctx = getattr(session, "context", None)
+    if isinstance(ctx, dict):
+        value = ctx.get("workspace_root")
+        if isinstance(value, str) and value.strip():
+            return value
+    elif ctx is not None:
+        value = getattr(ctx, "workspace_root", None)
+        if isinstance(value, str) and value.strip():
+            return value
+    variables = getattr(session, "variables", None)
+    if isinstance(variables, dict):
+        value = variables.get("workspace_root")
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
 
 
 def ephemeral_workspace_root(session: Any = None) -> str:
@@ -39,13 +64,9 @@ def _litellm_env_overrides(
 ) -> dict[str, str | None]:
     if not api_key:
         return {}
+    from omni_code.models import litellm_api_key_env
 
-    model_name = (model or "").lower()
-    if model_name.startswith("anthropic/") or model_name.startswith("claude"):
-        return {"ANTHROPIC_API_KEY": api_key}
-    if model_name.startswith("gemini/") or model_name.startswith("google/"):
-        return {"GOOGLE_API_KEY": api_key}
-    return {"OPENAI_API_KEY": api_key}
+    return {litellm_api_key_env(model): api_key}
 
 
 def _build_model_provider(

@@ -58,6 +58,21 @@ def get_models_config_path() -> Path:
     return get_config_dir() / "models.json"
 
 
+def litellm_api_key_env(model: str | None) -> str:
+    """The env var LiteLLM reads the API key from, by model prefix.
+
+    Single source of the prefix table — used for env fallback reads,
+    for exporting a configured key into the environment, and for the
+    per-run env overrides in utility runs.
+    """
+    model_name = (model or "").lower()
+    if model_name.startswith("anthropic/") or model_name.startswith("claude"):
+        return "ANTHROPIC_API_KEY"
+    if model_name.startswith("gemini/") or model_name.startswith("google/"):
+        return "GOOGLE_API_KEY"
+    return "OPENAI_API_KEY"
+
+
 def _expand_env_vars(value: Any) -> Any:
     """Recursively expand ${VAR} and ${VAR:-default} in strings."""
     if isinstance(value, str):
@@ -775,13 +790,7 @@ def resolve_model_for_runtime(
         if provider == "azure":
             result["api_key"] = os.getenv("AZURE_OPENAI_API_KEY")
         elif provider == "litellm":
-            model_str = result.get("model", "")
-            if model_str.startswith("anthropic/") or model_str.startswith("claude"):
-                result["api_key"] = os.getenv("ANTHROPIC_API_KEY")
-            elif model_str.startswith("gemini/") or model_str.startswith("google/"):
-                result["api_key"] = os.getenv("GOOGLE_API_KEY")
-            else:
-                result["api_key"] = os.getenv("OPENAI_API_KEY")
+            result["api_key"] = os.getenv(litellm_api_key_env(result.get("model")))
         else:
             result["api_key"] = os.getenv("OPENAI_API_KEY")
 
@@ -805,22 +814,13 @@ def apply_api_keys_to_env() -> None:
     if api_key:
         # Set the appropriate environment variable based on provider
         if provider == "azure":
-            if "AZURE_OPENAI_API_KEY" not in os.environ:
-                os.environ["AZURE_OPENAI_API_KEY"] = api_key
+            env_key = "AZURE_OPENAI_API_KEY"
         elif provider == "litellm":
-            model_str = default_config.get("model", "")
-            if model_str.startswith("anthropic/") or model_str.startswith("claude"):
-                if "ANTHROPIC_API_KEY" not in os.environ:
-                    os.environ["ANTHROPIC_API_KEY"] = api_key
-            elif model_str.startswith("gemini/") or model_str.startswith("google/"):
-                if "GOOGLE_API_KEY" not in os.environ:
-                    os.environ["GOOGLE_API_KEY"] = api_key
-            else:
-                if "OPENAI_API_KEY" not in os.environ:
-                    os.environ["OPENAI_API_KEY"] = api_key
+            env_key = litellm_api_key_env(default_config.get("model"))
         else:
-            if "OPENAI_API_KEY" not in os.environ:
-                os.environ["OPENAI_API_KEY"] = api_key
+            env_key = "OPENAI_API_KEY"
+        if env_key not in os.environ:
+            os.environ[env_key] = api_key
 
 
 def is_user_provider(name: str) -> bool:

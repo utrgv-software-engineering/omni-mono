@@ -57,21 +57,9 @@ def _coerce_positive_int(value: Optional[int]) -> Optional[int]:
 def _resolve_workspace_root(session: Session, override: Optional[str]) -> Optional[str]:
     if override and override.strip():
         return override
-    ctx = getattr(session, "context", None)
-    if isinstance(ctx, dict):
-        value = ctx.get("workspace_root")
-        if isinstance(value, str) and value.strip():
-            return value
-    if ctx is not None:
-        value = getattr(ctx, "workspace_root", None)
-        if isinstance(value, str) and value.strip():
-            return value
-    variables = getattr(session, "variables", None)
-    if isinstance(variables, dict):
-        value = variables.get("workspace_root")
-        if isinstance(value, str) and value.strip():
-            return value
-    return None
+    from omni_code.utility_runs import session_workspace_root
+
+    return session_workspace_root(session)
 
 
 @server_function(

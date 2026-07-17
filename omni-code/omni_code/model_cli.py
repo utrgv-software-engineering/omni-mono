@@ -475,13 +475,9 @@ def cmd_test(args):
             import litellm
 
             if api_key:
-                model_str = model or ""
-                if model_str.startswith("anthropic/") or model_str.startswith("claude"):
-                    os.environ["ANTHROPIC_API_KEY"] = api_key
-                elif model_str.startswith("gemini/") or model_str.startswith("google/"):
-                    os.environ["GOOGLE_API_KEY"] = api_key
-                else:
-                    os.environ["OPENAI_API_KEY"] = api_key
+                from omni_code.models import litellm_api_key_env
+
+                os.environ[litellm_api_key_env(model)] = api_key
 
             response = litellm.completion(
                 model=model,
