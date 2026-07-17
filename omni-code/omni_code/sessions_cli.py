@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import contextlib
 import json
 import os
 import sqlite3
@@ -27,10 +26,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from agents import Runner
+from omniagents.core.runtime import run_agent_once
+
+from omni_code.utility_runs import _build_model_provider
 from omniagents.core.paths import get_sessions_db_path
-from omniagents.core.agents.builder import _default_build_agent
-from omniagents.core.config.loader import load_agent_spec_from_yaml
 from omniagents.core.session import list_sessions, load_history
 from omniagents.core.session.query import (
     count_sessions as oa_count_sessions,
@@ -299,154 +298,29 @@ def _extract_transcript(history: list[dict]) -> str:
     return "\n".join(parts)
 
 
-def _litellm_env_overrides(
-    *, model: str | None, api_key: str | None
-) -> dict[str, str | None]:
-    if not api_key:
-        return {}
-
-    model_name = (model or "").lower()
-    if model_name.startswith("anthropic/") or model_name.startswith("claude"):
-        return {"ANTHROPIC_API_KEY": api_key}
-    if model_name.startswith("gemini/") or model_name.startswith("google/"):
-        return {"GOOGLE_API_KEY": api_key}
-    return {"OPENAI_API_KEY": api_key}
-
-
-def _temporary_environ(overrides: dict[str, str | None]):
-    @contextlib.contextmanager
-    def _impl():
-        prior: dict[str, str | None] = {}
-        for key, value in (overrides or {}).items():
-            prior[key] = os.environ.get(key)
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-        try:
-            yield
-        finally:
-            for key, value in prior.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
-
-    return _impl()
-
-
-def _build_model_provider(
-    runtime: dict[str, Any],
-) -> tuple[Any | None, dict[str, str | None]]:
-    provider = (runtime.get("provider") or "").strip().lower()
-    model = runtime.get("model")
-    api_key = runtime.get("api_key")
-    base_url = runtime.get("base_url")
-    use_responses = runtime.get("use_responses")
-    use_responses_websocket = runtime.get("use_responses_websocket")
-
-    provider_kwargs: dict[str, Any] = {}
-    if use_responses is not None:
-        provider_kwargs["use_responses"] = bool(use_responses)
-    if use_responses_websocket is not None:
-        provider_kwargs["use_responses_websocket"] = bool(use_responses_websocket)
-
-    if provider == "openai-oauth":
-        from agents.models.openai_provider import OpenAIProvider
-        from omni_code.codex_auth import build_codex_openai_client
-
-        client = build_codex_openai_client()
-        if client is None:
-            return None, {}
-        return OpenAIProvider(openai_client=client, **provider_kwargs), {}
-
-    if provider == "litellm":
-        from agents.extensions.models.litellm_provider import LitellmProvider
-
-        return LitellmProvider(), _litellm_env_overrides(model=model, api_key=api_key)
-
-    if provider in {"openai", "openai-compatible", "azure"}:
-        from openai import AsyncOpenAI
-        from agents.models.openai_provider import OpenAIProvider
-
-        resolved_base_url = base_url or "https://api.openai.com/v1"
-        resolved_api_key = api_key
-        if not resolved_api_key:
-            if provider == "azure":
-                resolved_api_key = os.getenv("AZURE_OPENAI_API_KEY")
-            else:
-                resolved_api_key = os.getenv("OPENAI_API_KEY")
-
-        is_azure = resolved_base_url and (
-            "openai.azure.com" in resolved_base_url
-            or "services.ai.azure.com" in resolved_base_url
-        )
-
-        if is_azure:
-            if not resolved_api_key:
-                return None, {}
-            client = AsyncOpenAI(
-                api_key="dummy",
-                base_url=resolved_base_url,
-                default_headers={"api-key": resolved_api_key},
-            )
-            return OpenAIProvider(openai_client=client, **provider_kwargs), {}
-
-        if not resolved_api_key and resolved_base_url != "https://api.openai.com/v1":
-            resolved_api_key = "dummy"
-
-        if not resolved_api_key:
-            return None, {}
-
-        client = AsyncOpenAI(
-            api_key=resolved_api_key,
-            base_url=resolved_base_url,
-        )
-        return OpenAIProvider(openai_client=client, **provider_kwargs), {}
-
-    return None, {}
-
-
 async def _run_session_summarizer_agent(
     *, model: str | None, runtime: dict[str, Any], prompt: str
 ) -> str:
-    from agents import RunConfig
-
+    
     agent_yaml = (
         Path(__file__).resolve().parent.parent
         / "omni_agents"
         / "session_summarizer"
         / "agent.yml"
     )
-    spec = load_agent_spec_from_yaml(str(agent_yaml))
-    if model:
-        spec.model_name = model
-    agent = await _default_build_agent(
-        settings={}, mcp_servers=None, spec=spec, session=None
-    )
-
     model_provider, env_overrides = _build_model_provider(runtime or {})
-    run_config = (
-        RunConfig(model_provider=model_provider) if model_provider is not None else None
-    )
     # CLI invocation — anchor to the user's current working directory.
     # The session_summarizer agent has tools=[] today so this is unused,
     # but passing it keeps the call forward-compatible and consistent
     # with the framework's strict workspace_root convention.
-    with _temporary_environ(env_overrides):
-        # Use the streaming runner: the Codex backend requires stream=true, and
-        # for every other model run_streamed routes through the same
-        # (non-streaming) per-turn path via the disable_token_streaming patch.
-        result = Runner.run_streamed(
-            agent,
-            prompt,
-            context={"workspace_root": os.getcwd()},
-            max_turns=1,
-            run_config=run_config,
-        )
-        async for _ in result.stream_events():
-            pass
-        return result.final_output_as(str)
+    return await run_agent_once(
+        agent_yaml,
+        prompt,
+        model=model,
+        model_provider=model_provider,
+        env_overrides=env_overrides,
+        workspace_root=os.getcwd(),
+    )
 
 
 def cmd_summarize(args: argparse.Namespace) -> None:

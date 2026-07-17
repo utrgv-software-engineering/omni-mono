@@ -75,27 +75,26 @@ def test_compact_uses_runtime_model_id_for_custom_provider_prefix(monkeypatch):
     assert summary_item["omniagents"]["kind"] == "context_summary"
 
 
-def test_run_compaction_agent_passes_model_provider_via_run_config(monkeypatch):
+def test_run_compaction_agent_passes_model_provider_to_ephemeral_run(monkeypatch):
+    """The compaction run delegates to the framework's run_agent_once with
+    the provider/env resolved by _build_model_provider. (RunConfig wiring
+    inside run_agent_once is covered by the framework's own tests.)"""
     captured: dict = {}
 
-    async def fake_build_agent(*, settings, mcp_servers, spec, session=None, **kwargs):
-        captured["built_model"] = spec.model_name
-        return SimpleNamespace(model=spec.model_name)
-
-    class DummyResult:
-        def final_output_as(self, _type):
-            return "ok"
-
-    async def fake_runner_run(agent, prompt, *, max_turns=1, run_config=None, **kwargs):
-        captured["agent_model"] = getattr(agent, "model", None)
-        captured["run_config"] = run_config
-        return DummyResult()
+    async def fake_run_agent_once(agent_yaml, prompt, **kwargs):
+        captured["agent_yaml"] = str(agent_yaml)
+        captured["prompt"] = prompt
+        captured.update(kwargs)
+        return "ok"
 
     sentinel_provider = object()
 
-    monkeypatch.setattr(compact_mod, "_default_build_agent", fake_build_agent)
-    monkeypatch.setattr(compact_mod.Runner, "run", fake_runner_run)
-    monkeypatch.setattr(compact_mod, "_build_model_provider", lambda runtime: (sentinel_provider, {}))
+    monkeypatch.setattr(compact_mod, "run_agent_once", fake_run_agent_once)
+    monkeypatch.setattr(
+        compact_mod,
+        "_build_model_provider",
+        lambda runtime: (sentinel_provider, {"K": "v"}),
+    )
 
     output = asyncio.run(
         compact_mod._run_compaction_agent(
@@ -107,7 +106,9 @@ def test_run_compaction_agent_passes_model_provider_via_run_config(monkeypatch):
     )
 
     assert output == "ok"
-    assert captured["built_model"] == "gpt-4.1"
-    assert captured["agent_model"] == "gpt-4.1"
-    assert captured["run_config"] is not None
-    assert captured["run_config"].model_provider is sentinel_provider
+    assert captured["agent_yaml"].endswith("compactor/agent.yml")
+    assert captured["prompt"] == "hi"
+    assert captured["model"] == "gpt-4.1"
+    assert captured["model_provider"] is sentinel_provider
+    assert captured["env_overrides"] == {"K": "v"}
+    assert captured["workspace_root"]

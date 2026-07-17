@@ -20,10 +20,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from agents import Runner
 from omniagents import server_function
-from omniagents.core.agents.builder import _default_build_agent
-from omniagents.core.config.loader import load_agent_spec_from_yaml
 from omniagents.core.runtime.compaction import (
     extract_transcript,
     extract_user_messages,
@@ -31,13 +28,14 @@ from omniagents.core.runtime.compaction import (
 )
 from omniagents.core.session.manager import Session
 
-# Shared with /compact — model/provider resolution and the env-override
-# context manager. Importing keeps recap and compact on the exact same
-# runtime path; if compact's resolution changes, recap follows.
-from server_functions.compact import (
+# Shared with /compact — model resolution stays on the exact same
+# runtime path; the provider wiring lives in omni_code.utility_runs.
+from server_functions.compact import _resolve_compaction_runtime
+from omniagents.core.runtime import run_agent_once
+
+from omni_code.utility_runs import (
     _build_model_provider,
-    _resolve_compaction_runtime,
-    _temporary_environ,
+    ephemeral_workspace_root,
 )
 
 
@@ -51,51 +49,16 @@ async def _run_recap_agent(
     agent_yaml = (
         Path(__file__).resolve().parent.parent / "omni_agents" / "recapper" / "agent.yml"
     )
-    spec = load_agent_spec_from_yaml(str(agent_yaml))
-    if model:
-        spec.model_name = model
-    agent = await _default_build_agent(
-        settings={}, mcp_servers=None, spec=spec, session=session
-    )
-
     model_provider, env_overrides = _build_model_provider(runtime or {})
-
-    from agents import RunConfig
-
-    run_config = (
-        RunConfig(model_provider=model_provider) if model_provider is not None else None
+    return await run_agent_once(
+        agent_yaml,
+        prompt,
+        model=model,
+        model_provider=model_provider,
+        env_overrides=env_overrides,
+        session=session,
+        workspace_root=ephemeral_workspace_root(session),
     )
-
-    workspace_root = None
-    if session is not None:
-        sess_ctx = getattr(session, "context", None)
-        if isinstance(sess_ctx, dict):
-            wr = sess_ctx.get("workspace_root")
-            if isinstance(wr, str) and wr.strip():
-                workspace_root = wr
-    if not workspace_root:
-        # Prefer the sandbox manifest root over omni serve's host cwd — they
-        # differ for container backends, and this run bypasses the AgentService
-        # resolver (direct Runner.run), so a host path here would not be
-        # clamped. Matches fs_get_workspace_root's fallback chain.
-        from omni_code.agent_workspace_state import get_manifest_root
-
-        workspace_root = get_manifest_root() or os.getcwd()
-
-    with _temporary_environ(env_overrides):
-        # Use the streaming runner: the Codex backend requires stream=true, and
-        # for every other model run_streamed routes through the same
-        # (non-streaming) per-turn path via the disable_token_streaming patch.
-        result = Runner.run_streamed(
-            agent,
-            prompt,
-            context={"workspace_root": workspace_root},
-            max_turns=1,
-            run_config=run_config,
-        )
-        async for _ in result.stream_events():
-            pass
-        return result.final_output_as(str)
 
 
 def _normalize_model_name(model_ref: str | None, runtime: dict[str, Any]) -> str | None:

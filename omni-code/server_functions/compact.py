@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import copy
 import json
 import os
 from pathlib import Path
 from typing import Any
 
-from agents import Runner
+from omniagents.core.runtime import run_agent_once
+
+from omni_code.utility_runs import (
+    _build_model_provider,
+    ephemeral_workspace_root,
+)
 from omniagents import server_function
-from omniagents.core.agents.builder import _default_build_agent
-from omniagents.core.config.loader import load_agent_spec_from_yaml
 from omniagents.core.runtime.compaction import (
     build_resume_protocol_block,
     extract_tool_events,
@@ -272,111 +274,6 @@ def _extract_response_text(resp: Any) -> str:
     return "".join(out).strip()
 
 
-@contextlib.contextmanager
-def _temporary_environ(overrides: dict[str, str | None]):
-    prior: dict[str, str | None] = {}
-    for key, value in (overrides or {}).items():
-        prior[key] = os.environ.get(key)
-        if value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = value
-    try:
-        yield
-    finally:
-        for key, value in prior.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-
-
-def _litellm_env_overrides(
-    *, model: str | None, api_key: str | None
-) -> dict[str, str | None]:
-    if not api_key:
-        return {}
-
-    model_name = (model or "").lower()
-    if model_name.startswith("anthropic/") or model_name.startswith("claude"):
-        return {"ANTHROPIC_API_KEY": api_key}
-    if model_name.startswith("gemini/") or model_name.startswith("google/"):
-        return {"GOOGLE_API_KEY": api_key}
-    return {"OPENAI_API_KEY": api_key}
-
-
-def _build_model_provider(
-    runtime: dict[str, Any],
-) -> tuple[Any | None, dict[str, str | None]]:
-    provider = (runtime.get("provider") or "").strip().lower()
-    model = runtime.get("model")
-    api_key = runtime.get("api_key")
-    base_url = runtime.get("base_url")
-    use_responses = runtime.get("use_responses")
-    use_responses_websocket = runtime.get("use_responses_websocket")
-
-    provider_kwargs: dict[str, Any] = {}
-    if use_responses is not None:
-        provider_kwargs["use_responses"] = bool(use_responses)
-    if use_responses_websocket is not None:
-        provider_kwargs["use_responses_websocket"] = bool(use_responses_websocket)
-
-    if provider == "openai-oauth":
-        from agents.models.openai_provider import OpenAIProvider
-        from omni_code.codex_auth import build_codex_openai_client
-
-        client = build_codex_openai_client()
-        if client is None:
-            return None, {}
-        return OpenAIProvider(openai_client=client, **provider_kwargs), {}
-
-    if provider == "litellm":
-        from agents.extensions.models.litellm_provider import LitellmProvider
-
-        return LitellmProvider(), _litellm_env_overrides(model=model, api_key=api_key)
-
-    if provider in {"openai", "openai-compatible", "azure"}:
-        from openai import AsyncOpenAI
-        from agents.models.openai_provider import OpenAIProvider
-
-        resolved_base_url = base_url or "https://api.openai.com/v1"
-        resolved_api_key = api_key
-        if not resolved_api_key:
-            if provider == "azure":
-                resolved_api_key = os.getenv("AZURE_OPENAI_API_KEY")
-            else:
-                resolved_api_key = os.getenv("OPENAI_API_KEY")
-
-        is_azure = resolved_base_url and (
-            "openai.azure.com" in resolved_base_url
-            or "services.ai.azure.com" in resolved_base_url
-        )
-
-        if is_azure:
-            if not resolved_api_key:
-                return None, {}
-            client = AsyncOpenAI(
-                api_key="dummy",
-                base_url=resolved_base_url,
-                default_headers={"api-key": resolved_api_key},
-            )
-            return OpenAIProvider(openai_client=client, **provider_kwargs), {}
-
-        if not resolved_api_key and resolved_base_url != "https://api.openai.com/v1":
-            resolved_api_key = "dummy"
-
-        if not resolved_api_key:
-            return None, {}
-
-        client = AsyncOpenAI(
-            api_key=resolved_api_key,
-            base_url=resolved_base_url,
-        )
-        return OpenAIProvider(openai_client=client, **provider_kwargs), {}
-
-    return None, {}
-
-
 def _resolve_compaction_runtime(
     service: Any, session: Session
 ) -> tuple[str | None, dict[str, Any]]:
@@ -424,55 +321,16 @@ async def _run_compaction_agent(
         / "compactor"
         / "agent.yml"
     )
-    spec = load_agent_spec_from_yaml(str(agent_yaml))
-    if model:
-        spec.model_name = model
-    agent = await _default_build_agent(
-        settings={}, mcp_servers=None, spec=spec, session=session
-    )
-
     model_provider, env_overrides = _build_model_provider(runtime or {})
-
-    from agents import RunConfig
-
-    run_config = (
-        RunConfig(model_provider=model_provider) if model_provider is not None else None
+    return await run_agent_once(
+        agent_yaml,
+        prompt,
+        model=model,
+        model_provider=model_provider,
+        env_overrides=env_overrides,
+        session=session,
+        workspace_root=ephemeral_workspace_root(session),
     )
-    # Inherit workspace_root from the caller's session (the user's active
-    # workspace) so that, if the compactor agent ever gains workspace
-    # tools, they resolve paths against the right directory rather than
-    # silently failing under strict mode. Today the compactor has tools=[]
-    # so the value is unused; passing it is forward-compatible.
-    workspace_root = None
-    if session is not None:
-        sess_ctx = getattr(session, "context", None)
-        if isinstance(sess_ctx, dict):
-            wr = sess_ctx.get("workspace_root")
-            if isinstance(wr, str) and wr.strip():
-                workspace_root = wr
-    if not workspace_root:
-        # Prefer the sandbox manifest root over omni serve's host cwd — they
-        # differ for container backends, and this run bypasses the AgentService
-        # resolver (direct Runner.run), so a host path here would not be
-        # clamped. Matches fs_get_workspace_root's fallback chain.
-        from omni_code.agent_workspace_state import get_manifest_root
-
-        workspace_root = get_manifest_root() or os.getcwd()
-
-    with _temporary_environ(env_overrides):
-        # Use the streaming runner: the Codex backend requires stream=true, and
-        # for every other model run_streamed routes through the same
-        # (non-streaming) per-turn path via the disable_token_streaming patch.
-        result = Runner.run_streamed(
-            agent,
-            prompt,
-            context={"workspace_root": workspace_root},
-            max_turns=1,
-            run_config=run_config,
-        )
-        async for _ in result.stream_events():
-            pass
-        return result.final_output_as(str)
 
 
 @server_function(
