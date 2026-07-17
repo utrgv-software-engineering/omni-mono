@@ -85,7 +85,10 @@ def test_parse_capability_requires_name():
 
 
 def test_parse_capability_requires_tools_or_agent_tools():
-    with pytest.raises(ValueError, match="at least one of 'tools' or 'agent_tools'"):
+    with pytest.raises(
+        ValueError,
+        match="at least one of 'tools', 'agent_tools', or 'server_functions'",
+    ):
         parse_capability_spec({"name": "fs"}, tool_registry={})
 
 

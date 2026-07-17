@@ -50,6 +50,30 @@ def _resolve_tool(name: str, tool_registry: Optional[Dict[str, Any]]) -> Any:
     return tool
 
 
+def _resolve_server_function(
+    name: str, server_functions_registry: Optional[Dict[str, Any]]
+) -> Any:
+    """Look up a server function by registered name. Raises ``ValueError``
+    with an actionable message when it is missing — same fail-fast contract
+    as ``_resolve_tool``."""
+    if server_functions_registry is None:
+        raise ValueError(
+            f"Cannot resolve server function {name!r}: no "
+            "server_functions_registry was provided to the capability parser. "
+            "Capabilities must be parsed in a project context where server "
+            "functions have been discovered."
+        )
+    meta = server_functions_registry.get(name)
+    if meta is None:
+        available = sorted(server_functions_registry.keys())
+        raise ValueError(
+            f"Capability references unknown server function {name!r}. "
+            f"Available server functions ({len(available)}): {available[:20]}"
+            + ("..." if len(available) > 20 else "")
+        )
+    return meta
+
+
 def _resolve_agent_tool_entry(
     entry: Any,
     *,
@@ -107,6 +131,7 @@ def parse_capability_spec(
     *,
     tool_registry: Optional[Dict[str, Any]] = None,
     agents_map: Optional[Dict[str, Any]] = None,
+    server_functions_registry: Optional[Dict[str, Any]] = None,
     source: str = "<inline>",
 ) -> Any:
     """Parse a single capability YAML dict into a Capability instance.
@@ -131,16 +156,24 @@ def parse_capability_spec(
 
     tools_list = spec.get("tools") or []
     agent_tools_list = spec.get("agent_tools") or []
+    server_functions_list = spec.get("server_functions") or []
     cap_type = spec.get("type")
-    # Pure-YAML capabilities must declare their tool surface explicitly.
+    # Pure-YAML capabilities must declare their surface explicitly.
     # Python-class capabilities (`type: <name>`) are exempt — the class owns
     # its tool construction (e.g. SDK Filesystem brings apply_patch/view_image
-    # via its own tools() implementation, no YAML list needed).
-    if cap_type is None and not tools_list and not agent_tools_list:
+    # via its own tools() implementation, no YAML list needed). A commands-only
+    # pack (server_functions without tools) is legal.
+    if (
+        cap_type is None
+        and not tools_list
+        and not agent_tools_list
+        and not server_functions_list
+    ):
         raise ValueError(
             f"Capability {name!r} at {source} must declare at least one of "
-            "'tools' or 'agent_tools' (or use 'type:' to reference a "
-            "registered Capability class that owns its tool construction)"
+            "'tools', 'agent_tools', or 'server_functions' (or use 'type:' to "
+            "reference a registered Capability class that owns its tool "
+            "construction)"
         )
     if not isinstance(tools_list, list):
         raise ValueError(
@@ -173,6 +206,28 @@ def parse_capability_spec(
         )
         if cfg is not None:
             resolved_agent_tools.append(cfg)
+
+    # Resolve server-function names against the project registry now, same
+    # fail-fast contract as tools:. Each resolved entry is the registry's
+    # meta dict (func/description/schemas/on_invoke/strict) keyed by the
+    # registered name — the service registers these when an agent lists
+    # this capability.
+    if not isinstance(server_functions_list, list):
+        raise ValueError(
+            f"Capability {name!r} 'server_functions' must be a list, "
+            f"got {type(server_functions_list).__name__}"
+        )
+    resolved_server_functions: List[Dict[str, Any]] = []
+    for sf_name in server_functions_list:
+        if not isinstance(sf_name, str) or not sf_name.strip():
+            raise ValueError(
+                f"Capability {name!r} 'server_functions' entries must be "
+                f"non-empty strings; got {sf_name!r}"
+            )
+        meta = _resolve_server_function(sf_name, server_functions_registry)
+        entry = dict(meta)
+        entry.setdefault("name", sf_name)
+        resolved_server_functions.append(entry)
 
     instructions_text = spec.get("instructions")
     if instructions_text is not None and not isinstance(instructions_text, str):
@@ -232,6 +287,7 @@ def parse_capability_spec(
             ("agent_tool_configs", resolved_agent_tools),
             ("instructions_text", instructions_text),
             ("approvals_spec", approvals_spec),
+            ("server_function_specs", resolved_server_functions),
         ):
             object.__setattr__(instance, field_name, value)
         return instance
@@ -244,6 +300,7 @@ def parse_capability_spec(
         instructions_text=instructions_text,
         approvals_spec=approvals_spec,
         sampling_params_override=sampling_params_override,
+        server_function_specs=resolved_server_functions,
     )
 
 
@@ -252,6 +309,7 @@ def discover_capabilities_in_dir(
     *,
     tool_registry: Optional[Dict[str, Any]] = None,
     agents_map: Optional[Dict[str, Any]] = None,
+    server_functions_registry: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Walk *base_dir* for ``*.yml`` / ``*.yaml`` files; parse each as a
     capability spec. Returns a name → Capability instance map.
@@ -280,6 +338,7 @@ def discover_capabilities_in_dir(
                 spec,
                 tool_registry=tool_registry,
                 agents_map=agents_map,
+                server_functions_registry=server_functions_registry,
                 source=str(yaml_file),
             )
         except ValueError as e:

@@ -1,6 +1,14 @@
 name: loop
 tools:
   - loop_continue
+server_functions:
+  - loop
+  - loop.status
+  - loop.stop
+  - loop.clear
+  - cron.create
+  - cron.list
+  - cron.delete
 instructions: |
   Dynamic /loop tasks may wake you with instructions to call `loop_continue`.
 

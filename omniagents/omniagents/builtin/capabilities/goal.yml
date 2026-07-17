@@ -1,6 +1,12 @@
 name: goal
 tools:
   - goal_complete
+server_functions:
+  - goal
+  - goal.stop
+  - goal.status
+  - goal.pause
+  - goal.resume
 instructions: |
   When the user starts an autonomous loop with /goal, you'll receive
   continuation prompts between turns. Call `goal_complete` once when

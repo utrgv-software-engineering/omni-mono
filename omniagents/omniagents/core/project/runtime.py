@@ -63,6 +63,12 @@ class ProjectContext:
     # Built from `paths.capabilities/*.yml` files plus inline `capabilities:`
     # block in project.yml. Empty dict when no capabilities are configured.
     capability_registry: Dict[str, Any] = field(default_factory=dict)
+    # Names in server_functions_registry that came from the builtin dir
+    # (omniagents/builtin/server_functions/). These are capability-gated:
+    # excluded from the spec's auto-registrar and registered only when an
+    # agent lists a capability naming them. Project server functions are
+    # never in this set, even when they override a builtin name.
+    builtin_server_function_names: set = field(default_factory=set)
     # User-supplied MCP server support
     allow_user_mcp_servers: bool = False
     user_mcp_servers: List["MCPServerConfig"] = field(default_factory=list)
@@ -262,12 +268,32 @@ def load_project(project_path: str) -> ProjectContext:
         "tool_output": tool_out_guard,
     }
 
+    # Builtin server functions first, project dirs override by name —
+    # same precedence as builtin tools and builtin capabilities. Builtin
+    # server functions are NOT auto-registered on the service; they only
+    # activate when a capability the agent lists names them (project
+    # server functions keep their historical auto-registration).
     server_functions_registry: Dict[str, Any] = {}
+    builtin_sf_dir = (core_root / "builtin" / "server_functions").resolve()
+    builtin_server_function_names: set[str] = set()
+    if builtin_sf_dir.is_dir():
+        try:
+            builtin_sf = discover_server_functions_in_dir(str(builtin_sf_dir))
+            server_functions_registry.update(builtin_sf)
+            builtin_server_function_names = set(builtin_sf.keys())
+        except Exception as e:
+            print(
+                f"Warning: builtin server-function discovery failed: {e}. "
+                "Builtin server functions unavailable."
+            )
     for d in server_functions_dirs:
         if d.is_dir():
             try:
                 sf = discover_server_functions_in_dir(str(d))
                 server_functions_registry.update(sf)
+                # A project definition takes over the name entirely —
+                # including auto-registration.
+                builtin_server_function_names -= set(sf.keys())
             except Exception:
                 pass
 
@@ -300,6 +326,7 @@ def load_project(project_path: str) -> ProjectContext:
                     str(builtin_caps_dir),
                     tool_registry=tool_registry,
                     agents_map=agents_map,
+                    server_functions_registry=server_functions_registry,
                 )
                 capability_registry.update(builtin_caps)
             except Exception as e:
@@ -318,6 +345,7 @@ def load_project(project_path: str) -> ProjectContext:
                     str(cap_dir),
                     tool_registry=tool_registry,
                     agents_map=agents_map,
+                    server_functions_registry=server_functions_registry,
                 )
                 for cap_name, cap in discovered.items():
                     if cap_name in project_cap_names:
@@ -339,6 +367,7 @@ def load_project(project_path: str) -> ProjectContext:
                         cap_spec,
                         tool_registry=tool_registry,
                         agents_map=agents_map,
+                        server_functions_registry=server_functions_registry,
                         source="project.yml",
                     )
                     cap_name = getattr(cap, "capability_name", None) or cap_spec.get("name")
@@ -402,6 +431,7 @@ def load_project(project_path: str) -> ProjectContext:
         guardrails_registry=guardrails_registry,
         server_functions_registry=server_functions_registry,
         capability_registry=capability_registry,
+        builtin_server_function_names=builtin_server_function_names,
         allow_user_mcp_servers=allow_user_mcp,
         user_mcp_servers=user_mcp_configs,
         security=security,
@@ -440,11 +470,19 @@ def build_spec_from_project(
         "security": project.security.to_dict(),
     }
     pdefs.update(project.ui_defaults or {})
+    # Builtin server functions are capability-gated (registered by the
+    # service when the agent lists the owning capability); only project
+    # server functions go through the spec's auto-registrar.
+    project_only_sf = {
+        k: v
+        for k, v in project.server_functions_registry.items()
+        if k not in project.builtin_server_function_names
+    }
     spec = load_agent_spec_from_yaml(
         str(agent_yaml),
         tool_registry=project.tool_registry,
         guardrails_registry=project.guardrails_registry,
-        server_functions_registry=project.server_functions_registry,
+        server_functions_registry=project_only_sf,
         agents_map=project.agents_map,
         capability_registry=project.capability_registry,
         project_defaults=pdefs,
@@ -465,7 +503,7 @@ def build_spec_from_project(
                 str(voice_path),
                 tool_registry=project.tool_registry,
                 guardrails_registry=project.guardrails_registry,
-                server_functions_registry=project.server_functions_registry,
+                server_functions_registry=project_only_sf,
                 agents_map=project.agents_map,
                 capability_registry=project.capability_registry,
                 project_defaults=pdefs,

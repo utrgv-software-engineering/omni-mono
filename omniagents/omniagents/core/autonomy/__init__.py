@@ -22,7 +22,11 @@ from .cron import (
     split_loop_interval_and_prompt,
 )
 from .goal import GoalState, set_goal_prompt_builders
-from .loop import LoopTask, set_loop_prompt_builders
+from .loop import (
+    LoopTask,
+    set_loop_default_prompt_resolver,
+    set_loop_prompt_builders,
+)
 from .wakeup import WakeupSchedule
 
 __all__ = [
@@ -38,6 +42,7 @@ __all__ = [
     "parse_interval_seconds",
     "register_active_tick",
     "set_goal_prompt_builders",
+    "set_loop_default_prompt_resolver",
     "set_loop_prompt_builders",
     "split_loop_interval_and_prompt",
     "unregister_active_tick",

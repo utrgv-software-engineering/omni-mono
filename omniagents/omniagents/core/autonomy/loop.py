@@ -121,6 +121,35 @@ def build_concluded_prompt(*, task_id: str, prompt: str, fires: int) -> str:
     return _concluded_prompt_builder(task_id=task_id, prompt=prompt, fires=fires)
 
 
+# The default-prompt resolver supplies the loop body when ``/loop`` is
+# invoked with an interval but no prompt text. Where that default comes
+# from is product policy (omni-code reads ``.omni/loop.md`` and a config-
+# dir fallback); the framework default is None — meaning "/loop requires
+# an explicit prompt" — and the slash handler reports usage.
+_default_prompt_resolver: Optional[Callable[[Optional[str]], Optional[str]]] = None
+
+
+def set_loop_default_prompt_resolver(
+    resolver: Optional[Callable[[Optional[str]], Optional[str]]],
+) -> None:
+    """Install the product's default-loop-prompt resolver.
+
+    ``resolver(workspace_root)`` returns the prompt text to use when a
+    loop is created without one, or None when no default exists. Pass
+    ``None`` to clear."""
+    global _default_prompt_resolver
+    _default_prompt_resolver = resolver
+
+
+def resolve_default_loop_prompt(workspace_root: Optional[str]) -> Optional[str]:
+    if _default_prompt_resolver is None:
+        return None
+    try:
+        return _default_prompt_resolver(workspace_root)
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # State.
 # ---------------------------------------------------------------------------

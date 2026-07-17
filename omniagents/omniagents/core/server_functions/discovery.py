@@ -202,6 +202,24 @@ def server_function(
 def discover_server_functions_in_dir(
     base_dir: str = "server_functions",
 ) -> Dict[str, dict]:
+    """Discover ``@server_function``-decorated callables under *base_dir*.
+
+    Modules are loaded under their full canonical dotted name when the
+    directory is a real Python package (so ``omniagents/builtin/
+    server_functions/`` and a project's local ``server_functions/`` don't
+    collide on ``sys.modules['server_functions']``); directories without
+    an ``__init__.py`` chain, or whose canonical name is already bound to
+    a different path, fall back to a unique synthetic prefix. Modules are
+    never evicted afterward — server-function modules hold live state
+    (tick loops, provider installs) and must stay process singletons.
+    Mirrors ``omniagents.core.tools.discovery.discover_functions_in_dir``.
+    """
+    import hashlib
+    import importlib.util
+    import types
+
+    from omniagents.core.tools.discovery import _resolve_canonical_package_name
+
     discovered: Dict[str, dict] = {}
     base_path = Path(base_dir).resolve()
 
@@ -210,6 +228,37 @@ def discover_server_functions_in_dir(
         return discovered
 
     Debug.log(f"Starting server function discovery in directory: {base_path}")
+
+    canonical_name = _resolve_canonical_package_name(base_path)
+    canonical_init = (base_path / "__init__.py").resolve() if canonical_name else None
+    use_synthetic = canonical_name is None
+    if canonical_name and not use_synthetic:
+        existing = sys.modules.get(canonical_name)
+        if existing is not None:
+            existing_file = getattr(existing, "__file__", None)
+            if existing_file:
+                try:
+                    if Path(existing_file).resolve() != canonical_init:
+                        use_synthetic = True
+                except OSError:
+                    use_synthetic = True
+            else:
+                use_synthetic = True
+
+    synth_pkg: Optional[str] = None
+    if use_synthetic:
+        synth_pkg = (
+            "_omniagents_sf_disco_"
+            + hashlib.md5(str(base_path).encode()).hexdigest()[:12]
+        )
+        if synth_pkg not in sys.modules:
+            pkg = types.ModuleType(synth_pkg)
+            pkg.__path__ = [str(base_path)]
+            pkg.__package__ = synth_pkg
+            sys.modules[synth_pkg] = pkg
+        module_prefix = synth_pkg
+    else:
+        module_prefix = canonical_name
 
     parent_path = str(base_path.parent)
     base_path_str = str(base_path)
@@ -225,15 +274,31 @@ def discover_server_functions_in_dir(
             if filepath.name == "__init__.py":
                 continue
             try:
-                relative_path = filepath.relative_to(base_path.parent)
-                module_path = str(relative_path.with_suffix(""))
-                module_path = module_path.replace(os.sep, ".")
+                relative_path = filepath.relative_to(base_path)
+                sub_name = ".".join(relative_path.with_suffix("").parts)
+                module_path = f"{module_prefix}.{sub_name}"
             except Exception:
                 Debug.log(f"Warning: Skipping file {filepath} outside expected parent {base_path.parent}")
                 continue
 
             try:
-                module = importlib.import_module(module_path)
+                if use_synthetic:
+                    if module_path in sys.modules:
+                        module = sys.modules[module_path]
+                    else:
+                        spec = importlib.util.spec_from_file_location(
+                            module_path, str(filepath)
+                        )
+                        if spec is None or spec.loader is None:
+                            raise ImportError(
+                                f"could not build import spec for {filepath}"
+                            )
+                        module = importlib.util.module_from_spec(spec)
+                        module.__package__ = synth_pkg
+                        sys.modules[module_path] = module
+                        spec.loader.exec_module(module)
+                else:
+                    module = importlib.import_module(module_path)
             except Exception as e:
                 print(
                     f"ERROR: Could not import module '{module_path}' from '{filepath}': {e}"

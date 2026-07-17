@@ -7,6 +7,9 @@ tools:
   - close_worker
   - resume_worker
   - cleanup_worker_worktree
+server_functions:
+  - workers.list
+  - workers.kill
 instructions: |
   Worker sub-agents execute self-contained subtasks in the background,
   concurrently with you and each other.

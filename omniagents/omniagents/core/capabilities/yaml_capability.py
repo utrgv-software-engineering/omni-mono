@@ -59,8 +59,19 @@ class _YamlCapability(Capability):
     """Per-capability sampling parameter overrides from the YAML
     ``sampling_params:`` block."""
 
+    server_function_specs: List[Dict[str, Any]] = Field(
+        default_factory=list, exclude=True
+    )
+    """Server-function meta entries resolved from the YAML
+    ``server_functions:`` list against the project registry. The service
+    registers these when an agent lists this capability (duck-typed via
+    ``server_functions()`` — the SDK base class doesn't know about them)."""
+
     def tools(self) -> List[Any]:
         return list(self.resolved_tools)
+
+    def server_functions(self) -> List[Dict[str, Any]]:
+        return list(self.server_function_specs)
 
     async def instructions(self, manifest: Any = None) -> Optional[str]:
         # Manifest is sandbox-only; pure-YAML capabilities ignore it.

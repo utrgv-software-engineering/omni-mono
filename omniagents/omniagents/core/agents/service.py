@@ -619,6 +619,69 @@ class AgentService(RpcMethodsBase):
             strict=False,
         )
 
+        self._register_capability_server_functions()
+
+    def _register_capability_server_functions(self) -> None:
+        """Register server functions declared by the agent's capabilities.
+
+        Capability packs may bundle server functions (a builtin ``goal``
+        capability ships ``/goal`` alongside the ``goal_complete`` tool);
+        they activate only for agents that list the capability. Runs at
+        service construction, BEFORE the project registrar the backend
+        invokes — so a project redefinition of the same name overwrites
+        the capability's version (project wins, consistent with every
+        other override direction). Between two active capabilities, the
+        first registration wins and the duplicate logs a warning
+        (mirrors duplicate-tool discovery behavior).
+        """
+        try:
+            caps = getattr(self.spec, "resolved_capabilities", None) or []
+            caps = list(caps)
+        except Exception:
+            return
+        seen_from_caps: set[str] = set()
+        for cap in caps:
+            sf_getter = getattr(cap, "server_functions", None)
+            if not callable(sf_getter):
+                continue
+            try:
+                entries = sf_getter() or []
+            except Exception:
+                continue
+            for meta in entries:
+                if not isinstance(meta, dict):
+                    continue
+                name = meta.get("name")
+                func = meta.get("func")
+                if not name or func is None:
+                    continue
+                if name in seen_from_caps:
+                    cap_label = getattr(cap, "capability_name", "?")
+                    logger.warning(
+                        "Duplicate server function %r from capability %r; "
+                        "keeping the first registration.",
+                        name,
+                        cap_label,
+                    )
+                    continue
+                try:
+                    self.register_server_function(
+                        name,
+                        func,
+                        description=meta.get("description"),
+                        params_schema=meta.get("params_schema"),
+                        result_schema=meta.get("result_schema"),
+                        on_invoke=meta.get("on_invoke"),
+                        strict=meta.get("strict"),
+                    )
+                    seen_from_caps.add(name)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to register capability server function %r: %s",
+                        name,
+                        e,
+                    )
+
     async def _ensure_session_mcp_servers(self, session: Session) -> list[Any]:
         """Ensure MCP servers are initialized and running for this session.
 
