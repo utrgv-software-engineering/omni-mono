@@ -1,17 +1,15 @@
 name: filesystem
-# Overrides the omniagents builtin `filesystem` capability (project caps win
-# over builtins of the same name; see omniagents core/project/runtime.py
-# precedence). We DROP the builtin's discovery tools — `list_directory`,
-# `glob_files`, `grep_files` — because they're a pure-Python walk through the
-# async workspace binding (an RPC per dir/file on sandboxed backends) and are
-# an order of magnitude slower than ripgrep, with no piping/chaining. The agent
-# does file/text discovery through the shell (`rg`, `rg --files`, `ls`) instead.
-tools:
-  - read_file
-  - read_image
-  - write_file
-  - edit_file
-  - apply_patch
+# Subsets the omniagents builtin `filesystem` pack. We DROP the builtin's
+# discovery tools — `list_directory`, `glob_files`, `grep_files` — because
+# they're a pure-Python walk through the async workspace binding (an RPC per
+# dir/file on sandboxed backends) and are an order of magnitude slower than
+# ripgrep, with no piping/chaining. The agent does file/text discovery through
+# the shell (`rg`, `rg --files`, `ls`) instead.
+extends: filesystem
+exclude_tools:
+  - list_directory
+  - glob_files
+  - grep_files
 instructions: |
   Use filesystem tools for targeted file inspection and edits.
   - Use `read_file` to inspect known files and `read_image` to view images.

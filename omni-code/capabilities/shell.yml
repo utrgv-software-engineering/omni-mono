@@ -1,16 +1,8 @@
 name: shell
-tools:
-  - execute_bash
-  - bash_status
-  - bash_logs
-  - bash_kill
-server_functions:
-  - bash_jobs.list
-  - bash_jobs.kill
-  - bash_jobs.tail
-  - bj-list
-  - bj-kill
-  - bj-logs
+# Subsets the omniagents builtin `shell` pack: same tools and server
+# functions, product instructions (adds the rg-over-cat discovery guidance
+# that pairs with our filesystem override).
+extends: shell
 instructions: |
   Shell execution with background-job support:
   - `execute_bash` runs a command. For long-running work (dev servers, soak

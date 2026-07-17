@@ -1,15 +1,7 @@
 name: workers
-tools:
-  - spawn_worker
-  - get_worker_status
-  - wait_for_workers
-  - send_worker_message
-  - close_worker
-  - resume_worker
-  - cleanup_worker_worktree
-server_functions:
-  - workers.list
-  - workers.kill
+# Subsets the omniagents builtin `workers` pack: same tools and server
+# functions, coding-specific instructions (worktree merge workflow).
+extends: workers
 instructions: |
   Spawn autonomous worker subagents for parallel coding subtasks. Each
   worker has its own conversation, full read/write access, and runs

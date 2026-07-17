@@ -1,10 +1,7 @@
 name: wakeup
-tools:
-  - schedule_wakeup
-  - cancel_wakeup
-server_functions:
-  - wakeup.stop
-  - wakeup.status
+# Subsets the omniagents builtin `wakeup` pack: same tools and server
+# functions, product instructions (adds spawn_worker guidance).
+extends: wakeup
 instructions: |
   Schedule self-wakeups for tasks the user wants you to "keep an eye on"
   over time. The session wakes on the cadence you set, with the message
