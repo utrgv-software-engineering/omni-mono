@@ -40,7 +40,7 @@ from omniagents.core.session.query import (
     populate_session_stats as oa_populate_session_stats,
     ensure_sessions_schema as oa_ensure_sessions_schema,
 )
-from openai import APIStatusError, BadRequestError
+from omniagents.core.runtime.compaction import summarize_with_window_shrink
 
 
 def _default_project() -> str:
@@ -128,17 +128,6 @@ def cmd_export(args: argparse.Namespace) -> None:
         raise SystemExit(1)
 
     _delegate("export", args, session_id=session_id, format=fmt, pretty=args.pretty)
-
-
-def _is_context_length_exceeded(err: Exception) -> bool:
-    if not isinstance(err, (BadRequestError, APIStatusError)):
-        return False
-    body = getattr(err, "body", None)
-    if isinstance(body, dict):
-        error_obj = body.get("error")
-        if isinstance(error_obj, dict):
-            return error_obj.get("code") == "context_length_exceeded"
-    return False
 
 
 def _trim_history_tail(items: list[dict], *, tail: int | None) -> list[dict]:
@@ -247,32 +236,24 @@ def cmd_summarize(args: argparse.Namespace) -> None:
     history = load_history(session_id, project_slug=project, agent_slug=args.agent)
     window = _trim_history_tail(history, tail=_coerce_limit(args.tail))
 
-    prompt = (
-        "Session metadata:\n"
-        f"{json.dumps(session_meta, ensure_ascii=False, default=str)}\n\n"
-        "Transcript (chronological raw JSON items):\n"
-        f"{_extract_transcript(window)}"
-    )
+    def _build_prompt(w: list[dict]) -> str:
+        return (
+            "Session metadata:\n"
+            f"{json.dumps(session_meta, ensure_ascii=False, default=str)}\n\n"
+            "Transcript (chronological raw JSON items):\n"
+            f"{_extract_transcript(w)}"
+        )
 
-    while True:
-        try:
-            raw = asyncio.run(
-                _run_session_summarizer_agent(
-                    model=model_name, runtime=runtime, prompt=prompt
-                )
-            )
-            break
-        except Exception as e:
-            if _is_context_length_exceeded(e) and window:
-                window.pop(0)
-                prompt = (
-                    "Session metadata:\n"
-                    f"{json.dumps(session_meta, ensure_ascii=False, default=str)}\n\n"
-                    "Transcript (chronological raw JSON items):\n"
-                    f"{_extract_transcript(window)}"
-                )
-                continue
-            raise
+    async def _summarize(prompt: str) -> str:
+        return await _run_session_summarizer_agent(
+            model=model_name, runtime=runtime, prompt=prompt
+        )
+
+    raw = asyncio.run(
+        summarize_with_window_shrink(
+            window, build_prompt=_build_prompt, summarize=_summarize
+        )
+    )
 
     out: dict[str, Any]
     try:
