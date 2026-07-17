@@ -45,12 +45,12 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Compile evaluation config
-        run: omniagents compile --project project.yml
+        run: omniagents compile --project omni_code/project.yml
 
       - name: Run evaluation suite
         run: |
           omniagents eval suite run \
-            --project project.yml \
+            --project omni_code/project.yml \
             --output target/eval_results.json \
             --verbose
 

@@ -19,14 +19,14 @@
 #
 # How to run:
 #   # Scenario 1 (orchestrator-only) — default agent works fine:
-#   python -m omniagents.cli eval suite run -P project.yml \
+#   python -m omniagents.cli eval suite run -P omni_code/project.yml \
 #       --select 'name:workspace_root_visible_to_orchestrator_tools' \
 #       --reporter pretty
 #
 #   # Scenario 2 (subagent fan-out) — needs the worker tools, which
 #   # the production `omni` agent has commented out. Run against the
 #   # test-only agent that has them enabled:
-#   python -m omniagents.cli eval suite run -P project.yml \
+#   python -m omniagents.cli eval suite run -P omni_code/project.yml \
 #       --agent eval_subagent_test \
 #       --select 'name:workspace_root_visible_to_spawned_worker' \
 #       --reporter pretty
@@ -98,7 +98,7 @@ scenarios:
   # the wrong directory and the sentinel content never makes it back.
   #
   # Run with:
-  #   python -m omniagents.cli eval suite run -P project.yml \
+  #   python -m omniagents.cli eval suite run -P omni_code/project.yml \
   #       --agent eval_subagent_test \
   #       --select 'name:workspace_root_visible_to_explorer_subagent' \
   #       --reporter pretty

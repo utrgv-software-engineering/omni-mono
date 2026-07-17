@@ -10,7 +10,7 @@ inspecting evals in this project.
 ## Running an eval
 
 ```bash
-python -m omniagents.cli eval suite run -P project.yml \
+python -m omniagents.cli eval suite run -P omni_code/project.yml \
   --select 'name:<scenario_name>' --reporter pretty
 ```
 

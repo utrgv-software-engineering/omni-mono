@@ -10,7 +10,7 @@
 #     the eval narrowly focused on tool-context propagation.
 #
 # Invoke via:
-#   python -m omniagents.cli eval suite run -P project.yml \
+#   python -m omniagents.cli eval suite run -P omni_code/project.yml \
 #       --agent eval_subagent_test \
 #       --select 'name:workspace_root_visible_to_spawned_worker' \
 #       --reporter pretty
