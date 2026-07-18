@@ -1,76 +1,27 @@
 mod sandbox;
-mod vm;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 /// Cross-platform sandbox for Omni Code.
 ///
-/// Two modes of operation:
-///
-///   exec (default): Process-level sandbox using platform-native isolation
-///     - Linux:   bubblewrap (user namespaces + seccomp)
-///     - macOS:   sandbox-exec (seatbelt profiles)
-///     - Windows: AppContainer (restricted tokens + ACLs)
-///
-///   vm: QEMU-based VM sandbox with a pre-built rootfs image
-///     - Full Ubuntu environment with all tools pre-installed
-///     - No Docker, no admin privileges, no container runtime required
-///     - Cross-platform: KVM (Linux), HVF (macOS), WHPX/TCG (Windows)
+/// exec: Process-level sandbox using platform-native isolation
+///   - Linux:   bubblewrap (user namespaces + seccomp)
+///   - macOS:   sandbox-exec (seatbelt profiles)
+///   - Windows: AppContainer (restricted tokens + ACLs)
 #[derive(Parser, Debug)]
 #[command(name = "omni-sandbox", version)]
 struct Cli {
     #[command(subcommand)]
-    command: Option<Command>,
-
-    // --- Flat args for backward-compatible `exec` mode ---
-    // When no subcommand is given, these are used directly.
-
-    /// Directory to mount read-write inside the sandbox (the workspace).
-    #[arg(long, global = false)]
-    workspace: Option<PathBuf>,
-
-    /// Additional directories to mount read-only.
-    #[arg(long = "ro-bind")]
-    ro_bind: Vec<PathBuf>,
-
-    /// Additional directories to mount read-write.
-    #[arg(long = "rw-bind")]
-    rw_bind: Vec<PathBuf>,
-
-    /// Allow network access (default: blocked).
-    #[arg(long, default_value_t = false)]
-    net: bool,
-
-    /// Allow network access only to these hosts (comma-separated).
-    #[arg(long, value_delimiter = ',')]
-    net_allow: Vec<String>,
-
-    /// Working directory inside the sandbox (defaults to workspace mount point).
-    #[arg(long)]
-    cwd: Option<PathBuf>,
-
-    /// Subpath names within writable roots to protect as read-only.
-    #[arg(long = "protect")]
-    protected_subpaths: Vec<String>,
-
-    /// Disable default protected subpath enforcement.
-    #[arg(long = "no-protected-subpaths", default_value_t = false)]
-    no_protected_subpaths: bool,
-
-    /// The command to run inside the sandbox (exec mode only).
-    #[arg(last = true)]
-    exec_command: Vec<String>,
+    command: Command,
 }
 
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Run a process inside a platform-native sandbox.
     Exec(ExecArgs),
-    /// Manage and run QEMU VM sandboxes.
-    Vm(vm::VmArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -87,12 +38,13 @@ struct ExecArgs {
     #[arg(long = "rw-bind")]
     rw_bind: Vec<PathBuf>,
 
-    /// Allow network access (default: blocked).
+    /// Allow unrestricted network access (default: blocked).
     #[arg(long, default_value_t = false)]
     net: bool,
 
-    /// Allow network access only to these hosts (comma-separated).
-    #[arg(long, value_delimiter = ',')]
+    /// Unsupported: host-level network filtering cannot be enforced by the
+    /// process sandbox. Passing this flag is a hard error (fail closed).
+    #[arg(long, value_delimiter = ',', hide = true)]
     net_allow: Vec<String>,
 
     /// Working directory inside the sandbox (defaults to workspace mount point).
@@ -116,33 +68,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Some(Command::Exec(args)) => run_exec(args),
-        Some(Command::Vm(args)) => vm::run(args),
-        None => {
-            // Backward-compatible: no subcommand means exec mode with flat args.
-            let workspace = match cli.workspace {
-                Some(ws) => ws,
-                None => {
-                    eprintln!("omni-sandbox: --workspace is required (or use a subcommand: exec, vm)");
-                    return ExitCode::from(2);
-                }
-            };
-            if cli.exec_command.is_empty() {
-                eprintln!("omni-sandbox: no command specified");
-                return ExitCode::from(2);
-            }
-            run_exec(ExecArgs {
-                workspace,
-                ro_bind: cli.ro_bind,
-                rw_bind: cli.rw_bind,
-                net: cli.net,
-                net_allow: cli.net_allow,
-                cwd: cli.cwd,
-                protected_subpaths: cli.protected_subpaths,
-                no_protected_subpaths: cli.no_protected_subpaths,
-                command: cli.exec_command,
-            })
-        }
+        Command::Exec(args) => run_exec(args),
     };
 
     match result {
@@ -156,12 +82,24 @@ fn main() -> ExitCode {
 
 /// Build a `SandboxConfig` from parsed CLI args. Extracted for testability.
 fn build_config(args: ExecArgs) -> Result<sandbox::SandboxConfig> {
+    // Fail closed: a host allowlist cannot be enforced at the process-sandbox
+    // level (bwrap/sandbox-exec/AppContainer have no reliable per-host
+    // egress filtering). Refuse to run rather than silently granting full
+    // network access.
+    if !args.net_allow.is_empty() {
+        bail!(
+            "--net-allow is not supported: host-level network filtering cannot \
+             be enforced by the process sandbox. Use --net for unrestricted \
+             network access, or omit both flags to block network entirely. \
+             Host allowlisting requires a container backend with network-level \
+             enforcement."
+        );
+    }
+
     let workspace = args
         .workspace
         .canonicalize()
         .with_context(|| format!("workspace path not found: {}", args.workspace.display()))?;
-
-    let allow_net = args.net || !args.net_allow.is_empty();
 
     let protected_subpaths = if args.no_protected_subpaths {
         Vec::new()
@@ -178,8 +116,7 @@ fn build_config(args: ExecArgs) -> Result<sandbox::SandboxConfig> {
         workspace,
         ro_binds: args.ro_bind,
         rw_binds: args.rw_bind,
-        allow_net,
-        net_allow_hosts: args.net_allow,
+        allow_net: args.net,
         cwd: args.cwd,
         command: args.command,
         protected_subpaths,
@@ -197,20 +134,6 @@ mod tests {
     use clap::Parser;
 
     #[test]
-    fn flat_args_parse_basic() {
-        let cli = Cli::parse_from([
-            "omni-sandbox",
-            "--workspace", "/tmp",
-            "--net",
-            "--", "/bin/true",
-        ]);
-        assert!(cli.command.is_none());
-        assert_eq!(cli.workspace.unwrap(), PathBuf::from("/tmp"));
-        assert!(cli.net);
-        assert_eq!(cli.exec_command, vec!["/bin/true"]);
-    }
-
-    #[test]
     fn exec_subcommand_parse() {
         let cli = Cli::parse_from([
             "omni-sandbox",
@@ -218,31 +141,40 @@ mod tests {
             "--workspace", "/tmp",
             "--", "/bin/true",
         ]);
-        match cli.command {
-            Some(Command::Exec(args)) => {
-                assert_eq!(args.workspace, PathBuf::from("/tmp"));
-                assert!(!args.net);
-                assert_eq!(args.command, vec!["/bin/true"]);
-            }
-            other => panic!("expected Exec subcommand, got {other:?}"),
-        }
+        let Command::Exec(args) = cli.command;
+        assert_eq!(args.workspace, PathBuf::from("/tmp"));
+        assert!(!args.net);
+        assert_eq!(args.command, vec!["/bin/true"]);
     }
 
     #[test]
-    fn flat_args_with_ro_bind_and_protect() {
+    fn flat_args_are_rejected() {
+        // The legacy no-subcommand mode is gone: a subcommand is required.
+        let result = Cli::try_parse_from([
+            "omni-sandbox",
+            "--workspace", "/tmp",
+            "--", "/bin/true",
+        ]);
+        assert!(result.is_err(), "flat args without a subcommand must be rejected");
+    }
+
+    #[test]
+    fn exec_with_ro_bind_and_protect() {
         let cli = Cli::parse_from([
             "omni-sandbox",
+            "exec",
             "--workspace", "/tmp",
             "--ro-bind", "/opt/venv",
             "--protect", ".secret",
             "--", "/bin/true",
         ]);
-        assert_eq!(cli.ro_bind, vec![PathBuf::from("/opt/venv")]);
-        assert_eq!(cli.protected_subpaths, vec!["secret".to_string()].iter().map(|_| ".secret".to_string()).collect::<Vec<_>>());
+        let Command::Exec(args) = cli.command;
+        assert_eq!(args.ro_bind, vec![PathBuf::from("/opt/venv")]);
+        assert_eq!(args.protected_subpaths, vec![".secret".to_string()]);
     }
 
     #[test]
-    fn net_allow_implies_allow_net() {
+    fn net_allow_fails_closed() {
         let args = ExecArgs {
             workspace: PathBuf::from("/tmp"),
             ro_bind: vec![],
@@ -254,9 +186,30 @@ mod tests {
             no_protected_subpaths: false,
             command: vec!["/bin/true".into()],
         };
-        // build_config canonicalizes workspace, so use a real path
-        let config = build_config(args).unwrap();
-        assert!(config.allow_net, "--net-allow should imply allow_net");
+        let err = build_config(args).expect_err("--net-allow must be a hard error");
+        assert!(
+            err.to_string().contains("--net-allow is not supported"),
+            "error should explain that host filtering is unsupported: {err}"
+        );
+    }
+
+    #[test]
+    fn net_allow_rejected_even_with_net() {
+        let args = ExecArgs {
+            workspace: PathBuf::from("/tmp"),
+            ro_bind: vec![],
+            rw_bind: vec![],
+            net: true,
+            net_allow: vec!["example.com".into()],
+            cwd: None,
+            protected_subpaths: vec![],
+            no_protected_subpaths: false,
+            command: vec!["/bin/true".into()],
+        };
+        assert!(
+            build_config(args).is_err(),
+            "--net-allow must be rejected regardless of --net"
+        );
     }
 
     #[test]
