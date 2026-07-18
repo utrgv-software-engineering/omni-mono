@@ -159,6 +159,19 @@ def test_notebook_readonly_and_slash_builtins(tmp_path):
     assert slash_tools == {"dispatch"}
 
 
+def test_recap_and_compact_control_packs(tmp_path):
+    """The recap/compact control-plane packs ship as builtins: no tools,
+    just their capability-gated builtin server function."""
+    _make_min_project(tmp_path)
+
+    proj = load_project(str(tmp_path))
+
+    for name in ("recap", "compact"):
+        cap = proj.capability_registry[name]
+        assert cap.tools() == []
+        assert [m["name"] for m in cap.server_functions()] == [name]
+
+
 def test_agent_uses_builtin_capability(tmp_path):
     """Agent referencing a builtin capability resolves through the project
     registry into the spec's resolved_capabilities."""

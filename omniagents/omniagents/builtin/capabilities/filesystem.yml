@@ -12,5 +12,8 @@ instructions: |
   Filesystem operations are available:
   - `read_file`, `list_directory`, `glob_files`, `grep_files` for inspection.
   - `read_image` to load a local image file into the conversation.
-  - `apply_patch` is preferred for edits to existing files.
+  - `apply_patch` is preferred for edits to existing files. Use that exact
+    name — not similarly named variants such as `applypatch` or `apply-patch`.
   - `write_file` for creating new files; `edit_file` for line-based edits.
+  - After an edit tool reports success, do not re-read the file just to
+    confirm the edit; the tool reports failure if it did not apply.

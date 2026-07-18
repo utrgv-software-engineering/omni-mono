@@ -352,3 +352,42 @@ def test_auto_compact_token_hook_custom_threshold():
     session = _FakeSession([])
     _run_token_hook(hook, service, session, total=60, max_input=100)
     assert service.calls[0]["command"] == "compact"
+
+
+# ---------------------------------------------------------------------------
+# Summarizer seam + default instructions
+# ---------------------------------------------------------------------------
+
+from omniagents.core.runtime.compaction import (
+    DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS,
+    compaction_summarizer,
+    set_compaction_summarizer,
+)
+
+
+@pytest.fixture()
+def _reset_compaction_seam():
+    original = compaction_summarizer()
+    yield
+    set_compaction_summarizer(original)
+
+
+def test_compaction_summarizer_seam_roundtrip(_reset_compaction_seam):
+    async def summarizer(prompt, *, service, session):
+        return "summary"
+
+    set_compaction_summarizer(summarizer)
+    assert compaction_summarizer() is summarizer
+    set_compaction_summarizer(None)
+    assert compaction_summarizer() is None
+
+
+def test_default_checkpoint_summary_instructions_shape():
+    text = DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS
+    # Handoff prompt: structured summary + coverage checklist.
+    assert "context length limit" in text
+    assert "<analysis>" in text
+    assert "Files and Key Sections" in text
+    # Domain-neutralized in the lift: no coding-flavored section titles.
+    assert "Files and Code Sections" not in text
+    assert "code snippet" not in text.lower()
