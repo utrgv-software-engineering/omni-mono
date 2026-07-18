@@ -1,7 +1,0 @@
-name: shell
-# Subsets the omniagents builtin `shell` pack: same tools, server
-# functions, and base instructions, plus the rg-over-cat discovery
-# guidance that pairs with our `filesystem` override.
-extends: shell
-instructions_append: |
-  Prefer `rg` and `rg --files` for text/file discovery over piping `cat`.

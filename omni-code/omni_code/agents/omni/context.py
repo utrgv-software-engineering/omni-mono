@@ -123,6 +123,38 @@ async def _recap_summarizer(prompt, *, service, session):
 
 set_recap_summarizer(_recap_summarizer)
 
+# Compaction: the framework owns the /compact orchestration (builtin
+# `compact` capability pack), the checkpoint marker + resume protocol, AND
+# the summary system prompt (DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS —
+# lifted from omni-code); the summarizer (compactor agent + model
+# resolution) is omni-code's.
+from omniagents.core.runtime.compaction import (  # noqa: E402
+    DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS,
+    set_compaction_summarizer,
+)
+
+
+async def _compaction_summarizer(prompt, *, service, session):
+    from omni_code.utility_runs import (
+        normalize_model_name,
+        resolve_service_model_runtime,
+        run_utility_agent,
+    )
+
+    model_ref, runtime = resolve_service_model_runtime(service, session)
+    model_name = normalize_model_name(model_ref, runtime)
+    return await run_utility_agent(
+        "compactor",
+        prompt,
+        model=model_name,
+        runtime=runtime,
+        session=session,
+        instructions=DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS,
+    )
+
+
+set_compaction_summarizer(_compaction_summarizer)
+
 # Slash commands executed by the builtin `dispatch` tool (slash pack).
 from omniagents.core.tools import register_slash_command  # noqa: E402
 
