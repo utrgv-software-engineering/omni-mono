@@ -99,19 +99,11 @@ fn build_profile(config: &SandboxConfig) -> String {
     sb.push_str("(allow sysctl-read)\n\n");
 
     // --- Network ---
-    if !config.net_allow_hosts.is_empty() {
-        // Host-level allowlist: allow localhost + only the specified hosts.
-        sb.push_str("; Network restricted to allowlisted hosts\n");
-        sb.push_str("(allow network* (local ip \"localhost:*\"))\n");
-        sb.push_str("(allow network* (remote ip \"localhost:*\"))\n");
-        sb.push_str("(allow network* (remote unix-socket))\n");
-        for host in &config.net_allow_hosts {
-            // Seatbelt supports (remote ip "host:*") for hostname/IP filtering.
-            sb.push_str(&format!(
-                "(allow network* (remote ip \"{host}:*\"))\n"
-            ));
-        }
-    } else if config.allow_net {
+    // Network is all-or-nothing: host-level allowlists are rejected at the
+    // CLI layer (fail closed) because seatbelt's per-host filtering is not
+    // reliable for hostnames (it filters by IP at connect time, so CDN or
+    // multi-A-record hosts leak) and no other backend supports it at all.
+    if config.allow_net {
         sb.push_str("; Network access allowed\n");
         sb.push_str("(allow network*)\n");
     } else {
