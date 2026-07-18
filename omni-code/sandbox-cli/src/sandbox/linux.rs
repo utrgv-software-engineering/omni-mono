@@ -195,18 +195,6 @@ pub fn exec(config: SandboxConfig) -> Result<u8> {
     }
     args.push("--die-with-parent".into());
 
-    // Host-level filtering cannot be enforced at the process level on Linux
-    // without root (iptables/nftables require CAP_NET_ADMIN). When a host
-    // allowlist is specified, warn that it must be enforced at a higher layer
-    // (e.g. Docker iptables rules via apply-network-isolation.sh).
-    if !config.net_allow_hosts.is_empty() && config.allow_net {
-        eprintln!(
-            "omni-sandbox: warning: host-level network filtering (--net-allow) \
-             cannot be enforced at the process sandbox level on Linux. \
-             Use Docker-level iptables rules for host allowlisting."
-        );
-    }
-
     // --- Seccomp filter ---
     // Write the BPF program to a temporary file and pass its fd to bwrap.
     // bwrap installs the filter after setting up namespaces but before
@@ -351,7 +339,6 @@ mod tests {
             ro_binds: vec![],
             rw_binds: vec![],
             allow_net: false,
-            net_allow_hosts: vec![],
             cwd: None,
             command: vec!["/bin/true".into()],
             protected_subpaths: vec![],
@@ -369,7 +356,6 @@ mod tests {
             ro_binds: vec![],
             rw_binds: vec![],
             allow_net: false,
-            net_allow_hosts: vec![],
             cwd: None,
             command: vec!["/bin/false".into()],
             protected_subpaths: vec![],
@@ -388,7 +374,6 @@ mod tests {
             ro_binds: vec![],
             rw_binds: vec![],
             allow_net: false,
-            net_allow_hosts: vec![],
             cwd: None,
             command: vec![
                 "/bin/sh".into(),
@@ -415,7 +400,6 @@ mod tests {
             ro_binds: vec![],
             rw_binds: vec![],
             allow_net: false,
-            net_allow_hosts: vec![],
             cwd: None,
             command: vec![
                 "/bin/sh".into(),
@@ -448,7 +432,6 @@ mod tests {
             ro_binds,
             rw_binds,
             allow_net,
-            net_allow_hosts: vec![],
             cwd: None,
             command: vec!["/bin/sh".into(), "-c".into(), cmd.into()],
             protected_subpaths,
@@ -497,7 +480,6 @@ mod tests {
             ro_binds: vec![],
             rw_binds: vec![],
             allow_net: false,
-            net_allow_hosts: vec![],
             cwd: None,
             command: vec![
                 "/bin/sh".into(), "-c".into(),
@@ -645,7 +627,6 @@ mod tests {
             ro_binds: vec![extra_path],
             rw_binds: vec![],
             allow_net: false,
-            net_allow_hosts: vec![],
             cwd: None,
             command: vec![
                 "/bin/sh".into(), "-c".into(),
@@ -674,7 +655,6 @@ mod tests {
             ro_binds: vec![],
             rw_binds: vec![extra_path.clone()],
             allow_net: false,
-            net_allow_hosts: vec![],
             cwd: None,
             command: vec![
                 "/bin/sh".into(), "-c".into(),
@@ -702,7 +682,6 @@ mod tests {
             ro_binds: vec![],
             rw_binds: vec![extra_path],
             allow_net: false,
-            net_allow_hosts: vec![],
             cwd: None,
             command: vec![
                 "/bin/sh".into(), "-c".into(),
@@ -730,7 +709,6 @@ mod tests {
             ro_binds: vec![],
             rw_binds: vec![],
             allow_net: false,
-            net_allow_hosts: vec![],
             cwd: Some(subdir.clone()),
             command: vec![
                 "/bin/sh".into(), "-c".into(),
@@ -753,7 +731,6 @@ mod tests {
             ro_binds: vec![],
             rw_binds: vec![],
             allow_net: false,
-            net_allow_hosts: vec![],
             cwd: None,
             command: vec![
                 "/bin/sh".into(), "-c".into(),
@@ -775,7 +752,6 @@ mod tests {
             ro_binds: vec![],
             rw_binds: vec![],
             allow_net: false,
-            net_allow_hosts: vec![],
             cwd: None,
             command: vec![],
             protected_subpaths: vec![],
@@ -800,7 +776,6 @@ mod tests {
             ro_binds: vec![],
             rw_binds: vec![],
             allow_net: false,
-            net_allow_hosts: vec![],
             cwd: None,
             command: vec![
                 "/bin/sh".into(), "-c".into(),
@@ -826,7 +801,6 @@ mod tests {
             ro_binds: vec![],
             rw_binds: vec![],
             allow_net: false,
-            net_allow_hosts: vec![],
             cwd: None,
             command: vec![
                 "/bin/sh".into(), "-c".into(),
@@ -853,7 +827,6 @@ mod tests {
             ro_binds: vec![],
             rw_binds: vec![],
             allow_net: false,
-            net_allow_hosts: vec![],
             cwd: None,
             command: vec![
                 "/bin/sh".into(), "-c".into(),

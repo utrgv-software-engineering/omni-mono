@@ -13,6 +13,7 @@ mod windows;
 pub const DEFAULT_PROTECTED_SUBPATHS: &[&str] = &[".git", ".env", ".codex"];
 
 /// Platform-agnostic sandbox configuration.
+#[derive(Debug)]
 pub struct SandboxConfig {
     /// Primary workspace directory — mounted read-write.
     pub workspace: PathBuf,
@@ -20,10 +21,10 @@ pub struct SandboxConfig {
     pub ro_binds: Vec<PathBuf>,
     /// Extra read-write bind mounts.
     pub rw_binds: Vec<PathBuf>,
-    /// Whether outbound network access is permitted.
+    /// Whether outbound network access is permitted. Network is all-or-nothing:
+    /// host-level allowlists are rejected at the CLI layer because no process
+    /// sandbox backend can reliably enforce them (fail closed).
     pub allow_net: bool,
-    /// Optional host-level allowlist (best-effort — not all backends support it).
-    pub net_allow_hosts: Vec<String>,
     /// Working directory inside the sandbox (defaults to workspace).
     pub cwd: Option<PathBuf>,
     /// The command + arguments to execute.

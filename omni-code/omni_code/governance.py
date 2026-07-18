@@ -3,7 +3,9 @@
 When authenticated to the management plane, checks the policy to determine
 if the current session requires sandboxing. If so, re-execs the current
 command inside omni-sandbox (process-level isolation via bwrap/sandbox-exec/
-AppContainer) with the policy's network allowlist and resource constraints.
+AppContainer) with the policy's network mode and resource constraints. The
+process sandbox is all-or-nothing for network: policies that require a
+host-filtered allowlist cannot be enforced here and cause a hard stop.
 
 Security model:
 - Fail closed: if governance is required and can't be enforced, refuse to run
@@ -86,7 +88,7 @@ def maybe_enforce_sandbox() -> None:
     # Skip for subcommands that don't run agents or already provide isolation
     if len(sys.argv) > 1 and sys.argv[1] in {
         "auth", "model", "provider", "update", "sessions",
-        "sandbox", "work",
+        "sandbox",
         "-h", "--help", "help",
     }:
         return
@@ -485,17 +487,32 @@ def _editable_source_dirs(venv_dir: Path) -> list[Path]:
 
 def _exec_in_sandbox(binary: str, config: dict) -> None:
     """Re-exec the current command inside omni-sandbox. Does not return."""
-    args = [binary]
+    args = [binary, "exec"]
 
     workspace = os.getcwd()
     args.extend(["--workspace", workspace])
 
-    # Network policy
+    # Network policy.
+    # Fail closed: the process sandbox (bwrap/sandbox-exec/AppContainer) can
+    # only do all-or-nothing network isolation. If the policy demands a
+    # host-filtered allowlist, we cannot honor it here — refuse to run rather
+    # than silently granting full egress.
     network_targets = config.get("network_targets", [])
     if network_targets:
         hosts = [t["hostname"] for t in network_targets if t.get("hostname")]
         if hosts:
-            args.extend(["--net-allow", ",".join(hosts)])
+            print(
+                "Error: Governance policy requires a host-filtered network "
+                f"allowlist ({', '.join(hosts)}), but the process sandbox "
+                f"backend ({config.get('backend', 'bwrap')}) cannot enforce "
+                "host-level network filtering. Use a container backend that "
+                "supports network allowlisting (set OMNI_SANDBOX_BACKEND="
+                "docker or podman, if the policy provides one), or ask your "
+                "platform admin to set the policy's network mode to 'open' "
+                "or remove the allowlist.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
     elif config.get("network_mode") == "open":
         args.append("--net")
 
