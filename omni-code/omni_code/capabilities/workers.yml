@@ -12,7 +12,5 @@ instructions_append: |
     own `worker/...` branch. Workers commit their changes; after the
     completion notification, merge each worker branch back and call
     `cleanup_worker_worktree` in that same turn.
-  - Do not `sleep` or poll between spawns: spawn all workers for the
-    phase in one turn and end the turn — their completion notifications
-    batch into a single wakeup. `get_worker_status(id, tail=N)` is for
-    peeking mid-turn, not for waiting.
+  - Spawn all workers for the phase in one turn — their completion
+    notifications batch into a single wakeup.

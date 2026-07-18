@@ -92,9 +92,16 @@ async def run_utility_agent(
     runtime: Optional[dict[str, Any]] = None,
     session: Any = None,
     workspace_root: Optional[str] = None,
+    instructions: Optional[str] = None,
 ) -> str:
     """Run one of omni-code's headless utility agents (``omni_code/agents/<name>``)
-    through the framework's ephemeral-run harness."""
+    through the framework's ephemeral-run harness.
+
+    ``instructions`` replaces the spec's system prompt for this run —
+    used when the prompt's single source of truth lives in code (e.g.
+    the framework's ``DEFAULT_RECAP_INSTRUCTIONS``) rather than in the
+    agent dir's ``instructions.md``.
+    """
     from pathlib import Path
 
     from omniagents.core.runtime import run_agent_once
@@ -102,9 +109,16 @@ async def run_utility_agent(
     agent_yaml = (
         Path(__file__).resolve().parent / "agents" / agent_name / "agent.yml"
     )
+    agent: Any = agent_yaml
+    if instructions is not None:
+        from omniagents.core.config.loader import load_agent_spec_from_yaml
+
+        spec = load_agent_spec_from_yaml(str(agent_yaml))
+        spec.get_agent_instructions = lambda: instructions
+        agent = spec
     model_provider, env_overrides = _build_model_provider(runtime or {})
     return await run_agent_once(
-        agent_yaml,
+        agent,
         prompt,
         model=model,
         model_provider=model_provider,
