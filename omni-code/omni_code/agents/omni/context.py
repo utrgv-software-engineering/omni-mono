@@ -93,9 +93,13 @@ set_goal_prompt_builders(
 set_loop_default_prompt_resolver(resolve_default_loop_prompt)
 _install_workers_runtime()
 
-# Recap: the framework owns the /recap orchestration and broadcast; the
-# summarizer (recapper agent + model resolution) is omni-code's.
-from omniagents.core.runtime.recap import set_recap_summarizer  # noqa: E402
+# Recap: the framework owns the /recap orchestration, broadcast, AND the
+# recap system prompt (DEFAULT_RECAP_INSTRUCTIONS — lifted from omni-code);
+# the summarizer (recapper agent + model resolution) is omni-code's.
+from omniagents.core.runtime.recap import (  # noqa: E402
+    DEFAULT_RECAP_INSTRUCTIONS,
+    set_recap_summarizer,
+)
 
 
 async def _recap_summarizer(prompt, *, service, session):
@@ -108,7 +112,12 @@ async def _recap_summarizer(prompt, *, service, session):
     model_ref, runtime = resolve_service_model_runtime(service, session)
     model_name = normalize_model_name(model_ref, runtime)
     return await run_utility_agent(
-        "recapper", prompt, model=model_name, runtime=runtime, session=session
+        "recapper",
+        prompt,
+        model=model_name,
+        runtime=runtime,
+        session=session,
+        instructions=DEFAULT_RECAP_INSTRUCTIONS,
     )
 
 

@@ -1,12 +1,17 @@
 name: recapper
 label: Session Recapper
 description: "Produces a short human-friendly recap of the current session"
-instructions_file: instructions.md
+# Placeholder only: the real system prompt is the framework's
+# DEFAULT_RECAP_INSTRUCTIONS (omniagents.core.runtime.recap) — the
+# single source of truth — injected per run via
+# omni_code.utility_runs.run_utility_agent(instructions=...).
+instructions: "(replaced at run time by the framework recap instructions)"
 
 tools: []
 
-# Headless subagent — invoked by server_functions/recap.py via direct
-# Runner.run (bypasses AgentService entirely, so configure_tool_approval
+# Headless subagent — invoked by the recap summarizer installed in
+# omni_code/agents/omni/context.py via the framework's run_agent_once
+# (bypasses AgentService entirely, so configure_tool_approval
 # never runs against it). Empty tool list also makes hangs impossible.
 # Setting use_safe_agent: false documents the intent and stays correct
 # if this agent is ever moved onto AgentService.

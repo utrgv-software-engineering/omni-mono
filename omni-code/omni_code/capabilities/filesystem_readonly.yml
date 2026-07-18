@@ -6,6 +6,3 @@ name: filesystem_readonly
 extends: filesystem_readonly
 exclude_tools:
   - read_image
-instructions_append: |
-  Use `read_file` to inspect specific files after you have identified relevant
-  paths. Do not modify files.

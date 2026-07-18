@@ -120,9 +120,16 @@ async def run_utility_agent(
     workspace_root: Optional[str] = None,
     model_settings: Optional[dict[str, Any]] = None,
     max_turns: int = 1,
+    instructions: Optional[str] = None,
 ) -> str:
     """Run one of omni-code's headless utility agents (``omni_code/agents/<name>``)
-    through the framework's ephemeral-run harness."""
+    through the framework's ephemeral-run harness.
+
+    ``instructions`` replaces the spec's system prompt for this run —
+    used when the prompt's single source of truth lives in code (e.g.
+    the framework's ``DEFAULT_RECAP_INSTRUCTIONS``) rather than in the
+    agent dir's ``instructions.md``.
+    """
     from pathlib import Path
 
     from omniagents.core.runtime import run_agent_once
@@ -131,14 +138,21 @@ async def run_utility_agent(
         Path(__file__).resolve().parent / "agents" / agent_name / "agent.yml"
     )
     agent: Any = agent_yaml
-    if isinstance(model_settings, dict) and model_settings:
+    wants_settings = isinstance(model_settings, dict) and bool(model_settings)
+    if wants_settings or instructions is not None:
         # run_agent_once applies the model-name override itself; model_settings
         # is the one spec field it doesn't touch, so stamp it on the loaded
-        # spec and hand the spec (not the path) to the harness.
+        # spec and hand the spec (not the path) to the harness. Likewise,
+        # ``instructions`` replaces the spec's system prompt when its single
+        # source of truth lives in code rather than the agent dir.
         from omniagents.core.config.loader import load_agent_spec_from_yaml
 
-        agent = load_agent_spec_from_yaml(str(agent_yaml))
-        agent.model_settings = model_settings
+        spec = load_agent_spec_from_yaml(str(agent_yaml))
+        if wants_settings:
+            spec.model_settings = model_settings
+        if instructions is not None:
+            spec.get_agent_instructions = lambda: instructions
+        agent = spec
     model_provider, env_overrides = build_model_provider(runtime or {})
     return await run_agent_once(
         agent,
