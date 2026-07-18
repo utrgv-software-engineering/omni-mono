@@ -15,9 +15,10 @@ registry:
   branch naming ``worker/<parent>-worker-<id>``.
 
 ``install()`` is idempotent and is called at import time of
-``server_functions/workers.py`` — server-function discovery imports that
-module in every omni-code server process, so the wiring provably lands
-before the first spawn. Tests import this module directly.
+``omni_code/agents/omni/context.py`` — the omni agent's context module,
+which every omni-code server process loads when building the entrypoint
+agent, so the wiring provably lands before the first spawn. Tests import
+this module directly.
 """
 
 from __future__ import annotations

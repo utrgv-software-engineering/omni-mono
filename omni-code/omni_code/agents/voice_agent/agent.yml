@@ -43,8 +43,8 @@ safe_agent_options:
     - scholar_search
     - convert_to_markdown
 
-server_functions:
-  - help
+# No server_functions: `/help` is carried by the builtin `slash`
+# capability pack this agent activates.
 
 context: build_voice_context
 model_config_resolver: resolve_default_model

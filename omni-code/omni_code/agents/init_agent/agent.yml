@@ -25,14 +25,7 @@ safe_agent_options:
 
 session:
   compaction:
+    # Settings mirror agents/omni/agent.yml — see the full rationale there.
     enabled: true
-    # No ``model``: compaction inherits the parent session's selected model
-    # and provider transport (incl. openai-oauth/Codex), so responses.compact
-    # hits the same endpoint/credentials. Pin a model here only to route
-    # compaction to a different endpoint on purpose.
     compaction_mode: auto
-    # Trigger at 80% of the model's context window. The default 0.9 leaves
-    # too little headroom for this agent's large tool surface + system
-    # prompt: a single big tool output can leap a turn from under-threshold
-    # to over the ceiling before the post-turn compaction runs.
     threshold_fraction: 0.8

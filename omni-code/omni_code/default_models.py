@@ -73,20 +73,6 @@ DEFAULT_PROVIDERS: Dict[str, Dict[str, Any]] = {
 DEFAULT_MODEL_NAME = "gpt-5.1"
 
 
-def get_default_models() -> Dict[str, Dict[str, Any]]:
-    """Get the project-provided default models.
-
-    Returns a flat mapping of model_reference -> model_config.
-    """
-    models: Dict[str, Dict[str, Any]] = {}
-    for provider_name, provider in DEFAULT_PROVIDERS.items():
-        provider_models = provider.get("models") or {}
-        for model_name, model_config in provider_models.items():
-            key = model_name if provider_name == "openai" else f"{provider_name}/{model_name}"
-            models[key] = model_config
-    return models
-
-
 def get_default_providers() -> Dict[str, Dict[str, Any]]:
     """Get the project-provided default provider profiles."""
     return {k: v.copy() for k, v in DEFAULT_PROVIDERS.items()}
