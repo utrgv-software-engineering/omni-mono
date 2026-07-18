@@ -159,9 +159,11 @@ def apply_platform_model_governance() -> None:
             provider_config["_governed"] = True
 
 
+    _write_governed_config(
+        platform_providers, default_model, allow_user_models=allow_user_models
+    )
     if not allow_user_models:
         # Platform providers replace user config entirely
-        _write_governed_config(platform_providers, default_model)
         logger.info(
             "Model governance: enforced (providers: %s, default: %s)",
             list(platform_providers.keys()),
@@ -169,16 +171,23 @@ def apply_platform_model_governance() -> None:
         )
     else:
         # Platform providers are the base, user config merges on top
-        _merge_platform_base(platform_providers, default_model)
         logger.info(
             "Model governance: advisory (platform base + user overrides)",
         )
 
 
 def _write_governed_config(
-    platform_providers: Dict[str, Any], default_model: Optional[str]
+    platform_providers: Dict[str, Any],
+    default_model: Optional[str],
+    *,
+    allow_user_models: bool,
 ) -> None:
-    """Replace the effective model config with platform-governed providers."""
+    """Write the governed model config that takes precedence over user config.
+
+    With ``allow_user_models`` the platform providers form the base that
+    user config merges on top of; without it they replace user config
+    entirely (the flag is read back by the model store's layered merge).
+    """
     from omni_code.models import get_models_config_path, MODELS_CONFIG_VERSION
 
     # Write to a separate governed config that takes precedence
@@ -189,27 +198,7 @@ def _write_governed_config(
         "voice_default": None,
         "providers": platform_providers,
         "_governed": True,
-        "_allow_user_models": False,
-    }
-    governed_path.parent.mkdir(parents=True, exist_ok=True)
-    governed_path.write_text(json.dumps(config, indent=2))
-    governed_path.chmod(0o600)
-
-
-def _merge_platform_base(
-    platform_providers: Dict[str, Any], default_model: Optional[str]
-) -> None:
-    """Merge platform providers as the base, user config on top."""
-    from omni_code.models import get_models_config_path, MODELS_CONFIG_VERSION
-
-    governed_path = get_models_config_path().parent / "models.governed.json"
-    config = {
-        "version": MODELS_CONFIG_VERSION,
-        "default": default_model,
-        "voice_default": None,
-        "providers": platform_providers,
-        "_governed": True,
-        "_allow_user_models": True,
+        "_allow_user_models": allow_user_models,
     }
     governed_path.parent.mkdir(parents=True, exist_ok=True)
     governed_path.write_text(json.dumps(config, indent=2))

@@ -25,7 +25,7 @@ import sqlite3
 import sys
 from typing import Any
 
-from omni_code.utility_runs import _build_model_provider
+from omni_code.utility_runs import build_model_provider
 from omniagents.core.paths import get_sessions_db_path
 from omniagents.core.session import list_sessions, load_history
 from omniagents.core.session.cli import (
@@ -38,7 +38,10 @@ from omniagents.core.session.query import (
     populate_session_stats as oa_populate_session_stats,
     ensure_sessions_schema as oa_ensure_sessions_schema,
 )
-from omniagents.core.runtime.compaction import summarize_with_window_shrink
+from omniagents.core.runtime.compaction import (
+    extract_transcript,
+    summarize_with_window_shrink,
+)
 
 
 def _default_project() -> str:
@@ -59,15 +62,6 @@ def _trim_history_tail(items: list[dict], *, tail: int | None) -> list[dict]:
     if len(items) <= tail:
         return list(items)
     return list(items[-tail:])
-
-
-def _extract_transcript(history: list[dict]) -> str:
-    parts: list[str] = []
-    for item in history or []:
-        if not isinstance(item, dict):
-            continue
-        parts.append(json.dumps(item, ensure_ascii=False, default=str))
-    return "\n".join(parts)
 
 
 async def _run_session_summarizer_agent(
@@ -94,22 +88,17 @@ def cmd_summarize(args: argparse.Namespace) -> None:
         print("session_id is required")
         raise SystemExit(1)
 
-    from omni_code.models import load_models_config, resolve_model_for_runtime
+    from omni_code.utility_runs import resolve_model_runtime
 
-    load_models_config()
-    runtime = resolve_model_for_runtime(args.model)
+    model_name, runtime = resolve_model_runtime(args.model)
     if not runtime:
         print("No model configured. Run: omni model setup")
         raise SystemExit(1)
 
-    provider_obj, _env_overrides = _build_model_provider(runtime)
+    provider_obj, _env_overrides = build_model_provider(runtime)
     if provider_obj is None:
         print("No usable model credentials found. Run: omni model setup")
         raise SystemExit(1)
-
-    from omni_code.utility_runs import normalize_model_name
-
-    model_name = normalize_model_name(args.model, runtime)
 
     project = _default_project()
     list_sessions(project_slug=project, agent_slug=args.agent)
@@ -146,7 +135,7 @@ def cmd_summarize(args: argparse.Namespace) -> None:
             "Session metadata:\n"
             f"{json.dumps(session_meta, ensure_ascii=False, default=str)}\n\n"
             "Transcript (chronological raw JSON items):\n"
-            f"{_extract_transcript(w)}"
+            f"{extract_transcript(w)}"
         )
 
     async def _summarize(prompt: str) -> str:

@@ -1,7 +1,20 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
+
+
+def dedupe_skill_roots(roots: Iterable[Path]) -> List[Path]:
+    """Order-preserving dedupe of skill-root paths (keyed by string path)."""
+    unique: List[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        key = str(root)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(root)
+    return unique
 
 
 def _published_sources() -> List[Dict[str, Any]]:
@@ -81,12 +94,4 @@ def source_skill_roots(workspace_root: str | None = None) -> List[Path]:
         if local_path is not None:
             roots.append(local_path / "skills")
 
-    unique: List[Path] = []
-    seen: set[str] = set()
-    for root in roots:
-        key = str(root)
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(root)
-    return unique
+    return dedupe_skill_roots(roots)

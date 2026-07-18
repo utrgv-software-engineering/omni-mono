@@ -63,6 +63,32 @@ def resolve_service_model_runtime(
     return candidates[0] if candidates else None, {}
 
 
+def resolve_model_runtime(
+    model_ref: Optional[str] = None, *, normalize: bool = True
+) -> tuple[Optional[str], dict[str, Any]]:
+    """Resolve *model_ref* (or the configured default) from omni-code's
+    model store into a ``(model_name, runtime)`` pair.
+
+    The one entry point for the CLI-side resolution dance: load the
+    models config, resolve the runtime dict, derive the model name. With
+    ``normalize`` (the default) the name has non-openai/litellm provider
+    prefixes stripped (see :func:`normalize_model_name`); without, the
+    runtime's raw model id is kept. Returns ``(None, {})`` when no model
+    is configured.
+    """
+    from omni_code.models import load_models_config, resolve_model_for_runtime
+
+    load_models_config()
+    runtime = resolve_model_for_runtime(model_ref)
+    if not runtime:
+        return None, {}
+    if normalize:
+        return normalize_model_name(model_ref, runtime), runtime
+    model = runtime.get("model")
+    model_name = model.strip() if isinstance(model, str) and model.strip() else None
+    return model_name, runtime
+
+
 def normalize_model_name(
     model_ref: Optional[str], runtime: dict[str, Any]
 ) -> Optional[str]:
@@ -92,6 +118,8 @@ async def run_utility_agent(
     runtime: Optional[dict[str, Any]] = None,
     session: Any = None,
     workspace_root: Optional[str] = None,
+    model_settings: Optional[dict[str, Any]] = None,
+    max_turns: int = 1,
 ) -> str:
     """Run one of omni-code's headless utility agents (``omni_code/agents/<name>``)
     through the framework's ephemeral-run harness."""
@@ -102,15 +130,25 @@ async def run_utility_agent(
     agent_yaml = (
         Path(__file__).resolve().parent / "agents" / agent_name / "agent.yml"
     )
-    model_provider, env_overrides = _build_model_provider(runtime or {})
+    agent: Any = agent_yaml
+    if isinstance(model_settings, dict) and model_settings:
+        # run_agent_once applies the model-name override itself; model_settings
+        # is the one spec field it doesn't touch, so stamp it on the loaded
+        # spec and hand the spec (not the path) to the harness.
+        from omniagents.core.config.loader import load_agent_spec_from_yaml
+
+        agent = load_agent_spec_from_yaml(str(agent_yaml))
+        agent.model_settings = model_settings
+    model_provider, env_overrides = build_model_provider(runtime or {})
     return await run_agent_once(
-        agent_yaml,
+        agent,
         prompt,
         model=model,
         model_provider=model_provider,
         env_overrides=env_overrides,
         session=session,
         workspace_root=workspace_root or ephemeral_workspace_root(session),
+        max_turns=max_turns,
     )
 
 
@@ -143,7 +181,7 @@ def _litellm_env_overrides(
     return {litellm_api_key_env(model): api_key}
 
 
-def _build_model_provider(
+def build_model_provider(
     runtime: dict[str, Any],
 ) -> tuple[Any | None, dict[str, str | None]]:
     """Turn a resolved model-runtime dict into an SDK model provider.
@@ -199,7 +237,9 @@ def _build_model_provider(
         if runtime.get(key) is not None:
             config[key] = bool(runtime[key])
 
-    from omniagents.core.agents.run_options import build_model_provider
+    from omniagents.core.agents.run_options import (
+        build_model_provider as _fw_build_model_provider,
+    )
 
-    provider_obj = build_model_provider(config)
+    provider_obj = _fw_build_model_provider(config)
     return provider_obj, (env_overrides if provider_obj is not None else {})
