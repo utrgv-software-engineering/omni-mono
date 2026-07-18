@@ -1247,7 +1247,7 @@ async def _serve(args: argparse.Namespace) -> int:
     # Register the openai-oauth provider builder so the main agent can use a
     # Codex model whenever one is selected (default or switched mid-session) —
     # not only when it's the startup default. Aux agents (compact, recap,
-    # summarizer) build their own via _build_model_provider's openai-oauth
+    # summarizer) build their own via build_model_provider's openai-oauth
     # branch. Safe + idempotent regardless of sign-in state.
     _register_codex_provider()
 

@@ -20,7 +20,9 @@ def _seed_session(*, project: str, agent: str, session_id: str, messages: list[d
 
 
 def test_build_model_provider_uses_chat_completions_when_configured():
-    provider, env = sessions_cli._build_model_provider({
+    from omni_code.utility_runs import build_model_provider
+
+    provider, env = build_model_provider({
         "provider": "openai-compatible",
         "model": "gpt-test",
         "api_key": "sk-test",

@@ -77,7 +77,7 @@ def test_compact_uses_runtime_model_id_for_custom_provider_prefix(monkeypatch):
 
 def test_run_compaction_agent_passes_model_provider_to_ephemeral_run(monkeypatch):
     """The compaction run delegates to the framework's run_agent_once with
-    the provider/env resolved by _build_model_provider. (RunConfig wiring
+    the provider/env resolved by build_model_provider. (RunConfig wiring
     inside run_agent_once is covered by the framework's own tests.)"""
     captured: dict = {}
 
@@ -96,7 +96,7 @@ def test_run_compaction_agent_passes_model_provider_to_ephemeral_run(monkeypatch
     monkeypatch.setattr(runtime_mod, "run_agent_once", fake_run_agent_once)
     monkeypatch.setattr(
         utility_runs,
-        "_build_model_provider",
+        "build_model_provider",
         lambda runtime: (sentinel_provider, {"K": "v"}),
     )
 

@@ -7,6 +7,7 @@ import pytest
 async def test_run_init_agent_uses_model_provider_and_restores_env(monkeypatch, tmp_path):
     import omni_code.init_command as slash
     import omni_code.models as models
+    import omni_code.utility_runs as utility_runs
     import omniagents.core.config.loader as loader
     import omniagents.core.agents.builder as builder
     from agents import Runner
@@ -41,7 +42,7 @@ async def test_run_init_agent_uses_model_provider_and_restores_env(monkeypatch, 
 
     dummy_provider = object()
 
-    monkeypatch.setattr(slash, "_build_model_provider", lambda _runtime: (dummy_provider, {"OPENAI_API_KEY": "sk-temp"}))
+    monkeypatch.setattr(utility_runs, "build_model_provider", lambda _runtime: (dummy_provider, {"OPENAI_API_KEY": "sk-temp"}))
 
     prior = os.environ.get("OPENAI_API_KEY")
     os.environ["OPENAI_API_KEY"] = "sk-original"
@@ -94,6 +95,7 @@ async def test_run_init_agent_passes_workspace_root_via_run_context(
     context= kwarg, sourced from $PWD (or cwd as fallback)."""
     import omni_code.init_command as slash
     import omni_code.models as models
+    import omni_code.utility_runs as utility_runs
     import omniagents.core.config.loader as loader
     import omniagents.core.agents.builder as builder
     from agents import Runner
@@ -121,7 +123,7 @@ async def test_run_init_agent_passes_workspace_root_via_run_context(
 
     monkeypatch.setattr(builder, "_default_build_agent", fake_build_agent)
     monkeypatch.setattr(
-        slash, "_build_model_provider", lambda _runtime: (None, {})
+        utility_runs, "build_model_provider", lambda _runtime: (None, {})
     )
 
     captured: dict = {}
@@ -169,6 +171,7 @@ async def test_run_init_agent_falls_back_to_cwd_when_pwd_missing(
     tries to write AGENTS.md)."""
     import omni_code.init_command as slash
     import omni_code.models as models
+    import omni_code.utility_runs as utility_runs
     import omniagents.core.config.loader as loader
     import omniagents.core.agents.builder as builder
     from agents import Runner
@@ -197,7 +200,7 @@ async def test_run_init_agent_falls_back_to_cwd_when_pwd_missing(
 
     monkeypatch.setattr(builder, "_default_build_agent", fake_build_agent)
     monkeypatch.setattr(
-        slash, "_build_model_provider", lambda _runtime: (None, {})
+        utility_runs, "build_model_provider", lambda _runtime: (None, {})
     )
 
     captured: dict = {}

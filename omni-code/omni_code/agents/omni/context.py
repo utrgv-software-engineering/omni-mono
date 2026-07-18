@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from omniagents import context_factory, model_config_resolver
-from omni_code.skill_sources import source_skill_roots
+from omni_code.skill_sources import dedupe_skill_roots, source_skill_roots
 
 
 def _resolve_invocation_dir() -> Path:
@@ -33,25 +33,15 @@ def _default_skill_roots(variables: Dict[str, Any]) -> List[Path]:
     from omni_code.config import get_config_dir
 
     workspace_root = variables.get("workspace_root")
-    roots: List[Path] = []
     if isinstance(workspace_root, str) and workspace_root.strip():
-        roots.append(Path(workspace_root).expanduser() / ".omni_code" / "skills")
-        roots.extend(source_skill_roots(workspace_root))
+        base = Path(workspace_root).expanduser()
     else:
-        roots.append(_resolve_invocation_dir() / ".omni_code" / "skills")
-        roots.extend(source_skill_roots(str(_resolve_invocation_dir())))
+        base = _resolve_invocation_dir()
 
-    seen: set[str] = set()
-    unique: List[Path] = []
-    for root in roots:
-        key = str(root)
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(root)
-
-    global_root = get_config_dir() / "skills"
-    unique.append(global_root)
+    unique = dedupe_skill_roots(
+        [base / ".omni_code" / "skills", *source_skill_roots(str(base))]
+    )
+    unique.append(get_config_dir() / "skills")
     return unique
 
 
