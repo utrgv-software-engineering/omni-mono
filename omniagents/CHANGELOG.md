@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.19] - 2026-07-18
+
 ### Added
 - Builtin `/compact` server function + `compact` capability pack, completing the recap symmetry: checkpoint compaction now ships a summarizer seam (`set_compaction_summarizer` / `compaction_summarizer` in `omniagents.core.runtime.compaction`) and a ready-made summarizer system prompt (`DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS`, lifted from omni-code's compactor agent and domain-neutralized). Products install a summarizer (their compactor agent + model resolution) and activate the pack instead of shipping their own `/compact`.
 - Generic tool-usage guidance folded into the builtin capability packs from omni-code: `filesystem` now carries the `apply_patch`-exact-name and don't-re-read-after-successful-edit bullets; `shell` now carries the prefer-`rg`/`rg --files`-over-`cat`/`grep`/`find` discovery guidance (matching `shell_readonly`).
