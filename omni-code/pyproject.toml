@@ -21,6 +21,9 @@ addopts = "-q"
 [dependency-groups]
 dev = [
     "pytest>=8.3.2",
+    "pytest-asyncio>=1.0",
+    "setuptools",  # tests/test_packaging.py imports setuptools
+    "pip",  # tests/test_packaging.py shells out to `python -m pip wheel`
 ]
 
 [project.scripts]
