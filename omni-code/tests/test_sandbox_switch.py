@@ -55,9 +55,19 @@ class FakeSessionManager:
 
 
 class FakeService:
+    """Mirrors the AgentService surface perform_switch touches: the public
+    run-quiesce API (active_run_ids/stop_run) and client-function broadcasts."""
+
     def __init__(self):
         self._session_manager = FakeSessionManager()
         self.events = []  # (function, args)
+
+    def active_run_ids(self):
+        return list(self._session_manager._task_map)
+
+    async def stop_run(self, run_id):
+        await self._session_manager.cancel(run_id)
+        return True
 
     async def request_client_function(
         self, function, args=None, *, session=None, expect_result=False, **kw
@@ -73,6 +83,7 @@ def _make_ctx(current_path="/profiles/host.yml", current_name="host"):
         session_id="sess-1",
         snapshot_dir=None,
         sources_parsed=[],
+        credentials_parsed=[],
         workspace_dir=__import__("pathlib").Path("/tmp/ws"),
         project_id=None,
         host="127.0.0.1",

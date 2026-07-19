@@ -76,15 +76,15 @@ def test_sandbox_cli_local_ui_json_output(monkeypatch, tmp_path, capsys):
     captured = capsys.readouterr()
     payload = json.loads(captured.out.strip())
 
-    assert payload["sandbox_url"] == "http://localhost:7777"
-    assert payload["ws_url"] == "ws://localhost:7777/ws"
+    assert payload["sandbox_url"] == "http://127.0.0.1:7777"
+    assert payload["ws_url"] == "ws://127.0.0.1:7777/ws"
     assert payload["ui_url"] == "http://localhost:8888"
-    assert payload["code_server_url"] == "http://localhost:9999"
-    assert payload["novnc_url"].startswith("http://localhost:9998/")
+    assert payload["code_server_url"] == "http://127.0.0.1:9999"
+    assert payload["novnc_url"].startswith("http://127.0.0.1:9998/")
     assert payload["container_id"] == "abc123"
 
     assert ui_calls
-    assert ui_calls[0]["ws_url"] == "ws://localhost:7777/ws"
+    assert ui_calls[0]["ws_url"] == "ws://127.0.0.1:7777/ws"
     assert ui_calls[0]["ui_host"] == "0.0.0.0"
     assert ui_calls[0]["ui_port"] == 8888
 
@@ -135,7 +135,7 @@ def test_sandbox_cli_builds_when_missing_and_runs(monkeypatch, tmp_path, capsys)
     )
 
     out = capsys.readouterr().out
-    assert "http://localhost:7777" in out
+    assert "http://127.0.0.1:7777" in out
 
     assert calls[0][0][:3] == ["docker", "image", "inspect"]
     assert calls[1][0][:3] == ["docker", "build", "-t"]
@@ -306,7 +306,7 @@ def test_sandbox_cli_detach_print_url(monkeypatch, tmp_path, capsys):
     )
 
     out = capsys.readouterr().out
-    assert out.strip() == "http://localhost:7777"
+    assert out.strip() == "http://127.0.0.1:7777"
 
     run_cmd, capture = next(call for call in calls if call[0][:2] == ["docker", "run"])
     assert run_cmd[:2] == ["docker", "run"]
@@ -382,7 +382,7 @@ def test_sandbox_cli_local_ui_runs_proxy(monkeypatch, tmp_path, capsys):
     assert "Omni Code web UI: http://localhost:8888" in out
 
     assert ui_calls
-    assert ui_calls[0]["ws_url"] == "ws://localhost:7777/ws"
+    assert ui_calls[0]["ws_url"] == "ws://127.0.0.1:7777/ws"
     assert ui_calls[0]["ui_host"] == "0.0.0.0"
     assert ui_calls[0]["ui_port"] == 8888
     assert ui_calls[0]["auth_token"] == "secret"

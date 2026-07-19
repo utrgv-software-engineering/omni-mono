@@ -10,8 +10,13 @@ def test_voice_agent_yaml_has_required_fields():
 
     assert config["name"] == "voice_agent"
     assert config["label"] == "Omni Code Voice"
-    assert "tools" in config
-    assert isinstance(config["tools"], list)
+    # Tools are activated via capability packs (capabilities migration);
+    # the voice agent gets a focused subset — file/shell + web/search +
+    # slash dispatch + markdown conversion.
+    assert isinstance(config["capabilities"], list)
+    assert set(config["capabilities"]) >= {"filesystem", "shell", "web", "markdown", "slash"}
+    # No notebook/workers/tasks — voice latency favors a tighter tool surface.
+    assert not {"notebook", "workers", "tasks"} & set(config["capabilities"])
     assert config["use_safe_agent"] is True
 
 
