@@ -59,6 +59,14 @@ struct ExecArgs {
     #[arg(long = "no-protected-subpaths", default_value_t = false)]
     no_protected_subpaths: bool,
 
+    /// Maximum number of processes for the sandboxed command.
+    ///
+    /// Enforced via setrlimit(RLIMIT_NPROC) on Linux/macOS. RLIMIT_NPROC
+    /// counts per-user processes, so the effective cap can only be stricter
+    /// than this value, never looser. Unsupported on Windows (hard error).
+    #[arg(long = "pids-limit")]
+    pids_limit: Option<u32>,
+
     /// The command to run inside the sandbox.
     #[arg(last = true, required = true)]
     command: Vec<String>,
@@ -120,6 +128,7 @@ fn build_config(args: ExecArgs) -> Result<sandbox::SandboxConfig> {
         cwd: args.cwd,
         command: args.command,
         protected_subpaths,
+        pids_limit: args.pids_limit,
     })
 }
 
@@ -174,6 +183,81 @@ mod tests {
     }
 
     #[test]
+    fn pids_limit_parses_as_own_flag_value() {
+        let cli = Cli::parse_from([
+            "omni-sandbox",
+            "exec",
+            "--workspace", "/tmp",
+            "--pids-limit", "256",
+            "--", "/bin/true",
+        ]);
+        let Command::Exec(args) = cli.command;
+        assert_eq!(args.pids_limit, Some(256));
+    }
+
+    #[test]
+    fn pids_limit_defaults_to_none() {
+        let cli = Cli::parse_from([
+            "omni-sandbox",
+            "exec",
+            "--workspace", "/tmp",
+            "--", "/bin/true",
+        ]);
+        let Command::Exec(args) = cli.command;
+        assert_eq!(args.pids_limit, None);
+    }
+
+    #[test]
+    fn pids_limit_rejects_non_numeric() {
+        let result = Cli::try_parse_from([
+            "omni-sandbox",
+            "exec",
+            "--workspace", "/tmp",
+            "--pids-limit", "10G",
+            "--", "/bin/true",
+        ]);
+        assert!(result.is_err(), "--pids-limit must be a plain integer");
+    }
+
+    #[test]
+    fn pids_limit_flows_into_config() {
+        let args = ExecArgs {
+            workspace: PathBuf::from("/tmp"),
+            ro_bind: vec![],
+            rw_bind: vec![],
+            net: false,
+            net_allow: vec![],
+            cwd: None,
+            protected_subpaths: vec![],
+            no_protected_subpaths: false,
+            pids_limit: Some(128),
+            command: vec!["/bin/true".into()],
+        };
+        let config = build_config(args).unwrap();
+        assert_eq!(config.pids_limit, Some(128));
+    }
+
+    #[test]
+    fn repeated_protect_flags_collect_paths() {
+        // governance.py emits one --protect per subpath; a comma-joined value
+        // would arrive as a single (wrong) subpath name, so the CLI contract
+        // is repeated flags.
+        let cli = Cli::parse_from([
+            "omni-sandbox",
+            "exec",
+            "--workspace", "/tmp",
+            "--protect", ".git",
+            "--protect", ".env",
+            "--", "/bin/true",
+        ]);
+        let Command::Exec(args) = cli.command;
+        assert_eq!(
+            args.protected_subpaths,
+            vec![".git".to_string(), ".env".to_string()]
+        );
+    }
+
+    #[test]
     fn net_allow_fails_closed() {
         let args = ExecArgs {
             workspace: PathBuf::from("/tmp"),
@@ -184,6 +268,7 @@ mod tests {
             cwd: None,
             protected_subpaths: vec![],
             no_protected_subpaths: false,
+            pids_limit: None,
             command: vec!["/bin/true".into()],
         };
         let err = build_config(args).expect_err("--net-allow must be a hard error");
@@ -204,6 +289,7 @@ mod tests {
             cwd: None,
             protected_subpaths: vec![],
             no_protected_subpaths: false,
+            pids_limit: None,
             command: vec!["/bin/true".into()],
         };
         assert!(
@@ -223,6 +309,7 @@ mod tests {
             cwd: None,
             protected_subpaths: vec![],
             no_protected_subpaths: false,
+            pids_limit: None,
             command: vec!["/bin/true".into()],
         };
         let config = build_config(args).unwrap();
@@ -244,6 +331,7 @@ mod tests {
             cwd: None,
             protected_subpaths: vec![],
             no_protected_subpaths: true,
+            pids_limit: None,
             command: vec!["/bin/true".into()],
         };
         let config = build_config(args).unwrap();
@@ -264,6 +352,7 @@ mod tests {
             cwd: None,
             protected_subpaths: vec![".secrets".into()],
             no_protected_subpaths: false,
+            pids_limit: None,
             command: vec!["/bin/true".into()],
         };
         let config = build_config(args).unwrap();

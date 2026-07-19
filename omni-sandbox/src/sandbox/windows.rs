@@ -58,6 +58,17 @@ pub fn exec(config: SandboxConfig) -> Result<u8> {
         bail!("no command specified");
     }
 
+    // Fail closed: the AppContainer backend has no process-count enforcement
+    // wired up (it would require a job object with an active-process limit).
+    // Refuse to run rather than silently dropping a policy restriction.
+    if config.pids_limit.is_some() {
+        bail!(
+            "--pids-limit is not supported by the Windows AppContainer sandbox. \
+             Remove the limit or use a backend that enforces it (Linux/macOS \
+             process sandbox, or a container backend)."
+        );
+    }
+
     let profile_name = format!("OmniCodeSandbox_{}", std::process::id());
 
     // --- Step 1: Create AppContainer profile ---
