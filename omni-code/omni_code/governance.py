@@ -516,22 +516,50 @@ def _exec_in_sandbox(binary: str, config: dict) -> None:
     elif config.get("network_mode") == "open":
         args.append("--net")
 
-    # Resource limits from policy
+    # Resource limits from policy.
+    # pids_limit is enforced by omni-sandbox via setrlimit(RLIMIT_NPROC)
+    # before exec on Linux/macOS (Windows AppContainer rejects it — fail
+    # closed inside the CLI itself).
     limits = config.get("resource_limits", {})
     if limits.get("pids_limit"):
         args.extend(["--pids-limit", str(limits["pids_limit"])])
+    # Fail closed: a disk quota is a restriction the process sandbox
+    # (bwrap/sandbox-exec/AppContainer) cannot enforce — refuse to run rather
+    # than silently dropping it.
     if limits.get("disk_gb"):
-        args.extend(["--disk-limit", f"{limits['disk_gb']}G"])
+        print(
+            "Error: Governance policy sets a disk limit "
+            f"({limits['disk_gb']} GB), but the process sandbox backend "
+            f"({config.get('backend', 'bwrap')}) cannot enforce disk quotas. "
+            "Use a container backend that supports disk limits (set "
+            "OMNI_SANDBOX_BACKEND=docker or podman, if the policy provides "
+            "one), or ask your platform admin to remove disk_gb from this "
+            "profile's resource limits.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
-    # Security profile from policy
+    # Security profile from policy.
+    # The process sandbox has no flags to RELAX isolation (seccomp is always
+    # on; the root filesystem is always read-only). Ignoring a relaxation
+    # means running stricter than the policy asks, which is safe — note it
+    # and continue.
     security = config.get("security_profile", {})
+    ignored_relaxations = []
     if security.get("seccomp_enabled") is False:
-        args.append("--no-seccomp")
+        ignored_relaxations.append("seccomp_enabled=false")
     if security.get("read_only_root") is False:
-        args.append("--rw-root")
-    protected = security.get("protected_subpaths")
-    if protected:
-        args.extend(["--protect", ",".join(protected)])
+        ignored_relaxations.append("read_only_root=false")
+    if ignored_relaxations:
+        print(
+            "Governance: process sandbox ignores security-profile relaxations "
+            f"({', '.join(ignored_relaxations)}); running with full isolation.",
+            file=sys.stderr,
+        )
+    # omni-sandbox takes one --protect flag per subpath (a comma-joined value
+    # would be treated as a single, wrong subpath name).
+    for subpath in security.get("protected_subpaths") or []:
+        args.extend(["--protect", subpath])
 
     # Mount config dir read-only so credentials are available inside sandbox
     config_dir = Path.home() / ".config" / "omni_code"

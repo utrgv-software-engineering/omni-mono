@@ -131,16 +131,24 @@ pub fn exec(config: SandboxConfig) -> Result<u8> {
 
     let cwd = config.cwd.as_ref().unwrap_or(&config.workspace);
 
-    let status = Command::new("sandbox-exec")
-        .arg("-f")
+    let mut cmd = Command::new("sandbox-exec");
+    cmd.arg("-f")
         .arg(profile_file.path())
         .args(&config.command)
         .current_dir(cwd)
         .stdin(std::process::Stdio::inherit())
         .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .status()
-        .context("failed to spawn sandbox-exec")?;
+        .stderr(std::process::Stdio::inherit());
+
+    // --- Process count limit ---
+    // Applied in the child pre-exec so sandbox-exec and everything it runs
+    // inherit the RLIMIT_NPROC cap. If it can't be applied, the spawn fails
+    // (closed).
+    if let Some(limit) = config.pids_limit {
+        super::apply_pids_limit(&mut cmd, limit);
+    }
+
+    let status = cmd.status().context("failed to spawn sandbox-exec")?;
 
     Ok(status.code().unwrap_or(1) as u8)
 }
