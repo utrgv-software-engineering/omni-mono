@@ -274,13 +274,20 @@ pub fn exec(config: SandboxConfig) -> Result<u8> {
     }
     args.extend(config.command);
 
-    let status = Command::new(&bwrap)
-        .args(&args)
+    let mut cmd = Command::new(&bwrap);
+    cmd.args(&args)
         .stdin(std::process::Stdio::inherit())
         .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .status()
-        .context("failed to spawn bwrap")?;
+        .stderr(std::process::Stdio::inherit());
+
+    // --- Process count limit ---
+    // Applied in the child pre-exec so bwrap and everything it runs inherit
+    // the RLIMIT_NPROC cap. If it can't be applied, the spawn fails (closed).
+    if let Some(limit) = config.pids_limit {
+        super::apply_pids_limit(&mut cmd, limit);
+    }
+
+    let status = cmd.status().context("failed to spawn bwrap")?;
 
     Ok(status.code().unwrap_or(1) as u8)
 }
@@ -342,6 +349,7 @@ mod tests {
             cwd: None,
             command: vec!["/bin/true".into()],
             protected_subpaths: vec![],
+            pids_limit: None,
         };
         let code = exec(config).expect("exec should succeed");
         assert_eq!(code, 0, "/bin/true should exit 0");
@@ -359,6 +367,7 @@ mod tests {
             cwd: None,
             command: vec!["/bin/false".into()],
             protected_subpaths: vec![],
+            pids_limit: None,
         };
         let code = exec(config).expect("exec should succeed");
         assert_eq!(code, 1, "/bin/false should exit 1");
@@ -382,6 +391,7 @@ mod tests {
                 "strace -e trace=none /bin/true 2>&1; test $? -ne 0".into(),
             ],
             protected_subpaths: vec![],
+            pids_limit: None,
         };
         let code = exec(config).expect("exec should succeed");
         assert_eq!(code, 0, "ptrace should be blocked by seccomp");
@@ -408,9 +418,34 @@ mod tests {
                 "touch .git/test 2>/dev/null && exit 1; touch allowed_file && exit 0".into(),
             ],
             protected_subpaths: vec![".git".into()],
+            pids_limit: None,
         };
         let code = exec(config).expect("exec should succeed");
         assert_eq!(code, 0, ".git should be read-only but workspace should be writable");
+    }
+
+    #[test]
+    #[ignore] // requires bwrap installed
+    fn sandbox_pids_limit_visible_inside_sandbox() {
+        // `ulimit -u` inside the sandbox should report the configured cap
+        // (or lower — RLIMIT_NPROC clamps to the hard limit).
+        let workspace = tempfile::tempdir().unwrap();
+        let config = SandboxConfig {
+            workspace: workspace.path().to_path_buf(),
+            ro_binds: vec![],
+            rw_binds: vec![],
+            allow_net: false,
+            cwd: None,
+            command: vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "test \"$(ulimit -u)\" -le 4321".into(),
+            ],
+            protected_subpaths: vec![],
+            pids_limit: Some(4321),
+        };
+        let code = exec(config).expect("exec should succeed");
+        assert_eq!(code, 0, "RLIMIT_NPROC should be capped inside the sandbox");
     }
 
     // --- Helper ---
@@ -435,6 +470,7 @@ mod tests {
             cwd: None,
             command: vec!["/bin/sh".into(), "-c".into(), cmd.into()],
             protected_subpaths,
+            pids_limit: None,
         }
     }
 
@@ -486,6 +522,7 @@ mod tests {
                 "echo hello > testfile && cat testfile | grep -q hello".into(),
             ],
             protected_subpaths: vec![],
+            pids_limit: None,
         };
         let code = exec(config).expect("exec should succeed");
         assert_eq!(code, 0, "workspace should be writable");
@@ -637,6 +674,7 @@ mod tests {
                 ),
             ],
             protected_subpaths: vec![],
+            pids_limit: None,
         };
         let code = exec(config).expect("exec should succeed");
         assert_eq!(code, 0, "ro_bind should be readable but not writable");
@@ -661,6 +699,7 @@ mod tests {
                 format!("echo test > {mount_target}/write_test"),
             ],
             protected_subpaths: vec![],
+            pids_limit: None,
         };
         let code = exec(config).expect("exec should succeed");
         assert_eq!(code, 0, "rw_bind should be writable");
@@ -692,6 +731,7 @@ mod tests {
                 ),
             ],
             protected_subpaths: vec![".git".into()],
+            pids_limit: None,
         };
         let code = exec(config).expect("exec should succeed");
         assert_eq!(code, 0, ".git in rw_bind should be read-only");
@@ -715,6 +755,7 @@ mod tests {
                 format!("test \"$(pwd)\" = \"{}\"", subdir.to_string_lossy()),
             ],
             protected_subpaths: vec![],
+            pids_limit: None,
         };
         let code = exec(config).expect("exec should succeed");
         assert_eq!(code, 0, "cwd should match the configured directory");
@@ -737,6 +778,7 @@ mod tests {
                 format!("test \"$(pwd)\" = \"{ws_str}\""),
             ],
             protected_subpaths: vec![],
+            pids_limit: None,
         };
         let code = exec(config).expect("exec should succeed");
         assert_eq!(code, 0, "cwd should default to workspace");
@@ -755,6 +797,7 @@ mod tests {
             cwd: None,
             command: vec![],
             protected_subpaths: vec![],
+            pids_limit: None,
         };
         let result = exec(config);
         assert!(result.is_err(), "empty command should be rejected");
@@ -782,6 +825,7 @@ mod tests {
                 "echo hello > testfile && test -f testfile".into(),
             ],
             protected_subpaths: vec![],
+            pids_limit: None,
         };
         let code = exec(config).expect("exec should succeed");
         assert_eq!(code, 0, "workspace paths with spaces should work");
@@ -810,6 +854,7 @@ mod tests {
                  touch workspace_ok && exit 0".into(),
             ],
             protected_subpaths: vec![".git".into(), ".env".into(), ".codex".into()],
+            pids_limit: None,
         };
         let code = exec(config).expect("exec should succeed");
         assert_eq!(code, 0, "all protected subpaths should be read-only");
@@ -834,6 +879,7 @@ mod tests {
                 "echo pwned > escape_link 2>/dev/null && exit 1; exit 0".into(),
             ],
             protected_subpaths: vec![],
+            pids_limit: None,
         };
         let code = exec(config).expect("exec should succeed");
         assert_eq!(code, 0, "symlink writes should not escape sandbox");
