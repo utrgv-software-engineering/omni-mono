@@ -170,9 +170,7 @@ This project also includes a voice-optimized agent spec (`voice_agent`). How you
 ├── omni_code/            # the installable product package
 │   ├── project.yml       # project manifest (paths relative to it)
 │   ├── agents/           # agent specs + instructions + context factories
-│   ├── tools/            # product-specific tools
 │   ├── capabilities/     # capability-pack overlays
-│   ├── server_functions/ # product server functions
 │   └── overlays/         # project.yml overlays (e.g. platform security)
 ├── evaluations/          # eval scenarios/measures (repo-only, not packaged)
 ├── tests/

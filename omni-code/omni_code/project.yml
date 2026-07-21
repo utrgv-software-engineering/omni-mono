@@ -52,8 +52,6 @@ sessions:
 # loader tolerates missing dirs).
 paths:
   agents: agents
-  tools: tools
-  server_functions: server_functions
   capabilities: capabilities
   # The shipped provider/model catalog (data only). The framework builds
   # + installs the process-wide ModelConfigStore from it at product

@@ -30,8 +30,6 @@ def test_all_agent_support_packages_are_discovered():
 
     assert expected_agent_packages <= discovered
     assert "omni_code.agents.worker" in discovered
-    assert "omni_code.tools" in discovered
-    assert "omni_code.server_functions" in discovered
 
     # The packaged layout must not leak generic top-level package names —
     # that's the collision class the restructure eliminated.
