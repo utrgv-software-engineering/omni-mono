@@ -6,9 +6,9 @@ batched ``exec``, PTY shells, and the exec-based file ops — is wrapped in
 the standalone `omni-sandbox <https://github.com/>`_ binary::
 
     omni-sandbox exec --workspace <manifest root>
-        [--ro-bind DIR]... [--rw-bind DIR]...
         [--net]                       # only when network: unrestricted
         [--protect SUBPATH]...        # per profile protected subpath
+        [--ro-bind DIR]... [--rw-bind DIR]...
         -- <command...>
 
 which gives platform-native process isolation (Linux: bubblewrap + seccomp;
@@ -50,6 +50,10 @@ from agents.sandbox.sandboxes.unix_local import (
     UnixLocalSandboxSessionState,
 )
 
+from omniagents.core.sandbox.process_relaunch import (
+    SandboxBind,
+    omni_sandbox_exec_argv,
+)
 from omniagents.core.sandbox.unix_local_extended import (
     ExtendedUnixLocalSandboxClient,
     ExtendedUnixLocalSandboxSession,
@@ -135,21 +139,22 @@ class ProcessSandboxSession(ExtendedUnixLocalSandboxSession):
         env: Mapping[str, str],
     ) -> list[str]:
         _ = env  # host env is inherited through the wrapper process
-        argv = [self._omni_sandbox_binary, "exec", "--workspace", str(workspace_root)]
-        for mount in self._omni_sandbox_ro_binds:
-            argv.extend(["--ro-bind", mount])
-        for mount in self._omni_sandbox_rw_binds:
-            argv.extend(["--rw-bind", mount])
-        if self._omni_sandbox_allow_net:
-            argv.append("--net")
-        # One --protect per subpath — a comma-joined value would be read as
-        # a single (wrong) subpath name. None → omit entirely so the
+        # Canonical argv construction is shared with the governance relaunch
+        # path (process_relaunch) so the wire format cannot drift. The
+        # builder emits one --protect per subpath (comma-joined would be
+        # read as a single, wrong subpath name); None → no flag, so the
         # binary's own defaults (.git/.env/.codex) apply.
-        for subpath in self._omni_sandbox_protected_subpaths or ():
-            argv.extend(["--protect", subpath])
-        argv.append("--")
-        argv.extend(command_parts)
-        return argv
+        return omni_sandbox_exec_argv(
+            self._omni_sandbox_binary,
+            str(workspace_root),
+            allow_net=self._omni_sandbox_allow_net,
+            protected_subpaths=self._omni_sandbox_protected_subpaths or (),
+            binds=[
+                *(SandboxBind(m) for m in self._omni_sandbox_ro_binds),
+                *(SandboxBind(m, writable=True) for m in self._omni_sandbox_rw_binds),
+            ],
+            command=command_parts,
+        )
 
 
 class ProcessSandboxClient(ExtendedUnixLocalSandboxClient):
