@@ -25,4 +25,6 @@ instructions: |
     carries only the exit code, not output). Not for waiting.
   - `bash_kill` terminates a job (SIGTERM, then SIGKILL).
   - Prefer `rg <pattern>` for text search and `rg --files` for file
-    discovery over `cat`/`grep`/`find` pipelines.
+    discovery over `cat`/`grep`/`find` pipelines — and over the
+    filesystem discovery tools when piping/chaining helps (`| head`,
+    `| xargs`), which those tools cannot do.

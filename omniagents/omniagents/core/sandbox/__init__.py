@@ -24,13 +24,21 @@ from .factory import (
 # subclass registry so manifests using their ``type`` strings resolve
 # correctly. Must happen before any manifest is parsed.
 from .authenticated_git_repo import AuthenticatedGitRepo, configure_host_credentials
+from .container_runtime import (
+    DEFAULT_RUNTIME_ENV_VAR,
+    container_runtime,
+    container_runtime_available,
+)
 from .local_git_archive import LocalGitArchive, LocalGitArchiveError
 from .partial_clone_git_repo import PartialCloneGitRepo
 from .permissive_local_dir import PermissiveLocalDir, PermissiveLocalDirError
 
 __all__ = [
     "AuthenticatedGitRepo",
+    "DEFAULT_RUNTIME_ENV_VAR",
     "configure_host_credentials",
+    "container_runtime",
+    "container_runtime_available",
     "LocalGitArchive",
     "LocalGitArchiveError",
     "PartialCloneGitRepo",
