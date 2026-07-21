@@ -263,6 +263,10 @@ include-package-data = true
     "templates/*",
     "templates/**/*",
 ]
+# Default worker instructions template ships next to its loader module.
+"omniagents.core.workers" = [
+    "*.md",
+]
 # Pyodide worker — pure JS, no Python at runtime, but the .mjs has to ship
 # with the wheel so PyodideWorkspace can spawn it via importlib.resources.
 "omniagents.workspace.pyodide_worker" = [
