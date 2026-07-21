@@ -187,25 +187,11 @@ async def _summarize_with_utility_agent(
 # ---------------------------------------------------------------------------
 
 
-def _serve(args: List[str]) -> Optional[int]:
-    """Host-side agent server backed by a long-lived sandbox session."""
-    from omni_code.serve_cli import main as serve_main
-
-    return serve_main(args)
-
-
 def _sandbox(args: List[str]) -> Optional[int]:
     """Run Omni Code inside a Docker sandbox."""
     from omni_code.sandbox_cli import main as sandbox_main
 
     return sandbox_main(args)
-
-
-def _sandbox_host(args: List[str]) -> Optional[int]:
-    """Host-side sandbox supervisor for the desktop launcher."""
-    from omni_code.sandbox_host_cli import main as sandbox_host_main
-
-    return sandbox_host_main(args)
 
 
 def _sessions(args: List[str]) -> int:
@@ -222,9 +208,13 @@ def _sessions(args: List[str]) -> int:
     )
 
 
+# ``serve`` and ``sandbox-host`` are NOT overridden: the framework's
+# reserved defaults (omniagents.product_serve) are launcher-complete for
+# omni-code — same argv surface, readiness payload, profile chain
+# (packaged sandbox_profile_default.yml via the manifest-sibling
+# convention), entrypoint spec, and codex registration (conventional on
+# the catalog's openai-oauth provider).
 COMMANDS = {
-    "serve": _serve,
     "sandbox": _sandbox,
-    "sandbox-host": _sandbox_host,
     "sessions": _sessions,
 }

@@ -74,7 +74,7 @@ def maybe_enforce_sandbox() -> None:
     # Skip for subcommands that don't run agents or already provide isolation
     if len(sys.argv) > 1 and sys.argv[1] in {
         "auth", "model", "provider", "update", "sessions",
-        "sandbox",
+        "sandbox", "describe",
         "-h", "--help", "help",
     }:
         return

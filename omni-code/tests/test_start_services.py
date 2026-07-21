@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from omni_code import serve_cli
+from omniagents.core.runtime import serve_harness as serve_cli
 
 
 CODE = serve_cli.ServiceSpec(

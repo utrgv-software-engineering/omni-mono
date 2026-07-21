@@ -10,12 +10,15 @@
 > `omniagents/builtin/tools/sandbox_observe.py`), with first-class session
 > lifecycle proxies in `omniagents/core/sandbox/lifecycle_session.py` and the
 > framework doc in omniagents `docs-internal/SANDBOX_LIFECYCLE.md`.
-> `sandbox.switch` delegates to the executor `serve_cli` installs via
+> `sandbox.switch` delegates to the executor the serve host installs via
 > `omniagents.core.runtime.sandbox_lifecycle.set_switch_executor`
 > (`perform_switch`). The switch *orchestration* below (quiesce, snapshot,
-> rebuild, re-wire, rollback, launcher wiring) still lives in this repo's
-> `serve_cli.py` until the serve-harness lift; this spec remains its
-> reference.
+> rebuild, re-wire, rollback) now lives in the framework's serve harness
+> (`omniagents/core/runtime/serve_harness.py`), and the serve CLI itself is
+> the framework's reserved subcommand (`omniagents/product_serve.py`; wire
+> contract in omniagents `docs/serve-protocol.md`) — this repo's
+> `serve_cli.py` is deleted. This spec remains the design reference; code
+> references below are historical (`omni_code/serve_cli.py` line numbers).
 
 ## Goal
 

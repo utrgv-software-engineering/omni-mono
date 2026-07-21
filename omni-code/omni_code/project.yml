@@ -19,9 +19,12 @@ product:
     command_hint: omni update
 # CLI surface — dispatched entirely by the framework's product CLI host
 # (omniagents.product_cli.product_main). Reserved commands (model,
-# provider, auth, update, sessions) mount from convention + the product
-# identity above; omni-code-specific behavior (governance preflight,
-# models bootstrap wizard, embedded mode, serve/sandbox commands, the
+# provider, auth, update, sessions, serve, sandbox-host, describe) mount
+# from convention + the product identity above — serve/sandbox-host are
+# the framework's launcher-contract defaults (omniagents.product_serve),
+# which pick up the packaged sandbox_profile_default.yml sibling of this
+# file; omni-code-specific behavior (governance preflight, models
+# bootstrap wizard, embedded mode, the docker `sandbox` command, the
 # coding-flavored sessions summarizer) lives in the extensions module.
 cli:
   default_mode: ink

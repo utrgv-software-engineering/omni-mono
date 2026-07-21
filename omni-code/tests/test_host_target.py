@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from omni_code import serve_cli
+from omniagents.core.runtime import serve_harness as serve_cli
 from omni_code.sandbox_profile import TerminalSpec, resolve_profile
 from omniagents.rpc.terminal_backends import (
     HostPtyBackend,

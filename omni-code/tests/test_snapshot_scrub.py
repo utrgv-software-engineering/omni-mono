@@ -14,7 +14,10 @@ import tarfile
 from pathlib import Path
 from types import SimpleNamespace
 
-from omni_code.serve_cli import _safe_symlink_target, _scrub_session_snapshot
+from omniagents.core.runtime.serve_harness import (
+    _safe_symlink_target,
+    _scrub_session_snapshot,
+)
 
 
 def _add_file(tar: tarfile.TarFile, name: str, data: bytes) -> None:
