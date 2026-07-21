@@ -59,7 +59,7 @@ exclude = [
 
 [tool.setuptools.package-data]
 # Everything ships inside the omni_code package: the project manifest,
-# agent specs/instructions, capability YAMLs, overlays, and the default
+# agent specs/instructions, capability YAMLs, and the default
 # sandbox profile.
 "omni_code" = [
     "project.yml",
@@ -79,7 +79,6 @@ exclude = [
     # (omniagents.core.project.prompts), so they must ship.
     "prompts/*.md",
     "capabilities/*.yml",
-    "overlays/*.yml",
 ]
 "omni_agents.omni" = ["*.yml", "*.md"]
 "omni_agents.voice_agent" = ["*.yml", "*.md"]

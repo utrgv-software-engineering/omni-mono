@@ -82,16 +82,6 @@ install_project_worker_defaults()
 # omniagents.core.runtime.slash_agents runner) whenever no Python
 # handler is registered — nothing to wire here.
 
-# Platform detection: the framework knows no product config paths; point
-# its stored-credentials lookup at omni-code's `omni auth login` store.
-from omniagents.core.providers.platform.bootstrap import (  # noqa: E402
-    set_platform_credentials_loader,
-)
-
-from omniagents.core.providers.platform.client import load_credentials as _load_platform_credentials  # noqa: E402
-
-set_platform_credentials_loader(_load_platform_credentials)
-
 
 def build_available_skills_block(variables: Dict[str, Any]) -> str:
     """Render the available-skills prompt block for the derived skill roots.

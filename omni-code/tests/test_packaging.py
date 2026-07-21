@@ -69,7 +69,6 @@ def test_wheel_is_fully_self_contained(tmp_path):
     assert "omni_code/prompts/goal_initial.md" in names
     assert "omni_code/prompts/goal_tick.md" in names
     assert "omni_code/prompts/loop.md" in names
-    assert "omni_code/overlays/platform.yml" in names
     assert "omni_code/sandbox_profile_default.yml" in names
 
     # No generic top-level packages escape into site-packages.

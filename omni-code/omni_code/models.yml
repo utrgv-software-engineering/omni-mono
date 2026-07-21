@@ -2,8 +2,8 @@
 # `paths.model_catalog`. The framework parses it at product bootstrap
 # (`import omni_code`) and installs a ModelConfigStore over it with the
 # conventional hooks (config dir from the product identity, auth-gated
-# platform model governance, codex OAuth discovery for the openai-oauth
-# provider, platform credential vending). Users add their own
+# codex OAuth discovery for the openai-oauth
+# provider). Users add their own
 # providers/models via ~/.config/omni_code/models.json, which merges
 # over (and can override) these defaults.
 #
