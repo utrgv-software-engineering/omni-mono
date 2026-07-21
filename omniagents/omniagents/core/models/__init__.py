@@ -109,6 +109,9 @@ def reset_model_store() -> None:
     _DEFAULT_STORE = None
     _SETUP_HINT = "No model configured."
     _EXPLICIT_HINT = False
+    from .catalog import _reset_catalog_store_cache
+
+    _reset_catalog_store_cache()
 
 
 # Imported after set_model_store/model_store exist: runtime.py resolves the

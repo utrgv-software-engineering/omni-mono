@@ -288,6 +288,16 @@ def test_explicit_set_model_store_after_catalog_install_wins(tmp_path):
     assert model_store() is explicit
 
 
+def test_repeat_install_of_same_catalog_reuses_the_store(tmp_path):
+    # bootstrap_product at package import, load_project later: everything
+    # bound to the early store must stay bound to the live one.
+    root = _product_dir(tmp_path)
+    bootstrap_product(root)
+    first = model_store()
+    assert install_model_catalog(root / "project.yml") is first
+    assert model_store() is first
+
+
 def test_invalid_declared_catalog_fails_loud_at_bootstrap(tmp_path):
     root = _product_dir(tmp_path, catalog="providers: 3\n")
     with pytest.raises(ValueError, match="'providers' must be a mapping"):

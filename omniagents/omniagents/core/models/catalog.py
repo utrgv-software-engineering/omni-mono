@@ -316,22 +316,39 @@ def build_catalog_store(catalog: ModelCatalog) -> ModelConfigStore:
     )
 
 
+# Stores already built per catalog file: repeated conventional installs
+# of the same catalog (bootstrap_product at package import, load_project
+# later) must hand back the same store instance, so everything bound to
+# the process-wide store early stays bound to the live one.
+_built_stores: Dict[Path, ModelConfigStore] = {}
+
+
+def _reset_catalog_store_cache() -> None:
+    """Drop built-store memoization (tests; called by reset_model_store)."""
+    _built_stores.clear()
+
+
 def install_model_catalog(
     manifest_path: Any, *, data: Optional[Mapping[str, Any]] = None
 ) -> Optional[ModelConfigStore]:
     """Install the manifest-declared catalog's store as the process default.
 
-    Returns the built store when the manifest declares
-    ``paths.model_catalog`` (installed via the default seam — an explicit
+    Returns the store when the manifest declares ``paths.model_catalog``
+    (installed via the default seam — an explicit
     :func:`omniagents.core.models.set_model_store` still wins), or None
-    when no catalog is declared. Raises on a declared-but-invalid
-    catalog file, so packaging bugs surface at bootstrap.
+    when no catalog is declared. Idempotent per catalog file: installing
+    the same catalog again re-installs the same store instance. Raises on
+    a declared-but-invalid catalog file, so packaging bugs surface at
+    bootstrap.
     """
     catalog_path = model_catalog_path(manifest_path, data=data)
     if catalog_path is None:
         return None
-    catalog = load_model_catalog(catalog_path)
-    store = build_catalog_store(catalog)
+    key = catalog_path.resolve()
+    store = _built_stores.get(key)
+    if store is None:
+        store = build_catalog_store(load_model_catalog(catalog_path))
+        _built_stores[key] = store
 
     from omniagents.core.product import product_info
 

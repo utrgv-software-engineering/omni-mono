@@ -123,6 +123,12 @@ tracing:
   - **server_functions**: Server functions directory (default: `server_functions`)
   - **evaluations**: Evaluation configs directory (default: `evaluations`)
   - **target**: Build output directory (default: `target`)
+  - **model_catalog**: A YAML file (manifest-relative, e.g. `models.yml`)
+    declaring the project's shipped provider/model catalog — `providers:`,
+    `default_model:`, `default_provider:`. The framework builds the
+    process-wide model store from it with conventional hooks at product
+    bootstrap and project load; an explicit `set_model_store` wins. See
+    `omniagents.core.models.catalog` for the full schema and timing contract.
 - **agents** (required): Agent configuration
   - **entrypoint**: Default agent key to run
   - **include**: Glob patterns for agents to include
