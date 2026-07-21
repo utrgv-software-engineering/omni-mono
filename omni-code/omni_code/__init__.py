@@ -1,7 +1,7 @@
 """omni-code: a full-stack coding agent built with OmniAgents.
 
 This package is side-effect free on import. omni-code's product
-identity — CLI program name, platform slug, config-dir name, updater
+identity — CLI program name, product slug, config-dir name, updater
 knobs — is declared exactly once in the ``product:`` section of the
 packaged ``project.yml`` and resolved by the framework:
 

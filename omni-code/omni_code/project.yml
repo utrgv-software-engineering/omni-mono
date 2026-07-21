@@ -4,7 +4,7 @@ allow_user_models: true
 # Product identity — the single declaration of who this product is.
 # Installed process-wide by omni_code.identity (bootstrap_product) and
 # read by every framework subsystem default: CLI prog rendering, the
-# per-user config dir, the platform policy slug + credential store, the
+# per-user config dir, the product slug, the
 # codex token store, the self-updater, and sandbox-profile user layers.
 product:
   name: omni-code
