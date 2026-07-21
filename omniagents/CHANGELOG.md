@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Builtin `workspace_info` capability pack (`fs_get_cwd`, `fs_get_workspace_root`, `fs_get_home`, `fs_list_dir`, `fs_get_sources`), lifted from omni-code. Fixes an inverted dependency: the web backend's workspace picker feature-detects these names (`App.tsx` / `WorkspacePicker.tsx`) but only omni-code defined them — the contract and implementation now live together. `fs_list_dir` is sandbox-aware (browses the container filesystem via `SandboxWorkspace`, clamped to the manifest root) when an embedder installs providers via the new `omniagents.core.runtime.workspace_info` seams: `set_workspace_sources_provider` (defaults to no sources), `set_manifest_root_provider`, and `set_sandbox_session_provider` — standalone servers fall back to the host filesystem.
+- Builtin `terminal` capability pack (`terminal.create` / `terminal.close`), lifted from omni-code — the server-function half of the terminal contract the framework already shipped (`TerminalManager`, `/ws/terminal`, PTY backends). Dual binding modes: a sandboxing embedder installs a configured `TerminalManager` on the service (`service.terminal_manager`) whose defaults win; standalone servers lazily fall back to a host-pty manager with cwd resolved from the session context. `attach_terminal_manager` / `terminal_supported` helpers exported from `omniagents.builtin.server_functions.terminal`.
+- Note: omni-code's `session_ensure` server function is intentionally NOT lifted — it only proxied the framework's own builtin `session.ensure` (registered by `AgentService`), which clients (including the web UI, which never calls `session_ensure`) should use directly. The omni-code shim dies downstream.
+
 ## [0.7.19] - 2026-07-18
 
 ### Added

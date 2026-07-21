@@ -1,0 +1,9 @@
+name: terminal
+# Control-plane only: interactive terminals for the web UI. terminal.create
+# hands back a token the client redeems on the /ws/terminal socket
+# (omniagents/rpc/terminal.py). Sandboxing embedders install a configured
+# TerminalManager on the service (service.terminal_manager) so shells run
+# inside the user's sandbox; standalone servers fall back to a host pty.
+server_functions:
+  - terminal.create
+  - terminal.close
