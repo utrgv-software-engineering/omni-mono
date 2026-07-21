@@ -56,6 +56,8 @@ exclude = [
     "sandbox_profile_default.yml",
     "sandbox/*",
     "agents/*/*.yml",
+    # Also matches agents/_shared/*.md — the {% include %} fragment files
+    # shared by the omni and voice_agent instruction templates.
     "agents/*/*.md",
     "capabilities/*.yml",
     "overlays/*.yml",

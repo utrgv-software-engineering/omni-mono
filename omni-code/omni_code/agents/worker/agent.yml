@@ -1,7 +1,13 @@
 name: worker
 label: Worker
 description: "Autonomous coding worker for parallel subtasks"
-instructions_file: instructions.md
+
+# No instructions/instructions_file on purpose: WorkerManager applies the
+# framework's DEFAULT_WORKER_INSTRUCTIONS (omniagents/core/workers/
+# worker_instructions.md) to spawned workers whose spec carries only the
+# loader fallback. omni-code's coding-specific delta (no git commits,
+# "Files modified" output emphasis) rides in via the template's
+# `additional_instructions` hook, supplied by build_worker_context.
 
 additional_tools_dirs:
   - ../../tools
