@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Builtin instruction fragments: the framework now ships generic agent-harness instruction fragments as data files under `omniagents/builtin/instructions/` (`personality.md`, `proactiveness.md`, `agents_md_spec.md`, `task_execution.md` — the last parameterized by `task_execution_agent_descriptor`, defaulting to "agent"), lifted from omni-code's `agents/_shared/`. `instruction_search_paths` appends the builtin directory *last*, so a bare `{% include "proactiveness.md" %}` falls through to the builtin only when no project fragment of that name exists — project fragments shadow builtins by name, mirroring builtin-capability/agent precedence. The include loader additionally mounts the builtin directory under the explicit `builtin/` prefix (`{% include "builtin/task_execution.md" %}`), which bypasses shadowing — the escape hatch that lets a project fragment extend its builtin namesake (include + delta) without recursing into itself. `builtin_instruction_fragments_dir()` exposes the location; `InstructionIncludeNotFoundError` now lists the builtin directory among the searched paths.
+
 ## [0.7.21] - 2026-07-18
 
 ### Added
