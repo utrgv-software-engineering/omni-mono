@@ -440,11 +440,28 @@ class RealtimeSession:
             # Use pre-built context if available
             context_dict = self.spec.context if isinstance(self.spec.context, dict) else {}
 
-        # Render Jinja2 template if context is available
-        if context_dict and raw_instructions:
+        # Include search paths for {% include %} fragments (set by the YAML
+        # loader from the instructions file's directory + _shared conventions).
+        search_paths = getattr(self.spec, "instructions_search_paths", None)
+        # Render Jinja2 when context is available, or when the template uses
+        # {% include %} and search paths exist (voice agents share fragments
+        # with their text siblings). Templates without includes and without
+        # context keep the historical pass-through behavior.
+        import re as _re
+
+        has_include = bool(
+            raw_instructions
+            and _re.search(r"\{%-?\s*(include|import|from)\b", raw_instructions)
+        )
+        if raw_instructions and (context_dict or (search_paths and has_include)):
             from omniagents.core.utils.jinja_instructions import render_template
             try:
-                instructions = render_template(raw_instructions, silent_undefined=True, **context_dict)
+                instructions = render_template(
+                    raw_instructions,
+                    silent_undefined=True,
+                    search_paths=search_paths,
+                    **context_dict,
+                )
             except Exception as e:
                 logger.warning(f"Failed to render instructions template: {e}")
                 instructions = raw_instructions

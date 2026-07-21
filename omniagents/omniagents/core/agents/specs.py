@@ -420,3 +420,17 @@ class AgentSpec:
     _runtime_hooks_registry: Optional[Dict[str, Any]] = field(default=None, repr=False)
 
     voice_spec: Optional["AgentSpec"] = field(default=None, repr=False)
+
+    # --- Instruction template includes ---
+    instructions_search_paths: Optional[List[Any]] = None
+    """Directories searched, in order, for ``{% include %}`` fragments when the
+    agent's Jinja2 instructions are rendered.
+
+    Populated by the YAML loader via
+    :func:`omniagents.core.utils.jinja_instructions.instruction_search_paths`:
+    the instructions file's own directory, its ``_shared/`` subdirectory, the
+    ``_shared/`` sibling of that directory (the ``agents/_shared/`` convention),
+    plus any ``paths.instruction_fragments`` directories from project.yml.
+    ``None`` (e.g. for agents built in Python) leaves includes unsupported,
+    matching pre-include behavior.
+    """

@@ -149,6 +149,43 @@ instructions: |
   - Ask clarifying questions when needed
 ```
 
+#### Shared instruction fragments ({% include %})
+
+Instructions are Jinja2 templates and may include shared fragments so
+sibling agents (e.g. a text agent and its voice counterpart) don't drift
+apart by copying the same lines:
+
+```jinja
+{# agents/voice/instructions.md #}
+You are the voice interface.
+{% include "core_rules.md" %}
+{% include "tone.md" %}
+```
+
+For `{% include "name.md" %}` the fragment is looked up, in order, in:
+
+1. the directory containing the instructions file (for inline
+   `instructions:`, the directory containing `agent.yml`) — relative
+   subpaths like `{% include "fragments/safety.md" %}` work too,
+2. a `_shared/` subdirectory of that directory,
+3. a `_shared/` directory that is a *sibling* of that directory — with the
+   strict `agents/<key>/agent.yml` layout this is `agents/_shared/`, the
+   recommended home for fragments shared across agents,
+4. any directories listed under `paths.instruction_fragments` in
+   `project.yml` (resolved relative to the project root; applies when the
+   agent is loaded through the project loader):
+
+```yaml
+# project.yml
+paths:
+  instruction_fragments: prompts/shared   # string or list
+```
+
+Includes nest (a fragment may itself `{% include %}` another) and render
+with the same Jinja2 context as the parent template. A missing fragment
+raises an error naming the searched directories. Templates that use no
+includes render exactly as before.
+
 ### Tools
 
 #### tools

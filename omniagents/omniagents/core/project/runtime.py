@@ -191,6 +191,10 @@ def load_project(
     capabilities_dirs = _resolve_many("capabilities", "capabilities")
     eval_dir = _resolve_many("evaluations", "evaluations")
     target_dir = _resolve_many("target", "target")
+    # Optional shared instruction-fragment dirs for {% include %} in agent
+    # instructions. No default: the file-relative `_shared/` conventions are
+    # always active; this key only adds project-level fragment roots.
+    instruction_fragments_dirs = _resolve_many("instruction_fragments")
     paths: Dict[str, List[Path]] = {
         "tools": tools_dirs,
         "guardrails": guardrails_dirs,
@@ -199,6 +203,7 @@ def load_project(
         "capabilities": capabilities_dirs,
         "evaluations": eval_dir,
         "target": target_dir,
+        "instruction_fragments": instruction_fragments_dirs,
     }
 
     agents_section = proj.get("agents") or {}
@@ -566,6 +571,10 @@ def build_spec_from_project(
         "tracing": project.tracing_defaults or None,
         "settings": project.settings_defaults or [],
         "security": project.security.to_dict(),
+        # paths.instruction_fragments — extra {% include %} search roots
+        "instruction_fragments": [
+            str(p) for p in (project.paths.get("instruction_fragments") or [])
+        ],
     }
     pdefs.update(project.ui_defaults or {})
     # Builtin server functions are capability-gated (registered by the
