@@ -13,7 +13,7 @@ import omniagents.core.updater as fw_updater
 from omniagents.core.updater import UpdateCheckResult
 
 import omni_code.governance as governance
-from omni_code.cli import cli_main
+from omniagents.product_cli import main as cli_main
 
 
 @pytest.fixture(autouse=True)

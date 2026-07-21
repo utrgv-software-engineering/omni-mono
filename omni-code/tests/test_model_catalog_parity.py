@@ -10,10 +10,14 @@ module returned (snapshotted below from default_models.py at deletion),
 and the installed store must serve them as its default layer.
 """
 
-from omniagents.core.models import model_store
+from omniagents.core.models import install_model_catalog, model_store
 from omniagents.core.models.catalog import load_model_catalog
+from omniagents.core.product import product_info
 
-import omni_code
+#: The discovered product manifest — the same path bootstrap installs
+#: the catalog from; installed here so the store tests below see it.
+PROJECT_MANIFEST = product_info().manifest_path
+install_model_catalog(PROJECT_MANIFEST)
 
 # --- Snapshot of the deleted omni_code/default_models.py -------------------
 
@@ -72,7 +76,7 @@ OLD_DEFAULT_PROVIDERS = {
 OLD_DEFAULT_MODEL_NAME = "gpt-5.1"
 OLD_DEFAULT_PROVIDER_NAME = "openai"
 
-CATALOG_PATH = omni_code.PROJECT_MANIFEST.parent / "models.yml"
+CATALOG_PATH = PROJECT_MANIFEST.parent / "models.yml"
 
 
 def test_catalog_providers_identical_to_old_python_catalog():
@@ -98,6 +102,4 @@ def test_bootstrap_reinstall_keeps_the_same_store_instance():
     # Everything bound at import time must stay bound to the live store:
     # re-installing the packaged catalog (load_project does this) hands
     # back the identical instance.
-    from omniagents.core.models import install_model_catalog
-
-    assert install_model_catalog(omni_code.PROJECT_MANIFEST) is model_store()
+    assert install_model_catalog(PROJECT_MANIFEST) is model_store()

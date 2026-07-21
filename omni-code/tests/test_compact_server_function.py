@@ -13,6 +13,13 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
+from omniagents.core.models import install_model_catalog
+from omniagents.core.product import product_info
+
+# The catalog store, installed from the discovered product manifest —
+# what product bootstrap does before any CLI run.
+install_model_catalog(product_info().manifest_path)
+
 # Importing the omni context module installs the summarizer (module-level
 # wiring, same as the recap summarizer).
 import omni_code.agents.omni.context as context_mod

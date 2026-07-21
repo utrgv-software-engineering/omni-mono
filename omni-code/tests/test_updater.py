@@ -4,8 +4,8 @@ The update mechanism (index scraping, version comparison, throttled
 notice, pipx upgrade) lives in ``omniagents.core.updater`` and is tested
 upstream. What omni-code owns — and what these tests cover — is the
 declaration: the ``product:`` section of the packaged project.yml
-(installed process-wide by the ``omni_code`` package import), from which
-``UpdaterConfig.from_product()`` derives the Gemfury index, the
+(resolved process-wide by the framework's entry-point discovery), from
+which ``UpdaterConfig.from_product()`` derives the Gemfury index, the
 ``omni-code`` package name, the config-dir cache, and the
 ``OMNI_CODE_*`` env knobs.
 """
@@ -16,16 +16,13 @@ import omniagents.core.updater as fw_updater
 from omniagents.core.product import load_product_info, product_info
 from omniagents.core.updater import UpdaterConfig
 
-import omni_code as product_pkg
-
 
 def _config() -> UpdaterConfig:
     return UpdaterConfig.from_product()
 
 
-def test_product_identity_installed_from_packaged_project_yml():
+def test_product_identity_discovered_from_packaged_project_yml():
     info = product_info()
-    assert info == product_pkg.PRODUCT
     assert info.name == "omni-code"
     assert info.prog == "omni"
     assert info.label == "Omni Code"
@@ -33,8 +30,10 @@ def test_product_identity_installed_from_packaged_project_yml():
     assert info.config_dir_name == "omni_code"
     assert info.windows_config_dir_name == "OmniCode"
     assert info.env_prefix == "OMNI_CODE"
-    # The light parse of the packaged manifest agrees with what's installed.
-    assert load_product_info(product_pkg.PROJECT_MANIFEST) == info
+    # The light parse of the discovered manifest agrees with what's resolved.
+    assert info.manifest_path is not None
+    assert info.manifest_path.name == "project.yml"
+    assert load_product_info(info.manifest_path) == info
 
 
 def test_updater_config_from_product_points_at_gemfury_omni_code():

@@ -37,7 +37,9 @@ from typing import Any
 from omniagents.core.eval.container_routing import ContainerRoutingMixin
 from omniagents.core.sandbox.profiles import resolve_product_profile
 
-import omni_code  # noqa: F401  (installs the product identity from project.yml)
+# Product identity (slug, manifest path for the packaged profile chain)
+# resolves via the framework's entry-point discovery — no bootstrap
+# import needed.
 
 from .workspace_env import WorkspaceEvalEnvironment
 

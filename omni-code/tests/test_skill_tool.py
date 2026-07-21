@@ -2,11 +2,10 @@ from omniagents.builtin.tools.skill_tool import _resolve_skill_path
 from omniagents.core.runtime import serve_state as aws
 from omniagents.core.skills import source_skill_roots
 
-# Importing omni_code bootstraps the product identity (slug omni_code),
-# from which the framework derives the skill layout (workspace
-# .omni_code/skills + source mounts + global config dir) — no provider
-# install; this is the same wiring the running agent gets.
-import omni_code  # noqa: F401
+# The product identity (slug omni_code) resolves via the framework's
+# entry-point discovery — no bootstrap import needed — and from it the
+# framework derives the skill layout (workspace .omni_code/skills +
+# source mounts + global config dir); the same wiring the agent gets.
 
 
 def _write_skill(skill_dir, name, description):

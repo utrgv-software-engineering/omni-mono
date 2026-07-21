@@ -27,8 +27,18 @@ dev = [
 ]
 
 [project.scripts]
-omni = "omni_code.cli:cli_main"
-omni-setup = "omni_code.cli:setup_main"
+# Console scripts are the framework's generic product entries; they find
+# omni-code's packaged project.yml through the entry-point declaration
+# below — no product-side dispatcher module.
+omni = "omniagents.product_cli:main"
+omni-setup = "omniagents.product_cli:setup_main"
+
+[project.entry-points."omniagents.products"]
+# Product discovery: the value is the importable package whose packaged
+# project.yml (with its `product:` section) declares who omni-code is.
+# This is how bare `import omniagents` usage resolves omni-code identity
+# with no bootstrap import.
+omni-code = "omni_code"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

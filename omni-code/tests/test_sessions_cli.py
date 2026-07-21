@@ -13,7 +13,7 @@ import pytest
 
 import omni_code.governance as governance
 from omni_code import cli_extensions
-from omni_code.cli import cli_main
+from omniagents.product_cli import main as cli_main
 import omniagents.core.session.history_db as history_db
 from omniagents.core.paths import get_sessions_db_path
 
