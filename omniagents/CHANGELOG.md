@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The environment-backed eval runner (`run_scenario`) now applies environment-declared env vars (`get_env_vars()`) *before* loading the agent spec, not after. Spec loading reads the process env — notably `XDG_CONFIG_HOME` for `allow_user_mcp_servers` discovery — so environments staging per-scenario config previously had to mutate `os.environ` in `setup()` under a self-managed lock. With no awaits between application and spec load, each concurrent scenario's spec load reads its own values.
 
 
-## [0.7.19] - 2026-07-18
+## [## [Unreleased]] - 2026-07-18
 
 ### Added
 - Builtin `/compact` server function + `compact` capability pack, completing the recap symmetry: checkpoint compaction now ships a summarizer seam (`set_compaction_summarizer` / `compaction_summarizer` in `omniagents.core.runtime.compaction`) and a ready-made summarizer system prompt (`DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS`, lifted from omni-code's compactor agent and domain-neutralized). Products install a summarizer (their compactor agent + model resolution) and activate the pack instead of shipping their own `/compact`.
