@@ -153,14 +153,17 @@ def apply_platform_model_governance() -> None:
     allow_user_models = project.get("allow_user_models", True)
     default_model = project.get("default_model")
 
-    # Mark each provider as governed so downstream code knows it came from the platform
-    for provider_config in platform_providers.values():
-        if isinstance(provider_config, dict):
-            provider_config["_governed"] = True
+    # The write (provider stamping, markers, 0600 perms) is the
+    # framework's; only the policy-key extraction above is omni-code's.
+    from omniagents.core.models import write_governed_config
 
+    from omni_code.config import get_config_dir
 
-    _write_governed_config(
-        platform_providers, default_model, allow_user_models=allow_user_models
+    write_governed_config(
+        get_config_dir(),
+        platform_providers,
+        default_model,
+        allow_user_models=allow_user_models,
     )
     if not allow_user_models:
         # Platform providers replace user config entirely
@@ -176,46 +179,10 @@ def apply_platform_model_governance() -> None:
         )
 
 
-def _write_governed_config(
-    platform_providers: Dict[str, Any],
-    default_model: Optional[str],
-    *,
-    allow_user_models: bool,
-) -> None:
-    """Write the governed model config that takes precedence over user config.
-
-    With ``allow_user_models`` the platform providers form the base that
-    user config merges on top of; without it they replace user config
-    entirely (the flag is read back by the model store's layered merge).
-    """
-    from omni_code.models import get_models_config_path, MODELS_CONFIG_VERSION
-
-    # Write to a separate governed config that takes precedence
-    governed_path = get_models_config_path().parent / "models.governed.json"
-    config = {
-        "version": MODELS_CONFIG_VERSION,
-        "default": default_model,
-        "voice_default": None,
-        "providers": platform_providers,
-        "_governed": True,
-        "_allow_user_models": allow_user_models,
-    }
-    governed_path.parent.mkdir(parents=True, exist_ok=True)
-    governed_path.write_text(json.dumps(config, indent=2))
-    governed_path.chmod(0o600)
-
-
 def load_governed_config() -> Optional[Dict[str, Any]]:
-    """Load the governed model config if it exists."""
-    from omni_code.models import get_models_config_path
+    """Load the governed model config if it exists (framework contract)."""
+    from omniagents.core.models import load_governed_config as _load_governed_config
 
-    governed_path = get_models_config_path().parent / "models.governed.json"
-    if not governed_path.exists():
-        return None
-    try:
-        data = json.loads(governed_path.read_text())
-        if data.get("_governed"):
-            return data
-    except (json.JSONDecodeError, OSError):
-        pass
-    return None
+    from omni_code.config import get_config_dir
+
+    return _load_governed_config(get_config_dir())

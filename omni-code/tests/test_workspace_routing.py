@@ -394,6 +394,15 @@ def test_is_git_dirty_routes_through_workspace():
     assert "status --porcelain" in cmd
 
 
+def _worktree_strategy():
+    """omni-code's ``worktree`` strategy: the framework's multi-source
+    isolation parameterized by workers_runtime's sources mapper (the same
+    instance ``install()`` registers)."""
+    return worker_isolation.MultiSourceWorktreeIsolation(
+        worker_tools._worker_sources, name="worktree"
+    )
+
+
 def test_worker_worktree_ready_checks_git_sources_not_manifest_root(monkeypatch):
     fake = _RecordingWorkspace(root="/workspace")
     monkeypatch.setattr(
@@ -409,7 +418,7 @@ def test_worker_worktree_ready_checks_git_sources_not_manifest_root(monkeypatch)
 
     token = set_workspace(fake)
     try:
-        ready = asyncio.run(worker_tools._is_worker_worktree_ready("/workspace"))
+        ready = asyncio.run(_worktree_strategy().ready("/workspace"))
     finally:
         reset_workspace(token)
 
@@ -431,7 +440,7 @@ def test_create_worker_worktree_for_sources_preserves_mount_layout(monkeypatch):
 
     fake.exec = exec_with_missing_scratch  # type: ignore[method-assign]
 
-    monkeypatch.setattr(worker_tools, "_worktrees_dir", lambda: "/scratch/worktrees")
+    monkeypatch.setattr("omniagents.workspace.scratch_root", lambda: "/scratch")
     monkeypatch.setattr(
         "omni_code.agent_workspace_state.get_manifest_root", lambda: "/workspace"
     )
@@ -450,14 +459,18 @@ def test_create_worker_worktree_for_sources_preserves_mount_layout(monkeypatch):
 
     token = set_workspace(fake)
     try:
-        info = asyncio.run(
-            worker_tools._create_worker_worktree_for_sources("/workspace", "pip")
+        workspace = asyncio.run(
+            _worktree_strategy().prepare(
+                worker_id="pip", parent_workspace_root="/workspace"
+            )
         )
     finally:
         reset_workspace(token)
 
+    info = workspace.metadata
+    assert workspace.root == "/scratch/worktrees/workspace-worker-pip"
     assert info["worktree_path"] == "/scratch/worktrees/workspace-worker-pip"
-    assert [s["mountName"] for s in info["sources"]] == ["api", "web", "notes"]
+    assert [s["name"] for s in info["sources"]] == ["api", "web", "notes"]
     assert info["sources"][0]["worktree_path"].endswith("/api")
     assert info["sources"][1]["source_path"] == "/workspace/web"
     assert info["sources"][1]["worktree_branch"] == "worker/workspace-worker-pip/web"
@@ -483,15 +496,15 @@ def test_remove_worker_worktree_removes_each_source_worktree():
             "parent_workspace": "/workspace",
             "sources": [
                 {
-                    "mountName": "api",
-                    "kind": "local-git",
+                    "name": "api",
+                    "git": True,
                     "source_path": "/host/api",
                     "worktree_path": "/scratch/worktrees/workspace-worker-pip/api",
                     "worktree_branch": "worker/workspace-worker-pip/api",
                 },
                 {
-                    "mountName": "notes",
-                    "kind": "local",
+                    "name": "notes",
+                    "git": False,
                     "source_path": "/host/notes",
                     "worktree_path": "/scratch/worktrees/workspace-worker-pip/notes",
                 },
@@ -501,9 +514,7 @@ def test_remove_worker_worktree_removes_each_source_worktree():
 
     token = set_workspace(fake)
     try:
-        removed = asyncio.run(
-            worker_tools.WorktreeIsolation().cleanup("pip", workspace)
-        )
+        removed = asyncio.run(_worktree_strategy().cleanup("pip", workspace))
     finally:
         reset_workspace(token)
 
