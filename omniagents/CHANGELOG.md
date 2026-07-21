@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `sessions summarize <session_id>` subcommand on the framework sessions CLI (`omniagents.core.session.cli`): history tail-trim (`--tail`, default 200), transcript extraction, shrink-on-context-error summarization via `summarize_with_window_shrink`, and a JSON envelope on stdout. Completes the recap/compaction symmetry for offline session summarization (`omniagents.core.session.summarize`): products install a summarizer with `set_session_summarizer` (their session-summarizer agent + model resolution; the callable receives `(prompt, *, model, project, agent, session_id)`), and `DEFAULT_SESSION_SUMMARY_INSTRUCTIONS` is a ready-made summarizer system prompt (lifted from omni-code's session_summarizer agent and domain-neutralized). The envelope's content keys are a parameter of the flow (`envelope=` on `summarize_session`, `args.summary_envelope` on the CLI mount) with a neutral default (`DEFAULT_SESSION_ENVELOPE`), so products keep their domain-flavored keys.
+
 ## [0.7.19] - 2026-07-18
 
 ### Added
