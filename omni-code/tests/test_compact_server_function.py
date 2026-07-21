@@ -63,8 +63,12 @@ def test_summarizer_runs_compactor_with_framework_instructions(monkeypatch):
         captured.update(kwargs)
         return "summary"
 
+    # The summarizer resolves through the framework's
+    # resolve_service_model_runtime, which reads the store instance.
+    import omni_code.models as models
+
     monkeypatch.setattr(
-        "omni_code.models.resolve_model_for_runtime", fake_resolve_model_for_runtime
+        models._STORE, "resolve_model_for_runtime", fake_resolve_model_for_runtime
     )
     monkeypatch.setattr(
         "omni_code.utility_runs.run_utility_agent", fake_run_utility_agent

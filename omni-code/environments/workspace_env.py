@@ -9,15 +9,13 @@ default, product env vars, and MCP-backed project state (``db_fixture``).
 
 from __future__ import annotations
 
-import asyncio
-import json
 import os
-import shutil
 from pathlib import Path
 from typing import Any, Dict
 
 from omniagents.core.eval.environment import EnvironmentContext
 from omniagents.core.eval.local_workspace import LocalWorkspaceEnvironment
+from omniagents.core.eval.mcp_fixture import UserMcpFixtureStager
 
 _DEFAULT_FIXTURES_DIR = (
     Path(__file__).resolve().parent.parent / "evaluations" / "fixtures" / "workspaces"
@@ -62,7 +60,8 @@ class WorkspaceEvalEnvironment(LocalWorkspaceEnvironment):
     """omni-code's temp-workspace eval environment.
 
     MCP-backed project state (``db_fixture`` field on a scenario):
-        Stages an isolated ``XDG_CONFIG_HOME`` inside the temp dir with an
+        Stages an isolated ``XDG_CONFIG_HOME`` inside the temp dir (via
+        the framework's ``UserMcpFixtureStager``) with an
         ``omni_code/mcp.json`` pointing at the real ``omni-projects-mcp``
         cli (resolved via ``$OMNI_PROJECTS_MCP_CLI`` or the launcher's
         default build path). The agent picks it up via the standard
@@ -72,24 +71,12 @@ class WorkspaceEvalEnvironment(LocalWorkspaceEnvironment):
         If ``evaluations/fixtures/dbs/<name>.db`` exists it is copied;
         otherwise the cli initializes a fresh schema on first open.
 
-        Self-serialising: ``db_fixture`` scenarios mutate
-        ``os.environ['XDG_CONFIG_HOME']`` (because spec loading reads it
-        before ``get_env_vars()`` applies). To stay correct under
-        ``runs_per_prompt`` and parallel scenarios, ``setup()`` holds a
-        class-level lock that ``teardown()`` releases. Scenarios that
-        don't use ``db_fixture`` are unaffected and stay parallelisable.
+        The ``XDG_CONFIG_HOME`` override flows through ``get_env_vars()``
+        — the eval runner applies environment env vars before spec load
+        (where user-MCP config is discovered), so no os.environ mutation
+        or cross-scenario lock is needed and ``db_fixture`` scenarios
+        stay parallelisable.
     """
-
-    # Class-level lock serialising any setup/teardown pair that mutates
-    # XDG_CONFIG_HOME. Lazy-init because asyncio.Lock binds to the running
-    # loop on first await.
-    _xdg_lock: "asyncio.Lock | None" = None
-
-    @classmethod
-    def _get_xdg_lock(cls) -> asyncio.Lock:
-        if cls._xdg_lock is None:
-            cls._xdg_lock = asyncio.Lock()
-        return cls._xdg_lock
 
     def __init__(self, fixtures_dir: str | None = None, **kwargs: Any) -> None:
         super().__init__(
@@ -108,122 +95,66 @@ class WorkspaceEvalEnvironment(LocalWorkspaceEnvironment):
         # Stage MCP-backed project DB if requested. Done last so a failure
         # here surfaces with the workspace already set up (easier to debug).
         db_fixture = scenario.get("db_fixture")
-        original_xdg: str | None = None
-        xdg_overridden = False
         db_path: Path | None = None
         mcp_config_dir: Path | None = None
-        xdg_lock_held = False
+        mcp_env: Dict[str, str] | None = None
         if db_fixture:
-            # Acquire the class-level XDG lock NOW; teardown releases it.
-            # Serialises overlapping db_fixture scenarios so they don't
-            # stomp on each other's os.environ['XDG_CONFIG_HOME'].
-            await self._get_xdg_lock().acquire()
-            xdg_lock_held = True
-            try:
-                mcp_cli = _resolve_mcp_cli()
-                if mcp_cli is None:
-                    env_set = os.environ.get("OMNI_PROJECTS_MCP_CLI")
-                    if env_set:
-                        raise RuntimeError(
-                            f"OMNI_PROJECTS_MCP_CLI={env_set!r} does not point to a file"
-                        )
+            mcp_cli = _resolve_mcp_cli()
+            if mcp_cli is None:
+                env_set = os.environ.get("OMNI_PROJECTS_MCP_CLI")
+                if env_set:
                     raise RuntimeError(
-                        "Scenario specifies db_fixture but omni-projects-mcp cli is "
-                        "not available. Set OMNI_PROJECTS_MCP_CLI to a path to "
-                        "packages/projects-mcp/dist/cli.js, or build the launcher "
-                        f"so the default path resolves: {_LAUNCHER_DEFAULT_MCP_CLI}"
+                        f"OMNI_PROJECTS_MCP_CLI={env_set!r} does not point to a file"
                     )
+                raise RuntimeError(
+                    "Scenario specifies db_fixture but omni-projects-mcp cli is "
+                    "not available. Set OMNI_PROJECTS_MCP_CLI to a path to "
+                    "packages/projects-mcp/dist/cli.js, or build the launcher "
+                    f"so the default path resolves: {_LAUNCHER_DEFAULT_MCP_CLI}"
+                )
 
-                xdg_root = Path(tmp_dir) / "_xdg_config"
-                mcp_config_dir = xdg_root / "omni_code"
-                mcp_config_dir.mkdir(parents=True, exist_ok=True)
+            stager = UserMcpFixtureStager(tmp_dir, product_config_name="omni_code")
+            db_path = stager.stage_file(
+                _DBS_FIXTURES_DIR / f"{db_fixture}.db", "projects.db"
+            )
+            pages_dir = stager.stage_tree(
+                _DBS_FIXTURES_DIR / f"{db_fixture}.pages", "projects"
+            )
 
-                db_path = mcp_config_dir / "projects.db"
-                pages_dir = mcp_config_dir / "projects"
-                pages_dir.mkdir(parents=True, exist_ok=True)
-
-                fixture_db = _DBS_FIXTURES_DIR / f"{db_fixture}.db"
-                if fixture_db.is_file():
-                    shutil.copy2(fixture_db, db_path)
-                fixture_pages = _DBS_FIXTURES_DIR / f"{db_fixture}.pages"
-                if fixture_pages.is_dir():
-                    shutil.copytree(fixture_pages, pages_dir, dirs_exist_ok=True)
-
-                node_bin = os.environ.get("OMNI_PROJECTS_MCP_NODE", "node")
-                mcp_json = {
-                    "mcpServers": {
-                        "omni-projects": {
-                            "type": "stdio",
-                            "command": node_bin,
-                            "args": [
-                                str(mcp_cli),
-                                "--db-path",
-                                str(db_path),
-                                "--pages-dir",
-                                str(pages_dir),
-                            ],
-                        }
+            node_bin = os.environ.get("OMNI_PROJECTS_MCP_NODE", "node")
+            stager.write_mcp_json(
+                {
+                    "omni-projects": {
+                        "type": "stdio",
+                        "command": node_bin,
+                        "args": [
+                            str(mcp_cli),
+                            "--db-path",
+                            str(db_path),
+                            "--pages-dir",
+                            str(pages_dir),
+                        ],
                     }
                 }
-                (mcp_config_dir / "mcp.json").write_text(
-                    json.dumps(mcp_json, indent=2) + "\n"
-                )
+            )
+            mcp_config_dir = stager.config_dir
+            mcp_env = stager.env_vars()
 
-                # Mutate XDG_CONFIG_HOME now: spec loading
-                # (omniagents/core/project/runtime.py:283) reads it before the
-                # runner applies env vars from get_env_vars().
-                original_xdg = os.environ.get("XDG_CONFIG_HOME")
-                os.environ["XDG_CONFIG_HOME"] = str(xdg_root)
-                xdg_overridden = True
-
-                print(
-                    f"[WorkspaceEvalEnvironment] db_fixture={db_fixture!r}: "
-                    f"XDG_CONFIG_HOME={xdg_root} db_path={db_path} mcp_cli={mcp_cli}"
-                )
-            except Exception:
-                # Anything in the staging block failed — release the lock so
-                # we don't deadlock the next scenario (teardown won't run for
-                # a failed setup).
-                self._get_xdg_lock().release()
-                xdg_lock_held = False
-                raise
+            print(
+                f"[WorkspaceEvalEnvironment] db_fixture={db_fixture!r}: "
+                f"XDG_CONFIG_HOME={stager.xdg_root} db_path={db_path} "
+                f"mcp_cli={mcp_cli}"
+            )
 
         context.data.update(
             {
                 "db_fixture": db_fixture,
                 "db_path": str(db_path) if db_path else None,
                 "mcp_config_dir": str(mcp_config_dir) if mcp_config_dir else None,
-                "_original_xdg_config_home": original_xdg,
-                "_xdg_overridden": xdg_overridden,
-                "_xdg_lock_held": xdg_lock_held,
+                "_mcp_env": mcp_env,
             }
         )
         return context
-
-    async def teardown(self, context: EnvironmentContext) -> None:
-        # Restore XDG_CONFIG_HOME first — runs even if the agent crashed,
-        # so a failure mid-cleanup doesn't leak the override into the
-        # next scenario.
-        try:
-            if context.get("_xdg_overridden"):
-                original = context.get("_original_xdg_config_home")
-                if original is None:
-                    os.environ.pop("XDG_CONFIG_HOME", None)
-                else:
-                    os.environ["XDG_CONFIG_HOME"] = original
-        finally:
-            # Release the XDG lock unconditionally if we acquired it.
-            # Held across the entire setup → agent run → measures →
-            # teardown lifecycle so other scenarios can't read os.environ
-            # mid-flight.
-            if context.get("_xdg_lock_held"):
-                try:
-                    self._get_xdg_lock().release()
-                except RuntimeError:
-                    # Already released (e.g. by a failed setup). Safe to ignore.
-                    pass
-
-        await super().teardown(context)
 
     def get_env_vars(self, context: EnvironmentContext) -> Dict[str, str]:
         env = super().get_env_vars(context)
@@ -242,4 +173,9 @@ class WorkspaceEvalEnvironment(LocalWorkspaceEnvironment):
                 "MISE_TRUSTED_CONFIG_PATHS": str(_DEFAULT_WORKSPACE_ROOT),
             }
         )
+        # The staged XDG_CONFIG_HOME (db_fixture scenarios) — the runner
+        # applies these before spec load, where user-MCP config is read.
+        mcp_env = context.get("_mcp_env")
+        if isinstance(mcp_env, dict):
+            env.update(mcp_env)
         return env

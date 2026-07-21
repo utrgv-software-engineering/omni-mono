@@ -596,8 +596,8 @@ def _load_spec(project_path: Path, agent_key: Optional[str]) -> Any:
     from omni_code.agent_workspace_state import set_project_context
 
     proj = load_project(str(project_path))
-    # Publish the resolved ProjectContext so worker spec loading
-    # (omni_code/workers_runtime._load_and_configure_spec) can route the worker
+    # Publish the resolved ProjectContext so worker spec loading (the
+    # framework spec loader bound in omni_code/workers_runtime) can route the worker
     # through build_spec_from_project with the same capability/tool/
     # guardrail registries. Without this, the worker would load its
     # agent.yml in isolation with capability_registry=None and silently

@@ -12,9 +12,10 @@ async def test_run_init_agent_uses_model_provider_and_restores_env(monkeypatch, 
     import omniagents.core.agents.builder as builder
     from agents import Runner
 
-    monkeypatch.setattr(models, "load_models_config", lambda: {})
+    # resolve_model_runtime is the framework's now; it reads the store
+    # instance, so that's what tests patch (not the module-level alias).
     monkeypatch.setattr(
-        models,
+        models._STORE,
         "resolve_model_for_runtime",
         lambda model_name=None: {
             "provider": "openai",
@@ -100,9 +101,8 @@ async def test_run_init_agent_passes_workspace_root_via_run_context(
     import omniagents.core.agents.builder as builder
     from agents import Runner
 
-    monkeypatch.setattr(models, "load_models_config", lambda: {})
     monkeypatch.setattr(
-        models,
+        models._STORE,
         "resolve_model_for_runtime",
         lambda model_name=None: {"model": "gpt-test", "model_settings": {}},
     )
@@ -177,9 +177,8 @@ async def test_run_init_agent_falls_back_to_cwd_when_pwd_missing(
     from agents import Runner
     from pathlib import Path
 
-    monkeypatch.setattr(models, "load_models_config", lambda: {})
     monkeypatch.setattr(
-        models,
+        models._STORE,
         "resolve_model_for_runtime",
         lambda model_name=None: {"model": "gpt-test", "model_settings": {}},
     )

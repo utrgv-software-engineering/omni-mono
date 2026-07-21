@@ -172,6 +172,22 @@ def test_sessions_export_missing_session_exits_1(monkeypatch, tmp_path):
     assert exc.value.code == 1
 
 
+def _mock_model_store(monkeypatch, runtime):
+    """Point omni-code's installed model store at a fixed runtime dict.
+
+    The summarizer resolves through the framework's resolve_model_runtime,
+    which reads the process-wide store — so the store instance (not the
+    module-level alias) is what tests must patch.
+    """
+    import omni_code.models as models
+
+    monkeypatch.setattr(
+        models._STORE,
+        "resolve_model_for_runtime",
+        lambda model_name=None: runtime,
+    )
+
+
 def test_sessions_summarize_parses_json(monkeypatch, tmp_path, capsys):
     _reset_history_db(monkeypatch)
     monkeypatch.setenv("OMNIAGENTS_HOME", str(tmp_path / "home"))
@@ -187,21 +203,20 @@ def test_sessions_summarize_parses_json(monkeypatch, tmp_path, capsys):
         messages=[{"role": "user", "content": "hello"}],
     )
 
-    monkeypatch.setattr("omni_code.models.load_models_config", lambda: {})
-    monkeypatch.setattr(
-        "omni_code.models.resolve_model_for_runtime",
-        lambda *_args, **_kwargs: {"provider": "openai", "model": "gpt-4.1", "api_key": "x"},
+    _mock_model_store(
+        monkeypatch, {"provider": "openai", "model": "gpt-4.1", "api_key": "x"}
     )
 
     captured = {}
 
-    async def fake_run(*, model, runtime, prompt):
+    async def fake_run(agent_name, prompt, *, model=None, runtime=None, **kwargs):
+        captured["agent_name"] = agent_name
         captured["model"] = model
         captured["runtime"] = runtime
         captured["prompt"] = prompt
         return json.dumps({"summary": "ok", "decisions": [], "constraints": [], "key_files": [], "commands": [], "tests": [], "open_questions": [], "next_steps": [], "notable_errors": []})
 
-    monkeypatch.setattr(sessions_cli, "_run_session_summarizer_agent", fake_run)
+    monkeypatch.setattr("omni_code.utility_runs.run_utility_agent", fake_run)
 
     sessions_cli.main(["--agent", agent, "summarize", "s1", "--tail", "10"])
 
@@ -209,6 +224,7 @@ def test_sessions_summarize_parses_json(monkeypatch, tmp_path, capsys):
     data = json.loads(out)
     assert data["session_id"] == "s1"
     assert data["summary"] == "ok"
+    assert captured["agent_name"] == "session_summarizer"
     assert captured["model"] == "gpt-4.1"
     assert "Transcript" in captured["prompt"]
 
@@ -228,16 +244,14 @@ def test_sessions_summarize_wraps_non_json(monkeypatch, tmp_path, capsys):
         messages=[{"role": "user", "content": "hello"}],
     )
 
-    monkeypatch.setattr("omni_code.models.load_models_config", lambda: {})
-    monkeypatch.setattr(
-        "omni_code.models.resolve_model_for_runtime",
-        lambda *_args, **_kwargs: {"provider": "openai", "model": "gpt-4.1", "api_key": "x"},
+    _mock_model_store(
+        monkeypatch, {"provider": "openai", "model": "gpt-4.1", "api_key": "x"}
     )
 
-    async def fake_run(*, model, runtime, prompt):
+    async def fake_run(agent_name, prompt, **kwargs):
         return "not-json"
 
-    monkeypatch.setattr(sessions_cli, "_run_session_summarizer_agent", fake_run)
+    monkeypatch.setattr("omni_code.utility_runs.run_utility_agent", fake_run)
 
     sessions_cli.main(["--agent", agent, "summarize", "s1"])
 
@@ -245,6 +259,65 @@ def test_sessions_summarize_wraps_non_json(monkeypatch, tmp_path, capsys):
     data = json.loads(out)
     assert data["raw"] == "not-json"
     assert data["session_id"] == "s1"
+    # The coding envelope keys are ensured even on a raw wrap.
+    for key in sessions_cli.SUMMARY_ENVELOPE:
+        assert key in data
+
+
+def test_sessions_summarize_without_model_prints_hint_and_exits_1(
+    monkeypatch, tmp_path, capsys
+):
+    """The no-model error now fires from the installed summarizer — i.e.
+    after the session lookup — and surfaces as a clean message, not a
+    traceback."""
+    _reset_history_db(monkeypatch)
+    monkeypatch.setenv("OMNIAGENTS_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("OMNIAGENTS_HISTORY_DB", raising=False)
+
+    project = "omni_code"
+    agent = "omni"
+
+    _seed_session(
+        project=project,
+        agent=agent,
+        session_id="s1",
+        messages=[{"role": "user", "content": "hello"}],
+    )
+
+    _mock_model_store(monkeypatch, {})
+
+    with pytest.raises(SystemExit) as exc:
+        sessions_cli.main(["--agent", agent, "summarize", "s1"])
+
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "No model configured. Run: omni model setup" in out
+
+
+def test_sessions_summarize_missing_session_exits_1(monkeypatch, tmp_path, capsys):
+    _reset_history_db(monkeypatch)
+    monkeypatch.setenv("OMNIAGENTS_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("OMNIAGENTS_HISTORY_DB", raising=False)
+
+    project = "omni_code"
+    agent = "omni"
+
+    _seed_session(
+        project=project,
+        agent=agent,
+        session_id="s1",
+        messages=[{"role": "user", "content": "hello"}],
+    )
+
+    _mock_model_store(
+        monkeypatch, {"provider": "openai", "model": "gpt-4.1", "api_key": "x"}
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        sessions_cli.main(["--agent", agent, "summarize", "missing"])
+
+    assert exc.value.code == 1
+    assert "Session not found: missing" in capsys.readouterr().out
 
 
 def test_sessions_list_after_filters(monkeypatch, tmp_path, capsys):
