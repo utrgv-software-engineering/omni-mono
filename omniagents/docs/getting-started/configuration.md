@@ -96,8 +96,9 @@ paths:
   target: target
   # Optional extra search roots for {% include %} fragments in agent
   # instructions (string or list). The file-relative _shared/ conventions
-  # are always active — see the "Shared instruction fragments" section in
-  # the Defining Agents guide.
+  # and the framework's builtin fragments (searched last; project fragments
+  # shadow them by name) are always active — see the "Shared instruction
+  # fragments" section in the Defining Agents guide.
   # instruction_fragments: prompts/shared
 agents:
   entrypoint: agent_name  # Default agent to run

@@ -12,6 +12,7 @@ import pytest
 
 from omniagents.core.utils.jinja_instructions import (
     InstructionIncludeNotFoundError,
+    builtin_instruction_fragments_dir,
     create_jinja2_instructions,
     instruction_search_paths,
     process_instructions,
@@ -44,6 +45,7 @@ def test_instruction_search_paths_order_and_dedupe(tmp_path):
         agent_dir / "_shared",
         tmp_path / "agents" / "_shared",
         extra,
+        builtin_instruction_fragments_dir(),
     ]
 
 
@@ -122,6 +124,100 @@ def test_render_template_supports_includes(tmp_path):
         search_paths=instruction_search_paths(tmp_path),
     )
     assert out == "[frag]"
+
+
+# ---------------------------------------------------------------------------
+# builtin fragments
+# ---------------------------------------------------------------------------
+
+
+def test_builtin_fragments_dir_ships_fragments():
+    d = builtin_instruction_fragments_dir()
+    assert d.is_dir()
+    names = {p.name for p in d.glob("*.md")}
+    assert {
+        "personality.md",
+        "proactiveness.md",
+        "agents_md_spec.md",
+        "task_execution.md",
+    } <= names
+
+
+def test_bare_name_falls_through_to_builtin_fragment(tmp_path):
+    # No project-side proactiveness.md anywhere: the bare include name
+    # resolves against the builtin fragments directory, searched last.
+    fn = create_jinja2_instructions(
+        "{% include 'proactiveness.md' %}",
+        search_paths=instruction_search_paths(tmp_path),
+    )
+    out = _render(fn)
+    assert out.startswith("## Proactiveness")
+
+
+def test_project_fragment_shadows_builtin_by_name(tmp_path):
+    (tmp_path / "proactiveness.md").write_text(
+        "project proactiveness", encoding="utf-8"
+    )
+    fn = create_jinja2_instructions(
+        "{% include 'proactiveness.md' %}",
+        search_paths=instruction_search_paths(tmp_path),
+    )
+    assert _render(fn) == "project proactiveness"
+
+
+def test_builtin_prefix_bypasses_project_shadow(tmp_path):
+    # The explicit builtin/ prefix reaches the framework fragment even when
+    # a project fragment of the same name exists.
+    (tmp_path / "proactiveness.md").write_text("shadow", encoding="utf-8")
+    fn = create_jinja2_instructions(
+        "{% include 'builtin/proactiveness.md' %}",
+        search_paths=instruction_search_paths(tmp_path),
+    )
+    assert _render(fn).startswith("## Proactiveness")
+
+
+def test_project_fragment_extends_builtin_namesake_without_recursion(tmp_path):
+    # The extend-don't-replace pattern: a project fragment includes its
+    # builtin namesake via the builtin/ prefix and appends a delta.
+    (tmp_path / "task_execution.md").write_text(
+        "{% include 'builtin/task_execution.md' %}\n\nProject delta.",
+        encoding="utf-8",
+    )
+    fn = create_jinja2_instructions(
+        "{% include 'task_execution.md' %}",
+        search_paths=instruction_search_paths(tmp_path),
+    )
+    out = _render(fn)
+    assert out.startswith("## Task execution")
+    assert out.endswith("Project delta.")
+
+
+def test_builtin_task_execution_descriptor_parameter(tmp_path):
+    paths = instruction_search_paths(tmp_path)
+    default = _render(
+        create_jinja2_instructions(
+            "{% include 'builtin/task_execution.md' %}", search_paths=paths
+        )
+    )
+    assert "You are an autonomous agent." in default
+    custom = _render(
+        create_jinja2_instructions(
+            "{% set task_execution_agent_descriptor = 'coding agent' %}"
+            "{% include 'builtin/task_execution.md' %}",
+            search_paths=paths,
+        )
+    )
+    assert "You are an autonomous coding agent." in custom
+
+
+def test_missing_fragment_error_lists_builtin_path(tmp_path):
+    paths = instruction_search_paths(tmp_path)
+    fn = create_jinja2_instructions(
+        "{% include 'no_such_fragment.md' %}", search_paths=paths
+    )
+    with pytest.raises(InstructionIncludeNotFoundError) as excinfo:
+        _render(fn)
+    assert str(builtin_instruction_fragments_dir()) in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------
