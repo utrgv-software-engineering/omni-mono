@@ -1341,3 +1341,169 @@ def test_run_codex_auth_unknown_command_returns_1(capsys):
 
     assert run_codex_auth_command("frobnicate") == 1
     assert "Unknown codex command" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# run_platform_auth_command — shared product-facing platform auth flow
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _platform_client(tmp_path, monkeypatch):
+    """Bind the platform client to a temp store with clean env; restore after."""
+    from omniagents.core.providers.platform import client
+
+    for var in (
+        "OMNI_PLATFORM_URL",
+        "OMNI_RUNTIME_TOKEN",
+        "OMNI_ACCESS_TOKEN",
+        "OMNI_SESSION_ID",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    prior_dir = client._credential_store_dir
+    prior_slug = client._product_slug
+    client.set_credential_store_dir(tmp_path)
+    client.set_product_slug("omniagents")
+    yield client
+    client.set_credential_store_dir(prior_dir)
+    client.set_product_slug(prior_slug)
+
+
+def test_run_platform_auth_status_not_authenticated_uses_prog(
+    _platform_client, capsys
+):
+    from omniagents.cli import run_platform_auth_command
+
+    status = run_platform_auth_command(["status"], prog="omni")
+
+    assert status == 0
+    out = capsys.readouterr().out
+    assert "Not authenticated." in out
+    assert "Run: omni auth login <platform-url>" in out
+
+
+def test_run_platform_auth_login_saves_credentials(
+    _platform_client, monkeypatch, capsys
+):
+    from omniagents.cli import run_platform_auth_command
+
+    client = _platform_client
+    creds = {
+        "platform_url": "https://platform.test",
+        "access_token": "at-1",
+        "refresh_token": "rt-1",
+        "user": {"name": "Eric", "email": "e@test", "domains": [{"name": "d1"}]},
+    }
+    seen = []
+    monkeypatch.setattr(
+        client, "device_code_login", lambda url: seen.append(url) or creds
+    )
+
+    status = run_platform_auth_command(["login", "platform.test"])
+
+    assert status == 0
+    assert seen == ["https://platform.test"]
+    assert client.load_credentials() == creds
+    out = capsys.readouterr().out
+    assert "Authenticated as Eric (e@test)" in out
+    assert "Domains: d1" in out
+    assert str(client.credential_path()) in out
+
+
+def test_run_platform_auth_login_failure_returns_1(
+    _platform_client, monkeypatch, capsys
+):
+    from omniagents.cli import run_platform_auth_command
+
+    def boom(url):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(_platform_client, "device_code_login", boom)
+
+    assert run_platform_auth_command(["login", "https://platform.test"]) == 1
+    assert "Login failed: nope" in capsys.readouterr().err
+
+
+def test_run_platform_auth_login_without_url_returns_1(
+    _platform_client, monkeypatch, capsys
+):
+    from omniagents.cli import run_platform_auth_command
+
+    monkeypatch.setattr("builtins.input", lambda prompt="": "")
+
+    assert run_platform_auth_command(["login"]) == 1
+    assert "No platform URL provided." in capsys.readouterr().err
+
+
+def test_run_platform_auth_logout_clears_store(_platform_client, capsys):
+    from omniagents.cli import run_platform_auth_command
+
+    client = _platform_client
+    client.save_credentials(
+        {"platform_url": "https://p.test", "access_token": "a", "user": {"email": "e@test"}}
+    )
+
+    assert run_platform_auth_command(["logout"]) == 0
+    assert client.load_credentials() is None
+    assert "Logged out (e@test)" in capsys.readouterr().out
+
+    assert run_platform_auth_command(["logout"]) == 0
+    assert "Not logged in." in capsys.readouterr().out
+
+
+def test_run_platform_auth_status_authenticated(
+    _platform_client, monkeypatch, capsys
+):
+    import requests
+
+    from omniagents.cli import run_platform_auth_command
+
+    client = _platform_client
+    client.save_credentials(
+        {
+            "platform_url": "https://platform.test",
+            "access_token": "at-1234567890abcdefghij",
+            "user": {"name": "Eric", "email": "e@test"},
+        }
+    )
+
+    class _Resp:
+        status_code = 200
+        ok = True
+
+    monkeypatch.setattr(
+        requests, "get", lambda url, headers=None, timeout=None: _Resp()
+    )
+
+    assert run_platform_auth_command(["status"]) == 0
+    out = capsys.readouterr().out
+    assert "Platform:  https://platform.test" in out
+    assert "Eric (e@test)" in out
+    assert "Status:    connected" in out
+
+
+def test_run_platform_auth_binds_slug_and_config_dir(
+    _platform_client, tmp_path, capsys
+):
+    from omniagents.cli import run_platform_auth_command
+
+    client = _platform_client
+    product_dir = tmp_path / "product-config"
+
+    status = run_platform_auth_command(
+        ["status"], prog="omni", slug="omni_code", config_dir=product_dir
+    )
+
+    assert status == 0
+    assert client.get_product_slug() == "omni_code"
+    assert client.credential_path() == product_dir / "platform.json"
+
+
+def test_run_platform_auth_help_and_unknown(_platform_client, capsys):
+    from omniagents.cli import run_platform_auth_command
+
+    assert run_platform_auth_command([], prog="omni") == 0
+    assert "usage: omni auth <command>" in capsys.readouterr().out
+
+    assert run_platform_auth_command(["frobnicate"]) == 1
+    assert "Unknown auth command" in capsys.readouterr().err

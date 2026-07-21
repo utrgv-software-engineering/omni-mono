@@ -62,38 +62,30 @@ class PlatformPolicyFetcher:
         return self._policy
 
     async def fetch(self) -> Dict[str, Any]:
-        """Fetch policy from GET /api/v1/sessions/{session_id}/policy."""
+        """Fetch policy from GET /api/v1/sessions/{session_id}/policy.
+
+        Delegates to the shared policy client
+        (``platform.client.fetch_policy``), session-scoped — so this path
+        gets the same single refresh-on-401 retry as user-scoped fetches.
+        """
         if self._fetched and self._policy is not None:
             return self._policy
 
-        import requests
+        from omniagents.core.providers.platform import client
 
-        url = f"{self._platform_url}/api/v1/sessions/{self._session_id}/policy"
-        try:
-            response = await asyncio.to_thread(
-                requests.get,
-                url,
-                headers={
-                    "Authorization": f"Bearer {self._runtime_token}",
-                },
-                timeout=10,
+        policy = await asyncio.to_thread(
+            lambda: client.fetch_policy(
+                session_id=self._session_id,
+                platform_url=self._platform_url,
+                token=self._runtime_token,
             )
-
-            if response.ok:
-                self._policy = response.json()
-                self._fetched = True
-                logger.info("Fetched policy for session %s", self._session_id)
-                return self._policy
-            else:
-                logger.warning(
-                    "Policy fetch returned %d: %s",
-                    response.status_code,
-                    response.text[:200],
-                )
-                return {}
-        except Exception as exc:
-            logger.warning("Policy fetch failed: %s", exc)
-            return {}
+        )
+        if policy is not None:
+            self._policy = policy
+            self._fetched = True
+            logger.info("Fetched policy for session %s", self._session_id)
+            return self._policy
+        return {}
 
     def apply_to_security_config(
         self, spec: Any, policy: Dict[str, Any]

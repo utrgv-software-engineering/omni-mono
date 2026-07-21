@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Management-plane auth client (`omniagents.core.providers.platform.client`), lifted from omni-code: device-code sign-in (`device_code_login`), owner-only `platform.json` credential store (`load_credentials` / `save_credentials` / `clear_credentials`), env-then-file URL/token resolution (`get_platform_url` / `get_access_token` / `resolve_platform`), and `refresh_access_token`. Products bind it to their own conventions with `set_credential_store_dir` / `set_product_slug` (mirroring the codex token-store binding) instead of shipping their own copy.
+- `run_platform_auth_command(argv, prog=..., slug=..., config_dir=...)` — public platform auth CLI flow (login / logout / status), the management-plane sibling of `run_codex_auth_command`; also wired up as `omniagents auth {login,logout,status}`.
+
+### Changed
+- One platform policy client: `client.fetch_policy` serves both the user scope (`GET /api/v1/policy/{slug}`) and the session scope (`GET /api/v1/sessions/{id}/policy`), with a single refresh-on-401 retry in both. `PlatformPolicyFetcher.fetch` now delegates to it (session-scoped fetches gain the 401 retry), and platform bootstrap's `_detect_platform` delegates its env-then-stored priority chain to `client.resolve_platform` (falling back to the client's credential store when no product loader is installed).
+
 ## [0.7.19] - 2026-07-18
 
 ### Added
