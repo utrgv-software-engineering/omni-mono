@@ -44,6 +44,8 @@ from agents.sandbox.session.sandbox_session_state import SandboxSessionState
 from agents.sandbox.snapshot import SnapshotBase, SnapshotSpec, resolve_snapshot
 from agents.sandbox.types import ExecResult, ExposedPortEndpoint, User
 
+from omniagents.core.sandbox.lifecycle_session import LifecycleSessionClientMixin
+
 # Reverse-RPC timeout for a single op. Generous because a forwarded exec may run
 # a long-ish command; PTY ops carry their own yield windows well under this.
 _OP_TIMEOUT_S = 300.0
@@ -440,7 +442,7 @@ def _pty_update_from(res: dict[str, Any]) -> PtyExecUpdate:
 # --------------------------------------------------------------------------- #
 
 
-class HostBridgeSandboxClient(BaseSandboxClient):
+class HostBridgeSandboxClient(LifecycleSessionClientMixin, BaseSandboxClient):
     """Connects a cloud agent to a remote host as its sandbox.
 
     There is nothing to provision: the host already exists and its workspace is

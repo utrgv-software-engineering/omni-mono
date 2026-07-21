@@ -48,6 +48,7 @@ from agents.sandbox.session import SandboxSession
 from agents.sandbox.session.sandbox_session_state import SandboxSessionState
 from agents.sandbox.snapshot import SnapshotBase, SnapshotSpec, resolve_snapshot
 
+from omniagents.core.sandbox.lifecycle_session import LifecycleSessionClientMixin
 from omniagents.core.sandbox.pty_stream import PtyStreamingSession
 
 __all__ = [
@@ -164,7 +165,7 @@ class ExtendedUnixLocalSandboxSession(UnixLocalSandboxSession, PtyStreamingSessi
                     pass
 
 
-class ExtendedUnixLocalSandboxClient(UnixLocalSandboxClient):
+class ExtendedUnixLocalSandboxClient(LifecycleSessionClientMixin, UnixLocalSandboxClient):
     async def create(
         self,
         *,

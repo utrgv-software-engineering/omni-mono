@@ -45,6 +45,7 @@ from agents.sandbox.session.sandbox_session_state import SandboxSessionState
 from agents.sandbox.snapshot import SnapshotBase, SnapshotSpec, resolve_snapshot
 from agents.sandbox.types import ExecResult, ExposedPortEndpoint, User
 
+from omniagents.core.sandbox.lifecycle_session import LifecycleSessionClientMixin
 from omniagents.core.sandbox.aci_engine import (
     AciConfig,
     AciContainerSpec,
@@ -503,7 +504,7 @@ class AciSandboxSession(BaseSandboxSession):
 # --------------------------------------------------------------------------- #
 
 
-class AciSandboxClient(BaseSandboxClient):
+class AciSandboxClient(LifecycleSessionClientMixin, BaseSandboxClient):
     """Provisions and reattaches ACI container groups as agent sandboxes."""
 
     backend_id = "aci"

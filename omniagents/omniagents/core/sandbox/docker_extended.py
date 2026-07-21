@@ -53,6 +53,7 @@ from agents.sandbox.types import ExecResult, User
 from docker.types import Mount as DockerSDKMount
 from docker.utils import parse_repository_tag
 
+from omniagents.core.sandbox.lifecycle_session import LifecycleSessionClientMixin
 from omniagents.core.sandbox.pty_stream import PtyStreamingSession
 
 _idle_log = logging.getLogger("omniagents.sandbox.idle")
@@ -616,7 +617,7 @@ class BindSpec:
         self.read_only = read_only
 
 
-class ExtendedDockerSandboxClient(DockerSandboxClient):
+class ExtendedDockerSandboxClient(LifecycleSessionClientMixin, DockerSandboxClient):
     """``DockerSandboxClient`` with cap_add / security_opt / network_mode /
     user overrides.
 
