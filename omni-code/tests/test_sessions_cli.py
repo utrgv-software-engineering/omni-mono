@@ -196,10 +196,12 @@ def _mock_model_store(monkeypatch, runtime):
     which reads the process-wide store — so the store instance (not the
     module-level alias) is what tests must patch.
     """
-    import omni_code.models as models
+    from omniagents.core.models import model_store
+
+    models = model_store()
 
     monkeypatch.setattr(
-        models._STORE,
+        models,
         "resolve_model_for_runtime",
         lambda model_name=None: runtime,
     )

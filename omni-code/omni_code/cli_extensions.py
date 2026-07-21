@@ -96,9 +96,10 @@ def models_preflight(args: List[str]) -> None:
     if not _is_agent_run(args):
         return None
 
-    from omni_code.models import load_models_config, resolve_model_for_runtime
+    from omniagents.core.models import model_store
 
-    load_models_config()
+    store = model_store()
+    store.load_config()
 
     # Apply platform model governance if authenticated
     try:
@@ -109,23 +110,20 @@ def models_preflight(args: List[str]) -> None:
         pass
 
     if "MODEL_NAME" not in os.environ:
-        model_runtime = resolve_model_for_runtime()
+        model_runtime = store.resolve_model_for_runtime()
         if model_runtime.get("model"):
             os.environ["MODEL_NAME"] = model_runtime["model"]
 
-    from omni_code.models import has_models_configured
-
-    if not has_models_configured():
+    if not store.has_models_configured():
         if _embedded_mode:
             import json
 
             print(json.dumps({"error": "No model credentials configured"}))
             sys.exit(1)
         print("No model credentials configured. Starting setup wizard...\n")
-        from omniagents.core.models import model_store
         from omniagents.core.models.cli import run_model_command
 
-        run_model_command(["setup"], store=model_store())
+        run_model_command(["setup"], store=store)
         print()
     return None
 

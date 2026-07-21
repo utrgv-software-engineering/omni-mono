@@ -66,11 +66,10 @@ set_loop_default_prompt_resolver(resolve_default_loop_prompt)
 # Workers: every input the wiring needs — the published --source mounts
 # (worktree isolation), the published ProjectContext (packaged-manifest
 # fallback via the product identity), the orchestrator's sandbox
-# attachment, the product slug, and the model store — derives from
-# framework state, so the whole thing is one framework call. Importing
-# omni_code.models first installs the model store the default worker
-# model resolver reads.
-import omni_code.models  # noqa: E402,F401
+# attachment, the product slug, and the model store (installed from the
+# declared catalog by the product bootstrap, i.e. the omni_code package
+# import above) — derives from framework state, so the whole thing is
+# one framework call.
 from omniagents.core.workers import install_project_worker_defaults  # noqa: E402
 
 install_project_worker_defaults()
@@ -364,12 +363,12 @@ def resolve_default_model() -> Dict[str, Any]:
         max_input_tokens, and max_output_tokens.
     """
     try:
-        from omni_code.models import get_default_model_config, get_default_model_name
+        from omniagents.core.models import model_store
 
-        config = get_default_model_config()
+        store = model_store()
+        config = store.get_default_model_config()
         if config:
-            name = get_default_model_name()
-            config["name"] = name
+            config["name"] = store.get_default_model_name()
             return config
     except Exception:
         pass

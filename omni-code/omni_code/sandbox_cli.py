@@ -796,9 +796,9 @@ def main(argv=None) -> None:
         env_file = _resolve_env_file(args.env_file, workspace)
         _apply_env_file_to_process(env_file)
 
-        from omni_code.models import has_models_configured
+        from omniagents.core.models import model_store
 
-        if not has_models_configured():
+        if not model_store().has_models_configured():
             raise RuntimeError(
                 "No model credentials configured. Set OPENAI_API_KEY (or provide a .env) "
                 "or run `omni model setup` to create ~/.config/omni_code/models.json."

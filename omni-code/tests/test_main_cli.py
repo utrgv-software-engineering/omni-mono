@@ -16,9 +16,9 @@ import omniagents.core.updater as fw_updater
 
 import omni_code.cli_extensions as cli_extensions
 import omni_code.governance as governance
-import omni_code.models as oc_models
 import omni_code.platform_models as platform_models
 from omni_code.cli import cli_main
+from omniagents.core.models import model_store
 
 
 @pytest.fixture(autouse=True)
@@ -37,13 +37,12 @@ def cli_env(monkeypatch):
     monkeypatch.setattr(
         governance, "maybe_enforce_sandbox", lambda: calls.append("governance")
     )
+    store = model_store()
+    monkeypatch.setattr(store, "load_config", lambda: calls.append("models_load"))
     monkeypatch.setattr(
-        oc_models, "load_models_config", lambda: calls.append("models_load")
+        store, "resolve_model_for_runtime", lambda model_name=None: {}
     )
-    monkeypatch.setattr(
-        oc_models, "resolve_model_for_runtime", lambda model_name=None: {}
-    )
-    monkeypatch.setattr(oc_models, "has_models_configured", lambda: True)
+    monkeypatch.setattr(store, "has_models_configured", lambda: True)
     monkeypatch.setattr(
         platform_models, "apply_platform_model_governance", lambda: None
     )
@@ -107,7 +106,7 @@ def test_cli_main_embedded_suppresses_update_notice(cli_env):
 
 
 def test_cli_main_embedded_no_models_emits_json_error(cli_env, capsys):
-    cli_env.monkeypatch.setattr(oc_models, "has_models_configured", lambda: False)
+    cli_env.monkeypatch.setattr(model_store(), "has_models_configured", lambda: False)
 
     with pytest.raises(SystemExit) as exc:
         cli_main(["--embedded"])
@@ -154,7 +153,7 @@ def test_reserved_commands_skip_models_bootstrap(cli_env):
 
 
 def test_models_wizard_runs_when_unconfigured(cli_env, capsys):
-    cli_env.monkeypatch.setattr(oc_models, "has_models_configured", lambda: False)
+    cli_env.monkeypatch.setattr(model_store(), "has_models_configured", lambda: False)
     cli_env.monkeypatch.setattr(
         fw_models_cli,
         "run_model_command",

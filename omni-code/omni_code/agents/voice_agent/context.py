@@ -25,9 +25,9 @@ def build_voice_context(variables: Dict[str, Any] = None) -> Dict[str, Any]:
 
 @realtime_settings_resolver
 def resolve_voice_realtime_settings() -> Dict[str, Any]:
-    from omni_code.models import resolve_voice_settings_for_realtime
+    from omniagents.core.models import model_store
 
-    return resolve_voice_settings_for_realtime()
+    return model_store().resolve_voice_settings_for_realtime()
 
 
 @model_config_resolver

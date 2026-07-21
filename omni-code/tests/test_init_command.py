@@ -6,7 +6,9 @@ import pytest
 @pytest.mark.asyncio
 async def test_run_init_agent_uses_model_provider_and_restores_env(monkeypatch, tmp_path):
     import omni_code.init_command as slash
-    import omni_code.models as models
+    from omniagents.core.models import model_store
+
+    models = model_store()
     import omni_code.utility_runs as utility_runs
     import omniagents.core.config.loader as loader
     import omniagents.core.agents.builder as builder
@@ -15,7 +17,7 @@ async def test_run_init_agent_uses_model_provider_and_restores_env(monkeypatch, 
     # resolve_model_runtime is the framework's now; it reads the store
     # instance, so that's what tests patch (not the module-level alias).
     monkeypatch.setattr(
-        models._STORE,
+        models,
         "resolve_model_for_runtime",
         lambda model_name=None: {
             "provider": "openai",
@@ -95,14 +97,16 @@ async def test_run_init_agent_passes_workspace_root_via_run_context(
     slash-command flow must pass workspace_root via the runner's
     context= kwarg, sourced from $PWD (or cwd as fallback)."""
     import omni_code.init_command as slash
-    import omni_code.models as models
+    from omniagents.core.models import model_store
+
+    models = model_store()
     import omni_code.utility_runs as utility_runs
     import omniagents.core.config.loader as loader
     import omniagents.core.agents.builder as builder
     from agents import Runner
 
     monkeypatch.setattr(
-        models._STORE,
+        models,
         "resolve_model_for_runtime",
         lambda model_name=None: {"model": "gpt-test", "model_settings": {}},
     )
@@ -170,7 +174,9 @@ async def test_run_init_agent_falls_back_to_cwd_when_pwd_missing(
     WorkspaceRootRequiredError downstream when init_agent's apply_patch
     tries to write AGENTS.md)."""
     import omni_code.init_command as slash
-    import omni_code.models as models
+    from omniagents.core.models import model_store
+
+    models = model_store()
     import omni_code.utility_runs as utility_runs
     import omniagents.core.config.loader as loader
     import omniagents.core.agents.builder as builder
@@ -178,7 +184,7 @@ async def test_run_init_agent_falls_back_to_cwd_when_pwd_missing(
     from pathlib import Path
 
     monkeypatch.setattr(
-        models._STORE,
+        models,
         "resolve_model_for_runtime",
         lambda model_name=None: {"model": "gpt-test", "model_settings": {}},
     )

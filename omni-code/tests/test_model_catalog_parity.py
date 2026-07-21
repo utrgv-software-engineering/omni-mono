@@ -1,9 +1,10 @@
 """Parity check: the declarative catalog equals the old Python catalog.
 
 ``omni_code/default_models.py`` (the shipped provider/model dicts and
-default-model fallback) collapsed into ``omni_code/models.yml``,
-declared via ``paths.model_catalog`` and loaded by the framework at
-product bootstrap. These tests pin byte-equivalent semantics: the
+default-model fallback) and ``omni_code/models.py`` (the store
+construction) collapsed into ``omni_code/models.yml``, declared via
+``paths.model_catalog`` and loaded by the framework at product
+bootstrap. These tests pin byte-equivalent semantics: the
 catalog-loaded values must be identical to the exact dicts the deleted
 module returned (snapshotted below from default_models.py at deletion),
 and the installed store must serve them as its default layer.
@@ -93,8 +94,10 @@ def test_installed_store_serves_the_catalog_as_default_layer():
     assert store.default_provider_name == OLD_DEFAULT_PROVIDER_NAME
 
 
-def test_legacy_module_binds_to_the_installed_store():
-    from omni_code import models as oc_models
+def test_bootstrap_reinstall_keeps_the_same_store_instance():
+    # Everything bound at import time must stay bound to the live store:
+    # re-installing the packaged catalog (load_project does this) hands
+    # back the identical instance.
+    from omniagents.core.models import install_model_catalog
 
-    assert oc_models._STORE is model_store()
-    assert oc_models.DEFAULT_PROVIDER_NAME == OLD_DEFAULT_PROVIDER_NAME
+    assert install_model_catalog(omni_code.PROJECT_MANIFEST) is model_store()

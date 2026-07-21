@@ -1,4 +1,5 @@
-"""Tests for provider-level CRUD functions in omni_code.models."""
+"""Tests for provider-level CRUD on omni-code's installed model store
+(catalog-built by the framework at product bootstrap)."""
 
 import json
 import os
@@ -6,14 +7,18 @@ from pathlib import Path
 
 import pytest
 
-from omni_code import models
+import omni_code  # noqa: F401 — bootstrap installs the catalog store
+from omniagents.core.models import MODELS_CONFIG_VERSION, model_store
+
+#: The installed store; method names match the historical function API.
+models = model_store()
 
 
 @pytest.fixture
 def tmp_models_config(tmp_path, monkeypatch):
     """Redirect models.json to a temp file and return its path."""
     config_path = tmp_path / "models.json"
-    monkeypatch.setattr(models._STORE, "config_path", lambda: config_path)
+    monkeypatch.setattr(models, "config_path", lambda: config_path)
     return config_path
 
 
@@ -29,7 +34,7 @@ def _read_config(path: Path) -> dict:
 
 def test_is_user_provider_true(tmp_models_config):
     _write_config(tmp_models_config, {
-        "version": models.MODELS_CONFIG_VERSION,
+        "version": MODELS_CONFIG_VERSION,
         "default": None,
         "voice_default": None,
         "providers": {
@@ -58,7 +63,7 @@ def test_list_providers_includes_builtins(tmp_models_config):
 
 def test_list_providers_includes_user_defined(tmp_models_config):
     _write_config(tmp_models_config, {
-        "version": models.MODELS_CONFIG_VERSION,
+        "version": MODELS_CONFIG_VERSION,
         "default": None,
         "voice_default": None,
         "providers": {
@@ -74,7 +79,7 @@ def test_list_providers_includes_user_defined(tmp_models_config):
 
 def test_list_providers_model_count(tmp_models_config):
     _write_config(tmp_models_config, {
-        "version": models.MODELS_CONFIG_VERSION,
+        "version": MODELS_CONFIG_VERSION,
         "default": None,
         "voice_default": None,
         "providers": {
@@ -104,7 +109,7 @@ def test_get_provider_builtin(tmp_models_config):
 
 def test_get_provider_user_defined(tmp_models_config):
     _write_config(tmp_models_config, {
-        "version": models.MODELS_CONFIG_VERSION,
+        "version": MODELS_CONFIG_VERSION,
         "default": None,
         "voice_default": None,
         "providers": {
@@ -122,7 +127,7 @@ def test_get_provider_nonexistent(tmp_models_config):
 
 def test_resolve_model_for_runtime_includes_provider_api_mode(tmp_models_config):
     _write_config(tmp_models_config, {
-        "version": models.MODELS_CONFIG_VERSION,
+        "version": MODELS_CONFIG_VERSION,
         "default": "chat/gpt-test",
         "voice_default": None,
         "providers": {
@@ -158,7 +163,7 @@ def test_add_provider_creates_new(tmp_models_config):
 
 def test_add_provider_preserves_existing_models(tmp_models_config):
     _write_config(tmp_models_config, {
-        "version": models.MODELS_CONFIG_VERSION,
+        "version": MODELS_CONFIG_VERSION,
         "default": None,
         "voice_default": None,
         "providers": {
@@ -183,7 +188,7 @@ def test_add_provider_preserves_existing_models(tmp_models_config):
 
 def test_update_provider_changes_key(tmp_models_config):
     _write_config(tmp_models_config, {
-        "version": models.MODELS_CONFIG_VERSION,
+        "version": MODELS_CONFIG_VERSION,
         "default": None,
         "voice_default": None,
         "providers": {
@@ -204,7 +209,7 @@ def test_update_provider_returns_false_for_missing(tmp_models_config):
 
 def test_update_provider_ignores_unknown_keys(tmp_models_config):
     _write_config(tmp_models_config, {
-        "version": models.MODELS_CONFIG_VERSION,
+        "version": MODELS_CONFIG_VERSION,
         "default": None,
         "voice_default": None,
         "providers": {
@@ -222,7 +227,7 @@ def test_update_provider_ignores_unknown_keys(tmp_models_config):
 
 def test_remove_provider_deletes(tmp_models_config):
     _write_config(tmp_models_config, {
-        "version": models.MODELS_CONFIG_VERSION,
+        "version": MODELS_CONFIG_VERSION,
         "default": None,
         "voice_default": None,
         "providers": {
@@ -239,7 +244,7 @@ def test_remove_provider_deletes(tmp_models_config):
 
 def test_remove_provider_clears_default(tmp_models_config):
     _write_config(tmp_models_config, {
-        "version": models.MODELS_CONFIG_VERSION,
+        "version": MODELS_CONFIG_VERSION,
         "default": "myprov/mymodel",
         "voice_default": None,
         "providers": {
@@ -258,7 +263,7 @@ def test_remove_provider_clears_default(tmp_models_config):
 
 def test_remove_provider_clears_voice_default(tmp_models_config):
     _write_config(tmp_models_config, {
-        "version": models.MODELS_CONFIG_VERSION,
+        "version": MODELS_CONFIG_VERSION,
         "default": None,
         "voice_default": "myprov/rt-model",
         "providers": {
