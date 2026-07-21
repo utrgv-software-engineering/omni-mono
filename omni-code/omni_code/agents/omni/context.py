@@ -156,7 +156,7 @@ from omniagents.core.providers.platform.bootstrap import (  # noqa: E402
     set_platform_credentials_loader,
 )
 
-from omni_code.platform import load_credentials as _load_platform_credentials  # noqa: E402
+from omniagents.core.providers.platform.client import load_credentials as _load_platform_credentials  # noqa: E402
 
 set_platform_credentials_loader(_load_platform_credentials)
 

@@ -80,7 +80,7 @@ def maybe_enforce_sandbox() -> None:
         return
 
     # Check if platform credentials exist — if not, no governance to enforce
-    from omni_code.platform import is_authenticated
+    from omniagents.core.providers.platform.client import is_authenticated
     if not is_authenticated():
         return
 
@@ -134,7 +134,7 @@ def maybe_enforce_sandbox() -> None:
 def _fetch_fresh_policy() -> Optional[dict]:
     """Fetch policy directly from the platform. Does NOT use local cache —
     the cache can be tampered with, so sandbox decisions use a fresh read."""
-    from omni_code.platform import fetch_policy
+    from omniagents.core.providers.platform.client import fetch_policy
 
     return fetch_policy()
 
@@ -363,7 +363,7 @@ def _fetch_pull_token(token_url: str) -> Optional[dict]:
     """Fetch a scoped pull token from the platform's image-pull-token endpoint."""
     try:
         import requests
-        from omni_code.platform import get_platform_url, get_access_token
+        from omniagents.core.providers.platform.client import get_platform_url, get_access_token
 
         url = get_platform_url()
         token = get_access_token()
