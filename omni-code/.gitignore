@@ -22,6 +22,7 @@ node_modules/
 
 # Test/Runtime artifacts
 .pytest_cache/
+.ruff_cache/
 sessions.db
 
 # Eval run outputs (regenerated each run)
@@ -31,9 +32,6 @@ evaluations/__pycache__/
 # playwright-cli / playwright-mcp working dirs (transient)
 .playwright-cli/
 .playwright-mcp/
-
-# Build-time copy of project.yml (canonical copy lives at repo root)
-omni_code/project.yml
 
 # Rust
 target/

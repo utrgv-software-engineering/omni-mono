@@ -207,7 +207,6 @@ This project also includes a voice-optimized agent spec (`voice_agent`). How you
 ### Project layout
 ```
 .
-├── main.py
 ├── omni_code/            # the installable product package
 │   ├── project.yml       # project manifest (paths relative to it)
 │   ├── agents/           # agent specs + instructions + context factories
@@ -219,8 +218,7 @@ This project also includes a voice-optimized agent spec (`voice_agent`). How you
 ├── environments/         # eval execution environments (repo-only)
 ├── tests/
 ├── docs/
-├── pyproject.toml
-└── requirements.txt
+└── pyproject.toml
 ```
 
 ### Prerequisites
@@ -255,12 +253,6 @@ pytest
 - Run `make bump-patch`/`bump-minor`/`bump-major` to adjust the version.
 - `make publish` builds distributions and uploads them to Fury using `FURY_USER` and `FURY_TOKEN` from `.env`.
 - See `docs/RELEASE.md` for the full workflow.
-
-### Installing via requirements.txt
-```bash
-pip install -r requirements.txt
-```
-The file includes the private Gemfury index URL required for `omniagents` and `agentio`.
 
 ## License
 MIT (see LICENSE)
