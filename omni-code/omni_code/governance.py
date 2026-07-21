@@ -562,7 +562,9 @@ def _exec_in_sandbox(binary: str, config: dict) -> None:
         args.extend(["--protect", subpath])
 
     # Mount config dir read-only so credentials are available inside sandbox
-    config_dir = Path.home() / ".config" / "omni_code"
+    from omni_code.config import get_config_dir
+
+    config_dir = get_config_dir()
     if config_dir.is_dir():
         args.extend(["--ro-bind", str(config_dir)])
 

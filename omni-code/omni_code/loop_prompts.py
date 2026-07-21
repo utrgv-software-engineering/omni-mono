@@ -4,6 +4,8 @@ from pathlib import Path
 
 from omniagents.core.utils.prompt_files import resolve_prompt_file
 
+from omni_code.config import get_config_dir
+
 MAX_LOOP_MD_BYTES = 25_000
 
 
@@ -30,5 +32,5 @@ def _candidate_paths(workspace_root: str | None) -> list[Path]:
     paths: list[Path] = []
     if workspace_root:
         paths.append(Path(workspace_root).expanduser() / ".omni" / "loop.md")
-    paths.append(Path.home() / ".config" / "omni_code" / "loop.md")
+    paths.append(get_config_dir() / "loop.md")
     return paths
