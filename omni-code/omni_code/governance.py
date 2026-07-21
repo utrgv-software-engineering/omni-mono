@@ -56,18 +56,36 @@ def is_sandboxed() -> bool:
 
 
 def find_sandbox_binary() -> Optional[str]:
-    """Find the omni-sandbox binary."""
-    # 1. Bundled with omni-code (built from sandbox-cli/)
+    """Find the omni-sandbox binary.
+
+    The crate lives in the standalone omni-sandbox repository (extracted
+    from this repo's former sandbox-cli/). Search order:
+
+    1. ``OMNI_SANDBOX_BIN`` env var (explicit override)
+    2. Packaged ``omni_code/assets/bin/`` (wheel-shipped binary)
+    3. Sibling checkout ``../omni-sandbox/target/{release,debug}/``
+    4. ``PATH``
+    """
+    # 1. Explicit override
+    env_bin = os.getenv("OMNI_SANDBOX_BIN")
+    if env_bin:
+        path = Path(env_bin)
+        if path.is_file() and os.access(str(path), os.X_OK):
+            return str(path)
+
     pkg_dir = Path(__file__).resolve().parent
     candidates = [
-        pkg_dir.parent / "sandbox-cli" / "target" / "release" / "omni-sandbox",
-        pkg_dir.parent / "sandbox-cli" / "target" / "debug" / "omni-sandbox",
+        # 2. Packaged with omni-code
+        pkg_dir / "assets" / "bin" / "omni-sandbox",
+        # 3. Sibling checkout of the standalone omni-sandbox repo
+        pkg_dir.parent.parent / "omni-sandbox" / "target" / "release" / "omni-sandbox",
+        pkg_dir.parent.parent / "omni-sandbox" / "target" / "debug" / "omni-sandbox",
     ]
     for path in candidates:
         if path.is_file() and os.access(str(path), os.X_OK):
             return str(path)
 
-    # 2. On PATH
+    # 4. On PATH
     on_path = shutil.which("omni-sandbox")
     if on_path:
         return on_path
@@ -135,9 +153,10 @@ def maybe_enforce_sandbox() -> None:
         if not binary:
             print(
                 "Error: Governance policy requires sandbox isolation but omni-sandbox "
-                "binary is not installed. Build it with:\n"
-                "  cd sandbox-cli && cargo build --release\n"
-                "Or install it to your PATH.",
+                "binary is not installed. Build it from the standalone omni-sandbox "
+                "repo (sibling checkout ../omni-sandbox):\n"
+                "  cd ../omni-sandbox && cargo build --release\n"
+                "Or set OMNI_SANDBOX_BIN, or install omni-sandbox to your PATH.",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -257,8 +276,9 @@ def _check_bwrap_versions(config: dict) -> None:
                     if not _version_gte(installed, required_sandbox_version):
                         print(
                             f"Error: Governance requires omni-sandbox >= {required_sandbox_version} "
-                            f"but {installed} is installed. Update with:\n"
-                            f"  cd sandbox-cli && cargo build --release",
+                            f"but {installed} is installed. Update from the standalone "
+                            f"omni-sandbox repo:\n"
+                            f"  cd ../omni-sandbox && cargo build --release",
                             file=sys.stderr,
                         )
                         sys.exit(1)

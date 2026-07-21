@@ -16,9 +16,9 @@ import pytest
 from omni_code import governance
 
 
-# Flags accepted by `omni-sandbox exec` (see sandbox-cli/src/main.rs
-# ExecArgs). `--net-allow` exists but is a hard error by design, so it is
-# deliberately NOT in this set.
+# Flags accepted by `omni-sandbox exec` (see src/main.rs ExecArgs in the
+# standalone omni-sandbox repo, formerly sandbox-cli/ here). `--net-allow`
+# exists but is a hard error by design, so it is deliberately NOT in this set.
 SUPPORTED_FLAGS = {
     "--workspace",
     "--ro-bind",
