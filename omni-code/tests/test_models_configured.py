@@ -1,10 +1,12 @@
 """Behavior of omni-code's installed model store (catalog-built by the
-framework at product bootstrap from omni_code/models.yml)."""
+framework from omni_code/models.yml — the manifest located by
+entry-point discovery, installed here exactly as product bootstrap
+does)."""
 
-import omni_code  # noqa: F401 — bootstrap installs the catalog store
-from omniagents.core.models import MODELS_CONFIG_VERSION, model_store
+from omniagents.core.models import MODELS_CONFIG_VERSION, install_model_catalog
+from omniagents.core.product import product_info
 
-_STORE = model_store()
+_STORE = install_model_catalog(product_info().manifest_path)
 
 
 def test_has_models_configured_false_when_no_api_key(monkeypatch):

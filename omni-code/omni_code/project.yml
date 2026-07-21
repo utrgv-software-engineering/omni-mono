@@ -24,9 +24,10 @@ product:
 # the framework's launcher-contract defaults (omniagents.product_serve),
 # which pick up the packaged sandbox_profile_default.yml sibling of this
 # file; sessions runs the conventionally-named session_summarizer agent
-# with the summary envelope declared below; omni-code-specific behavior
-# (governance preflight, models bootstrap wizard, embedded mode) lives
-# in the extensions module.
+# with the summary envelope declared below; the models bootstrap wizard
+# and embedded (launcher) mode are framework fallthrough conventions
+# too. The one omni-code-specific behavior left — the governance
+# preflight — lives in the extensions module.
 cli:
   default_mode: ink
   extensions: omni_code.cli_extensions

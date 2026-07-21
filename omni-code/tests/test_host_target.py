@@ -15,7 +15,8 @@ from pathlib import Path
 import pytest
 
 from omniagents.core.runtime import serve_harness as serve_cli
-import omni_code  # noqa: F401  (installs the product identity from project.yml)
+
+# Product identity resolves via the framework's entry-point discovery.
 from omniagents.core.sandbox.profiles import (
     TerminalSpec,
     resolve_product_profile as resolve_profile,

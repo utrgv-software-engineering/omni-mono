@@ -2,6 +2,14 @@ import os
 
 import pytest
 
+from omniagents.core.models import install_model_catalog
+from omniagents.core.product import product_info
+
+# The catalog store, installed from the discovered product manifest —
+# what product bootstrap does before any CLI run; these tests patch the
+# store's resolution methods.
+install_model_catalog(product_info().manifest_path)
+
 
 @pytest.mark.asyncio
 async def test_run_init_agent_uses_model_provider_and_restores_env(monkeypatch, tmp_path):

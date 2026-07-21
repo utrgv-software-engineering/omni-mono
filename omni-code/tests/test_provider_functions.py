@@ -7,11 +7,12 @@ from pathlib import Path
 
 import pytest
 
-import omni_code  # noqa: F401 — bootstrap installs the catalog store
-from omniagents.core.models import MODELS_CONFIG_VERSION, model_store
+from omniagents.core.models import MODELS_CONFIG_VERSION, install_model_catalog
+from omniagents.core.product import product_info
 
-#: The installed store; method names match the historical function API.
-models = model_store()
+#: The installed store (catalog from the discovered product manifest,
+#: as bootstrap installs it); method names match the historical API.
+models = install_model_catalog(product_info().manifest_path)
 
 
 @pytest.fixture

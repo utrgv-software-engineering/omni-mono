@@ -12,8 +12,8 @@ import json
 import pytest
 
 import omni_code.governance as governance
-from omni_code import PROJECT_MANIFEST
-from omni_code.cli import cli_main
+from omniagents.core.product import product_info
+from omniagents.product_cli import main as cli_main
 import omniagents.core.session.history_db as history_db
 from omniagents.core.paths import get_sessions_db_path
 from omniagents.core.session.summarize import manifest_session_envelope
@@ -285,7 +285,7 @@ def test_sessions_summarize_wraps_non_json(monkeypatch, tmp_path, capsys):
     assert data["session_id"] == "s1"
     # The coding envelope keys (declared in project.yml) are ensured
     # even on a raw wrap.
-    envelope = manifest_session_envelope(PROJECT_MANIFEST)
+    envelope = manifest_session_envelope(product_info().manifest_path)
     assert envelope is not None and "key_files" in envelope
     for key in envelope:
         assert key in data

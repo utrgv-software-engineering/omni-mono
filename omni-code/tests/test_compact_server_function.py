@@ -14,10 +14,14 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
-# Importing omni_code bootstraps the product identity (manifest_path),
-# which is what the conventional summarizer resolves the compactor
-# agent through.
-import omni_code  # noqa: F401
+from omniagents.core.models import install_model_catalog
+from omniagents.core.product import product_info
+
+# The catalog store, installed from the discovered product manifest —
+# what product bootstrap does before any CLI run. Identity itself
+# resolves via entry-point discovery; the conventional compaction
+# summarizer then finds the compactor agent through the manifest.
+install_model_catalog(product_info().manifest_path)
 from omniagents.core.runtime.compaction import (
     DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS,
     compaction_summarizer,

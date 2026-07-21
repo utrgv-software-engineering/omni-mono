@@ -18,7 +18,8 @@ from textwrap import dedent
 
 import pytest
 
-import omni_code  # noqa: F401  (installs the product identity from project.yml)
+# Product identity (and its manifest path, from which the packaged
+# default profile is found) resolves via entry-point discovery.
 from omniagents.core.sandbox.profiles import resolve_product_profile as resolve_profile
 
 
