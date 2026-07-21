@@ -6,7 +6,7 @@ chain, ``${workspace_dir}`` substitution, network-allowlist / user-.env
 injection, and the ``init``/``services``/``terminal`` extension. This
 module supplies omni-code's packaged default profile — a real file
 path, not identity; the user/config layers default from the product
-identity declared in project.yml (installed by ``omni_code.identity``).
+identity declared in project.yml (installed by the ``omni_code`` package import).
 
 Resolution order (last wins on key conflict, dicts merge, lists replace):
 
@@ -28,7 +28,6 @@ from omniagents.core.sandbox.profiles import (
     resolve_profile as _framework_resolve_profile,
 )
 
-from omni_code import identity  # noqa: F401  — installs the product identity
 
 __all__ = ["ResolvedProfile", "ServiceSpec", "TerminalSpec", "resolve_profile"]
 

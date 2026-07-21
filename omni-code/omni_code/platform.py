@@ -5,7 +5,7 @@ refresh, and the unified policy client — lives in
 ``omniagents.core.providers.platform.client``. Its omni-code binding
 (the ``omni_code`` policy slug, the ``~/.config/omni_code`` credential
 store) is no longer set here: it flows from the product identity
-declared in project.yml (installed by ``omni_code.identity``), which the
+declared in project.yml (installed by the ``omni_code`` package import), which the
 client defaults from when nothing is bound explicitly.
 
 This module exists only for import-surface stability: omni-code's call
@@ -15,7 +15,6 @@ sites (governance, model governance, the auth CLI) keep importing from
 
 from __future__ import annotations
 
-from omni_code import identity  # noqa: F401  — installs the product identity
 
 # Re-export the API omni-code uses.
 from omniagents.core.providers.platform.client import (  # noqa: F401

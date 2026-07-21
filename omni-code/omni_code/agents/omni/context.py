@@ -30,7 +30,7 @@ def _resolve_invocation_dir() -> Path:
 
 
 def _default_skill_roots(variables: Dict[str, Any]) -> List[Path]:
-    from omni_code.config import get_config_dir
+    from omniagents.core.config import product_config_dir
 
     workspace_root = variables.get("workspace_root")
     if isinstance(workspace_root, str) and workspace_root.strip():
@@ -41,7 +41,7 @@ def _default_skill_roots(variables: Dict[str, Any]) -> List[Path]:
     unique = dedupe_skill_roots(
         [base / ".omni_code" / "skills", *source_skill_roots(str(base))]
     )
-    unique.append(get_config_dir() / "skills")
+    unique.append(product_config_dir() / "skills")
     return unique
 
 

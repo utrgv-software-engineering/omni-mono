@@ -157,10 +157,10 @@ def apply_platform_model_governance() -> None:
     # framework's; only the policy-key extraction above is omni-code's.
     from omniagents.core.models import write_governed_config
 
-    from omni_code.config import get_config_dir
+    from omniagents.core.config import product_config_dir
 
     write_governed_config(
-        get_config_dir(),
+        product_config_dir(),
         platform_providers,
         default_model,
         allow_user_models=allow_user_models,
@@ -183,6 +183,6 @@ def load_governed_config() -> Optional[Dict[str, Any]]:
     """Load the governed model config if it exists (framework contract)."""
     from omniagents.core.models import load_governed_config as _load_governed_config
 
-    from omni_code.config import get_config_dir
+    from omniagents.core.config import product_config_dir
 
-    return _load_governed_config(get_config_dir())
+    return _load_governed_config(product_config_dir())

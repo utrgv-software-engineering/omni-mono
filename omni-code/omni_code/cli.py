@@ -11,7 +11,7 @@ from __future__ import annotations
 
 
 def cli_main(argv=None) -> int:
-    from omni_code.identity import PROJECT_MANIFEST
+    from omni_code import PROJECT_MANIFEST
     from omniagents.product_cli import product_main
 
     return product_main(PROJECT_MANIFEST, argv)
@@ -19,7 +19,6 @@ def cli_main(argv=None) -> int:
 
 def setup_main() -> None:
     """``omni-setup`` — the model setup wizard, standalone."""
-    from omni_code import identity  # noqa: F401  — installs the product identity
     from omni_code.models import _STORE
     from omniagents.core.models.cli import run_model_command
 

@@ -51,7 +51,7 @@ def build_model_provider(
     """
     provider = (runtime.get("provider") or "").strip().lower()
     if provider == "openai-oauth":
-        import omni_code.codex_auth  # noqa: F401
+        import omniagents.core.providers.codex  # noqa: F401
 
     return provider_from_runtime(runtime)
 

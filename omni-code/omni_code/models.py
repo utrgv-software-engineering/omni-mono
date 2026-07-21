@@ -22,7 +22,7 @@ from omniagents.core.models import (
     litellm_api_key_env,
 )
 
-from omni_code.config import get_config_dir
+from omniagents.core.config import product_config_dir
 from omni_code.default_models import (
     get_default_model_name_fallback,
     get_default_providers,
@@ -63,13 +63,13 @@ def _governed_model_config() -> Optional[Dict[str, Any]]:
 
 
 def _codex_models() -> Optional[Dict[str, Dict[str, Any]]]:
-    from omni_code.codex_auth import list_codex_models
+    from omniagents.core.providers.codex import list_codex_models
 
     return list_codex_models()
 
 
 def _codex_authenticated() -> bool:
-    from omni_code.codex_auth import is_authenticated
+    from omniagents.core.providers.codex import is_authenticated
 
     return is_authenticated()
 
@@ -81,7 +81,7 @@ def _platform_credential(ref: str) -> Optional[Dict[str, Any]]:
 
 
 _STORE = ModelConfigStore(
-    config_dir=get_config_dir,
+    config_dir=product_config_dir,
     default_providers=get_default_providers,
     default_model_fallback=get_default_model_name_fallback,
     governed_config=_governed_model_config,

@@ -12,7 +12,28 @@ from types import SimpleNamespace
 from typing import Iterable, List, Optional
 
 from omni_code._version import __version__
-from omni_code.config import container_runtime, container_runtime_available, get_config_dir
+from omniagents.core.config import product_config_dir as get_config_dir
+
+# Product-branded knob first, framework knob second. The operator knob is
+# the short OMNI_* brand, not the product env prefix (OMNI_CODE_*).
+_CONTAINER_RUNTIME_ENV_VARS = (
+    "OMNI_CONTAINER_RUNTIME",
+    "OMNIAGENTS_CONTAINER_RUNTIME",
+)
+
+
+def container_runtime() -> str:
+    from omniagents.core.sandbox.container_runtime import container_runtime as _rt
+
+    return _rt(env_vars=_CONTAINER_RUNTIME_ENV_VARS)
+
+
+def container_runtime_available() -> bool:
+    from omniagents.core.sandbox.container_runtime import (
+        container_runtime_available as _available,
+    )
+
+    return _available(env_vars=_CONTAINER_RUNTIME_ENV_VARS)
 
 
 CONTAINER_PORT = 7681

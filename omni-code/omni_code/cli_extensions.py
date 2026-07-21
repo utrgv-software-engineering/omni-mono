@@ -19,7 +19,6 @@ import os
 import sys
 from typing import Any, Dict, List, Optional
 
-from omni_code import identity  # noqa: F401  — installs the product identity
 
 # Importing the models module installs omni-code's ModelConfigStore
 # (default catalog, platform governance, codex OAuth, credential

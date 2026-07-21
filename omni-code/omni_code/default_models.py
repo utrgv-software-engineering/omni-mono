@@ -51,7 +51,7 @@ DEFAULT_PROVIDERS: Dict[str, Dict[str, Any]] = {
         },
     },
     # ChatGPT subscription via the Codex backend (OAuth). No API key — auth is
-    # a ChatGPT login managed by omni_code.codex_auth. Talks the Responses API
+    # a ChatGPT login managed by omniagents.core.providers.codex. Talks the Responses API
     # to chatgpt.com/backend-api/codex. When signed in, the model list is
     # discovered live from the backend (see models._apply_oauth_discovery); the
     # entries below are only the offline fallback.

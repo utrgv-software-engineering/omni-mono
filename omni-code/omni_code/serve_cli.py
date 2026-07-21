@@ -1221,7 +1221,7 @@ async def perform_switch(profile_path: str, *, session: Any = None) -> Dict[str,
 def _register_codex_provider() -> None:
     """Register the openai-oauth model provider builder. Never blocks serve."""
     try:
-        from omni_code.codex_auth import register_codex_provider
+        from omniagents.core.providers.codex import register_codex_provider
 
         register_codex_provider()
     except Exception as e:

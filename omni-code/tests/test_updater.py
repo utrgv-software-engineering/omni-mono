@@ -4,7 +4,7 @@ The update mechanism (index scraping, version comparison, throttled
 notice, pipx upgrade) lives in ``omniagents.core.updater`` and is tested
 upstream. What omni-code owns — and what these tests cover — is the
 declaration: the ``product:`` section of the packaged project.yml
-(installed process-wide by ``omni_code.identity``), from which
+(installed process-wide by the ``omni_code`` package import), from which
 ``UpdaterConfig.from_product()`` derives the Gemfury index, the
 ``omni-code`` package name, the config-dir cache, and the
 ``OMNI_CODE_*`` env knobs.
@@ -16,7 +16,7 @@ import omniagents.core.updater as fw_updater
 from omniagents.core.product import load_product_info, product_info
 from omniagents.core.updater import UpdaterConfig
 
-from omni_code import identity
+import omni_code as product_pkg
 
 
 def _config() -> UpdaterConfig:
@@ -25,7 +25,7 @@ def _config() -> UpdaterConfig:
 
 def test_product_identity_installed_from_packaged_project_yml():
     info = product_info()
-    assert info == identity.PRODUCT
+    assert info == product_pkg.PRODUCT
     assert info.name == "omni-code"
     assert info.prog == "omni"
     assert info.label == "Omni Code"
@@ -34,7 +34,7 @@ def test_product_identity_installed_from_packaged_project_yml():
     assert info.windows_config_dir_name == "OmniCode"
     assert info.env_prefix == "OMNI_CODE"
     # The light parse of the packaged manifest agrees with what's installed.
-    assert load_product_info(identity.PROJECT_MANIFEST) == info
+    assert load_product_info(product_pkg.PROJECT_MANIFEST) == info
 
 
 def test_updater_config_from_product_points_at_gemfury_omni_code():
@@ -49,7 +49,7 @@ def test_updater_config_from_product_points_at_gemfury_omni_code():
 
 def test_update_cache_lives_in_omni_code_config_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    from omni_code.config import get_config_dir
+    from omniagents.core.config import product_config_dir as get_config_dir
 
     assert (
         fw_updater.get_update_cache_path(_config())
