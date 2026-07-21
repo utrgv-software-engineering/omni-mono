@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Generic pipx self-updater (`omniagents.core.updater`), lifted from omni-code: products describe themselves with an `UpdaterConfig` (simple-index URL, pipx package name, cache dir, env-var prefix, plus optional update-command hint and pip extra-index override) and reuse `check_for_update` (PEP-503 simple-index version scrape), `maybe_print_update_notice` (throttled `update.json`-cached startup notice with failure-retry backoff, honoring `<PREFIX>_UPDATE_CHECK` and `<PREFIX>_UPDATE_CHECK_INTERVAL_SECONDS`), and `run_update_command(argv, config=..., prog=...)` — the check/confirm/`pipx upgrade` CLI flow, parameterized by program name like `run_codex_auth_command` / `run_model_command`.
+
 ## [0.7.19] - 2026-07-18
 
 ### Added
