@@ -1,34 +1,24 @@
-"""omni-code binding for the shared OmniAgents management-plane client.
+"""omni-code import surface for the shared OmniAgents management-plane client.
 
 The platform client — device-code sign-in, credential store, token
 refresh, and the unified policy client — lives in
-``omniagents.core.providers.platform.client`` so any OmniAgents product
-can use it. This module exists only to bind it to omni-code's
-conventions:
+``omniagents.core.providers.platform.client``. Its omni-code binding
+(the ``omni_code`` policy slug, the ``~/.config/omni_code`` credential
+store) is no longer set here: it flows from the product identity
+declared in project.yml (installed by ``omni_code.identity``), which the
+client defaults from when nothing is bound explicitly.
 
-- Point the credential store at omni-code's config dir
-  (``~/.config/omni_code/platform.json``).
-- Scope user-level policy fetches to the ``omni_code`` project slug.
-
-It then re-exports the client API that omni-code's call sites use
-(governance, model governance, the auth CLI), so they can keep importing
-from ``omni_code.platform``.
+This module exists only for import-surface stability: omni-code's call
+sites (governance, model governance, the auth CLI) keep importing from
+``omni_code.platform``.
 """
 
 from __future__ import annotations
 
-from omni_code.config import get_config_dir
-from omniagents.core.providers.platform import client as _client
-
-# The management plane scopes policy to a project slug.
-POLICY_PROJECT_SLUG = "omni_code"
-
-# Bind the shared client to omni-code's conventions on import.
-_client.set_product_slug(POLICY_PROJECT_SLUG)
-_client.set_credential_store_dir(get_config_dir())
+from omni_code import identity  # noqa: F401  — installs the product identity
 
 # Re-export the API omni-code uses.
-from omniagents.core.providers.platform.client import (  # noqa: E402,F401
+from omniagents.core.providers.platform.client import (  # noqa: F401
     PLATFORM_CRED_FILE,
     clear_credentials,
     device_code_login,

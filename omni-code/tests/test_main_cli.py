@@ -12,9 +12,7 @@ def test_cli_main_force_prompt_mode_with_double_dash(monkeypatch):
     fake_models.has_models_configured = lambda: True
     monkeypatch.setitem(sys.modules, "omni_code.models", fake_models)
 
-    fake_updater = ModuleType("omni_code.updater")
-    fake_updater.maybe_print_update_notice = lambda: None
-    monkeypatch.setitem(sys.modules, "omni_code.updater", fake_updater)
+    monkeypatch.setattr(main_mod, "_print_update_notice", lambda: None)
 
     fake_proxy = ModuleType("omni_code.proxy")
     fake_proxy.maybe_start_proxy = lambda _project_path: None

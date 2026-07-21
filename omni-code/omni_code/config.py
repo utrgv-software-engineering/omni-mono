@@ -1,10 +1,11 @@
 from pathlib import Path
 
-# Project name - must match project.yml for consistency with omniagents MCP loading
-PROJECT_NAME = "omni_code"
-PROJECT_NAME_WINDOWS = "OmniCode"
+from omni_code import identity  # noqa: F401  — installs the product identity
 
-# Product-branded knob first, framework knob second.
+# Product-branded knob first, framework knob second. Kept explicit: the
+# operator knob is the short OMNI_* brand, not the product env prefix
+# (OMNI_CODE_*), and the framework's container-runtime seam takes a
+# literal env-var list.
 _CONTAINER_RUNTIME_ENV_VARS = (
     "OMNI_CONTAINER_RUNTIME",
     "OMNIAGENTS_CONTAINER_RUNTIME",
@@ -32,6 +33,7 @@ def container_runtime_available() -> bool:
 
 
 def get_config_dir() -> Path:
+    """omni-code's per-user config dir, from the installed product identity."""
     from omniagents.core.config import product_config_dir
 
-    return product_config_dir(PROJECT_NAME, windows_name=PROJECT_NAME_WINDOWS)
+    return product_config_dir()

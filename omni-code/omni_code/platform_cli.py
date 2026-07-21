@@ -7,8 +7,9 @@ Usage:
     omni auth codex <cmd>     Manage ChatGPT (Codex) sign-in: login|logout|status
 
 The login/logout/status flow is the shared framework command
-(``omniagents.cli.run_platform_auth_command``) bound to omni-code's
-program name, policy slug, and credential store.
+(``omniagents.cli.run_platform_auth_command``); program name, policy
+slug, and credential store default from the product identity declared
+in project.yml (installed by ``omni_code.identity``).
 """
 
 import sys
@@ -32,23 +33,19 @@ def main(args: list[str]) -> None:
         )
         return
 
-    from omni_code.config import get_config_dir
+    from omni_code import identity  # noqa: F401  — installs the product identity
     from omniagents.cli import run_platform_auth_command
 
-    status = run_platform_auth_command(
-        args, prog="omni", slug="omni_code", config_dir=get_config_dir()
-    )
+    status = run_platform_auth_command(args)
     if status:
         sys.exit(status)
 
 
 def _codex(args: list[str]) -> None:
-    # Importing codex_auth binds the framework's codex token store to
-    # omni-code's config dir before the shared CLI flow runs.
-    from omni_code import codex_auth  # noqa: F401
-
+    # The codex token store and prog default from the product identity.
+    from omni_code import identity  # noqa: F401  — installs the product identity
     from omniagents.cli import run_codex_auth_command
 
-    status = run_codex_auth_command(args[0] if args else "login", prog="omni")
+    status = run_codex_auth_command(args[0] if args else "login")
     if status:
         sys.exit(status)

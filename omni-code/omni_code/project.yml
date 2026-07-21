@@ -1,6 +1,22 @@
 name: omni_code
 allow_user_mcp_servers: true
 allow_user_models: true
+# Product identity — the single declaration of who this product is.
+# Installed process-wide by omni_code.identity (bootstrap_product) and
+# read by every framework subsystem default: CLI prog rendering, the
+# per-user config dir, the platform policy slug + credential store, the
+# codex token store, the self-updater, and sandbox-profile user layers.
+product:
+  name: omni-code
+  prog: omni
+  label: Omni Code
+  slug: omni_code
+  config_dir: omni_code
+  windows_config_dir: OmniCode
+  env_prefix: OMNI_CODE
+  update:
+    index_url: https://pypi.fury.io/ericmichael/omni-code/
+    command_hint: omni update
 # Paths are relative to this file. Code/data siblings live inside the
 # omni_code package (identical layout for editable and wheel installs);
 # evaluations and target are repo-only and absent from wheels (the

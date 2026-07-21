@@ -1,6 +1,5 @@
 import os
 import sys
-from pathlib import Path
 
 
 def _get_arg_value(args: list[str], *flags: str) -> str | None:
@@ -46,7 +45,18 @@ def _load_models_config() -> None:
             os.environ["MODEL_NAME"] = model_runtime["model"]
 
 
+def _print_update_notice() -> None:
+    from omniagents.core.updater import UpdaterConfig, maybe_print_update_notice
+
+    maybe_print_update_notice(UpdaterConfig.from_product())
+
+
 def cli_main(argv=None) -> None:
+    # Product identity first: everything after this — governance (policy
+    # slug, credential store), the model store (config dir), the update
+    # notice — reads it through the framework defaults.
+    from omni_code.identity import PROJECT_MANIFEST
+
     args = argv if argv is not None else sys.argv[1:]
     force_prompt_mode = bool(args and args[0] == "--")
 
@@ -131,14 +141,12 @@ def cli_main(argv=None) -> None:
         print()
 
     if not embedded:
-        from omni_code.updater import maybe_print_update_notice
-
-        maybe_print_update_notice()
+        _print_update_notice()
 
     # The project manifest lives inside the package — agents/, tools/,
     # capabilities/, server_functions/ are subpackages beside it, so the
     # same path works identically for editable and wheel installs.
-    project_path = Path(__file__).resolve().parent / "project.yml"
+    project_path = PROJECT_MANIFEST
     from omniagents.cli import main as omni_main
 
     new_args = ["omniagents", "run", "--project", str(project_path), "--mode", "ink"]

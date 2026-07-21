@@ -1,16 +1,17 @@
 """``omni update`` CLI tests.
 
-The command is the framework's ``run_update_command`` bound to omni-code's
-``UPDATER_CONFIG``; these tests pin the binding (program name, package
-name, exit codes) by faking the framework's check/upgrade primitives.
+The command is the framework's ``run_update_command`` with the config
+defaulted from the product identity in the packaged project.yml; these
+tests pin that binding (program name, package name, exit codes) by
+faking the framework's check/upgrade primitives.
 """
 
 import pytest
 
 import omniagents.core.updater as fw_updater
+from omniagents.core.updater import UpdateCheckResult
 
 from omni_code import update_cli
-from omni_code.updater import UpdateCheckResult
 
 
 def test_update_cli_yes_skips_prompt_and_runs_upgrade(monkeypatch, capsys):

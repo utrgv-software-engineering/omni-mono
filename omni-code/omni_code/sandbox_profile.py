@@ -4,8 +4,9 @@ A thin product binding over the framework's layered profile resolver
 (``omniagents.core.sandbox.profiles``): the framework owns the merge
 chain, ``${workspace_dir}`` substitution, network-allowlist / user-.env
 injection, and the ``init``/``services``/``terminal`` extension. This
-module supplies omni-code's config directory and packaged default
-profile.
+module supplies omni-code's packaged default profile — a real file
+path, not identity; the user/config layers default from the product
+identity declared in project.yml (installed by ``omni_code.identity``).
 
 Resolution order (last wins on key conflict, dicts merge, lists replace):
 
@@ -27,7 +28,7 @@ from omniagents.core.sandbox.profiles import (
     resolve_profile as _framework_resolve_profile,
 )
 
-from omni_code.config import get_config_dir
+from omni_code import identity  # noqa: F401  — installs the product identity
 
 __all__ = ["ResolvedProfile", "ServiceSpec", "TerminalSpec", "resolve_profile"]
 
@@ -43,7 +44,6 @@ def resolve_profile(
     """Resolve a sandbox profile through omni-code's layered chain."""
     return _framework_resolve_profile(
         workspace_dir=workspace_dir,
-        config_dir=get_config_dir(),
         default_profile_path=_DEFAULT_PROFILE_PATH,
         project_id=project_id,
         explicit_path=explicit_path,

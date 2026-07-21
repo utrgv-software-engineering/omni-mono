@@ -31,10 +31,14 @@ def _write(path: Path, content: str) -> Path:
 
 @pytest.fixture
 def config_dir(tmp_path, monkeypatch):
-    """Redirect ``get_config_dir`` so user/project layers live under tmp_path."""
-    cfg = tmp_path / "cfg"
-    monkeypatch.setattr(sandbox_profile, "get_config_dir", lambda: cfg)
-    return cfg
+    """Redirect the product config dir so user/project layers live under tmp_path.
+
+    ``resolve_profile`` defaults its config dir from the installed
+    product identity (project.yml ``product.config_dir`` = ``omni_code``),
+    which honors ``XDG_CONFIG_HOME`` at call time.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    return tmp_path / "omni_code"
 
 
 @pytest.fixture

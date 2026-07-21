@@ -50,7 +50,9 @@ SUMMARY_ENVELOPE: dict[str, Any] = {
 
 
 def _default_project() -> str:
-    return "omni_code"
+    from omni_code.identity import PRODUCT
+
+    return PRODUCT.slug
 
 
 def _default_agent() -> str:
