@@ -4,14 +4,13 @@ evaluation:
     max_exchanges: 10
     runs_per_prompt: 1
 
-  # Environment configuration for external state management
-  # The environment class handles fixture loading, state verification, and cleanup
+  # Environment declaration for external state management.
+  # `type` names a registered environment factory; the demo factory is
+  # registered from evaluations/measures.py (see the bottom of that
+  # file). The remaining keys are the factory's knobs.
   environment:
-    # Class path relative to project root (or absolute module path)
-    class: environments.demo_env.DemoEvalEnvironment
-    # Config passed to the environment class __init__
-    config:
-      api_base_url: ${API_BASE_URL:-http://localhost:3000}
+    type: booking_demo
+    api_base_url: http://localhost:3000
 
   scenarios:
     # Scripted single-turn scenario (default type)

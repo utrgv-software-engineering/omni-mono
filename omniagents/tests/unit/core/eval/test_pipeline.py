@@ -565,30 +565,25 @@ def test_derive_judge_keys_from_measures_handles_mixed_values():
     assert result == ["quality", "custom", "speed"]
 
 
-def test_run_evaluation_with_environment_returns_error_on_failed_load(
+def test_run_evaluation_with_environment_returns_error_on_failed_build(
     monkeypatch, tmp_path
 ):
-    """Test that environment loading failures are captured in the result."""
+    """A declared environment that fails to build is captured in the result."""
     from omniagents.core.eval import multi_turn
 
-    # Config with environment but no scenarios to avoid running actual agent
+    # Config with an unknown environment type and no scenarios so no
+    # actual agent runs.
     config_text = textwrap.dedent(
         """
         evaluation:
           environment:
-            class: nonexistent.module.EnvClass
-            config:
-              api_base: http://localhost:3000
+            type: nonexistent_type
           scenarios: []
         """
     )
     cfg_path = tmp_path / "compiled.yaml"
     cfg_path.write_text(config_text)
 
-    # Mock load_environment_class to return None (failed load)
-    monkeypatch.setattr(
-        multi_turn, "load_environment_class", lambda env_config, base_dir: None
-    )
     # _load_local_measures is imported from .pipeline inside the function
     monkeypatch.setattr(pipeline, "_load_local_measures", lambda cfg, **kw: None)
 
@@ -600,7 +595,7 @@ def test_run_evaluation_with_environment_returns_error_on_failed_load(
 
     # Verify the error is captured even with no scenarios
     assert "environment_error" in result
-    assert "nonexistent.module.EnvClass" in result["environment_error"]
+    assert "nonexistent_type" in result["environment_error"]
     assert "warnings" in result
     assert len(result["warnings"]) == 1
     assert "Environment loading failed" in result["warnings"][0]

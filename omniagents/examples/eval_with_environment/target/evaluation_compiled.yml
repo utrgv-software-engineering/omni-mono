@@ -16,9 +16,8 @@ evaluation:
     max_turns: 10
     runs_per_prompt: 1
   environment:
-    class: environments.demo_env.DemoEvalEnvironment
-    config:
-      api_base_url: ${API_BASE_URL:-http://localhost:3000}
+    type: booking_demo
+    api_base_url: http://localhost:3000
   scenarios:
   - name: simple_booking_lookup
     prompt: What's the status of booking ABC123?

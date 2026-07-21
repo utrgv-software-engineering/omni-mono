@@ -38,6 +38,7 @@ from omniagents.core.evaluation import (
 )
 
 from .environment import EvalEnvironment, EnvironmentContext, NoOpEnvironment
+from .environment_config import build_environment
 from .simulated_user import SimulatedUser, UserPersona
 from .telemetry import consume_stream_events, scenario_timer, build_telemetry
 
@@ -45,7 +46,6 @@ __all__ = [
     "run_scenario",
     "run_scenarios_against_agent",
     "run_evaluation_with_environment_async",
-    "load_environment_class",
 ]
 
 _logger = logging.getLogger(__name__)
@@ -1110,70 +1110,6 @@ async def _run_synthetic_conversation(
     )
 
 
-def load_environment_class(
-    environment_config: Dict[str, Any],
-    base_dir: Path,
-) -> Optional[EvalEnvironment]:
-    """Load an EvalEnvironment class from configuration.
-
-    Args:
-        environment_config: Dict with 'class' and optional 'config' keys.
-        base_dir: Base directory for relative imports.
-
-    Returns:
-        Instantiated EvalEnvironment or None.
-    """
-    if not environment_config:
-        return None
-
-    class_path = environment_config.get("class")
-    if not class_path:
-        return None
-
-    config = environment_config.get("config", {})
-
-    try:
-        # Handle relative imports from project
-        if class_path.startswith("."):
-            # e.g., ".environments.api_eval.ApiEvalEnvironment"
-            import importlib.util
-            import sys
-
-            parts = class_path.lstrip(".").split(".")
-            module_path = base_dir / "/".join(parts[:-1]) + ".py"
-            class_name = parts[-1]
-
-            spec = importlib.util.spec_from_file_location(
-                f"eval_env_{parts[-2]}", str(module_path)
-            )
-            if spec and spec.loader:
-                module = importlib.util.module_from_spec(spec)
-                sys.modules[spec.name] = module
-                spec.loader.exec_module(module)
-                env_class = getattr(module, class_name)
-                return env_class(**config)
-        else:
-            # Absolute import - add base_dir to sys.path if not already there
-            import importlib
-            import sys
-
-            base_dir_str = str(base_dir)
-            if base_dir_str not in sys.path:
-                sys.path.insert(0, base_dir_str)
-
-            parts = class_path.rsplit(".", 1)
-            module_name = parts[0]
-            class_name = parts[1] if len(parts) > 1 else parts[0]
-
-            module = importlib.import_module(module_name)
-            env_class = getattr(module, class_name)
-            return env_class(**config)
-
-    except Exception as e:
-        _logger.warning("Failed to load environment class '%s': %s", class_path, e)
-        return None
-
-
 def _is_synthetic_scenario(scenario: Dict[str, Any]) -> bool:
     """Check if scenario is synthetic type."""
     return scenario.get("type") == "synthetic"
@@ -1238,18 +1174,18 @@ async def run_evaluation_with_environment_async(
 
     _load_local_measures(cfg_path, project_root=_project_root, eval_dir=_eval_dir)
 
-    # Try to load environment from config if not provided
+    # Build the declared environment if one isn't provided
     env_config = eval_cfg.get("environment")
     env_load_error: Optional[str] = None
     if environment is None and env_config:
-        env_base = _project_root or cfg_path.parent
-        environment = load_environment_class(env_config, env_base)
-        if environment is None and env_config.get("class"):
-            # Environment was configured but failed to load
-            env_load_error = (
-                f"Failed to load environment class: {env_config.get('class')}. "
-                "Check that the module exists and all dependencies are installed."
+        try:
+            environment = build_environment(
+                env_config,
+                project_root=_project_root or cfg_path.parent,
+                eval_dir=_eval_dir,
             )
+        except Exception as exc:
+            env_load_error = f"Failed to build declared environment: {exc}"
             _logger.error(env_load_error)
 
     # Filter scenarios
@@ -1441,12 +1377,18 @@ async def run_scenarios_against_agent(
 
     _load_local_measures(cfg_path, project_root=_project_root, eval_dir=_eval_dir)
 
-    # Load environment from config
+    # Build the declared environment from config
     environment = None
     env_config = eval_cfg.get("environment")
     if env_config:
-        env_base = _project_root or cfg_path.parent
-        environment = load_environment_class(env_config, env_base)
+        try:
+            environment = build_environment(
+                env_config,
+                project_root=_project_root or cfg_path.parent,
+                eval_dir=_eval_dir,
+            )
+        except Exception as exc:
+            _logger.error("Failed to build declared environment: %s", exc)
 
     total = len(scenarios)
 

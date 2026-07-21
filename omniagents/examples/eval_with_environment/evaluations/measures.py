@@ -153,3 +153,89 @@ async def booking_verified_in_db(ctx: EvalContext) -> Dict[str, Any]:
     except RuntimeError as e:
         # No environment configured
         return fail_reason(f"Cannot verify: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Custom evaluation environment
+#
+# Environments whose behavior isn't expressible as configuration (this
+# demo talks to a booking API) register a factory under a type name.
+# measures.py is imported by the pipeline before the environment is
+# built, so registering here is enough; evaluation.yml then declares
+#
+#     environment:
+#       type: booking_demo
+#       api_base_url: http://localhost:3000
+# ---------------------------------------------------------------------------
+
+import uuid
+from typing import Optional
+
+from omniagents.core.eval.environment import EnvironmentContext, EvalEnvironment
+from omniagents.core.eval.environment_config import register_environment_type
+
+
+class DemoEvalEnvironment(EvalEnvironment):
+    """Example evaluation environment for booking scenarios.
+
+    This environment:
+    1. Loads fixture data before each scenario
+    2. Provides context values to tools (e.g., session_id, api_key)
+    3. Sets environment variables for tools that read them directly
+    4. Verifies expected state after scenario completion
+    5. Cleans up test data after each scenario
+    """
+
+    def __init__(self, api_base_url: str = "http://localhost:3000", **kwargs: Any):
+        self.api_base_url = api_base_url
+        # In a real implementation, you might initialize an API client here
+        # self.client = ApiClient(api_base_url)
+
+    async def setup(self, scenario: Dict[str, Any]) -> EnvironmentContext:
+        """Load fixtures / create test sessions before a scenario runs."""
+        session_id = str(uuid.uuid4())
+        fixture = scenario.get("fixture")
+        # In a real implementation, you would load the fixture:
+        # await self.client.load_fixture(fixture)
+        return EnvironmentContext(
+            session_id=session_id,
+            data={
+                "session_id": session_id,
+                "fixture_loaded": fixture,
+                # Available in spec.context during agent runs:
+                "api_key": f"test_key_{session_id[:8]}",
+                "resource_id": 12345,
+            },
+        )
+
+    async def teardown(self, context: EnvironmentContext) -> None:
+        """Clean up test data (always called, even on failure)."""
+        # await self.client.cleanup_session(context.session_id)
+
+    async def verify(
+        self, context: EnvironmentContext, expected: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Verify expected state; measures call this via ctx.verify()."""
+        # In a real implementation, query your API/database here.
+        results = {
+            key: {"matched": True, "details": "Demo verification"}
+            for key in (expected or {})
+        }
+        return {"success": True, "results": results}
+
+    def get_env_vars(self, context: EnvironmentContext) -> Dict[str, str]:
+        """Env vars set around scenario execution for tools that read them."""
+        return {
+            "DEMO_API_KEY": context.data.get("api_key", ""),
+            "DEMO_API_BASE_URL": self.api_base_url,
+            "DEMO_SESSION_ID": context.session_id,
+        }
+
+
+def _build_demo_environment(
+    config: Dict[str, Any], *, project_root: Optional[Any], eval_dir: Optional[Any]
+) -> DemoEvalEnvironment:
+    return DemoEvalEnvironment(**config)
+
+
+register_environment_type("booking_demo", _build_demo_environment)

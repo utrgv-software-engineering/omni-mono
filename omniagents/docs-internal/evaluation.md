@@ -43,6 +43,78 @@ python -m omniagents.cli compile -P path/to/project.yml
 python -m omniagents.cli eval run -P path/to/project.yml --reporter pretty
 ```
 
+Environment config (declarative)
+
+The `evaluation.environment` block declares the eval environment as
+data: a `type` naming a registered environment factory plus that
+factory's knobs. There is no class-path form — products keep no
+environment Python. Relative paths resolve against the `evaluations/`
+directory.
+
+```yaml
+evaluation:
+  environment:
+    type: local_workspace              # built-in factory
+
+    # LocalWorkspaceEnvironment knobs (all optional)
+    fixtures_dir: fixtures/workspaces  # fixture workspace tree
+    workspace_root: ~/.cache/my_product/eval-workspaces
+    skills_subdir: .my_product/skills
+    keep_tempdir_env: MY_EVAL_KEEP_TEMPDIR
+    tempdir_prefix: my_eval_
+
+    # Static env vars applied around every scenario. ${workspace} is the
+    # per-scenario temp dir, ${workspace_root} the configured cache root;
+    # unknown ${...} tokens are left as-is.
+    env:
+      MY_WORKSPACE_ROOT: "${workspace}"
+      MISE_TRUSTED_CONFIG_PATHS: "${workspace_root}"
+
+    # Optional: compose ContainerRoutingMixin. `profile_resolver:
+    # product` is the installed product's layered resolver
+    # (resolve_product_profile); a dotted path imports a custom one.
+    # `default_profile` backs the bare `environment.image` shorthand;
+    # `profile`/`image` are class-level fallbacks (per-scenario
+    # `environment:` blocks win).
+    container_routing:
+      profile_resolver: product
+      default_profile: profiles/devbox.yml
+
+    # Optional: per-scenario user-MCP fixture staging. When a scenario
+    # sets `<scenario_key>: <name>`, an isolated XDG_CONFIG_HOME is
+    # staged inside the temp dir with a generated
+    # `<config_name>/mcp.json` pointing the declared server at
+    # `<dbs_dir>/<name>.db` (copied to db_dest, or initialized fresh by
+    # the server) and `<dbs_dir>/<name>.pages` (copied to pages_dest).
+    # `cli`/`command` accept `{env_var, default}` — the env var
+    # overrides the declared default at runtime.
+    mcp_fixture:
+      scenario_key: db_fixture
+      dbs_dir: fixtures/dbs
+      config_name: my_product
+      server_name: my-mcp-server
+      command: { env_var: MY_MCP_NODE, default: node }
+      cli: { env_var: MY_MCP_CLI, default: ~/path/to/dist/cli.js }
+      args: ["${cli}", "--db-path", "${db_path}", "--pages-dir", "${pages_dir}"]
+      db_dest: projects.db
+      pages_dest: projects
+```
+
+Environments that genuinely aren't expressible as configuration
+register a factory from project Python the pipeline already loads
+(`evaluations/measures.py` runs before the environment is built):
+
+```python
+from omniagents.core.eval.environment_config import register_environment_type
+
+register_environment_type(
+    "booking_api", lambda cfg, *, project_root, eval_dir: BookingEnv(**cfg)
+)
+```
+
+then declare `environment: {type: booking_api, ...}`. See
+`examples/eval_with_environment/`.
+
 Metrics config
 
 ```yaml
