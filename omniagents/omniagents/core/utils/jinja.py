@@ -7,8 +7,10 @@ from .jinja_instructions import (
 )
 
 
-def render_template(template_str: str, **kwargs) -> str:
-    return _render_template_core(template_str, silent_undefined=False, **kwargs)
+def render_template(template_str: str, *, search_paths=None, **kwargs) -> str:
+    return _render_template_core(
+        template_str, silent_undefined=False, search_paths=search_paths, **kwargs
+    )
 
 
 def read_text_file(base: Path, rel_or_abs: str) -> str:

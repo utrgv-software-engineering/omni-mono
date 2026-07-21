@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Shared instruction fragments: agent instruction templates (Jinja2) now support `{% include %}`. The render environment gets a `ChoiceLoader` over ordered search paths — the instructions file's own directory, its `_shared/` subdirectory, the sibling `_shared/` directory (`agents/_shared/` in the strict layout), plus optional `paths.instruction_fragments` dirs from project.yml. Wired through `AgentSpec.instructions_search_paths` into the agent builder and the realtime (voice) session, so text and voice agents can share verbatim instruction blocks instead of drifting copies. Missing includes raise `InstructionIncludeNotFoundError` naming the searched directories; templates without includes render byte-identically to before (regression-tested).
+
 ## [0.7.19] - 2026-07-18
 
 ### Added

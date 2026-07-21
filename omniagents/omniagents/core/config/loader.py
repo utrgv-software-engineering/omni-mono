@@ -264,6 +264,34 @@ def _load_instructions(config: Dict[str, Any], base_dir: Path) -> Callable[[], s
         return lambda: "You are a helpful assistant."
 
 
+def _instruction_search_paths(
+    config: Dict[str, Any],
+    base_dir: Path,
+    project_defaults: Optional[Dict[str, Any]] = None,
+) -> List[Path]:
+    """Compute ``{% include %}`` search paths for an agent's instructions.
+
+    Anchored at the instructions file's own directory when
+    ``instructions_file`` is set, otherwise at the agent YAML's directory
+    (inline ``instructions:``). Adds the ``_shared/`` conventions plus any
+    ``paths.instruction_fragments`` directories forwarded by the project
+    loader via ``project_defaults``.
+    """
+    from omniagents.core.utils.jinja_instructions import instruction_search_paths
+
+    anchor_dir = base_dir
+    instructions_file_relative = config.get("instructions_file")
+    if instructions_file_relative:
+        anchor_dir = (base_dir / str(instructions_file_relative)).resolve().parent
+
+    extra_dirs: List[Path] = []
+    if project_defaults:
+        for d in project_defaults.get("instruction_fragments") or []:
+            extra_dirs.append(Path(d))
+
+    return instruction_search_paths(anchor_dir, extra_dirs)
+
+
 def _parse_inline_agent_spec(
     config: Dict[str, Any], base_dir: Path, parent_loading_stack: Set[Path]
 ) -> "AgentSpec":
@@ -433,6 +461,8 @@ def _parse_inline_agent_spec(
         # UI/UX (minimal for inline agents)
         settings_fields=[],
         agent_slug=inline_agent_slug,
+        # Include search paths for {% include %} fragments in instructions
+        instructions_search_paths=_instruction_search_paths(config, base_dir),
     )
 
 
@@ -2200,6 +2230,10 @@ def load_agent_spec_from_yaml(
         # Storage Metadata
         project_slug=None,
         agent_slug=agent_slug,
+        # Include search paths for {% include %} fragments in instructions
+        instructions_search_paths=_instruction_search_paths(
+            config, base_dir, project_defaults
+        ),
     )
 
     if server_functions_registrar:

@@ -860,3 +860,100 @@ def test_realtime_settings_invalid_type_uses_defaults(tmp_path, capsys):
     assert "should be a dictionary" in captured.out
     assert spec.realtime_settings is not None
     assert spec.realtime_settings.voice == "alloy"  # Default
+
+
+def test_loader_sets_instruction_search_paths_from_instructions_file(tmp_path):
+    """Search paths anchor at the instructions file's own directory."""
+    agent_dir = tmp_path / "agents" / "primary"
+    agent_dir.mkdir(parents=True)
+    prompts_dir = agent_dir / "prompts"
+    prompts_dir.mkdir()
+    (prompts_dir / "instructions.md").write_text("Hi", encoding="utf-8")
+    yaml_path = agent_dir / "agent.yml"
+    write(
+        yaml_path,
+        """
+        name: SearchPathAgent
+        instructions_file: prompts/instructions.md
+        """,
+    )
+    spec = load_agent_spec_from_yaml(str(yaml_path))
+    assert spec.instructions_search_paths == [
+        prompts_dir,
+        prompts_dir / "_shared",
+        agent_dir / "_shared",
+    ]
+
+
+def test_loader_search_paths_include_project_instruction_fragments(tmp_path):
+    """paths.instruction_fragments dirs are appended via project_defaults."""
+    agent_dir = tmp_path / "agents" / "primary"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "instructions.md").write_text("Hi", encoding="utf-8")
+    fragments_dir = tmp_path / "fragments"
+    yaml_path = agent_dir / "agent.yml"
+    write(
+        yaml_path,
+        """
+        name: FragmentAgent
+        instructions_file: instructions.md
+        """,
+    )
+    spec = load_agent_spec_from_yaml(
+        str(yaml_path),
+        project_defaults={"instruction_fragments": [str(fragments_dir)]},
+    )
+    assert spec.instructions_search_paths == [
+        agent_dir,
+        agent_dir / "_shared",
+        tmp_path / "agents" / "_shared",
+        fragments_dir,
+    ]
+
+
+def test_loader_renders_include_from_shared_sibling_dir(tmp_path):
+    """End-to-end: instructions_file with {% include %} resolves agents/_shared."""
+    import asyncio
+
+    from omniagents.core.utils.jinja_instructions import process_instructions
+
+    agent_dir = tmp_path / "agents" / "voice"
+    shared_dir = tmp_path / "agents" / "_shared"
+    agent_dir.mkdir(parents=True)
+    shared_dir.mkdir(parents=True)
+    (shared_dir / "core.md").write_text("Shared rules.", encoding="utf-8")
+    (agent_dir / "instructions.md").write_text(
+        "Voice agent.\n{% include 'core.md' %}", encoding="utf-8"
+    )
+    yaml_path = agent_dir / "agent.yml"
+    write(
+        yaml_path,
+        """
+        name: VoiceAgent
+        instructions_file: instructions.md
+        """,
+    )
+    spec = load_agent_spec_from_yaml(str(yaml_path))
+    renderer = process_instructions(
+        spec.get_agent_instructions(),
+        search_paths=spec.instructions_search_paths,
+    )
+    rendered = asyncio.run(renderer(None, None))
+    assert rendered == "Voice agent.\nShared rules."
+
+
+def test_loader_inline_instructions_search_paths_anchor_at_yaml_dir(tmp_path):
+    yaml_path = tmp_path / "agent.yml"
+    write(
+        yaml_path,
+        """
+        name: InlineAgent
+        instructions: Just do it
+        """,
+    )
+    spec = load_agent_spec_from_yaml(str(yaml_path))
+    assert spec.instructions_search_paths == [
+        tmp_path,
+        tmp_path / "_shared",
+        tmp_path.parent / "_shared",
+    ]

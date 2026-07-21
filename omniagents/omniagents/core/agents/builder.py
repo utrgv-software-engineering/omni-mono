@@ -546,7 +546,10 @@ async def _default_build_agent(
             raw_instructions.rstrip() + "\n\n" + "\n\n".join(cap_instructions_parts)
         )
 
-    instructions = process_instructions(raw_instructions)
+    instructions = process_instructions(
+        raw_instructions,
+        search_paths=getattr(spec, "instructions_search_paths", None),
+    )
     tools = spec.available_tools
 
     # Apply spec-level tool guardrails to every FunctionTool the agent uses.
