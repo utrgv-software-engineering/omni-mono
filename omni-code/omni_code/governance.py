@@ -1,11 +1,16 @@
-"""Governance-driven sandbox enforcement.
+"""Governance-driven sandbox enforcement — pure policy translation.
 
-When authenticated to the management plane, checks the policy to determine
-if the current session requires sandboxing. If so, re-execs the current
-command inside omni-sandbox (process-level isolation via bwrap/sandbox-exec/
-AppContainer) with the policy's network mode and resource constraints. The
-process sandbox is all-or-nothing for network: policies that require a
-host-filtered allowlist cannot be enforced here and cause a hard stop.
+When authenticated to the management plane, checks the policy and, if it
+requires sandboxing, translates the sandbox profile into a framework
+relaunch request and re-execs the current command inside omni-sandbox.
+The mechanics — namespace detection, binary discovery, venv/editable bind
+computation, argv construction, execvp — live in
+``omniagents.core.sandbox.process_relaunch``; this module owns only
+omni-code policy: fresh policy fetch, profile resolution (with the legacy
+single-profile fallback), governed-image pull with digest pinning,
+version gating, and the fail-closed decision tree. The process sandbox is
+all-or-nothing for network: a policy demanding a host-filtered allowlist
+causes a hard stop.
 
 Security model:
 - Fail closed: if governance is required and can't be enforced, refuse to run
@@ -17,80 +22,43 @@ Security model:
 """
 
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
 
-
-def is_sandboxed() -> bool:
-    """Return True if actually running inside a sandbox.
-
-    Detection strategy:
-    1. On Linux, check /proc/self/uid_map — a restricted mapping means we're
-       in a user namespace (bwrap sandbox). This is authoritative regardless
-       of env vars, so the launcher's omni-sandbox invocation is detected.
-    2. Fall back to the OMNI_SANDBOXED env var for macOS/Windows/containers
-       where namespace detection isn't applicable.
-    """
-    # Linux: authoritative namespace detection via uid_map.
-    if sys.platform == "linux":
-        try:
-            uid_map = Path("/proc/self/uid_map").read_text().strip()
-            # In the root namespace, uid_map is "0 0 4294967295" (identity map).
-            # In a user namespace, it's a restricted mapping.
-            parts = uid_map.split()
-            if len(parts) >= 3 and parts[0] == "0" and parts[1] == "0" and int(parts[2]) > 1000000:
-                pass  # Root namespace — not sandboxed (check env var below)
-            else:
-                return True  # Restricted mapping — genuinely sandboxed
-        except Exception:
-            pass
-
-    # Env var fallback for macOS/Windows/containers.
-    if os.getenv("OMNI_SANDBOXED") == "1":
-        return True
-
-    return False
+from omniagents.core.sandbox.process_relaunch import (
+    SandboxBind,
+    SandboxRelaunchRequest,
+    is_sandboxed,  # noqa: F401  (re-exported; also used below)
+    relaunch_in_sandbox,
+)
+from omniagents.core.sandbox.process_relaunch import (
+    find_sandbox_binary as _find_sandbox_binary,
+)
 
 
 def find_sandbox_binary() -> Optional[str]:
     """Find the omni-sandbox binary.
 
     The crate lives in the standalone omni-sandbox repository (extracted
-    from this repo's former sandbox-cli/). Search order:
+    from this repo's former sandbox-cli/). Search order (framework helper):
 
     1. ``OMNI_SANDBOX_BIN`` env var (explicit override)
     2. Packaged ``omni_code/assets/bin/`` (wheel-shipped binary)
     3. Sibling checkout ``../omni-sandbox/target/{release,debug}/``
     4. ``PATH``
     """
-    # 1. Explicit override
-    env_bin = os.getenv("OMNI_SANDBOX_BIN")
-    if env_bin:
-        path = Path(env_bin)
-        if path.is_file() and os.access(str(path), os.X_OK):
-            return str(path)
-
     pkg_dir = Path(__file__).resolve().parent
-    candidates = [
-        # 2. Packaged with omni-code
-        pkg_dir / "assets" / "bin" / "omni-sandbox",
-        # 3. Sibling checkout of the standalone omni-sandbox repo
-        pkg_dir.parent.parent / "omni-sandbox" / "target" / "release" / "omni-sandbox",
-        pkg_dir.parent.parent / "omni-sandbox" / "target" / "debug" / "omni-sandbox",
-    ]
-    for path in candidates:
-        if path.is_file() and os.access(str(path), os.X_OK):
-            return str(path)
-
-    # 4. On PATH
-    on_path = shutil.which("omni-sandbox")
-    if on_path:
-        return on_path
-
-    return None
+    return _find_sandbox_binary(
+        candidates=[
+            # 2. Packaged with omni-code
+            pkg_dir / "assets" / "bin" / "omni-sandbox",
+            # 3. Sibling checkout of the standalone omni-sandbox repo
+            pkg_dir.parent.parent / "omni-sandbox" / "target" / "release" / "omni-sandbox",
+            pkg_dir.parent.parent / "omni-sandbox" / "target" / "debug" / "omni-sandbox",
+        ]
+    )
 
 
 def maybe_enforce_sandbox() -> None:
@@ -260,7 +228,13 @@ def _resolve_sandbox_requirements(policy: dict) -> Optional[dict]:
 
 
 def _check_bwrap_versions(config: dict) -> None:
-    """Check that local omni-code and omni-sandbox versions meet the policy minimum."""
+    """Check that local omni-code and omni-sandbox versions meet the policy minimum.
+
+    Stays in omni-code (not the framework relaunch helper): the image_spec
+    keys are this product's deployment-policy schema, and both remediation
+    messages name product install channels (the sibling omni-sandbox
+    checkout, ``pip install --upgrade omni-code``) the framework cannot know.
+    """
     image_spec = config.get("image_spec", {})
 
     required_sandbox_version = image_spec.get("sandbox_cli_version")
@@ -442,182 +416,50 @@ def _get_image_digest(backend: str, image_ref: str) -> Optional[str]:
     return None
 
 
-def _editable_source_dirs(venv_dir: Path) -> list[Path]:
-    """Return source directories of editable installs in the given venv.
-
-    Handles two pip layouts:
-      * Legacy ``.pth`` files containing literal absolute paths.
-      * Modern ``__editable___<name>_finder.py`` modules with a ``MAPPING``
-        dict mapping import names to absolute source paths.
-
-    Those paths live outside the venv and must be bind-mounted separately
-    for imports to resolve inside the sandbox.
-    """
-    import ast
-
-    found: list[Path] = []
-    seen: set[Path] = set()
-
-    def add(p: Path) -> None:
-        if p.is_absolute() and p.is_dir() and p not in seen:
-            seen.add(p)
-            found.append(p)
-
-    lib = venv_dir / "lib"
-    if not lib.is_dir():
-        return found
-
-    for site_packages in lib.glob("python*/site-packages"):
-        # Legacy: literal absolute path on its own line.
-        for pth in site_packages.glob("*.pth"):
-            try:
-                for line in pth.read_text().splitlines():
-                    line = line.strip()
-                    if not line or line.startswith("#") or line.startswith("import "):
-                        continue
-                    add(Path(line))
-            except OSError:
-                continue
-
-        # Modern: __editable___<name>_finder.py with a MAPPING dict literal.
-        for finder in site_packages.glob("__editable___*_finder.py"):
-            try:
-                tree = ast.parse(finder.read_text())
-            except (OSError, SyntaxError):
-                continue
-            for node in ast.walk(tree):
-                if (
-                    isinstance(node, ast.AnnAssign)
-                    and isinstance(node.target, ast.Name)
-                    and node.target.id == "MAPPING"
-                    and node.value is not None
-                ):
-                    try:
-                        mapping = ast.literal_eval(node.value)
-                    except (ValueError, SyntaxError):
-                        continue
-                    if isinstance(mapping, dict):
-                        # Bind the *parent* of each module path so sibling files
-                        # (project.yml, pyproject.toml, etc.) are visible too.
-                        for src in mapping.values():
-                            add(Path(src).parent)
-
-    return found
-
-
 def _exec_in_sandbox(binary: str, config: dict) -> None:
-    """Re-exec the current command inside omni-sandbox. Does not return."""
-    args = [binary, "exec"]
-
-    workspace = os.getcwd()
-    args.extend(["--workspace", workspace])
-
-    # Network policy.
-    # Fail closed: the process sandbox (bwrap/sandbox-exec/AppContainer) can
-    # only do all-or-nothing network isolation. If the policy demands a
-    # host-filtered allowlist, we cannot honor it here — refuse to run rather
-    # than silently granting full egress.
+    """Translate the resolved policy config into a relaunch request and
+    re-exec inside omni-sandbox (framework mechanics). Does not return
+    when enforcement succeeds; fail-closed refusals exit(1)."""
     network_targets = config.get("network_targets", [])
-    if network_targets:
-        hosts = [t["hostname"] for t in network_targets if t.get("hostname")]
-        if hosts:
-            print(
-                "Error: Governance policy requires a host-filtered network "
-                f"allowlist ({', '.join(hosts)}), but the process sandbox "
-                f"backend ({config.get('backend', 'bwrap')}) cannot enforce "
-                "host-level network filtering. Use a container backend that "
-                "supports network allowlisting (set OMNI_SANDBOX_BACKEND="
-                "docker or podman, if the policy provides one), or ask your "
-                "platform admin to set the policy's network mode to 'open' "
-                "or remove the allowlist.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-    elif config.get("network_mode") == "open":
-        args.append("--net")
-
-    # Resource limits from policy.
-    # pids_limit is enforced by omni-sandbox via setrlimit(RLIMIT_NPROC)
-    # before exec on Linux/macOS (Windows AppContainer rejects it — fail
-    # closed inside the CLI itself).
+    hosts = [t["hostname"] for t in network_targets if t.get("hostname")]
     limits = config.get("resource_limits", {})
-    if limits.get("pids_limit"):
-        args.extend(["--pids-limit", str(limits["pids_limit"])])
-    # Fail closed: a disk quota is a restriction the process sandbox
-    # (bwrap/sandbox-exec/AppContainer) cannot enforce — refuse to run rather
-    # than silently dropping it.
-    if limits.get("disk_gb"):
-        print(
-            "Error: Governance policy sets a disk limit "
-            f"({limits['disk_gb']} GB), but the process sandbox backend "
-            f"({config.get('backend', 'bwrap')}) cannot enforce disk quotas. "
-            "Use a container backend that supports disk limits (set "
-            "OMNI_SANDBOX_BACKEND=docker or podman, if the policy provides "
-            "one), or ask your platform admin to remove disk_gb from this "
-            "profile's resource limits.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    # Security profile from policy.
-    # The process sandbox has no flags to RELAX isolation (seccomp is always
-    # on; the root filesystem is always read-only). Ignoring a relaxation
-    # means running stricter than the policy asks, which is safe — note it
-    # and continue.
     security = config.get("security_profile", {})
+
+    # Relaxations the process sandbox cannot honor — the framework notes
+    # and ignores them (running stricter than the policy asks is safe).
     ignored_relaxations = []
     if security.get("seccomp_enabled") is False:
         ignored_relaxations.append("seccomp_enabled=false")
     if security.get("read_only_root") is False:
         ignored_relaxations.append("read_only_root=false")
-    if ignored_relaxations:
-        print(
-            "Governance: process sandbox ignores security-profile relaxations "
-            f"({', '.join(ignored_relaxations)}); running with full isolation.",
-            file=sys.stderr,
-        )
-    # omni-sandbox takes one --protect flag per subpath (a comma-joined value
-    # would be treated as a single, wrong subpath name).
-    for subpath in security.get("protected_subpaths") or []:
-        args.extend(["--protect", subpath])
 
+    binds = []
     # Mount config dir read-only so credentials are available inside sandbox
     from omniagents.core.config import product_config_dir
 
     config_dir = product_config_dir()
     if config_dir.is_dir():
-        args.extend(["--ro-bind", str(config_dir)])
-
+        binds.append(SandboxBind(str(config_dir)))
     # Mount omniagents home for session persistence
     omniagents_home = Path.home() / ".omniagents"
     if omniagents_home.is_dir():
-        args.extend(["--rw-bind", str(omniagents_home)])
+        binds.append(SandboxBind(str(omniagents_home), writable=True))
 
-    # The command to run inside the sandbox.
-    # Use the absolute path of the entry script so we re-exec the SAME omni
-    # (e.g. a launcher-managed venv), not whatever happens to be first on
-    # the sandbox's PATH (which can pick up an unrelated install — e.g. a
-    # mise shim — that lacks our dependencies).
-    inner_omni = os.path.realpath(sys.argv[0])
-
-    # The venv that owns this omni must be visible inside the sandbox so the
-    # inner exec can find both the entry script and its Python interpreter.
-    venv_dir = Path(inner_omni).parent.parent
-    if venv_dir.is_dir():
-        args.extend(["--ro-bind", str(venv_dir)])
-
-    # Editable installs (`pip install -e`) keep their source outside the venv;
-    # without binding those directories the sandboxed Python can't import them.
-    for src_dir in _editable_source_dirs(venv_dir):
-        args.extend(["--ro-bind", str(src_dir)])
-
-    args.append("--")
-    args.append(inner_omni)
-    args.extend(sys.argv[1:])
-
-    # Set the sandbox marker — verified by is_sandboxed() via namespace check
-    os.environ["OMNI_SANDBOXED"] = "1"
-
-    print("Governance: enforcing sandbox isolation", file=sys.stderr)
-
-    os.execvp(binary, args)
+    relaunch_in_sandbox(
+        binary,
+        SandboxRelaunchRequest(
+            workspace=os.getcwd(),
+            network=(
+                "unrestricted"
+                if not network_targets and config.get("network_mode") == "open"
+                else "none"
+            ),
+            network_allow_hosts=hosts,
+            pids_limit=limits.get("pids_limit") or None,
+            disk_limit_gb=limits.get("disk_gb") or None,
+            ignored_relaxations=ignored_relaxations,
+            protected_subpaths=security.get("protected_subpaths") or (),
+            binds=binds,
+            backend_label=config.get("backend", "bwrap"),
+        ),
+    )
