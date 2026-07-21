@@ -13,7 +13,7 @@ Schema (illustrative)::
 
     version: 1
     client:
-      type: docker | unix_local | e2b | ...
+      type: docker | unix_local | process | e2b | ...
     options:
       image: ghcr.io/...:tag
       exposed_ports: [8080, 6080]

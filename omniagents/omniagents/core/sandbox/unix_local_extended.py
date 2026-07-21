@@ -166,6 +166,17 @@ class ExtendedUnixLocalSandboxSession(UnixLocalSandboxSession, PtyStreamingSessi
 
 
 class ExtendedUnixLocalSandboxClient(LifecycleSessionClientMixin, UnixLocalSandboxClient):
+    def _make_inner_session(
+        self, state: UnixLocalSandboxSessionState
+    ) -> UnixLocalSandboxSession:
+        """Instantiate the backend session for *state*.
+
+        Subclass seam: :class:`~omniagents.core.sandbox.process_extended.
+        ProcessSandboxClient` overrides this to build its wrapped-exec
+        session (and stamp the omni-sandbox invocation config on it).
+        """
+        return ExtendedUnixLocalSandboxSession.from_state(state)
+
     async def create(
         self,
         *,
@@ -209,13 +220,13 @@ class ExtendedUnixLocalSandboxClient(LifecycleSessionClientMixin, UnixLocalSandb
             workspace_root_owned=workspace_root_owned,
             exposed_ports=resolved_options.exposed_ports,
         )
-        inner = ExtendedUnixLocalSandboxSession.from_state(state)
+        inner = self._make_inner_session(state)
         return self._wrap_session(inner, instrumentation=self._instrumentation)
 
     async def resume(self, state: SandboxSessionState) -> SandboxSession:
         if not isinstance(state, UnixLocalSandboxSessionState):
             raise TypeError(
-                "ExtendedUnixLocalSandboxClient.resume expects a UnixLocalSandboxSessionState"
+                f"{type(self).__name__}.resume expects a UnixLocalSandboxSessionState"
             )
-        inner = ExtendedUnixLocalSandboxSession.from_state(state)
+        inner = self._make_inner_session(state)
         return self._wrap_session(inner, instrumentation=self._instrumentation)
