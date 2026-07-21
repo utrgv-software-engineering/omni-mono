@@ -11,10 +11,12 @@ A composition of two independent concerns:
   tools exec inside it via the SDK ``SandboxAgent`` path — while the LLM
   loop, model client, and all measures stay host-side.
 
-omni-code supplies only the product knobs: its profile resolver (the
-same layered YAML system ``omni serve`` uses, called hermetically with
-``explicit_path``) and the packaged default eval profile used by the
-bare ``environment.image`` shorthand.
+omni-code supplies only the product knobs: the framework's product
+profile resolver (the same layered YAML system ``omni serve`` uses,
+resolving omni-code's packaged default by the manifest-sibling
+convention, called hermetically with ``explicit_path``) and the
+packaged default eval profile used by the bare ``environment.image``
+shorthand.
 
 Scenarios with neither ``profile`` nor ``image`` fall through to plain
 host-tempdir behavior unchanged, so this class is safe as the global
@@ -33,8 +35,9 @@ from pathlib import Path
 from typing import Any
 
 from omniagents.core.eval.container_routing import ContainerRoutingMixin
+from omniagents.core.sandbox.profiles import resolve_product_profile
 
-from omni_code.sandbox_profile import resolve_profile
+import omni_code  # noqa: F401  (installs the product identity from project.yml)
 
 from .workspace_env import WorkspaceEvalEnvironment
 
@@ -53,7 +56,7 @@ _DEFAULT_EVAL_PROFILE = (
 class DevboxEvalEnvironment(ContainerRoutingMixin, WorkspaceEvalEnvironment):
     """Host-side agent + per-scenario containerized environment."""
 
-    profile_resolver = staticmethod(resolve_profile)
+    profile_resolver = staticmethod(resolve_product_profile)
     default_profile_path = _DEFAULT_EVAL_PROFILE
 
     def __init__(

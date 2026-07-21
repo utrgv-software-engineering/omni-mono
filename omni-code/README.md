@@ -28,55 +28,15 @@ omni --embedded --mode web --ui-minimal
 
 In this mode Omni Code does not auto-open a browser and emits a machine-readable JSON line from the web backend with the resolved `url` and `port`.
 
-## Sandbox (Docker)
+## Sandboxing
 
-If you have Docker installed, you can run Omni Code inside a container while mounting your current workspace and your Omni Code config directory (models/MCP/skills):
-
-```bash
-omni sandbox --ui container
-```
-
-To persist credentials or tool state between runs, mount a persistent Docker volume into the container:
+To run the agent's environment in a container, use `omni serve` with a sandbox profile: the agent loop stays on the host while its shell and file tools execute inside the container described by the profile. Profiles are layered YAML — the packaged default, then `<config>/sandbox/default.yml`, then `<config>/projects/<id>/sandbox.yml`, then an explicit `--profile <path>` override:
 
 ```bash
-omni sandbox --persist-volume omni-cred-azure:/home/user/.azure
+omni serve --profile my-sandbox-profile.yml
 ```
 
-To run `code-server` inside the sandbox and expose it on a host port:
-
-```bash
-omni sandbox --ui container --enable-code-server --code-server-port 8080
-```
-
-By default the sandbox persists OmniAgents state (sessions + Studio traces) in an isolated directory so sandbox history is not mixed with your local OmniAgents history:
-
-- Host: `~/.config/omni_code/sandbox/omniagents/` → Container: `/home/user/.omniagents/`
-
-You can override this location (or intentionally share your local OmniAgents state) with:
-
-```bash
-omni sandbox --omniagents-home ~/.omniagents
-```
-
-For Electron-style launching, you can run in the background and print only the URL:
-
-```bash
-omni sandbox --mode web --detach --print-url --port 0
-```
-
-For programmatic launching (e.g. an Electron wrapper), you can emit a machine-readable JSON payload:
-
-```bash
-omni sandbox --ui local --enable-code-server --enable-vnc --code-server-port 0 --vnc-port 0 --ui-port 0 --output json
-```
-
-For `--ui container/none`, JSON output requires `--detach`.
-
-By default it will pass `<workspace>/.env` to Docker if present. You can override it with:
-
-```bash
-omni sandbox --env-file /path/to/.env
-```
+For full process isolation of the agent itself (filesystem/network confinement enforced by the OS), Omni Code integrates the `omni-sandbox` binary: when platform governance requires it, `omni` re-execs itself inside `omni-sandbox` automatically before anything else runs.
 
 ## In-session commands
 

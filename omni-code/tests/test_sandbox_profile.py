@@ -1,6 +1,9 @@
-"""Unit tests for ``omni_code.sandbox_profile``.
+"""Sandbox profile resolution for omni-code via the framework resolver.
 
-Covers the three contracts ``omni serve`` depends on:
+``omniagents.core.sandbox.profiles.resolve_product_profile`` resolves the
+installed product's layered chain against omni-code's packaged default
+(``omni_code/sandbox_profile_default.yml``, found by the manifest-sibling
+convention). Covers the contracts ``omni serve`` depends on:
 
   * Layered resolution (default ← user-default ← per-project ← explicit)
   * Deep merge semantics (dicts merge; lists/scalars replace)
@@ -15,7 +18,8 @@ from textwrap import dedent
 
 import pytest
 
-from omni_code import sandbox_profile
+import omni_code  # noqa: F401  (installs the product identity from project.yml)
+from omniagents.core.sandbox.profiles import resolve_product_profile as resolve_profile
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +58,7 @@ def workspace(tmp_path):
 
 
 def test_default_only_when_no_user_or_project(config_dir, workspace):
-    profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
+    profile = resolve_profile(workspace_dir=workspace)
     assert profile.raw["client"]["type"] == "host"
     assert profile.raw["manifest"]["root"] == str(workspace.resolve())
     assert profile.services == []
@@ -71,7 +75,7 @@ def test_user_default_layer_merges_over_builtin(config_dir, workspace):
             FROM_USER: "v"
         """,
     )
-    profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
+    profile = resolve_profile(workspace_dir=workspace)
     # Default stays
     assert profile.raw["client"]["type"] == "host"
     # User-default adds env
@@ -99,7 +103,7 @@ def test_project_layer_merges_over_user(config_dir, workspace):
             SHARED: project-value
         """,
     )
-    profile = sandbox_profile.resolve_profile(
+    profile = resolve_profile(
         workspace_dir=workspace, project_id="proj-123"
     )
     env = profile.raw["manifest"]["environment"]
@@ -112,7 +116,7 @@ def test_project_layer_merges_over_user(config_dir, workspace):
 
 def test_missing_project_profile_silently_skipped(config_dir, workspace):
     """Naming a project_id with no per-project file is not an error."""
-    profile = sandbox_profile.resolve_profile(
+    profile = resolve_profile(
         workspace_dir=workspace, project_id="does-not-exist"
     )
     assert len(profile.sources) == 1  # only the default
@@ -146,7 +150,7 @@ def test_explicit_profile_skips_user_and_project_layers(
             FROM_EXPLICIT: "v"
         """,
     )
-    profile = sandbox_profile.resolve_profile(
+    profile = resolve_profile(
         workspace_dir=workspace,
         project_id="p",
         explicit_path=explicit,
@@ -184,7 +188,7 @@ def test_deep_merge_nested_dicts(config_dir, workspace):
             ADD_ME: "v"
         """,
     )
-    profile = sandbox_profile.resolve_profile(
+    profile = resolve_profile(
         workspace_dir=workspace, project_id="p"
     )
     assert profile.raw["manifest"]["root"] == "/overridden"
@@ -210,7 +214,7 @@ def test_lists_replace_not_concat(config_dir, workspace):
           exposed_ports: [5000]
         """,
     )
-    profile = sandbox_profile.resolve_profile(
+    profile = resolve_profile(
         workspace_dir=workspace, project_id="p"
     )
     assert profile.raw["options"]["exposed_ports"] == [5000]
@@ -244,7 +248,7 @@ def test_workspace_dir_substituted_recursively(config_dir, workspace, tmp_path):
             port: 8000
         """,
     )
-    profile = sandbox_profile.resolve_profile(
+    profile = resolve_profile(
         workspace_dir=workspace, explicit_path=profile_path
     )
     ws_str = str(workspace.resolve())
@@ -265,7 +269,7 @@ def test_unknown_substitution_token_raises(config_dir, workspace, tmp_path):
     # ${not_a_real_var} doesn't match any known substitution key, so it's
     # left as-is (treated as literal). Verify that's the behavior — if we
     # ever tighten this to error, this test is the signal.
-    profile = sandbox_profile.resolve_profile(
+    profile = resolve_profile(
         workspace_dir=workspace, explicit_path=profile_path
     )
     assert profile.raw["manifest"]["root"] == "${not_a_real_var}"
@@ -297,7 +301,7 @@ def test_services_parsed_with_all_fields(config_dir, workspace, tmp_path):
             user: "1000:1000"
         """,
     )
-    profile = sandbox_profile.resolve_profile(
+    profile = resolve_profile(
         workspace_dir=workspace, explicit_path=profile_path
     )
     assert len(profile.services) == 1
@@ -327,7 +331,7 @@ def test_service_port_must_be_in_exposed_ports(config_dir, workspace, tmp_path):
         """,
     )
     with pytest.raises(ValueError, match="not in sandbox.options.exposed_ports"):
-        sandbox_profile.resolve_profile(
+        resolve_profile(
             workspace_dir=workspace, explicit_path=profile_path
         )
 
@@ -346,7 +350,7 @@ def test_service_without_port_is_allowed(config_dir, workspace, tmp_path):
             command: "while true; do sleep 1; done"
         """,
     )
-    profile = sandbox_profile.resolve_profile(
+    profile = resolve_profile(
         workspace_dir=workspace, explicit_path=profile_path
     )
     assert profile.services[0].port is None
@@ -365,7 +369,7 @@ def test_service_missing_command_rejected(config_dir, workspace, tmp_path):
         """,
     )
     with pytest.raises(ValueError, match="command is required"):
-        sandbox_profile.resolve_profile(
+        resolve_profile(
             workspace_dir=workspace, explicit_path=profile_path
         )
 
@@ -386,7 +390,7 @@ def test_service_wrong_command_type_rejected(config_dir, workspace, tmp_path):
     # We require strings for now (shell=True at the call site). If we later
     # support argv lists this test should flip to assert the list parses.
     with pytest.raises(ValueError, match="command is required"):
-        sandbox_profile.resolve_profile(
+        resolve_profile(
             workspace_dir=workspace, explicit_path=profile_path
         )
 
@@ -408,7 +412,7 @@ def test_missing_client_type_rejected(config_dir, workspace, tmp_path):
     # Explicit-path mode still merges the default first, and the default
     # supplies `client.type: host` — so this profile actually validates.
     # Verify that's the behavior so we don't accidentally drift.
-    profile = sandbox_profile.resolve_profile(
+    profile = resolve_profile(
         workspace_dir=workspace, explicit_path=profile_path
     )
     assert profile.raw["client"]["type"] == "host"
@@ -418,7 +422,7 @@ def test_non_mapping_profile_rejected(config_dir, workspace, tmp_path):
     profile_path = tmp_path / "p.yml"
     profile_path.write_text("- not\n- a\n- mapping\n")
     with pytest.raises(ValueError, match="must be a YAML mapping"):
-        sandbox_profile.resolve_profile(
+        resolve_profile(
             workspace_dir=workspace, explicit_path=profile_path
         )
 
@@ -441,7 +445,7 @@ def test_init_block_parses_commands_in_order(config_dir, workspace, tmp_path):
           - "echo second"
         """,
     )
-    profile = sandbox_profile.resolve_profile(
+    profile = resolve_profile(
         workspace_dir=workspace, explicit_path=profile_path
     )
     assert profile.init == ["echo first", "echo second"]
@@ -459,7 +463,7 @@ def test_init_block_substitutes_workspace_dir(config_dir, workspace, tmp_path):
           - "ls ${workspace_dir}"
         """,
     )
-    profile = sandbox_profile.resolve_profile(
+    profile = resolve_profile(
         workspace_dir=workspace, explicit_path=profile_path
     )
     assert str(workspace.resolve()) in profile.init[0]
@@ -475,7 +479,7 @@ def test_init_absent_yields_empty_list(config_dir, workspace, tmp_path):
           root: ${workspace_dir}
         """,
     )
-    profile = sandbox_profile.resolve_profile(
+    profile = resolve_profile(
         workspace_dir=workspace, explicit_path=profile_path
     )
     assert profile.init == []
@@ -493,7 +497,7 @@ def test_init_non_list_rejected(config_dir, workspace, tmp_path):
         """,
     )
     with pytest.raises(ValueError, match="sandbox.init must be a list"):
-        sandbox_profile.resolve_profile(
+        resolve_profile(
             workspace_dir=workspace, explicit_path=profile_path
         )
 
@@ -520,25 +524,25 @@ def _env_values(profile) -> dict:
 
 def test_network_json_injects_env_when_enabled(config_dir, workspace):
     _write_network_json(config_dir, enabled=True, allowlist=["api.openai.com", "github.com"])
-    profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
+    profile = resolve_profile(workspace_dir=workspace)
     assert _env_values(profile).get("OMNI_SANDBOX_NETWORK_ALLOWLIST") == "api.openai.com,github.com"
 
 
 def test_network_json_disabled_does_not_inject(config_dir, workspace):
     _write_network_json(config_dir, enabled=False, allowlist=["api.openai.com"])
-    profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
+    profile = resolve_profile(workspace_dir=workspace)
     assert "OMNI_SANDBOX_NETWORK_ALLOWLIST" not in _env_values(profile)
 
 
 def test_network_json_empty_allowlist_does_not_inject(config_dir, workspace):
     _write_network_json(config_dir, enabled=True, allowlist=[])
-    profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
+    profile = resolve_profile(workspace_dir=workspace)
     assert "OMNI_SANDBOX_NETWORK_ALLOWLIST" not in _env_values(profile)
 
 
 def test_network_json_missing_is_silent(config_dir, workspace):
     # No network.json file at all.
-    profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
+    profile = resolve_profile(workspace_dir=workspace)
     assert "OMNI_SANDBOX_NETWORK_ALLOWLIST" not in _env_values(profile)
 
 
@@ -556,7 +560,7 @@ def test_explicit_profile_env_wins_over_network_json(config_dir, workspace, tmp_
               OMNI_SANDBOX_NETWORK_ALLOWLIST: "from-profile.com"
         """,
     )
-    profile = sandbox_profile.resolve_profile(
+    profile = resolve_profile(
         workspace_dir=workspace, explicit_path=profile_path
     )
     assert _env_values(profile)["OMNI_SANDBOX_NETWORK_ALLOWLIST"] == "from-profile.com"
@@ -577,7 +581,7 @@ def test_explicit_empty_string_opts_out_of_auto_discovery(config_dir, workspace,
               OMNI_SANDBOX_NETWORK_ALLOWLIST: ""
         """,
     )
-    profile = sandbox_profile.resolve_profile(
+    profile = resolve_profile(
         workspace_dir=workspace, explicit_path=profile_path
     )
     assert _env_values(profile)["OMNI_SANDBOX_NETWORK_ALLOWLIST"] == ""
@@ -586,7 +590,7 @@ def test_explicit_empty_string_opts_out_of_auto_discovery(config_dir, workspace,
 def test_malformed_network_json_falls_open(config_dir, workspace):
     config_dir.mkdir(parents=True, exist_ok=True)
     (config_dir / "network.json").write_text("{not valid json")
-    profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
+    profile = resolve_profile(workspace_dir=workspace)
     assert "OMNI_SANDBOX_NETWORK_ALLOWLIST" not in _env_values(profile)
 
 
@@ -603,7 +607,7 @@ def test_init_empty_string_rejected(config_dir, workspace, tmp_path):
         """,
     )
     with pytest.raises(ValueError, match="must be a non-empty"):
-        sandbox_profile.resolve_profile(
+        resolve_profile(
             workspace_dir=workspace, explicit_path=profile_path
         )
 
@@ -615,7 +619,7 @@ def test_init_empty_string_rejected(config_dir, workspace, tmp_path):
 
 def test_terminal_default_when_block_absent(config_dir, workspace):
     """Profiles without a ``terminal:`` block get sensible defaults."""
-    profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
+    profile = resolve_profile(workspace_dir=workspace)
     assert profile.terminal.command == "bash -i"
     assert profile.terminal.user is None
     assert profile.terminal.cwd is None
@@ -635,7 +639,7 @@ def test_terminal_block_parses_all_fields(config_dir, workspace, tmp_path):
           cwd: "/workspace"
         """,
     )
-    profile = sandbox_profile.resolve_profile(
+    profile = resolve_profile(
         workspace_dir=workspace, explicit_path=profile_path
     )
     assert profile.terminal.command == "zsh -l"
@@ -657,7 +661,7 @@ def test_terminal_user_falls_back_to_top_level_run_as(config_dir, workspace, tmp
           command: "bash -i"
         """,
     )
-    profile = sandbox_profile.resolve_profile(
+    profile = resolve_profile(
         workspace_dir=workspace, explicit_path=profile_path
     )
     assert profile.terminal.user == "1000:1000"
@@ -676,7 +680,7 @@ def test_terminal_empty_command_rejected(config_dir, workspace, tmp_path):
         """,
     )
     with pytest.raises(ValueError, match="terminal.command"):
-        sandbox_profile.resolve_profile(
+        resolve_profile(
             workspace_dir=workspace, explicit_path=profile_path
         )
 
@@ -693,7 +697,7 @@ def test_terminal_non_mapping_rejected(config_dir, workspace, tmp_path):
         """,
     )
     with pytest.raises(ValueError, match="terminal must be a mapping"):
-        sandbox_profile.resolve_profile(
+        resolve_profile(
             workspace_dir=workspace, explicit_path=profile_path
         )
 
@@ -708,7 +712,7 @@ def test_user_env_file_injected_into_manifest_environment(config_dir, workspace)
     # The SDK's Environment model is {value: {KEY: val}} — a flat dict is dropped,
     # so the vars MUST land under manifest.environment.value (regression guard).
     _write(config_dir / ".env", 'FOO=bar\n# a comment\nQUOTED="hello world"\n\nEMPTY_OK=\n')
-    profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
+    profile = resolve_profile(workspace_dir=workspace)
     values = profile.raw["manifest"]["environment"]["value"]
     assert values["FOO"] == "bar"
     assert values["QUOTED"] == "hello world"  # dotenv strips the quotes
@@ -725,13 +729,13 @@ def test_profile_environment_wins_over_user_env(config_dir, workspace):
         """,
     )
     _write(config_dir / ".env", "SHARED=from-env\nONLY_ENV=v\n")
-    profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
+    profile = resolve_profile(workspace_dir=workspace)
     values = profile.raw["manifest"]["environment"]["value"]
     assert values["SHARED"] == "from-profile"  # explicit profile value is not clobbered
     assert values["ONLY_ENV"] == "v"
 
 
 def test_missing_env_file_is_noop(config_dir, workspace):
-    profile = sandbox_profile.resolve_profile(workspace_dir=workspace)
+    profile = resolve_profile(workspace_dir=workspace)
     # No <config>/.env → no crash, default profile resolves normally.
     assert profile.raw["client"]["type"] == "host"

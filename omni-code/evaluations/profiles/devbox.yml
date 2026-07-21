@@ -1,9 +1,10 @@
 # Pinned sandbox profile for evaluations ("environment in container").
 #
-# Resolved via omni_code.sandbox_profile.resolve_profile(explicit_path=...),
-# which merges ONLY this file over the built-in default and SKIPS the user/
-# project layers — so eval runs are hermetic and reproducible regardless of
-# whatever sandbox config the host machine happens to have.
+# Resolved via omniagents.core.sandbox.profiles.resolve_product_profile
+# (explicit_path=...), which merges ONLY this file over the built-in
+# default and SKIPS the user/project layers — so eval runs are hermetic
+# and reproducible regardless of whatever sandbox config the host machine
+# happens to have.
 #
 # A scenario opts into this environment with:
 #

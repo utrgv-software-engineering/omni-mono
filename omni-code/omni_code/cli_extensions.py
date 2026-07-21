@@ -187,13 +187,6 @@ async def _summarize_with_utility_agent(
 # ---------------------------------------------------------------------------
 
 
-def _sandbox(args: List[str]) -> Optional[int]:
-    """Run Omni Code inside a Docker sandbox."""
-    from omni_code.sandbox_cli import main as sandbox_main
-
-    return sandbox_main(args)
-
-
 def _sessions(args: List[str]) -> int:
     """Inspect OmniAgents sessions."""
     # Wire omni-code's summarizer + coding envelope, then delegate to the
@@ -215,6 +208,5 @@ def _sessions(args: List[str]) -> int:
 # convention), entrypoint spec, and codex registration (conventional on
 # the catalog's openai-oauth provider).
 COMMANDS = {
-    "sandbox": _sandbox,
     "sessions": _sessions,
 }

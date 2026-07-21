@@ -15,7 +15,11 @@ from pathlib import Path
 import pytest
 
 from omniagents.core.runtime import serve_harness as serve_cli
-from omni_code.sandbox_profile import TerminalSpec, resolve_profile
+import omni_code  # noqa: F401  (installs the product identity from project.yml)
+from omniagents.core.sandbox.profiles import (
+    TerminalSpec,
+    resolve_product_profile as resolve_profile,
+)
 from omniagents.rpc.terminal_backends import (
     HostPtyBackend,
     PtyOpenError,

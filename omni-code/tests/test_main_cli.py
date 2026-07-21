@@ -73,8 +73,10 @@ def test_cli_main_top_level_help_mentions_force_prompt(cli_env, capsys):
     assert "omni -- <words...>" in out
     assert "Force prompt mode" in out
     # Product commands from cli_extensions are mounted in the help.
-    assert "omni sandbox ..." in out
+    assert "omni sessions ..." in out
     assert "omni update ..." in out
+    # The deprecated Docker-sandbox CLI is gone.
+    assert "omni sandbox ..." not in out
 
 
 def test_cli_main_embedded_web_forces_json_output(cli_env):

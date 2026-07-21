@@ -49,15 +49,14 @@ exclude = [
 
 [tool.setuptools.package-data]
 # Everything ships inside the omni_code package: the project manifest,
-# agent specs/instructions, capability YAMLs, overlays, and the sandbox
-# assets + default profile.
+# agent specs/instructions, capability YAMLs, overlays, and the default
+# sandbox profile.
 "omni_code" = [
     "project.yml",
     # The declared model catalog (paths.model_catalog) — the store is
     # built from this file at product bootstrap, so it must ship.
     "models.yml",
     "sandbox_profile_default.yml",
-    "sandbox/*",
     # Optional wheel-shipped omni-sandbox binary (built in the standalone
     # omni-sandbox repo); governance.find_sandbox_binary checks here.
     "assets/bin/*",
