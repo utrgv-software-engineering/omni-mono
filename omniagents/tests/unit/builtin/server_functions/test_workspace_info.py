@@ -16,6 +16,7 @@ from omniagents.builtin.server_functions.workspace_info import (
     fs_get_workspace_root,
     fs_list_dir,
 )
+from omniagents.core.runtime import serve_state
 from omniagents.core.runtime.workspace_info import (
     set_manifest_root_provider,
     set_sandbox_session_provider,
@@ -25,10 +26,12 @@ from omniagents.core.runtime.workspace_info import (
 
 @pytest.fixture(autouse=True)
 def _reset_seams():
+    serve_state.reset()
     yield
     set_workspace_sources_provider(None)
     set_manifest_root_provider(None)
     set_sandbox_session_provider(None)
+    serve_state.reset()
 
 
 class _FakeSession:
@@ -84,6 +87,48 @@ def test_sources_uses_installed_provider():
     # Shallow copy — mutating the result must not touch the provider's list.
     result["sources"].append({"kind": "local"})
     assert len(sources) == 1
+
+
+def test_sources_default_to_published_serve_state():
+    serve_state.set_sources(
+        [{"kind": "local", "mountName": "app", "path": "/host/app"}]
+    )
+    result = asyncio.run(fs_get_sources())
+    assert result == {
+        "sources": [{"kind": "local", "mountName": "app", "path": "/host/app"}]
+    }
+
+
+def test_installed_sources_provider_wins_over_serve_state():
+    serve_state.set_sources([{"kind": "local", "mountName": "published"}])
+    set_workspace_sources_provider(lambda: [{"kind": "local", "mountName": "mine"}])
+    result = asyncio.run(fs_get_sources())
+    assert result == {"sources": [{"kind": "local", "mountName": "mine"}]}
+
+
+def test_workspace_root_defaults_to_published_serve_state():
+    serve_state.set_manifest_root("/workspace")
+    result = asyncio.run(fs_get_workspace_root(_FakeSession()))
+    assert result == {"path": "/workspace"}
+
+
+def test_installed_manifest_root_provider_wins_over_serve_state():
+    serve_state.set_manifest_root("/published")
+    set_manifest_root_provider(lambda: "/mine")
+    result = asyncio.run(fs_get_workspace_root(_FakeSession()))
+    assert result == {"path": "/mine"}
+
+
+def test_sandbox_session_defaults_to_published_serve_state():
+    from omniagents.core.runtime.workspace_info import get_sandbox_session
+
+    session = object()
+    serve_state.set_sandbox_session(session)
+    assert get_sandbox_session() is session
+
+    override = object()
+    set_sandbox_session_provider(lambda: override)
+    assert get_sandbox_session() is override
 
 
 def test_sources_swallow_provider_errors():

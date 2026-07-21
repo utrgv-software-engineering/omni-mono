@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Process-global serve-session state (`omniagents.core.runtime.serve_state`), lifted wholesale from omni-code's `agent_workspace_state`: the serve host publishes the running session's wiring — `manifest_root`, the parsed launcher `--source` descriptors (raw dicts preserved for UI callers, plus a typed `SourceDescriptor` view via `get_source_descriptors()` with `kind`/`mount_name`/`path`/`repo_url`/`ref`, `is_local`/`is_git`/`local_path()` helpers, and `from_dict`/`to_dict` round-trip of the wire protocol), the resolved `ProjectContext`, the sandbox-attached orchestrator `AgentSpec`, the live `SandboxSession`, the discard-snapshot-on-exit flag, and the sandbox-profile `SwitchContext` — and every other consumer (server functions, worker spec loaders, skill-root resolution, context factories) reads it without weaving references through call sites. All slots default to absent so non-serve entry points behave standalone; `reset()` restores that for tests.
+
+### Changed
+- The `workspace_info` provider seams (`set_workspace_sources_provider` / `set_manifest_root_provider` / `set_sandbox_session_provider`) now DEFAULT to reading the published serve-session state — an explicitly-installed provider still wins. A product whose serve host publishes into `serve_state` no longer installs any of the three providers.
+- Skill-root resolution is now derived, not product-installed: without a `set_skill_roots_provider` install, `skill_roots(workspace_root)` resolves `<workspace>/.{product slug}/skills`, then each published workspace source's `skills/` directory (`source_skill_roots` — mount-name resolution against the serve session's manifest root, host-path fallback when no sandbox session is live, order-preserving dedupe), then `<product config dir>/skills` — so a product with a `product:` section in project.yml gets its conventional layout (omni-code: `.omni_code/skills` + `~/.config/omni_code/skills`) with no code. The previous default (`.omniagents/skills` only, empty without a workspace root) is subsumed: the framework identity derives the same dot-dir, and the invocation directory (`$PWD`) is the fallback base. `default_skill_roots`, `source_skill_roots`, and `dedupe_skill_roots` are exported from `omniagents.core.skills`.
+
 ## [0.7.21] - 2026-07-18
 
 ### Added

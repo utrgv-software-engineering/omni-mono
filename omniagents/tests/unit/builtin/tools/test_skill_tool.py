@@ -75,4 +75,7 @@ def test_failing_provider_degrades_to_default(tmp_path):
 
     set_skill_roots_provider(boom)
     roots = skill_roots(str(tmp_path))
-    assert roots == [tmp_path / ".omniagents" / "skills"]
+    # Derived default: workspace dot-dir first, per-user global root last.
+    assert roots[0] == tmp_path / ".omniagents" / "skills"
+    assert roots[-1].name == "skills"
+    assert roots[-1].parent.name == "omniagents"

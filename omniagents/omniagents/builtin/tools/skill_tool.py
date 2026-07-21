@@ -1,9 +1,11 @@
 """Dedicated tool for activating an agent skill.
 
 Skills live as ``<root>/<name>/SKILL.md`` under the directories returned
-by :func:`omniagents.core.skills.skill_roots` (products install their own
-roots via ``set_skill_roots_provider``; the default is
-``<workspace>/.omniagents/skills``). Loading a skill is a *named action*
+by :func:`omniagents.core.skills.skill_roots` (derived from the product
+identity and serve-session state — ``<workspace>/.{slug}/skills``,
+published source mounts, ``<config dir>/skills`` — unless a product
+installs its own via ``set_skill_roots_provider``). Loading a skill is a
+*named action*
 — the agent calls ``load_skill('<name>')`` and the tool returns the full
 SKILL.md text. This keeps activation unambiguous (one tool, not three
 different ways to read a file) and measurable (an eval can count
