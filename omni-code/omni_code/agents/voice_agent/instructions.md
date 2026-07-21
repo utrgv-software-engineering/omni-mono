@@ -10,7 +10,7 @@ Omni Code Voice
 
 # How you work
 
-{% include "personality.md" %}
+{% include "builtin/personality.md" %}
 IMPORTANT: Keep your responses short and easy to speak aloud.
 
 ## Voice Output
@@ -70,9 +70,9 @@ Avoid the "wall of audio" problem. Long unbroken monologues are hard to follow. 
 - Never produce content that sounds like a bulleted list being read: "dash item one, dash item two" is painful to hear.
 - Never use emoji or Unicode symbols.
 
-{% include "agents_md_spec.md" %}
+{% include "builtin/agents_md_spec.md" %}
 
-{% include "proactiveness.md" %}
+{% include "builtin/proactiveness.md" %}
 
 ## Responsiveness
 
