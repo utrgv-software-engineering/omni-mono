@@ -3,22 +3,32 @@
 The ``fs_*`` server functions (``omniagents.builtin.server_functions.
 workspace_info``) describe the workspace the *agent's tools* see, which for
 sandboxed launchers differs from the server process's own filesystem. The
-launcher owns that wiring, so it installs providers here — following the
-same pattern as :func:`omniagents.core.runtime.recap.set_recap_summarizer`:
+launcher owns that wiring; by default it flows through the framework's
+process-global serve-session state
+(:mod:`omniagents.core.runtime.serve_state`), which any serve host
+publishes into. An embedder with different wiring can still install
+explicit providers here — an installed provider always wins over the
+serve-state default — following the same pattern as
+:func:`omniagents.core.runtime.recap.set_recap_summarizer`:
 
 * :func:`set_workspace_sources_provider` — a callable returning the list of
   source descriptors that seeded the workspace (``fs_get_sources``).
-  Defaults to an empty list, so the builtin works standalone.
+  Defaults to :func:`~omniagents.core.runtime.serve_state.get_sources`
+  (empty standalone), so the builtin works with no install at all.
 * :func:`set_manifest_root_provider` — a callable returning the manifest
   root the agent's tools actually see (e.g. ``/workspace`` inside a docker
   session). Used by ``fs_get_workspace_root`` (fallback) and
-  ``fs_list_dir`` (sandbox browse root). Defaults to ``None`` — server
-  functions then fall back to the server's own cwd / host filesystem.
+  ``fs_list_dir`` (sandbox browse root). Defaults to
+  :func:`~omniagents.core.runtime.serve_state.get_manifest_root` (``None``
+  standalone) — server functions then fall back to the server's own cwd /
+  host filesystem.
 * :func:`set_sandbox_session_provider` — a callable returning the live
   sandbox session (the SDK's ``BaseSandboxSession``) when one is running.
   When it yields a session, ``fs_list_dir`` browses the *container*
   filesystem through :class:`omniagents.workspace.SandboxWorkspace`;
-  otherwise it lists the host. Defaults to ``None`` (host mode).
+  otherwise it lists the host. Defaults to
+  :func:`~omniagents.core.runtime.serve_state.get_sandbox_session`
+  (``None`` — host mode).
 
 Providers are callables rather than stored values because the underlying
 state belongs to the embedder and may change over the server's lifetime
@@ -69,10 +79,17 @@ def workspace_sources_provider() -> Optional[Callable[[], List[Dict[str, Any]]]]
 def get_workspace_sources() -> List[Dict[str, Any]]:
     """Source descriptors that seeded the workspace; ``[]`` standalone.
 
-    Returns a shallow copy so callers can't mutate the embedder's state.
+    An installed provider wins; otherwise reads the framework's published
+    serve-session state. Returns a shallow copy so callers can't mutate
+    the embedder's state.
     """
     if _sources_provider is None:
-        return []
+        from omniagents.core.runtime import serve_state
+
+        try:
+            return serve_state.get_sources()
+        except Exception:
+            return []
     try:
         sources = _sources_provider()
     except Exception:
@@ -95,13 +112,20 @@ def manifest_root_provider() -> Optional[Callable[[], Optional[str]]]:
 
 
 def get_manifest_root() -> Optional[str]:
-    """The manifest root, or ``None`` when no embedder installed one."""
+    """The manifest root; installed provider wins, else the published
+    serve-session state, else ``None``."""
     if _manifest_root_provider is None:
-        return None
-    try:
-        root = _manifest_root_provider()
-    except Exception:
-        return None
+        from omniagents.core.runtime import serve_state
+
+        try:
+            root = serve_state.get_manifest_root()
+        except Exception:
+            return None
+    else:
+        try:
+            root = _manifest_root_provider()
+        except Exception:
+            return None
     if isinstance(root, str) and root.strip():
         return root
     return None
@@ -122,9 +146,15 @@ def sandbox_session_provider() -> Optional[Callable[[], Optional[Any]]]:
 
 
 def get_sandbox_session() -> Optional[Any]:
-    """The live sandbox session, or ``None`` (host mode)."""
+    """The live sandbox session; installed provider wins, else the
+    published serve-session state, else ``None`` (host mode)."""
     if _sandbox_session_provider is None:
-        return None
+        from omniagents.core.runtime import serve_state
+
+        try:
+            return serve_state.get_sandbox_session()
+        except Exception:
+            return None
     try:
         return _sandbox_session_provider()
     except Exception:
