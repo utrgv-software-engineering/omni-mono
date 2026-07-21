@@ -10,7 +10,7 @@
 # end-to-end signal that the strict path lands the right value in the
 # right place across both single-tool runs and worker fan-out.
 #
-# WorkspaceEvalEnvironment stages a fresh tempdir per run and writes
+# The declared eval environment stages a fresh tempdir per run and writes
 # both `PWD` and `OMNI_WORKSPACE_ROOT` env vars and `spec.context =
 # {"workspace_root": tmp_dir}`. If everything is wired correctly:
 #   * `execute_bash` lands in tmp_dir → marker file appears there.

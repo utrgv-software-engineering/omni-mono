@@ -94,7 +94,7 @@ scenarios:
       # toolchain (uv via the devbox-uv profile, node/jq from the image), the
       # agent's changes, and the acceptance artifacts. Each command must exit
       # 0. The scenario owns *what* to check; the framework just runs it in the
-      # box (command_in_workspace_succeeds → DevboxEvalEnvironment.run_command).
+      # box (command_in_workspace_succeeds → the environment's run_command).
       command_timeout_s: 360
       commands:
         # 1. The project's test suite passes with the agent's fix.

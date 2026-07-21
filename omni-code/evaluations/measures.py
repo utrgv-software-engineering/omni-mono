@@ -583,7 +583,7 @@ def db_row_exists(ctx: EvalContext) -> dict:
     """Assert a SELECT against the env-staged sqlite db returns >=1 row.
 
     Reads ``db_path`` from ``ctx.metadata['environment_context']`` (populated
-    by ``WorkspaceEvalEnvironment`` when the scenario sets ``db_fixture``).
+    by the declared eval environment when the scenario sets ``db_fixture``).
     The query comes from ``ctx.expect['assert_sql']``.
     """
     sql = ctx.expect.get("assert_sql")
@@ -957,7 +957,7 @@ def bug_caught_by_tests(ctx: EvalContext) -> dict:
       - ``ctx.expect.get('test_command', 'uv run pytest -q 2>&1')``
       - ``ctx.expect.get('test_timeout_s', 240)``
 
-    Reads from environment context (populated by ``WorkspaceEvalEnvironment``):
+    Reads from environment context (populated by the declared eval environment):
       - ``workspace_root`` — the live tempdir
       - ``fixture_src_dir`` — pristine fixture dir the workspace was copied from
     """

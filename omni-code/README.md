@@ -175,7 +175,6 @@ This project also includes a voice-optimized agent spec (`voice_agent`). How you
 │   ├── server_functions/ # product server functions
 │   └── overlays/         # project.yml overlays (e.g. platform security)
 ├── evaluations/          # eval scenarios/measures (repo-only, not packaged)
-├── environments/         # eval execution environments (repo-only)
 ├── tests/
 ├── docs/
 └── pyproject.toml
