@@ -231,7 +231,13 @@ include-package-data = true
 # (builtin/capabilities/), so the packages-find scan misses them and they get
 # dropped from the wheel — leaving web/filesystem/artifacts/etc. unavailable at
 # runtime ("capability 'X' not found"). Ship them via the builtin package.
-"omniagents.builtin" = ["capabilities/*.yml"]
+# Builtin agent specs (builtin/agents/<key>/agent.yml + instructions.md) are
+# data-only too — same treatment.
+"omniagents.builtin" = [
+    "capabilities/*.yml",
+    "agents/*/agent.yml",
+    "agents/*/*.md",
+]
 # Ensure the Ink TUI TypeScript sources are included in wheels/sdists
 "omniagents.backends.ink" = [
     "tui/package.json",

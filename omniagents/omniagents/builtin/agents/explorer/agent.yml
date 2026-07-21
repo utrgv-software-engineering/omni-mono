@@ -1,0 +1,52 @@
+name: explorer
+label: Explorer
+description: "Fast read-only workspace exploration sub-agent"
+instructions_file: instructions.md
+
+# LLM-facing description used when this agent is exposed via
+# `agent_tools:` (Agent.as_tool()). agent_tools entries that omit their
+# own `tool_description:` fall back to this — single source of truth.
+tool_description: |
+  Ask a read-only sub-agent to explore the workspace and answer a
+  question. Use this for broad exploration when you need to search
+  across multiple files or don't know where to look (e.g. "how is
+  authentication implemented?", "find all API route definitions",
+  "which files mention X?").
+
+  For targeted lookups of a specific file or symbol you already know
+  about, use read_file or search directly — they are faster.
+
+  You can run multiple explore calls in parallel when investigating
+  different aspects of the workspace.
+
+# Read-only exploration surface. `filesystem_readonly` is intentionally
+# narrower than the full `filesystem` cap — no write/edit/apply_patch.
+# `shell_readonly` gives the explorer fast read-only discovery via rg/git/ls.
+capabilities:
+  - filesystem_readonly
+  - shell_readonly
+  - notebook_readonly
+
+model_settings:
+  reasoning:
+    effort: low
+  parallel_tool_calls: true
+
+max_turns: 50
+
+# Headless subagent — runs inside the parent's session via
+# Agent.as_tool(); never prompts for approval on its own.
+use_safe_agent: false
+
+# No model_config_resolver: the builtin explorer deliberately declares no
+# model of its own. The builder falls back to the orchestrator's settings
+# (settings.model_name / session model override), so the sub-agent runs on
+# whatever model the hosting product resolved for the session. Products
+# that want a different model shadow this agent with their own
+# agents/explorer/agent.yml.
+
+session:
+  compaction:
+    enabled: true
+    compaction_mode: auto
+    threshold_fraction: 0.8

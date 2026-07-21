@@ -281,6 +281,39 @@ def load_project(
     if voice_entry is None:
         voice_entry = entry
 
+    core_root = Path(__file__).resolve().parents[2]
+
+    # --- Builtin agents ---
+    # The framework ships stock sub-agent specs under
+    # omniagents/builtin/agents/<key>/agent.yml (e.g. the read-only
+    # `explorer` wired up by the builtin `exploration` capability pack).
+    # They merge into agents_map here — AFTER entrypoint/voice-entrypoint
+    # resolution, so a single-agent project keeps its auto-entrypoint and
+    # a project with no agents still fails loudly above. Precedence
+    # mirrors builtin capabilities: a project agent with the same key
+    # shadows the builtin entirely. The project's agents.include/exclude
+    # globs apply, so a project can opt out (exclude: ["explorer"]).
+    builtin_agents_dir = (core_root / "builtin" / "agents").resolve()
+    if builtin_agents_dir.is_dir():
+        for y in sorted(builtin_agents_dir.glob("*/agent.yml")):
+            data = _read_yaml(y)
+            if not isinstance(data, dict):
+                continue
+            try:
+                key = _validate_agent_name(y.parent.name, data.get("name"), y)
+            except ValueError as e:
+                print(f"Warning: skipping builtin agent {y}: {e}")
+                continue
+            if key in agents_map:
+                continue  # project definition shadows the builtin
+            if include_globs and not any(
+                fnmatch.fnmatch(key, g) for g in include_globs
+            ):
+                continue
+            if exclude_globs and any(fnmatch.fnmatch(key, g) for g in exclude_globs):
+                continue
+            agents_map[key] = y.resolve()
+
     tracing_defaults = (
         proj.get("tracing") if isinstance(proj.get("tracing"), dict) else None
     )
@@ -291,7 +324,6 @@ def load_project(
 
     tool_registry: Dict[str, Any] = {}
 
-    core_root = Path(__file__).resolve().parents[2]
     builtin_tools_dir = (core_root / "builtin" / "tools").resolve()
     if builtin_tools_dir.is_dir():
         try:
@@ -377,9 +409,11 @@ def load_project(
             parse_capability_spec,
         )
 
-        # Builtin capabilities first; users can override below. Builtin caps
-        # don't currently use agent_tools (they bundle FunctionTools only),
-        # so passing agents_map is harmless but unnecessary.
+        # Builtin capabilities first; users can override below. agents_map
+        # already includes the builtin agents at this point, so builtin
+        # packs that expose a sub-agent via agent_tools (e.g. exploration's
+        # `explore` → builtin explorer) resolve here — against the project's
+        # shadowing definition when one exists.
         builtin_caps_dir = (core_root / "builtin" / "capabilities").resolve()
         if builtin_caps_dir.is_dir():
             try:

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Builtin agents: the framework now ships stock sub-agent specs under `omniagents/builtin/agents/<key>/agent.yml`, merged into every project's agent registry after project agent discovery — mirroring builtin-capability precedence (a project `agents/<key>/` definition shadows the builtin by name; `agents.include`/`exclude` globs apply, so `exclude: ["explorer"]` opts out). First builtin agent: `explorer`, a read-only workspace exploration sub-agent (capabilities `filesystem_readonly` + `shell_readonly` + `notebook_readonly`, low reasoning effort, parallel tool calls, headless), lifted from omni-code and domain-neutralized. It declares no model or `model_config_resolver` — it inherits the orchestrator's resolved model — so products only shadow it when they want different model routing.
+- Builtin `exploration` capability pack: exposes the builtin `explorer` as an `explore` agent tool (`max_turns: 50`, no approval) with delegation guidance — use `explore` for broad workspace questions, re-read key files after it returns. Products get the pack by listing `capabilities: [exploration]` on an agent; shadowing `explorer` re-points the pack's tool at the product's own definition.
+
 ## [0.7.19] - 2026-07-18
 
 ### Added
