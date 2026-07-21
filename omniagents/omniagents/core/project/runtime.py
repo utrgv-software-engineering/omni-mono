@@ -191,6 +191,17 @@ def load_project(
             )
         )
 
+    # Install the manifest-declared model catalog (paths.model_catalog)
+    # as the process-default model store. Same precedence as identity:
+    # an explicit set_model_store (or a product bootstrap that installed
+    # the same catalog — idempotent) is never clobbered by this implicit
+    # install winning only among conventional installs.
+    from omniagents.core.models.catalog import install_model_catalog
+
+    install_model_catalog(
+        (p if p.is_file() else (base_dir / "project.yml")), data=proj
+    )
+
     paths_cfg = proj.get("paths") or {}
 
     def _resolve_many(kind: str, default: Optional[str] = None) -> List[Path]:

@@ -347,7 +347,20 @@ def bootstrap_product(project_path: Any) -> ProductInfo:
     ``load_product_info(project_path)`` + :func:`set_product_info`.
     Returns the installed :class:`ProductInfo`. Because the install is
     explicit, later ``load_project`` calls never clobber it.
+
+    When the manifest declares a model catalog (``paths.model_catalog``),
+    the conventional model store is built and installed as the process
+    default here too — so CLI paths that never load a project (the model
+    wizard, ``<prog> model``/``provider``) see the product's catalog. An
+    explicit ``set_model_store`` still wins (see
+    :mod:`omniagents.core.models.catalog` for the timing contract).
     """
     info = load_product_info(project_path)
     set_product_info(info)
+
+    from omniagents.core.models.catalog import install_model_catalog
+
+    install_model_catalog(
+        info.manifest_path if info.manifest_path is not None else project_path
+    )
     return info

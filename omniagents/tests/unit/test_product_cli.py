@@ -40,8 +40,10 @@ def _fresh_model_store():
     import omniagents.core.models as models_pkg
 
     before = models_pkg._ACTIVE_STORE
+    before_default = models_pkg._DEFAULT_STORE
     yield
     models_pkg._ACTIVE_STORE = before
+    models_pkg._DEFAULT_STORE = before_default
 
 
 ACME_PRODUCT = """

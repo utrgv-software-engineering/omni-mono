@@ -233,3 +233,82 @@ def ensure_platform_session(
         os.environ["OMNI_RUNTIME_TOKEN"] = session["session_token"]
     logger.info("Local platform session created: %s", session["session_id"])
     return session
+
+
+# ---------------------------------------------------------------------------
+# Conventional process-wide provider
+# ---------------------------------------------------------------------------
+
+# Process-cached conventional provider used by fetch_provider_credential
+# (the ModelConfigStore credential_resolver convention).
+_conventional_provider: Optional[PlatformCredentialProvider] = None
+
+
+def _get_conventional_provider() -> Optional[PlatformCredentialProvider]:
+    """Build (once) the conventional credential provider for this process.
+
+    In container mode, the launcher injects ``OMNI_SESSION_ID`` /
+    ``OMNI_RUNTIME_TOKEN``. In local mode, a lightweight session is
+    bootstrapped on demand for the installed product's slug —
+    :func:`ensure_platform_session` exports those env vars so the
+    runtime token is picked up below.
+    """
+    global _conventional_provider
+    if _conventional_provider is not None:
+        return _conventional_provider
+
+    from omniagents.core.providers.platform.client import (
+        get_access_token,
+        get_platform_url,
+    )
+
+    platform_url = get_platform_url()
+    token = get_access_token()
+    if not platform_url or not token:
+        logger.warning("Cannot fetch credential: no platform URL or token available")
+        return None
+
+    session_id = os.getenv("OMNI_SESSION_ID")
+    if not session_id:
+        from omniagents.core.product import product_info
+
+        session = ensure_platform_session(
+            platform_url, token, agent=product_info().slug
+        )
+        session_id = session["session_id"] if session else None
+    if not session_id:
+        logger.warning(
+            "Cannot fetch credential: unable to establish session with platform"
+        )
+        return None
+
+    # After session creation, use the runtime token (not the user access
+    # token) since the credential endpoint requires runtime auth.
+    runtime_token = os.getenv("OMNI_RUNTIME_TOKEN") or token
+    _conventional_provider = PlatformCredentialProvider(
+        platform_url, runtime_token, session_id
+    )
+    return _conventional_provider
+
+
+def fetch_provider_credential(credential_ref: str) -> Optional[Dict[str, Any]]:
+    """Fetch a provider credential from the management plane.
+
+    The conventional ``credential_resolver`` for
+    :class:`~omniagents.core.models.ModelConfigStore`: uses the
+    ``credential_ref`` path from the platform policy to retrieve an
+    access token or API key for a model provider. Results are cached in
+    memory and refreshed 60 seconds before expiry (see
+    :class:`PlatformCredentialProvider`).
+
+    Args:
+        credential_ref: Relative URL path, e.g.
+            ``/api/v1/sessions/{session_id}/credentials/42``.
+
+    Returns:
+        Credential dict on success, None on failure.
+    """
+    provider = _get_conventional_provider()
+    if provider is None:
+        return None
+    return provider.get_credential_by_ref_sync(credential_ref)
