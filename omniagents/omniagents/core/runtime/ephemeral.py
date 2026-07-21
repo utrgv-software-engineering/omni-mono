@@ -20,6 +20,12 @@ resolve ``agents/<agent_key>/agent.yml`` through a project manifest
 (defaulting to the installed product's — ``ProductInfo.manifest_path``),
 apply the spec-level overrides products kept re-implementing
 (``model_settings`` stamp, ``instructions`` swap), and delegate.
+
+:func:`conventional_service_summarizer` closes the loop for the
+summarizer seams (recap/compaction): when a project ships an agent under
+the conventional key (``recapper``/``compactor``), the seam getters fall
+back to a summarizer that runs it through this harness — naming the
+agent IS the install.
 """
 
 from __future__ import annotations
@@ -54,6 +60,26 @@ def temporary_environ(overrides: Dict[str, Optional[str]]):
                 os.environ[key] = value
 
 
+def ephemeral_workspace_root(session: Any = None) -> str:
+    """workspace_root for a run that bypasses the AgentService resolver.
+
+    Prefer the caller's session workspace, then the published sandbox
+    manifest root over the host cwd — they differ for container
+    backends, and an unclamped host path would be wrong there. Matches
+    the ``workspace_info`` builtins' fallback chain. Lifted from
+    omni-code.
+    """
+    if session is not None:
+        sess_ctx = getattr(session, "context", None)
+        if isinstance(sess_ctx, dict):
+            wr = sess_ctx.get("workspace_root")
+            if isinstance(wr, str) and wr.strip():
+                return wr
+    from omniagents.core.runtime.serve_state import get_manifest_root
+
+    return get_manifest_root() or os.getcwd()
+
+
 async def run_agent_once(
     agent: Any,
     prompt: str,
@@ -83,10 +109,11 @@ async def run_agent_once(
             builders read session-scoped settings). The run does NOT
             append to the session.
         workspace_root: Explicit workspace root for the run context.
-            Falls back to ``session.context["workspace_root"]``, then the
-            process cwd. Runs bypass the AgentService resolver, so pass
-            an explicit value when host cwd is not the right anchor
-            (e.g. sandboxed deployments).
+            Falls back to :func:`ephemeral_workspace_root` —
+            ``session.context["workspace_root"]``, then the published
+            sandbox manifest root, then the process cwd. Runs bypass
+            the AgentService resolver, so pass an explicit value when
+            none of those is the right anchor.
         context: Extra run-context entries merged over the workspace_root
             stamp.
         max_turns: Turn budget; utility agents default to a single turn.
@@ -114,14 +141,8 @@ async def run_agent_once(
         RunConfig(model_provider=model_provider) if model_provider is not None else None
     )
 
-    if not workspace_root and session is not None:
-        sess_ctx = getattr(session, "context", None)
-        if isinstance(sess_ctx, dict):
-            wr = sess_ctx.get("workspace_root")
-            if isinstance(wr, str) and wr.strip():
-                workspace_root = wr
     if not workspace_root:
-        workspace_root = os.getcwd()
+        workspace_root = ephemeral_workspace_root(session)
 
     run_context: Dict[str, Any] = {"workspace_root": workspace_root}
     if context:
@@ -284,3 +305,45 @@ async def run_project_agent_once(
         context=context,
         max_turns=max_turns,
     )
+
+
+def conventional_service_summarizer(
+    agent_key: str, instructions: str, project_path: Any = None
+) -> Optional[Any]:
+    """The conventional ``(prompt, *, service, session)`` summarizer for
+    *agent_key*, or ``None`` when the project has no such agent.
+
+    The fallback behind the recap/compaction summarizer seams: when no
+    summarizer is explicitly installed but the project (the installed
+    product's manifest by default) ships ``agents/<agent_key>/agent.yml``,
+    the seam runs that agent one-shot with *instructions* as the
+    code-owned system prompt — so shipping a conventionally-named agent
+    IS the install. Model resolution mirrors the utility-run preference
+    order (session active model → service spec model → configured
+    default, via ``resolve_service_model_runtime``), and the workspace
+    root anchors through :func:`ephemeral_workspace_root`.
+    """
+    try:
+        resolve_project_agent_yaml(agent_key, project_path)
+    except Exception:
+        return None
+
+    async def _summarize(prompt: str, *, service: Any, session: Any) -> str:
+        from omniagents.core.models import (
+            normalize_model_name,
+            resolve_service_model_runtime,
+        )
+
+        model_ref, runtime = resolve_service_model_runtime(service, session)
+        model_name = normalize_model_name(model_ref, runtime)
+        return await run_project_agent_once(
+            agent_key,
+            prompt,
+            project_path=project_path,
+            model=model_name,
+            runtime=runtime,
+            session=session,
+            instructions=instructions,
+        )
+
+    return _summarize

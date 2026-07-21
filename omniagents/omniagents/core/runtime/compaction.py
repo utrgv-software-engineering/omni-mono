@@ -320,16 +320,20 @@ def build_resume_protocol_block(*, history: list[dict], tool_events: list[dict])
 # with the ``context_summary`` marker — that works on any backend and is
 # the recovery step reactive (on-context-error) compaction relies on.
 #
-# Like recap, the *summarizer* is product policy: products install one
-# with ``set_compaction_summarizer`` (typically a one-shot run of their
-# compactor agent on their resolved model).
-# ``DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS`` is a ready-made system
-# prompt for products that don't want to write their own. The builtin
-# ``compact`` capability pack exposes ``/compact`` over this module; the
-# orchestration below is generic.
+# Like recap, the *summarizer* resolves by convention: a project that
+# ships an agent named ``CONVENTIONAL_COMPACTION_AGENT`` (``compactor``)
+# gets a summarizer that runs it one-shot under
+# ``DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS`` on the utility-run model
+# resolution — no install call needed. ``set_compaction_summarizer``
+# remains the override seam (an explicit install always wins). The
+# builtin ``compact`` capability pack exposes ``/compact`` over this
+# module; the orchestration below is generic.
 # ---------------------------------------------------------------------------
 
 CHECKPOINT_KIND = "context_summary"
+
+#: Project-agent key the conventional compaction summarizer runs.
+CONVENTIONAL_COMPACTION_AGENT = "compactor"
 
 DEFAULT_CHECKPOINT_ENVELOPE = (
     "Another language model started to solve this problem and produced a "
@@ -410,20 +414,35 @@ _SUMMARIZER: Optional[CompactionSummarizer] = None
 
 
 def set_compaction_summarizer(summarizer: Optional[CompactionSummarizer]) -> None:
-    """Install the product's checkpoint-compaction summarizer.
+    """Install an explicit compaction summarizer (wins over the convention).
 
     The callable receives ``(prompt, *, service, session)`` and returns
-    the summary body — typically a one-shot run of the product's
-    compactor agent on its resolved model (see
-    :data:`DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS` for a ready-made
-    prompt).
+    the summary body. Most products don't need this: shipping a
+    ``compactor`` project agent activates the conventional summarizer
+    (see :func:`compaction_summarizer`). Installing ``None`` restores
+    the conventional fallback.
     """
     global _SUMMARIZER
     _SUMMARIZER = summarizer
 
 
 def compaction_summarizer() -> Optional[CompactionSummarizer]:
-    return _SUMMARIZER
+    """The active checkpoint-compaction summarizer.
+
+    An explicitly-installed summarizer wins; otherwise the conventional
+    one — a one-shot run of the project's ``compactor`` agent under
+    :data:`DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS`
+    (:func:`omniagents.core.runtime.conventional_service_summarizer`) —
+    when the installed project ships that agent. ``None`` when neither
+    exists.
+    """
+    if _SUMMARIZER is not None:
+        return _SUMMARIZER
+    from omniagents.core.runtime.ephemeral import conventional_service_summarizer
+
+    return conventional_service_summarizer(
+        CONVENTIONAL_COMPACTION_AGENT, DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS
+    )
 
 
 def is_checkpoint_item(item: Any) -> bool:

@@ -192,6 +192,59 @@ def test_handle_sessions_summarize_custom_envelope(capsys):
     assert "decisions" not in out
 
 
+def test_handle_sessions_summarize_manifest_envelope(capsys, tmp_path):
+    """Without args.summary_envelope, the CLI reads the installed
+    product manifest's sessions.summary_envelope declaration; an
+    explicit namespace envelope still wins."""
+    from omniagents.core.product import bootstrap_product, reset_product_info
+
+    manifest = tmp_path / "project.yml"
+    manifest.write_text(
+        "name: env_proj\n"
+        "product:\n  slug: env_proj\n"
+        "sessions:\n"
+        "  summary_envelope:\n"
+        '    summary: ""\n'
+        "    key_files: []\n"
+        "    tests: []\n",
+        encoding="utf-8",
+    )
+    reset_product_info()
+    try:
+        bootstrap_product(manifest)
+
+        history_db.register_session("session-6", project_slug=None, agent_slug=None)
+        history_db.append_message(
+            "session-6",
+            {"role": "user", "content": "hello"},
+            project_slug=None,
+            agent_slug=None,
+        )
+
+        async def summarizer(prompt, **kwargs):
+            return "{}"
+
+        set_session_summarizer(summarizer)
+
+        code = handle_sessions_command(_summarize_args("session-6"))
+        assert code == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["key_files"] == []
+        assert out["tests"] == []
+        assert "decisions" not in out
+
+        # Explicit namespace envelope wins over the manifest declaration.
+        args = _summarize_args("session-6")
+        args.summary_envelope = {"summary": "", "verdicts": []}
+        code = handle_sessions_command(args)
+        assert code == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["verdicts"] == []
+        assert "key_files" not in out
+    finally:
+        reset_product_info()
+
+
 def test_handle_sessions_summarize_missing_session(capsys):
     async def summarizer(prompt, **kwargs):
         return "{}"

@@ -382,6 +382,59 @@ def test_compaction_summarizer_seam_roundtrip(_reset_compaction_seam):
     assert compaction_summarizer() is None
 
 
+def test_conventional_summarizer_runs_compactor_with_default_prompt(
+    _reset_compaction_seam, monkeypatch, tmp_path
+):
+    """A project shipping a `compactor` agent gets the conventional
+    summarizer: one-shot run under the framework checkpoint prompt;
+    an explicit install wins over it."""
+    from types import SimpleNamespace
+
+    from omniagents.core.product import reset_product_info
+
+    from .test_recap import install_summarizer_product
+
+    reset_product_info()
+    try:
+        install_summarizer_product(tmp_path, agent_key="compactor")
+
+        captured = {}
+
+        async def fake_run_project_agent_once(agent_key, prompt, **kwargs):
+            captured["agent_key"] = agent_key
+            captured.update(kwargs)
+            return "checkpoint body"
+
+        monkeypatch.setattr(
+            "omniagents.core.runtime.ephemeral.run_project_agent_once",
+            fake_run_project_agent_once,
+        )
+
+        session = SimpleNamespace(
+            active_model=None,
+            model_config={"provider": "openai", "model": "gpt-conv", "api_key": "k"},
+        )
+        summarizer = compaction_summarizer()
+        assert summarizer is not None
+        body = asyncio.run(
+            summarizer("transcript", service=SimpleNamespace(spec=None), session=session)
+        )
+        assert body == "checkpoint body"
+        assert captured["agent_key"] == "compactor"
+        assert captured["instructions"] == DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS
+        assert captured["model"] == "gpt-conv"
+        assert captured["session"] is session
+
+        # Explicit install wins over the convention.
+        async def explicit(prompt, *, service, session):
+            return "explicit"
+
+        set_compaction_summarizer(explicit)
+        assert compaction_summarizer() is explicit
+    finally:
+        reset_product_info()
+
+
 def test_default_checkpoint_summary_instructions_shape():
     text = DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS
     # Handoff prompt: structured summary + coverage checklist.

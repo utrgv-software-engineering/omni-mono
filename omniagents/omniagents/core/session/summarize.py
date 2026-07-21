@@ -9,14 +9,23 @@ message_count) plus a product-shapeable set of content keys. The
 that envelope.
 
 Like recap (``core/runtime/recap.py``) and checkpoint compaction, the
-*summarizer* is product policy: products install one with
-:func:`set_session_summarizer` (typically a one-shot run of their
-session-summarizer agent on their resolved model).
-:data:`DEFAULT_SESSION_SUMMARY_INSTRUCTIONS` is a ready-made system
-prompt for products that don't want to write their own, shaped to emit
-the neutral :data:`DEFAULT_SESSION_ENVELOPE` keys; products with their
-own envelope keys pass them via the ``envelope`` parameter (CLI mounts
-read it from ``args.summary_envelope``).
+*summarizer* resolves by convention: a project that ships an agent named
+:data:`CONVENTIONAL_SESSION_SUMMARIZER_AGENT` (``session_summarizer``)
+gets a summarizer that runs it one-shot on the configured default model
+— no install call needed. Unlike the recap/compaction conventions
+(placeholder agents, code-owned prompts), the session summarizer's
+prompt is the agent's own ``instructions.md`` — the JSON schema it emits
+is product content, declared beside the envelope.
+:data:`DEFAULT_SESSION_SUMMARY_INSTRUCTIONS` is the ready-made starting
+point for that file, shaped to emit the neutral
+:data:`DEFAULT_SESSION_ENVELOPE` keys. :func:`set_session_summarizer`
+remains the override seam (an explicit install always wins).
+
+Products with their own envelope keys declare them in the project
+manifest (``sessions.summary_envelope`` — see
+:func:`manifest_session_envelope`) or pass them via the ``envelope``
+parameter (CLI mounts read ``args.summary_envelope`` first, then the
+manifest).
 
 Lifted from omni-code.
 """
@@ -40,14 +49,19 @@ from omniagents.core.session.query import (
 )
 
 __all__ = [
+    "CONVENTIONAL_SESSION_SUMMARIZER_AGENT",
     "DEFAULT_SESSION_SUMMARY_INSTRUCTIONS",
     "DEFAULT_SESSION_ENVELOPE",
+    "manifest_session_envelope",
     "set_session_summarizer",
     "session_summarizer",
     "trim_history_tail",
     "build_session_summary_prompt",
     "summarize_session",
 ]
+
+#: Project-agent key the conventional session summarizer runs.
+CONVENTIONAL_SESSION_SUMMARIZER_AGENT = "session_summarizer"
 
 
 # Lifted from omni-code's session_summarizer agent.
@@ -96,6 +110,58 @@ DEFAULT_SESSION_ENVELOPE: dict[str, Any] = {
 }
 
 
+def manifest_session_envelope(
+    project_path: Any = None,
+) -> Optional[dict[str, Any]]:
+    """The summary envelope a project manifest declares, or ``None``.
+
+    Manifest schema (top-level, mirroring the other convention
+    sections)::
+
+        sessions:
+          summary_envelope:
+            summary: ""
+            key_files: []
+            ...
+
+    Keys map to per-call default values, exactly the shape
+    :func:`summarize_session` takes as ``envelope=``; the keys must
+    agree with the JSON schema the project's session-summarizer prompt
+    emits. *project_path* is a project.yml path or its directory; when
+    omitted, the installed product's manifest is read
+    (``product_info().manifest_path``). Returns ``None`` — meaning
+    "use :data:`DEFAULT_SESSION_ENVELOPE`" — when there is no manifest
+    or no well-formed declaration.
+    """
+    import yaml
+    from pathlib import Path
+
+    if project_path is None:
+        from omniagents.core.product import product_info
+
+        project_path = product_info().manifest_path
+    if project_path is None:
+        return None
+    manifest = Path(project_path).expanduser()
+    if manifest.is_dir():
+        manifest = manifest / "project.yml"
+    if not manifest.is_file():
+        return None
+    try:
+        proj = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return None
+    sessions_cfg = proj.get("sessions") if isinstance(proj, dict) else None
+    if not isinstance(sessions_cfg, Mapping):
+        return None
+    envelope = sessions_cfg.get("summary_envelope")
+    if not isinstance(envelope, Mapping) or not envelope:
+        return None
+    if not all(isinstance(key, str) for key in envelope):
+        return None
+    return dict(envelope)
+
+
 # async (prompt: str, *, model, project, agent, session_id) -> str
 SessionSummarizer = Callable[..., Awaitable[str]]
 
@@ -108,21 +174,78 @@ _NO_SUMMARIZER_MESSAGE = (
 
 
 def set_session_summarizer(summarizer: Optional[SessionSummarizer]) -> None:
-    """Install the product's session summarizer.
+    """Install an explicit session summarizer (wins over the convention).
 
     The callable receives ``(prompt, *, model, project, agent,
-    session_id)`` and returns the summary text — typically a one-shot
-    run of the product's session-summarizer agent on its resolved model
-    (see :data:`DEFAULT_SESSION_SUMMARY_INSTRUCTIONS` for a ready-made
-    prompt). ``model`` is the caller's model reference (the CLI's
-    ``--model``), unresolved — resolution is product policy.
+    session_id)`` and returns the summary text. ``model`` is the
+    caller's model reference (the CLI's ``--model``), unresolved. Most
+    products don't need this: shipping a ``session_summarizer`` project
+    agent activates the conventional summarizer (see
+    :func:`session_summarizer`). Installing ``None`` restores the
+    conventional fallback.
     """
     global _SUMMARIZER
     _SUMMARIZER = summarizer
 
 
+async def _conventional_session_summarizer(
+    prompt: str,
+    *,
+    model: Optional[str],
+    project: Optional[str],
+    agent: Optional[str],
+    session_id: str,
+) -> str:
+    """Run the conventional ``session_summarizer`` project agent one-shot.
+
+    Resolves *model* (or the configured default) through the installed
+    model store, fails with an actionable ``RuntimeError`` naming the
+    product's ``<prog> model setup`` when no model/credentials are
+    usable, and runs the agent under its own packaged instructions —
+    anchored to the caller's cwd (CLI invocation; the agent is
+    conventionally tool-less, so the anchor is forward-compatibility).
+    """
+    import os
+
+    from omniagents.core.models import provider_from_runtime, resolve_model_runtime
+    from omniagents.core.product import product_info
+    from omniagents.core.runtime.ephemeral import run_project_agent_once
+
+    prog = product_info().prog
+    model_name, runtime = resolve_model_runtime(model)
+    if not runtime:
+        raise RuntimeError(f"No model configured. Run: {prog} model setup")
+    provider_obj, _env_overrides = provider_from_runtime(runtime)
+    if provider_obj is None:
+        raise RuntimeError(
+            f"No usable model credentials found. Run: {prog} model setup"
+        )
+    return await run_project_agent_once(
+        CONVENTIONAL_SESSION_SUMMARIZER_AGENT,
+        prompt,
+        model=model_name,
+        runtime=runtime,
+        workspace_root=os.getcwd(),
+    )
+
+
 def session_summarizer() -> Optional[SessionSummarizer]:
-    return _SUMMARIZER
+    """The active session summarizer.
+
+    An explicitly-installed summarizer wins; otherwise the conventional
+    one — a one-shot run of the project's ``session_summarizer`` agent
+    on the resolved model — when the installed project ships that
+    agent. ``None`` when neither exists.
+    """
+    if _SUMMARIZER is not None:
+        return _SUMMARIZER
+    from omniagents.core.runtime.ephemeral import resolve_project_agent_yaml
+
+    try:
+        resolve_project_agent_yaml(CONVENTIONAL_SESSION_SUMMARIZER_AGENT)
+    except Exception:
+        return None
+    return _conventional_session_summarizer
 
 
 def trim_history_tail(items: list[dict], *, tail: int | None) -> list[dict]:

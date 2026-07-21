@@ -6,12 +6,14 @@ additionally pushes it to the client via the ``ui.recap`` client function
 (a notifications-style panel). Unlike checkpoint compaction, a recap is a
 read-only side view — session history is never mutated.
 
-Like compaction, the *summarizer* is product policy: products install one
-with :func:`set_recap_summarizer` (typically a one-shot run of their
-recapper agent on their resolved model). :data:`DEFAULT_RECAP_INSTRUCTIONS`
-is a ready-made system prompt for products that don't want to write their
-own. The builtin ``recap`` capability pack exposes ``/recap`` over this
-module.
+Like compaction, the *summarizer* resolves by convention: a project that
+ships an agent named :data:`CONVENTIONAL_RECAP_AGENT` (``recapper``) gets
+a summarizer that runs it one-shot under
+:data:`DEFAULT_RECAP_INSTRUCTIONS` on the utility-run model resolution —
+no install call needed. :func:`set_recap_summarizer` remains the
+override seam for products with summarization policy of their own (an
+explicit install always wins). The builtin ``recap`` capability pack
+exposes ``/recap`` over this module.
 
 Lifted from omni-code.
 """
@@ -27,12 +29,16 @@ from omniagents.core.runtime.compaction import (
 )
 
 __all__ = [
+    "CONVENTIONAL_RECAP_AGENT",
     "DEFAULT_RECAP_INSTRUCTIONS",
     "set_recap_summarizer",
     "recap_summarizer",
     "generate_recap",
     "generate_and_broadcast_recap",
 ]
+
+#: Project-agent key the conventional recap summarizer runs.
+CONVENTIONAL_RECAP_AGENT = "recapper"
 
 
 DEFAULT_RECAP_INSTRUCTIONS = """\
@@ -67,19 +73,35 @@ _SUMMARIZER: Optional[RecapSummarizer] = None
 
 
 def set_recap_summarizer(summarizer: Optional[RecapSummarizer]) -> None:
-    """Install the product's recap summarizer.
+    """Install an explicit recap summarizer (wins over the convention).
 
     The callable receives ``(prompt, *, service, session)`` and returns
-    the recap text — typically a one-shot run of the product's recapper
-    agent on its resolved model (see :data:`DEFAULT_RECAP_INSTRUCTIONS`
-    for a ready-made prompt).
+    the recap text. Most products don't need this: shipping a
+    ``recapper`` project agent activates the conventional summarizer
+    (see :func:`recap_summarizer`). Installing ``None`` restores the
+    conventional fallback.
     """
     global _SUMMARIZER
     _SUMMARIZER = summarizer
 
 
 def recap_summarizer() -> Optional[RecapSummarizer]:
-    return _SUMMARIZER
+    """The active recap summarizer.
+
+    An explicitly-installed summarizer wins; otherwise the conventional
+    one — a one-shot run of the project's ``recapper`` agent under
+    :data:`DEFAULT_RECAP_INSTRUCTIONS`
+    (:func:`omniagents.core.runtime.conventional_service_summarizer`) —
+    when the installed project ships that agent. ``None`` when neither
+    exists.
+    """
+    if _SUMMARIZER is not None:
+        return _SUMMARIZER
+    from omniagents.core.runtime.ephemeral import conventional_service_summarizer
+
+    return conventional_service_summarizer(
+        CONVENTIONAL_RECAP_AGENT, DEFAULT_RECAP_INSTRUCTIONS
+    )
 
 
 def build_recap_prompt(history: list) -> str:

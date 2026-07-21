@@ -166,6 +166,176 @@ def test_build_session_summary_prompt_shape():
     assert '"content": "hi"' in prompt
 
 
+# ---------------------------------------------------------------------------
+# Conventional summarizer + manifest envelope
+# ---------------------------------------------------------------------------
+
+
+def _install_session_product(tmp_path, *, with_agent=True, sessions_block=""):
+    from textwrap import dedent
+
+    from omniagents.core.product import bootstrap_product
+
+    if with_agent:
+        agent_yaml = tmp_path / "agents" / "session_summarizer" / "agent.yml"
+        agent_yaml.parent.mkdir(parents=True, exist_ok=True)
+        agent_yaml.write_text(
+            dedent(
+                """
+                name: session_summarizer
+                instructions: Emit the project JSON schema.
+                tools: []
+                """
+            ),
+            encoding="utf-8",
+        )
+    manifest = tmp_path / "project.yml"
+    manifest.write_text(
+        "name: sess_proj\nproduct:\n  slug: sess_proj\n  prog: sessprog\n"
+        + sessions_block,
+        encoding="utf-8",
+    )
+    bootstrap_product(manifest)
+    return manifest
+
+
+@pytest.fixture()
+def _fresh_identity():
+    from omniagents.core.product import reset_product_info
+
+    reset_product_info()
+    yield
+    reset_product_info()
+
+
+def test_conventional_session_summarizer_runs_named_agent(
+    _fresh_identity, monkeypatch, tmp_path
+):
+    _install_session_product(tmp_path, with_agent=True)
+    set_session_summarizer(None)
+
+    captured = {}
+
+    async def fake_run_project_agent_once(agent_key, prompt, **kwargs):
+        captured["agent_key"] = agent_key
+        captured["prompt"] = prompt
+        captured.update(kwargs)
+        return json.dumps({"summary": "conventional"})
+
+    monkeypatch.setattr(
+        "omniagents.core.runtime.ephemeral.run_project_agent_once",
+        fake_run_project_agent_once,
+    )
+    monkeypatch.setattr(
+        "omniagents.core.models.resolve_model_runtime",
+        lambda model_ref=None, **_kw: (
+            "gpt-conv",
+            {"provider": "openai", "model": "gpt-conv", "api_key": "k"},
+        ),
+    )
+    provider = object()
+    monkeypatch.setattr(
+        "omniagents.core.models.provider_from_runtime",
+        lambda runtime: (provider, {}),
+    )
+
+    _seed_session("sum-conv", ["conventional needle"])
+    out = asyncio.run(summarize_session("sum-conv"))
+
+    assert out["summary"] == "conventional"
+    assert captured["agent_key"] == "session_summarizer"
+    assert "conventional needle" in captured["prompt"]
+    assert captured["model"] == "gpt-conv"
+    assert captured["runtime"]["provider"] == "openai"
+    # The agent's own instructions.md is the prompt — never overridden.
+    assert "instructions" not in captured
+
+
+def test_conventional_session_summarizer_no_model_names_prog(
+    _fresh_identity, monkeypatch, tmp_path
+):
+    _install_session_product(tmp_path, with_agent=True)
+    set_session_summarizer(None)
+    monkeypatch.setattr(
+        "omniagents.core.models.resolve_model_runtime",
+        lambda model_ref=None, **_kw: (None, {}),
+    )
+
+    summarizer = session_summarizer()
+    assert summarizer is not None
+    with pytest.raises(RuntimeError, match="Run: sessprog model setup"):
+        asyncio.run(
+            summarizer(
+                "p", model=None, project=None, agent=None, session_id="x"
+            )
+        )
+
+
+def test_missing_conventional_agent_behaves_as_uninstalled(
+    _fresh_identity, tmp_path
+):
+    _install_session_product(tmp_path, with_agent=False)
+    set_session_summarizer(None)
+    assert session_summarizer() is None
+    with pytest.raises(RuntimeError, match="set_session_summarizer"):
+        asyncio.run(summarize_session("whatever"))
+
+
+def test_explicit_session_summarizer_wins_over_convention(
+    _fresh_identity, tmp_path
+):
+    _install_session_product(tmp_path, with_agent=True)
+
+    async def explicit(prompt, **kwargs):
+        return "{}"
+
+    set_session_summarizer(explicit)
+    assert session_summarizer() is explicit
+    set_session_summarizer(None)
+    assert session_summarizer() is not None
+    assert session_summarizer() is not explicit
+
+
+def test_manifest_session_envelope_reads_declaration(_fresh_identity, tmp_path):
+    from omniagents.core.session.summarize import manifest_session_envelope
+
+    _install_session_product(
+        tmp_path,
+        sessions_block=(
+            "sessions:\n"
+            "  summary_envelope:\n"
+            '    summary: ""\n'
+            "    key_files: []\n"
+            "    tests: []\n"
+        ),
+    )
+    assert manifest_session_envelope() == {
+        "summary": "",
+        "key_files": [],
+        "tests": [],
+    }
+
+
+def test_manifest_session_envelope_absent_or_malformed(_fresh_identity, tmp_path):
+    from omniagents.core.product import reset_product_info
+    from omniagents.core.session.summarize import manifest_session_envelope
+
+    # No sessions: section at all.
+    _install_session_product(tmp_path, with_agent=False)
+    assert manifest_session_envelope() is None
+    # Malformed declaration (not a mapping).
+    other = tmp_path / "bad"
+    other.mkdir()
+    reset_product_info()
+    _install_session_product(
+        other, with_agent=False, sessions_block="sessions:\n  summary_envelope: nope\n"
+    )
+    assert manifest_session_envelope() is None
+    # No installed manifest at all.
+    reset_product_info()
+    assert manifest_session_envelope() is None
+
+
 def test_default_session_summary_instructions_shape():
     text = DEFAULT_SESSION_SUMMARY_INSTRUCTIONS
     # JSON-only structured summary of a stored session.

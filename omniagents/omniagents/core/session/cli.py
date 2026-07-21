@@ -18,6 +18,7 @@ from omniagents.core.session.query import (
     search_session_messages,
 )
 from omniagents.core.session.summarize import (
+    manifest_session_envelope,
     session_summarizer,
     summarize_session,
 )
@@ -273,6 +274,12 @@ def handle_sessions_command(args: argparse.Namespace) -> int:
                 "(see omniagents.core.session.summarize.set_session_summarizer)."
             )
             return 1
+        # Products with domain-flavored envelope keys either pin them on
+        # the namespace before dispatch (like project/agent) or declare
+        # them in the project manifest (sessions.summary_envelope).
+        envelope = getattr(args, "summary_envelope", None)
+        if envelope is None:
+            envelope = manifest_session_envelope()
         try:
             out = asyncio.run(
                 summarize_session(
@@ -281,9 +288,7 @@ def handle_sessions_command(args: argparse.Namespace) -> int:
                     agent=agent,
                     model=args.model,
                     tail=coerce_limit(args.tail),
-                    # Products with domain-flavored envelope keys pin them on
-                    # the namespace before dispatch, like project/agent.
-                    envelope=getattr(args, "summary_envelope", None),
+                    envelope=envelope,
                 )
             )
         except LookupError as err:
