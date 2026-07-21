@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from omni_code import serve_cli
+from omniagents.core.runtime import serve_harness
 from omniagents.core.runtime import serve_state as aws
 
 
@@ -134,19 +135,19 @@ def wired(monkeypatch):
     async def fake_teardown(session, started_services):
         calls["teardown"].append((session, started_services))
 
-    monkeypatch.setattr(serve_cli, "teardown_session", fake_teardown)
+    monkeypatch.setattr(serve_harness, "teardown_session", fake_teardown)
     monkeypatch.setattr(
-        serve_cli,
+        serve_harness,
         "resolve_profile",
         lambda **kw: FakeProfile(backend="docker"),
     )
     monkeypatch.setattr(
-        serve_cli,
+        serve_harness,
         "_attach_session_to_spec",
         lambda spec, session, raw: calls["attach"].append(session),
     )
     monkeypatch.setattr(
-        serve_cli,
+        serve_harness,
         "_install_session_terminal_manager",
         lambda app, session, terminal: calls["terminal"].append(session),
     )
@@ -180,7 +181,7 @@ async def test_switch_happy_path_rewires_and_broadcasts(wired, monkeypatch):
         assert kw["prior_container_id"] is None  # cross-backend → no warm reattach
         return FakeBrought(new, "docker", "ctr-new")
 
-    monkeypatch.setattr(serve_cli, "bring_up_session", fake_bring_up)
+    monkeypatch.setattr(serve_harness, "bring_up_session", fake_bring_up)
 
     res = await serve_cli.perform_switch("/profiles/devbox.yml")
 
@@ -210,7 +211,7 @@ async def test_switch_noop_when_same_profile(wired, monkeypatch):
     aws.set_switch_context(
         _make_ctx(current_path="/profiles/devbox.yml", current_name="devbox")
     )
-    monkeypatch.setattr(serve_cli, "bring_up_session", None)  # must not be called
+    monkeypatch.setattr(serve_harness, "bring_up_session", None)  # must not be called
 
     res = await serve_cli.perform_switch("/profiles/devbox.yml")
     assert res["ok"] is True and res["profile"] == "devbox"
@@ -225,7 +226,7 @@ async def test_switch_quiesces_active_run(wired, monkeypatch):
     aws.set_sandbox_session(FakeSession("old"))
     aws.set_switch_context(_make_ctx())
     monkeypatch.setattr(
-        serve_cli,
+        serve_harness,
         "bring_up_session",
         lambda **kw: _coro(FakeBrought(FakeSession("new"), "docker", "c")),
     )
@@ -252,7 +253,7 @@ async def test_switch_rolls_back_on_bringup_failure(wired, monkeypatch):
             raise RuntimeError("docker daemon down")
         return FakeBrought(rolled, "unix_local", None)  # rollback bring-up
 
-    monkeypatch.setattr(serve_cli, "bring_up_session", fake_bring_up)
+    monkeypatch.setattr(serve_harness, "bring_up_session", fake_bring_up)
 
     res = await serve_cli.perform_switch("/profiles/devbox.yml")
     assert res["ok"] is False
@@ -278,7 +279,7 @@ async def test_switch_lost_when_rollback_also_fails(wired, monkeypatch):
     async def always_fail(**kw):
         raise RuntimeError("both gone")
 
-    monkeypatch.setattr(serve_cli, "bring_up_session", always_fail)
+    monkeypatch.setattr(serve_harness, "bring_up_session", always_fail)
 
     res = await serve_cli.perform_switch("/profiles/devbox.yml")
     assert res["ok"] is False and "rollback failed" in res["reason"]
