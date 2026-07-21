@@ -126,6 +126,6 @@ def ephemeral_workspace_root(session: Any = None) -> str:
             wr = sess_ctx.get("workspace_root")
             if isinstance(wr, str) and wr.strip():
                 return wr
-    from omni_code.agent_workspace_state import get_manifest_root
+    from omniagents.core.runtime.serve_state import get_manifest_root
 
     return get_manifest_root() or os.getcwd()

@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from omni_code import serve_cli
-from omni_code import agent_workspace_state as aws
+from omniagents.core.runtime import serve_state as aws
 
 
 # --------------------------------------------------------------------------
@@ -151,7 +151,7 @@ def wired(monkeypatch):
         lambda app, session, terminal: calls["terminal"].append(session),
     )
     monkeypatch.setattr(
-        "omni_code.agent_workspace_state.set_orchestrator_spec",
+        "omniagents.core.runtime.serve_state.set_orchestrator_spec",
         lambda spec: calls["orchestrator"].append(spec),
     )
 
@@ -313,7 +313,7 @@ async def test_get_state_reports_context():
 
 @pytest.mark.asyncio
 async def test_wait_until_ready_blocks_then_resolves():
-    from omni_code.agent_workspace_state import get_switch_context
+    from omniagents.core.runtime.serve_state import get_switch_context
 
     ctx = _make_ctx()
     ctx.switching = True

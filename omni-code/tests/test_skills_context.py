@@ -1,5 +1,5 @@
 from omni_code.agents.omni.context import build_coding_context
-from omni_code import agent_workspace_state as aws
+from omniagents.core.runtime import serve_state as aws
 
 
 def test_build_coding_context_includes_available_skills(monkeypatch, tmp_path):
