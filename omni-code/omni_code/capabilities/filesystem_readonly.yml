@@ -1,8 +1,0 @@
-name: filesystem_readonly
-# Extends the omniagents builtin `filesystem_readonly` pack. Drops only
-# `read_image` — the explorer is a text-research subagent. Discovery
-# tools stay: the builtins ripgrep-accelerate themselves when `rg` is
-# available in the workspace.
-extends: filesystem_readonly
-exclude_tools:
-  - read_image
