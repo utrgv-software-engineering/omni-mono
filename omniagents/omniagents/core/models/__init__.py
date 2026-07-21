@@ -7,6 +7,13 @@ from .store import (
     ModelConfigStore,
     expand_env_vars,
     litellm_api_key_env,
+    normalize_model_name,
+)
+from .governed import (
+    GOVERNED_CONFIG_FILENAME,
+    governed_config_path,
+    load_governed_config,
+    write_governed_config,
 )
 
 __all__ = [
@@ -14,6 +21,14 @@ __all__ = [
     "ModelConfigStore",
     "expand_env_vars",
     "litellm_api_key_env",
+    "normalize_model_name",
+    "GOVERNED_CONFIG_FILENAME",
+    "governed_config_path",
+    "load_governed_config",
+    "write_governed_config",
+    "resolve_model_runtime",
+    "resolve_service_model_runtime",
+    "provider_from_runtime",
     "set_model_store",
     "model_store",
     "model_setup_hint",
@@ -46,3 +61,12 @@ def model_store() -> Optional[ModelConfigStore]:
 
 def model_setup_hint() -> str:
     return _SETUP_HINT
+
+
+# Imported after set_model_store/model_store exist: runtime.py resolves the
+# process-wide store through this module when no explicit store is passed.
+from .runtime import (  # noqa: E402
+    provider_from_runtime,
+    resolve_model_runtime,
+    resolve_service_model_runtime,
+)
