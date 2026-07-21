@@ -43,8 +43,34 @@ Precedence (who wins the process-global identity):
    the process default, but only while no explicit set has happened.
    Loading a second project (implicitly) replaces a previous implicit
    install.
-3. Otherwise :data:`DEFAULT_PRODUCT_INFO` — the framework's own
+3. Entry-point discovery — when an installed distribution declares an
+   ``omniagents.products`` entry point (see
+   :data:`PRODUCT_ENTRY_POINT_GROUP`), its packaged ``project.yml``
+   supplies the identity. Lazy and cached: nothing is imported or read
+   until the first :func:`product_info` call that needs it. This is
+   what makes identity resolve correctly on bare module imports —
+   ``python -c "...product_config_dir()..."`` in a venv with a product
+   installed yields the product's dir with no prior bootstrap. If
+   several distributions declare one, the winner is chosen
+   deterministically (lexicographically smallest ``(name, value)``)
+   and a warning is printed to stderr. Set
+   ``OMNIAGENTS_PRODUCT_DISCOVERY=0`` to disable discovery entirely.
+4. Otherwise :data:`DEFAULT_PRODUCT_INFO` — the framework's own
    "omniagents" identity.
+
+Entry-point value shape: the value is a *module reference* — the
+importable package that ships the product's ``project.yml`` as a
+top-level packaged resource::
+
+    [project.entry-points."omniagents.products"]
+    omni-code = "omni_code"
+
+A module reference (rather than a file path or a loaded attribute) is
+robust across editable and wheel installs: it resolves through the
+import system to wherever the package actually lives, requires no code
+execution beyond importing the product package (whose ``__init__`` is
+expected to be side-effect free), and reuses the existing convention
+that ``project.yml`` ships inside the product package.
 
 Product CLIs bootstrap identity *before* (and without) resolving the
 whole project with :func:`bootstrap_product`, which uses the light
@@ -54,7 +80,9 @@ key only, no agent discovery, no overlays, no registries.
 
 from __future__ import annotations
 
+import os
 import re
+import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping, Optional
@@ -62,6 +90,7 @@ from typing import Any, Mapping, Optional
 import yaml
 
 __all__ = [
+    "PRODUCT_ENTRY_POINT_GROUP",
     "ProductInfo",
     "ProductUpdateInfo",
     "DEFAULT_PRODUCT_INFO",
@@ -71,7 +100,13 @@ __all__ = [
     "product_info_from_mapping",
     "load_product_info",
     "bootstrap_product",
+    "discover_product_manifest",
 ]
+
+#: Entry-point group installed product distributions declare so the
+#: framework can discover their packaged project.yml (see the module
+#: docstring for the value shape and precedence).
+PRODUCT_ENTRY_POINT_GROUP = "omniagents.products"
 
 
 @dataclass(frozen=True)
@@ -257,16 +292,137 @@ def product_info_from_mapping(data: Any) -> ProductInfo:
 
 
 # ---------------------------------------------------------------------------
+# Entry-point discovery
+# ---------------------------------------------------------------------------
+
+_DISCOVERY_UNSET: Any = object()
+
+#: Cached discovery result: ``_DISCOVERY_UNSET`` until the first lookup,
+#: then a ``ProductInfo`` or ``None``. Cleared by :func:`reset_product_info`.
+_discovered: Any = _DISCOVERY_UNSET
+
+
+def _discovery_disabled() -> bool:
+    raw = os.getenv("OMNIAGENTS_PRODUCT_DISCOVERY")
+    return (raw or "").strip().lower() in ("0", "false", "no")
+
+
+def _load_product_entry_points() -> list:
+    """The declared ``omniagents.products`` entry points (test seam)."""
+    from importlib import metadata
+
+    return list(metadata.entry_points(group=PRODUCT_ENTRY_POINT_GROUP))
+
+
+def _entry_point_manifest(value: str) -> Path:
+    """Resolve an entry-point value (a module reference) to its packaged
+    ``project.yml``. Prefers ``importlib.resources`` (zip-aware), falling
+    back to the imported module's ``__file__`` sibling."""
+    from importlib import import_module
+
+    module_name = value.split(":", 1)[0].strip()
+    if not module_name:
+        raise ValueError(f"empty module reference in entry point value {value!r}")
+    module = import_module(module_name)
+
+    try:
+        from importlib.resources import files
+
+        candidate = Path(str(files(module_name).joinpath("project.yml")))
+        if candidate.is_file():
+            return candidate
+    except Exception:
+        pass
+
+    module_file = getattr(module, "__file__", None)
+    if module_file:
+        candidate = Path(module_file).resolve().parent / "project.yml"
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(
+        f"module {module_name!r} does not package a project.yml"
+    )
+
+
+def _discover_product_info() -> Optional[ProductInfo]:
+    """One discovery pass: pick the entry point, load its identity.
+
+    Never raises — a broken declaration warns on stderr and yields None
+    (bare imports must keep working on the framework default)."""
+    try:
+        entries = sorted(
+            _load_product_entry_points(), key=lambda ep: (ep.name, ep.value)
+        )
+    except Exception as err:
+        print(
+            f"omniagents: product entry-point discovery failed: {err}",
+            file=sys.stderr,
+        )
+        return None
+    if not entries:
+        return None
+
+    chosen = entries[0]
+    if len(entries) > 1:
+        listing = ", ".join(f"{ep.name} ({ep.value})" for ep in entries)
+        print(
+            "omniagents: multiple distributions declare "
+            f"'{PRODUCT_ENTRY_POINT_GROUP}' entry points: {listing}; "
+            f"using {chosen.name!r}",
+            file=sys.stderr,
+        )
+    try:
+        return load_product_info(_entry_point_manifest(chosen.value))
+    except Exception as err:
+        print(
+            f"omniagents: could not resolve product entry point "
+            f"{chosen.name!r} = {chosen.value!r}: {err}",
+            file=sys.stderr,
+        )
+        return None
+
+
+def _discovered_product_info() -> Optional[ProductInfo]:
+    """The lazily-discovered product identity, cached after first use."""
+    if _discovery_disabled():
+        return None
+    global _discovered
+    if _discovered is _DISCOVERY_UNSET:
+        _discovered = _discover_product_info()
+    return _discovered
+
+
+def discover_product_manifest() -> Optional[Path]:
+    """The packaged ``project.yml`` of the entry-point-discovered product
+    distribution, or None when no distribution declares one.
+
+    The resolution :func:`omniagents.product_cli.main` uses to run a
+    product console script with no product-side dispatcher at all."""
+    info = _discovered_product_info()
+    return info.manifest_path if info is not None else None
+
+
+# ---------------------------------------------------------------------------
 # Process-global identity
 # ---------------------------------------------------------------------------
 
-_current: ProductInfo = DEFAULT_PRODUCT_INFO
+_current: Optional[ProductInfo] = None
 _explicitly_set: bool = False
 
 
 def product_info() -> ProductInfo:
-    """The current process-wide product identity (never None)."""
-    return _current
+    """The current process-wide product identity (never None).
+
+    Resolution: an installed identity (explicit :func:`set_product_info`
+    / :func:`bootstrap_product`, or ``load_project``'s implicit install)
+    → the entry-point-discovered product (lazy, cached) →
+    :data:`DEFAULT_PRODUCT_INFO`."""
+    if _current is not None:
+        return _current
+    discovered = _discovered_product_info()
+    if discovered is not None:
+        return discovered
+    return DEFAULT_PRODUCT_INFO
 
 
 def set_product_info(info: ProductInfo) -> None:
@@ -296,14 +452,16 @@ def _set_default_product_info(info: ProductInfo) -> None:
 
 
 def reset_product_info() -> None:
-    """Restore the default identity and clear the explicit-set flag.
+    """Restore the default identity, clear the explicit-set flag, and
+    drop the cached entry-point discovery result.
 
     Intended for tests and embedders that spin up multiple products in
     one process.
     """
-    global _current, _explicitly_set
-    _current = DEFAULT_PRODUCT_INFO
+    global _current, _explicitly_set, _discovered
+    _current = None
     _explicitly_set = False
+    _discovered = _DISCOVERY_UNSET
 
 
 # ---------------------------------------------------------------------------

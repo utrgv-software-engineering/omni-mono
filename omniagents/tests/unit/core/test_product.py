@@ -449,3 +449,141 @@ def test_reset_product_info_clears_explicit_flag(tmp_path):
 def test_module_underscore_state_not_leaked():
     # _set_default_product_info is project-loader plumbing, not API.
     assert "_set_default_product_info" not in product_mod.__all__
+
+
+# ---------------------------------------------------------------------------
+# Entry-point discovery
+# ---------------------------------------------------------------------------
+
+
+def _install_product_package(tmp_path, monkeypatch, package="acmepkg", slug="acme_code"):
+    """A fake installed product package shipping a project.yml, plus its
+    entry point declared in the ``omniagents.products`` group."""
+    from types import SimpleNamespace
+
+    pkg = tmp_path / package
+    pkg.mkdir(parents=True, exist_ok=True)
+    (pkg / "__init__.py").write_text("")
+    manifest = pkg / "project.yml"
+    manifest.write_text(
+        dedent(
+            f"""
+            name: {slug}
+            product:
+              name: {slug.replace("_", "-")}
+              prog: acme
+              slug: {slug}
+            """
+        )
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    import sys as _sys
+
+    monkeypatch.delitem(_sys.modules, package, raising=False)
+    return SimpleNamespace(name=slug.replace("_", "-"), value=package), manifest
+
+
+@pytest.fixture
+def _discovery_enabled(monkeypatch):
+    monkeypatch.delenv("OMNIAGENTS_PRODUCT_DISCOVERY", raising=False)
+
+
+def test_bare_import_identity_resolves_via_discovery(
+    tmp_path, monkeypatch, _discovery_enabled
+):
+    ep, manifest = _install_product_package(tmp_path, monkeypatch)
+    monkeypatch.setattr(product_mod, "_load_product_entry_points", lambda: [ep])
+
+    info = product_info()
+    assert info.name == "acme-code"
+    assert info.prog == "acme"
+    assert info.manifest_path == manifest
+    assert product_mod.discover_product_manifest() == manifest
+
+
+def test_discovery_is_cached_after_first_lookup(
+    tmp_path, monkeypatch, _discovery_enabled
+):
+    ep, _ = _install_product_package(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        product_mod, "_load_product_entry_points", lambda: calls.append(1) or [ep]
+    )
+
+    assert product_info().name == "acme-code"
+    assert product_info().name == "acme-code"
+    assert len(calls) == 1
+    reset_product_info()
+    assert product_info().name == "acme-code"
+    assert len(calls) == 2
+
+
+def test_explicit_set_wins_over_discovery(tmp_path, monkeypatch, _discovery_enabled):
+    ep, _ = _install_product_package(tmp_path, monkeypatch)
+    monkeypatch.setattr(product_mod, "_load_product_entry_points", lambda: [ep])
+
+    set_product_info(ACME_INFO)
+    assert product_info() is ACME_INFO
+
+
+def test_load_project_implicit_install_wins_over_discovery(
+    tmp_path, monkeypatch, _discovery_enabled
+):
+    from omniagents.core.project.runtime import load_project
+
+    ep, _ = _install_product_package(tmp_path, monkeypatch)
+    monkeypatch.setattr(product_mod, "_load_product_entry_points", lambda: [ep])
+
+    proj_file = _product_project(tmp_path / "proj", "product: {slug: loaded_product}\n")
+    load_project(str(proj_file))
+    assert product_info().slug == "loaded_product"
+
+
+def test_no_entry_points_falls_back_to_default(monkeypatch, _discovery_enabled):
+    monkeypatch.setattr(product_mod, "_load_product_entry_points", lambda: [])
+    assert product_info() is DEFAULT_PRODUCT_INFO
+    assert product_mod.discover_product_manifest() is None
+
+
+def test_multiple_products_pick_deterministically_and_warn(
+    tmp_path, monkeypatch, _discovery_enabled, capsys
+):
+    ep_a, manifest_a = _install_product_package(
+        tmp_path, monkeypatch, package="aaapkg", slug="aaa_code"
+    )
+    ep_b, _ = _install_product_package(
+        tmp_path, monkeypatch, package="zzzpkg", slug="zzz_code"
+    )
+    # Declaration order must not matter: lexicographically smallest wins.
+    monkeypatch.setattr(
+        product_mod, "_load_product_entry_points", lambda: [ep_b, ep_a]
+    )
+
+    info = product_info()
+    assert info.slug == "aaa_code"
+    assert product_mod.discover_product_manifest() == manifest_a
+    err = capsys.readouterr().err
+    assert "multiple distributions declare" in err
+    assert "omniagents.products" in err
+    assert "'aaa-code'" in err
+
+
+def test_broken_entry_point_warns_and_falls_back(
+    monkeypatch, _discovery_enabled, capsys
+):
+    from types import SimpleNamespace
+
+    ep = SimpleNamespace(name="ghost", value="package_that_does_not_exist_xyz")
+    monkeypatch.setattr(product_mod, "_load_product_entry_points", lambda: [ep])
+
+    assert product_info() is DEFAULT_PRODUCT_INFO
+    assert "could not resolve product entry point" in capsys.readouterr().err
+
+
+def test_discovery_kill_switch_env(tmp_path, monkeypatch):
+    ep, _ = _install_product_package(tmp_path, monkeypatch)
+    monkeypatch.setattr(product_mod, "_load_product_entry_points", lambda: [ep])
+    monkeypatch.setenv("OMNIAGENTS_PRODUCT_DISCOVERY", "0")
+
+    assert product_info() is DEFAULT_PRODUCT_INFO
+    assert product_mod.discover_product_manifest() is None

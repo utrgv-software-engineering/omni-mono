@@ -284,6 +284,18 @@ except ModuleNotFoundError:
 
 
 # ---------------------------------------------------------------------------
+# Pytest fixture: no ambient product discovery
+# ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _no_ambient_product_discovery(monkeypatch):
+    """Framework tests must not inherit a product identity from
+    distributions installed in the dev environment (e.g. an editable
+    omni-code declaring an ``omniagents.products`` entry point).
+    Discovery tests re-enable it explicitly with ``delenv``."""
+    monkeypatch.setenv("OMNIAGENTS_PRODUCT_DISCOVERY", "0")
+
+
+# ---------------------------------------------------------------------------
 # Pytest fixture: temporary history DB for tests
 # ---------------------------------------------------------------------------
 @pytest.fixture(autouse=True)

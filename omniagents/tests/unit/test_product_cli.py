@@ -612,3 +612,288 @@ cli:
     )
     with pytest.raises(ImportError, match="cli.extensions"):
         product_main(manifest, ["anything"])
+
+
+# ---------------------------------------------------------------------------
+# Console-script entries: main() / setup_main() via entry-point discovery
+# ---------------------------------------------------------------------------
+
+
+def _install_discovered_product(tmp_path, monkeypatch, package="acmepkg"):
+    """A fake installed product distribution: an importable package with a
+    packaged project.yml, declared via a (stubbed) entry point."""
+    import os
+    from types import SimpleNamespace
+
+    import omniagents.core.product as product_mod
+
+    pkg = tmp_path / package
+    pkg.mkdir(parents=True, exist_ok=True)
+    (pkg / "__init__.py").write_text("")
+    manifest = pkg / "project.yml"
+    manifest.write_text("name: acme_code\n" + dedent(ACME_PRODUCT))
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, package, raising=False)
+    ep = SimpleNamespace(name="acme-code", value=package)
+    monkeypatch.setattr(product_mod, "_load_product_entry_points", lambda: [ep])
+    monkeypatch.delenv("OMNIAGENTS_PRODUCT_DISCOVERY", raising=False)
+    return manifest
+
+
+def test_main_resolves_product_via_discovery(tmp_path, monkeypatch):
+    from omniagents.product_cli import main
+
+    manifest = _install_discovered_product(tmp_path, monkeypatch)
+    called = _capture_run(monkeypatch)
+
+    assert main(["hello", "world"]) == 0
+    argv = called["argv"]
+    assert argv[:4] == ["omniagents", "run", "--project", str(manifest)]
+    assert argv[-2:] == ["hello", "world"]
+
+
+def test_main_help_renders_discovered_prog(tmp_path, monkeypatch, capsys):
+    from omniagents.product_cli import main
+
+    _install_discovered_product(tmp_path, monkeypatch)
+    assert main(["--help"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("usage: acme ")
+    assert "acme -- <words...>" in out
+
+
+def test_main_without_product_distribution_errors(monkeypatch, capsys):
+    import omniagents.core.product as product_mod
+    from omniagents.product_cli import main
+
+    monkeypatch.setattr(product_mod, "_load_product_entry_points", lambda: [])
+    monkeypatch.delenv("OMNIAGENTS_PRODUCT_DISCOVERY", raising=False)
+
+    assert main(["anything"]) == 2
+    assert "omniagents.products" in capsys.readouterr().err
+
+
+def test_setup_main_bootstraps_discovered_product_and_runs_wizard(
+    tmp_path, monkeypatch
+):
+    from omniagents.core.product import product_info
+    from omniagents.product_cli import setup_main
+
+    _install_discovered_product(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        models_cli, "run_model_command", lambda argv, **kw: calls.append(list(argv))
+    )
+
+    assert setup_main() == 0
+    assert calls == [["setup"]]
+    # The wizard ran against the bootstrapped (explicit) product identity.
+    assert product_info().prog == "acme"
+
+
+# ---------------------------------------------------------------------------
+# Fallthrough conventions: models bootstrap + embedded mode
+# ---------------------------------------------------------------------------
+
+
+class _FakeStore:
+    def __init__(self, configured=True, model="acme-model"):
+        self.configured = configured
+        self.model = model
+        self.calls = []
+
+    def load_config(self):
+        self.calls.append("load_config")
+        return {}
+
+    def resolve_model_for_runtime(self, model_name=None):
+        self.calls.append("resolve")
+        return {"model": self.model} if self.model else {}
+
+    def has_models_configured(self):
+        return self.configured
+
+
+@pytest.fixture
+def _clean_bootstrap_env():
+    import os
+
+    keys = ["OMNI_WEB_AUTO_OPEN", "ACME_CODE_UPDATE_CHECK", "MODEL_NAME"]
+    saved = {k: os.environ.get(k) for k in keys}
+    for k in keys:
+        os.environ.pop(k, None)
+    yield
+    for k, v in saved.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+
+def _install_fake_store(monkeypatch, store):
+    import omniagents.core.models as models_pkg
+
+    monkeypatch.setattr(models_pkg, "model_store", lambda: store)
+
+
+def test_models_bootstrap_loads_config_and_exports_model_name(
+    tmp_path, monkeypatch, _clean_bootstrap_env
+):
+    import os
+
+    manifest = _write_manifest(tmp_path, ACME_PRODUCT)
+    _capture_run(monkeypatch)
+    store = _FakeStore()
+    _install_fake_store(monkeypatch, store)
+
+    assert product_main(manifest, ["hello"]) == 0
+    assert "load_config" in store.calls
+    assert os.environ["MODEL_NAME"] == "acme-model"
+
+
+def test_models_bootstrap_skipped_without_installed_store(
+    tmp_path, monkeypatch, _clean_bootstrap_env
+):
+    import os
+
+    manifest = _write_manifest(tmp_path, ACME_PRODUCT)
+    _capture_run(monkeypatch)
+    _install_fake_store(monkeypatch, None)
+    wizard = []
+    monkeypatch.setattr(
+        models_cli, "run_model_command", lambda argv, **kw: wizard.append(list(argv))
+    )
+
+    assert product_main(manifest, ["hello"]) == 0
+    assert wizard == []
+    assert "MODEL_NAME" not in os.environ
+
+
+def test_models_bootstrap_skipped_on_subcommand_dispatch(
+    tmp_path, monkeypatch, _clean_bootstrap_env
+):
+    manifest = _write_manifest(tmp_path, ACME_PRODUCT)
+    store = _FakeStore(configured=False)
+    _install_fake_store(monkeypatch, store)
+    monkeypatch.setattr(models_cli, "run_model_command", lambda argv, **kw: None)
+
+    assert product_main(manifest, ["model", "list"]) == 0
+    # No wizard, no config load — the bootstrap gates off dispatch.
+    assert store.calls == []
+
+
+def test_models_wizard_runs_when_unconfigured(
+    tmp_path, monkeypatch, _clean_bootstrap_env, capsys
+):
+    manifest = _write_manifest(tmp_path, ACME_PRODUCT)
+    order = []
+    _capture_run(monkeypatch)
+    monkeypatch.setattr(
+        fw_cli, "main", lambda: order.append("run")
+    )
+    store = _FakeStore(configured=False)
+    _install_fake_store(monkeypatch, store)
+    monkeypatch.setattr(
+        models_cli,
+        "run_model_command",
+        lambda argv, **kw: order.append(("wizard", list(argv), kw.get("store"))),
+    )
+
+    assert product_main(manifest, ["hello"]) == 0
+    assert order[0] == ("wizard", ["setup"], store)
+    assert order[-1] == "run"
+    assert "Starting setup wizard" in capsys.readouterr().out
+
+
+def test_embedded_no_models_emits_json_error(
+    tmp_path, monkeypatch, _clean_bootstrap_env, capsys
+):
+    manifest = _write_manifest(tmp_path, ACME_PRODUCT)
+    _capture_run(monkeypatch)
+    _install_fake_store(monkeypatch, _FakeStore(configured=False))
+
+    with pytest.raises(SystemExit) as exc:
+        product_main(manifest, ["--embedded"])
+    assert exc.value.code == 1
+    assert '"error"' in capsys.readouterr().out
+
+
+def test_embedded_strips_flag_and_sets_env(
+    tmp_path, monkeypatch, _clean_bootstrap_env
+):
+    import os
+
+    manifest = _write_manifest(tmp_path, ACME_PRODUCT)
+    called = _capture_run(monkeypatch)
+    _install_fake_store(monkeypatch, _FakeStore())
+
+    assert product_main(manifest, ["--embedded", "hi"]) == 0
+    assert os.environ["OMNI_WEB_AUTO_OPEN"] == "false"
+    assert os.environ["ACME_CODE_UPDATE_CHECK"] == "0"
+    assert "--embedded" not in called["argv"]
+
+
+def test_embedded_web_forces_json_output(
+    tmp_path, monkeypatch, _clean_bootstrap_env
+):
+    manifest = _write_manifest(tmp_path, ACME_PRODUCT)
+    called = _capture_run(monkeypatch)
+    _install_fake_store(monkeypatch, _FakeStore())
+
+    assert product_main(manifest, ["--embedded", "--mode", "web"]) == 0
+    argv = called["argv"]
+    assert argv[argv.index("--output") + 1] == "json"
+
+
+def test_embedded_web_preserves_explicit_output(
+    tmp_path, monkeypatch, _clean_bootstrap_env
+):
+    manifest = _write_manifest(tmp_path, ACME_PRODUCT)
+    called = _capture_run(monkeypatch)
+    _install_fake_store(monkeypatch, _FakeStore())
+
+    assert product_main(
+        manifest, ["--embedded", "--mode", "web", "--output", "text"]
+    ) == 0
+    argv = called["argv"]
+    assert argv[argv.index("--output") + 1] == "text"
+    assert argv.count("--output") == 1
+
+
+def test_embedded_suppresses_update_notice_via_env_gate(
+    tmp_path, monkeypatch, _clean_bootstrap_env, capsys
+):
+    manifest = _write_manifest(tmp_path, ACME_PRODUCT + ACME_UPDATE)
+    _capture_run(monkeypatch)
+    _install_fake_store(monkeypatch, _FakeStore())
+    # Real maybe_print_update_notice: the ACME_CODE_UPDATE_CHECK=0 knob
+    # set by embedded interception must silence it entirely.
+    assert product_main(manifest, ["--embedded", "hi"]) == 0
+    assert "date available" not in capsys.readouterr().out
+
+
+def test_embedded_flag_not_intercepted_on_command_dispatch(
+    tmp_path, monkeypatch, _clean_bootstrap_env
+):
+    import os
+
+    seen = {}
+    ext = _make_extensions(
+        monkeypatch,
+        COMMANDS={"hello": lambda args: seen.update({"args": list(args)}) or 0},
+    )
+    manifest = _write_manifest(
+        tmp_path,
+        ACME_PRODUCT
+        + f"""
+cli:
+  extensions: {ext}
+""",
+    )
+    store = _FakeStore(configured=False)
+    _install_fake_store(monkeypatch, store)
+
+    assert product_main(manifest, ["hello", "--embedded"]) == 0
+    assert seen["args"] == ["--embedded"]
+    assert "OMNI_WEB_AUTO_OPEN" not in os.environ
+    assert store.calls == []

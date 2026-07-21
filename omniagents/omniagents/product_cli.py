@@ -5,15 +5,20 @@ used to hand-roll its own CLI dispatcher — a reserved-word table, a
 ``--`` prompt escape, per-subcommand thin wrapper modules, an update
 notice, and a fallthrough to ``omniagents run``. This module makes the
 project manifest the single source of that surface: a product's console
-script collapses to::
+script is the framework's :func:`main` directly, with the manifest
+located by entry-point discovery
+(:func:`omniagents.core.product.discover_product_manifest`)::
 
-    def cli_main(argv=None) -> int:
-        from omniagents.product_cli import product_main
+    [project.scripts]
+    omni = "omniagents.product_cli:main"
+    omni-setup = "omniagents.product_cli:setup_main"
 
-        return product_main(PROJECT_MANIFEST, argv)
+    [project.entry-points."omniagents.products"]
+    omni-code = "omni_code"
 
 so if the base command for a product is ``omni``, the update command is
-``omni update`` — no per-product dispatcher files.
+``omni update`` — no per-product dispatcher files. Embedders with a
+manifest in hand can call :func:`product_main` directly.
 
 :func:`product_main` always runs :func:`~omniagents.core.product.bootstrap_product`
 first, so every framework subsystem (model store dir, platform policy
@@ -44,8 +49,25 @@ subcommands from convention:
 Everything else falls through to
 ``omniagents run --project <manifest> --mode <cli.default_mode>`` with
 the remaining args passed through; a leading ``--`` forces prompt mode
-even for reserved words. The update notice (when ``update:`` is
-declared) prints on the fallthrough path only.
+even for reserved words. The fallthrough path also carries two
+framework conventions:
+
+- **Embedded mode** (launcher contract, see ``docs/serve-protocol.md``):
+  a ``--embedded`` flag anywhere in a fallthrough invocation is
+  stripped; browser auto-open (``OMNI_WEB_AUTO_OPEN=false``) and the
+  startup update notice (``<ENV_PREFIX>_UPDATE_CHECK=0``) are
+  suppressed, and ``--mode web`` without an explicit ``--output`` gets
+  ``--output json`` appended so the readiness payload is machine
+  readable.
+- **Models bootstrap** — for products with an installed process-wide
+  model store (built at bootstrap from the manifest's declared model
+  catalog): load the user model config, apply platform model
+  governance, export ``MODEL_NAME``, and when no models are configured
+  run the interactive setup wizard — or, in embedded mode, print one
+  ``{"error": ...}`` JSON line and exit 1.
+
+The update notice (when ``update:`` is declared) prints on the
+fallthrough path only.
 
 Manifest schema (top-level, all optional)::
 
@@ -61,8 +83,9 @@ named by ``cli.extensions`` may define:
   declaration order before any dispatch, each receiving the current
   argv (after any mutation by earlier preflights). A preflight may veto
   the run (``sys.exit``/``os.exec``) or return a modified argv; ``None``
-  keeps argv unchanged. Covers governance sandbox re-exec, first-run
-  wizards, embedded-mode interception.
+  keeps argv unchanged. Covers product-specific gates like governance
+  sandbox re-exec (first-run model wizards and embedded-mode
+  interception are framework defaults now — see above).
 - ``COMMANDS: dict[str, Callable[[list[str]], int | None]]`` — extra
   subcommands (e.g. ``serve``) or overrides of reserved ones, each
   receiving the argv after the command word and returning an exit
@@ -76,6 +99,7 @@ Dispatch precedence: PREFLIGHT → COMMANDS (product) → reserved
 
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -83,7 +107,12 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 import yaml
 
-from omniagents.core.product import ProductInfo, bootstrap_product, product_info
+from omniagents.core.product import (
+    PRODUCT_ENTRY_POINT_GROUP,
+    ProductInfo,
+    bootstrap_product,
+    product_info,
+)
 
 __all__ = [
     "HELP_TOKENS",
@@ -91,9 +120,11 @@ __all__ = [
     "ProductCliConfig",
     "dispatches_to_command",
     "load_product_cli_config",
+    "main",
     "product_main",
     "run_product_describe_command",
     "run_product_sessions_command",
+    "setup_main",
 ]
 
 #: Subcommands the framework mounts from convention (``update`` only when
@@ -439,6 +470,90 @@ def run_product_sessions_command(
 
 
 # ---------------------------------------------------------------------------
+# Fallthrough conventions: embedded mode + models bootstrap
+# ---------------------------------------------------------------------------
+
+
+def _get_arg_value(args: Sequence[str], *flags: str) -> Optional[str]:
+    for i, arg in enumerate(args):
+        if arg in flags and i + 1 < len(args):
+            return args[i + 1]
+    return None
+
+
+def _intercept_embedded(
+    args: List[str], info: ProductInfo
+) -> tuple[List[str], bool]:
+    """Embedded (desktop-launcher) mode for the fallthrough agent run.
+
+    Part of the launcher contract (``docs/serve-protocol.md``): strip
+    ``--embedded``, suppress browser auto-open and the startup update
+    notice (the launcher owns update UX), and force JSON output for web
+    mode unless ``--output`` was given explicitly. Returns the rewritten
+    argv and whether embedded mode is active.
+    """
+    if "--embedded" not in args:
+        return args, False
+
+    args = [a for a in args if a != "--embedded"]
+    os.environ["OMNI_WEB_AUTO_OPEN"] = "false"
+    if info.env_prefix:
+        os.environ[f"{info.env_prefix}_UPDATE_CHECK"] = "0"
+    if (
+        _get_arg_value(args, "--mode", "-m") == "web"
+        and _get_arg_value(args, "--output") is None
+    ):
+        args = [*args, "--output", "json"]
+    return args, True
+
+
+def _bootstrap_models(*, embedded: bool) -> None:
+    """Default models bootstrap ahead of the fallthrough agent run.
+
+    Runs only for products with an installed process-wide model store —
+    installed at :func:`bootstrap_product` from the manifest's declared
+    model catalog (``paths.model_catalog``), or bound explicitly by the
+    product. Loads the user model config, applies platform model
+    governance when authenticated, exports ``MODEL_NAME`` from the
+    resolved runtime, and when no models are configured runs the
+    interactive setup wizard — or, in embedded mode, prints a single
+    ``{"error": ...}`` JSON line for the launcher and exits 1.
+    """
+    from omniagents.core.models import model_store
+
+    store = model_store()
+    if store is None:
+        return
+
+    store.load_config()
+
+    # Apply platform model governance if authenticated.
+    try:
+        from omniagents.core.models.governed import apply_platform_model_governance
+
+        apply_platform_model_governance()
+    except Exception:
+        pass
+
+    if "MODEL_NAME" not in os.environ:
+        model_runtime = store.resolve_model_for_runtime()
+        if model_runtime.get("model"):
+            os.environ["MODEL_NAME"] = model_runtime["model"]
+
+    if not store.has_models_configured():
+        if embedded:
+            import json
+
+            print(json.dumps({"error": "No model credentials configured"}))
+            sys.exit(1)
+        print("No model credentials configured. Starting setup wizard...\n")
+        from omniagents.core.models.cli import run_model_command
+
+        run_model_command(["setup"], store=store)
+        print()
+
+
+# ---------------------------------------------------------------------------
 # Help
 # ---------------------------------------------------------------------------
 
@@ -561,8 +676,14 @@ def product_main(project_path: Any, argv: Optional[List[str]] = None) -> int:
         if head == "describe":
             return run_product_describe_command(args[1:])
 
-    # Fallthrough: the product's agent run. The update notice prints
-    # here only — never ahead of subcommands.
+    # Fallthrough: the product's agent run. Embedded interception and
+    # the models bootstrap apply here only — never ahead of subcommands.
+    args, embedded = _intercept_embedded(args, info)
+    _bootstrap_models(embedded=embedded)
+
+    # The update notice prints on the fallthrough path only (and the
+    # embedded env knob above disables it through the standard
+    # <PREFIX>_UPDATE_CHECK gate).
     if info.update is not None:
         from omniagents.core.updater import UpdaterConfig, maybe_print_update_notice
 
@@ -580,4 +701,47 @@ def product_main(project_path: Any, argv: Optional[List[str]] = None) -> int:
         *args,
     ]
     omni_main()
+    return 0
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """Console-script entry for a product distribution.
+
+    Resolves the product's packaged manifest via entry-point discovery
+    (:func:`omniagents.core.product.discover_product_manifest`) and runs
+    :func:`product_main` — the target a product's ``[project.scripts]``
+    names directly, with no product-side dispatcher module at all.
+    *argv* defaults to ``sys.argv[1:]``.
+    """
+    from omniagents.core.product import discover_product_manifest
+
+    manifest = discover_product_manifest()
+    if manifest is None:
+        print(
+            "omniagents: no product distribution found — no installed "
+            f"distribution declares an '{PRODUCT_ENTRY_POINT_GROUP}' "
+            "entry point.",
+            file=sys.stderr,
+        )
+        return 2
+    return product_main(manifest, argv)
+
+
+def setup_main() -> int:
+    """The model setup wizard, standalone — for ``omni-setup``-style
+    console scripts.
+
+    Bootstraps the entry-point-discovered product first (identity +
+    declared model catalog), then runs ``model setup`` on the installed
+    store (a generic product-config-dir store when none is installed).
+    """
+    from omniagents.core.product import discover_product_manifest
+
+    manifest = discover_product_manifest()
+    if manifest is not None:
+        bootstrap_product(manifest)
+
+    from omniagents.core.models.cli import run_model_command
+
+    run_model_command(["setup"], store=_require_model_store())
     return 0
