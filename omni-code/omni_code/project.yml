@@ -23,12 +23,30 @@ product:
 # from convention + the product identity above — serve/sandbox-host are
 # the framework's launcher-contract defaults (omniagents.product_serve),
 # which pick up the packaged sandbox_profile_default.yml sibling of this
-# file; omni-code-specific behavior (governance preflight, models
-# bootstrap wizard, embedded mode, the docker `sandbox` command, the
-# coding-flavored sessions summarizer) lives in the extensions module.
+# file; sessions runs the conventionally-named session_summarizer agent
+# with the summary envelope declared below; omni-code-specific behavior
+# (governance preflight, models bootstrap wizard, embedded mode) lives
+# in the extensions module.
 cli:
   default_mode: ink
   extensions: omni_code.cli_extensions
+# Sessions conventions (framework sessions CLI). The coding-flavored
+# summary envelope: content keys ensured on every `omni sessions
+# summarize` result, must agree with the JSON schema in
+# agents/session_summarizer/instructions.md (that agent, named by
+# convention, IS the summarizer — see
+# omniagents.core.session.summarize).
+sessions:
+  summary_envelope:
+    summary: ""
+    decisions: []
+    constraints: []
+    key_files: []
+    commands: []
+    tests: []
+    open_questions: []
+    next_steps: []
+    notable_errors: []
 # Paths are relative to this file. Code/data siblings live inside the
 # omni_code package (identical layout for editable and wheel installs);
 # evaluations and target are repo-only and absent from wheels (the

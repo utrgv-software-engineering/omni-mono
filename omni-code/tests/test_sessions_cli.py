@@ -1,10 +1,10 @@
 """``omni sessions`` tests.
 
-The command is omni-code's COMMANDS override in `cli_extensions`: it
-installs the coding summarizer + envelope, then delegates to the
-framework's reserved-sessions default
-(`omniagents.product_cli.run_product_sessions_command`), pinned to the
-`omni_code` project.
+The command is fully conventional: the framework's reserved-sessions
+default (`omniagents.product_cli.run_product_sessions_command`) pins the
+`omni_code` project + entrypoint agent, the summarizer runs the
+conventionally-named `session_summarizer` packaged agent, and the coding
+summary envelope comes from project.yml (`sessions.summary_envelope`).
 """
 
 import json
@@ -12,10 +12,11 @@ import json
 import pytest
 
 import omni_code.governance as governance
-from omni_code import cli_extensions
+from omni_code import PROJECT_MANIFEST
 from omni_code.cli import cli_main
 import omniagents.core.session.history_db as history_db
 from omniagents.core.paths import get_sessions_db_path
+from omniagents.core.session.summarize import manifest_session_envelope
 
 
 @pytest.fixture(autouse=True)
@@ -40,7 +41,7 @@ def _seed_session(*, project: str, agent: str, session_id: str, messages: list[d
 
 
 def test_build_model_provider_uses_chat_completions_when_configured():
-    from omni_code.utility_runs import build_model_provider
+    from omniagents.core.models import provider_from_runtime as build_model_provider
 
     provider, env = build_model_provider({
         "provider": "openai-compatible",
@@ -235,7 +236,9 @@ def test_sessions_summarize_parses_json(monkeypatch, tmp_path, capsys):
         captured["prompt"] = prompt
         return json.dumps({"summary": "ok", "decisions": [], "constraints": [], "key_files": [], "commands": [], "tests": [], "open_questions": [], "next_steps": [], "notable_errors": []})
 
-    monkeypatch.setattr("omni_code.utility_runs.run_utility_agent", fake_run)
+    monkeypatch.setattr(
+        "omniagents.core.runtime.ephemeral.run_project_agent_once", fake_run
+    )
 
     assert _sessions(["--agent", agent, "summarize", "s1", "--tail", "10"]) == 0
 
@@ -270,7 +273,9 @@ def test_sessions_summarize_wraps_non_json(monkeypatch, tmp_path, capsys):
     async def fake_run(agent_name, prompt, **kwargs):
         return "not-json"
 
-    monkeypatch.setattr("omni_code.utility_runs.run_utility_agent", fake_run)
+    monkeypatch.setattr(
+        "omniagents.core.runtime.ephemeral.run_project_agent_once", fake_run
+    )
 
     assert _sessions(["--agent", agent, "summarize", "s1"]) == 0
 
@@ -278,8 +283,11 @@ def test_sessions_summarize_wraps_non_json(monkeypatch, tmp_path, capsys):
     data = json.loads(out)
     assert data["raw"] == "not-json"
     assert data["session_id"] == "s1"
-    # The coding envelope keys are ensured even on a raw wrap.
-    for key in cli_extensions.SUMMARY_ENVELOPE:
+    # The coding envelope keys (declared in project.yml) are ensured
+    # even on a raw wrap.
+    envelope = manifest_session_envelope(PROJECT_MANIFEST)
+    assert envelope is not None and "key_files" in envelope
+    for key in envelope:
         assert key in data
 
 

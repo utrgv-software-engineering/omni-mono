@@ -1,9 +1,10 @@
 """The `/init` slash command: generate or update the workspace AGENTS.md.
 
 Runs the product's `init_agent` (omni_code/agents/init_agent) through the
-shared utility-run wiring (`omni_code.utility_runs.run_utility_agent`) — a
-multi-turn agent run with real tools, outside the session lifecycle.
-Registered on the framework's default slash registry from
+framework's project-aware harness
+(`omniagents.core.runtime.run_project_agent_once`) — a multi-turn agent
+run with real tools, outside the session lifecycle. Registered on the
+framework's default slash registry from
 `omni_code/agents/omni/context.py`, so the builtin `dispatch` tool can
 execute it.
 """
@@ -16,7 +17,8 @@ from pathlib import Path
 
 async def run_init_agent(max_turns: int = 1000) -> str:
     """Run the init_agent from the packaged agents tree."""
-    from omni_code.utility_runs import resolve_model_runtime, run_utility_agent
+    from omniagents.core.models import resolve_model_runtime
+    from omniagents.core.runtime import run_project_agent_once
 
     # The init agent takes the runtime's raw model id (no provider-prefix
     # normalization — historical behavior for this path).
@@ -30,7 +32,7 @@ async def run_init_agent(max_turns: int = 1000) -> str:
     base_dir = Path(workspace_root).expanduser() if workspace_root else Path.cwd()
 
     try:
-        status = await run_utility_agent(
+        status = await run_project_agent_once(
             "init_agent",
             "begin",
             model=model,
@@ -51,5 +53,4 @@ async def run_init_agent(max_turns: int = 1000) -> str:
             return f"{status}\n\nAGENTS.md:\n\n```markdown\n{body}\n```"
         except Exception:
             return status
-
     return status

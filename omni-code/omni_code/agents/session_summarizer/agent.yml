@@ -5,10 +5,14 @@ instructions_file: instructions.md
 
 tools: []
 
-# Headless subagent — invoked by omni_code/cli_extensions.py via direct
-# Runner.run (bypasses AgentService entirely, so configure_tool_approval
-# never runs against it). Setting use_safe_agent: false documents the
-# intent and stays correct if this agent is ever moved onto AgentService.
+# Headless subagent — this agent's name IS the install: the framework's
+# session-summarize seam runs the project agent named
+# `session_summarizer` by convention via run_project_agent_once
+# (bypasses AgentService entirely, so configure_tool_approval never runs
+# against it). Its instructions.md is the prompt; the JSON keys it emits
+# must agree with project.yml's sessions.summary_envelope. Setting
+# use_safe_agent: false documents the intent and stays correct if this
+# agent is ever moved onto AgentService.
 use_safe_agent: false
 
 model_settings:

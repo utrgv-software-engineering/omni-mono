@@ -4,16 +4,17 @@ description: "Summarizes the current conversation context for continuation"
 # Placeholder only: the real system prompt is the framework's
 # DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS
 # (omniagents.core.runtime.compaction) — the single source of truth —
-# injected per run via
-# omni_code.utility_runs.run_utility_agent(instructions=...).
+# injected per run by the framework's conventional compaction
+# summarizer.
 instructions: "(replaced at run time by the framework checkpoint-summary instructions)"
 
 tools: []
 
-# Headless subagent — invoked by the compaction summarizer installed in
-# omni_code/agents/omni/context.py via the framework's run_agent_once
-# (bypasses AgentService entirely, so configure_tool_approval
-# never runs against it). Empty tool list also makes hangs impossible.
+# Headless subagent — this agent's name IS the install: the framework's
+# compaction seam runs the project agent named `compactor` by convention
+# via run_project_agent_once (bypasses AgentService entirely, so
+# configure_tool_approval never runs against it). Empty tool list also
+# makes hangs impossible.
 # Setting use_safe_agent: false documents the intent and stays correct
 # if this agent is ever moved onto AgentService.
 use_safe_agent: false

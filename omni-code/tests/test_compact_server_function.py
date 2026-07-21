@@ -2,20 +2,22 @@
 
 The server function itself is the framework builtin
 (``omniagents.builtin.server_functions.compact``, activated by the builtin
-``compact`` capability pack). What omni-code owns — and what these tests
-cover — is the summarizer installed through the
-``set_compaction_summarizer`` seam (compactor agent + model resolution,
-running under the framework's DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS)
-and the omni agent's activation of the ``compact`` capability.
+``compact`` capability pack). The summarizer is conventional: with no
+explicit install, the framework seam runs omni-code's packaged
+``compactor`` agent (named by convention) under
+DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS on the utility-run model
+resolution. These tests cover that convention and the omni agent's
+activation of the ``compact`` capability.
 """
 
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
-# Importing the omni context module installs the summarizer (module-level
-# wiring, same as the recap summarizer).
-import omni_code.agents.omni.context as context_mod
+# Importing omni_code bootstraps the product identity (manifest_path),
+# which is what the conventional summarizer resolves the compactor
+# agent through.
+import omni_code  # noqa: F401
 from omniagents.core.runtime.compaction import (
     DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS,
     compaction_summarizer,
@@ -38,12 +40,14 @@ class FakeSession:
         self.history.append(item)
 
 
-def test_context_module_installs_compaction_summarizer():
-    assert compaction_summarizer() is context_mod._compaction_summarizer
+def test_conventional_compaction_summarizer_is_active():
+    """No explicit install anywhere in omni-code: the seam resolves the
+    conventionally-named packaged compactor agent."""
+    assert compaction_summarizer() is not None
 
 
 def test_summarizer_runs_compactor_with_framework_instructions(monkeypatch):
-    """The installed summarizer resolves the session's model through
+    """The conventional summarizer resolves the session's model through
     omni-code's store and runs the compactor utility agent under the
     framework's checkpoint-summary instructions."""
     captured: dict = {}
@@ -57,7 +61,7 @@ def test_summarizer_runs_compactor_with_framework_instructions(monkeypatch):
             "api_key": None,
         }
 
-    async def fake_run_utility_agent(agent_name, prompt, **kwargs):
+    async def fake_run_project_agent_once(agent_name, prompt, **kwargs):
         captured["agent_name"] = agent_name
         captured["prompt"] = prompt
         captured.update(kwargs)
@@ -73,7 +77,8 @@ def test_summarizer_runs_compactor_with_framework_instructions(monkeypatch):
         models, "resolve_model_for_runtime", fake_resolve_model_for_runtime
     )
     monkeypatch.setattr(
-        "omni_code.utility_runs.run_utility_agent", fake_run_utility_agent
+        "omniagents.core.runtime.ephemeral.run_project_agent_once",
+        fake_run_project_agent_once,
     )
 
     service = FakeService(model_name="local/gpt-4.1")

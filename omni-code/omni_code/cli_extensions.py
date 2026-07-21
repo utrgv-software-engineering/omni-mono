@@ -132,81 +132,22 @@ PREFLIGHT = [governance_preflight, embedded_preflight, models_preflight]
 
 
 # ---------------------------------------------------------------------------
-# Sessions: the coding-flavored summary envelope + installed summarizer
-# ---------------------------------------------------------------------------
-
-#: The coding-flavored summary envelope. Keys must agree with the JSON
-#: schema in ``omni_code/agents/session_summarizer/instructions.md``.
-SUMMARY_ENVELOPE: Dict[str, Any] = {
-    "summary": "",
-    "decisions": [],
-    "constraints": [],
-    "key_files": [],
-    "commands": [],
-    "tests": [],
-    "open_questions": [],
-    "next_steps": [],
-    "notable_errors": [],
-}
-
-
-async def _summarize_with_utility_agent(
-    prompt: str, *, model: Optional[str], project: Optional[str],
-    agent: Optional[str], session_id: str,
-) -> str:
-    """omni-code's session summarizer: resolve the model, then run the
-    ``session_summarizer`` agent one-shot over the transcript prompt."""
-    from omni_code.utility_runs import (
-        build_model_provider,
-        resolve_model_runtime,
-        run_utility_agent,
-    )
-
-    model_name, runtime = resolve_model_runtime(model)
-    if not runtime:
-        raise RuntimeError("No model configured. Run: omni model setup")
-    provider_obj, _env_overrides = build_model_provider(runtime)
-    if provider_obj is None:
-        raise RuntimeError("No usable model credentials found. Run: omni model setup")
-
-    # CLI invocation — anchor to the user's current working directory.
-    # The session_summarizer agent has tools=[] today so this is unused,
-    # but passing it keeps the call forward-compatible and consistent
-    # with the framework's strict workspace_root convention.
-    return await run_utility_agent(
-        "session_summarizer",
-        prompt,
-        model=model_name,
-        runtime=runtime,
-        workspace_root=os.getcwd(),
-    )
-
-
-# ---------------------------------------------------------------------------
 # COMMANDS — product subcommands + overrides of reserved ones
 # ---------------------------------------------------------------------------
 
-
-def _sessions(args: List[str]) -> int:
-    """Inspect OmniAgents sessions."""
-    # Wire omni-code's summarizer + coding envelope, then delegate to the
-    # framework's reserved-sessions default (project pinned to the
-    # product slug from identity).
-    from omniagents.core.session.summarize import set_session_summarizer
-    from omniagents.product_cli import run_product_sessions_command
-
-    set_session_summarizer(_summarize_with_utility_agent)
-    return run_product_sessions_command(
-        args, agent="omni", summary_envelope=SUMMARY_ENVELOPE
-    )
-
-
-# ``serve`` and ``sandbox-host`` are NOT overridden: the framework's
-# reserved defaults (omniagents.product_serve) are launcher-complete for
-# omni-code — same argv surface, readiness payload, profile chain
-# (packaged sandbox_profile_default.yml via the manifest-sibling
-# convention), entrypoint spec, and codex registration (conventional on
-# the catalog's openai-oauth provider).
-COMMANDS = {
-    "sessions": _sessions,
-}
+# No overrides: the framework's reserved defaults are complete for
+# omni-code.
+#
+# ``sessions`` is fully conventional — the reserved default pins the
+# product slug as project and the manifest's entrypoint agent, the
+# summarizer runs the conventionally-named
+# ``omni_code/agents/session_summarizer`` agent (its instructions.md is
+# the prompt), and the coding-flavored summary envelope is declared in
+# project.yml (``sessions.summary_envelope``).
+#
+# ``serve`` and ``sandbox-host`` are launcher-complete framework
+# defaults (omniagents.product_serve) — same argv surface, readiness
+# payload, profile chain (packaged sandbox_profile_default.yml via the
+# manifest-sibling convention), entrypoint spec, and codex registration
+# (conventional on the catalog's openai-oauth provider).
+COMMANDS: Dict[str, Any] = {}

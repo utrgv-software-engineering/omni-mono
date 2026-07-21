@@ -74,67 +74,13 @@ from omniagents.core.workers import install_project_worker_defaults  # noqa: E40
 
 install_project_worker_defaults()
 
-# Recap: the framework owns the /recap orchestration, broadcast, AND the
-# recap system prompt (DEFAULT_RECAP_INSTRUCTIONS — lifted from omni-code);
-# the summarizer (recapper agent + model resolution) is omni-code's.
-from omniagents.core.runtime.recap import (  # noqa: E402
-    DEFAULT_RECAP_INSTRUCTIONS,
-    set_recap_summarizer,
-)
-
-
-async def _recap_summarizer(prompt, *, service, session):
-    from omni_code.utility_runs import (
-        normalize_model_name,
-        resolve_service_model_runtime,
-        run_utility_agent,
-    )
-
-    model_ref, runtime = resolve_service_model_runtime(service, session)
-    model_name = normalize_model_name(model_ref, runtime)
-    return await run_utility_agent(
-        "recapper",
-        prompt,
-        model=model_name,
-        runtime=runtime,
-        session=session,
-        instructions=DEFAULT_RECAP_INSTRUCTIONS,
-    )
-
-
-set_recap_summarizer(_recap_summarizer)
-
-# Compaction: the framework owns the /compact orchestration (builtin
-# `compact` capability pack), the checkpoint marker + resume protocol, AND
-# the summary system prompt (DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS —
-# lifted from omni-code); the summarizer (compactor agent + model
-# resolution) is omni-code's.
-from omniagents.core.runtime.compaction import (  # noqa: E402
-    DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS,
-    set_compaction_summarizer,
-)
-
-
-async def _compaction_summarizer(prompt, *, service, session):
-    from omni_code.utility_runs import (
-        normalize_model_name,
-        resolve_service_model_runtime,
-        run_utility_agent,
-    )
-
-    model_ref, runtime = resolve_service_model_runtime(service, session)
-    model_name = normalize_model_name(model_ref, runtime)
-    return await run_utility_agent(
-        "compactor",
-        prompt,
-        model=model_name,
-        runtime=runtime,
-        session=session,
-        instructions=DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS,
-    )
-
-
-set_compaction_summarizer(_compaction_summarizer)
+# Recap + compaction: fully conventional. The framework owns the /recap
+# and /compact orchestration AND the summarizer wiring — with no explicit
+# install, the seams run the project agents named by convention
+# (omni_code/agents/recapper, omni_code/agents/compactor) one-shot under
+# the framework prompts (DEFAULT_RECAP_INSTRUCTIONS /
+# DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS) on the utility-run model
+# resolution. Shipping those agents IS the install; nothing to wire here.
 
 # Workspace info: the framework owns the fs_* picker server functions
 # (builtin `workspace_info` capability pack) and the terminal.* functions
