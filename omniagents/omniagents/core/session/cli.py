@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import sqlite3
 import sys
@@ -15,6 +16,10 @@ from omniagents.core.session.query import (
     populate_session_stats,
     query_sessions,
     search_session_messages,
+)
+from omniagents.core.session.summarize import (
+    session_summarizer,
+    summarize_session,
 )
 
 
@@ -93,6 +98,25 @@ def add_sessions_subparser(subparsers) -> argparse.ArgumentParser:
     export_parser.add_argument("--agent", default=None, help="Agent slug")
     export_parser.add_argument("--format", choices=["json", "jsonl"], default="jsonl")
     export_parser.add_argument("--pretty", action="store_true")
+
+    summarize_parser = sessions_sub.add_parser(
+        "summarize", help="Summarize a session with the installed summarizer"
+    )
+    summarize_parser.add_argument("session_id")
+    summarize_parser.add_argument("--project", default=None, help="Project slug")
+    summarize_parser.add_argument("--agent", default=None, help="Agent slug")
+    summarize_parser.add_argument(
+        "--model",
+        default=None,
+        help="Model reference handed to the installed summarizer (unresolved)",
+    )
+    summarize_parser.add_argument(
+        "--tail",
+        type=int,
+        default=200,
+        help="Summarize only the last N history items (<=0 for all)",
+    )
+    summarize_parser.add_argument("--pretty", action="store_true")
     return parser
 
 
@@ -237,6 +261,35 @@ def handle_sessions_command(args: argparse.Namespace) -> int:
             return 0
         for item in history:
             print(dump_json(item, pretty=False))
+        return 0
+
+    if args.sessions_cmd == "summarize":
+        if not (args.session_id or "").strip():
+            print("session_id is required")
+            return 1
+        if session_summarizer() is None:
+            print(
+                "No session summarizer is installed "
+                "(see omniagents.core.session.summarize.set_session_summarizer)."
+            )
+            return 1
+        try:
+            out = asyncio.run(
+                summarize_session(
+                    args.session_id,
+                    project=project,
+                    agent=agent,
+                    model=args.model,
+                    tail=coerce_limit(args.tail),
+                    # Products with domain-flavored envelope keys pin them on
+                    # the namespace before dispatch, like project/agent.
+                    envelope=getattr(args, "summary_envelope", None),
+                )
+            )
+        except LookupError as err:
+            print(str(err))
+            return 1
+        print(dump_json(out, pretty=args.pretty))
         return 0
 
     print(f"Unknown sessions subcommand: {args.sessions_cmd}")
