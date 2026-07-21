@@ -29,7 +29,6 @@ def test_all_agent_support_packages_are_discovered():
     }
 
     assert expected_agent_packages <= discovered
-    assert "omni_code.agents.explorer" in discovered
     assert "omni_code.agents.worker" in discovered
     assert "omni_code.tools" in discovered
     assert "omni_code.server_functions" in discovered
@@ -56,11 +55,12 @@ def test_wheel_is_fully_self_contained(tmp_path):
 
     # Everything lives inside the omni_code package.
     assert "omni_code/project.yml" in names
-    assert "omni_code/capabilities/exploration.yml" in names
-    assert "omni_code/agents/explorer/context.py" in names
+    assert "omni_code/capabilities/workers.yml" in names
     assert "omni_code/agents/worker/context.py" in names
     assert "omni_code/agents/omni/agent.yml" in names
     assert "omni_code/agents/omni/instructions.md" in names
+    # Shared instruction fragments ({% include %} targets) must ship.
+    assert "omni_code/agents/_shared/identity.md" in names
     assert "omni_code/overlays/platform.yml" in names
     assert "omni_code/sandbox_profile_default.yml" in names
 

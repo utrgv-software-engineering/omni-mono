@@ -33,7 +33,9 @@ tools:
   - get_worker_status
 
 agent_tools:
-  - yaml: ../explorer/agent.yml
+  # Resolves against the project agent registry, which includes the
+  # framework's builtin `explorer` (omniagents/builtin/agents/).
+  - agent: explorer
     tool_name: explore
     max_turns: 50
     # tool_description falls back to explorer's spec — keeps the LLM

@@ -107,13 +107,14 @@ context: build_coding_context
 model_config_resolver: resolve_default_model
 variables: {}
 
-# Sub-agent (explorer) is bundled into the `exploration` capability above
-# via agent_tools: [{agent: explorer, tool_name: explore, ...}]. The
-# sub-agent inherits the parent's RunConfig (model_provider with
-# credentials) and the parent's RunContextWrapper (workspace_root, session
-# vars). Its own model_config_resolver picks up the user's currently-
-# selected model from omni-code's models.json so the explorer follows the
-# parent's model selection rather than the provider default.
+# Sub-agent (explorer) is bundled into the builtin `exploration` capability
+# above via agent_tools: [{agent: explorer, tool_name: explore, ...}]. Both
+# the capability pack and the explorer agent ship with the framework
+# (omniagents/builtin/). The sub-agent inherits the parent's RunConfig
+# (model_provider with credentials) and the parent's RunContextWrapper
+# (workspace_root, session vars); it declares no model of its own, so it
+# runs on the orchestrator's resolved model — the user's currently-selected
+# model from omni-code's models.json.
 
 # SDK 0.16+ proactive compaction. Wraps the session with
 # OpenAIResponsesCompactionSession so the Responses ``compact`` endpoint
