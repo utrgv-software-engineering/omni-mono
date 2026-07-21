@@ -55,7 +55,7 @@ key only, no agent discovery, no overlays, no registries.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
@@ -116,6 +116,14 @@ class ProductInfo:
     update: Optional[ProductUpdateInfo] = None
     """Self-update configuration, or None when the product has no
     ``update:`` block."""
+
+    manifest_path: Optional[Path] = None
+    """Resolved path of the ``project.yml`` this identity was parsed
+    from, when it came from a manifest (:func:`load_product_info` /
+    :func:`bootstrap_product` / ``load_project``); None for hand-built
+    infos. Lets project-aware helpers (e.g.
+    ``omniagents.core.runtime.run_project_agent_once``) find the
+    installed product's manifest without extra plumbing."""
 
     def config_dir(self) -> Path:
         """The product's per-user config directory (not created)."""
@@ -327,7 +335,7 @@ def load_product_info(project_path: Any) -> ProductInfo:
     if section is None:
         return DEFAULT_PRODUCT_INFO
     try:
-        return product_info_from_mapping(section)
+        return replace(product_info_from_mapping(section), manifest_path=p)
     except ValueError as e:
         raise ValueError(f"{e} (file: {p})") from e
 

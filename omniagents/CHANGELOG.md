@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Project-aware ephemeral runs: `omniagents.core.runtime.run_project_agent_once(agent_key, prompt, ...)` resolves `agents/<agent_key>/agent.yml` through a project manifest (explicit `project_path=`, else the installed product's manifest) and delegates to `run_agent_once`, absorbing the spec-level overrides every product utility-runner re-implemented — `model_settings` stamped on the loaded spec, `instructions` replacing the spec's system prompt for prompts whose source of truth lives in code, and an optional `runtime=` dict turned into an SDK provider via `provider_from_runtime` when no explicit `model_provider`/`env_overrides` are passed (products with provider policy of their own keep resolving those themselves). Resolution is a light manifest read (`paths.agents`, default `agents`; first hit wins across multiple dirs), exposed as `resolve_project_agent_yaml`. To make the default manifest discoverable, `ProductInfo` gains a `manifest_path` field stamped by `load_product_info`/`bootstrap_product` and by `load_project`'s implicit identity install; hand-built infos keep `None`. omni-code's `run_utility_agent` shrinks to a thin delegate.
+
 ## [0.7.21] - 2026-07-18
 
 ### Added

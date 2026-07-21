@@ -177,12 +177,19 @@ def load_project(
     # omniagents.core.product.set_product_info / bootstrap_product wins —
     # loading a project never clobbers an explicitly installed identity.
     if proj.get("product") is not None:
+        from dataclasses import replace as _dc_replace
+
         from omniagents.core.product import (
             _set_default_product_info,
             product_info_from_mapping,
         )
 
-        _set_default_product_info(product_info_from_mapping(proj["product"]))
+        _set_default_product_info(
+            _dc_replace(
+                product_info_from_mapping(proj["product"]),
+                manifest_path=(p if p.is_file() else (base_dir / "project.yml")),
+            )
+        )
 
     paths_cfg = proj.get("paths") or {}
 

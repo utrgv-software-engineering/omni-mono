@@ -187,6 +187,25 @@ def test_load_product_info_without_section_returns_default(tmp_path):
     assert load_product_info(tmp_path) is DEFAULT_PRODUCT_INFO
 
 
+def test_load_product_info_stamps_manifest_path(tmp_path):
+    proj = _write(tmp_path / "project.yml", "product: {slug: acme_code}\n")
+    assert load_product_info(tmp_path).manifest_path == proj
+    assert load_product_info(proj).manifest_path == proj
+    # Hand-built infos carry no manifest.
+    assert product_info_from_mapping({"slug": "x"}).manifest_path is None
+    # bootstrap installs the stamped identity process-wide.
+    bootstrap_product(proj)
+    assert product_info().manifest_path == proj
+
+
+def test_load_project_stamps_manifest_path(tmp_path):
+    from omniagents.core.project.runtime import load_project
+
+    proj_file = _product_project(tmp_path, "product: {slug: acme_code}\n")
+    load_project(str(proj_file))
+    assert product_info().manifest_path == proj_file.resolve()
+
+
 def test_load_product_info_missing_manifest_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_product_info(tmp_path / "nope")
