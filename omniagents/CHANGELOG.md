@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `container_runtime()` / `container_runtime_available()` (`omniagents.core.sandbox.container_runtime`): docker/podman CLI selection honoring `OMNIAGENTS_CONTAINER_RUNTIME`, with an `env_vars` seam so products can put their own operator knob first (omni-code: `OMNI_CONTAINER_RUNTIME`). CLI-binary concept only — the docker sandbox backend keeps talking to the engine API via the docker SDK (`DOCKER_HOST` covers Podman's docker-compatible socket there).
+- `resolve_prompt_file(candidates, fallback, max_bytes=...)` (`omniagents.core.utils.prompt_files`): user-overridable prompt-file resolution — first non-empty candidate (workspace file, then user-config file), size-capped and error-tolerant, else the builtin fallback text. Lifted from omni-code's loop-prompt resolution; pairs with the `set_loop_default_prompt_resolver` seam.
+- `UserMcpFixtureStager` (`omniagents.core.eval.mcp_fixture`): per-scenario user-MCP fixture staging for eval environments — isolated `XDG_CONFIG_HOME` inside the scenario temp dir, fixture file/tree copies, generated `<product>/mcp.json`, and an `env_vars()` contribution for `get_env_vars()`. Lifted from omni-code's `WorkspaceEvalEnvironment` minus its cross-scenario lock, which the runner fix below makes unnecessary.
+- The builtin `shell` / `shell_readonly` packs now steer discovery toward the shell over the filesystem discovery tools when piping/chaining (`| head`, `| xargs`) helps — restoring a nuance from omni-code's retired filesystem-pack override.
+
+### Fixed
+- The environment-backed eval runner (`run_scenario`) now applies environment-declared env vars (`get_env_vars()`) *before* loading the agent spec, not after. Spec loading reads the process env — notably `XDG_CONFIG_HOME` for `allow_user_mcp_servers` discovery — so environments staging per-scenario config previously had to mutate `os.environ` in `setup()` under a self-managed lock. With no awaits between application and spec load, each concurrent scenario's spec load reads its own values.
+
 ## [0.7.19] - 2026-07-18
 
 ### Added

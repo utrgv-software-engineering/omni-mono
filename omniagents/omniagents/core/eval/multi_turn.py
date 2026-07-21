@@ -322,6 +322,21 @@ async def run_scenario(
         }
 
     try:
+        # Apply environment-declared env vars BEFORE loading the agent
+        # spec: spec loading reads process env — notably XDG_CONFIG_HOME
+        # for ``allow_user_mcp_servers``' mcp.json discovery — so an
+        # environment that stages per-scenario config (e.g. an isolated
+        # XDG_CONFIG_HOME with a generated mcp.json) must have its vars
+        # visible now, not after the spec exists. Originals are saved and
+        # restored in the ``finally`` below. There is no await between
+        # here and the spec load, so under asyncio concurrency each
+        # scenario's spec load reads its own values.
+        if context:
+            env_vars = env.get_env_vars(context)
+            for var_name, var_value in env_vars.items():
+                saved_env_vars[var_name] = os.environ.get(var_name)
+                os.environ[var_name] = str(var_value)
+
         # Load agent spec with project registries so all tools/server_functions
         # /capabilities resolve.
         _tool_reg, _sf_reg, _cap_reg = _build_registries_for_eval(
@@ -360,13 +375,6 @@ async def run_scenario(
         # Inject environment context into spec.context for tools
         if context and context.data:
             spec.context.update(context.data)
-
-            # Set env vars as specified by the environment
-            # Save original values so we can restore them for parallel execution
-            env_vars = env.get_env_vars(context)
-            for var_name, var_value in env_vars.items():
-                saved_env_vars[var_name] = os.environ.get(var_name)
-                os.environ[var_name] = str(var_value)
 
         # Let the environment wire runtime-only objects into the spec while
         # it's still mutable — e.g. attach a live SandboxSession and flip

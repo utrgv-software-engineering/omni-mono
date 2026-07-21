@@ -3,7 +3,10 @@ tools:
   - execute_bash
 instructions: |
   Use `execute_bash` only for read-only discovery and inspection.
-  - Prefer `rg <pattern>` for text search and `rg --files` for file discovery.
+  - Prefer `rg <pattern>` for text search and `rg --files` for file
+    discovery — including over the filesystem discovery tools when
+    piping/chaining helps (`| head`, `| xargs`), which those tools
+    cannot do.
   - Use `ls`, `find`, `pwd`, `git grep`, `git ls-files`, `git status`, and
     `git log` only for inspection.
   - Do not run commands that modify files, install dependencies, start services,
