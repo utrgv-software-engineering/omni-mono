@@ -74,6 +74,10 @@ exclude = [
     # Also matches agents/_shared/*.md — the {% include %} fragment files
     # shared by the omni and voice_agent instruction templates.
     "agents/*/*.md",
+    # Prompt-template files (paths.prompts) — goal_initial.md,
+    # goal_tick.md, loop.md; resolved by convention at runtime
+    # (omniagents.core.project.prompts), so they must ship.
+    "prompts/*.md",
     "capabilities/*.yml",
     "overlays/*.yml",
 ]

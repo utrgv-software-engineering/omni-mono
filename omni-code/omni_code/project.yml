@@ -60,11 +60,37 @@ paths:
   # bootstrap, with the conventional hooks — see
   # omniagents.core.models.catalog.
   model_catalog: models.yml
+  # Prompt-template files with conventional filenames bound to framework
+  # seams (omniagents.core.project.prompts): goal_initial.md /
+  # goal_tick.md render with the goal context (Jinja: goal, max_turns);
+  # loop.md is the packaged tail of the /loop default chain
+  # (<workspace>/.omni/loop.md → ~/.config/omni_code/loop.md → this).
+  prompts: prompts
   evaluations: ../evaluations
   target: ../target
 agents:
   entrypoint: omni
   voice_entrypoint: voice_agent
+# Declarative slash → project-agent bindings, executed by the framework's
+# generic runner (omniagents.core.runtime.slash_agents) over
+# run_project_agent_once. The final-line protocol (the exact status
+# strings below) is declared in agents/init_agent/instructions.md; this
+# binding is only the dispatch + response formatting.
+slash_commands:
+  init:
+    agent: init_agent
+    prompt: begin
+    max_turns: 1000
+    # Historical behavior for this path: the init agent takes the
+    # runtime's raw model id (no provider-prefix normalization).
+    normalize_model: false
+    failure_message: Failed to update AGENTS.md
+    attach_file:
+      path: AGENTS.md
+      when_status:
+        - Created AGENTS.md
+        - Updated AGENTS.md
+      language: markdown
 
 settings:
   - key: model_name

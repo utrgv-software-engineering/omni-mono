@@ -1,29 +1,28 @@
-"""Goal-loop prompt builders for the tick-driven autopilot.
+"""Byte-parity gates for the prompts lifted from Python into
+``omni_code/prompts/*.md``.
 
-The loop has two prompts:
-
-- **Initial** (``build_goal_initial_prompt``): user-role message that
-  kicks off the first run. Frames the agent as working toward a goal
-  with the ``goal_complete`` tool contract spelled out and the tick
-  model explained.
-- **Tick** (``build_goal_tick_prompt``): short assistant-role
-  notification delivered by the periodic tick scheduler. The agent
-  reads it as its own infrastructure poking to take the next step.
-
-The goal text itself is free-form prose — the user packs the
-verification surface, constraints, boundaries, iteration policy, and
-blocked-stop condition into the prompt and the agent reads it from
-history each turn. We do not parse or structure the text.
+The legacy builders (``omni_code/goal_prompts.py`` /
+``omni_code/loop_prompts.py``) are deleted; their exact output is
+reproduced here verbatim as the fixture. The framework must render the
+packaged template files to byte-identical strings — whitespace-exact —
+through its conventional resolution (no builders installed, the
+discovered omni-code product manifest's ``paths.prompts``).
 """
 
-from __future__ import annotations
+import pytest
+
+from omniagents.core.autonomy import goal as goal_mod
+from omniagents.core.autonomy import loop as loop_mod
 
 
-def build_goal_initial_prompt(goal: str, max_turns: int) -> str:
-    """First user message of an autopilot loop. Frames the goal, the
-    tool contract for termination (including the optional evidence
-    field), and the tick model so the agent knows it's expected to
-    keep working between wake-ups."""
+# ---------------------------------------------------------------------------
+# Legacy builders, copied verbatim from the deleted omni_code/goal_prompts.py
+# and omni_code/loop_prompts.py. Do not edit except in lockstep with the
+# template files — this file IS the parity fixture.
+# ---------------------------------------------------------------------------
+
+
+def _legacy_goal_initial(goal: str, max_turns: int) -> str:
     return f"""You are working toward a specific goal across multiple turns. Use your judgment, the tools, and the workspace to make steady progress until the goal is achieved or the turn budget is exhausted.
 
 ## Goal
@@ -69,10 +68,7 @@ You have up to {max_turns} turns before the loop self-terminates. Reaching the b
 """.strip()
 
 
-def build_goal_tick_prompt(*, goal: str, max_turns: int) -> str:
-    """Periodic-tick notification body. Short by design — the agent
-    already has the goal + context in history; this is just a poke to
-    take the next step."""
+def _legacy_goal_tick(*, goal: str, max_turns: int) -> str:
     return (
         f"[goal] Tick. Goal: {goal} (budget {max_turns} turns total). "
         "Take the next concrete step. Reuse context — don't re-read files you have. "
@@ -82,3 +78,55 @@ def build_goal_tick_prompt(*, goal: str, max_turns: int) -> str:
         "For long-running work, kick it off with `execute_bash(background=True)` or "
         "`spawn_worker(...)` and end your turn — the completion notification will wake you."
     )
+
+
+_LEGACY_MAINTENANCE_PROMPT = """Continue useful maintenance for this session.
+
+Work in this order:
+1. Continue any unfinished work already authorized in the conversation.
+2. Tend to the current branch or pull request when discoverable: failed checks, review comments, merge conflicts, or obvious regressions.
+3. Check background jobs, workers, and queued follow-up work that the transcript already started.
+4. If nothing needs action, say so briefly and stop.
+
+Do not start unrelated new initiatives. Do not push, delete, merge, or perform irreversible actions unless the transcript already authorized that exact class of action.""".strip()
+
+
+# A goal text with multiple lines and Markdown punctuation, to make the
+# parity check meaningful beyond trivial substitution.
+_FIXTURE_GOAL = (
+    "Ship the `/init` lift & verify:\n"
+    "- all 193 tests green\n"
+    "- no *regressions* in wheel packaging"
+)
+_FIXTURE_MAX_TURNS = 37
+
+
+def test_goal_initial_template_byte_parity():
+    got = goal_mod.build_initial_prompt(_FIXTURE_GOAL, _FIXTURE_MAX_TURNS)
+    assert got == _legacy_goal_initial(_FIXTURE_GOAL, _FIXTURE_MAX_TURNS)
+
+
+def test_goal_tick_template_byte_parity():
+    got = goal_mod.build_tick_prompt(goal=_FIXTURE_GOAL, max_turns=_FIXTURE_MAX_TURNS)
+    assert got == _legacy_goal_tick(goal=_FIXTURE_GOAL, max_turns=_FIXTURE_MAX_TURNS)
+
+
+def test_loop_packaged_template_byte_parity(tmp_path, monkeypatch):
+    # Neutralize the operator override layers so the packaged
+    # omni_code/prompts/loop.md is what resolves: an empty XDG config
+    # home and a workspace without .omni/loop.md.
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    got = loop_mod.resolve_default_loop_prompt(str(ws))
+    assert got == _LEGACY_MAINTENANCE_PROMPT
+
+
+def test_loop_workspace_override_still_wins(tmp_path, monkeypatch):
+    # The historical candidate paths survive the lift: <workspace>/.omni/
+    # (derived from the product prog) ahead of the packaged template.
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    ws = tmp_path / "ws"
+    (ws / ".omni").mkdir(parents=True)
+    (ws / ".omni" / "loop.md").write_text("operator body\n", encoding="utf-8")
+    assert loop_mod.resolve_default_loop_prompt(str(ws)) == "operator body"

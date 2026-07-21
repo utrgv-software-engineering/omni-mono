@@ -38,30 +38,16 @@ def _resolve_invocation_dir() -> Path:
 # Product wiring for the builtin autonomy + worker server functions.
 #
 # The /goal, /loop, wakeup, workers, and bash-jobs server functions ship
-# with the framework (builtin capability packs); the coding-specific
-# prompts and the worktree isolation strategy are omni-code's. This
-# module is the product's install point: it is imported (as the omni
-# agent's context factory) when the agent spec loads, which precedes any
-# run — and therefore any goal start, loop fire, or worker spawn — in
-# every process shape (serve, TUI, evals, tests that build the spec).
+# with the framework (builtin capability packs). The coding-specific
+# prompt wording is data, not wiring: the manifest's `paths.prompts`
+# directory (omni_code/prompts/) carries goal_initial.md / goal_tick.md
+# (rendered with the goal context) and loop.md (the packaged tail of the
+# framework's /loop default chain: <workspace>/.omni/loop.md →
+# ~/.config/omni_code/loop.md → packaged). No install calls here —
+# the framework resolves the templates by convention
+# (omniagents.core.project.prompts); loop tick/concluded prompts use the
+# framework defaults as-is.
 # ---------------------------------------------------------------------------
-from omniagents.core.autonomy import (  # noqa: E402
-    set_goal_prompt_builders,
-    set_loop_default_prompt_resolver,
-)
-
-from omni_code.goal_prompts import (  # noqa: E402
-    build_goal_initial_prompt,
-    build_goal_tick_prompt,
-)
-from omni_code.loop_prompts import resolve_default_loop_prompt  # noqa: E402
-
-set_goal_prompt_builders(
-    initial=build_goal_initial_prompt,
-    tick=build_goal_tick_prompt,
-)
-# Loop tick/concluded prompts: the framework defaults are used as-is.
-set_loop_default_prompt_resolver(resolve_default_loop_prompt)
 
 # Workers: every input the wiring needs — the published --source mounts
 # (worktree isolation), the published ProjectContext (packaged-manifest
@@ -89,12 +75,12 @@ install_project_worker_defaults()
 # `omniagents.core.runtime.serve_state`, which those builtins read by
 # default — no providers to install here.
 
-# Slash commands executed by the builtin `dispatch` tool (slash pack).
-from omniagents.core.tools import register_slash_command  # noqa: E402
-
-from omni_code.init_command import run_init_agent  # noqa: E402
-
-register_slash_command("init", lambda _arg=None: run_init_agent())
+# Slash commands executed by the builtin `dispatch` tool (slash pack):
+# declared, not registered. The manifest's `slash_commands:` section
+# binds /init to the packaged init_agent; the framework's default slash
+# registry falls back to manifest bindings (via the generic
+# omniagents.core.runtime.slash_agents runner) whenever no Python
+# handler is registered — nothing to wire here.
 
 # Platform detection: the framework knows no product config paths; point
 # its stored-credentials lookup at omni-code's `omni auth login` store.

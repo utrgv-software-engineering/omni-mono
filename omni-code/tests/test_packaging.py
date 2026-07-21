@@ -64,6 +64,11 @@ def test_wheel_is_fully_self_contained(tmp_path):
     assert "omni_code/agents/omni/instructions.md" in names
     # Shared instruction fragments ({% include %} targets) must ship.
     assert "omni_code/agents/_shared/identity.md" in names
+    # Prompt-template files (paths.prompts) must ship — the framework
+    # resolves goal/loop prompt wording from them by convention.
+    assert "omni_code/prompts/goal_initial.md" in names
+    assert "omni_code/prompts/goal_tick.md" in names
+    assert "omni_code/prompts/loop.md" in names
     assert "omni_code/overlays/platform.yml" in names
     assert "omni_code/sandbox_profile_default.yml" in names
 
