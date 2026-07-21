@@ -73,6 +73,8 @@ nav:
   - Backends:
     - Overview: backends/overview.md
     - Server: backends/server.md
+  - Protocols:
+    - Serve Protocol: serve-protocol.md
   - API Reference:
     - Core: api/core.md
     - Tools: api/tools.md

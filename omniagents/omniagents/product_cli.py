@@ -33,6 +33,13 @@ subcommands from convention:
   as project and the manifest's entrypoint agent as the default agent
   (:func:`run_product_sessions_command`, public so overrides can
   delegate).
+- ``serve`` / ``sandbox-host`` — the launcher serve contract
+  (:mod:`omniagents.product_serve`): a long-lived sandbox-session agent
+  server with the JSON readiness handshake, and the laptop half of
+  computer-as-sandbox. See ``docs/serve-protocol.md``.
+- ``describe`` — machine-readable product introspection
+  (:func:`run_product_describe_command`): identity, version, config dir,
+  update channel, and the serve protocol version, as one JSON object.
 
 Everything else falls through to
 ``omniagents run --project <manifest> --mode <cli.default_mode>`` with
@@ -85,12 +92,22 @@ __all__ = [
     "dispatches_to_command",
     "load_product_cli_config",
     "product_main",
+    "run_product_describe_command",
     "run_product_sessions_command",
 ]
 
 #: Subcommands the framework mounts from convention (``update`` only when
 #: the manifest declares a ``product.update:`` block).
-RESERVED_COMMANDS = ("model", "provider", "auth", "update", "sessions")
+RESERVED_COMMANDS = (
+    "model",
+    "provider",
+    "auth",
+    "update",
+    "sessions",
+    "serve",
+    "sandbox-host",
+    "describe",
+)
 
 #: Tokens rendering the top-level help instead of dispatching.
 HELP_TOKENS = frozenset({"-h", "--help", "help"})
@@ -306,6 +323,68 @@ def _run_update_command(args: List[str]) -> int:
     return run_update_command(args)
 
 
+def _product_version(info: ProductInfo) -> str:
+    """The installed product distribution's version, falling back to the
+    framework's own version when the product package has no metadata
+    (editable checkouts, the bare framework identity)."""
+    from importlib import metadata
+
+    try:
+        return metadata.version(info.name)
+    except metadata.PackageNotFoundError:
+        from omniagents._version import __version__
+
+        return __version__
+
+
+def run_product_describe_command(argv: Optional[List[str]] = None) -> int:
+    """The reserved ``<prog> describe`` command — machine-readable product
+    introspection for launchers and tooling.
+
+    ``<prog> describe --json`` prints one JSON object: the resolved
+    product identity (``name``/``prog``/``label``/``slug``), the
+    installed ``version`` (product package metadata, framework version
+    as fallback), the resolved absolute ``config_dir``, ``env_prefix``,
+    the ``update`` channel (``{index_url, command_hint}`` or null), and
+    ``serve_protocol`` — the version of the launcher serve contract this
+    installation speaks (see docs/serve-protocol.md).
+    """
+    import argparse
+    import json
+
+    info = product_info()
+    parser = argparse.ArgumentParser(prog=f"{info.prog} describe")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the description as one JSON object (the only format).",
+    )
+    parser.parse_args(list(argv or []))
+
+    from omniagents.product_serve import SERVE_PROTOCOL_VERSION
+
+    payload: Dict[str, Any] = {
+        "name": info.name,
+        "prog": info.prog,
+        "label": info.label,
+        "slug": info.slug,
+        "version": _product_version(info),
+        "config_dir": str(info.config_dir().expanduser().resolve()),
+        "env_prefix": info.env_prefix,
+        "update": (
+            {
+                "index_url": info.update.index_url,
+                "command_hint": info.update.command_hint,
+            }
+            if info.update is not None
+            else None
+        ),
+        "serve_protocol": SERVE_PROTOCOL_VERSION,
+    }
+    print(json.dumps(payload))
+    return 0
+
+
 def run_product_sessions_command(
     argv: Optional[List[str]] = None,
     *,
@@ -383,6 +462,9 @@ def _print_top_level_help(
     if info.update is not None:
         reserved.append(("update", "Manage updates"))
     reserved.append(("sessions", "Inspect OmniAgents sessions"))
+    reserved.append(("serve", "Run the agent server over a sandbox session"))
+    reserved.append(("sandbox-host", "Expose this machine as a remote sandbox"))
+    reserved.append(("describe", "Print product metadata as JSON"))
 
     entries: List[tuple[str, str]] = [(prog, f"Launch the {info.label} chat")]
     seen = set()
@@ -468,6 +550,16 @@ def product_main(project_path: Any, argv: Optional[List[str]] = None) -> int:
             return run_product_sessions_command(
                 args[1:], agent=cli_config.entrypoint_agent
             )
+        if head == "serve":
+            from omniagents.product_serve import serve_main
+
+            return serve_main(args[1:])
+        if head == "sandbox-host":
+            from omniagents.product_serve import sandbox_host_main
+
+            return sandbox_host_main(args[1:])
+        if head == "describe":
+            return run_product_describe_command(args[1:])
 
     # Fallthrough: the product's agent run. The update notice prints
     # here only — never ahead of subcommands.

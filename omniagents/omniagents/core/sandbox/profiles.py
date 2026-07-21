@@ -62,6 +62,15 @@ from omniagents.core.utils.merge import deep_merge as _deep_merge
 # the profile sets it explicitly.
 NETWORK_ALLOWLIST_ENV = "OMNI_SANDBOX_NETWORK_ALLOWLIST"
 
+#: The ``paths:`` key naming a product's packaged default profile,
+#: relative to the manifest (mirrors ``paths.model_catalog``).
+SANDBOX_PROFILE_PATH_KEY = "sandbox_profile"
+
+#: Conventional filename of a product's packaged default profile when
+#: ``paths.sandbox_profile`` is not declared: a sibling of project.yml,
+#: exactly where omni-code ships ``omni_code/sandbox_profile_default.yml``.
+PRODUCT_DEFAULT_PROFILE_FILENAME = "sandbox_profile_default.yml"
+
 
 # ---------------------------------------------------------------------------
 # Public types
@@ -181,6 +190,65 @@ def resolve_profile(
         services=services,
         terminal=terminal,
         sources=[src for src, _ in layers],
+    )
+
+
+def product_default_profile_path(manifest_path: Optional[Any] = None) -> Optional[Path]:
+    """The installed product's packaged default profile, or ``None``.
+
+    *manifest_path* defaults to the installed product identity's
+    manifest (``product_info().manifest_path``). The profile is the
+    manifest-declared ``paths.sandbox_profile`` file (resolved relative
+    to the manifest) when present, else the conventional sibling
+    ``sandbox_profile_default.yml`` when it exists — the layering
+    omni-code's product resolver shim always applied.
+    """
+    if manifest_path is None:
+        from omniagents.core.product import product_info
+
+        manifest_path = product_info().manifest_path
+    if manifest_path is None:
+        return None
+    p = Path(manifest_path).expanduser()
+    if p.is_dir():
+        p = p / "project.yml"
+    if not p.is_file():
+        return None
+    try:
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return None
+    paths_cfg = data.get("paths") if isinstance(data, Mapping) else None
+    if isinstance(paths_cfg, Mapping):
+        rel = paths_cfg.get(SANDBOX_PROFILE_PATH_KEY)
+        if isinstance(rel, str) and rel.strip():
+            candidate = Path(rel.strip()).expanduser()
+            if not candidate.is_absolute():
+                candidate = (p.parent / candidate).resolve()
+            return candidate
+    sibling = p.parent / PRODUCT_DEFAULT_PROFILE_FILENAME
+    return sibling if sibling.is_file() else None
+
+
+def resolve_product_profile(
+    *,
+    workspace_dir: Path,
+    project_id: Optional[str] = None,
+    explicit_path: Optional[Path] = None,
+) -> ResolvedProfile:
+    """Resolve a profile through the installed product's layered chain.
+
+    :func:`resolve_profile` with ``default_profile_path`` bound to
+    :func:`product_default_profile_path` — the conventional resolver a
+    product's ``<prog> serve`` (and every ``sandbox.switch``) uses, and
+    the seam a hand-rolled product resolver used to be. Products without
+    a packaged default degrade to the user/project layers only.
+    """
+    return resolve_profile(
+        workspace_dir=workspace_dir,
+        default_profile_path=product_default_profile_path(),
+        project_id=project_id,
+        explicit_path=explicit_path,
     )
 
 
