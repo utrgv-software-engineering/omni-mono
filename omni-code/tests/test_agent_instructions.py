@@ -1,11 +1,14 @@
 """Instruction-template composition tests.
 
 omni and voice_agent share verbatim base sections via ``{% include %}``
-fragments in ``omni_code/agents/_shared/`` (framework include mechanism:
-anchor dir -> anchor/_shared -> agents/_shared). The worker agent declares
-no instructions at all: WorkerManager installs the framework's
-DEFAULT_WORKER_INSTRUCTIONS and omni-code layers its coding delta through
-the ``additional_instructions`` context hook.
+fragments: coding-flavored ones in ``omni_code/agents/_shared/`` and
+generic agent-harness ones shipped by the framework
+(``omniagents/builtin/instructions/``, included via the explicit
+``builtin/`` prefix; search order: anchor dir -> anchor/_shared ->
+agents/_shared -> builtin). The worker agent declares no instructions at
+all: WorkerManager installs the framework's DEFAULT_WORKER_INSTRUCTIONS
+and omni-code layers its coding delta through the
+``additional_instructions`` context hook.
 """
 
 from pathlib import Path
@@ -49,10 +52,15 @@ def test_omni_and_voice_share_fragment_sections_verbatim():
         assert probe in omni, probe
         assert probe in voice, probe
 
-    # The full AGENTS.md spec section must be byte-identical in both renders.
-    spec_fragment = (AGENTS_DIR / "_shared" / "agents_md_spec.md").read_text(
-        encoding="utf-8"
-    ).rstrip("\n")
+    # The full AGENTS.md spec section (now a framework builtin fragment)
+    # must be byte-identical in both renders.
+    from omniagents.core.utils.jinja_instructions import (
+        builtin_instruction_fragments_dir,
+    )
+
+    spec_fragment = (
+        builtin_instruction_fragments_dir() / "agents_md_spec.md"
+    ).read_text(encoding="utf-8").rstrip("\n")
     assert spec_fragment in omni
     assert spec_fragment in voice
 

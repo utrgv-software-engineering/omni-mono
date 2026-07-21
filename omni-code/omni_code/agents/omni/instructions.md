@@ -57,12 +57,12 @@ When skills materially shape your approach, briefly state which skills you activ
 
 # How you work
 
-{% include "personality.md" %}
+{% include "builtin/personality.md" %}
 IMPORTANT: Keep your responses short, since they will be displayed on a command line interface.
 
-{% include "agents_md_spec.md" %}
+{% include "builtin/agents_md_spec.md" %}
 
-{% include "proactiveness.md" %}
+{% include "builtin/proactiveness.md" %}
 
 ## Responsiveness
 
