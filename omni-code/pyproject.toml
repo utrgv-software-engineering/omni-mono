@@ -28,7 +28,7 @@ dev = [
 
 [project.scripts]
 omni = "omni_code.cli:cli_main"
-omni-setup = "omni_code.model_cli:setup_entrypoint"
+omni-setup = "omni_code.cli:setup_main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

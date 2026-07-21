@@ -5,7 +5,7 @@ instructions_file: instructions.md
 
 tools: []
 
-# Headless subagent — invoked by omni_code/sessions_cli.py via direct
+# Headless subagent — invoked by omni_code/cli_extensions.py via direct
 # Runner.run (bypasses AgentService entirely, so configure_tool_approval
 # never runs against it). Setting use_safe_agent: false documents the
 # intent and stays correct if this agent is ever moved onto AgentService.

@@ -1,10 +1,30 @@
+"""``omni sessions`` tests.
+
+The command is omni-code's COMMANDS override in `cli_extensions`: it
+installs the coding summarizer + envelope, then delegates to the
+framework's reserved-sessions default
+(`omniagents.product_cli.run_product_sessions_command`), pinned to the
+`omni_code` project.
+"""
+
 import json
 
 import pytest
 
-from omni_code import sessions_cli
+import omni_code.governance as governance
+from omni_code import cli_extensions
+from omni_code.cli import cli_main
 import omniagents.core.session.history_db as history_db
 from omniagents.core.paths import get_sessions_db_path
+
+
+@pytest.fixture(autouse=True)
+def _no_governance(monkeypatch):
+    monkeypatch.setattr(governance, "maybe_enforce_sandbox", lambda: None)
+
+
+def _sessions(args: list[str]) -> int:
+    return cli_main(["sessions", *args])
 
 
 def _reset_history_db(monkeypatch):
@@ -58,7 +78,7 @@ def test_sessions_list_json_excludes_archived_by_default(monkeypatch, tmp_path, 
         archived=True,
     )
 
-    sessions_cli.main(["--agent", agent, "list", "--all"])
+    assert _sessions(["--agent", agent, "list", "--all"]) == 0
 
     out = capsys.readouterr().out.strip()
     data = json.loads(out)
@@ -89,7 +109,7 @@ def test_sessions_list_includes_archived(monkeypatch, tmp_path, capsys):
         archived=True,
     )
 
-    sessions_cli.main(["--agent", agent, "list", "--include-archived", "--all"])
+    assert _sessions(["--agent", agent, "list", "--include-archived", "--all"]) == 0
 
     out = capsys.readouterr().out.strip()
     data = json.loads(out)
@@ -115,7 +135,7 @@ def test_sessions_export_jsonl(monkeypatch, tmp_path, capsys):
         ],
     )
 
-    sessions_cli.main(["--agent", agent, "export", "s1", "--format", "jsonl"])
+    assert _sessions(["--agent", agent, "export", "s1", "--format", "jsonl"]) == 0
 
     out = capsys.readouterr().out.strip().splitlines()
     assert len(out) == 2
@@ -144,7 +164,7 @@ def test_sessions_search_finds_message(monkeypatch, tmp_path, capsys):
         messages=[{"role": "assistant", "content": "nothing here"}],
     )
 
-    sessions_cli.main(["--agent", agent, "search", "world", "--limit", "10"])
+    assert _sessions(["--agent", agent, "search", "world", "--limit", "10"]) == 0
 
     out = capsys.readouterr().out.strip()
     data = json.loads(out)
@@ -166,10 +186,7 @@ def test_sessions_export_missing_session_exits_1(monkeypatch, tmp_path):
         messages=[{"role": "user", "content": "hello"}],
     )
 
-    with pytest.raises(SystemExit) as exc:
-        sessions_cli.main(["--agent", agent, "export", "missing"])
-
-    assert exc.value.code == 1
+    assert _sessions(["--agent", agent, "export", "missing"]) == 1
 
 
 def _mock_model_store(monkeypatch, runtime):
@@ -218,7 +235,7 @@ def test_sessions_summarize_parses_json(monkeypatch, tmp_path, capsys):
 
     monkeypatch.setattr("omni_code.utility_runs.run_utility_agent", fake_run)
 
-    sessions_cli.main(["--agent", agent, "summarize", "s1", "--tail", "10"])
+    assert _sessions(["--agent", agent, "summarize", "s1", "--tail", "10"]) == 0
 
     out = capsys.readouterr().out.strip()
     data = json.loads(out)
@@ -253,21 +270,21 @@ def test_sessions_summarize_wraps_non_json(monkeypatch, tmp_path, capsys):
 
     monkeypatch.setattr("omni_code.utility_runs.run_utility_agent", fake_run)
 
-    sessions_cli.main(["--agent", agent, "summarize", "s1"])
+    assert _sessions(["--agent", agent, "summarize", "s1"]) == 0
 
     out = capsys.readouterr().out.strip()
     data = json.loads(out)
     assert data["raw"] == "not-json"
     assert data["session_id"] == "s1"
     # The coding envelope keys are ensured even on a raw wrap.
-    for key in sessions_cli.SUMMARY_ENVELOPE:
+    for key in cli_extensions.SUMMARY_ENVELOPE:
         assert key in data
 
 
 def test_sessions_summarize_without_model_prints_hint_and_exits_1(
     monkeypatch, tmp_path, capsys
 ):
-    """The no-model error now fires from the installed summarizer — i.e.
+    """The no-model error fires from the installed summarizer — i.e.
     after the session lookup — and surfaces as a clean message, not a
     traceback."""
     _reset_history_db(monkeypatch)
@@ -286,10 +303,7 @@ def test_sessions_summarize_without_model_prints_hint_and_exits_1(
 
     _mock_model_store(monkeypatch, {})
 
-    with pytest.raises(SystemExit) as exc:
-        sessions_cli.main(["--agent", agent, "summarize", "s1"])
-
-    assert exc.value.code == 1
+    assert _sessions(["--agent", agent, "summarize", "s1"]) == 1
     out = capsys.readouterr().out
     assert "No model configured. Run: omni model setup" in out
 
@@ -313,11 +327,26 @@ def test_sessions_summarize_missing_session_exits_1(monkeypatch, tmp_path, capsy
         monkeypatch, {"provider": "openai", "model": "gpt-4.1", "api_key": "x"}
     )
 
-    with pytest.raises(SystemExit) as exc:
-        sessions_cli.main(["--agent", agent, "summarize", "missing"])
-
-    assert exc.value.code == 1
+    assert _sessions(["--agent", agent, "summarize", "missing"]) == 1
     assert "Session not found: missing" in capsys.readouterr().out
+
+
+def test_sessions_default_agent_is_entrypoint(monkeypatch, tmp_path, capsys):
+    """Without --agent, the override pins the manifest's entrypoint agent."""
+    _reset_history_db(monkeypatch)
+    monkeypatch.setenv("OMNIAGENTS_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("OMNIAGENTS_HISTORY_DB", raising=False)
+
+    _seed_session(
+        project="omni_code",
+        agent="omni",
+        session_id="s1",
+        messages=[{"role": "user", "content": "hello"}],
+    )
+
+    assert _sessions(["list", "--all"]) == 0
+    data = json.loads(capsys.readouterr().out.strip())
+    assert {s["id"] for s in data} == {"s1"}
 
 
 def test_sessions_list_after_filters(monkeypatch, tmp_path, capsys):
@@ -354,7 +383,7 @@ def test_sessions_list_after_filters(monkeypatch, tmp_path, capsys):
     finally:
         conn.close()
 
-    sessions_cli.main(["--agent", agent, "list", "--after", "2024-06-01", "--all"])
+    assert _sessions(["--agent", agent, "list", "--after", "2024-06-01", "--all"]) == 0
 
     out = capsys.readouterr().out.strip()
     data = json.loads(out)
