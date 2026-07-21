@@ -20,11 +20,11 @@ import sys
 from typing import Any, Dict, List, Optional
 
 
-# Importing the models module installs omni-code's ModelConfigStore
-# (default catalog, platform governance, codex OAuth, credential
-# resolver) as the process-wide registry the framework's reserved
-# `omni model` / `omni provider` commands operate on.
-import omni_code.models  # noqa: F401  — installs the model store
+# omni-code's ModelConfigStore (catalog from omni_code/models.yml,
+# platform governance, codex OAuth, credential resolver) is installed as
+# the process-wide registry by the product bootstrap (`import
+# omni_code`), which the framework's product CLI host runs before
+# loading this module.
 
 
 def _get_arg_value(args: List[str], *flags: str) -> Optional[str]:
@@ -122,10 +122,10 @@ def models_preflight(args: List[str]) -> None:
             print(json.dumps({"error": "No model credentials configured"}))
             sys.exit(1)
         print("No model credentials configured. Starting setup wizard...\n")
-        from omni_code.models import _STORE
+        from omniagents.core.models import model_store
         from omniagents.core.models.cli import run_model_command
 
-        run_model_command(["setup"], store=_STORE)
+        run_model_command(["setup"], store=model_store())
         print()
     return None
 

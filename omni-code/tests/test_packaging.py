@@ -55,6 +55,9 @@ def test_wheel_is_fully_self_contained(tmp_path):
 
     # Everything lives inside the omni_code package.
     assert "omni_code/project.yml" in names
+    # The declared model catalog (paths.model_catalog) must ship — the
+    # model store is built from it at product bootstrap.
+    assert "omni_code/models.yml" in names
     assert "omni_code/capabilities/workers.yml" in names
     assert "omni_code/agents/worker/context.py" in names
     assert "omni_code/agents/omni/agent.yml" in names

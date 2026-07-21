@@ -19,7 +19,9 @@ def cli_main(argv=None) -> int:
 
 def setup_main() -> None:
     """``omni-setup`` — the model setup wizard, standalone."""
-    from omni_code.models import _STORE
+    import omni_code  # noqa: F401 — bootstrap installs the catalog store
+
+    from omniagents.core.models import model_store
     from omniagents.core.models.cli import run_model_command
 
-    run_model_command(["setup"], store=_STORE)
+    run_model_command(["setup"], store=model_store())

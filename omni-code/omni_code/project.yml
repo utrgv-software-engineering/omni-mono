@@ -35,6 +35,11 @@ paths:
   tools: tools
   server_functions: server_functions
   capabilities: capabilities
+  # The shipped provider/model catalog (data only). The framework builds
+  # + installs the process-wide ModelConfigStore from it at product
+  # bootstrap, with the conventional hooks — see
+  # omniagents.core.models.catalog.
+  model_catalog: models.yml
   evaluations: ../evaluations
   target: ../target
 agents:

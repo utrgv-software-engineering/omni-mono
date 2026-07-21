@@ -16,9 +16,9 @@ from __future__ import annotations
 import os
 from typing import Any, Optional
 
-# Install omni-code's model store as the process-wide registry before any
-# re-exported resolver runs (import side effect of omni_code.models).
-import omni_code.models  # noqa: F401
+# omni-code's model store is installed as the process-wide registry by
+# the product bootstrap (`import omni_code`, run implicitly for any
+# omni_code.* import) from the catalog declared in project.yml.
 
 # ref → (model_name, runtime) resolution and name normalization are
 # framework helpers bound to the installed store; re-exported here for

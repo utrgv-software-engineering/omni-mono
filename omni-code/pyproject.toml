@@ -53,6 +53,9 @@ exclude = [
 # assets + default profile.
 "omni_code" = [
     "project.yml",
+    # The declared model catalog (paths.model_catalog) — the store is
+    # built from this file at product bootstrap, so it must ship.
+    "models.yml",
     "sandbox_profile_default.yml",
     "sandbox/*",
     # Optional wheel-shipped omni-sandbox binary (built in the standalone

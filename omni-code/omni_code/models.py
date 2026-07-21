@@ -1,31 +1,22 @@
-"""Model configuration for Omni Code.
+"""Legacy import surface for omni-code's model store.
 
-A thin product binding over the framework's
-:class:`omniagents.core.models.ModelConfigStore`: the store owns the
-``models.json`` schema, the layered merge (product defaults → platform
-governance → user config), ref parsing, CRUD, and runtime resolution.
-This module supplies only omni-code's parts — the config directory, the
-default model catalog (``default_models.py``), and the platform/codex
-integration hooks — and re-exports the historical function API bound to
-a singleton store.
+The catalog is data, not code: it lives in ``omni_code/models.yml``,
+declared by ``paths.model_catalog`` in the packaged project.yml. The
+framework parses it and installs the process-wide
+:class:`omniagents.core.models.ModelConfigStore` — with the conventional
+hooks (product config dir, auth-gated platform model governance, codex
+OAuth discovery, platform credential vending) — during product bootstrap
+(``import omni_code``). See :mod:`omniagents.core.models.catalog`.
 
-Model references: unprefixed names ("gpt-5.1") imply the default
-provider profile "openai"; other providers use
-"<provider_name>/<model_name>" ("azure-prod/gpt-5.2").
+This module remains only as the historical function API for existing
+importers, bound to that installed store. New code should call
+``omniagents.core.models.model_store()`` directly.
 """
 
-from typing import Any, Dict, Optional
-
-from omniagents.core.models import (
+from omniagents.core.models import (  # noqa: F401  — legacy re-exports
     MODELS_CONFIG_VERSION,
-    ModelConfigStore,
     litellm_api_key_env,
-)
-
-from omniagents.core.config import product_config_dir
-from omni_code.default_models import (
-    get_default_model_name_fallback,
-    get_default_providers,
+    model_store,
 )
 
 __all__ = [
@@ -34,72 +25,19 @@ __all__ = [
     "litellm_api_key_env",
 ]
 
-DEFAULT_PROVIDER_NAME = "openai"
+# Installed by the omni_code package import (bootstrap_product reads
+# paths.model_catalog); importing this submodule imports the package
+# first, so the store is always present here.
+_STORE = model_store()
+if _STORE is None:  # pragma: no cover — packaging bug guard
+    raise RuntimeError(
+        "omni-code's model catalog store is not installed; "
+        "omni_code/models.yml missing from the package?"
+    )
 
+DEFAULT_PROVIDER_NAME = _STORE.default_provider_name
 
-def _governed_model_config() -> Optional[Dict[str, Any]]:
-    """Management-plane model governance — only when authenticated.
-
-    A stale governed config on disk must not override user settings when
-    the user is not connected to the management plane. When credentials
-    exist but the governed cache is missing, re-apply governance once.
-    """
-    try:
-        from omni_code.platform import is_authenticated
-        from omni_code.platform_models import (
-            apply_platform_model_governance,
-            load_governed_config,
-        )
-
-        if not is_authenticated():
-            return None
-        governed = load_governed_config()
-        if not governed:
-            apply_platform_model_governance()
-            governed = load_governed_config()
-        return governed
-    except Exception:
-        return None
-
-
-def _codex_models() -> Optional[Dict[str, Dict[str, Any]]]:
-    from omniagents.core.providers.codex import list_codex_models
-
-    return list_codex_models()
-
-
-def _codex_authenticated() -> bool:
-    from omniagents.core.providers.codex import is_authenticated
-
-    return is_authenticated()
-
-
-def _platform_credential(ref: str) -> Optional[Dict[str, Any]]:
-    from omni_code.platform_models import fetch_provider_credential
-
-    return fetch_provider_credential(ref)
-
-
-_STORE = ModelConfigStore(
-    config_dir=product_config_dir,
-    default_providers=get_default_providers,
-    default_model_fallback=get_default_model_name_fallback,
-    governed_config=_governed_model_config,
-    oauth_models=_codex_models,
-    oauth_authenticated=_codex_authenticated,
-    credential_resolver=_platform_credential,
-    default_provider_name=DEFAULT_PROVIDER_NAME,
-)
-
-# Install as the process-wide registry the builtin model-picker server
-# functions (/models, /model, /reasoning, /voice-model*) read.
-from omniagents.core.models import set_model_store  # noqa: E402
-
-set_model_store(
-    _STORE, setup_hint="No model configured. Run `omni model setup` to add one."
-)
-
-# The historical module-level function API, bound to the singleton store.
+# The historical module-level function API, bound to the installed store.
 get_models_config_path = _STORE.config_path
 load_models_config = _STORE.load_config
 save_models_config = _STORE.save_config
