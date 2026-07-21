@@ -55,7 +55,6 @@ from omni_code.goal_prompts import (  # noqa: E402
     build_goal_tick_prompt,
 )
 from omni_code.loop_prompts import resolve_default_loop_prompt  # noqa: E402
-from omni_code.workers_runtime import install as _install_workers_runtime  # noqa: E402
 
 set_goal_prompt_builders(
     initial=build_goal_initial_prompt,
@@ -63,7 +62,18 @@ set_goal_prompt_builders(
 )
 # Loop tick/concluded prompts: the framework defaults are used as-is.
 set_loop_default_prompt_resolver(resolve_default_loop_prompt)
-_install_workers_runtime()
+
+# Workers: every input the wiring needs — the published --source mounts
+# (worktree isolation), the published ProjectContext (packaged-manifest
+# fallback via the product identity), the orchestrator's sandbox
+# attachment, the product slug, and the model store — derives from
+# framework state, so the whole thing is one framework call. Importing
+# omni_code.models first installs the model store the default worker
+# model resolver reads.
+import omni_code.models  # noqa: E402,F401
+from omniagents.core.workers import install_project_worker_defaults  # noqa: E402
+
+install_project_worker_defaults()
 
 # Recap: the framework owns the /recap orchestration, broadcast, AND the
 # recap system prompt (DEFAULT_RECAP_INSTRUCTIONS — lifted from omni-code);
