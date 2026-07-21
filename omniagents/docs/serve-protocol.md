@@ -180,6 +180,33 @@ prints one JSON object:
 `serve_protocol` is the version of this document the installation
 implements.
 
+## `<prog> --embedded` (non-serve embed)
+
+The launcher's *other* spawn mode: running the product's ordinary chat
+runtime embedded in the desktop app instead of the sandbox-session
+`serve` server. `--embedded` is a fallthrough-run flag, not a
+subcommand — it may appear anywhere in an invocation that falls through
+to the agent run (it is ignored on subcommand dispatch), and the
+framework CLI host (`omniagents.product_cli.product_main`) intercepts
+it:
+
+- `--embedded` is stripped from the argv passed to the run.
+- `OMNI_WEB_AUTO_OPEN=false` is exported — web mode must not open a
+  browser; the launcher owns the window.
+- `<ENV_PREFIX>_UPDATE_CHECK=0` is exported — the launcher owns update
+  UX, so the startup update notice is suppressed through the standard
+  updater gate.
+- With `--mode web` (or `-m web`) and no explicit `--output`,
+  `--output json` is appended so the web runtime's readiness line is
+  machine readable.
+- If the product declares a model catalog and no models are configured,
+  the interactive setup wizard is **not** started; instead one JSON
+  line is printed to stdout and the process exits `1`:
+
+  ```json
+  {"error": "No model credentials configured"}
+  ```
+
 ## Profile resolution (context)
 
 `serve` resolves its sandbox profile through the conventional product
