@@ -33,6 +33,8 @@ capabilities:
   - compact       # /compact checkpoint compaction (builtin; summarizer installed in omni/context.py)
   - model_picker  # /models /model /reasoning /voice-model* (builtin, control-plane only)
   - sandbox       # sandbox_get_state / sandbox_wait_until_ready (read-only; switching is operator-only)
+  - workspace_info # fs_get_cwd/workspace_root/home/list_dir/sources picker RPCs (builtin; providers installed in omni/context.py)
+  - terminal      # terminal.create / terminal.close (builtin; omni serve installs the sandboxed TerminalManager)
 
 model_settings:
   reasoning:
@@ -81,19 +83,12 @@ safe_agent_options:
     - sandbox_get_state
     - sandbox_wait_until_ready
 
-# The feedback / model-picker / artifact / help / compact server functions
-# are NOT listed here: they are carried by the builtin capability packs
-# this agent activates (feedback, model_picker, artifacts, slash, compact)
+# The feedback / model-picker / artifact / help / compact / fs_* /
+# terminal.* server functions are NOT listed here: they are carried by
+# the builtin capability packs this agent activates (feedback,
+# model_picker, artifacts, slash, compact, workspace_info, terminal)
 # and register through the capability-gated path.
 server_functions:
-  - terminal.create
-  - terminal.close
-  - fs_get_cwd
-  - fs_get_workspace_root
-  - fs_get_sources
-  - fs_get_home
-  - fs_list_dir
-  - session_ensure
   # The goal/loop/cron/wakeup/bash-jobs server functions are NOT listed
   # here: they are carried by the builtin capability packs this agent
   # already activates (goal, loop, wakeup, shell) and register through

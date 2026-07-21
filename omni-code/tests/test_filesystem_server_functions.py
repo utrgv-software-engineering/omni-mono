@@ -1,61 +1,116 @@
-import pytest
+"""fs_* / terminal.* wiring tests.
 
-from omni_code.server_functions import filesystem
+The server functions themselves are framework builtins
+(``omniagents.builtin.server_functions.workspace_info`` and ``.terminal``,
+activated by the builtin ``workspace_info`` / ``terminal`` capability
+packs). What omni-code owns — and what these tests cover — is the omni
+agent's activation of those packs and the providers installed through the
+``omniagents.core.runtime.workspace_info`` seams (wired to the state
+``omni serve`` publishes into ``omni_code.agent_workspace_state``).
+
+The old omni-code ``session_ensure`` shim (a proxy for the framework's own
+builtin ``session.ensure``) was deleted with the migration.
+"""
+
+from pathlib import Path
+
+# Importing the omni context module installs the workspace-info providers
+# (module-level wiring, same as the recap/compaction summarizers).
+import omni_code.agents.omni.context  # noqa: F401
+from omni_code import agent_workspace_state as aws
+from omniagents.core.runtime import workspace_info as ws_seams
 
 
-@pytest.mark.asyncio
-async def test_session_ensure_proxies_to_builtin():
-    handler = getattr(filesystem.session_ensure, "_server_function_on_invoke")
-    captured = {}
+def _omni_spec():
+    from omniagents.core.project.runtime import build_spec_from_project, load_project
 
-    class FakeSession:
-        id = "sess-ensured"
-        context = {}
-        variables = {}
+    project_yml = Path(__file__).parent.parent / "omni_code" / "project.yml"
+    project = load_project(str(project_yml))
+    return project, build_spec_from_project(project, "omni")
 
-    class FakeService:
-        def get_or_create_session(self, _=None):
-            return FakeSession()
 
-        async def server_call(self, function, args=None, session_id=None):
-            captured["function"] = function
-            captured["args"] = args or {}
-            captured["session_id"] = session_id
-            return {
-                "session_id": "sess-built-in",
-                "workspace_root": args.get("workspace_root"),
-            }
-
-    result = await handler(
-        FakeService(),
-        None,
-        {"workspace_root": "/workspace"},
-    )
-
-    assert captured["function"] == "session.ensure"
-    assert captured["args"] == {"workspace_root": "/workspace"}
-    assert result == {
-        "session_id": "sess-built-in",
-        "workspace_root": "/workspace",
+def _capability_server_functions(spec, cap_name):
+    caps = {
+        getattr(cap, "capability_name", None): cap
+        for cap in getattr(spec, "resolved_capabilities", [])
+    }
+    assert cap_name in caps, f"omni agent does not activate {cap_name!r}"
+    return {
+        entry.get("name"): entry["func"]
+        for entry in (getattr(caps[cap_name], "server_function_specs", None) or [])
     }
 
 
-@pytest.mark.asyncio
-async def test_session_ensure_uses_existing_session_id():
-    handler = getattr(filesystem.session_ensure, "_server_function_on_invoke")
-    captured = {}
+def test_workspace_info_pack_resolves_to_builtins():
+    """The omni agent's ``workspace_info`` capability carries the fs_*
+    picker functions from the framework builtin module — omni-code no
+    longer ships its own filesystem server functions."""
+    _, spec = _omni_spec()
+    funcs = _capability_server_functions(spec, "workspace_info")
 
-    class FakeSession:
-        id = "sess-existing"
-        context = {}
-        variables = {}
+    for name in (
+        "fs_get_cwd",
+        "fs_get_workspace_root",
+        "fs_get_home",
+        "fs_list_dir",
+        "fs_get_sources",
+    ):
+        assert name in funcs, f"{name} missing from workspace_info pack"
+        assert funcs[name].__module__ == (
+            "omniagents.builtin.server_functions.workspace_info"
+        )
 
-    class FakeService:
-        async def server_call(self, function, args=None, session_id=None):
-            captured["session_id"] = session_id
-            return {"session_id": session_id}
+    # The explicit server_functions list no longer carries them.
+    explicit = [
+        entry.get("name") if isinstance(entry, dict) else entry
+        for entry in (getattr(spec, "server_functions", None) or [])
+    ]
+    assert not any(str(name).startswith("fs_") for name in explicit)
+    assert "session_ensure" not in explicit
 
-    result = await handler(FakeService(), FakeSession(), None)
 
-    assert captured["session_id"] == "sess-existing"
-    assert result == {"session_id": "sess-existing"}
+def test_terminal_pack_resolves_to_builtins():
+    """The omni agent's ``terminal`` capability carries terminal.create /
+    terminal.close from the framework builtin module."""
+    _, spec = _omni_spec()
+    funcs = _capability_server_functions(spec, "terminal")
+
+    for name in ("terminal.create", "terminal.close"):
+        assert name in funcs, f"{name} missing from terminal pack"
+        assert funcs[name].__module__ == (
+            "omniagents.builtin.server_functions.terminal"
+        )
+
+    explicit = [
+        entry.get("name") if isinstance(entry, dict) else entry
+        for entry in (getattr(spec, "server_functions", None) or [])
+    ]
+    assert "terminal.create" not in explicit
+    assert "terminal.close" not in explicit
+
+
+def test_context_module_installs_workspace_info_providers():
+    """Importing the omni context wires the framework seams to the state
+    ``omni serve`` publishes into ``agent_workspace_state``."""
+    assert ws_seams.workspace_sources_provider() is not None
+    assert ws_seams.manifest_root_provider() is not None
+    assert ws_seams.sandbox_session_provider() is not None
+
+    sentinel_session = object()
+    aws.set_manifest_root("/workspace/proj")
+    aws.set_sources([{"kind": "local", "mountName": "proj", "path": "/host/proj"}])
+    aws.set_sandbox_session(sentinel_session)
+    try:
+        assert ws_seams.get_manifest_root() == "/workspace/proj"
+        assert ws_seams.get_workspace_sources() == [
+            {"kind": "local", "mountName": "proj", "path": "/host/proj"}
+        ]
+        assert ws_seams.get_sandbox_session() is sentinel_session
+    finally:
+        aws.set_manifest_root(None)
+        aws.set_sources(None)
+        aws.set_sandbox_session(None)
+
+    assert ws_seams.get_manifest_root() is None
+    assert ws_seams.get_workspace_sources() == []
+    assert ws_seams.get_sandbox_session() is None

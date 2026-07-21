@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from omniagents.core.utils.prompt_files import resolve_prompt_file
+
 MAX_LOOP_MD_BYTES = 25_000
 
 
@@ -17,16 +19,11 @@ Do not start unrelated new initiatives. Do not push, delete, merge, or perform i
 
 
 def resolve_default_loop_prompt(workspace_root: str | None = None) -> str:
-    for path in _candidate_paths(workspace_root):
-        try:
-            if path.exists() and path.is_file():
-                data = path.read_bytes()[:MAX_LOOP_MD_BYTES]
-                text = data.decode("utf-8", errors="replace").strip()
-                if text:
-                    return text
-        except Exception:
-            continue
-    return BUILTIN_MAINTENANCE_PROMPT
+    return resolve_prompt_file(
+        _candidate_paths(workspace_root),
+        BUILTIN_MAINTENANCE_PROMPT,
+        max_bytes=MAX_LOOP_MD_BYTES,
+    )
 
 
 def _candidate_paths(workspace_root: str | None) -> list[Path]:

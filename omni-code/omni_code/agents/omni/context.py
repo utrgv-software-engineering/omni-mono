@@ -155,6 +155,26 @@ async def _compaction_summarizer(prompt, *, service, session):
 
 set_compaction_summarizer(_compaction_summarizer)
 
+# Workspace info: the framework owns the fs_* picker server functions
+# (builtin `workspace_info` capability pack) and the terminal.* functions
+# (builtin `terminal` pack). What omni-code owns is the state they
+# describe — `omni serve` publishes the manifest root, --source
+# descriptors, and the live sandbox session into
+# `omni_code.agent_workspace_state`; these providers surface that state
+# to the builtins. Lambdas late-bind through the module so tests can
+# monkeypatch the getters.
+from omniagents.core.runtime.workspace_info import (  # noqa: E402
+    set_manifest_root_provider,
+    set_sandbox_session_provider,
+    set_workspace_sources_provider,
+)
+
+from omni_code import agent_workspace_state as _workspace_state  # noqa: E402
+
+set_workspace_sources_provider(lambda: _workspace_state.get_sources())
+set_manifest_root_provider(lambda: _workspace_state.get_manifest_root())
+set_sandbox_session_provider(lambda: _workspace_state.get_sandbox_session())
+
 # Slash commands executed by the builtin `dispatch` tool (slash pack).
 from omniagents.core.tools import register_slash_command  # noqa: E402
 

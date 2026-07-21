@@ -1659,7 +1659,7 @@ def _install_session_terminal_manager(
     and user; ``terminal.create`` callers may override per-call. The
     legacy ``session.context['workspace_root']`` (a *host* path) is
     bypassed entirely for this manager — see the explicit-binding
-    branch in :func:`server_functions.terminal.terminal_create`.
+    branch in :func:`omniagents.builtin.server_functions.terminal.terminal_create`.
 
     Silent no-op when the session backend can't stream PTY output
     (e.g. ``e2b``/``modal`` until those backends grow

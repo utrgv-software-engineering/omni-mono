@@ -5,12 +5,22 @@ Usage:
     omni auth logout          Clear stored credentials
     omni auth status          Show current authentication status
     omni auth codex <cmd>     Manage ChatGPT (Codex) sign-in: login|logout|status
+
+The login/logout/status flow is the shared framework command
+(``omniagents.cli.run_platform_auth_command``) bound to omni-code's
+program name, policy slug, and credential store.
 """
 
 import sys
 
 
 def main(args: list[str]) -> None:
+    args = list(args or [])
+
+    if args and args[0] == "codex":
+        _codex(args[1:])
+        return
+
     if not args or args[0] in {"-h", "--help", "help"}:
         print(
             "usage: omni auth <command>\n\n"
@@ -22,19 +32,14 @@ def main(args: list[str]) -> None:
         )
         return
 
-    command = args[0]
+    from omni_code.config import get_config_dir
+    from omniagents.cli import run_platform_auth_command
 
-    if command == "login":
-        _login(args[1:])
-    elif command == "logout":
-        _logout()
-    elif command == "status":
-        _status()
-    elif command == "codex":
-        _codex(args[1:])
-    else:
-        print(f"Unknown auth command: {command}", file=sys.stderr)
-        sys.exit(1)
+    status = run_platform_auth_command(
+        args, prog="omni", slug="omni_code", config_dir=get_config_dir()
+    )
+    if status:
+        sys.exit(status)
 
 
 def _codex(args: list[str]) -> None:
@@ -47,93 +52,3 @@ def _codex(args: list[str]) -> None:
     status = run_codex_auth_command(args[0] if args else "login", prog="omni")
     if status:
         sys.exit(status)
-
-
-def _login(args: list[str]) -> None:
-    from omni_code.platform import (
-        device_code_login,
-        get_platform_url,
-        save_credentials,
-    )
-
-    # URL from args, env, or stored credentials
-    url = args[0] if args else get_platform_url()
-
-    if not url:
-        url = input("Platform URL: ").strip()
-
-    if not url:
-        print("No platform URL provided.", file=sys.stderr)
-        sys.exit(1)
-
-    if not url.startswith("http"):
-        url = f"https://{url}"
-
-    try:
-        creds = device_code_login(url)
-        save_credentials(creds)
-
-        user = creds.get("user", {})
-        print(f"Authenticated as {user.get('name', 'unknown')} ({user.get('email', '')})")
-
-        domains = user.get("domains", [])
-        if domains:
-            print(f"Domains: {', '.join(d['name'] for d in domains)}")
-
-        print(f"\nCredentials saved to ~/.config/omni_code/platform.json")
-    except Exception as e:
-        print(f"Login failed: {e}", file=sys.stderr)
-        sys.exit(1)
-
-
-def _logout() -> None:
-    from omni_code.platform import clear_credentials, load_credentials
-
-    creds = load_credentials()
-    if creds:
-        user = creds.get("user", {})
-        clear_credentials()
-        print(f"Logged out ({user.get('email', 'unknown')})")
-    else:
-        print("Not logged in.")
-
-
-def _status() -> None:
-    from omni_code.platform import get_access_token, get_platform_url, load_credentials
-
-    url = get_platform_url()
-    token = get_access_token()
-
-    if not url or not token:
-        print("Not authenticated.")
-        print("\nRun: omni auth login <platform-url>")
-        return
-
-    creds = load_credentials()
-    user = creds.get("user", {}) if creds else {}
-
-    print(f"Platform:  {url}")
-    print(f"User:      {user.get('name', 'unknown')} ({user.get('email', '')})")
-    print(f"Token:     {token[:20]}...")
-
-    domains = user.get("domains", [])
-    if domains:
-        print(f"Domains:   {', '.join(d['name'] for d in domains)}")
-
-    # Test connectivity
-    try:
-        import requests
-
-        resp = requests.get(
-            f"{url}/api/v1/health",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=5,
-        )
-        if resp.ok:
-            print(f"Status:    connected")
-        elif resp.status_code == 401:
-            print(f"Status:    token expired (run: omni auth login)")
-        else:
-            print(f"Status:    error ({resp.status_code})")
-    except Exception as e:
-        print(f"Status:    unreachable ({e})")

@@ -148,7 +148,11 @@ async def test_fs_list_dir_browses_container_when_sandboxed():
     """With a live sandbox session, fs_list_dir lists the CONTAINER (via the
     session), defaulting to the manifest root and returning absolute container
     paths — so the picker navigates the filesystem the agent's tools see."""
-    import omni_code.server_functions.filesystem as fsmod
+    # fs_list_dir is the framework builtin; importing the omni context
+    # installs the providers that surface omni serve's published state
+    # (agent_workspace_state) to it.
+    import omni_code.agents.omni.context  # noqa: F401
+    import omniagents.builtin.server_functions.workspace_info as fsmod
     from omni_code import agent_workspace_state as aws
 
     class _SdkEntry:

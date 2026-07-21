@@ -1,6 +1,13 @@
+"""Behavioral checks against the framework's builtin terminal server
+functions (``omniagents.builtin.server_functions.terminal``) — the module
+the omni agent's ``terminal`` capability pack activates. The standalone
+fallback path (no embedder-installed manager) must keep resolving the cwd
+from the session context, since omni-code relies on it for the host
+execution target."""
+
 import pytest
 
-from omni_code.server_functions import terminal as terminal_mod
+from omniagents.builtin.server_functions import terminal as terminal_mod
 
 
 class FakeTerminalManager:
