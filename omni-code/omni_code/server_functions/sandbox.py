@@ -23,13 +23,13 @@ def _resolve_inner_session() -> Any:
     """Return the inner backend session, or None if no session is bound.
 
     ``serve_cli._serve`` publishes the wrapped ``SandboxSession`` via
-    ``agent_workspace_state.set_sandbox_session`` after start. We reach
+    ``serve_state.set_sandbox_session`` after start. We reach
     through ``_inner`` to access backend-specific methods like
     ``pause`` / ``unpause`` — the public ``SandboxSession`` wrapper
     explicitly proxies a fixed method set and does not forward by
     ``__getattr__``.
     """
-    from omni_code.agent_workspace_state import get_sandbox_session
+    from omniagents.core.runtime.serve_state import get_sandbox_session
 
     session = get_sandbox_session()
     if session is None:
@@ -174,7 +174,7 @@ async def sandbox_notify_activity(service: Any) -> dict:  # noqa: ARG001
     strict=True,
 )
 async def sandbox_discard_snapshot(service: Any) -> dict:  # noqa: ARG001
-    from omni_code.agent_workspace_state import set_discard_snapshot_on_exit
+    from omniagents.core.runtime.serve_state import set_discard_snapshot_on_exit
 
     set_discard_snapshot_on_exit(True)
     return {"ok": True}

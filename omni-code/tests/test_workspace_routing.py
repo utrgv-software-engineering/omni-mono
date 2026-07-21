@@ -406,10 +406,10 @@ def _worktree_strategy():
 def test_worker_worktree_ready_checks_git_sources_not_manifest_root(monkeypatch):
     fake = _RecordingWorkspace(root="/workspace")
     monkeypatch.setattr(
-        "omni_code.agent_workspace_state.get_manifest_root", lambda: "/workspace"
+        "omniagents.core.runtime.serve_state.get_manifest_root", lambda: "/workspace"
     )
     monkeypatch.setattr(
-        "omni_code.agent_workspace_state.get_sources",
+        "omniagents.core.runtime.serve_state.get_sources",
         lambda: [
             {"kind": "local-git", "mountName": "api", "path": "/host/api"},
             {"kind": "git-remote", "mountName": "web", "repoUrl": "https://example.com/web.git"},
@@ -442,10 +442,10 @@ def test_create_worker_worktree_for_sources_preserves_mount_layout(monkeypatch):
 
     monkeypatch.setattr("omniagents.workspace.scratch_root", lambda: "/scratch")
     monkeypatch.setattr(
-        "omni_code.agent_workspace_state.get_manifest_root", lambda: "/workspace"
+        "omniagents.core.runtime.serve_state.get_manifest_root", lambda: "/workspace"
     )
     monkeypatch.setattr(
-        "omni_code.agent_workspace_state.get_sources",
+        "omniagents.core.runtime.serve_state.get_sources",
         lambda: [
             {"kind": "local-git", "mountName": "api", "path": "/host/api"},
             {

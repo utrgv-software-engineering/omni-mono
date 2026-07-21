@@ -4,9 +4,10 @@ The server functions themselves are framework builtins
 (``omniagents.builtin.server_functions.workspace_info`` and ``.terminal``,
 activated by the builtin ``workspace_info`` / ``terminal`` capability
 packs). What omni-code owns — and what these tests cover — is the omni
-agent's activation of those packs and the providers installed through the
-``omniagents.core.runtime.workspace_info`` seams (wired to the state
-``omni serve`` publishes into ``omni_code.agent_workspace_state``).
+agent's activation of those packs and the serve-session state ``omni
+serve`` publishes into ``omniagents.core.runtime.serve_state``, which the
+``omniagents.core.runtime.workspace_info`` seams read by default (no
+providers installed).
 
 The old omni-code ``session_ensure`` shim (a proxy for the framework's own
 builtin ``session.ensure``) was deleted with the migration.
@@ -17,7 +18,7 @@ from pathlib import Path
 # Importing the omni context module installs the workspace-info providers
 # (module-level wiring, same as the recap/compaction summarizers).
 import omni_code.agents.omni.context  # noqa: F401
-from omni_code import agent_workspace_state as aws
+from omniagents.core.runtime import serve_state as aws
 from omniagents.core.runtime import workspace_info as ws_seams
 
 
@@ -89,12 +90,13 @@ def test_terminal_pack_resolves_to_builtins():
     assert "terminal.close" not in explicit
 
 
-def test_context_module_installs_workspace_info_providers():
-    """Importing the omni context wires the framework seams to the state
-    ``omni serve`` publishes into ``agent_workspace_state``."""
-    assert ws_seams.workspace_sources_provider() is not None
-    assert ws_seams.manifest_root_provider() is not None
-    assert ws_seams.sandbox_session_provider() is not None
+def test_workspace_info_seams_read_published_serve_state():
+    """The framework seams default to the state ``omni serve`` publishes
+    into ``serve_state`` — omni-code installs no providers (the old lambda
+    installs in the context module are gone)."""
+    assert ws_seams.workspace_sources_provider() is None
+    assert ws_seams.manifest_root_provider() is None
+    assert ws_seams.sandbox_session_provider() is None
 
     sentinel_session = object()
     aws.set_manifest_root("/workspace/proj")

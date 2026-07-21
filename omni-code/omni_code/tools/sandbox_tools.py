@@ -7,7 +7,7 @@ launcher / a slash command), deliberately NOT exposed as an LLM tool: the model
 must not be able to move itself to a less-isolated profile (e.g. out of a
 network-restricted devbox onto the host).
 
-State is read from the process-global ``agent_workspace_state.SwitchContext``
+State is read from the process-global ``serve_state.SwitchContext``
 that ``omni serve`` publishes; outside a serve process the tools degrade to a
 benign "ready, no switching" answer.
 """
@@ -23,7 +23,7 @@ from omniagents.core.tools import function_tool
 
 
 def _state_dict() -> dict:
-    from omni_code.agent_workspace_state import get_switch_context
+    from omniagents.core.runtime.serve_state import get_switch_context
 
     ctx = get_switch_context()
     if ctx is None:
@@ -80,7 +80,7 @@ async def sandbox_wait_until_ready(
             On timeout, returns ``ready: false`` — the switch is taking unusually
             long; report that to the user rather than retrying blindly.
     """
-    from omni_code.agent_workspace_state import get_switch_context
+    from omniagents.core.runtime.serve_state import get_switch_context
 
     sw = get_switch_context()
     if sw is None:

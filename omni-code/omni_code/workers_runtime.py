@@ -31,7 +31,7 @@ _FALLBACK_PROJECT_CONTEXT: Any = None
 def _resolve_project_context() -> Any:
     """The running server's published ProjectContext, else a cached
     ``load_project`` of the packaged project.yml (tests, direct runs)."""
-    from omni_code.agent_workspace_state import get_project_context
+    from omniagents.core.runtime.serve_state import get_project_context
 
     ctx = get_project_context()
     if ctx is not None:
@@ -54,7 +54,7 @@ def _resolve_worker_model_runtime(model: Optional[str] = None) -> Any:
 
 
 def _orchestrator_spec() -> Any:
-    from omni_code.agent_workspace_state import get_orchestrator_spec
+    from omniagents.core.runtime.serve_state import get_orchestrator_spec
 
     return get_orchestrator_spec()
 
@@ -67,26 +67,31 @@ def _worker_sources() -> list[WorkerSource]:
     published ``path`` or its mount under the manifest root. Empty when
     serve published no sources (single-repo behavior applies then).
     """
-    from omni_code.agent_workspace_state import get_manifest_root, get_sources
+    from omniagents.core.runtime.serve_state import (
+        get_manifest_root,
+        get_source_descriptors,
+    )
 
     manifest_root = get_manifest_root()
     out: list[WorkerSource] = []
-    for source in get_sources() or []:
-        kind = source.get("kind")
-        mount_name = source.get("mountName")
-        if kind not in ("local", "local-git", "git-remote"):
+    for source in get_source_descriptors():
+        if source.kind not in ("local", "local-git", "git-remote"):
             continue
-        if not isinstance(mount_name, str) or not mount_name.strip():
+        if not source.mount_name:
             continue
-        path = source.get("path")
-        if not (isinstance(path, str) and path.strip()):
-            path = os.path.join(manifest_root, mount_name) if manifest_root else None
+        path = source.path
+        if not path:
+            path = (
+                os.path.join(manifest_root, source.mount_name)
+                if manifest_root
+                else None
+            )
         if path:
             out.append(
                 WorkerSource(
-                    name=mount_name,
+                    name=source.mount_name,
                     host_path=path,
-                    git=kind in ("local-git", "git-remote"),
+                    git=source.is_git,
                 )
             )
     return out

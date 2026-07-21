@@ -593,7 +593,7 @@ def _load_spec(project_path: Path, agent_key: Optional[str]) -> Any:
         build_spec_from_project,
         load_project,
     )
-    from omni_code.agent_workspace_state import set_project_context
+    from omniagents.core.runtime.serve_state import set_project_context
 
     proj = load_project(str(project_path))
     # Publish the resolved ProjectContext so worker spec loading (the
@@ -887,7 +887,7 @@ async def bring_up_session(
     Shared by first launch (``_serve``) and ``perform_switch`` so both paths
     bring sessions up identically.
     """
-    from omni_code.agent_workspace_state import (
+    from omniagents.core.runtime.serve_state import (
         set_manifest_root,
         set_sandbox_session,
         set_sources,
@@ -1015,7 +1015,7 @@ async def _attempt_rollback(ctx: Any, prev_profile_path: Optional[str]) -> bool:
     """Bring the previous profile back up from the (intact) snapshot and re-wire
     it. Returns True on success. The workspace tar the failed switch's teardown
     persisted is keyed by session_id, so the rollback rehydrates the same files."""
-    from omni_code.agent_workspace_state import (
+    from omniagents.core.runtime.serve_state import (
         set_orchestrator_spec,
         set_sandbox_session,
     )
@@ -1082,7 +1082,7 @@ async def perform_switch(profile_path: str, *, session: Any = None) -> Dict[str,
     used to route the ``ui.sandbox.*`` broadcasts. Returns
     ``{ok, profile, backend, container_id, services, reason?}``.
     """
-    from omni_code.agent_workspace_state import (
+    from omniagents.core.runtime.serve_state import (
         get_sandbox_session,
         get_switch_context,
         set_orchestrator_spec,
@@ -1303,7 +1303,7 @@ async def _serve(args: argparse.Namespace) -> int:
     if is_host:
         from omniagents.workspace import HostWorkspace, set_default_workspace
 
-        from omni_code.agent_workspace_state import set_manifest_root, set_sources
+        from omniagents.core.runtime.serve_state import set_manifest_root, set_sources
 
         session = None
         resume_tier = None
@@ -1362,7 +1362,7 @@ async def _serve(args: argparse.Namespace) -> int:
     # loader can forward sandbox_use_sandbox_agent / sandbox_run_as /
     # sandbox_run_config to spawned workers (loaded fresh per spawn, otherwise
     # their filesystem/shell tools would target the host, not the sandbox).
-    from omni_code.agent_workspace_state import set_orchestrator_spec
+    from omniagents.core.runtime.serve_state import set_orchestrator_spec
 
     set_orchestrator_spec(spec)
 
@@ -1372,7 +1372,7 @@ async def _serve(args: argparse.Namespace) -> int:
 
     from omniagents.workspace import clamp_within
 
-    from omni_code.agent_workspace_state import get_manifest_root, get_sandbox_session
+    from omniagents.core.runtime.serve_state import get_manifest_root, get_sandbox_session
 
     def _resolve_workspace_root(requested: Optional[str]) -> Optional[str]:
         """Map a requested cwd to the effective one, per the live target.
@@ -1485,7 +1485,7 @@ async def _serve(args: argparse.Namespace) -> int:
     # Lets the ``sandbox.switch`` server function rebuild + re-attach the
     # sandbox in place (no process restart). ``ready_event`` starts set: the
     # sandbox is up. Cleared in the teardown ``finally`` below.
-    from omni_code.agent_workspace_state import SwitchContext, set_switch_context
+    from omniagents.core.runtime.serve_state import SwitchContext, set_switch_context
 
     switch_ctx = SwitchContext(
         app=app,
@@ -1545,7 +1545,7 @@ async def _serve(args: argparse.Namespace) -> int:
     try:
         await server.serve()
     finally:
-        from omni_code.agent_workspace_state import (
+        from omniagents.core.runtime.serve_state import (
             get_sandbox_session,
             get_switch_context,
             set_sandbox_session,
@@ -1587,7 +1587,7 @@ async def _serve(args: argparse.Namespace) -> int:
                 await inner_for_idle_stop.stop_idle_watcher()
             except Exception:
                 pass
-        from omni_code.agent_workspace_state import get_discard_snapshot_on_exit
+        from omniagents.core.runtime.serve_state import get_discard_snapshot_on_exit
 
         await teardown_session(
             live_session,

@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from omniagents import context_factory, model_config_resolver
-from omni_code.skill_sources import dedupe_skill_roots, source_skill_roots
 
 
 def _resolve_invocation_dir() -> Path:
@@ -29,37 +28,10 @@ def _resolve_invocation_dir() -> Path:
         return Path.cwd()
 
 
-def _default_skill_roots(variables: Dict[str, Any]) -> List[Path]:
-    from omniagents.core.config import product_config_dir
-
-    workspace_root = variables.get("workspace_root")
-    if isinstance(workspace_root, str) and workspace_root.strip():
-        base = Path(workspace_root).expanduser()
-    else:
-        base = _resolve_invocation_dir()
-
-    unique = dedupe_skill_roots(
-        [base / ".omni_code" / "skills", *source_skill_roots(str(base))]
-    )
-    unique.append(product_config_dir() / "skills")
-    return unique
-
-
-def _skill_roots_for_workspace(workspace_root: Optional[str]) -> List[Path]:
-    """Adapter for the framework's skill-roots provider: same roots the
-    available-skills prompt block is built from, keyed by workspace."""
-    variables: Dict[str, Any] = (
-        {"workspace_root": workspace_root} if workspace_root else {}
-    )
-    return _default_skill_roots(variables)
-
-
-# Install omni-code's skill layout as the process-wide provider so the
-# builtin ``load_skill`` tool resolves the same roots this module renders
-# into the system prompt.
-from omniagents.core.skills import set_skill_roots_provider  # noqa: E402
-
-set_skill_roots_provider(_skill_roots_for_workspace)
+# Skill roots need no product wiring: the framework derives omni-code's
+# layout (`<workspace>/.omni_code/skills` + published source mounts +
+# `~/.config/omni_code/skills`) from the installed product identity and
+# the serve session's published state (`omniagents.core.skills.skill_roots`).
 
 
 # ---------------------------------------------------------------------------
@@ -157,23 +129,10 @@ set_compaction_summarizer(_compaction_summarizer)
 
 # Workspace info: the framework owns the fs_* picker server functions
 # (builtin `workspace_info` capability pack) and the terminal.* functions
-# (builtin `terminal` pack). What omni-code owns is the state they
-# describe — `omni serve` publishes the manifest root, --source
-# descriptors, and the live sandbox session into
-# `omni_code.agent_workspace_state`; these providers surface that state
-# to the builtins. Lambdas late-bind through the module so tests can
-# monkeypatch the getters.
-from omniagents.core.runtime.workspace_info import (  # noqa: E402
-    set_manifest_root_provider,
-    set_sandbox_session_provider,
-    set_workspace_sources_provider,
-)
-
-from omni_code import agent_workspace_state as _workspace_state  # noqa: E402
-
-set_workspace_sources_provider(lambda: _workspace_state.get_sources())
-set_manifest_root_provider(lambda: _workspace_state.get_manifest_root())
-set_sandbox_session_provider(lambda: _workspace_state.get_sandbox_session())
+# (builtin `terminal` pack). `omni serve` publishes the manifest root,
+# --source descriptors, and the live sandbox session into the framework's
+# `omniagents.core.runtime.serve_state`, which those builtins read by
+# default — no providers to install here.
 
 # Slash commands executed by the builtin `dispatch` tool (slash pack).
 from omniagents.core.tools import register_slash_command  # noqa: E402
@@ -194,15 +153,19 @@ set_platform_credentials_loader(_load_platform_credentials)
 
 
 def build_available_skills_block(variables: Dict[str, Any]) -> str:
-    """Render the available-skills prompt block for omni-code's skill roots.
+    """Render the available-skills prompt block for the derived skill roots.
 
-    ``_default_skill_roots`` orders workspace-local roots before the global
-    config root, and the framework's merge is first-wins by skill name, so
+    The framework's ``skill_roots`` orders workspace-local roots before
+    the global config root, and its merge is first-wins by skill name, so
     local skills shadow global ones without any re-sorting here.
     """
     from omniagents.core.skills import build_available_skills_block as _fw_block
+    from omniagents.core.skills import skill_roots
 
-    return _fw_block(_default_skill_roots(variables))
+    workspace_root = variables.get("workspace_root")
+    if not (isinstance(workspace_root, str) and workspace_root.strip()):
+        workspace_root = None
+    return _fw_block(skill_roots(workspace_root))
 
 
 _SKIP_DIRS = frozenset({
@@ -247,12 +210,12 @@ def discover_agents_md(start_dir: str) -> List[str]:
 def _get_published_sources() -> List[Dict[str, Any]]:
     """Fetch the source descriptors omni serve published for this session.
 
-    Best-effort: returns an empty list if ``agent_workspace_state`` isn't
+    Best-effort: returns an empty list if ``serve_state`` isn't
     importable (e.g. running outside ``omni serve``) or if no sources were
     declared.
     """
     try:
-        from omni_code.agent_workspace_state import get_sources
+        from omniagents.core.runtime.serve_state import get_sources
     except Exception:
         return []
     try:
