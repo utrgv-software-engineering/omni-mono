@@ -26,11 +26,9 @@ product:
 # file; sessions runs the conventionally-named session_summarizer agent
 # with the summary envelope declared below; the models bootstrap wizard
 # and embedded (launcher) mode are framework fallthrough conventions
-# too. The one omni-code-specific behavior left — the governance
-# preflight — lives in the extensions module.
+# too.
 cli:
   default_mode: ink
-  extensions: omni_code.cli_extensions
 # Sessions conventions (framework sessions CLI). The coding-flavored
 # summary envelope: content keys ensured on every `omni sessions
 # summarize` result, must agree with the JSON schema in

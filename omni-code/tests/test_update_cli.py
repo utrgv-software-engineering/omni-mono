@@ -12,13 +12,7 @@ import pytest
 import omniagents.core.updater as fw_updater
 from omniagents.core.updater import UpdateCheckResult
 
-import omni_code.governance as governance
 from omniagents.product_cli import main as cli_main
-
-
-@pytest.fixture(autouse=True)
-def _no_governance(monkeypatch):
-    monkeypatch.setattr(governance, "maybe_enforce_sandbox", lambda: None)
 
 
 def test_update_cli_yes_skips_prompt_and_runs_upgrade(monkeypatch, capsys):

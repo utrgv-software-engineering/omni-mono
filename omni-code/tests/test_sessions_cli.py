@@ -11,17 +11,11 @@ import json
 
 import pytest
 
-import omni_code.governance as governance
 from omniagents.core.product import product_info
 from omniagents.product_cli import main as cli_main
 import omniagents.core.session.history_db as history_db
 from omniagents.core.paths import get_sessions_db_path
 from omniagents.core.session.summarize import manifest_session_envelope
-
-
-@pytest.fixture(autouse=True)
-def _no_governance(monkeypatch):
-    monkeypatch.setattr(governance, "maybe_enforce_sandbox", lambda: None)
 
 
 def _sessions(args: list[str]) -> int:

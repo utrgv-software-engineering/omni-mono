@@ -4,12 +4,11 @@ omni-code's packaged project.yml via entry-point discovery
 (`omniagents.products` -> `omni_code`) and dispatches through the
 product CLI host.
 
-Embedded mode and the models bootstrap are framework fallthrough
-conventions now, tested upstream in omniagents. What omni-code owns —
-and what these tests cover — is the binding: discovery resolves to this
-product with no product-side dispatcher, and the governance preflight
-(the whole of `cli_extensions.PREFLIGHT`) runs first on every
-invocation.
+Embedded mode, the models bootstrap, and the summarizer/sessions
+conventions are framework behavior, tested upstream in omniagents.
+What omni-code owns — and what these tests cover — is the binding:
+discovery resolves to this product with no product-side dispatcher or
+extensions module at all.
 """
 
 import sys
@@ -25,18 +24,12 @@ from omniagents.core.models import install_model_catalog
 from omniagents.core.product import product_info
 from omniagents.product_cli import main as cli_main
 
-import omni_code.cli_extensions as cli_extensions
-import omni_code.governance as governance
-
 
 @pytest.fixture
 def cli_env(monkeypatch):
-    """Patch the seams around the host: governance, the model store,
-    platform governance, update notice, and the fallthrough run."""
+    """Patch the seams around the host: the model store, platform model
+    governance, update notice, and the fallthrough run."""
     calls = []
-    monkeypatch.setattr(
-        governance, "maybe_enforce_sandbox", lambda: calls.append("governance")
-    )
     store = install_model_catalog(product_info().manifest_path)
     monkeypatch.setattr(store, "load_config", lambda: calls.append("models_load"))
     monkeypatch.setattr(
@@ -74,26 +67,18 @@ def test_cli_main_top_level_help_resolves_prog_omni(cli_env, capsys):
     assert out.startswith("usage: omni ")
     assert "omni -- <words...>" in out
     assert "Force prompt mode" in out
-    # Product commands from cli_extensions are mounted in the help.
     assert "omni sessions ..." in out
     assert "omni update ..." in out
     # The deprecated Docker-sandbox CLI is gone.
     assert "omni sandbox ..." not in out
 
 
-def test_governance_is_the_only_preflight():
-    """After the framework lifted embedded + models handling, omni-code's
-    PREFLIGHT is exactly the governance sandbox re-exec — the security
-    boundary, ahead of every dispatch."""
-    assert cli_extensions.PREFLIGHT == [cli_extensions.governance_preflight]
-
-
-def test_governance_runs_before_fallthrough_and_models_bootstrap(cli_env):
+def test_fallthrough_runs_models_bootstrap_then_run(cli_env):
     assert cli_main(["fix", "this"]) == 0
-    assert cli_env.calls == ["governance", "models_load", "run"]
+    assert cli_env.calls == ["models_load", "run"]
 
 
-def test_governance_runs_before_reserved_dispatch(cli_env):
+def test_reserved_dispatch_skips_models_bootstrap(cli_env):
     cli_env.monkeypatch.setattr(
         fw_models_cli,
         "run_model_command",
@@ -101,9 +86,9 @@ def test_governance_runs_before_reserved_dispatch(cli_env):
     )
 
     assert cli_main(["model", "list"]) == 0
-    # Governance first; the framework models bootstrap self-gates off for
-    # subcommand dispatch (no wizard, no config load).
-    assert cli_env.calls == ["governance", "model_cmd"]
+    # The framework models bootstrap self-gates off for subcommand
+    # dispatch (no wizard, no config load).
+    assert cli_env.calls == ["model_cmd"]
 
 
 def test_reserved_commands_skip_models_bootstrap(cli_env):
@@ -116,7 +101,7 @@ def test_reserved_commands_skip_models_bootstrap(cli_env):
 
     assert cli_main(["auth", "status"]) == 0
     assert captured["argv"] == ["status"]
-    assert cli_env.calls == ["governance"]
+    assert cli_env.calls == []
 
 
 def test_prompt_words_pass_through_to_run(cli_env):
