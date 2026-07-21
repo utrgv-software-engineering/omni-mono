@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `MultiSourceWorktreeIsolation` (`omniagents.core.workers`): worktree isolation for workspaces assembled from several sources, lifted from omni-code. One git worktree (branch `worker/<parent>-worker-<id>/<name>`) or `cp -a` copy per source, mounted by name under a shared worker root in the framework scratch area; transactional creation (partial failures roll back worktrees, branches, and the worker root) and metadata-driven cleanup. Parameterized by a `SourcesProvider` returning `WorkerSource(name, host_path, git)` descriptors — no product state in the framework — and degrades to plain single-repo `WorktreeIsolation` when the provider yields no sources, so products register it under `name="worktree"` as a drop-in replacement.
+- Framework-owned default worker instructions: the generic worker system prompt (stay-focused, parallel tool calls, absolute paths, private task-list scoping, when-stuck/blocker protocol, structured output format) now ships as `DEFAULT_WORKER_INSTRUCTIONS` / `worker_instructions.md` (path via `default_worker_instructions_path()`), lifted from omni-code's worker agent and domain-neutralized. `WorkerManager` applies it to every spawned worker spec that carries no instructions of its own (`apply_default_worker_instructions`, same seam as the safety defaulting); products layer their delta via their own `instructions_file` or the template's `additional_instructions` / `agents_md_block` hooks.
+- `make_project_worker_spec_loader` (`omniagents.core.workers`): builds a `WorkerDefaults.spec_loader` bound to a project registry — worker spec via `build_spec_from_project` (full capability/tool/guardrails registries), orchestrator sandbox attachment forwarding, resolved model/model-settings stamping, `resolve_default_model_config` exposure — parameterized by `project_provider`, `agent_key`, `project_slug`, `model_resolver`, and `orchestrator_spec_provider`, so a product's worker wiring shrinks to naming its providers.
+
 ## [0.7.19] - 2026-07-18
 
 ### Added
