@@ -89,6 +89,14 @@ def _config_dir() -> Path:
     env = os.getenv("OMNIAGENTS_CODEX_HOME")
     if env:
         return Path(env)
+    # Fall back to the installed product identity's config dir (e.g. a
+    # product declaring `product:` in project.yml keeps codex.json in its
+    # own config dir without calling set_token_store_dir).
+    from omniagents.core.product import DEFAULT_PRODUCT_INFO, product_info
+
+    info = product_info()
+    if info is not DEFAULT_PRODUCT_INFO:
+        return info.config_dir()
     xdg = os.getenv("XDG_CONFIG_HOME")
     base = Path(xdg) if xdg else Path.home() / ".config"
     return base / "omniagents"

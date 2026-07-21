@@ -148,6 +148,67 @@ layout: tabs
 - **use_safe_agent** (optional, default: false): When true, requires user approval before executing tools
 - **layout** (optional): UI layout mode. Options: `tabs` (separates conversation and tool logs)
 
+## Product Identity
+
+Projects that ship as installable products (their own CLI, config
+directory, platform slug, self-update channel) declare their identity
+once, in a top-level `product:` section of `project.yml`, instead of
+handing the same constants to each framework subsystem:
+
+```yaml
+product:
+  name: omni-code          # distribution/package name (default: slug with "_" -> "-")
+  prog: omni               # CLI program name for --help rendering (default: name)
+  label: Omni Code         # human display label, e.g. in `omni model` (default: name)
+  slug: omni_code          # platform/project slug for policy scoping
+  config_dir: omni_code    # per-user config dir name (default: slug)
+  windows_config_dir: OmniCode   # %APPDATA% dir name on Windows (default: config_dir)
+  env_prefix: OMNI_CODE    # env-var prefix (default: slug upper-cased)
+  update:                  # optional; presence enables self-update defaults
+    index_url: https://pypi.fury.io/me/omni-code/   # PEP-503 simple project page (required)
+    package: omni-code     # pipx/metadata distribution name (default: name)
+    command_hint: omni update    # shown in update notices (default: "<prog> update")
+```
+
+Every key has a sensible default, so a minimal `product: {slug: x}`
+works. At least one of `slug` / `name` is required; unknown keys are
+rejected (typo protection).
+
+### How identity is installed
+
+- `omniagents.core.product.bootstrap_product(project_path)` — the single
+  call a product's `cli.py` makes first. It light-parses the manifest's
+  `product:` key (`load_product_info`; a plain YAML read — no agent
+  discovery, no overlays) and installs the result process-wide via
+  `set_product_info()`.
+- `load_project` also installs the manifest's `product:` section
+  automatically — but an explicit `set_product_info()` /
+  `bootstrap_product()` always wins and is never clobbered by a later
+  project load.
+- Without either, `product_info()` returns the framework's own
+  `omniagents` identity.
+
+### What defaults from it
+
+With identity installed, the framework subsystems no longer need
+identity arguments (explicit arguments still win everywhere):
+
+- `run_model_command` / `run_provider_command` / `run_codex_auth_command`
+  / `run_platform_auth_command`: `prog` (and the model CLI's
+  `product_label`) default from the product.
+- `product_config_dir()` (argless): the product's per-user config
+  directory; also available as `product_info().config_dir()`.
+- Platform client: policy slug (`get_product_slug()`) and the
+  `platform.json` credential store directory.
+- Codex token store: `codex.json` directory (after the
+  `OMNIAGENTS_CODEX_HOME` env override).
+- Self-update: `UpdaterConfig.from_product()` builds the updater config
+  from the `product.update:` block, and `run_update_command()` with no
+  `config=` uses it (a clear error is raised when no `update:` block is
+  declared).
+- Sandbox profiles: `resolve_profile()` reads the user profile layers
+  from the product config dir when `config_dir` is not passed.
+
 ## Session Storage
 
 Conversation history is stored in SQLite databases organized by project and agent.

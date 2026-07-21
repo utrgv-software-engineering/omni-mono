@@ -39,7 +39,10 @@ import time
 from dataclasses import dataclass, replace
 from importlib import metadata
 from pathlib import Path
-from typing import Callable, Iterable, Optional, Union
+from typing import TYPE_CHECKING, Callable, Iterable, Optional, Union
+
+if TYPE_CHECKING:
+    from omniagents.core.product import ProductInfo
 
 import requests
 
@@ -87,6 +90,35 @@ class UpdaterConfig:
     env_prefix: str
     update_command_hint: Optional[str] = None
     pip_extra_index_url: Optional[str] = None
+
+    @classmethod
+    def from_product(cls, info: Optional["ProductInfo"] = None) -> "UpdaterConfig":
+        """Build an :class:`UpdaterConfig` from a product identity.
+
+        *info* is an ``omniagents.core.product.ProductInfo``; defaults
+        to the installed process-wide identity. The config is derived
+        from the manifest's ``product.update:`` block (``index_url``,
+        ``package``, ``command_hint``) plus ``env_prefix`` and the
+        product config dir as the cache dir. Raises ``ValueError`` when
+        the product declares no ``update:`` block.
+        """
+        if info is None:
+            from omniagents.core.product import product_info
+
+            info = product_info()
+        if getattr(info, "update", None) is None:
+            raise ValueError(
+                f"Product '{info.name}' declares no 'update:' block under "
+                "'product:' in project.yml — add product.update.index_url "
+                "(and optionally package/command_hint) to enable self-update."
+            )
+        return cls(
+            simple_index_url=info.update.index_url,
+            package_name=info.update.package,
+            cache_dir=info.config_dir,
+            env_prefix=info.env_prefix,
+            update_command_hint=info.update.command_hint,
+        )
 
     def resolve_cache_dir(self) -> Path:
         if callable(self.cache_dir):
@@ -334,17 +366,29 @@ def _prompt_confirm(prompt: str) -> bool:
 def run_update_command(
     argv=None,
     *,
-    config: UpdaterConfig,
+    config: Optional[UpdaterConfig] = None,
     prog: Optional[str] = None,
 ) -> int:
     """Run a ``<prog> update`` command (check, confirm, pipx upgrade).
 
     Public so products wrapping the framework CLI can reuse the exact
     same flow under their own program name (pass ``prog``, e.g.
-    ``"omni update"``) instead of copying it. Returns a process exit
-    status: 0 on success/up-to-date/declined, 1 when the latest version
-    cannot be determined or when ``--check`` finds an update available.
+    ``"omni update"``) instead of copying it. When ``config`` is omitted
+    it defaults via :meth:`UpdaterConfig.from_product` from the installed
+    product identity — a clear ``ValueError`` is raised when that product
+    declares no ``product.update:`` block — and ``prog`` then defaults to
+    ``"<product prog> update"``. Explicit arguments always win. Returns a
+    process exit status: 0 on success/up-to-date/declined, 1 when the
+    latest version cannot be determined or when ``--check`` finds an
+    update available.
     """
+    if config is None:
+        from omniagents.core.product import product_info
+
+        info = product_info()
+        config = UpdaterConfig.from_product(info)
+        if prog is None:
+            prog = f"{info.prog} update"
     prog = prog or f"{config.package_name} update"
     parser = argparse.ArgumentParser(
         prog=prog,

@@ -172,6 +172,18 @@ def load_project(
     proj = _read_yaml(p if p.is_file() else (base_dir / "project.yml"))
     proj, _applied_overlays = _apply_project_overlays(proj, overlays)
 
+    # Install the manifest's product identity (`product:` section) as the
+    # process-wide default. A prior explicit
+    # omniagents.core.product.set_product_info / bootstrap_product wins —
+    # loading a project never clobbers an explicitly installed identity.
+    if proj.get("product") is not None:
+        from omniagents.core.product import (
+            _set_default_product_info,
+            product_info_from_mapping,
+        )
+
+        _set_default_product_info(product_info_from_mapping(proj["product"]))
+
     paths_cfg = proj.get("paths") or {}
 
     def _resolve_many(kind: str, default: Optional[str] = None) -> List[Path]:

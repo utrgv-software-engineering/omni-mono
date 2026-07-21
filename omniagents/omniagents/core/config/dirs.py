@@ -12,15 +12,30 @@ import os
 from pathlib import Path
 
 
-def product_config_dir(name: str, *, windows_name: str | None = None) -> Path:
+def product_config_dir(
+    name: str | None = None, *, windows_name: str | None = None
+) -> Path:
     """Per-user config directory for the product called ``name``.
 
     * Windows: ``%APPDATA%/<windows_name or name>``
     * elsewhere: ``$XDG_CONFIG_HOME/<name>`` when set, otherwise
       ``~/.config/<name>``
 
+    When ``name`` is omitted, both names default from the installed
+    product identity (``omniagents.core.product.product_info()``) —
+    ``product.config_dir`` / ``product.windows_config_dir`` from
+    project.yml, or the framework's ``omniagents`` identity when no
+    product is installed.
+
     The directory is not created; callers create it on first write.
     """
+    if name is None:
+        from omniagents.core.product import product_info
+
+        info = product_info()
+        name = info.config_dir_name
+        if windows_name is None:
+            windows_name = info.windows_config_dir_name
     if os.name == "nt":
         base = os.getenv("APPDATA")
         if not base:

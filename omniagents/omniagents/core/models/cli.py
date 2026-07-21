@@ -44,6 +44,23 @@ class _CLIContext:
     product_label: str
 
 
+def _resolve_identity(
+    prog: Optional[str], product_label: Optional[str]
+) -> tuple[str, Optional[str]]:
+    """Default ``prog`` (and, only then, ``product_label``) from the
+    installed product identity. Explicit arguments always win; when
+    ``prog`` is given, ``product_label`` keeps its historical
+    default-to-``prog`` behavior downstream."""
+    if prog is None:
+        from omniagents.core.product import product_info
+
+        info = product_info()
+        prog = info.prog
+        if product_label is None:
+            product_label = info.label
+    return prog, product_label
+
+
 def prompt_choice(prompt: str, options: list, default: Optional[str] = None) -> str:
     while True:
         for i, opt in enumerate(options, 1):
@@ -810,7 +827,14 @@ def cmd_provider_remove(ctx, args):
 
 
 
-def run_model_command(argv=None, *, store: ModelConfigStore, prog: str, product_label: Optional[str] = None):
+def run_model_command(
+    argv=None,
+    *,
+    store: ModelConfigStore,
+    prog: Optional[str] = None,
+    product_label: Optional[str] = None,
+):
+    prog, product_label = _resolve_identity(prog, product_label)
     ctx = _CLIContext(store=store, prog=prog, product_label=product_label or prog)
     parser = argparse.ArgumentParser(
         prog=f"{prog} model",
@@ -906,7 +930,14 @@ def run_model_command(argv=None, *, store: ModelConfigStore, prog: str, product_
 
 
 
-def run_provider_command(argv=None, *, store: ModelConfigStore, prog: str, product_label: Optional[str] = None):
+def run_provider_command(
+    argv=None,
+    *,
+    store: ModelConfigStore,
+    prog: Optional[str] = None,
+    product_label: Optional[str] = None,
+):
+    prog, product_label = _resolve_identity(prog, product_label)
     ctx = _CLIContext(store=store, prog=prog, product_label=product_label or prog)
     parser = argparse.ArgumentParser(
         prog=f"{prog} provider",

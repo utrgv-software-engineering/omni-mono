@@ -94,18 +94,26 @@ def _resolve_studio_project_value(
     return project_value, manifest_path, derived
 
 
-def run_codex_auth_command(command: str = "login", *, prog: str = "omniagents") -> int:
+def run_codex_auth_command(command: str = "login", *, prog: Optional[str] = None) -> int:
     """Run a ``<prog> auth codex {login,logout,status}`` command.
 
     Public so products wrapping the framework CLI can reuse the exact
-    same flow under their own program name (pass ``prog``) instead of
-    copying the three branches. Products that bind the token store to a
-    custom directory must perform that binding before calling (e.g. by
-    importing their codex-auth module). Returns a process exit status.
+    same flow under their own program name instead of copying the three
+    branches. ``prog`` defaults from the installed product identity
+    (``omniagents.core.product.product_info().prog``; ``"omniagents"``
+    when no product is installed) — an explicit argument wins. Products
+    that bind the token store to a custom directory must perform that
+    binding before calling (e.g. by importing their codex-auth module,
+    or by installing product identity via ``bootstrap_product``).
+    Returns a process exit status.
     """
     import sys
 
+    from omniagents.core.product import product_info
     from omniagents.core.providers import codex
+
+    if prog is None:
+        prog = product_info().prog
 
     if command == "login":
         try:
@@ -134,7 +142,7 @@ def run_codex_auth_command(command: str = "login", *, prog: str = "omniagents") 
 def run_platform_auth_command(
     argv: Optional[List[str]] = None,
     *,
-    prog: str = "omniagents",
+    prog: Optional[str] = None,
     slug: Optional[str] = None,
     config_dir: Optional[Any] = None,
 ) -> int:
@@ -142,10 +150,14 @@ def run_platform_auth_command(
 
     Public so products wrapping the framework CLI can reuse the exact same
     device-code login / logout / status flow under their own program name
-    (pass ``prog``) instead of copying it. ``slug`` and ``config_dir`` bind
-    the shared platform client to the product's policy scope and credential
-    store before the flow runs (mirroring ``run_codex_auth_command``'s
-    token-store binding contract). Returns a process exit status.
+    instead of copying it. ``prog`` defaults from the installed product
+    identity (``omniagents.core.product.product_info().prog``); an
+    explicit argument wins. ``slug`` and ``config_dir`` bind the shared
+    platform client to the product's policy scope and credential store
+    before the flow runs (mirroring ``run_codex_auth_command``'s
+    token-store binding contract); when omitted, the platform client
+    itself already defaults both from the installed product identity.
+    Returns a process exit status.
 
     ``argv`` is the argument list after ``auth`` — e.g. ``["login"]``,
     ``["login", "https://platform.example.edu"]``, ``["logout"]``,
@@ -153,7 +165,11 @@ def run_platform_auth_command(
     """
     import sys
 
+    from omniagents.core.product import product_info
     from omniagents.core.providers.platform import client
+
+    if prog is None:
+        prog = product_info().prog
 
     if slug:
         client.set_product_slug(slug)

@@ -130,7 +130,7 @@ class ResolvedProfile:
 def resolve_profile(
     *,
     workspace_dir: Path,
-    config_dir: Path,
+    config_dir: Optional[Path] = None,
     default_profile_path: Optional[Path] = None,
     project_id: Optional[str] = None,
     explicit_path: Optional[Path] = None,
@@ -143,13 +143,20 @@ def resolve_profile(
     *config_dir* is the product config directory holding the user layers
     (``sandbox/default.yml``, ``projects/<id>/sandbox.yml``) plus the
     ``network.json`` allowlist and user ``.env`` that are injected into
-    the manifest environment. *default_profile_path* is the product's
+    the manifest environment. When omitted it defaults to the installed
+    product identity's config dir
+    (``omniagents.core.product.product_info().config_dir()``); an
+    explicit argument wins. *default_profile_path* is the product's
     packaged base profile (skipped when None or missing).
 
     When *explicit_path* is given, only the built-in default + the explicit
     file are merged — the user/project layers are skipped. This is the
     "tests, scripting, debugging" path; the launcher should not use it.
     """
+    if config_dir is None:
+        from omniagents.core.product import product_info
+
+        config_dir = product_info().config_dir()
     layers = _collect_layers(
         config_dir=config_dir,
         default_profile_path=default_profile_path,

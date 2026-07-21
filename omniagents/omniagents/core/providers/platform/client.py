@@ -18,12 +18,15 @@ It owns:
   (``/api/v1/sessions/{id}/policy``), with a single refresh-on-401 retry
   in both scopes.
 
-The credential store defaults to ``platform.json`` under the framework's
-per-user config dir (``$XDG_CONFIG_HOME/omniagents`` or
-``~/.config/omniagents``). Products that keep credentials in their own
-config dir bind the store with :func:`set_credential_store_dir`, and bind
-their policy scope with :func:`set_product_slug` — mirroring the codex
-token-store binding (``omniagents.core.providers.codex.set_token_store_dir``).
+The credential store defaults to ``platform.json`` under the installed
+product identity's config dir (``omniagents.core.product``) — the
+framework's own ``$XDG_CONFIG_HOME/omniagents`` / ``~/.config/omniagents``
+when no product is installed — and the policy scope defaults to that
+identity's slug. Products that declare a ``product:`` section in
+project.yml therefore need no binding at all; explicit
+:func:`set_credential_store_dir` / :func:`set_product_slug` calls still
+win — mirroring the codex token-store binding
+(``omniagents.core.providers.codex.set_token_store_dir``).
 
 Credential file format::
 
@@ -45,8 +48,6 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from omniagents.core.config.dirs import product_config_dir
-
 logger = logging.getLogger("omniagents.platform.client")
 
 PLATFORM_CRED_FILE = "platform.json"
@@ -58,7 +59,7 @@ DEFAULT_PRODUCT_SLUG = "omniagents"
 # --------------------------------------------------------------------------
 
 _credential_store_dir: Optional[Path] = None
-_product_slug: str = DEFAULT_PRODUCT_SLUG
+_product_slug: Optional[str] = None
 
 
 def set_credential_store_dir(path: Any) -> None:
@@ -72,21 +73,37 @@ def set_credential_store_dir(path: Any) -> None:
     _credential_store_dir = Path(path) if path is not None else None
 
 
-def set_product_slug(slug: str) -> None:
-    """Set the product slug used for user-scoped policy fetches."""
+def set_product_slug(slug: Optional[str]) -> None:
+    """Explicitly bind the product slug used for user-scoped policy fetches.
+
+    Passing a falsy value clears the explicit binding, falling back to
+    the installed product identity (see :func:`get_product_slug`).
+    """
     global _product_slug
-    _product_slug = slug or DEFAULT_PRODUCT_SLUG
+    _product_slug = slug or None
 
 
 def get_product_slug() -> str:
-    """Return the currently bound product slug."""
-    return _product_slug
+    """Return the bound product slug.
+
+    An explicit :func:`set_product_slug` wins; otherwise the slug comes
+    from the installed product identity
+    (``omniagents.core.product.product_info().slug``), which is
+    ``"omniagents"`` when no product is installed.
+    """
+    if _product_slug:
+        return _product_slug
+    from omniagents.core.product import product_info
+
+    return product_info().slug or DEFAULT_PRODUCT_SLUG
 
 
 def _config_dir() -> Path:
     if _credential_store_dir is not None:
         return _credential_store_dir
-    return product_config_dir("omniagents")
+    from omniagents.core.product import product_info
+
+    return product_info().config_dir()
 
 
 def credential_path() -> Path:
