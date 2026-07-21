@@ -6,12 +6,20 @@ from .ephemeral import (
     run_project_agent_once,
     temporary_environ,
 )
+from .slash_agents import (
+    manifest_slash_bindings,
+    manifest_slash_handler,
+    run_slash_agent,
+)
 
 __all__ = [
     "conventional_service_summarizer",
     "ephemeral_workspace_root",
+    "manifest_slash_bindings",
+    "manifest_slash_handler",
     "resolve_project_agent_yaml",
     "run_agent_once",
     "run_project_agent_once",
+    "run_slash_agent",
     "temporary_environ",
 ]

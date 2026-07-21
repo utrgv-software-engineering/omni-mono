@@ -15,11 +15,16 @@ class SlashCommandRegistry:
         self._commands[normalized] = handler
 
     def has(self, name: str) -> bool:
-        return self._normalize(name) in self._commands
+        normalized = self._normalize(name)
+        if normalized in self._commands:
+            return True
+        return self._manifest_handler(normalized) is not None
 
     async def execute(self, name: str, arg: str | None = None) -> str:
         normalized = self._normalize(name)
         handler = self._commands.get(normalized)
+        if handler is None:
+            handler = self._manifest_handler(normalized)
         if handler is None:
             return f"Unknown command: {name}"
 
@@ -65,6 +70,22 @@ class SlashCommandRegistry:
                 },
             },
         )
+
+    @staticmethod
+    def _manifest_handler(normalized: str):
+        """Fallback: the installed product manifest's declarative
+        ``slash_commands:`` binding for *normalized*, wrapped as a
+        handler (see ``omniagents.core.runtime.slash_agents``). A
+        Python-registered handler of the same name always wins; a broken
+        manifest degrades to "Unknown command"."""
+        try:
+            from omniagents.core.runtime.slash_agents import (
+                manifest_slash_handler,
+            )
+
+            return manifest_slash_handler(normalized)
+        except Exception:
+            return None
 
     @staticmethod
     def _normalize(name: str) -> str:

@@ -225,6 +225,9 @@ def load_project(
     # instructions. No default: the file-relative `_shared/` conventions are
     # always active; this key only adds project-level fragment roots.
     instruction_fragments_dirs = _resolve_many("instruction_fragments")
+    # Product prompt-template dirs (conventional filenames bound to
+    # framework seams — see omniagents.core.project.prompts).
+    prompts_dirs = _resolve_many("prompts", "prompts")
     paths: Dict[str, List[Path]] = {
         "tools": tools_dirs,
         "guardrails": guardrails_dirs,
@@ -234,6 +237,7 @@ def load_project(
         "evaluations": eval_dir,
         "target": target_dir,
         "instruction_fragments": instruction_fragments_dirs,
+        "prompts": prompts_dirs,
     }
 
     agents_section = proj.get("agents") or {}

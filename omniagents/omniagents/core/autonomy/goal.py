@@ -21,10 +21,15 @@ No retry-on-error logic, no continuation-after-every-turn enqueue: the
 tick handles wake-ups uniformly, and the agent reacts to its own
 history when a previous turn errored.
 
-Products expose these impls as server functions / slash commands and
-may install their own prompt builders via
-:func:`set_goal_prompt_builders`; the generic defaults here are
-domain-neutral.
+Products expose these impls as server functions / slash commands. The
+prompt wording is a product seam with three levels: an explicitly
+installed builder (:func:`set_goal_prompt_builders`) always wins; else a
+product-packaged template file (``goal_initial.md`` / ``goal_tick.md``
+under the manifest's declared prompts dir — see
+``omniagents.core.project.prompts``) is rendered with the goal context
+(Jinja variables ``goal``, ``max_turns``); else the generic defaults
+here apply — they are domain-neutral so the loop is usable without any
+installation.
 """
 
 from __future__ import annotations
@@ -150,12 +155,44 @@ def set_goal_prompt_builders(
         _tick_prompt_builder = tick or default_goal_tick_prompt
 
 
+def _render_product_template(name: str, **context: Any) -> Optional[str]:
+    """Render the installed product's packaged prompt template *name*
+    with *context*, or None when no product/template exists. Best-effort:
+    a broken manifest or template degrades to the generic default."""
+    try:
+        from omniagents.core.project.prompts import (
+            product_prompt_template,
+            render_prompt_template,
+        )
+
+        text = product_prompt_template(name)
+        if text is None:
+            return None
+        return render_prompt_template(text, **context)
+    except Exception:
+        return None
+
+
 def build_initial_prompt(goal: str, max_turns: int) -> str:
-    return _initial_prompt_builder(goal, max_turns)
+    if _initial_prompt_builder is not default_goal_initial_prompt:
+        return _initial_prompt_builder(goal, max_turns)
+    rendered = _render_product_template(
+        "goal_initial.md", goal=goal, max_turns=max_turns
+    )
+    if rendered is not None:
+        return rendered
+    return default_goal_initial_prompt(goal, max_turns)
 
 
 def build_tick_prompt(*, goal: str, max_turns: int) -> str:
-    return _tick_prompt_builder(goal=goal, max_turns=max_turns)
+    if _tick_prompt_builder is not default_goal_tick_prompt:
+        return _tick_prompt_builder(goal=goal, max_turns=max_turns)
+    rendered = _render_product_template(
+        "goal_tick.md", goal=goal, max_turns=max_turns
+    )
+    if rendered is not None:
+        return rendered
+    return default_goal_tick_prompt(goal=goal, max_turns=max_turns)
 
 
 # ---------------------------------------------------------------------------

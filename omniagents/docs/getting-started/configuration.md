@@ -100,10 +100,20 @@ paths:
   # shadow them by name) are always active — see the "Shared instruction
   # fragments" section in the Defining Agents guide.
   # instruction_fragments: prompts/shared
+  # Prompt-template files with conventional filenames bound to framework
+  # seams (goal_initial.md, goal_tick.md, loop.md — see "Prompt template
+  # files" below). Defaults to the manifest-sibling `prompts/` directory.
+  # prompts: prompts
 agents:
   entrypoint: agent_name  # Default agent to run
   include: ["*"]          # Agent patterns to include (optional)
   exclude: []             # Agent patterns to exclude (optional)
+
+# Declarative slash → project-agent bindings (see "Slash command
+# bindings" below).
+# slash_commands:
+#   init:
+#     agent: init_agent
 
 tracing:
   provider: studio        # Options: default, studio, none
@@ -129,11 +139,69 @@ tracing:
     process-wide model store from it with conventional hooks at product
     bootstrap and project load; an explicit `set_model_store` wins. See
     `omniagents.core.models.catalog` for the full schema and timing contract.
+  - **prompts**: Prompt-template directory (string or list; default:
+    `prompts`). See "Prompt template files" below.
 - **agents** (required): Agent configuration
   - **entrypoint**: Default agent key to run
   - **include**: Glob patterns for agents to include
   - **exclude**: Glob patterns for agents to exclude
+- **slash_commands** (optional): Declarative slash → project-agent
+  bindings. See "Slash command bindings" below.
 - **tracing** (optional): Tracing configuration (see Tracing Configuration below)
+
+### Prompt template files
+
+A product ships prompt wording as data instead of Python f-strings:
+Markdown files in the directory `paths.prompts` names (manifest-relative,
+default `prompts/`). Conventional filenames bind each file to a framework
+seam; files render through the same Jinja environment as agent
+instructions (silent-undefined), and the rendered output is stripped.
+
+| File | Seam | Jinja variables |
+| --- | --- | --- |
+| `goal_initial.md` | First user message of a `/goal` autopilot run | `goal` (str), `max_turns` (int) |
+| `goal_tick.md` | Periodic goal tick notification body | `goal` (str), `max_turns` (int) |
+| `loop.md` | Default `/loop` prompt body when `/loop` is invoked without text | none |
+
+Precedence at each seam: an explicitly installed builder/resolver
+(`set_goal_prompt_builders` / `set_loop_default_prompt_resolver`) always
+wins; else the product template file (if present); else the framework's
+generic default. The `/loop` default additionally honors operator
+override files ahead of the packaged template:
+`<workspace>/.<prog>/loop.md` → `<config-dir>/loop.md` → packaged
+`prompts/loop.md` → framework default (none — `/loop` then requires an
+explicit prompt). See `omniagents.core.project.prompts`.
+
+### Slash command bindings
+
+`slash_commands:` binds a slash command to a one-shot project agent run —
+the builtin `dispatch` tool's default registry falls back to these
+bindings whenever no Python-registered handler exists for the name, so
+the binding is pure data:
+
+```yaml
+slash_commands:
+  init:
+    agent: init_agent          # agents/<key>/agent.yml (required)
+    prompt: begin              # kickoff user message (default "begin")
+    max_turns: 1000            # turn budget (default 50)
+    normalize_model: false     # keep the runtime's raw model id (default true)
+    failure_message: Failed to update AGENTS.md  # returned when the run raises
+    attach_file:               # optional success-attachment protocol
+      path: AGENTS.md          # workspace-relative file read back after the run
+      when_status:             # exact final-line statuses that trigger attachment
+        - Created AGENTS.md
+        - Updated AGENTS.md
+      language: markdown       # code-fence language (default markdown)
+```
+
+The run goes through `run_project_agent_once` (multi-turn, outside the
+session lifecycle), anchored to the invoking shell's directory (`$PWD`,
+falling back to the process cwd). The agent's final output is the
+command's response; with `attach_file`, a matching final status appends
+the named workspace file in a code fence. The final-line protocol itself
+(which exact strings the agent ends with) belongs in the agent's
+instructions. See `omniagents.core.runtime.slash_agents`.
 
 ### Agent Configuration
 

@@ -122,9 +122,12 @@ def build_concluded_prompt(*, task_id: str, prompt: str, fires: int) -> str:
 
 
 # The default-prompt resolver supplies the loop body when ``/loop`` is
-# invoked with an interval but no prompt text. Where that default comes
-# from is product policy (omni-code reads ``.omni/loop.md`` and a config-
-# dir fallback); the framework default is None — meaning "/loop requires
+# invoked with an interval but no prompt text. An explicitly installed
+# resolver (product policy) wins; otherwise the conventional override
+# chain applies: ``<workspace>/.<prog>/loop.md`` (operator, workspace-
+# local) → ``<config-dir>/loop.md`` (operator, per-user) → the product's
+# packaged ``loop.md`` template (``paths.prompts`` — see
+# ``omniagents.core.project.prompts``) → None, meaning "/loop requires
 # an explicit prompt" — and the slash handler reports usage.
 _default_prompt_resolver: Optional[Callable[[Optional[str]], Optional[str]]] = None
 
@@ -136,16 +139,44 @@ def set_loop_default_prompt_resolver(
 
     ``resolver(workspace_root)`` returns the prompt text to use when a
     loop is created without one, or None when no default exists. Pass
-    ``None`` to clear."""
+    ``None`` to restore the conventional file chain."""
     global _default_prompt_resolver
     _default_prompt_resolver = resolver
 
 
+def _conventional_default_loop_prompt(
+    workspace_root: Optional[str],
+) -> Optional[str]:
+    """The conventional loop-body chain: workspace override file → user
+    config file → packaged product template → None.
+
+    The workspace override dir name derives from the installed product's
+    CLI prog (``.<prog>/loop.md`` — omni-code's historical ``.omni/``);
+    the user-config candidate is ``product_config_dir()/loop.md``."""
+    from pathlib import Path
+
+    from omniagents.core.config import product_config_dir
+    from omniagents.core.product import product_info
+    from omniagents.core.project.prompts import product_prompt_template
+    from omniagents.core.utils.prompt_files import resolve_prompt_file
+
+    candidates: list[Path] = []
+    if workspace_root:
+        prog = (product_info().prog or "").strip()
+        if prog:
+            candidates.append(
+                Path(workspace_root).expanduser() / f".{prog}" / "loop.md"
+            )
+    candidates.append(product_config_dir() / "loop.md")
+    packaged = product_prompt_template("loop.md") or ""
+    return resolve_prompt_file(candidates, packaged) or None
+
+
 def resolve_default_loop_prompt(workspace_root: Optional[str]) -> Optional[str]:
-    if _default_prompt_resolver is None:
-        return None
     try:
-        return _default_prompt_resolver(workspace_root)
+        if _default_prompt_resolver is not None:
+            return _default_prompt_resolver(workspace_root)
+        return _conventional_default_loop_prompt(workspace_root)
     except Exception:
         return None
 
