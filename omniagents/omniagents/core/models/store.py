@@ -44,7 +44,13 @@ from typing import Any, Callable, Dict, List, Optional
 
 MODELS_CONFIG_VERSION = 3
 
-__all__ = ["ModelConfigStore", "MODELS_CONFIG_VERSION", "litellm_api_key_env", "expand_env_vars"]
+__all__ = [
+    "ModelConfigStore",
+    "MODELS_CONFIG_VERSION",
+    "litellm_api_key_env",
+    "expand_env_vars",
+    "normalize_model_name",
+]
 
 
 def litellm_api_key_env(model: str | None) -> str:
@@ -55,6 +61,35 @@ def litellm_api_key_env(model: str | None) -> str:
     if model_name.startswith("gemini/") or model_name.startswith("google/"):
         return "GOOGLE_API_KEY"
     return "OPENAI_API_KEY"
+
+
+def normalize_model_name(
+    model_ref: Optional[str], runtime: Dict[str, Any]
+) -> Optional[str]:
+    """The bare model id to hand a provider, from a resolved runtime dict.
+
+    The counterpart of :meth:`ModelConfigStore.parse_model_ref` for the
+    *runtime* side: where refs are ``<provider_name>/<model_name>``, the
+    runtime's ``model`` may still carry a routing prefix. Strip it unless
+    it is one the SDK's providers route on themselves (``openai/...``,
+    ``litellm/...``) or the runtime's provider is ``litellm`` (LiteLLM
+    model ids are ``<vendor>/<model>`` and must stay whole). Falls back
+    to *model_ref* when the runtime carries no model id.
+    """
+    model_name = runtime.get("model") if isinstance(runtime, dict) else None
+    if (not isinstance(model_name, str) or not model_name.strip()) and isinstance(
+        model_ref, str
+    ):
+        model_name = model_ref.strip()
+    if (
+        isinstance(model_name, str)
+        and "/" in model_name
+        and runtime.get("provider") != "litellm"
+    ):
+        prefix = model_name.split("/", 1)[0]
+        if prefix not in {"openai", "litellm"}:
+            model_name = model_name.split("/", 1)[1]
+    return model_name
 
 
 def expand_env_vars(value: Any) -> Any:

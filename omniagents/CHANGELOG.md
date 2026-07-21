@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Model runtime/provider plumbing beside `ModelConfigStore` (`omniagents.core.models`), lifted from omni-code: `resolve_model_runtime` (ref → `(model_name, runtime)` with optional prefix normalization) and `resolve_service_model_runtime` (utility-run preference order: session active model → service spec model → raw session `model_config`), both taking an explicit `store=` or the process-wide registry installed via `set_model_store`; `normalize_model_name` (runtime-side counterpart of the store's ref parsing — strips non-`openai/`/`litellm/` provider prefixes, keeps LiteLLM ids whole); and `provider_from_runtime`, the runtime-dict → SDK model-provider adapter over `run_options.build_model_provider` that adds the credential policy the plain builder does not apply (litellm API-key env overrides, env-var credential fallback, "no credential against a real OpenAI/Azure endpoint → no provider", dummy key for local endpoints).
+- Governed model config producer (`omniagents.core.models.governed`): `write_governed_config` / `load_governed_config` / `governed_config_path` own the `models.governed.json` artifact next to `models.json` — `_governed`/`_allow_user_models` markers, per-provider `_governed` stamping, merge-base vs replace semantics read back by the store's layered merge, 0600 permissions — parameterized by config dir. Products keep only the policy-key extraction that feeds it.
+
 ## [0.7.19] - 2026-07-18
 
 ### Added
