@@ -12,7 +12,7 @@ Covered tools:
   ``workspace.write_text``
 - ``convert_to_markdown``: ``workspace.exists`` + ``workspace.read_bytes``
   for non-host backends (host mode goes straight to the path)
-- ``worker_tools`` git helpers (``_is_git_repo``, ``_is_git_dirty``):
+- worker isolation git helpers (``is_git_repo``, ``is_git_dirty``):
   ``workspace.exec``
 - ``read_job_log`` (used by ``bash_logs`` and ``bash_jobs.tail``):
   ``workspace.read_bytes``
@@ -42,8 +42,8 @@ conversion_tools = importlib.import_module(
     "omniagents.builtin.tools.convert_to_markdown"
 )
 import omniagents.builtin.tools.notebook_tools as notebook_tools
-import omni_code.workers_runtime as worker_tools
 import omniagents.core.workers.isolation as worker_isolation
+from omniagents.core.workers import serve_worker_sources
 from omniagents.builtin.tools import _bash_jobs
 from omniagents.workspace import (
     ExecResult,
@@ -354,7 +354,7 @@ def test_convert_to_markdown_routes_through_workspace(monkeypatch):
     assert result.ui_metadata["metadata"]["success"] is True
 
 
-# -- worker_tools git helpers ------------------------------------------
+# -- worker isolation git helpers --------------------------------------
 
 
 def test_is_git_repo_routes_through_workspace():
@@ -396,10 +396,10 @@ def test_is_git_dirty_routes_through_workspace():
 
 def _worktree_strategy():
     """omni-code's ``worktree`` strategy: the framework's multi-source
-    isolation parameterized by workers_runtime's sources mapper (the same
-    instance ``install()`` registers)."""
+    isolation over the framework's serve-state sources provider (the same
+    pairing ``install_project_worker_defaults()`` registers)."""
     return worker_isolation.MultiSourceWorktreeIsolation(
-        worker_tools._worker_sources, name="worktree"
+        serve_worker_sources, name="worktree"
     )
 
 
