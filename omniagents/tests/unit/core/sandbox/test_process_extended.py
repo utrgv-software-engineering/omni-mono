@@ -190,22 +190,24 @@ def test_argv_maps_mounts_net_and_protect(fake_binary, tmp_path):
         workspace_root=tmp_path,
         env={},
     )
+    # Canonical order (shared with the governance relaunch builder):
+    # workspace, net, protect, then binds in caller order.
     assert argv == [
         fake_binary,
         "exec",
         "--workspace",
         str(tmp_path),
+        "--net",
+        "--protect",
+        ".git",
+        "--protect",
+        ".env",
         "--ro-bind",
         "/opt/tools",
         "--ro-bind",
         "/opt/venv",
         "--rw-bind",
         "/home/user/.cache/thing",
-        "--net",
-        "--protect",
-        ".git",
-        "--protect",
-        ".env",
         "--",
         "/bin/true",
     ]

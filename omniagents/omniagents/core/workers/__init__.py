@@ -30,6 +30,12 @@ from .isolation import (
     isolation_strategy_names,
     register_isolation_strategy,
 )
+from .serve_defaults import (
+    default_worker_model_resolver,
+    default_worker_project_context,
+    install_project_worker_defaults,
+    serve_worker_sources,
+)
 from .spec_loader import make_project_worker_spec_loader
 
 __all__ = [
@@ -55,4 +61,8 @@ __all__ = [
     "isolation_strategy_names",
     "register_isolation_strategy",
     "make_project_worker_spec_loader",
+    "serve_worker_sources",
+    "default_worker_project_context",
+    "default_worker_model_resolver",
+    "install_project_worker_defaults",
 ]
