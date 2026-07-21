@@ -287,6 +287,15 @@ class SwitchContext:
     host: str
     port: int
     auth_token: Optional[str]
+    # The product's layered profile resolver, keyword-callable as
+    # ``resolver(workspace_dir=..., project_id=..., explicit_path=...) ->
+    # ResolvedProfile``. ``perform_switch`` / rollback resolve target
+    # profiles through it so product layers (packaged default profile,
+    # user/project overlays) apply on switches too. ``None`` falls back
+    # to the framework resolver
+    # (:func:`omniagents.core.sandbox.profiles.resolve_profile`), which
+    # has no product default layer.
+    profile_resolver: Optional[Any] = None
 
     # --- current sandbox (mutated per switch) ---
     current_profile_path: Optional[str] = None
