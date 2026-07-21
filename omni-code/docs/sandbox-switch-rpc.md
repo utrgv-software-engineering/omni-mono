@@ -1,5 +1,22 @@
 # Spec: in-place sandbox switching over RPC (`sandbox.switch`)
 
+> **Status (2026-07): surface lifted into omniagents.** The RPC surface
+> (`sandbox.pause` / `sandbox.unpause` / `sandbox.notify_activity` /
+> `sandbox.discard_snapshot` / `sandbox.switch`), the read-only agent tools
+> (`sandbox_get_state` / `sandbox_wait_until_ready`), and the authority model
+> are now framework builtins: the `sandbox` capability pack
+> (`omniagents/builtin/capabilities/sandbox.yml`,
+> `omniagents/builtin/server_functions/sandbox_lifecycle.py`,
+> `omniagents/builtin/tools/sandbox_observe.py`), with first-class session
+> lifecycle proxies in `omniagents/core/sandbox/lifecycle_session.py` and the
+> framework doc in omniagents `docs-internal/SANDBOX_LIFECYCLE.md`.
+> `sandbox.switch` delegates to the executor `serve_cli` installs via
+> `omniagents.core.runtime.sandbox_lifecycle.set_switch_executor`
+> (`perform_switch`). The switch *orchestration* below (quiesce, snapshot,
+> rebuild, re-wire, rollback, launcher wiring) still lives in this repo's
+> `serve_cli.py` until the serve-harness lift; this spec remains its
+> reference.
+
 ## Goal
 
 Let a user change the sandbox profile of a **running** `omni serve` session

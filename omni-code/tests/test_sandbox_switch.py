@@ -300,7 +300,7 @@ async def test_switch_no_context_returns_error(wired):
 
 @pytest.mark.asyncio
 async def test_get_state_reports_context():
-    from omni_code.tools.sandbox_tools import _state_dict
+    from omniagents.builtin.tools.sandbox_observe import _state_dict
 
     aws.set_switch_context(_make_ctx(current_name="devbox"))
     aws.get_switch_context().backend = "docker"

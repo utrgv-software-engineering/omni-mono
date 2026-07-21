@@ -32,7 +32,7 @@ capabilities:
   - recap         # /recap catch-up panel (builtin; summarizer installed in omni/context.py)
   - compact       # /compact checkpoint compaction (builtin; summarizer installed in omni/context.py)
   - model_picker  # /models /model /reasoning /voice-model* (builtin, control-plane only)
-  - sandbox       # sandbox_get_state / sandbox_wait_until_ready (read-only; switching is operator-only)
+  - sandbox       # builtin: sandbox_get_state / sandbox_wait_until_ready tools (read-only) + the operator-only sandbox.* lifecycle RPCs (pause/unpause/notify_activity/discard_snapshot/switch)
   - workspace_info # fs_get_cwd/workspace_root/home/list_dir/sources picker RPCs (builtin; providers installed in omni/context.py)
   - terminal      # terminal.create / terminal.close (builtin; omni serve installs the sandboxed TerminalManager)
 
@@ -83,20 +83,12 @@ safe_agent_options:
     - sandbox_get_state
     - sandbox_wait_until_ready
 
-# The feedback / model-picker / artifact / help / compact / fs_* /
-# terminal.* server functions are NOT listed here: they are carried by
-# the builtin capability packs this agent activates (feedback,
-# model_picker, artifacts, slash, compact, workspace_info, terminal)
-# and register through the capability-gated path.
-server_functions:
-  # The goal/loop/cron/wakeup/bash-jobs server functions are NOT listed
-  # here: they are carried by the builtin capability packs this agent
-  # already activates (goal, loop, wakeup, shell) and register through
-  # the capability-gated path.
-  - sandbox.pause
-  - sandbox.unpause
-  - sandbox.notify_activity
-  - sandbox.switch
+# No server_functions list: every server function this agent needs —
+# feedback / model-picker / artifact / help / compact / fs_* /
+# terminal.* / goal / loop / cron / wakeup / bash-jobs, and the
+# sandbox.* lifecycle RPCs (pause/unpause/notify_activity/
+# discard_snapshot/switch) — is carried by a builtin capability pack it
+# activates above and registers through the capability-gated path.
 
 context: build_coding_context
 model_config_resolver: resolve_default_model

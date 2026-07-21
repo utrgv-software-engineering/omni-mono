@@ -913,12 +913,12 @@ async def bring_up_session(
         prior_container_id=prior_container_id,
     )
 
-    # Idle-pause threshold from the profile YAML before start() arms the watcher.
-    inner = getattr(session, "_inner", session)
-    if hasattr(inner, "set_idle_threshold"):
-        raw_idle = profile.raw.get("idle")
-        if isinstance(raw_idle, dict) and "pause_after_seconds" in raw_idle:
-            inner.set_idle_threshold(_parse_idle_threshold(raw_idle))
+    # Idle-pause threshold from the profile YAML before start() arms the
+    # watcher. First-class proxy on the framework's session wrapper; no-ops
+    # on backends without idle machinery.
+    raw_idle = profile.raw.get("idle")
+    if isinstance(raw_idle, dict) and "pause_after_seconds" in raw_idle:
+        session.set_idle_threshold(_parse_idle_threshold(raw_idle))
 
     # Scrub the snapshot tar BEFORE start() hydrates it — this is the ONLY
     # scrub site (teardown deliberately doesn't scrub; see teardown_session).
@@ -1509,6 +1509,13 @@ async def _serve(args: argparse.Namespace) -> int:
     switch_ctx.ready_event.set()
     set_switch_context(switch_ctx)
 
+    # The builtin ``sandbox.switch`` server function (activated by the
+    # ``sandbox`` capability pack) validates the RPC and delegates to this
+    # executor; the orchestration itself lives here in ``perform_switch``.
+    from omniagents.core.runtime.sandbox_lifecycle import set_switch_executor
+
+    set_switch_executor(perform_switch)
+
     # --- Run server + fast signal shutdown ---
     # Any exit signal skips uvicorn's graceful drain (``force_exit``): the
     # drain waits on open WS connections — all ours (launcher, terminals) —
@@ -1580,11 +1587,11 @@ async def _serve(args: argparse.Namespace) -> int:
                 pass
         # Stop the idle watcher first so its tick task is cancelled and
         # any in-flight pause unwinds before teardown does its own
-        # defensive unpause + snapshot persist.
-        inner_for_idle_stop = getattr(live_session, "_inner", live_session)
-        if hasattr(inner_for_idle_stop, "stop_idle_watcher"):
+        # defensive unpause + snapshot persist. First-class proxy; no-ops
+        # on backends without idle machinery.
+        if live_session is not None:
             try:
-                await inner_for_idle_stop.stop_idle_watcher()
+                await live_session.stop_idle_watcher()
             except Exception:
                 pass
         from omniagents.core.runtime.serve_state import get_discard_snapshot_on_exit
@@ -1598,6 +1605,9 @@ async def _serve(args: argparse.Namespace) -> int:
         # deliberately leaves the handle alone so switches can replace it).
         set_sandbox_session(None)
         set_switch_context(None)
+        from omniagents.core.runtime.sandbox_lifecycle import set_switch_executor as _clear_switch_executor
+
+        _clear_switch_executor(None)
 
     return 0
 
@@ -1687,7 +1697,7 @@ def _install_session_terminal_manager(
         # fall back to a HOST shell — that would break the isolation model by
         # handing the user a shell on the omni serve host instead of inside
         # the sandbox.
-        label = type(getattr(session, "_inner", session)).__name__
+        label = getattr(session, "backend_class_name", None) or type(session).__name__
         backend = _UnsupportedPtyBackend(label)
 
     service.terminal_manager = TerminalManager(
@@ -1758,14 +1768,13 @@ async def teardown_session(
             pass
     # If the container was paused for idle, unpause first — session.stop()
     # → persist_snapshot drives ``session.exec`` to write the fingerprint
-    # helper output, which hangs forever on a paused container. Cheap
-    # no-op when the session backend doesn't expose unpause.
-    inner = getattr(session, "_inner", session)
-    if hasattr(inner, "unpause"):
-        try:
-            await inner.unpause()
-        except Exception:
-            pass
+    # helper output, which hangs forever on a paused container. First-class
+    # proxy; SandboxLifecycleUnsupported (backend without unpause) and
+    # backend errors are both swallowed — cheap no-op either way.
+    try:
+        await session.unpause()
+    except Exception:
+        pass
     # ``session.stop()`` persists the workspace snapshot internally
     # (``_persist_snapshot`` → ``snapshot_lifecycle.persist_snapshot``)
     # for any non-noop snapshot configuration; the SDK does not expose
