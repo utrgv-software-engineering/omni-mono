@@ -58,29 +58,20 @@ def _find_stored_credentials() -> Optional[Dict[str, Any]]:
 def _detect_platform() -> Optional[Dict[str, str]]:
     """Detect platform URL and access token from env or stored credentials.
 
-    Returns dict with platform_url and access_token, or None.
+    Delegates the env-then-stored priority chain to
+    ``platform.client.resolve_platform``. A product-installed loader
+    (``set_platform_credentials_loader``) takes precedence for the stored
+    step; without one, the client's own credential store is consulted
+    (which products may have re-bound via ``set_credential_store_dir``).
+
+    Returns dict with platform_url, access_token and session_id, or None.
     """
-    # Priority 1: env vars (container / launcher injection)
-    platform_url = os.getenv("OMNI_PLATFORM_URL")
-    token = os.getenv("OMNI_RUNTIME_TOKEN") or os.getenv("OMNI_ACCESS_TOKEN")
+    from omniagents.core.providers.platform import client
 
-    if platform_url and token:
-        return {
-            "platform_url": platform_url.rstrip("/"),
-            "access_token": token,
-            "session_id": os.getenv("OMNI_SESSION_ID", ""),
-        }
-
-    # Priority 2: stored credentials from `omni auth login`
-    creds = _find_stored_credentials()
-    if creds and creds.get("platform_url") and creds.get("access_token"):
-        return {
-            "platform_url": creds["platform_url"].rstrip("/"),
-            "access_token": creds["access_token"],
-            "session_id": "",
-        }
-
-    return None
+    loader = (
+        _find_stored_credentials if _stored_credentials_loader is not None else None
+    )
+    return client.resolve_platform(credentials_loader=loader)
 
 
 def maybe_inject_platform_config(spec: Any) -> None:
