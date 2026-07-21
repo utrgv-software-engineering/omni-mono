@@ -22,8 +22,6 @@ async def run_init_agent(max_turns: int = 1000) -> str:
     # normalization — historical behavior for this path).
     model, model_runtime = resolve_model_runtime(normalize=False)
 
-    model_settings = model_runtime.get("model_settings")
-
     # Anchor the run to the invoking shell's directory ($PWD, falling back
     # to process cwd) — the init agent's apply_patch / write_file tools
     # resolve relative paths against it, and the resulting AGENTS.md is
@@ -37,7 +35,9 @@ async def run_init_agent(max_turns: int = 1000) -> str:
             "begin",
             model=model,
             runtime=model_runtime,
-            model_settings=model_settings if isinstance(model_settings, dict) else None,
+            # The harness stamps model_settings only when it's a
+            # non-empty dict, so the runtime value passes through raw.
+            model_settings=model_runtime.get("model_settings"),
             workspace_root=str(base_dir),
             max_turns=max_turns,
         )

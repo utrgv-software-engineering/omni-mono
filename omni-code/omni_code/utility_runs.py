@@ -1,12 +1,14 @@
 """Shared wiring for omni-code's ephemeral (utility) agent runs.
 
-The compact, recap, and session-summarize flows all run a one-shot
-utility agent via ``omniagents.core.runtime.run_agent_once``. The model
-resolution dance (ref → runtime dict → SDK provider) lives framework-side
-in ``omniagents.core.models`` now and is re-exported here against
-omni-code's installed model store; what stays product-specific is the
-codex (openai-oauth) token-store binding and how workspace_root is
-anchored for runs that bypass the AgentService resolver.
+The compact, recap, init, and session-summarize flows all run a one-shot
+utility agent via the framework's project-aware harness
+(``omniagents.core.runtime.run_project_agent_once``), which resolves
+``omni_code/agents/<name>/agent.yml`` through the packaged project
+manifest and applies the model_settings/instructions overrides itself.
+What stays product-specific here is model resolution against omni-code's
+installed model store, the codex (openai-oauth) token-store binding, and
+how workspace_root is anchored for runs that bypass the AgentService
+resolver.
 """
 
 from __future__ import annotations
@@ -26,13 +28,6 @@ from omniagents.core.models import (  # noqa: E402,F401
     provider_from_runtime,
     resolve_model_runtime,
     resolve_service_model_runtime,
-)
-
-# Session-shape workspace-root reading and the ensure+persist dance are
-# framework helpers now; re-exported here for omni-code's server functions.
-from omniagents.core.server_functions.helpers import (  # noqa: E402,F401
-    ensure_session_with_workspace,
-    session_workspace_root,
 )
 
 
@@ -68,47 +63,29 @@ async def run_utility_agent(
     max_turns: int = 1,
     instructions: Optional[str] = None,
 ) -> str:
-    """Run one of omni-code's headless utility agents (``omni_code/agents/<name>``)
-    through the framework's ephemeral-run harness.
+    """Run one of omni-code's headless utility agents (``omni_code/agents/<name>``).
 
-    ``instructions`` replaces the spec's system prompt for this run —
-    used when the prompt's single source of truth lives in code (e.g.
-    the framework's ``DEFAULT_RECAP_INSTRUCTIONS``) rather than in the
-    agent dir's ``instructions.md``.
+    Thin delegate to the framework's
+    :func:`omniagents.core.runtime.run_project_agent_once` — the agent
+    resolves through the bootstrapped product manifest. omni-code's
+    remaining policy: the codex-aware provider build
+    (:func:`build_model_provider`) and the manifest-root workspace
+    fallback (:func:`ephemeral_workspace_root`).
     """
-    from pathlib import Path
+    from omniagents.core.runtime import run_project_agent_once
 
-    from omniagents.core.runtime import run_agent_once
-
-    agent_yaml = (
-        Path(__file__).resolve().parent / "agents" / agent_name / "agent.yml"
-    )
-    agent: Any = agent_yaml
-    wants_settings = isinstance(model_settings, dict) and bool(model_settings)
-    if wants_settings or instructions is not None:
-        # run_agent_once applies the model-name override itself; model_settings
-        # is the one spec field it doesn't touch, so stamp it on the loaded
-        # spec and hand the spec (not the path) to the harness. Likewise,
-        # ``instructions`` replaces the spec's system prompt when its single
-        # source of truth lives in code rather than the agent dir.
-        from omniagents.core.config.loader import load_agent_spec_from_yaml
-
-        spec = load_agent_spec_from_yaml(str(agent_yaml))
-        if wants_settings:
-            spec.model_settings = model_settings
-        if instructions is not None:
-            spec.get_agent_instructions = lambda: instructions
-        agent = spec
     model_provider, env_overrides = build_model_provider(runtime or {})
-    return await run_agent_once(
-        agent,
+    return await run_project_agent_once(
+        agent_name,
         prompt,
         model=model,
         model_provider=model_provider,
         env_overrides=env_overrides,
         session=session,
         workspace_root=workspace_root or ephemeral_workspace_root(session),
+        model_settings=model_settings,
         max_turns=max_turns,
+        instructions=instructions,
     )
 
 
