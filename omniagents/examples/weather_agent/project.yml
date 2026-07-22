@@ -1,7 +1,5 @@
-# The entrypoint is conventional: the agent named after the product.
-# The voice agent deviates from the `voice_agent` naming convention,
-# so it is the one declaration this manifest needs.
 product:
   name: weather_agent
 agents:
+  entrypoint: weather_agent
   voice_entrypoint: weather_voice

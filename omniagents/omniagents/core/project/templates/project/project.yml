@@ -1,8 +1,13 @@
-# One name — everything derives: slug, CLI prog, display label, config
-# dirs, env prefix, tracing project, and the entrypoint agent (the agent
-# named after the product). Paths follow the conventional layout
-# (agents/, tools/, capabilities/, evaluations/, target/, prompts/, and
-# a manifest-sibling models.yml when present). Declare a key only where
-# your product deviates from the convention.
+# One name seeds identity: slug, CLI prog, display label, config dirs,
+# env prefix, and the tracing project all derive from the product name.
+# Paths follow the conventional layout (agents/, tools/, capabilities/,
+# evaluations/, target/, prompts/, and a manifest-sibling models.yml
+# when present). Declare an identity/path key only where your product
+# deviates from the convention.
 product:
   name: {sanitized}
+
+# Which agent runs is always declared — there is no naming convention
+# for entrypoints.
+agents:
+  entrypoint: {sanitized}

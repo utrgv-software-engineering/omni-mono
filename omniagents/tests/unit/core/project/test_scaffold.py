@@ -126,30 +126,19 @@ def test_scaffold_tool_async_and_force(tmp_path):
 def test_delete_agent_updates_entrypoint(tmp_path):
     _, project_dir, base = scaffold_project("Delete Project", parent_dir=str(tmp_path))
     _, _, other = scaffold_agent(project_dir, "Other Agent")
-    _, _, third = scaffold_agent(project_dir, "Third Agent")
     root = Path(project_dir)
     project_yaml = root / "project.yml"
-    # The scaffolded manifest declares no entrypoint — the agent named
-    # after the product is the conventional one.
+    # The scaffolded manifest declares its entrypoint explicitly.
     doc = yaml.safe_load(project_yaml.read_text(encoding="utf-8"))
-    assert "agents" not in doc
-    # Deleting the conventional entrypoint with several agents left
-    # declares a replacement (the convention no longer resolves).
+    assert doc["agents"]["entrypoint"] == base
     removed, _, deleted = delete_agent(project_dir, base)
     assert removed == [str(root / "agents" / base)]
     assert deleted == base
     assert not (root / "agents" / base).exists()
     doc = yaml.safe_load(project_yaml.read_text(encoding="utf-8"))
-    assert doc["agents"]["entrypoint"] in {other, third}
-    survivor = doc["agents"]["entrypoint"]
-    victim = other if survivor == third else third
-    # Deleting the declared entrypoint with a single agent left drops
-    # the declaration: the single-agent auto-entrypoint covers it.
-    delete_agent(project_dir, survivor)
-    doc = yaml.safe_load(project_yaml.read_text(encoding="utf-8"))
-    assert "agents" not in doc
+    assert doc["agents"]["entrypoint"] == other
     with pytest.raises(ValueError):
-        delete_agent(project_dir, victim)
+        delete_agent(project_dir, other)
 
 
 def test_scaffold_guardrail_variants(tmp_path):

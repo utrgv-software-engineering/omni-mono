@@ -260,7 +260,22 @@ instructions: hello
     )
 
 
-def test_entrypoint_convention_prefers_prog_agent(tmp_path: Path):
+def test_single_agent_auto_entrypoint(tmp_path: Path):
+    """A single-agent project needs no declaration: its sole agent is the
+    unambiguous entrypoint."""
+    root = tmp_path / "acme"
+    root.mkdir()
+    _write(root / "project.yml", "product:\n  name: acme-agent\n")
+    _write_agent(root, "solo")
+    context = load_project(str(root))
+    assert context.entrypoint == "solo"
+
+
+def test_multi_agent_requires_declared_entrypoint(tmp_path: Path):
+    """No entrypoint-by-name convention: an agent named after the product's
+    prog/slug is NOT implicitly the entrypoint. With several agents and no
+    declaration, the entrypoint is unresolved and resolving it fails with
+    an error that names the `agents.entrypoint` key."""
     root = tmp_path / "acme"
     root.mkdir()
     _write(
@@ -271,23 +286,15 @@ def test_entrypoint_convention_prefers_prog_agent(tmp_path: Path):
 """,
     )
     _write_agent(root, "acme")
-    _write_agent(root, "helper")
-    context = load_project(str(root))
-    assert context.entrypoint == "acme"
-    assert context.product.slug == "acme_agent"
-
-
-def test_entrypoint_convention_falls_back_to_slug_agent(tmp_path: Path):
-    root = tmp_path / "acme"
-    root.mkdir()
-    _write(root / "project.yml", "product:\n  name: acme-agent\n")
     _write_agent(root, "acme_agent")
     _write_agent(root, "helper")
     context = load_project(str(root))
-    assert context.entrypoint == "acme_agent"
+    assert context.entrypoint is None
+    with pytest.raises(FileNotFoundError, match=r"agents:\s*\n\s*entrypoint:"):
+        build_spec_from_project(context)
 
 
-def test_entrypoint_explicit_declaration_wins_over_convention(tmp_path: Path):
+def test_declared_entrypoint_always_wins(tmp_path: Path):
     root = tmp_path / "acme"
     root.mkdir()
     _write(
@@ -305,29 +312,42 @@ agents:
     assert context.entrypoint == "helper"
 
 
-def test_voice_entrypoint_convention_picks_voice_agent(tmp_path: Path):
+def test_voice_agent_name_is_not_a_voice_entrypoint_convention(tmp_path: Path):
+    """An agent literally named `voice_agent` gets no special treatment:
+    without a declared `agents.voice_entrypoint` there is no voice spec."""
     root = tmp_path / "acme"
     root.mkdir()
-    _write(root / "project.yml", "product:\n  name: acme\n")
+    _write(
+        root / "project.yml",
+        "product:\n  name: acme\nagents:\n  entrypoint: acme\n",
+    )
     _write_agent(root, "acme")
     _write_agent(root, "voice_agent", model="gpt-realtime")
     context = load_project(str(root))
     assert context.entrypoint == "acme"
-    assert context.voice_entrypoint == "voice_agent"
-    spec = build_spec_from_project(context)
-    assert spec.voice_spec is not None
-    assert spec.voice_spec.agent_slug == "voice_agent"
-
-
-def test_voice_entrypoint_none_without_conventional_agent(tmp_path: Path):
-    root = tmp_path / "acme"
-    root.mkdir()
-    _write(root / "project.yml", "product:\n  name: acme\n")
-    _write_agent(root, "acme")
-    context = load_project(str(root))
-    assert context.voice_entrypoint is None
     spec = build_spec_from_project(context)
     assert spec.voice_spec is None
+
+
+def test_declared_voice_entrypoint_builds_voice_spec(tmp_path: Path):
+    root = tmp_path / "acme"
+    root.mkdir()
+    _write(
+        root / "project.yml",
+        """product:
+  name: acme
+agents:
+  entrypoint: acme
+  voice_entrypoint: talker
+""",
+    )
+    _write_agent(root, "acme")
+    _write_agent(root, "talker", model="gpt-realtime")
+    context = load_project(str(root))
+    assert context.voice_entrypoint == "talker"
+    spec = build_spec_from_project(context)
+    assert spec.voice_spec is not None
+    assert spec.voice_spec.agent_slug == "talker"
 
 
 def test_tracing_defaults_derive_from_product_slug(tmp_path: Path):

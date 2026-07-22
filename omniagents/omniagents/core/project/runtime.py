@@ -343,14 +343,10 @@ def load_project(
                 f"Entrypoint '{entry}' not found among agents: {sorted(agents_map.keys())}"
             )
     else:
-        # Entrypoint convention: the agent named after the product's CLI
-        # program, else the one named after the product slug, else the
-        # single-agent auto-entrypoint. Explicit declarations win above.
-        if product.prog in agents_map:
-            entry = product.prog
-        elif product.slug in agents_map:
-            entry = product.slug
-        elif len(agents_map) == 1:
+        # No convention here: which agent runs must be declared. The only
+        # implicit case is the single-agent project, whose sole agent is
+        # its unambiguous entrypoint.
+        if len(agents_map) == 1:
             entry = next(iter(agents_map.keys()))
         else:
             entry = None
@@ -361,10 +357,12 @@ def load_project(
                 f"Voice entrypoint '{voice_entry}' not found among agents: {sorted(agents_map.keys())}"
             )
     elif voice_entry in (None, ""):
-        # Voice convention: the agent named `voice_agent`, when present.
-        voice_entry = "voice_agent" if "voice_agent" in agents_map else None
+        voice_entry = None
     else:
         raise ValueError("Voice entrypoint must be a string if provided")
+
+    if voice_entry is None:
+        voice_entry = entry
 
     core_root = Path(__file__).resolve().parents[2]
 
@@ -608,11 +606,11 @@ def load_project(
         raw=proj,
         paths=paths,
         agents_map=agents_map,
-        entrypoint=(
-            str(entry)
-            if entry
-            else (next(iter(agents_map.keys())) if agents_map else None)
-        ),
+        # No fallback here: which agent runs must be declared
+        # (agents.entrypoint), except the single-agent auto-entrypoint
+        # resolved above. A None entrypoint fails at resolve_agent with
+        # an actionable error.
+        entrypoint=(str(entry) if entry else None),
         voice_entrypoint=(str(voice_entry) if voice_entry else None),
         tracing_defaults=tracing_defaults,
         settings_defaults=settings_defaults,
@@ -634,7 +632,13 @@ def resolve_agent(
 ) -> Tuple[str, Path]:
     key = agent_key or project.entrypoint
     if not key:
-        raise FileNotFoundError("No agent entrypoint defined in project.yml")
+        raise FileNotFoundError(
+            "No agent entrypoint defined in project.yml. The project has "
+            f"multiple agents ({sorted(project.agents_map.keys())}) and no "
+            "declared entrypoint — declare one with:\n\n"
+            "  agents:\n"
+            "    entrypoint: <agent-key>"
+        )
     if key not in project.agents_map:
         raise FileNotFoundError(f"Agent key not found in project: {key}")
     return key, project.agents_map[key]
@@ -644,9 +648,14 @@ def build_spec_from_project(
     project: ProjectContext,
     agent_key: Optional[str] = None,
 ):
-    # The loader already resolved the voice entrypoint (declared, else
-    # the conventional `voice_agent` when present, else None).
-    configured_voice_key = project.voice_entrypoint
+    raw_agents_config = (
+        project.raw.get("agents") if isinstance(project.raw, dict) else {}
+    )
+    configured_voice_key = None
+    if isinstance(raw_agents_config, dict):
+        raw_voice = raw_agents_config.get("voice_entrypoint")
+        if isinstance(raw_voice, str) and raw_voice.strip():
+            configured_voice_key = raw_voice.strip()
 
     selected_key = agent_key
     key, agent_yaml = resolve_agent(project, selected_key)
