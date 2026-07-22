@@ -430,9 +430,7 @@ class AgentSpec:
     :func:`omniagents.core.utils.jinja_instructions.instruction_search_paths`:
     the instructions file's own directory, its ``_shared/`` subdirectory, the
     ``_shared/`` sibling of that directory (the ``agents/_shared/`` convention),
-    any ``paths.instruction_fragments`` directories from project.yml, and —
-    last — the framework's builtin fragments
-    (``omniagents/builtin/instructions/``), so project fragments shadow
-    builtins by name. ``None`` (e.g. for agents built in Python) leaves
-    includes unsupported, matching pre-include behavior.
+    and any ``paths.instruction_fragments`` directories from project.yml.
+    ``None`` (e.g. for agents built in Python) leaves includes unsupported,
+    matching pre-include behavior.
     """

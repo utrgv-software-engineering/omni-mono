@@ -7,7 +7,6 @@ import pytest
 
 from omniagents.core.product import bootstrap_product, reset_product_info
 from omniagents.core.runtime.recap import (
-    DEFAULT_RECAP_INSTRUCTIONS,
     generate_and_broadcast_recap,
     generate_recap,
     recap_summarizer,
@@ -33,7 +32,7 @@ def install_summarizer_product(tmp_path, *, agent_key=None, slug="conv_proj"):
             dedent(
                 f"""
                 name: {agent_key}
-                instructions: "(placeholder)"
+                instructions: "Project-owned summarizer prompt."
                 tools: []
                 """
             ),
@@ -111,7 +110,7 @@ class _ConvService:
     spec = None
 
 
-def test_conventional_summarizer_runs_recapper_with_default_prompt(
+def test_conventional_summarizer_runs_recapper_under_its_own_instructions(
     monkeypatch, tmp_path
 ):
     install_summarizer_product(tmp_path, agent_key="recapper")
@@ -137,7 +136,8 @@ def test_conventional_summarizer_runs_recapper_with_default_prompt(
     assert text == "recap text"
     assert captured["agent_key"] == "recapper"
     assert captured["prompt"] == "transcript"
-    assert captured["instructions"] == DEFAULT_RECAP_INSTRUCTIONS
+    # The agent's own instructions.md is the prompt — never overridden.
+    assert "instructions" not in captured
     # Model resolved through the utility-run preference order.
     assert captured["model"] == "gpt-conv"
     assert captured["runtime"]["provider"] == "openai"

@@ -273,10 +273,9 @@ def _instruction_search_paths(
 
     Anchored at the instructions file's own directory when
     ``instructions_file`` is set, otherwise at the agent YAML's directory
-    (inline ``instructions:``). Adds the ``_shared/`` conventions, any
+    (inline ``instructions:``). Adds the ``_shared/`` conventions and any
     ``paths.instruction_fragments`` directories forwarded by the project
-    loader via ``project_defaults``, and — last — the framework's builtin
-    fragments (project fragments shadow builtins by name).
+    loader via ``project_defaults``.
     """
     from omniagents.core.utils.jinja_instructions import instruction_search_paths
 

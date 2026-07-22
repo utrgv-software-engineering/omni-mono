@@ -2,18 +2,16 @@
 
 ``WorkerManager`` (the run loop) still lives in ``omniagents.rpc.agents``
 and is re-exported here; this package adds the pluggable pieces around
-it — isolation strategies, default worker instructions, project-backed
-spec loading, and product configuration.
+it — isolation strategies, project-backed spec loading, and product
+configuration. Worker instructions are product content: the worker
+agent's own ``instructions``/``instructions_file`` (``omniagents new``
+scaffolds a starter ``agents/worker/``); a spec that declares neither
+gets the YAML loader's generic fallback plus its warning.
 """
 
 from omniagents.rpc.agents import WorkerManager
 
 from .config import WorkerDefaults, set_worker_defaults, worker_defaults
-from .instructions import (
-    DEFAULT_WORKER_INSTRUCTIONS,
-    apply_default_worker_instructions,
-    default_worker_instructions_path,
-)
 from .isolation import (
     CopyIsolation,
     IsolationError,
@@ -43,9 +41,6 @@ __all__ = [
     "WorkerDefaults",
     "set_worker_defaults",
     "worker_defaults",
-    "DEFAULT_WORKER_INSTRUCTIONS",
-    "apply_default_worker_instructions",
-    "default_worker_instructions_path",
     "IsolationError",
     "IsolationStrategy",
     "WorkerWorkspace",

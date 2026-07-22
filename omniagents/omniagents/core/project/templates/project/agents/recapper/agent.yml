@@ -1,0 +1,23 @@
+name: recapper
+label: Session Recapper
+description: "Produces a short human-friendly recap of the current session"
+# This agent's name IS the install: with no explicitly-installed recap
+# summarizer, the framework's recap seam runs the project agent named
+# `recapper` one-shot under these instructions on the utility-run model
+# resolution (bypassing AgentService, so no approvals run against it).
+# instructions.md is the prompt — it is yours to edit.
+instructions_file: instructions.md
+
+tools: []
+
+# Headless subagent — empty tool list makes hangs impossible;
+# use_safe_agent: false documents the intent and stays correct if this
+# agent is ever moved onto AgentService.
+use_safe_agent: false
+
+model_settings:
+  tool_choice: none
+
+max_turns: 1
+
+variables: {}

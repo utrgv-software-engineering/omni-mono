@@ -8,12 +8,13 @@ read-only side view — session history is never mutated.
 
 Like compaction, the *summarizer* resolves by convention: a project that
 ships an agent named :data:`CONVENTIONAL_RECAP_AGENT` (``recapper``) gets
-a summarizer that runs it one-shot under
-:data:`DEFAULT_RECAP_INSTRUCTIONS` on the utility-run model resolution —
-no install call needed. :func:`set_recap_summarizer` remains the
-override seam for products with summarization policy of their own (an
-explicit install always wins). The builtin ``recap`` capability pack
-exposes ``/recap`` over this module.
+a summarizer that runs it one-shot under the agent's own instructions on
+the utility-run model resolution — no install call needed. The recap
+prompt is product content; ``omniagents new`` scaffolds a starter
+``agents/recapper/`` the product owns. :func:`set_recap_summarizer`
+remains the override seam for products with summarization policy of
+their own (an explicit install always wins). The builtin ``recap``
+capability pack exposes ``/recap`` over this module.
 
 Lifted from omni-code.
 """
@@ -30,7 +31,6 @@ from omniagents.core.runtime.compaction import (
 
 __all__ = [
     "CONVENTIONAL_RECAP_AGENT",
-    "DEFAULT_RECAP_INSTRUCTIONS",
     "set_recap_summarizer",
     "recap_summarizer",
     "generate_recap",
@@ -39,31 +39,6 @@ __all__ = [
 
 #: Project-agent key the conventional recap summarizer runs.
 CONVENTIONAL_RECAP_AGENT = "recapper"
-
-
-DEFAULT_RECAP_INSTRUCTIONS = """\
-You are writing a low-friction catch-up note for a user returning after stepping away from an agent session.
-
-The input is a chronological transcript of the session, including tool calls and outputs where present. Use it to understand the current state, but do not retell the transcript.
-
-Goal: help the user regain context in under 15 seconds.
-
-Write 3–6 short bullets. Prioritize:
-- What the user asked for.
-- The current result, status, or blocker.
-- What is still needed from the user, if anything.
-- The next useful action.
-
-Guidelines:
-- Start with the current state, not the history.
-- Keep it concise: usually 80–160 words.
-- Use plain language with low cognitive overhead.
-- Do not narrate every attempt, click, retry, command, tool call, or implementation detail.
-- Mention failed attempts only as a short reason for a current blocker.
-- Include file names, commands, or decisions only when they are essential for the user to know what to do next.
-- No preamble ("Here is a recap..."). Start with the substance.
-- If the session is short or nothing much happened, say so briefly rather than inventing detail.
-"""
 
 
 # async (prompt: str, *, service, session) -> str
@@ -89,8 +64,8 @@ def recap_summarizer() -> Optional[RecapSummarizer]:
     """The active recap summarizer.
 
     An explicitly-installed summarizer wins; otherwise the conventional
-    one — a one-shot run of the project's ``recapper`` agent under
-    :data:`DEFAULT_RECAP_INSTRUCTIONS`
+    one — a one-shot run of the project's ``recapper`` agent under its
+    own instructions
     (:func:`omniagents.core.runtime.conventional_service_summarizer`) —
     when the installed project ships that agent. ``None`` when neither
     exists.
@@ -99,9 +74,7 @@ def recap_summarizer() -> Optional[RecapSummarizer]:
         return _SUMMARIZER
     from omniagents.core.runtime.ephemeral import conventional_service_summarizer
 
-    return conventional_service_summarizer(
-        CONVENTIONAL_RECAP_AGENT, DEFAULT_RECAP_INSTRUCTIONS
-    )
+    return conventional_service_summarizer(CONVENTIONAL_RECAP_AGENT)
 
 
 def build_recap_prompt(history: list) -> str:

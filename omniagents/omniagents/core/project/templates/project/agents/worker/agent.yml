@@ -1,0 +1,19 @@
+name: worker
+label: Worker
+description: "Autonomous worker for parallel subtasks"
+# Spawned by the framework worker tools via WorkerManager (the `workers`
+# capability on an orchestrating agent). instructions.md is the worker's
+# system prompt — it is yours to edit; layer your product's delta (extra
+# rules, output emphasis) directly into it.
+instructions_file: instructions.md
+
+# Workers get whatever surface your product grants them; start empty and
+# add tools/capabilities as your tasks demand.
+tools: []
+
+model_settings:
+  parallel_tool_calls: true
+
+max_turns: 100
+
+variables: {}
