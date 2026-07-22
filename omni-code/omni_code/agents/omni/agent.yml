@@ -94,10 +94,11 @@ context: build_coding_context
 model_config_resolver: resolve_default_model
 variables: {}
 
-# Sub-agent (explorer) is bundled into the builtin `exploration` capability
+# Sub-agent (explorer) is bundled into the project `exploration` capability
 # above via agent_tools: [{agent: explorer, tool_name: explore, ...}]. Both
-# the capability pack and the explorer agent ship with the framework
-# (omniagents/builtin/). The sub-agent inherits the parent's RunConfig
+# the capability pack (capabilities/exploration.yml) and the explorer agent
+# (agents/explorer/) are product-owned — the framework ships packs, tools,
+# and prompt seams, but no agents. The sub-agent inherits the parent's RunConfig
 # (model_provider with credentials) and the parent's RunContextWrapper
 # (workspace_root, session vars); it declares no model of its own, so it
 # runs on the orchestrator's resolved model — the user's currently-selected

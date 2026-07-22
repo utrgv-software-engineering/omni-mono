@@ -33,8 +33,8 @@ tools:
   - get_worker_status
 
 agent_tools:
-  # Resolves against the project agent registry, which includes the
-  # framework's builtin `explorer` (omniagents/builtin/agents/).
+  # Resolves against the project agent registry — the product-owned
+  # `explorer` (omni_code/agents/explorer/).
   - agent: explorer
     tool_name: explore
     max_turns: 50
