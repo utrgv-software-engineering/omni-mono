@@ -14,3 +14,11 @@
 
 ## Examples
 <few-shot input→output pairs to show format and edge cases>
+
+{% include "personality.md" %}
+
+{% include "proactiveness.md" %}
+
+{% include "agents_md_spec.md" %}
+
+{% include "task_execution.md" %}

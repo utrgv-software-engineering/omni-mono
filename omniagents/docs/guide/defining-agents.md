@@ -181,27 +181,11 @@ paths:
   instruction_fragments: prompts/shared   # string or list
 ```
 
-5. last, the framework's builtin fragments
-   (`omniagents/builtin/instructions/`) — generic agent-harness prose the
-   framework ships, e.g. `personality.md`, `proactiveness.md`,
-   `agents_md_spec.md`, and `task_execution.md` (whose agent descriptor is
-   parameterized: `{% set task_execution_agent_descriptor = "coding agent"
-   %}` before the include; it defaults to "agent").
-
-Because the builtin directory is searched last, a project fragment with the
-same name shadows the builtin — the same precedence as builtin capabilities.
-The explicit `builtin/` prefix bypasses shadowing:
-
-```jinja
-{# agents/_shared/task_execution.md — extend, don't replace #}
-{% include "builtin/task_execution.md" %}
-
-Project-specific execution rules...
-```
-
-Use the prefix when a project fragment extends its builtin namesake (a bare
-name there would resolve back to the project fragment itself), or whenever
-you want the include to read as explicitly framework-owned.
+The framework ships no instruction prose of its own — every fragment an
+agent includes is project content. `omniagents new` scaffolds starter
+fragments under `agents/_shared/` (`personality.md`, `proactiveness.md`,
+`agents_md_spec.md`, `task_execution.md`) that the generated entrypoint
+agent includes; edit or delete them freely, they are yours.
 
 Includes nest (a fragment may itself `{% include %}` another) and render
 with the same Jinja2 context as the parent template. A missing fragment

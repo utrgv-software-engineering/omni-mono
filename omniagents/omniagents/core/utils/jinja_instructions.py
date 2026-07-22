@@ -17,7 +17,6 @@ from jinja2 import (
     ChoiceLoader,
     Environment,
     FileSystemLoader,
-    PrefixLoader,
     TemplateNotFound,
 )
 from agents.run_context import RunContextWrapper
@@ -45,21 +44,6 @@ class InstructionIncludeNotFoundError(Exception):
         )
 
 
-def builtin_instruction_fragments_dir() -> Path:
-    """Directory of instruction fragments shipped with the framework.
-
-    Data-only Markdown fragments under ``omniagents/builtin/instructions/``
-    (generic agent-harness prose: personality, proactiveness, the AGENTS.md
-    spec, task-execution persistence). They resolve *last* in the
-    ``{% include %}`` search order, so a project fragment with the same name
-    shadows the builtin — mirroring builtin-capability precedence. The
-    ``builtin/`` include prefix (see :func:`_build_loader`) always reaches
-    them explicitly, letting a project fragment extend its builtin namesake
-    without recursing into itself.
-    """
-    return Path(__file__).resolve().parents[2] / "builtin" / "instructions"
-
-
 def instruction_search_paths(
     anchor_dir: PathLike, extra_dirs: Iterable[PathLike] = ()
 ) -> List[Path]:
@@ -73,10 +57,7 @@ def instruction_search_paths(
     3. ``anchor_dir/../_shared`` — the ``agents/_shared/`` sibling convention
        for the strict ``agents/<key>/`` project layout,
     4. any ``extra_dirs`` (e.g. ``paths.instruction_fragments`` from
-       project.yml), in the given order,
-    5. the framework's builtin fragments
-       (:func:`builtin_instruction_fragments_dir`) — always last, so any
-       project-side fragment of the same name shadows the builtin.
+       project.yml), in the given order.
 
     Duplicates are removed while preserving order. Directories need not exist;
     non-existent entries are simply skipped by the template loader.
@@ -87,7 +68,6 @@ def instruction_search_paths(
         anchor / "_shared",
         anchor.parent / "_shared",
         *[Path(d) for d in extra_dirs],
-        builtin_instruction_fragments_dir(),
     ]
     out: List[Path] = []
     seen: set = set()
@@ -100,25 +80,10 @@ def instruction_search_paths(
 
 
 def _build_loader(search_paths: Optional[Sequence[PathLike]]):
-    """Build a ChoiceLoader over the given directories, or None.
-
-    Besides the plain directory loaders, mounts the framework's builtin
-    fragments under the explicit ``builtin/`` prefix
-    (``{% include "builtin/proactiveness.md" %}``). Bare names already fall
-    through to the builtin directory via :func:`instruction_search_paths`;
-    the prefix exists for the extend-don't-replace case, where a project
-    fragment includes its builtin namesake and a bare name would resolve
-    back to the project fragment itself.
-    """
+    """Build a ChoiceLoader over the given directories, or None."""
     if not search_paths:
         return None
-    loaders = [FileSystemLoader(str(p)) for p in search_paths]
-    loaders.append(
-        PrefixLoader(
-            {"builtin": FileSystemLoader(str(builtin_instruction_fragments_dir()))}
-        )
-    )
-    return ChoiceLoader(loaders)
+    return ChoiceLoader([FileSystemLoader(str(p)) for p in search_paths])
 
 
 def context_to_dict(context: Any) -> Dict[str, Any]:

@@ -22,7 +22,6 @@ from .query import (
 from .cli import add_sessions_subparser, handle_sessions_command
 from .summarize import (
     DEFAULT_SESSION_ENVELOPE,
-    DEFAULT_SESSION_SUMMARY_INSTRUCTIONS,
     session_summarizer,
     set_session_summarizer,
     summarize_session,
@@ -50,7 +49,6 @@ __all__ = [
     "handle_sessions_command",
     # Offline session summarization
     "DEFAULT_SESSION_ENVELOPE",
-    "DEFAULT_SESSION_SUMMARY_INSTRUCTIONS",
     "session_summarizer",
     "set_session_summarizer",
     "summarize_session",

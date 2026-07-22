@@ -231,11 +231,8 @@ include-package-data = true
 # (builtin/capabilities/), so the packages-find scan misses them and they get
 # dropped from the wheel — leaving web/filesystem/artifacts/etc. unavailable at
 # runtime ("capability 'X' not found"). Ship them via the builtin package.
-# Builtin instruction fragments (builtin/instructions/*.md) are data-only
-# too — same treatment.
 "omniagents.builtin" = [
     "capabilities/*.yml",
-    "instructions/*.md",
 ]
 # Ensure the Ink TUI TypeScript sources are included in wheels/sdists
 "omniagents.backends.ink" = [
@@ -261,10 +258,6 @@ include-package-data = true
 "omniagents.core.project" = [
     "templates/*",
     "templates/**/*",
-]
-# Default worker instructions template ships next to its loader module.
-"omniagents.core.workers" = [
-    "*.md",
 ]
 # Pyodide worker — pure JS, no Python at runtime, but the .mjs has to ship
 # with the wheel so PyodideWorkspace can spawn it via importlib.resources.

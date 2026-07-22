@@ -24,8 +24,9 @@ apply the spec-level overrides products kept re-implementing
 :func:`conventional_service_summarizer` closes the loop for the
 summarizer seams (recap/compaction): when a project ships an agent under
 the conventional key (``recapper``/``compactor``), the seam getters fall
-back to a summarizer that runs it through this harness — naming the
-agent IS the install.
+back to a summarizer that runs it through this harness under the agent's
+own instructions — naming the agent IS the install, and the prompt is
+product content.
 """
 
 from __future__ import annotations
@@ -308,7 +309,7 @@ async def run_project_agent_once(
 
 
 def conventional_service_summarizer(
-    agent_key: str, instructions: str, project_path: Any = None
+    agent_key: str, project_path: Any = None
 ) -> Optional[Any]:
     """The conventional ``(prompt, *, service, session)`` summarizer for
     *agent_key*, or ``None`` when the project has no such agent.
@@ -316,12 +317,12 @@ def conventional_service_summarizer(
     The fallback behind the recap/compaction summarizer seams: when no
     summarizer is explicitly installed but the project (the installed
     product's manifest by default) ships ``agents/<agent_key>/agent.yml``,
-    the seam runs that agent one-shot with *instructions* as the
-    code-owned system prompt — so shipping a conventionally-named agent
-    IS the install. Model resolution mirrors the utility-run preference
-    order (session active model → service spec model → configured
-    default, via ``resolve_service_model_runtime``), and the workspace
-    root anchors through :func:`ephemeral_workspace_root`.
+    the seam runs that agent one-shot under the agent's own instructions
+    — so shipping a conventionally-named agent IS the install, and the
+    prompt is product content. Model resolution mirrors the utility-run
+    preference order (session active model → service spec model →
+    configured default, via ``resolve_service_model_runtime``), and the
+    workspace root anchors through :func:`ephemeral_workspace_root`.
     """
     try:
         resolve_project_agent_yaml(agent_key, project_path)
@@ -343,7 +344,6 @@ def conventional_service_summarizer(
             model=model_name,
             runtime=runtime,
             session=session,
-            instructions=instructions,
         )
 
     return _summarize

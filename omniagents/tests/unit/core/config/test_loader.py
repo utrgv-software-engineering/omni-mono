@@ -8,9 +8,6 @@ from omniagents.core.config.loader import (
     load_agent_spec_from_yaml,
     _parse_inline_agent_spec,
 )
-from omniagents.core.utils.jinja_instructions import (
-    builtin_instruction_fragments_dir,
-)
 
 
 def write(path, content):
@@ -885,7 +882,6 @@ def test_loader_sets_instruction_search_paths_from_instructions_file(tmp_path):
         prompts_dir,
         prompts_dir / "_shared",
         agent_dir / "_shared",
-        builtin_instruction_fragments_dir(),
     ]
 
 
@@ -912,7 +908,6 @@ def test_loader_search_paths_include_project_instruction_fragments(tmp_path):
         agent_dir / "_shared",
         tmp_path / "agents" / "_shared",
         fragments_dir,
-        builtin_instruction_fragments_dir(),
     ]
 
 
@@ -961,5 +956,4 @@ def test_loader_inline_instructions_search_paths_anchor_at_yaml_dir(tmp_path):
         tmp_path,
         tmp_path / "_shared",
         tmp_path.parent / "_shared",
-        builtin_instruction_fragments_dir(),
     ]

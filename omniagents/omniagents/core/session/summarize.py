@@ -12,12 +12,10 @@ Like recap (``core/runtime/recap.py``) and checkpoint compaction, the
 *summarizer* resolves by convention: a project that ships an agent named
 :data:`CONVENTIONAL_SESSION_SUMMARIZER_AGENT` (``session_summarizer``)
 gets a summarizer that runs it one-shot on the configured default model
-— no install call needed. Unlike the recap/compaction conventions
-(placeholder agents, code-owned prompts), the session summarizer's
-prompt is the agent's own ``instructions.md`` — the JSON schema it emits
-is product content, declared beside the envelope.
-:data:`DEFAULT_SESSION_SUMMARY_INSTRUCTIONS` is the ready-made starting
-point for that file, shaped to emit the neutral
+— no install call needed. The prompt is the agent's own
+``instructions.md`` — the JSON schema it emits is product content,
+declared beside the envelope. ``omniagents new`` scaffolds a starter
+``agents/session_summarizer/`` shaped to emit the neutral
 :data:`DEFAULT_SESSION_ENVELOPE` keys. :func:`set_session_summarizer`
 remains the override seam (an explicit install always wins).
 
@@ -50,7 +48,6 @@ from omniagents.core.session.query import (
 
 __all__ = [
     "CONVENTIONAL_SESSION_SUMMARIZER_AGENT",
-    "DEFAULT_SESSION_SUMMARY_INSTRUCTIONS",
     "DEFAULT_SESSION_ENVELOPE",
     "manifest_session_envelope",
     "set_session_summarizer",
@@ -62,38 +59,6 @@ __all__ = [
 
 #: Project-agent key the conventional session summarizer runs.
 CONVENTIONAL_SESSION_SUMMARIZER_AGENT = "session_summarizer"
-
-
-# Lifted from omni-code's session_summarizer agent.
-DEFAULT_SESSION_SUMMARY_INSTRUCTIONS = """\
-Return ONLY valid JSON (no markdown fences, no extra text).
-
-You are summarizing a past agent session. The input contains:
-- Session metadata
-- A chronological transcript of message objects (raw JSON items, including tool calls/outputs when present)
-
-Your job is to produce a structured summary that helps an agent quickly reuse the session.
-
-JSON schema (keys must exist; use empty arrays/strings if unknown):
-{
-  "session_id": "string",
-  "project": "string",
-  "agent": "string",
-  "created_at": "string|null",
-  "message_count": 0,
-  "summary": "string",
-  "decisions": ["string"],
-  "constraints": ["string"],
-  "open_questions": ["string"],
-  "next_steps": ["string"],
-  "notable_errors": ["string"]
-}
-
-Guidelines:
-- Prefer concrete, tool-verifiable details (names, identifiers, exact values).
-- If the transcript includes tool outputs, extract the key results.
-- Keep summary concise but information-dense.
-"""
 
 
 # The neutral default content keys of the summary envelope. Products with

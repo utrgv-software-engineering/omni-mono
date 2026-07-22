@@ -8,7 +8,6 @@ import pytest
 from omniagents.core.session import history_db
 from omniagents.core.session.summarize import (
     DEFAULT_SESSION_ENVELOPE,
-    DEFAULT_SESSION_SUMMARY_INSTRUCTIONS,
     build_session_summary_prompt,
     session_summarizer,
     set_session_summarizer,
@@ -334,21 +333,3 @@ def test_manifest_session_envelope_absent_or_malformed(_fresh_identity, tmp_path
     # No installed manifest at all.
     reset_product_info()
     assert manifest_session_envelope() is None
-
-
-def test_default_session_summary_instructions_shape():
-    text = DEFAULT_SESSION_SUMMARY_INSTRUCTIONS
-    # JSON-only structured summary of a stored session.
-    assert text.startswith("Return ONLY valid JSON")
-    assert "Session metadata" in text
-    # The schema advertises exactly the neutral envelope keys.
-    for key in DEFAULT_SESSION_ENVELOPE:
-        assert f'"{key}"' in text
-    for key in ("session_id", "project", "agent", "created_at", "message_count"):
-        assert f'"{key}"' in text
-    # Domain-neutralized in the lift: no coding-flavored keys or wording.
-    assert "key_files" not in text
-    assert '"commands"' not in text
-    assert '"tests"' not in text
-    assert "coding" not in text.lower()
-    assert "file path" not in text.lower()

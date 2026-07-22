@@ -355,11 +355,10 @@ def test_auto_compact_token_hook_custom_threshold():
 
 
 # ---------------------------------------------------------------------------
-# Summarizer seam + default instructions
+# Summarizer seam
 # ---------------------------------------------------------------------------
 
 from omniagents.core.runtime.compaction import (
-    DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS,
     compaction_summarizer,
     set_compaction_summarizer,
 )
@@ -382,11 +381,11 @@ def test_compaction_summarizer_seam_roundtrip(_reset_compaction_seam):
     assert compaction_summarizer() is None
 
 
-def test_conventional_summarizer_runs_compactor_with_default_prompt(
+def test_conventional_summarizer_runs_compactor_under_its_own_instructions(
     _reset_compaction_seam, monkeypatch, tmp_path
 ):
     """A project shipping a `compactor` agent gets the conventional
-    summarizer: one-shot run under the framework checkpoint prompt;
+    summarizer: one-shot run under the agent's own instructions;
     an explicit install wins over it."""
     from types import SimpleNamespace
 
@@ -421,7 +420,8 @@ def test_conventional_summarizer_runs_compactor_with_default_prompt(
         )
         assert body == "checkpoint body"
         assert captured["agent_key"] == "compactor"
-        assert captured["instructions"] == DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS
+        # The agent's own instructions.md is the prompt — never overridden.
+        assert "instructions" not in captured
         assert captured["model"] == "gpt-conv"
         assert captured["session"] is session
 
@@ -433,14 +433,3 @@ def test_conventional_summarizer_runs_compactor_with_default_prompt(
         assert compaction_summarizer() is explicit
     finally:
         reset_product_info()
-
-
-def test_default_checkpoint_summary_instructions_shape():
-    text = DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS
-    # Handoff prompt: structured summary + coverage checklist.
-    assert "context length limit" in text
-    assert "<analysis>" in text
-    assert "Files and Key Sections" in text
-    # Domain-neutralized in the lift: no coding-flavored section titles.
-    assert "Files and Code Sections" not in text
-    assert "code snippet" not in text.lower()

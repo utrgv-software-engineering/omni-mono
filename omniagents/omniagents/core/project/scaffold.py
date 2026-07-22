@@ -107,6 +107,41 @@ def scaffold_project(
         created,
     )
 
+    # Battery agents + shared fragments: starter content the product owns.
+    # The framework ships no agent prompt text at runtime — the summarizer
+    # conventions (recapper/compactor/session_summarizer) and spawned
+    # workers run under these project-owned instructions; the `_shared/`
+    # fragments are included by the entrypoint agent's instructions.
+    for battery_key in ("recapper", "compactor", "session_summarizer", "worker"):
+        battery_dir = agents_dir / battery_key
+        battery_dir.mkdir(parents=True, exist_ok=True)
+        _write_template(
+            battery_dir / "agent.yml",
+            f"project/agents/{battery_key}/agent.yml",
+            force,
+            created,
+        )
+        _write_template(
+            battery_dir / "instructions.md",
+            f"project/agents/{battery_key}/instructions.md",
+            force,
+            created,
+        )
+    shared_dir = agents_dir / "_shared"
+    shared_dir.mkdir(parents=True, exist_ok=True)
+    for fragment in (
+        "personality.md",
+        "proactiveness.md",
+        "agents_md_spec.md",
+        "task_execution.md",
+    ):
+        _write_template(
+            shared_dir / fragment,
+            f"project/agents/_shared/{fragment}",
+            force,
+            created,
+        )
+
     display_label = _titleize(sanitized)
     tools_list = "[echo, word_count]" if include_samples else "[]"
     config_dir_unix = sanitized.replace("_", "-")
@@ -379,10 +414,14 @@ def delete_agent(project_ref: str, agent_key: str) -> Tuple[List[str], str, str]
         agents_cfg = data.get("agents") if isinstance(data.get("agents"), dict) else {}
         entry = agents_cfg.get("entrypoint")
         if entry == agent_key:
-            for candidate in existing_keys:
-                if candidate != agent_key:
-                    agents_cfg["entrypoint"] = candidate
-                    break
+            # Prefer a non-battery agent for the new entrypoint — the
+            # conventional summarizer/worker agents are headless subagents.
+            battery_keys = {"recapper", "compactor", "session_summarizer", "worker"}
+            candidates = [k for k in existing_keys if k != agent_key]
+            preferred = [k for k in candidates if k not in battery_keys]
+            for candidate in preferred or candidates:
+                agents_cfg["entrypoint"] = candidate
+                break
         data["agents"] = agents_cfg
         project_yml.write_text(
             yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"

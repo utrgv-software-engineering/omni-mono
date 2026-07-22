@@ -199,18 +199,6 @@ class WorkerManager:
     ) -> WorkerHandle:
         spec, _runtime = self._spec_loader(model)
         _default_worker_safety(spec)
-        try:
-            # Lazy import: omniagents.core.workers re-exports WorkerManager
-            # from this module, so a top-level import would be circular.
-            from omniagents.core.workers.instructions import (
-                apply_default_worker_instructions,
-            )
-
-            apply_default_worker_instructions(spec)
-        except Exception:
-            # Defaulting must never block a spawn; a worker with loader
-            # fallback instructions still runs.
-            pass
         variables = getattr(spec, "variables", None)
         if variables is None:
             spec.variables = {}
