@@ -1,16 +1,7 @@
-name: weather_agent_project
-paths:
-  evaluations: evaluations
-  agents: agents
-  target: target
-  tools: tools
-agents:
-  entrypoint: weather_agent
-  voice_entrypoint: weather_voice
-
-tracing:
-  provider: studio
-  project: weather_agent_demo
+# The entrypoint is conventional: the agent named after the product.
+# The voice agent deviates from the `voice_agent` naming convention,
+# so it is the one declaration this manifest needs.
+product:
   name: weather_agent
-  settings:
-    resume: never
+agents:
+  voice_entrypoint: weather_voice

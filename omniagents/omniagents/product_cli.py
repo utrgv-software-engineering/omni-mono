@@ -160,8 +160,10 @@ class ProductCliConfig:
     """Import path of the product's CLI extension module, or None."""
 
     entrypoint_agent: Optional[str] = None
-    """The manifest's ``agents.entrypoint`` — the default agent for the
-    reserved ``sessions`` command."""
+    """The manifest's entrypoint agent — declared ``agents.entrypoint``,
+    else the conventional one (the agent named after the product's
+    ``prog``, else its ``slug``). The default agent for the reserved
+    ``sessions`` command."""
 
 
 def _resolve_manifest_path(project_path: Any) -> Path:
@@ -182,6 +184,32 @@ def _opt_str(data: Mapping[str, Any], key: str, *, where: str) -> Optional[str]:
     return value.strip()
 
 
+def _conventional_entrypoint(data: Mapping[str, Any], manifest: Path) -> Optional[str]:
+    """The conventional entrypoint agent, mirroring the project loader:
+    the agent named after the product's ``prog``, else its ``slug``,
+    when that agent exists under the manifest's agents dir."""
+    section = data.get("product")
+    if section is None:
+        return None
+    try:
+        from omniagents.core.product import product_info_from_mapping
+
+        pinfo = product_info_from_mapping(section)
+    except ValueError:
+        return None
+    paths_cfg = data.get("paths")
+    agents_rel = (
+        paths_cfg.get("agents") if isinstance(paths_cfg, Mapping) else None
+    )
+    if not isinstance(agents_rel, str) or not agents_rel.strip():
+        agents_rel = "agents"
+    agents_dir = manifest.parent / agents_rel.strip()
+    for candidate in (pinfo.prog, pinfo.slug):
+        if (agents_dir / candidate / "agent.yml").is_file():
+            return candidate
+    return None
+
+
 def load_product_cli_config(project_path: Any) -> ProductCliConfig:
     """Light-parse the ``cli:`` section (and ``agents.entrypoint``) of a manifest.
 
@@ -200,6 +228,8 @@ def load_product_cli_config(project_path: Any) -> ProductCliConfig:
         raw_entry = agents_section.get("entrypoint")
         if isinstance(raw_entry, str) and raw_entry.strip():
             entrypoint = raw_entry.strip()
+    if entrypoint is None:
+        entrypoint = _conventional_entrypoint(data, p)
 
     section = data.get("cli")
     if section is None:

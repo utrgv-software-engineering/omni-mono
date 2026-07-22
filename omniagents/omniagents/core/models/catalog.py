@@ -210,7 +210,13 @@ def load_model_catalog(path: Any) -> ModelCatalog:
 def model_catalog_path(
     manifest_path: Any, *, data: Optional[Mapping[str, Any]] = None
 ) -> Optional[Path]:
-    """The manifest-declared catalog file (``paths.model_catalog``), or None.
+    """The manifest's catalog file, or None.
+
+    Declared via ``paths.model_catalog``; by convention a
+    manifest-sibling ``models.yml`` (used only when the file exists —
+    mirroring the sandbox-profile sibling convention). An explicit
+    declaration always resolves (missing files then fail loudly at
+    load time).
 
     *manifest_path* is a project.yml path or a directory containing one.
     *data* is an optional pre-parsed manifest mapping (e.g. the
@@ -231,11 +237,15 @@ def model_catalog_path(
     if not isinstance(data, Mapping):
         return None
     paths_cfg = data.get("paths")
-    if not isinstance(paths_cfg, Mapping):
-        return None
-    rel = paths_cfg.get(MODEL_CATALOG_PATH_KEY)
+    rel = (
+        paths_cfg.get(MODEL_CATALOG_PATH_KEY)
+        if isinstance(paths_cfg, Mapping)
+        else None
+    )
     if not isinstance(rel, str) or not rel.strip():
-        return None
+        # Convention: a manifest-sibling models.yml, when it exists.
+        conventional = (p.parent / "models.yml").resolve()
+        return conventional if conventional.is_file() else None
     candidate = Path(rel.strip()).expanduser()
     if not candidate.is_absolute():
         candidate = (p.parent / candidate).resolve()

@@ -1,15 +1,8 @@
-name: {sanitized}
-paths:
-  agents: agents
-  tools: tools
-  target: target
-agents:
-  entrypoint: {sanitized}
-  voice_entrypoint: {sanitized}
-
-tracing:
-  provider: studio
-  project: {sanitized}_project
+# One name — everything derives: slug, CLI prog, display label, config
+# dirs, env prefix, tracing project, and the entrypoint agent (the agent
+# named after the product). Paths follow the conventional layout
+# (agents/, tools/, capabilities/, evaluations/, target/, prompts/, and
+# a manifest-sibling models.yml when present). Declare a key only where
+# your product deviates from the convention.
+product:
   name: {sanitized}
-  settings:
-    resume: never

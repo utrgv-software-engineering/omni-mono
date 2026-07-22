@@ -40,7 +40,7 @@ def _create_project(
     _write_yaml(
         root / "project.yml",
         {
-            "name": project_name,
+            "product": {"name": project_name},
             "paths": {
                 "agents": "agents",
                 "evaluations": "evaluations",
@@ -294,12 +294,17 @@ class TestLoadEvalConfig:
     def test_extracts_tracing_config(self, tmp_path: Path):
         project_dir = _create_project(tmp_path)
         cfg = load_eval_config(str(project_dir))
-        assert cfg.tracing_config == {"provider": "demo"}
+        # Declared keys merged over the product-derived defaults.
+        assert cfg.tracing_config == {
+            "provider": "demo",
+            "project": "demo_project",
+            "name": "demo_project",
+        }
 
     def test_preserves_project_config(self, tmp_path: Path):
         project_dir = _create_project(tmp_path)
         cfg = load_eval_config(str(project_dir))
-        assert cfg.project_config["name"] == "demo_project"
+        assert cfg.project_config["product"]["name"] == "demo_project"
 
     def test_accepts_project_yml_path(self, tmp_path: Path):
         project_dir = _create_project(tmp_path)

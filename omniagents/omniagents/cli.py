@@ -61,9 +61,15 @@ def _resolve_studio_project_value(
         tracing_project = tracing_cfg.get("project")
         if isinstance(tracing_project, str) and tracing_project.strip():
             return tracing_project.strip()
-        fallback_name = data.get("name")
-        if isinstance(fallback_name, str) and fallback_name.strip():
-            return fallback_name.strip()
+        # Convention: the tracing project is the product slug.
+        product_section = data.get("product")
+        if product_section is not None:
+            try:
+                from omniagents.core.product import product_info_from_mapping
+
+                return product_info_from_mapping(product_section).slug
+            except Exception:
+                return None
         return None
 
     if value:

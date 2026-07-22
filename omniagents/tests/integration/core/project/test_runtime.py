@@ -49,7 +49,8 @@ def _build_runtime_fixture(tmp_path: Path) -> Path:
     root.mkdir()
     _write(
         root / "project.yml",
-        """name: Demo Project
+        """product:
+  name: demo-project
 paths:
   agents: agents
   tools: tools
@@ -242,3 +243,152 @@ instructions: nope
     )
     with pytest.raises(ValueError):
         load_project(str(root))
+
+
+# ---------------------------------------------------------------------------
+# One-name conventions: the product identity IS the project identity
+# ---------------------------------------------------------------------------
+
+
+def _write_agent(root: Path, key: str, model: str = "gpt-4o") -> None:
+    _write(
+        root / "agents" / key / "agent.yml",
+        f"""name: {key}
+model: {model}
+instructions: hello
+""",
+    )
+
+
+def test_entrypoint_convention_prefers_prog_agent(tmp_path: Path):
+    root = tmp_path / "acme"
+    root.mkdir()
+    _write(
+        root / "project.yml",
+        """product:
+  name: acme-agent
+  prog: acme
+""",
+    )
+    _write_agent(root, "acme")
+    _write_agent(root, "helper")
+    context = load_project(str(root))
+    assert context.entrypoint == "acme"
+    assert context.product.slug == "acme_agent"
+
+
+def test_entrypoint_convention_falls_back_to_slug_agent(tmp_path: Path):
+    root = tmp_path / "acme"
+    root.mkdir()
+    _write(root / "project.yml", "product:\n  name: acme-agent\n")
+    _write_agent(root, "acme_agent")
+    _write_agent(root, "helper")
+    context = load_project(str(root))
+    assert context.entrypoint == "acme_agent"
+
+
+def test_entrypoint_explicit_declaration_wins_over_convention(tmp_path: Path):
+    root = tmp_path / "acme"
+    root.mkdir()
+    _write(
+        root / "project.yml",
+        """product:
+  name: acme-agent
+  prog: acme
+agents:
+  entrypoint: helper
+""",
+    )
+    _write_agent(root, "acme")
+    _write_agent(root, "helper")
+    context = load_project(str(root))
+    assert context.entrypoint == "helper"
+
+
+def test_voice_entrypoint_convention_picks_voice_agent(tmp_path: Path):
+    root = tmp_path / "acme"
+    root.mkdir()
+    _write(root / "project.yml", "product:\n  name: acme\n")
+    _write_agent(root, "acme")
+    _write_agent(root, "voice_agent", model="gpt-realtime")
+    context = load_project(str(root))
+    assert context.entrypoint == "acme"
+    assert context.voice_entrypoint == "voice_agent"
+    spec = build_spec_from_project(context)
+    assert spec.voice_spec is not None
+    assert spec.voice_spec.agent_slug == "voice_agent"
+
+
+def test_voice_entrypoint_none_without_conventional_agent(tmp_path: Path):
+    root = tmp_path / "acme"
+    root.mkdir()
+    _write(root / "project.yml", "product:\n  name: acme\n")
+    _write_agent(root, "acme")
+    context = load_project(str(root))
+    assert context.voice_entrypoint is None
+    spec = build_spec_from_project(context)
+    assert spec.voice_spec is None
+
+
+def test_tracing_defaults_derive_from_product_slug(tmp_path: Path):
+    root = tmp_path / "acme"
+    root.mkdir()
+    _write(root / "project.yml", "product:\n  name: acme-agent\n")
+    _write_agent(root, "acme_agent")
+    context = load_project(str(root))
+    assert context.tracing_defaults == {
+        "provider": "studio",
+        "project": "acme_agent",
+        "name": "acme_agent",
+    }
+
+
+def test_tracing_declared_keys_merge_over_derived_defaults(tmp_path: Path):
+    root = tmp_path / "acme"
+    root.mkdir()
+    _write(
+        root / "project.yml",
+        """product:
+  name: acme-agent
+tracing:
+  project: custom_traces
+  settings:
+    resume: allow
+""",
+    )
+    _write_agent(root, "acme_agent")
+    context = load_project(str(root))
+    assert context.tracing_defaults["project"] == "custom_traces"
+    assert context.tracing_defaults["name"] == "acme_agent"
+    assert context.tracing_defaults["provider"] == "studio"
+    assert context.tracing_defaults["settings"] == {"resume": "allow"}
+
+
+def test_project_identity_derives_from_directory_without_product(tmp_path: Path):
+    root = tmp_path / "dir_named_project"
+    root.mkdir()
+    _write(root / "project.yml", "paths:\n  agents: agents\n")
+    _write_agent(root, "solo")
+    context = load_project(str(root))
+    assert context.product.slug == "dir_named_project"
+    spec = build_spec_from_project(context)
+    assert spec.project_slug == "dir_named_project"
+
+
+def test_legacy_top_level_name_is_inert(tmp_path: Path):
+    """Top-level `name:` was removed as a concept — identity never reads it."""
+    root = tmp_path / "actual_dir"
+    root.mkdir()
+    _write(
+        root / "project.yml",
+        """name: legacy_name
+paths:
+  agents: agents
+""",
+    )
+    _write_agent(root, "solo")
+    context = load_project(str(root))
+    assert context.product.slug == "actual_dir"
+    assert context.tracing_defaults["project"] == "actual_dir"
+    spec = build_spec_from_project(context)
+    assert spec.project_slug == "actual_dir"

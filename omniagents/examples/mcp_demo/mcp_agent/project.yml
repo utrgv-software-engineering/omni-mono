@@ -1,14 +1,2 @@
-name: mcp_agent
-paths:
-  agents: agents
-  tools: tools
-  target: target
-agents:
-  entrypoint: mcp_agent
-
-tracing:
-  provider: studio
-  project: mcp_agent_project
+product:
   name: mcp_agent
-  settings:
-    resume: never

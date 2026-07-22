@@ -1,14 +1,4 @@
-name: wired_demo
-paths:
-  agents: agents
-  tools: tools
-  target: target
+product:
+  name: wired_demo
 agents:
   entrypoint: wired_demo
-
-tracing:
-  provider: studio
-  project: wired_demo_project
-  name: wired_demo
-  settings:
-    resume: never

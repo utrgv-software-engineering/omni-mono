@@ -31,7 +31,7 @@ def studio_api_env(tmp_path: Path):
     ctx = load_project(str(manifest_path))
     base_spec = build_spec_from_project(ctx)
     app_resources["manifest_path"] = str(manifest_path)
-    app_resources["project_name"] = ctx.raw.get("name")
+    app_resources["project_name"] = ctx.product.slug
     app_resources["base_spec"] = base_spec
     app_resources["agent_specs"] = {ctx.entrypoint: base_spec}
     app_resources["entry_agent_key"] = ctx.entrypoint

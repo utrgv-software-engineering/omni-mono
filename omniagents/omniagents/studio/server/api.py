@@ -2834,7 +2834,7 @@ def create_api_app(
         resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
         updated_resources = dict(resources or {})
         project_name = (
-            ctx.raw.get("name")
+            ctx.product.slug
             or resources.get("project_name")
             or app.state.default_project
         )

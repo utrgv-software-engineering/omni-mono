@@ -1,7 +1,4 @@
-name: Studio Fixture
-paths:
-  agents: agents
-  tools: tools
-  guardrails: guardrails
+product:
+  name: studio_fixture
 agents:
   entrypoint: primary

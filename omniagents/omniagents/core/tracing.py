@@ -75,7 +75,12 @@ def setup_tracing(tracing_config: Optional[Dict[str, Any]]) -> None:
                 pass
             return
 
-        project = tracing_config.get("project", "omniagents")
+        # Convention: the tracing project is the product slug. Project
+        # manifests get this filled by the loader; this fallback covers
+        # bare (non-project) runs.
+        from omniagents.core.product import product_info
+
+        project = tracing_config.get("project", product_info().slug)
         name = tracing_config.get("name")
         settings = tracing_config.get("settings", {})
 

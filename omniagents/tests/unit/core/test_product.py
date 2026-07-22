@@ -56,10 +56,7 @@ def _product_project(tmp_path: Path, product_yaml: str) -> Path:
         tools: []
         """,
     )
-    return _write(
-        tmp_path / "project.yml",
-        "name: product_test\n" + dedent(product_yaml),
-    )
+    return _write(tmp_path / "project.yml", dedent(product_yaml))
 
 
 # ---------------------------------------------------------------------------
@@ -72,18 +69,52 @@ def test_minimal_slug_only_derives_everything():
     assert info.slug == "omni_code"
     assert info.name == "omni-code"
     assert info.prog == "omni-code"
-    assert info.label == "omni-code"
+    assert info.label == "Omni Code"
     assert info.config_dir_name == "omni_code"
-    assert info.windows_config_dir_name is None
+    assert info.windows_config_dir_name == "OmniCode"
     assert info.env_prefix == "OMNI_CODE"
     assert info.update is None
 
 
-def test_name_only_derives_slug():
+def test_name_only_derives_everything():
+    """The one-name convention: `product: {name: x}` seeds every facet."""
     info = product_info_from_mapping({"name": "omni-code"})
     assert info.slug == "omni_code"
     assert info.name == "omni-code"
+    assert info.prog == "omni-code"
+    assert info.label == "Omni Code"
+    assert info.config_dir_name == "omni_code"
+    assert info.windows_config_dir_name == "OmniCode"
     assert info.env_prefix == "OMNI_CODE"
+
+
+def test_label_derivation_splits_and_title_cases():
+    assert product_info_from_mapping({"name": "acme-agent"}).label == "Acme Agent"
+    assert product_info_from_mapping({"name": "acme_agent"}).label == "Acme Agent"
+    assert product_info_from_mapping({"name": "acme"}).label == "Acme"
+
+
+def test_windows_config_dir_derives_from_label():
+    # Derived label -> spaces removed.
+    assert (
+        product_info_from_mapping({"name": "acme-agent"}).windows_config_dir_name
+        == "AcmeAgent"
+    )
+    # Explicit label feeds the derivation too.
+    assert (
+        product_info_from_mapping(
+            {"name": "acme-agent", "label": "Acme Dev Tool"}
+        ).windows_config_dir_name
+        == "AcmeDevTool"
+    )
+
+
+def test_update_command_hint_derives_from_prog():
+    info = product_info_from_mapping(
+        {"name": "acme-agent", "prog": "acme", "update": {"index_url": "https://x/"}}
+    )
+    assert info.update is not None
+    assert info.update.command_hint == "acme update"
 
 
 def test_full_schema_explicit_keys_win():

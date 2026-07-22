@@ -35,7 +35,8 @@ def test_project_without_flag_ignores_user_mcp(tmp_path):
     # Create project.yml WITHOUT allow_user_mcp_servers flag
     _write(
         root / "project.yml",
-        """name: test_project
+        """product:
+  name: test_project
 paths:
   agents: agents
 """,
@@ -79,7 +80,8 @@ def test_project_with_flag_loads_user_mcp(tmp_path):
     # Create project.yml WITH allow_user_mcp_servers flag
     _write(
         root / "project.yml",
-        """name: test_project
+        """product:
+  name: test_project
 allow_user_mcp_servers: true
 paths:
   agents: agents
@@ -121,7 +123,8 @@ def test_project_with_flag_false_ignores_user_mcp(tmp_path):
 
     _write(
         root / "project.yml",
-        """name: test_project
+        """product:
+  name: test_project
 allow_user_mcp_servers: false
 paths:
   agents: agents
@@ -160,7 +163,8 @@ def test_invalid_flag_type_defaults_false(tmp_path, capsys):
 
     _write(
         root / "project.yml",
-        """name: test_project
+        """product:
+  name: test_project
 allow_user_mcp_servers: "yes"
 paths:
   agents: agents
@@ -206,7 +210,8 @@ def test_user_mcp_merged_with_agent_yml(tmp_path):
 
     _write(
         root / "project.yml",
-        """name: test_project
+        """product:
+  name: test_project
 allow_user_mcp_servers: true
 paths:
   agents: agents
@@ -249,7 +254,8 @@ def test_user_mcp_overrides_agent_yml_same_name(tmp_path):
 
     _write(
         root / "project.yml",
-        """name: test_project
+        """product:
+  name: test_project
 allow_user_mcp_servers: true
 paths:
   agents: agents
@@ -298,7 +304,8 @@ def test_full_precedence_chain(tmp_path, monkeypatch):
 
     _write(
         root / "project.yml",
-        """name: test_project
+        """product:
+  name: test_project
 allow_user_mcp_servers: true
 paths:
   agents: agents
@@ -379,7 +386,8 @@ def test_voice_spec_gets_user_mcp_servers(tmp_path):
 
     _write(
         root / "project.yml",
-        """name: test_project
+        """product:
+  name: test_project
 allow_user_mcp_servers: true
 paths:
   agents: agents
@@ -439,7 +447,8 @@ def test_project_name_slugified_for_config_path(tmp_path):
     # Project name with spaces and special chars
     _write(
         root / "project.yml",
-        """name: "My Project Name"
+        """product:
+  name: "My Project Name"
 allow_user_mcp_servers: true
 paths:
   agents: agents

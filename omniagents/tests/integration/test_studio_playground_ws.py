@@ -32,7 +32,7 @@ def studio_app(studio_project):
     }
     base_spec = agent_specs[context.entrypoint]
     resources = {
-        "project_name": context.raw.get("name"),
+        "project_name": context.product.slug,
         "tool_registry": context.tool_registry,
         "guardrails_registry": context.guardrails_registry,
         "agent_specs": agent_specs,
@@ -56,7 +56,7 @@ def studio_app(studio_project):
         },
     }
     app, _ = create_api_app(
-        default_project=context.raw.get("name"), playground_resources=resources
+        default_project=context.product.slug, playground_resources=resources
     )
     return app
 

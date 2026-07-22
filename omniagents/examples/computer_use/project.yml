@@ -1,14 +1,2 @@
-name: computer_use
-paths:
-  agents: agents
-  tools: tools
-  target: target
-agents:
-  entrypoint: computer_use
-
-tracing:
-  provider: studio
-  project: computer_use_project
+product:
   name: computer_use
-  settings:
-    resume: never

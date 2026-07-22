@@ -12,6 +12,11 @@ import fnmatch
 
 import yaml
 
+from omniagents.core.product import (
+    DEFAULT_PRODUCT_INFO,
+    ProductInfo,
+    product_info_from_mapping,
+)
 from omniagents.core.security import SecurityConfig
 from omniagents.core.tools.discovery import discover_functions_in_dir
 from omniagents.core.guardrails.discovery import discover_guardrails_in_dir
@@ -74,6 +79,12 @@ class ProjectContext:
     user_mcp_servers: List["MCPServerConfig"] = field(default_factory=list)
     # Project-level security policy
     security: SecurityConfig = field(default_factory=SecurityConfig)
+    # The project's product identity — the manifest's `product:` section
+    # resolved with every convention applied, or (when the manifest has
+    # no product section) an identity derived from the project directory
+    # name. The product identity IS the project identity: sessions,
+    # tracing, and registries scope by `product.slug`.
+    product: ProductInfo = DEFAULT_PRODUCT_INFO
 
 
 def _validate_agent_name(expected_key: str, yaml_name: Any, path: Path) -> str:
@@ -96,14 +107,33 @@ def _validate_agent_name(expected_key: str, yaml_name: Any, path: Path) -> str:
     return yaml_name
 
 
-def _project_overlay_paths(project_name: Any) -> List[Path]:
+def _manifest_product(proj: Dict[str, Any], base_dir: Path) -> ProductInfo:
+    """The manifest's product identity — the project's one name.
+
+    The ``product:`` section resolved with all conventions applied; when
+    the manifest has none, the identity derives from the project
+    directory name (the directory IS the name). Falls back to the
+    framework identity only when even that yields nothing usable.
+    """
+    section = proj.get("product")
+    if section is not None:
+        return product_info_from_mapping(section)
+    try:
+        return product_info_from_mapping({"name": base_dir.name})
+    except ValueError:
+        return DEFAULT_PRODUCT_INFO
+
+
+def _project_overlay_paths(config_dir_name: Any) -> List[Path]:
     """Overlay files layered over the base project.yml, in merge order.
 
     Two sources, mirroring the sandbox-profile chain:
 
     1. Config-dir convention: ``<product-config>/project.d/*.yml``
        (lexical order) — the user/operator layer for an installed
-       product whose packaged base project.yml is read-only.
+       product whose packaged base project.yml is read-only. The dir is
+       the base manifest's product ``config_dir`` (derived from the
+       product name when not declared).
     2. ``OMNIAGENTS_PROJECT_OVERLAYS`` — ``os.pathsep``-separated
        explicit paths (e.g. a container image selecting its enterprise
        security overlay); applied last, so explicit wins.
@@ -111,11 +141,11 @@ def _project_overlay_paths(project_name: Any) -> List[Path]:
     import os
 
     out: List[Path] = []
-    if isinstance(project_name, str) and project_name.strip():
+    if isinstance(config_dir_name, str) and config_dir_name.strip():
         try:
             from omniagents.core.config.dirs import product_config_dir
 
-            overlay_dir = product_config_dir(project_name.strip()) / "project.d"
+            overlay_dir = product_config_dir(config_dir_name.strip()) / "project.d"
             if overlay_dir.is_dir():
                 out.extend(sorted(overlay_dir.glob("*.yml")))
         except Exception:
@@ -130,7 +160,10 @@ def _project_overlay_paths(project_name: Any) -> List[Path]:
 
 
 def _apply_project_overlays(
-    proj: Dict[str, Any], overlays: Optional[List[Path]] = None
+    proj: Dict[str, Any],
+    overlays: Optional[List[Path]] = None,
+    *,
+    config_dir_name: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], List[Path]]:
     """Merge overlay documents over the base project dict.
 
@@ -141,7 +174,7 @@ def _apply_project_overlays(
     from omniagents.core.utils.merge import deep_merge
 
     applied: List[Path] = []
-    candidates = list(_project_overlay_paths(proj.get("name")))
+    candidates = list(_project_overlay_paths(config_dir_name))
     candidates.extend(overlays or [])
     for overlay_path in candidates:
         if not overlay_path.is_file():
@@ -170,7 +203,18 @@ def load_project(
                 f"Could not find project.yml in directory: {base_dir}"
             )
     proj = _read_yaml(p if p.is_file() else (base_dir / "project.yml"))
-    proj, _applied_overlays = _apply_project_overlays(proj, overlays)
+    # Overlay lookup scopes by the BASE manifest's product config dir —
+    # an overlay cannot relocate where overlays are found.
+    proj, _applied_overlays = _apply_project_overlays(
+        proj,
+        overlays,
+        config_dir_name=_manifest_product(proj, base_dir).config_dir_name,
+    )
+
+    # The project's resolved product identity (post-overlay). This is
+    # the project identity: every place the loader/runtime historically
+    # read a top-level `name:` now derives from it.
+    product = _manifest_product(proj, base_dir)
 
     # Install the manifest's product identity (`product:` section) as the
     # process-wide default. A prior explicit
@@ -179,14 +223,11 @@ def load_project(
     if proj.get("product") is not None:
         from dataclasses import replace as _dc_replace
 
-        from omniagents.core.product import (
-            _set_default_product_info,
-            product_info_from_mapping,
-        )
+        from omniagents.core.product import _set_default_product_info
 
         _set_default_product_info(
             _dc_replace(
-                product_info_from_mapping(proj["product"]),
+                product,
                 manifest_path=(p if p.is_file() else (base_dir / "project.yml")),
             )
         )
@@ -302,7 +343,14 @@ def load_project(
                 f"Entrypoint '{entry}' not found among agents: {sorted(agents_map.keys())}"
             )
     else:
-        if len(agents_map) == 1:
+        # Entrypoint convention: the agent named after the product's CLI
+        # program, else the one named after the product slug, else the
+        # single-agent auto-entrypoint. Explicit declarations win above.
+        if product.prog in agents_map:
+            entry = product.prog
+        elif product.slug in agents_map:
+            entry = product.slug
+        elif len(agents_map) == 1:
             entry = next(iter(agents_map.keys()))
         else:
             entry = None
@@ -313,12 +361,10 @@ def load_project(
                 f"Voice entrypoint '{voice_entry}' not found among agents: {sorted(agents_map.keys())}"
             )
     elif voice_entry in (None, ""):
-        voice_entry = None
+        # Voice convention: the agent named `voice_agent`, when present.
+        voice_entry = "voice_agent" if "voice_agent" in agents_map else None
     else:
         raise ValueError("Voice entrypoint must be a string if provided")
-
-    if voice_entry is None:
-        voice_entry = entry
 
     core_root = Path(__file__).resolve().parents[2]
 
@@ -353,8 +399,19 @@ def load_project(
                 continue
             agents_map[key] = y.resolve()
 
-    tracing_defaults = (
-        proj.get("tracing") if isinstance(proj.get("tracing"), dict) else None
+    # Tracing derives from the product identity: provider `studio`,
+    # project and trace name both the product slug. A declared `tracing:`
+    # block deep-merges over those defaults, so a project states only
+    # what deviates.
+    from omniagents.core.utils.merge import deep_merge
+
+    tracing_defaults = deep_merge(
+        {
+            "provider": "studio",
+            "project": product.slug,
+            "name": product.slug,
+        },
+        proj.get("tracing") if isinstance(proj.get("tracing"), dict) else {},
     )
     settings_defaults = (
         proj.get("settings") if isinstance(proj.get("settings"), list) else []
@@ -541,13 +598,9 @@ def load_project(
     if allow_user_mcp:
         from omniagents.core.config.user_mcp import load_user_mcp_config
 
-        project_name = proj.get("name")
-        if not project_name or not isinstance(project_name, str):
-            project_name = base_dir.name
-        project_name_slug = _slugify(project_name, base_dir.name)
         user_mcp_configs = load_user_mcp_config(
             project_root=base_dir,
-            project_name=project_name_slug,
+            project_name=product.slug,
         )
 
     return ProjectContext(
@@ -572,6 +625,7 @@ def load_project(
         allow_user_mcp_servers=allow_user_mcp,
         user_mcp_servers=user_mcp_configs,
         security=security,
+        product=product,
     )
 
 
@@ -590,14 +644,9 @@ def build_spec_from_project(
     project: ProjectContext,
     agent_key: Optional[str] = None,
 ):
-    raw_agents_config = (
-        project.raw.get("agents") if isinstance(project.raw, dict) else {}
-    )
-    configured_voice_key = None
-    if isinstance(raw_agents_config, dict):
-        raw_voice = raw_agents_config.get("voice_entrypoint")
-        if isinstance(raw_voice, str) and raw_voice.strip():
-            configured_voice_key = raw_voice.strip()
+    # The loader already resolved the voice entrypoint (declared, else
+    # the conventional `voice_agent` when present, else None).
+    configured_voice_key = project.voice_entrypoint
 
     selected_key = agent_key
     key, agent_yaml = resolve_agent(project, selected_key)
@@ -631,8 +680,7 @@ def build_spec_from_project(
             project.user_mcp_servers if project.allow_user_mcp_servers else None
         ),
     )
-    project_name = project.raw.get("name") if isinstance(project.raw, dict) else None
-    spec.project_slug = _slugify(project_name, project.root.name)
+    spec.project_slug = project.product.slug
     spec.agent_slug = _slugify(key, key)
 
     voice_spec = None

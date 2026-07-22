@@ -144,8 +144,23 @@ def test_model_catalog_path_resolves_relative(tmp_path):
 
 def test_model_catalog_path_absent(tmp_path):
     root = tmp_path / "p"
-    _write(root / "project.yml", "name: x\n")
+    _write(root / "project.yml", "product:\n  name: x\n")
     assert model_catalog_path(root) is None
+
+
+def test_model_catalog_path_sibling_convention(tmp_path):
+    """An undeclared catalog resolves to a manifest-sibling models.yml
+    when — and only when — that file exists."""
+    root = tmp_path / "p"
+    _write(root / "project.yml", "product:\n  name: x\n")
+    assert model_catalog_path(root) is None
+    _write(root / "models.yml", "providers: {}\n")
+    assert model_catalog_path(root) == (root / "models.yml").resolve()
+    # An explicit declaration still wins over the sibling convention.
+    resolved = model_catalog_path(
+        root / "project.yml", data={"paths": {"model_catalog": "other.yml"}}
+    )
+    assert resolved == root / "other.yml"
 
 
 def test_model_catalog_path_prefers_preparsed_data(tmp_path):

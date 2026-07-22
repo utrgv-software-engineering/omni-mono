@@ -1,12 +1,7 @@
-name: demo_studio_project
-paths:
-  agents: agents
-  evaluations: evaluations
-  target: target
-  tools: tools
+product:
+  name: demo_studio_project
 agents:
   entrypoint: primary
 tracing:
-  provider: studio
   project: demo_traces
   name: demo_project

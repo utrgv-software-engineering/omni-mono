@@ -299,7 +299,7 @@ def serve(
                         )
 
             playground_resources = {
-                "project_name": project or project_context.raw.get("name") or None,
+                "project_name": project or project_context.product.slug,
                 "tool_registry": tool_registry,
                 "guardrails_registry": guardrails_registry,
                 "base_spec": base_spec,

@@ -571,13 +571,9 @@ def load_eval_config(
     # Read agent config
     agent_cfg = _read_yaml(agent_path) or {}
 
-    # Extract tracing config
-    tracing_config: Dict[str, Any] = {}
-    try:
-        if isinstance(proj.get("tracing"), dict):
-            tracing_config = dict(proj.get("tracing") or {})
-    except Exception:
-        pass
+    # Tracing config — the loader's product-derived defaults with the
+    # manifest's declared `tracing:` block merged over them.
+    tracing_config: Dict[str, Any] = dict(prj.tracing_defaults or {})
 
     return EvalConfig(
         config=compiled_eval,
@@ -619,9 +615,20 @@ def introspect_resources(eval_config: EvalConfig) -> Dict[str, Any]:
         if name:
             metric_names.append(name)
 
+    product_section = (
+        eval_config.project_config.get("product")
+        if isinstance(eval_config.project_config, dict)
+        else None
+    )
+    if product_section is not None:
+        from omniagents.core.product import product_info_from_mapping
+
+        project_name = product_info_from_mapping(product_section).slug
+    else:
+        project_name = eval_config.project_root.name
+
     return {
-        "project_name": eval_config.project_config.get("name")
-        or eval_config.project_root.name,
+        "project_name": project_name,
         "agent_file": str(eval_config.agent_path),
         "resources": {
             "scenarios": scenario_names,

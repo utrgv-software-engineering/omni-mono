@@ -1,13 +1,6 @@
-name: studio_cli_demo
-paths:
-  agents: agents
-  target: target
+product:
+  name: studio_cli_demo
 agents:
   entrypoint: smoke
-
 tracing:
-  provider: studio
-  project: studio_cli_demo
   name: smoke_trace
-  settings:
-    resume: never

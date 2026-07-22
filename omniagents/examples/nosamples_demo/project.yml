@@ -1,14 +1,4 @@
-name: nosamples_demo
-paths:
-  agents: agents
-  tools: tools
-  target: target
+product:
+  name: nosamples_demo
 agents:
   entrypoint: nosamples_demo
-
-tracing:
-  provider: studio
-  project: nosamples_demo_project
-  name: nosamples_demo
-  settings:
-    resume: never

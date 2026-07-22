@@ -1,8 +1,2 @@
-name: eval_with_environment
-paths:
-  evaluations: evaluations
-  agents: agents
-  target: target
-  tools: tools
-agents:
-  entrypoint: demo_agent
+product:
+  name: eval_with_environment

@@ -371,6 +371,7 @@ def delete_agent(project_ref: str, agent_key: str) -> Tuple[List[str], str, str]
         raise ValueError("Cannot delete the only agent in the project")
     shutil.rmtree(target_dir)
     removed = [str(target_dir)]
+    remaining = [k for k in existing_keys if k != agent_key]
     project_yml = root / "project.yml"
     if project_yml.is_file():
         data = yaml.safe_load(project_yml.read_text(encoding="utf-8")) or {}
@@ -378,15 +379,45 @@ def delete_agent(project_ref: str, agent_key: str) -> Tuple[List[str], str, str]
             data = {}
         agents_cfg = data.get("agents") if isinstance(data.get("agents"), dict) else {}
         entry = agents_cfg.get("entrypoint")
-        if entry == agent_key:
-            for candidate in existing_keys:
-                if candidate != agent_key:
-                    agents_cfg["entrypoint"] = candidate
-                    break
-        data["agents"] = agents_cfg
-        project_yml.write_text(
-            yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
-        )
+        if not entry:
+            # Conventional entrypoint: the agent named after the product's
+            # prog/slug (mirrors the loader). Deleting it strands the
+            # project unless a single agent remains (auto-entrypoint).
+            try:
+                from omniagents.core.product import product_info_from_mapping
+
+                section = data.get("product")
+                pinfo = (
+                    product_info_from_mapping(section)
+                    if section is not None
+                    else None
+                )
+            except ValueError:
+                pinfo = None
+            if pinfo is not None:
+                if pinfo.prog in existing_keys:
+                    entry = pinfo.prog
+                elif pinfo.slug in existing_keys:
+                    entry = pinfo.slug
+        if entry == agent_key and len(remaining) > 1:
+            agents_cfg["entrypoint"] = remaining[0]
+            data["agents"] = agents_cfg
+            project_yml.write_text(
+                yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
+                encoding="utf-8",
+            )
+        elif agents_cfg.get("entrypoint") == agent_key:
+            # Declared entrypoint removed and one agent remains: the
+            # single-agent auto-entrypoint covers it — drop the stale key.
+            agents_cfg.pop("entrypoint", None)
+            if agents_cfg:
+                data["agents"] = agents_cfg
+            else:
+                data.pop("agents", None)
+            project_yml.write_text(
+                yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
+                encoding="utf-8",
+            )
     return removed, str(root), agent_key
 
 

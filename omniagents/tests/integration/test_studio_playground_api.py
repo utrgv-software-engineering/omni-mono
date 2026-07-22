@@ -33,7 +33,7 @@ def studio_app(studio_project):
     }
     base_spec = agent_specs[context.entrypoint]
     resources = {
-        "project_name": context.raw.get("name"),
+        "project_name": context.product.slug,
         "tool_registry": context.tool_registry,
         "guardrails_registry": context.guardrails_registry,
         "agent_specs": agent_specs,
@@ -57,7 +57,7 @@ def studio_app(studio_project):
         },
     }
     app, _ = create_api_app(
-        default_project=context.raw.get("name"), playground_resources=resources
+        default_project=context.product.slug, playground_resources=resources
     )
     return app
 
@@ -75,7 +75,7 @@ def test_get_studio_project_available(studio_client, studio_project):
     response = studio_client.get("/api/studio/project")
     data = response.json()
     assert data["available"] is True
-    assert data["project"] == "Studio Fixture"
+    assert data["project"] == "studio_fixture"
     assert Path(data["manifest_path"]) == studio_project / "project.yml"
 
 
@@ -95,7 +95,7 @@ def test_get_playground_metadata_reports_project_state(studio_app, studio_client
     response = studio_client.get("/api/playground/metadata")
     data = response.json()
     assert data["available"] is True
-    assert data["project_name"] == "Studio Fixture"
+    assert data["project_name"] == "studio_fixture"
     assert data["entry_agent"] == "primary"
     assert data["agent_key"] == "primary"
     assert data["agent_label"] == "Primary Agent"

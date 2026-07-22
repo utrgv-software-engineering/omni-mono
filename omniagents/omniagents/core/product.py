@@ -12,18 +12,19 @@ Schema (all keys optional except that at least one of ``slug`` /
 ``name`` must be present)::
 
     product:
-      name: omni-code            # distribution/package name
+      name: omni-code            # distribution/package name — THE one seed
                                  #   default: slug with "_" -> "-"
       prog: omni                 # CLI program name for --help rendering
                                  #   default: name
       label: Omni Code           # human display label (model CLI, wizards)
-                                 #   default: name
+                                 #   default: name split on "-"/"_",
+                                 #   title-cased ("omni-code" -> "Omni Code")
       slug: omni_code            # platform/project slug
                                  #   default: name slugified ("-" -> "_")
       config_dir: omni_code      # per-user config dir name
                                  #   (-> product_config_dir(...)); default: slug
       windows_config_dir: OmniCode   # %APPDATA% dir name on Windows
-                                 #   default: config_dir
+                                 #   default: label without spaces
       env_prefix: OMNI_CODE      # env-var prefix; default: slug upper-cased
                                  #   with non-alphanumerics collapsed to "_"
       update:                    # optional; presence enables self-update defaults
@@ -32,7 +33,9 @@ Schema (all keys optional except that at least one of ``slug`` /
         command_hint: omni update    # shown in update notices;
                                  #   default: "<prog> update"
 
-A minimal ``product: {slug: x}`` therefore fully works.
+A minimal ``product: {name: x}`` therefore fully works — one name, every
+identity facet derived; declare only where a product's historical naming
+deviates from the convention.
 
 Precedence (who wins the process-global identity):
 
@@ -180,6 +183,12 @@ def _derive_env_prefix(slug: str) -> str:
     return token.upper()
 
 
+def _derive_label(name: str) -> str:
+    """``omni-code`` / ``omni_code`` -> ``Omni Code``."""
+    parts = [p for p in re.split(r"[-_]+", name.strip()) if p]
+    return " ".join(p[:1].upper() + p[1:] for p in parts) or name
+
+
 DEFAULT_PRODUCT_INFO = ProductInfo(
     name="omniagents",
     prog="omniagents",
@@ -248,9 +257,11 @@ def product_info_from_mapping(data: Any) -> ProductInfo:
         name = slug.replace("_", "-")
 
     prog = _opt_str(data, "prog", where="product") or name
-    label = _opt_str(data, "label", where="product") or name
+    label = _opt_str(data, "label", where="product") or _derive_label(name)
     config_dir = _opt_str(data, "config_dir", where="product") or slug
-    windows_config_dir = _opt_str(data, "windows_config_dir", where="product")
+    windows_config_dir = _opt_str(
+        data, "windows_config_dir", where="product"
+    ) or label.replace(" ", "")
     env_prefix = _opt_str(data, "env_prefix", where="product") or _derive_env_prefix(
         slug
     )
