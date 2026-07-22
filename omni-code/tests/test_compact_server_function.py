@@ -4,10 +4,10 @@ The server function itself is the framework builtin
 (``omniagents.builtin.server_functions.compact``, activated by the builtin
 ``compact`` capability pack). The summarizer is conventional: with no
 explicit install, the framework seam runs omni-code's packaged
-``compactor`` agent (named by convention) under
-DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS on the utility-run model
-resolution. These tests cover that convention and the omni agent's
-activation of the ``compact`` capability.
+``compactor`` agent (named by convention) under the agent's own
+``instructions.md`` — omni-code owns the checkpoint-summary prompt — on
+the utility-run model resolution. These tests cover that convention and
+the omni agent's activation of the ``compact`` capability.
 """
 
 import asyncio
@@ -22,10 +22,7 @@ from omniagents.core.product import product_info
 # resolves via entry-point discovery; the conventional compaction
 # summarizer then finds the compactor agent through the manifest.
 install_model_catalog(product_info().manifest_path)
-from omniagents.core.runtime.compaction import (
-    DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS,
-    compaction_summarizer,
-)
+from omniagents.core.runtime.compaction import compaction_summarizer
 
 
 class FakeService:
@@ -50,10 +47,10 @@ def test_conventional_compaction_summarizer_is_active():
     assert compaction_summarizer() is not None
 
 
-def test_summarizer_runs_compactor_with_framework_instructions(monkeypatch):
+def test_summarizer_runs_compactor_under_its_own_instructions(monkeypatch):
     """The conventional summarizer resolves the session's model through
     omni-code's store and runs the compactor utility agent under the
-    framework's checkpoint-summary instructions."""
+    agent's own packaged instructions — no framework injection."""
     captured: dict = {}
 
     def fake_resolve_model_for_runtime(model_name=None):
@@ -99,7 +96,24 @@ def test_summarizer_runs_compactor_with_framework_instructions(monkeypatch):
     assert captured["model"] == "gpt-4.1"
     assert captured["runtime"]["provider"] == "openai-compatible"
     assert captured["session"] is session
-    assert captured["instructions"] == DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS
+    # The agent's own instructions.md is the prompt — never overridden.
+    assert "instructions" not in captured
+
+
+def test_compactor_agent_owns_the_checkpoint_summary_prompt():
+    """The packaged compactor agent's instructions.md carries the
+    checkpoint-summary prompt (formerly the framework's
+    DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS, restored verbatim)."""
+    from omniagents.core.config.loader import load_agent_spec_from_yaml
+
+    agent_yml = (
+        Path(__file__).parent.parent / "omni_code" / "agents" / "compactor" / "agent.yml"
+    )
+    spec = load_agent_spec_from_yaml(str(agent_yml))
+    text = spec.get_agent_instructions()
+    assert "context length limit" in text
+    assert "<analysis>" in text
+    assert "Files and Key Sections" in text
 
 
 def test_builtin_compact_resolves_through_omni_agent_capabilities():

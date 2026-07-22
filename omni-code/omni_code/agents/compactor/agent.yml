@@ -1,12 +1,9 @@
 name: compactor
 label: Context Compactor
 description: "Summarizes the current conversation context for continuation"
-# Placeholder only: the real system prompt is the framework's
-# DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS
-# (omniagents.core.runtime.compaction) — the single source of truth —
-# injected per run by the framework's conventional compaction
-# summarizer.
-instructions: "(replaced at run time by the framework checkpoint-summary instructions)"
+# instructions.md IS the checkpoint-summary prompt — omni-code owns
+# every word this agent speaks; the framework injects nothing.
+instructions_file: instructions.md
 
 tools: []
 

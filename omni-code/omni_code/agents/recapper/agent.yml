@@ -1,11 +1,9 @@
 name: recapper
 label: Session Recapper
 description: "Produces a short human-friendly recap of the current session"
-# Placeholder only: the real system prompt is the framework's
-# DEFAULT_RECAP_INSTRUCTIONS (omniagents.core.runtime.recap) — the
-# single source of truth — injected per run by the framework's
-# conventional recap summarizer.
-instructions: "(replaced at run time by the framework recap instructions)"
+# instructions.md IS the recap prompt — omni-code owns every word this
+# agent speaks; the framework injects nothing.
+instructions_file: instructions.md
 
 tools: []
 

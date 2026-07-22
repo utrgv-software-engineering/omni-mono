@@ -64,9 +64,9 @@ install_project_worker_defaults()
 # and /compact orchestration AND the summarizer wiring — with no explicit
 # install, the seams run the project agents named by convention
 # (omni_code/agents/recapper, omni_code/agents/compactor) one-shot under
-# the framework prompts (DEFAULT_RECAP_INSTRUCTIONS /
-# DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS) on the utility-run model
-# resolution. Shipping those agents IS the install; nothing to wire here.
+# each agent's own instructions.md (omni-code owns the prompts) on the
+# utility-run model resolution. Shipping those agents IS the install;
+# nothing to wire here.
 
 # Workspace info: the framework owns the fs_* picker server functions
 # (builtin `workspace_info` capability pack) and the terminal.* functions

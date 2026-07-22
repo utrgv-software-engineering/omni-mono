@@ -1,14 +1,13 @@
 """Instruction-template composition tests.
 
 omni and voice_agent share verbatim base sections via ``{% include %}``
-fragments: coding-flavored ones in ``omni_code/agents/_shared/`` and
-generic agent-harness ones shipped by the framework
-(``omniagents/builtin/instructions/``, included via the explicit
-``builtin/`` prefix; search order: anchor dir -> anchor/_shared ->
-agents/_shared -> builtin). The worker agent declares no instructions at
-all: WorkerManager installs the framework's DEFAULT_WORKER_INSTRUCTIONS
-and omni-code layers its coding delta through the
-``additional_instructions`` context hook.
+fragments in ``omni_code/agents/_shared/`` (search order: anchor dir ->
+anchor/_shared -> agents/_shared). Every fragment is product-owned — the
+framework ships no instruction prose. The worker agent's system prompt
+is its own ``instructions.md``: the generic worker protocol merged with
+omni-code's coding delta as one file, with the
+``additional_instructions`` context hook kept live for caller-supplied
+extras (e.g. per-scenario eval variables).
 """
 
 from pathlib import Path
@@ -23,7 +22,7 @@ from omniagents.core.utils.jinja_instructions import (
 AGENTS_DIR = Path(__file__).resolve().parents[1] / "omni_code" / "agents"
 
 
-def _render(agent_key: str) -> str:
+def _render(agent_key: str, **extra) -> str:
     anchor = AGENTS_DIR / agent_key
     template = (anchor / "instructions.md").read_text(encoding="utf-8")
     return render_template(
@@ -31,6 +30,7 @@ def _render(agent_key: str) -> str:
         silent_undefined=True,
         search_paths=instruction_search_paths(anchor),
         current_date="2026-01-01",
+        **extra,
     )
 
 
@@ -42,6 +42,7 @@ def test_omni_and_voice_share_fragment_sections_verbatim():
         "You are Omni Code, a highly-skilled full-stack software-engineering assistant.",
         "## AGENTS.md spec",
         "## Proactiveness",
+        "## Personality",
         "## Following conventions",
         "## Code Style",
         "## Debugging Libraries, Frameworks, Dependencies",
@@ -52,15 +53,13 @@ def test_omni_and_voice_share_fragment_sections_verbatim():
         assert probe in omni, probe
         assert probe in voice, probe
 
-    # The full AGENTS.md spec section (now a framework builtin fragment)
+    # The full AGENTS.md spec section (a product-owned _shared fragment)
     # must be byte-identical in both renders.
-    from omniagents.core.utils.jinja_instructions import (
-        builtin_instruction_fragments_dir,
-    )
-
     spec_fragment = (
-        builtin_instruction_fragments_dir() / "agents_md_spec.md"
-    ).read_text(encoding="utf-8").rstrip("\n")
+        (AGENTS_DIR / "_shared" / "agents_md_spec.md")
+        .read_text(encoding="utf-8")
+        .rstrip("\n")
+    )
     assert spec_fragment in omni
     assert spec_fragment in voice
 
@@ -84,64 +83,69 @@ def test_terminal_only_bullets_render_for_omni_not_voice():
     assert "## Voice Output" not in omni
 
 
-def test_worker_spec_uses_framework_default_plus_coding_delta(monkeypatch, tmp_path):
-    from omniagents.core.workers.instructions import (
-        DEFAULT_WORKER_INSTRUCTIONS,
-        apply_default_worker_instructions,
-    )
+def test_instructions_use_no_framework_fragments():
+    # The framework ships no instruction prose: every include in every
+    # agent template resolves inside the project tree.
+    for instructions in AGENTS_DIR.glob("*/instructions.md"):
+        text = instructions.read_text(encoding="utf-8")
+        assert 'include "builtin/' not in text, instructions
+        assert "include 'builtin/" not in text, instructions
 
-    from omni_code.agents.worker.context import build_worker_context
 
-    # The worker agent.yml deliberately declares no instructions, so the
-    # loader fallback applies and WorkerManager swaps in the framework
-    # default at spawn time.
+def test_worker_owns_its_prompt_with_coding_delta_inline():
+    # The worker spec points at its own instructions.md — the framework
+    # no longer installs any default worker prompt at spawn time.
     config = yaml.safe_load(
         (AGENTS_DIR / "worker" / "agent.yml").read_text(encoding="utf-8")
     )
-    assert "instructions" not in config
-    assert "instructions_file" not in config
+    assert config["instructions_file"] == "instructions.md"
 
-    class SpecStub:
-        def get_agent_instructions(self):
-            return "You are a helpful assistant."
+    from omni_code.agents.worker.context import build_worker_context
 
-    spec = SpecStub()
-    assert apply_default_worker_instructions(spec) is True
-    assert spec.get_agent_instructions() == DEFAULT_WORKER_INSTRUCTIONS
-
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("PWD", str(tmp_path))
     context = build_worker_context({})
     context["worker_name"] = "worker-test-1"
-
+    anchor = AGENTS_DIR / "worker"
     rendered = render_template(
-        DEFAULT_WORKER_INSTRUCTIONS, silent_undefined=True, **context
+        (anchor / "instructions.md").read_text(encoding="utf-8"),
+        silent_undefined=True,
+        search_paths=instruction_search_paths(anchor),
+        **context,
     )
 
-    # Framework base present.
+    # Generic worker protocol present.
     assert (
         "You are **worker-test-1**, an autonomous worker agent executing a "
         "focused subtask." in rendered
     )
     assert "## Task list" in rendered
     assert "## When stuck" in rendered
-    # Coding delta present exactly once, under the framework's hook heading.
+    # Coding delta present exactly once, under the (now inline) heading.
     assert rendered.count("# Additional Instructions") == 1
     assert rendered.count("Do not commit changes to git.") == 1
     assert (
         rendered.count("list every file you created or changed by absolute path")
         == 1
     )
-    # Nothing duplicated from the framework base.
+    # Nothing duplicated from the generic protocol.
     assert rendered.count("Stay focused on the assigned task.") == 1
 
 
-def test_worker_context_preserves_caller_additional_instructions():
-    from omni_code.agents.worker.context import (
-        WORKER_CODING_DELTA,
-        build_worker_context,
-    )
+def test_worker_context_passes_caller_additional_instructions_through():
+    # The delta lives in instructions.md now; the context factory forwards
+    # caller extras untouched and the template hook renders them after it.
+    from omni_code.agents.worker.context import build_worker_context
 
     context = build_worker_context({"additional_instructions": "Scenario extra."})
-    assert context["additional_instructions"].startswith(WORKER_CODING_DELTA)
-    assert context["additional_instructions"].endswith("Scenario extra.")
+    assert context["additional_instructions"] == "Scenario extra."
+
+    context["worker_name"] = "worker-test-2"
+    anchor = AGENTS_DIR / "worker"
+    rendered = render_template(
+        (anchor / "instructions.md").read_text(encoding="utf-8"),
+        silent_undefined=True,
+        search_paths=instruction_search_paths(anchor),
+        **context,
+    )
+    assert rendered.count("Scenario extra.") == 1
+    delta_pos = rendered.index("Do not commit changes to git.")
+    assert rendered.index("Scenario extra.") > delta_pos
