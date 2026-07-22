@@ -44,12 +44,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Serve-state-derived worker defaults (`omniagents.core.workers.serve_defaults`), lifted from omni-code's `workers_runtime.py`: `install_project_worker_defaults(model_resolver=None, agent_key="worker", project_slug=None, default_isolation="none")` is the one call a product makes to wire the whole worker subsystem, with every input derived from framework state. It registers `MultiSourceWorktreeIsolation` over the new `serve_worker_sources` provider as the `worktree` strategy — mapping the serve session's published `--source` descriptors to `WorkerSource` entries (git worktree for `local-git`/`git-remote`, plain copy for `local`, other kinds skipped; host path from the published `path`, else the mount under the manifest root; degrades to single-repo worktree behavior when no sources are published) — and installs a `make_project_worker_spec_loader` bound to `default_worker_project_context` (the published `ProjectContext`, with a cached `load_project` of the installed product's `manifest_path` as the non-serve fallback), the published orchestrator spec (sandbox attachment forwarding), the installed product's slug, and `default_worker_model_resolver` (the process-wide model store installed via `set_model_store`; `None` when no store is installed, leaving the spec as built). `model_resolver=` remains the one product hook for products with their own resolution policy. Idempotent; omni-code's `omni_code/workers_runtime.py` collapses to this single call.
 
 
-## [## [Unreleased]] - 2026-07-18
+## [0.7.21] - 2026-07-18
 
 ### Added
 - Product CLI host (`omniagents.product_cli`), driven by project.yml: `product_main(project_path, argv=None) -> int` collapses a product's hand-rolled CLI dispatcher to a ~5-line console script — if the base command is `omni`, the update command is `omni update`, all from configuration. It bootstraps the product identity first (`bootstrap_product`), then mounts the reserved subcommands from convention: `model`/`provider` (framework model CLI on the installed process-wide model store, with a generic product-config-dir store as fallback), `auth` (platform login/logout/status + the `auth codex` passthrough), `update` (mounted ONLY when the manifest declares a `product.update:` block; `UpdaterConfig.from_product`), and `sessions` (framework sessions CLI pinned to the product slug as project and the manifest's `agents.entrypoint` as default agent — exported as `run_product_sessions_command` so product overrides can delegate). Everything else falls through to `omniagents run --project <manifest> --mode <cli.default_mode>` (default `ink`) with args passed through, a leading `--` forcing prompt mode even for reserved words, and the update notice printed on the fallthrough path only. Product-specific behavior plugs in via a manifest-declared extension module — `cli: {default_mode: ..., extensions: my_product.cli_extensions}` — which may define `PREFLIGHT: list[Callable[[list[str]], list[str] | None]]` (argv hooks run in order before any dispatch; may veto/exec or rewrite argv — governance sandbox re-exec, first-run wizards, embedded-mode interception) and `COMMANDS: dict[str, Callable[[list[str]], int | None]]` (extra subcommands or overrides of reserved ones). Dispatch precedence: PREFLIGHT → COMMANDS (product) → reserved (framework) → fallthrough run. `dispatches_to_command(argv, extra_commands=...)` is the public gate preflights use to run only on agent-run invocations; `load_product_cli_config` is the light `cli:` parse (unknown-key typo protection, like `product:`).
 
-## [## [Unreleased]] - 2026-07-18
+## [0.7.20] - 2026-07-18
 
 ### Added
 - Product identity descriptor (`omniagents.core.product`), convention over configuration: a top-level `product:` section in project.yml (`name`, `prog`, `label`, `slug`, `config_dir`, `windows_config_dir`, `env_prefix`, and an optional `update:` block with `index_url`/`package`/`command_hint`) declares once the identity constants downstream products used to hand to each framework subsystem one at a time; a minimal `product: {slug: x}` derives everything else. Parsed into a frozen `ProductInfo` (with `ProductUpdateInfo` and a `config_dir()` path helper), installed process-wide via `set_product_info()` / read via `product_info()` (default: the framework's own `omniagents` identity). `load_product_info(project_path)` is a light parse — a plain YAML read of the `product:` key, no project resolution — and `bootstrap_product(project_path)` (load + explicit set) is the single call a product's cli.py makes first. `load_project` installs the manifest's `product:` section automatically, but an explicit `set_product_info`/`bootstrap_product` always wins and is never clobbered.
@@ -75,7 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The environment-backed eval runner (`run_scenario`) now applies environment-declared env vars (`get_env_vars()`) *before* loading the agent spec, not after. Spec loading reads the process env — notably `XDG_CONFIG_HOME` for `allow_user_mcp_servers` discovery — so environments staging per-scenario config previously had to mutate `os.environ` in `setup()` under a self-managed lock. With no awaits between application and spec load, each concurrent scenario's spec load reads its own values.
 
 
-## [## [Unreleased]] - 2026-07-18
+## [0.7.19] - 2026-07-18
 
 ### Added
 - Builtin `/compact` server function + `compact` capability pack, completing the recap symmetry: checkpoint compaction now ships a summarizer seam (`set_compaction_summarizer` / `compaction_summarizer` in `omniagents.core.runtime.compaction`) and a ready-made summarizer system prompt (`DEFAULT_CHECKPOINT_SUMMARY_INSTRUCTIONS`, lifted from omni-code's compactor agent and domain-neutralized). Products install a summarizer (their compactor agent + model resolution) and activate the pack instead of shipping their own `/compact`.
@@ -106,13 +106,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI `--version` flag support
 - Automated versioning workflow with bump2version
 
-## [## [Unreleased]] - 2025-10-22
+## [0.3.19] - 2025-10-22
 
 ### Fixed
 - Ensure Studio dark mode uses shared tokens so text stays legible across components.
 - Align the Logs page header layout with other Studio sections while preserving project controls.
 
-## [## [Unreleased]] - 2025-10-15
+## [0.3.16] - 2025-10-15
 
 ### Fixed
 - Align OmniAgents Studio websocket URLs, dev defaults, and CORS with GitHub Codespaces port forwarding.
@@ -125,12 +125,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Ensure `omniagents studio serve` serves the Studio UI without requiring the `--dev` flag.
 
-## [## [Unreleased]] - 2025-10-13
+## [0.3.15] - 2025-10-13
 
 ### Fixed
 - Fail evaluation suites when agent runs terminate with errors by surfacing them as `_agent_error` measures.
 
-## [## [Unreleased]] - 2025-01-26
+## [0.2.1] - 2025-01-26
 
 ### Added
 - Core refactoring of backends architecture
