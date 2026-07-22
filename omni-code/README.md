@@ -36,8 +36,6 @@ To run the agent's environment in a container, use `omni serve` with a sandbox p
 omni serve --profile my-sandbox-profile.yml
 ```
 
-For full process isolation of the agent itself (filesystem/network confinement enforced by the OS), Omni Code integrates the `omni-sandbox` binary: when platform governance requires it, `omni` re-execs itself inside `omni-sandbox` automatically before anything else runs.
-
 ## In-session commands
 
 Type these while the assistant is running:
@@ -78,7 +76,7 @@ Omni Code supports Agent Skills by injecting discovered skills into the system p
 - Per-workspace: `<workspace_root>/.omni_code/skills/`
 
 ## End-User Install
-- Python 3.10+ and libgit2 must be available on your PATH.
+- Python 3.10+ must be available on your PATH.
 - Choose either pipx or uv to install the `omni` CLI globally, then run `omni model setup` to configure credentials.
 
 ### Option A: pipx (recommended)
@@ -160,7 +158,6 @@ This project also includes a voice-optimized agent spec (`voice_agent`). How you
 ## Troubleshooting
 
 - `No model credentials configured`: run `omni model setup`.
-- `ImportError: libgit2` / `pygit2` failures: install `libgit2` (macOS: `brew install libgit2`, Debian/Ubuntu: `sudo apt-get install -y libgit2-dev`).
 
 ## Developer Setup
 
@@ -169,9 +166,11 @@ This project also includes a voice-optimized agent spec (`voice_agent`). How you
 .
 ├── omni_code/            # the installable product package
 │   ├── project.yml       # project manifest (paths relative to it)
-│   ├── agents/           # agent specs + instructions + context factories
+│   ├── models.yml        # declared model catalog
+│   ├── agents/           # agent specs + instructions (+ context factories)
 │   ├── capabilities/     # capability-pack overlays
-│   └── overlays/         # project.yml overlays (e.g. platform security)
+│   ├── prompts/          # goal/loop prompt templates
+│   └── sandbox_profile_default.yml
 ├── evaluations/          # eval scenarios/measures (repo-only, not packaged)
 ├── tests/
 ├── docs/
@@ -180,7 +179,6 @@ This project also includes a voice-optimized agent spec (`voice_agent`). How you
 
 ### Prerequisites
 - Python 3.10+
-- libgit2 (e.g., `brew install libgit2`, `sudo apt-get install -y libgit2-dev`)
 - Run `omni model setup` once to capture credentials in your global config if you have not already.
 - For Azure OpenAI development, choose the Azure option inside the setup wizard to populate the required variables.
 
@@ -190,7 +188,8 @@ git clone git@github.com:<you>/omni-code.git
 cd omni-code
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -e .[dev] --extra-index-url https://pypi.fury.io/ericmichael/
+pip install -e . --extra-index-url https://pypi.fury.io/ericmichael/
+pip install --group dev  # test dependencies (pyproject [dependency-groups])
 omni model setup
 omni
 ```
