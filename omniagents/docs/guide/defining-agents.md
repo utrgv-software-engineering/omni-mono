@@ -189,8 +189,8 @@ paths:
    %}` before the include; it defaults to "agent").
 
 Because the builtin directory is searched last, a project fragment with the
-same name shadows the builtin — the same precedence as builtin capabilities
-and builtin agents. The explicit `builtin/` prefix bypasses shadowing:
+same name shadows the builtin — the same precedence as builtin capabilities.
+The explicit `builtin/` prefix bypasses shadowing:
 
 ```jinja
 {# agents/_shared/task_execution.md — extend, don't replace #}
@@ -351,6 +351,12 @@ icon_map:
 ### Handoffs (Multi-Agent Systems)
 
 Enable your agent to delegate tasks to other specialized agents.
+
+Every agent in a project is project-defined: the framework ships builtin
+capability packs, tools, instruction fragments, and prompt seams, but no
+agents. Sub-agents referenced by `handoffs:`, `agent_tools:`, or a
+capability pack's `agent_tools:` always resolve against the project's own
+`agents/<key>/agent.yml` registry.
 
 #### handoffs
 List of agents this agent can hand off to:

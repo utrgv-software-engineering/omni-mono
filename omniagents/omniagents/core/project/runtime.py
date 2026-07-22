@@ -366,37 +366,6 @@ def load_project(
 
     core_root = Path(__file__).resolve().parents[2]
 
-    # --- Builtin agents ---
-    # The framework ships stock sub-agent specs under
-    # omniagents/builtin/agents/<key>/agent.yml (e.g. the read-only
-    # `explorer` wired up by the builtin `exploration` capability pack).
-    # They merge into agents_map here — AFTER entrypoint/voice-entrypoint
-    # resolution, so a single-agent project keeps its auto-entrypoint and
-    # a project with no agents still fails loudly above. Precedence
-    # mirrors builtin capabilities: a project agent with the same key
-    # shadows the builtin entirely. The project's agents.include/exclude
-    # globs apply, so a project can opt out (exclude: ["explorer"]).
-    builtin_agents_dir = (core_root / "builtin" / "agents").resolve()
-    if builtin_agents_dir.is_dir():
-        for y in sorted(builtin_agents_dir.glob("*/agent.yml")):
-            data = _read_yaml(y)
-            if not isinstance(data, dict):
-                continue
-            try:
-                key = _validate_agent_name(y.parent.name, data.get("name"), y)
-            except ValueError as e:
-                print(f"Warning: skipping builtin agent {y}: {e}")
-                continue
-            if key in agents_map:
-                continue  # project definition shadows the builtin
-            if include_globs and not any(
-                fnmatch.fnmatch(key, g) for g in include_globs
-            ):
-                continue
-            if exclude_globs and any(fnmatch.fnmatch(key, g) for g in exclude_globs):
-                continue
-            agents_map[key] = y.resolve()
-
     # Tracing derives from the product identity: provider `studio`,
     # project and trace name both the product slug. A declared `tracing:`
     # block deep-merges over those defaults, so a project states only
@@ -503,11 +472,11 @@ def load_project(
             parse_capability_spec,
         )
 
-        # Builtin capabilities first; users can override below. agents_map
-        # already includes the builtin agents at this point, so builtin
-        # packs that expose a sub-agent via agent_tools (e.g. exploration's
-        # `explore` → builtin explorer) resolve here — against the project's
-        # shadowing definition when one exists.
+        # Builtin capabilities first; users can override below. The
+        # framework ships no agents, so a builtin pack's agent_tools (if
+        # any ever declared one) could only resolve against the project's
+        # own agents_map — packs that reference a missing agent are
+        # skipped by the discoverer rather than failing the project.
         builtin_caps_dir = (core_root / "builtin" / "capabilities").resolve()
         if builtin_caps_dir.is_dir():
             try:
