@@ -2,9 +2,8 @@
 
 ``omni_code/default_models.py`` (the shipped provider/model dicts and
 default-model fallback) and ``omni_code/models.py`` (the store
-construction) collapsed into ``omni_code/models.yml``, declared via
-``paths.model_catalog`` and loaded by the framework at product
-bootstrap. These tests pin byte-equivalent semantics: the
+construction) collapsed into ``omni_code/models.yml``, the conventional
+manifest-sibling catalog the framework loads at product bootstrap. These tests pin byte-equivalent semantics: the
 catalog-loaded values must be identical to the exact dicts the deleted
 module returned (snapshotted below from default_models.py at deletion),
 and the installed store must serve them as its default layer.

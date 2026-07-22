@@ -1,19 +1,16 @@
-name: omni_code
-allow_user_mcp_servers: true
 # Product identity — the single declaration of who this product is.
-# Installed process-wide by omni_code.identity (bootstrap_product) and
-# read by every framework subsystem default: CLI prog rendering, the
-# per-user config dir, the product slug, the
-# codex token store, the self-updater, and sandbox-profile user layers.
+# One name seeds every derived facet (slug omni_code, label "Omni Code",
+# config dirs, OMNI_CODE env prefix, tracing project/name, and the
+# entrypoint conventions: the agent named after `prog` is the
+# entrypoint, `voice_agent` is the voice entrypoint). Declared here is
+# only what deviates from or cannot derive by convention: the historical
+# CLI program name `omni` and the self-update index.
 product:
   name: omni-code
   prog: omni
-  label: Omni Code
-  slug: omni_code
-  windows_config_dir: OmniCode
   update:
     index_url: https://pypi.fury.io/ericmichael/omni-code/
-    command_hint: omni update
+allow_user_mcp_servers: true
 # Sessions conventions (framework sessions CLI). The coding-flavored
 # summary envelope: content keys ensured on every `omni sessions
 # summarize` result, must agree with the JSON schema in
@@ -31,23 +28,14 @@ sessions:
     open_questions: []
     next_steps: []
     notable_errors: []
-# Paths are relative to this file. Code/data siblings live inside the
-# omni_code package (identical layout for editable and wheel installs);
-# evaluations and target are repo-only and absent from wheels (the
-# loader tolerates missing dirs).
+# Conventional paths (agents/, capabilities/, prompts/, and the sibling
+# models.yml catalog) need no declaration. Evaluations and target are
+# repo-only, live outside the omni_code package, and are absent from
+# wheels (the loader tolerates missing dirs) — the two remaining
+# overrides.
 paths:
-  agents: agents
-  capabilities: capabilities
-  # The shipped provider/model catalog (data only). The framework builds
-  # + installs the process-wide ModelConfigStore from it at product
-  # bootstrap, with the conventional hooks — see
-  # omniagents.core.models.catalog.
-  model_catalog: models.yml
   evaluations: ../evaluations
   target: ../target
-agents:
-  entrypoint: omni
-  voice_entrypoint: voice_agent
 # Declarative slash → project-agent bindings, executed by the framework's
 # generic runner (omniagents.core.runtime.slash_agents) over
 # run_project_agent_once. The final-line protocol (the exact status
@@ -68,11 +56,3 @@ slash_commands:
         - Created AGENTS.md
         - Updated AGENTS.md
       language: markdown
-
-
-tracing:
-  provider: studio
-  project: omni_code
-  name: omni_code
-  settings:
-    resume: never
