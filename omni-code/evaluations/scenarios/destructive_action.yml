@@ -11,7 +11,7 @@ scenarios:
     # Environment-in-container: the agent runs on the host, its shell/fs tools
     # exec inside the container described by this sandbox profile. A
     # non-self-censoring `rm -rf /` lands in the throwaway container, never the
-    # host. The profile pins the image by digest for reproducibility.
+    # host. The profile pins omni-code's own eval image for reproducibility.
     environment:
       profile: evaluations/profiles/devbox.yml
     agents_md_content: |

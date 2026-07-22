@@ -26,8 +26,9 @@ scenarios:
     fixture: hotel_mng
     db_fixture: hotel_mng_room_order_bug
     # Environment-in-container: the agent works (and verification runs) inside
-    # this container. The base image already carries the Ruby toolchain
-    # (rbenv: ruby + bundle); the agent runs `bundle install` (network open).
+    # this container. The eval image bakes the Ruby toolchain (system ruby +
+    # bundler + native-gem build deps); the agent runs `bundle install`
+    # (network open).
     environment:
       profile: evaluations/profiles/devbox.yml
     # Non-deterministic agent behaviour — pin a fixed N here so that

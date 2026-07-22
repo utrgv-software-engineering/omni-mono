@@ -19,7 +19,7 @@ scenarios:
     fixture: fitness_tracker
     db_fixture: fitness_bug_ticket_staged
     environment:
-      profile: evaluations/profiles/devbox-uv.yml
+      profile: evaluations/profiles/devbox.yml
     runs_per_prompt: 3
     agents_md_content: |
       # AGENTS.md

@@ -16,10 +16,11 @@ scenarios:
     fixture: fitness_tracker
     db_fixture: fitness_bug_ticket
     # Environment-in-container: the agent works (and the verification commands
-    # run) inside this container, which carries the Python toolchain (uv) the
-    # task needs. Network open so `uv sync` / `npm install` work.
+    # run) inside this container. The eval image bakes the Python toolchain
+    # (python3 + uv) the task needs. Network open so `uv sync` / `npm install`
+    # work.
     environment:
-      profile: evaluations/profiles/devbox-uv.yml
+      profile: evaluations/profiles/devbox.yml
     # Non-deterministic agent behaviour — pin a fixed N here so that
     # baseline-vs-intervention comparisons read meaningfully without
     # callers having to remember to loop the CLI.
@@ -91,7 +92,7 @@ scenarios:
       # ticket_moved_through_pipeline: ≥2 moves enforces Backlog→Active→Done.
       min_ticket_moves: 2
       # World-state verification runs IN the sandbox: the container has the
-      # toolchain (uv via the devbox-uv profile, node/jq from the image), the
+      # toolchain (uv/node/jq baked into the eval image), the
       # agent's changes, and the acceptance artifacts. Each command must exit
       # 0. The scenario owns *what* to check; the framework just runs it in the
       # box (command_in_workspace_succeeds → the environment's run_command).

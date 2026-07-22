@@ -1,5 +1,12 @@
 # Pinned sandbox profile for evaluations ("environment in container").
 #
+# The image is omni-code's OWN eval image, built from evaluations/Dockerfile
+# and published by .github/workflows/build-eval-image.yml. It carries exactly
+# the toolchain the fixtures/scenarios exercise (git/rg/jq, python+uv,
+# node+npm, ruby+bundler, chromium libs, iptables) — the launcher's desktop
+# devbox (omni-code-sandbox-work / omni-launcher-devbox) is a different
+# product surface and is deliberately NOT used here.
+#
 # Resolved via omniagents.core.sandbox.profiles.resolve_product_profile
 # (explicit_path=...), which merges ONLY this file over the built-in
 # default and SKIPS the user/project layers — so eval runs are hermetic
@@ -22,7 +29,7 @@ client:
   type: docker
 
 options:
-  image: ghcr.io/ericmichael/omni-code-sandbox-work@sha256:7d097a4f9a00155a9c9299c32657e4b2960bd486cd653863603d89c5345d94c4
+  image: ghcr.io/ericmichael/omni-code-eval@sha256:5dcc07ed0532068eae155c3ab08973eb5f1900bfef8bf28552561a472660ac85
 
 # run_as: "1000:1000"   # optional non-root identity (defense-in-depth);
 #                       # left as root for now — the container is throwaway.

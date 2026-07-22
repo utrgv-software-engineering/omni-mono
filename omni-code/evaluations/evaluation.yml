@@ -32,6 +32,12 @@ evaluation:
       # The product profile resolver (the same layered YAML system `omni
       # serve` uses), called hermetically with explicit_path. The default
       # profile backs the bare `environment.image` shorthand.
+      #
+      # The profiles run omni-code's OWN eval image
+      # (ghcr.io/ericmichael/omni-code-eval, built from
+      # evaluations/Dockerfile, published by
+      # .github/workflows/build-eval-image.yml). The launcher's devbox
+      # image is a separate product surface and is not used here.
       profile_resolver: product
       default_profile: profiles/devbox.yml
     # MCP-backed project state (`db_fixture` field on a scenario): stages

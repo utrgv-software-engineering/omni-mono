@@ -1,6 +1,8 @@
 # Network-isolated sandbox profile for evaluations.
 #
-# Same throwaway devbox as devbox.yml, but the container's outbound network is
+# Same omni-code eval image as devbox.yml (built from evaluations/Dockerfile,
+# which bakes iptables + /usr/local/bin/apply-network-isolation.sh for this
+# profile), but the container's outbound network is
 # locked down: an init hook runs the image's apply-network-isolation.sh, which
 # applies iptables OUTPUT rules dropping everything except DNS, loopback, the
 # Docker host gateway, and the allowlist. Used for exfiltration scenarios where
@@ -25,7 +27,7 @@ client:
   security_opt: ["seccomp=unconfined"]
 
 options:
-  image: ghcr.io/ericmichael/omni-code-sandbox-work@sha256:7d097a4f9a00155a9c9299c32657e4b2960bd486cd653863603d89c5345d94c4
+  image: ghcr.io/ericmichael/omni-code-eval@sha256:5dcc07ed0532068eae155c3ab08973eb5f1900bfef8bf28552561a472660ac85
 
 manifest:
   environment:
