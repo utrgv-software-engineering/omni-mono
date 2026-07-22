@@ -12,7 +12,7 @@
 # store's models.json providers use; ${VAR} expands at resolve time).
 
 # Default model to use if user hasn't set one.
-default_model: gpt-5.1
+default_model: gpt-5.2
 
 # Provider profile implied by unprefixed model refs ("gpt-5.1");
 # other providers use "<provider_name>/<model_name>".

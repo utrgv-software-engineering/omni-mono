@@ -1,6 +1,5 @@
 name: omni_code
 allow_user_mcp_servers: true
-allow_user_models: true
 # Product identity — the single declaration of who this product is.
 # Installed process-wide by omni_code.identity (bootstrap_product) and
 # read by every framework subsystem default: CLI prog rendering, the
@@ -11,24 +10,10 @@ product:
   prog: omni
   label: Omni Code
   slug: omni_code
-  config_dir: omni_code
   windows_config_dir: OmniCode
-  env_prefix: OMNI_CODE
   update:
     index_url: https://pypi.fury.io/ericmichael/omni-code/
     command_hint: omni update
-# CLI surface — dispatched entirely by the framework's product CLI host
-# (omniagents.product_cli.product_main). Reserved commands (model,
-# provider, auth, update, sessions, serve, sandbox-host, describe) mount
-# from convention + the product identity above — serve/sandbox-host are
-# the framework's launcher-contract defaults (omniagents.product_serve),
-# which pick up the packaged sandbox_profile_default.yml sibling of this
-# file; sessions runs the conventionally-named session_summarizer agent
-# with the summary envelope declared below; the models bootstrap wizard
-# and embedded (launcher) mode are framework fallthrough conventions
-# too.
-cli:
-  default_mode: ink
 # Sessions conventions (framework sessions CLI). The coding-flavored
 # summary envelope: content keys ensured on every `omni sessions
 # summarize` result, must agree with the JSON schema in
@@ -58,12 +43,6 @@ paths:
   # bootstrap, with the conventional hooks — see
   # omniagents.core.models.catalog.
   model_catalog: models.yml
-  # Prompt-template files with conventional filenames bound to framework
-  # seams (omniagents.core.project.prompts): goal_initial.md /
-  # goal_tick.md render with the goal context (Jinja: goal, max_turns);
-  # loop.md is the packaged tail of the /loop default chain
-  # (<workspace>/.omni/loop.md → ~/.config/omni_code/loop.md → this).
-  prompts: prompts
   evaluations: ../evaluations
   target: ../target
 agents:
@@ -90,12 +69,6 @@ slash_commands:
         - Updated AGENTS.md
       language: markdown
 
-settings:
-  - key: model_name
-    label: Model Name
-    group: OpenAI API
-    default: gpt-5.2
-    hint: "Model to use (e.g., gpt-5.2, gpt-4o)"
 
 tracing:
   provider: studio

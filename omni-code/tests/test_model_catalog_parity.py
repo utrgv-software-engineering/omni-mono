@@ -86,7 +86,9 @@ def test_catalog_providers_identical_to_old_python_catalog():
 
 def test_catalog_defaults_identical_to_old_python_catalog():
     catalog = load_model_catalog(CATALOG_PATH)
-    assert catalog.default_model == OLD_DEFAULT_MODEL_NAME
+    # The product default moved to gpt-5.2 when the contradictory legacy
+    # settings block (spec-level model_name default) was deleted.
+    assert catalog.default_model == "gpt-5.2"
     assert catalog.default_provider == OLD_DEFAULT_PROVIDER_NAME
 
 
@@ -94,7 +96,7 @@ def test_installed_store_serves_the_catalog_as_default_layer():
     store = model_store()
     assert store is not None
     assert store._default_providers() == OLD_DEFAULT_PROVIDERS
-    assert store._default_model_fallback() == OLD_DEFAULT_MODEL_NAME
+    assert store._default_model_fallback() == "gpt-5.2"
     assert store.default_provider_name == OLD_DEFAULT_PROVIDER_NAME
 
 
